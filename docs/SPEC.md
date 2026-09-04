@@ -322,11 +322,11 @@ Indexes worth naming: `jobs(company_id, status)`, `jobs(in_table, status, fit_sc
 
 ```mermaid
 flowchart LR
-  B[Browser] -->|HTTPS, session cookie| W[Vercel: Next.js app<br/>UI + API routes]
-  W -->|reads and writes| DB[(Render: Postgres)]
+  B[Browser] -->|HTTPS, session cookie| W["Vercel: Next.js app<br/>UI + API routes"]
+  W -->|reads and writes| DB[("Render: Postgres")]
   W -->|inserts tasks| DB
-  K[Render: worker web service<br/>Node + headless Chromium] -->|polls tasks, writes results| DB
-  K -->|scheduler 06:00 daily, Sunday weekly| K
+  K["Render: worker web service<br/>Node + headless Chromium"] -->|polls tasks, writes results| DB
+  K -->|"scheduler 06:00 daily, Sunday weekly"| K
   K -->|HTTPS| S[Company sites and ATS feeds]
   K -->|HTTPS| A[Anthropic API]
 ```

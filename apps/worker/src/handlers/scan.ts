@@ -171,7 +171,9 @@ async function scanSource(
       },
       settings.gate,
     );
-    const nearMiss = !gate.inTable && settings.nearMissEnabled && !gate.excluded;
+    // A near miss is a role that failed the keyword gate but is still plausibly relevant. It is
+    // recorded cheaply here; only a capped number are scored each day (see below).
+    const nearMiss = !gate.inTable && settings.nearMissEnabled && !gate.excluded && gate.locationOk;
     const [created] = await deps.db
       .insert(schema.jobs)
       .values({
@@ -282,7 +284,18 @@ async function scanSource(
   }
 
   if (!(await aiBudgetExceeded(deps))) {
-    for (const item of scoreQueue) {
+    // Roles in the table are always scored. Near misses are scored only up to the daily cap, so a
+    // wide keyword change cannot turn into hundreds of model calls.
+    const inTableToScore = scoreQueue.filter((item) => !item.nearMiss);
+    let nearMissBudget = 0;
+    const nearMissCandidates = scoreQueue.filter((item) => item.nearMiss);
+    if (nearMissCandidates.length > 0) {
+      const scoredToday = await deps.db.execute<{ n: number }>(sql`
+        select count(*)::int as n from jobs
+        where near_miss and fit_scored_at >= date_trunc('day', now())`);
+      nearMissBudget = Math.max(0, settings.nearMissDailyCap - (scoredToday.rows[0]?.n ?? 0));
+    }
+    for (const item of [...inTableToScore, ...nearMissCandidates.slice(0, nearMissBudget)]) {
       await enqueueTask(deps.db, "score_job", item, { dedupeKey: dedupeKeyFor("score_job", item), priority: priorityFor("score_job") });
     }
     for (const jobId of descriptionQueue.slice(0, 50)) {

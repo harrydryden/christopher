@@ -223,6 +223,9 @@ describe("end to end", () => {
     expect(rows.find((r) => r.title === "Operations Manager")!.keywordTerms).toEqual(["operations"]);
     // Every role from the first scan is flagged as seeded so a day-one table is not read as news.
     expect(rows.every((r) => r.seeded)).toBe(true);
+    // The engineering role missed the keywords but is otherwise plausible, so it is kept as a
+    // near miss the learning loop can surface. Nothing is deleted.
+    expect(rows.find((r) => r.title.startsWith("Software"))!.nearMiss).toBe(true);
   }, 60_000);
 
   it("filters by location, expanding UK and keeping UK-remote roles", async () => {
@@ -237,6 +240,8 @@ describe("end to end", () => {
     expect(rows.find((r) => r.title === "Head of Business Operations")!.inTable).toBe(false);
     expect(rows.find((r) => r.title === "Senior Operations Associate")!.inTable).toBe(false);
     expect(rows.find((r) => r.title === "Operations Analyst")!.location).toBe("Remote - UK");
+    // A role outside the location filter is not a near miss either: the filter is a hard boundary.
+    expect(rows.find((r) => r.title === "Head of Business Operations")!.nearMiss).toBe(false);
   }, 60_000);
 
   it("re-evaluates the gate in place when the location filter changes", async () => {

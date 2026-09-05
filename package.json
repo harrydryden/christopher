@@ -1,0 +1,26 @@
+{
+  "name": "christopher",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Single-user careers page monitor: daily scans, keyword and location filtered roles, apply/skip learning, similar-company recommendations.",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter './packages/*' build && pnpm --filter @christopher/worker build && pnpm --filter @christopher/web build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "dev:web": "pnpm --filter @christopher/web dev",
+    "dev:worker": "pnpm --filter @christopher/worker dev",
+    "db:generate": "pnpm --filter @christopher/db generate",
+    "db:migrate": "pnpm --filter @christopher/db migrate"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "typescript": "~5.9.0",
+    "tsx": "latest",
+    "vitest": "latest"
+  }
+}

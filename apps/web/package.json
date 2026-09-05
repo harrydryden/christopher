@@ -1,0 +1,36 @@
+{
+  "name": "@christopher/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "echo 'no unit tests in web app'",
+    "lint": "echo 'no lint configured'",
+    "hash-password": "tsx scripts/hash-password.ts"
+  },
+  "dependencies": {
+    "@christopher/core": "workspace:*",
+    "@christopher/db": "workspace:*",
+    "drizzle-orm": "latest",
+    "next": "15",
+    "pg": "latest",
+    "react": "19",
+    "react-dom": "19",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "latest",
+    "@types/node": "latest",
+    "@types/pg": "latest",
+    "@types/react": "19",
+    "@types/react-dom": "19",
+    "postcss": "latest",
+    "tailwindcss": "latest",
+    "tsx": "latest",
+    "typescript": "~5.9.0"
+  }
+}

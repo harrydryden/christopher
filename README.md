@@ -83,7 +83,7 @@ Full instructions, including what to set where and what to do when something is 
 [docs/DEPLOY.md](docs/DEPLOY.md). In short:
 
 - **Database and worker on Render, interface on Vercel** (recommended). `render.yaml` is a
-  blueprint that creates the worker from `apps/worker/Dockerfile`; in Vercel, import the repository
+  blueprint that creates the worker from `Dockerfile`; in Vercel, import the repository
   and set the root directory to `apps/web`. Roughly £11 a month plus model usage.
 - **Vercel only, with a Render database.** A Vercel Cron calls `/api/cron`, which runs the same
   scheduler and handlers inside the request. Roughly £5 a month, but there is no headless browser,

@@ -12,7 +12,7 @@ services:
     name: christopher-worker
     runtime: docker
     plan: starter            # starter never sleeps; the free tier does
-    dockerfilePath: ./apps/worker/Dockerfile
+    dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /healthz
     autoDeploy: true

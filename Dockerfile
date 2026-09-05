@@ -1,5 +1,6 @@
-# Worker image for Render. Based on the Playwright image so Chromium and its system
-# libraries are already present and match the installed Playwright version.
+# Worker image for Render, built from the repository root.
+# Based on the Playwright image so Chromium and its system libraries are already present and
+# match the installed Playwright version.
 FROM mcr.microsoft.com/playwright:v1.56.1-noble
 
 ENV NODE_ENV=production \

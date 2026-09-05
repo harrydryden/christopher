@@ -56,7 +56,7 @@ the same learning loop.
 Render can read `render.yaml` from the repository: **New → Blueprint**, point it at the repo, and it
 creates the worker service (it will also offer to create a database; skip that if you made one
 above). Or create it by hand: **New → Web Service**, runtime **Docker**, Dockerfile path
-`apps/worker/Dockerfile`, Docker context `.`, health check path `/healthz`, instance type
+`Dockerfile`, Docker context `.`, health check path `/healthz`, instance type
 **Starter** (the free type sleeps, which stops the scheduler).
 
 Set these on the service:

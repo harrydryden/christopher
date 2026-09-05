@@ -370,6 +370,13 @@ describe("end to end", () => {
     expect(run!.status).toBe("not_found");
     const sources = await db.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
     expect(sources).toHaveLength(0);
+
+    // As a last resort discovery guesses an applicant tracking slug from the domain name. Those
+    // guesses must be refused by the host map, not answered by a real board: otherwise the result
+    // of this test depends on who happens to own the slug "orbital".
+    const log = (run!.log as string[]).join("\n");
+    expect(log).toContain("not in the test host map");
+    expect(server.requests.every((r) => HOSTS.includes(r.host))).toBe(true);
   }, 60_000);
 
   it("records a scan run that the health page can report on", async () => {

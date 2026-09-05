@@ -71,6 +71,9 @@ export class BrowserRenderer {
         if (type === "image" || type === "font" || type === "media") return route.abort();
         const target = new URL(req.url());
         const mapped = hostMap[target.hostname] ?? hostMap["*"];
+        // A configured host map is exhaustive, so a test cannot reach the real internet through
+        // the browser either.
+        if (!mapped && Object.keys(hostMap).length > 0) return route.abort();
         if (mapped) {
           // Used only by tests, which point real hostnames at a local server. Playwright refuses to
           // rewrite across protocols, so the request is made here and the response fulfilled.

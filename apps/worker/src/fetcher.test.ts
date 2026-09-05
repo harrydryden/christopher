@@ -107,6 +107,21 @@ describe("polite fetcher", () => {
     if (error instanceof SourceFetchError) expect(["timeout", "network"]).toContain(error.kind);
   });
 
+  it("refuses a host the test map does not name, rather than reaching the real internet", async () => {
+    // Discovery guesses applicant tracking slugs from a domain name as a last resort. Without this
+    // rule a test would query real boards, and whether it passed would depend on who happens to
+    // own that slug.
+    const error = await fetcher().fetchText("https://api.lever.co/v0/postings/orbital?mode=json").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(SourceFetchError);
+    expect((error as SourceFetchError).kind).toBe("network");
+    expect((error as Error).message).toContain("not in the test host map");
+  });
+
+  it("maps every host when the map has a wildcard", async () => {
+    const f = new PoliteFetcher({ userAgent: "test", hostMap: { "*": server.hostMap["www.example.test"]! }, perHostDelayMs: 0 });
+    await expect(f.fetchText("https://anything.test/")).resolves.toMatchObject({ status: 404 });
+  });
+
   it("returns a 404 as a response rather than throwing", async () => {
     const res = await fetcher().fetchText("https://www.example.test/nope");
     expect(res.status).toBe(404);

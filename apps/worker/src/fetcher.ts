@@ -28,18 +28,23 @@ export class PoliteFetcher {
 
   constructor(private readonly opts: FetcherOptions) {}
 
-  /** Apply the host map (tests) and return the URL to actually request plus the Host header to present. */
-  mapUrl(url: string): { target: string; originalHost: string } {
+  /**
+   * Apply the host map (tests only) and return the URL to actually request plus the Host header
+   * to present. When a map is configured it is exhaustive: a host it does not name is reported as
+   * unmapped so the caller can refuse it rather than reach the real internet from a test.
+   */
+  mapUrl(url: string): { target: string; originalHost: string; unmapped: boolean } {
     const u = new URL(url);
     const originalHost = u.hostname;
-    const mapped = this.opts.hostMap?.[u.hostname] ?? this.opts.hostMap?.["*"];
+    const hostMap = this.opts.hostMap ?? {};
+    const mapped = hostMap[u.hostname] ?? hostMap["*"];
     if (mapped) {
       const [h, p] = mapped.split(":");
       u.protocol = "http:";
       u.hostname = h ?? "127.0.0.1";
       u.port = p ?? "";
     }
-    return { target: u.toString(), originalHost };
+    return { target: u.toString(), originalHost, unmapped: !mapped && Object.keys(hostMap).length > 0 };
   }
 
   private async waitTurn(host: string): Promise<void> {
@@ -108,7 +113,12 @@ export class PoliteFetcher {
   }
 
   private async rawFetch(url: string, init: FetchInit = {}): Promise<FetchResponse> {
-    const { target, originalHost } = this.mapUrl(url);
+    const { target, originalHost, unmapped } = this.mapUrl(url);
+    if (unmapped) {
+      // Only reachable under a test host map. Failing here keeps a test hermetic: without it a
+      // discovery run that guesses an applicant tracking slug would query the real board.
+      throw new SourceFetchError(`refusing to fetch ${originalHost}: not in the test host map`, "network");
+    }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), init.timeoutMs ?? this.opts.defaultTimeoutMs ?? 20_000);
     const headers: Record<string, string> = {

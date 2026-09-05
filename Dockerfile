@@ -12,11 +12,13 @@ WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 
 # Install dependencies first so the layer is cached until a manifest changes.
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY packages/db/package.json packages/db/
 COPY packages/core/package.json packages/core/
 COPY packages/ai/package.json packages/ai/
 COPY apps/worker/package.json apps/worker/
+# The web app is not built here, but pnpm needs every workspace manifest present to
+# resolve a frozen lockfile.
 COPY apps/web/package.json apps/web/
 RUN pnpm install --frozen-lockfile --filter @christopher/worker... --filter @christopher/db --filter @christopher/core --filter @christopher/ai
 

@@ -4,7 +4,8 @@
  *
  *   DATABASE_URL=... pnpm --filter @christopher/worker exec tsx src/seed-demo.ts
  */
-import { createDb, runMigrations, schema } from "@christopher/db";
+import {createDb, schema} from "@christopher/db";
+import { runMigrations } from "@christopher/db/migrate";
 import { evaluateGate, normalizeTitle, DEFAULT_SETTINGS } from "@christopher/core";
 import { sql } from "drizzle-orm";
 

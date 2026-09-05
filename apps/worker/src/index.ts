@@ -2,7 +2,8 @@
  * Worker entry point. One always-on process that runs the scheduler, the task queue and every
  * outbound fetch and model call. See docs/SPEC.md section 6.
  */
-import { runMigrations } from "@christopher/db";
+import {} from "@christopher/db";
+import { runMigrations } from "@christopher/db/migrate";
 import { createDeps } from "./context";
 import { readEnv } from "./env";
 import { startHealthServer } from "./health";

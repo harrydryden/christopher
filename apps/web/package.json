@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "echo 'no unit tests in web app'",
+    "test": "vitest run",
     "lint": "echo 'no lint configured'",
     "hash-password": "tsx scripts/hash-password.ts"
   },
@@ -20,7 +20,8 @@
     "pg": "latest",
     "react": "19",
     "react-dom": "19",
-    "zod": "latest"
+    "zod": "latest",
+    "@christopher/worker": "workspace:*"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "latest",
@@ -31,6 +32,7 @@
     "postcss": "latest",
     "tailwindcss": "latest",
     "tsx": "latest",
-    "typescript": "~5.9.0"
+    "typescript": "~5.9.0",
+    "vitest": "latest"
   }
 }

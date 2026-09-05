@@ -79,21 +79,15 @@ pnpm cli scan       # queue a full run
 
 ## Deploying
 
-**Database and worker (Render).** `render.yaml` is a blueprint: point Render at this repository and
-it creates a Postgres instance and one always-on worker service built from
-`apps/worker/Dockerfile`. Set `ANTHROPIC_API_KEY` and `SCRAPER_CONTACT_EMAIL` in the dashboard. The
-worker runs migrations on boot behind an advisory lock, so it is safe to redeploy at any time. A web
-service is used rather than a cron job because the scheduler and the on-demand queue must both be
-running.
+Full instructions, including what to set where and what to do when something is wrong, are in
+[docs/DEPLOY.md](docs/DEPLOY.md). In short:
 
-**Interface (Vercel).** Import the repository, set the root directory to `apps/web`, and set
-`DATABASE_URL` (the external connection string from Render, which needs TLS), `SESSION_SECRET` and
-`APP_PASSWORD_HASH`. Vercel's egress addresses vary, so the database is protected by TLS and a strong
-password rather than an IP allowlist. The interface never calls the worker: it writes rows into the
-`tasks` table and the worker picks them up within seconds.
-
-Roughly $14 a month for Render, plus model usage, which the Health page tracks against a budget you
-set.
+- **Database and worker on Render, interface on Vercel** (recommended). `render.yaml` is a
+  blueprint that creates the worker from `apps/worker/Dockerfile`; in Vercel, import the repository
+  and set the root directory to `apps/web`. Roughly £11 a month plus model usage.
+- **Vercel only, with a Render database.** A Vercel Cron calls `/api/cron`, which runs the same
+  scheduler and handlers inside the request. Roughly £5 a month, but there is no headless browser,
+  so a careers page whose roles arrive by JavaScript has to have its board URL pasted in by hand.
 
 ## Environment variables
 
@@ -107,6 +101,8 @@ set.
 | `TZ` | worker | the timezone the daily run is scheduled in |
 | `WORKER_CONCURRENCY` | worker | parallel tasks, default 3 |
 | `CHROMIUM_EXECUTABLE_PATH` | worker | only needed outside the Docker image |
+| `CRON_SECRET` | web | required only for the Vercel-cron deployment; Vercel sends it as a bearer token |
+| `CHRISTOPHER_DISABLE_BROWSER` | both | set to `1` where there is no Chromium, such as Vercel |
 
 Everything else, including keywords, locations, the run time and the model, is edited in Settings and
 stored in the database.

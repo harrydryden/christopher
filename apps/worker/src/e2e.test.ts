@@ -6,7 +6,8 @@
  * Requires a database: set TEST_DATABASE_URL (defaults to the local christopher_test database).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createDb, runMigrations, schema, enqueueTask, type Db } from "@christopher/db";
+import {createDb, schema, enqueueTask, type Db} from "@christopher/db";
+import { runMigrations } from "@christopher/db/migrate";
 import { dedupeKeyFor, displayStatus, liveFor, priorityFor } from "@christopher/core";
 import { desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";

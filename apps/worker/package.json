@@ -26,5 +26,11 @@
     "@types/pg": "latest",
     "typescript": "~5.9.0",
     "vitest": "latest"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/exports.ts",
+      "default": "./src/exports.ts"
+    }
   }
 }

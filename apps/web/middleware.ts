@@ -1,8 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE_NAME, verifySessionCookieValue } from "@/lib/session";
 
+/**
+ * Everything is behind the session cookie except the login page, the health check, and the cron
+ * route, which authenticates itself with CRON_SECRET rather than a browser session.
+ */
 export const config = {
-  matcher: ["/((?!login|api/health|_next|favicon.ico).*)"],
+  matcher: ["/((?!login|api/health|api/cron|_next|favicon.ico).*)"],
 };
 
 export async function middleware(req: NextRequest) {

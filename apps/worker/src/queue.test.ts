@@ -1,6 +1,7 @@
 /** Queue and scheduler behaviour against a real database. */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createDb, enqueueTask, runMigrations, schema, type Db } from "@christopher/db";
+import {createDb, enqueueTask, schema, type Db} from "@christopher/db";
+import { runMigrations } from "@christopher/db/migrate";
 import { desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";

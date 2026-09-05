@@ -29,7 +29,10 @@ export class BrowserRenderer {
     if (this.browser && this.browser.isConnected()) return this.browser;
     if (this.launching) return this.launching;
     this.launching = (async () => {
-      this.pw = await import("playwright");
+      // The bundler must not follow this: the interface imports the worker's handlers for its
+      // cron route, and a serverless deployment has no Chromium to drive. It is only reached
+      // when a browser render is actually requested.
+      this.pw = (await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ "playwright")) as Playwright;
       const browser = await this.pw.chromium.launch({
         headless: true,
         executablePath: this.opts.executablePath,

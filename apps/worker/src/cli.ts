@@ -8,7 +8,8 @@
  *   pnpm --filter @christopher/worker cli list           (companies, sources, counts)
  *   pnpm --filter @christopher/worker cli table          (the roles table as text)
  */
-import { schema, enqueueTask, runMigrations } from "@christopher/db";
+import {schema, enqueueTask} from "@christopher/db";
+import { runMigrations } from "@christopher/db/migrate";
 import {
   dedupeKeyFor,
   discovery,

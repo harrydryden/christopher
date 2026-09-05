@@ -70,7 +70,11 @@ export function resolveSettings(rows: Array<{ key: string; value: unknown }>): A
     const def = DEFAULT_SETTINGS[key];
     const val = row.value;
     if (val === null || val === undefined) continue;
-    if (typeof def !== typeof val) continue;
+    // A stored value replaces the default when the two are the same kind. `hideThreshold` is the
+    // one setting whose default is null (meaning "off") and whose set value is a number, so a null
+    // default accepts any primitive; a stored null is already skipped above and keeps the default.
+    const compatible = def === null ? typeof val !== "object" : typeof def === typeof val;
+    if (!compatible) continue;
     if (key === "gate" && typeof val === "object") {
       out.gate = { ...DEFAULT_SETTINGS.gate, ...(val as Partial<GateSettings>) };
       continue;

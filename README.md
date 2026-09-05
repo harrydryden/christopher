@@ -65,6 +65,11 @@ pnpm dev:worker
 
 ```bash
 cd apps/worker
+
+# Dry run: what would discovery find for a URL? Touches nothing.
+pnpm cli probe https://www.anduril.com/open-roles
+pnpm cli probe https://www.anthropic.com
+
 pnpm cli add https://www.anduril.com https://www.anthropic.com
 pnpm cli drain      # runs queued work now instead of waiting for the scheduler
 pnpm cli list       # companies, the source found for each, role counts
@@ -117,6 +122,21 @@ The end-to-end suite starts a fake company website and runs the real code agains
 adding a homepage URL, discovering its Greenhouse board, scanning it, filtering by keyword and
 location, and closing a role that disappears. It needs PostgreSQL; set `TEST_DATABASE_URL` or use the
 default `christopher_test` database.
+
+## Checking it against a real site
+
+The discovery pipeline was built against the two shapes these examples use, and both are covered by
+tests using fixtures:
+
+| Example | Shape | How it resolves |
+|---|---|---|
+| `anduril.com/open-roles` | A page whose roles are loaded by JavaScript | Headless Chromium renders it; the applicant tracking system is recognised from the API call the page makes, or from the JavaScript bundle if no browser is available |
+| `anthropic.com/careers/jobs` | A careers landing page that links on to the listing | The careers link is followed, the listing's job links are recognised as a hosted board, and the board's feed is read directly |
+
+This environment has no outbound access to those domains, so they were reproduced as fixtures rather
+than fetched. Run `pnpm cli probe <url>` on your own machine to see what discovery finds for a real
+site: it prints the candidates, their confidence, the evidence behind each and the full log, and
+writes nothing to the database.
 
 ## Behaviour worth knowing
 

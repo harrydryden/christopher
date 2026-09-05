@@ -1,5 +1,6 @@
 /**
  * Operational CLI. Run one-off jobs without waiting for the scheduler:
+ *   pnpm --filter @christopher/worker cli probe <url>    (dry run: what would discovery find?)
  *   pnpm --filter @christopher/worker cli add <homepage-url>
  *   pnpm --filter @christopher/worker cli discover <company-id|domain>
  *   pnpm --filter @christopher/worker cli scan [company-id|domain]
@@ -10,6 +11,7 @@
 import { schema, enqueueTask, runMigrations } from "@christopher/db";
 import {
   dedupeKeyFor,
+  discovery,
   displayStatus,
   ensureHttpUrl,
   extractDomain,
@@ -18,7 +20,7 @@ import {
   priorityFor,
 } from "@christopher/core";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { createDeps } from "./context";
+import { createDeps, makeDiscoveryContext } from "./context";
 import { readEnv } from "./env";
 import { handlers } from "./handlers";
 import { ensureSeedTags } from "./handlers/learning";
@@ -40,6 +42,26 @@ async function main() {
 
   try {
     switch (command) {
+      case "probe": {
+        const target = args[0];
+        if (!target) throw new Error("usage: cli probe <url>");
+        const ctx = makeDiscoveryContext(deps, { useAi: false });
+        const result = target.includes("/") && !/^https?:\/\/[^/]+\/?$/.test(ensureHttpUrl(target))
+          ? await discovery.probeUrlAsSource(target, ctx)
+          : await discovery.discoverCareersSources(target, ctx);
+        console.log(`\n${result.homepageUrl}`);
+        console.log(`company: ${result.companyName ?? "(unknown)"}`);
+        console.log(`outcome: ${result.outcome}  (${result.fetches} fetches, ${result.durationMs} ms)\n`);
+        for (const [i, c] of result.candidates.entries()) {
+          console.log(`${i + 1}. ${c.spec.type}${c.spec.atsSlug ? `/${c.spec.atsSlug}` : ""}  ${Math.round(c.confidence * 100)}%  ${c.method}`);
+          console.log(`   ${c.spec.url}`);
+          if (c.count !== undefined) console.log(`   ${c.count} posting(s)${c.companyName ? `, board name "${c.companyName}"` : ""}`);
+          for (const sample of c.sample.slice(0, 3)) console.log(`     - ${sample.title}${sample.location ? ` (${sample.location})` : ""}`);
+          for (const line of c.evidence.slice(0, 3)) console.log(`   evidence: ${line}`);
+        }
+        console.log(`\nlog:\n${result.log.map((l) => `  ${l}`).join("\n")}`);
+        break;
+      }
       case "add": {
         for (const raw of args) {
           const url = ensureHttpUrl(raw);
@@ -155,7 +177,7 @@ async function main() {
         break;
       }
       default:
-        console.log("commands: add <url...> | discover [company] [url] | scan [company] | tick | drain [n] | list | table");
+        console.log("commands: probe <url> | add <url...> | discover [company] [url] | scan [company] | tick | drain [n] | list | table");
     }
   } finally {
     await deps.close();

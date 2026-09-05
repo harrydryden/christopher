@@ -69,12 +69,28 @@ export class BrowserRenderer {
         const target = new URL(req.url());
         const mapped = hostMap[target.hostname] ?? hostMap["*"];
         if (mapped) {
+          // Used only by tests, which point real hostnames at a local server. Playwright refuses to
+          // rewrite across protocols, so the request is made here and the response fulfilled.
           const [h, p] = mapped.split(":");
           const original = target.hostname;
           target.protocol = "http:";
           target.hostname = h ?? "127.0.0.1";
           target.port = p ?? "";
-          return route.continue({ url: target.toString(), headers: { ...req.headers(), "x-forwarded-host": original } });
+          try {
+            const response = await fetch(target.toString(), {
+              method: req.method(),
+              headers: { ...req.headers(), "x-forwarded-host": original },
+              body: (req.postDataBuffer() as unknown as BodyInit | null) ?? undefined,
+              redirect: "follow",
+            });
+            const headers: Record<string, string> = {};
+            response.headers.forEach((v, k) => {
+              if (k.toLowerCase() !== "content-encoding" && k.toLowerCase() !== "content-length") headers[k] = v;
+            });
+            return route.fulfill({ status: response.status, headers, body: Buffer.from(await response.arrayBuffer()) });
+          } catch {
+            return route.abort();
+          }
         }
         return route.continue();
       });

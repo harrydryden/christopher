@@ -215,6 +215,9 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
     return;
   }
 
+  const candidatesBeforeHops = run.candidates.size;
+  let looksLikeLanding = false;
+
   if (depth > 0) {
     const onward = links
       .map((link) => ({ link, score: scoreLink(link, finalUrl, { resolveSpec: ctx.resolveSpec }) }))
@@ -222,19 +225,18 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
       .sort((a, b) => b.score - a.score)
       .slice(0, 2);
     if (onward.length > 0) {
+      looksLikeLanding = true;
       run.say(`${finalUrl} looks like a landing page; following ${onward.length} link(s)`);
-      const before = run.candidates.size;
       for (const { link } of onward) {
         if (ctx.resolveSpec(link.href)) continue; // already captured as an ATS candidate
         await inspectPage(run, ctx, link.href, depth - 1, `landing ${finalUrl}`);
       }
-      if (run.candidates.size === before) {
-        run.add({ spec: { type: "html", url: finalUrl }, method: "landing", evidence: [`careers landing page, no listing within one hop`] });
-      }
-      return;
+      if (run.candidates.size > candidatesBeforeHops) return;
     }
   }
 
+  // The heuristics could not settle it: a page with one or two roles, or a landing page whose links
+  // led nowhere. This is where the model earns its place.
   if (ctx.ai?.classifyPage) {
     try {
       const verdict = await ctx.ai.classifyPage({ url: finalUrl, text: stripHtml(html).slice(0, 6000), links: links.slice(0, 120) });
@@ -245,12 +247,18 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
       }
       if (verdict.kind === "landing" && verdict.nextHopUrl && depth > 0) {
         const next = absoluteUrl(verdict.nextHopUrl, finalUrl);
-        if (next) await inspectPage(run, ctx, next, depth - 1, `model hop from ${finalUrl}`);
-        return;
+        if (next) {
+          await inspectPage(run, ctx, next, depth - 1, `model hop from ${finalUrl}`);
+          if (run.candidates.size > candidatesBeforeHops) return;
+        }
       }
     } catch (err) {
       run.say(`model classification failed: ${(err as Error).message}`);
     }
+  }
+
+  if (looksLikeLanding && run.candidates.size === candidatesBeforeHops) {
+    run.add({ spec: { type: "html", url: finalUrl }, method: "landing", evidence: [`careers landing page, no listing within one hop`] });
   }
 }
 

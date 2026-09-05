@@ -252,3 +252,76 @@ describe("link scoring and page metadata", () => {
     expect(looksLikeSoft404(fx.LISTING_PAGE_HTML)).toBe(false);
   });
 });
+
+describe("discovery: the model as a fallback", () => {
+  it("follows a link the model picks when nothing on the page looks like careers", async () => {
+    const calls: string[] = [];
+    const ctx = createFakeDiscoveryContext({
+      routes: {
+        // Nothing here reads as a careers link: the wording is idiosyncratic and the path is opaque.
+        "https://www.acme.example/": {
+          body: `<html><head><title>Acme</title></head><body><nav>
+            <a href="/p/1">Product</a><a href="/p/2">Platform</a><a href="/p/3">Company</a>
+            <a href="/p/4">Grow with us</a><a href="/p/5">Contact</a></nav></body></html>`,
+        },
+        "https://www.acme.example/p/4": { body: fx.LISTING_PAGE_HTML },
+        ...greenhouseRoutes,
+      },
+      ai: {
+        chooseCareersLinks: async (input) => {
+          calls.push("chooseCareersLinks");
+          expect(input.companyName).toBe("Acme");
+          expect(input.links.length).toBeGreaterThan(0);
+          return [{ url: "https://www.acme.example/p/4", confidence: 0.7, reason: "\"Grow with us\" is careers wording" }];
+        },
+      },
+    });
+    const result = await discoverCareersSources("https://www.acme.example/", ctx);
+    expect(calls).toEqual(["chooseCareersLinks"]);
+    expect(result.outcome).toBe("resolved");
+    expect(result.best?.spec.atsSlug).toBe("acme");
+  });
+
+  it("accepts a page the model classifies as a listing when the heuristics cannot tell", async () => {
+    const ctx = createFakeDiscoveryContext({
+      routes: {
+        "https://www.acme.example/": {
+          body: `<html><head><title>Acme</title></head><body><nav><a href="/">Home</a><a href="/product">Product</a>
+            <a href="/pricing">Pricing</a><a href="/docs">Docs</a><a href="/careers">Careers</a></nav></body></html>`,
+        },
+        // Two roles only: below the three-posting bar the heuristics use, so the model decides.
+        "https://www.acme.example/careers": {
+          body: `<html><head><title>Careers</title></head><body><h1>Open roles</h1>
+            <a href="/careers/ops-lead">Operations Lead</a><a href="/careers/engineer">Engineer</a></body></html>`,
+        },
+      },
+      ai: {
+        classifyPage: async (input) => {
+          expect(input.url).toBe("https://www.acme.example/careers");
+          expect(input.text).toContain("Open roles");
+          return { kind: "listing", confidence: 0.9 };
+        },
+      },
+    });
+    const result = await discoverCareersSources("https://www.acme.example/", ctx);
+    expect(result.best?.method).toBe("ai_listing");
+    expect(result.best?.confidence).toBe(0.75);
+    expect(result.outcome).toBe("needs_confirmation");
+  });
+
+  it("carries on when the model call fails", async () => {
+    const ctx = createFakeDiscoveryContext({
+      routes: {
+        "https://www.acme.example/": { body: "<html><head><title>Acme</title></head><body><a href='/a'>A</a><a href='/b'>B</a><a href='/c'>C</a><a href='/d'>D</a><a href='/e'>E</a></body></html>" },
+      },
+      ai: {
+        chooseCareersLinks: async () => {
+          throw new Error("model unavailable");
+        },
+      },
+    });
+    const result = await discoverCareersSources("https://www.acme.example/", ctx);
+    expect(result.outcome).toBe("not_found");
+    expect(result.log.join("\n")).toContain("model link suggestion failed");
+  });
+});

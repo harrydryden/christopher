@@ -276,7 +276,9 @@ export async function handleReevaluateGate(task: Task, deps: WorkerDeps): Promis
       },
       settings.gate,
     );
-    const nearMiss = !gate.inTable && settings.nearMissEnabled && !gate.excluded;
+    // Matches the rule used when a role is first stored: the location filter is a hard boundary,
+    // so a role outside it is never surfaced as a near miss.
+    const nearMiss = !gate.inTable && settings.nearMissEnabled && !gate.excluded && gate.locationOk;
     const hidden = settings.hideThreshold !== null && gate.inTable && job.fitScore !== null ? job.fitScore < settings.hideThreshold : false;
     if (
       gate.inTable === job.inTable &&

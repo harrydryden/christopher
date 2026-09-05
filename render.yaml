@@ -1,0 +1,33 @@
+# Render blueprint: one always-on worker service plus the Postgres database.
+# The Next.js interface is deployed separately on Vercel and talks to the same database.
+databases:
+  - name: christopher-db
+    databaseName: christopher
+    user: christopher
+    plan: basic-256mb        # the free tier expires after 30 days; do not use it here
+    postgresMajorVersion: "16"
+
+services:
+  - type: web                # a web service, not a cron job: the scheduler must always be running
+    name: christopher-worker
+    runtime: docker
+    plan: starter            # starter never sleeps; the free tier does
+    dockerfilePath: ./apps/worker/Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: christopher-db
+          property: connectionString
+      - key: ANTHROPIC_API_KEY
+        sync: false          # set this in the Render dashboard
+      - key: SCRAPER_CONTACT_EMAIL
+        sync: false
+      - key: TZ
+        value: Europe/London
+      - key: WORKER_CONCURRENCY
+        value: "3"
+      - key: LOG_LEVEL
+        value: info

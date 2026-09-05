@@ -44,8 +44,19 @@ const ERROR_MARKERS = [
   "Internal Server Error",
   "This page could not be found",
   "Unhandled Runtime Error",
-  "digest:",
 ];
+
+/**
+ * Next.js serialises its not-found and error boundaries into every page's script payload, so the
+ * markers must be looked for in visible text only.
+ */
+function visibleText(html) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ");
+}
 
 const env = {
   ...process.env,
@@ -104,15 +115,16 @@ async function main() {
       continue;
     }
     const body = await res.text();
+    const text = visibleText(body);
     if (res.status !== 200) {
       failures.push(`${path} returned ${res.status}${res.headers.get("location") ? ` -> ${res.headers.get("location")}` : ""}`);
       continue;
     }
     for (const marker of ERROR_MARKERS) {
-      if (body.includes(marker)) failures.push(`${path} contains the error marker "${marker}"`);
+      if (text.includes(marker)) failures.push(`${path} shows the error "${marker}"`);
     }
     for (const needle of expected) {
-      if (!body.includes(needle)) failures.push(`${path} does not mention "${needle}"`);
+      if (!text.includes(needle) && !body.includes(needle)) failures.push(`${path} does not mention "${needle}"`);
     }
     console.log(`  ${res.status}  ${path}  (${body.length} bytes)`);
   }

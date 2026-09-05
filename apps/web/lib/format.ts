@@ -42,3 +42,19 @@ export function truncate(text: string, max: number): string {
 export function pluralize(n: number, singular: string, plural: string = `${singular}s`): string {
   return n === 1 ? singular : plural;
 }
+
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  discovered: "Discovered",
+  updated: "Updated",
+  closed: "Closed",
+  reopened: "Reopened",
+  scored: "Scored",
+  decided: "Decided",
+  hidden: "Hidden",
+  unhidden: "Unhidden",
+  description_fetched: "Description fetched",
+};
+
+export function eventTypeLabel(type: string): string {
+  return EVENT_TYPE_LABELS[type] ?? type;
+}

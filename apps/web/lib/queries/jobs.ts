@@ -1,7 +1,8 @@
 import { and, desc, eq, gte, inArray } from "drizzle-orm";
-import { careerSources, companies, decisions, jobEvents, jobs, type Job, type SourceType } from "@christopher/db";
-import { displayStatus, liveFor, type AppSettings, type DisplayStatus } from "@christopher/core";
+import { careerSources, companies, decisions, jobEvents, jobs, type Job, type SourceType } from "@christopher/db/schema";
+import { displayStatus, formatDuration, liveFor, type AppSettings, type DisplayStatus } from "@christopher/core";
 import { db } from "@/lib/db";
+import { eventTypeLabel, relativeTime } from "@/lib/format";
 
 export interface RoleCompany {
   id: string;
@@ -264,6 +265,22 @@ export function sortRoleRows(rows: RoleRow[], sort: SortKey, dir: SortDir, now: 
   return sorted;
 }
 
+/** Serialise filters back to a query string, e.g. for the CSV export link. */
+export function filtersToQueryString(filters: RolesFilters): string {
+  const params = new URLSearchParams();
+  for (const s of filters.status) params.append("status", s);
+  if (filters.company) params.set("company", filters.company);
+  if (filters.decision !== "all") params.set("decision", filters.decision);
+  if (filters.minFit !== null) params.set("minFit", String(filters.minFit));
+  if (filters.location) params.set("location", filters.location);
+  if (filters.q) params.set("q", filters.q);
+  if (filters.showHidden) params.set("showHidden", "1");
+  if (filters.closed) params.set("closed", "1");
+  params.set("sort", filters.sort);
+  params.set("dir", filters.dir);
+  return params.toString();
+}
+
 /** Split in-table open roles below the hide threshold into a separate bucket, unless showHidden is set. */
 export function splitHidden(rows: RoleRow[], hideThreshold: number | null, showHidden: boolean): { visible: RoleRow[]; hidden: RoleRow[] } {
   if (hideThreshold === null || showHidden) return { visible: rows, hidden: [] };
@@ -274,4 +291,104 @@ export function splitHidden(rows: RoleRow[], hideThreshold: number | null, showH
     (isHiddenCandidate ? hidden : visible).push(row);
   }
   return { visible, hidden };
+}
+
+// ---------------------------------------------------------------------------
+// View model: presentation-ready, JSON-serialisable shape for client components.
+// All date formatting happens here (server-side) so client components never
+// need to recompute a relative time against a fresh `Date.now()`, which would
+// risk a hydration mismatch.
+// ---------------------------------------------------------------------------
+
+export interface RoleDecisionVM {
+  id: string;
+  decision: "apply" | "skip";
+  reason: string;
+  createdLabel: string;
+}
+
+export interface RoleEventVM {
+  id: string;
+  type: string;
+  label: string;
+  title: string;
+}
+
+export interface RoleRowVM {
+  id: string;
+  companyId: string;
+  companyName: string;
+  companyFaviconUrl: string | null;
+  companyHomepageUrl: string;
+  title: string;
+  url: string;
+  location: string | null;
+  locations: string[];
+  remote: boolean;
+  department: string | null;
+  employmentType: string | null;
+  salaryText: string | null;
+  status: DisplayStatus;
+  liveForText: string;
+  liveForTitle: string;
+  seeded: boolean;
+  fitScore: number | null;
+  fitRationale: string | null;
+  keywordTerms: string[];
+  sourceType: SourceType;
+  firstSeenLabel: string;
+  firstSeenTitle: string;
+  postedLabel: string | null;
+  postedTitle: string | null;
+  closedLabel: string | null;
+  closedTitle: string | null;
+  descriptionText: string | null;
+  decision: RoleDecisionVM | null;
+  events: RoleEventVM[];
+}
+
+export function buildRoleRowVM(row: RoleRow, now: Date = new Date()): RoleRowVM {
+  const status = displayStatus(row.job, now);
+  const { days, basis } = liveFor(row.job, now);
+  let liveForTitle =
+    basis === "first_seen"
+      ? "Counted from when this tool first saw the role; the source publishes no posted date."
+      : "Counted from the date the source published for this role.";
+  if (row.job.seeded) liveForTitle += " (seeded on first scan)";
+  const liveForText = formatDuration(days) + (basis === "first_seen" ? "*" : "");
+
+  return {
+    id: row.job.id,
+    companyId: row.company.id,
+    companyName: row.company.name,
+    companyFaviconUrl: row.company.faviconUrl,
+    companyHomepageUrl: row.company.homepageUrl,
+    title: row.job.title,
+    url: row.job.url,
+    location: row.job.location,
+    locations: row.job.locations,
+    remote: !!row.job.remote,
+    department: row.job.department,
+    employmentType: row.job.employmentType,
+    salaryText: row.job.salaryText,
+    status,
+    liveForText,
+    liveForTitle,
+    seeded: row.job.seeded,
+    fitScore: row.job.fitScore,
+    fitRationale: row.job.fitRationale,
+    keywordTerms: row.job.keywordTerms,
+    sourceType: row.sourceType,
+    firstSeenLabel: relativeTime(row.job.firstSeenAt, now),
+    firstSeenTitle: row.job.firstSeenAt.toISOString(),
+    postedLabel: row.job.postedAt ? relativeTime(row.job.postedAt, now) : null,
+    postedTitle: row.job.postedAt ? row.job.postedAt.toISOString() : null,
+    closedLabel: row.job.closedAt ? relativeTime(row.job.closedAt, now) : null,
+    closedTitle: row.job.closedAt ? row.job.closedAt.toISOString() : null,
+    descriptionText: row.job.descriptionText,
+    decision: row.decision
+      ? { id: row.decision.id, decision: row.decision.decision, reason: row.decision.reason, createdLabel: relativeTime(row.decision.createdAt, now) }
+      : null,
+    events: row.events.map((e) => ({ id: e.id, type: e.type, label: eventTypeLabel(e.type), title: `${relativeTime(e.at, now)} · ${e.at.toISOString()}` })),
+  };
 }

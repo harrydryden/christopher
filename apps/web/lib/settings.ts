@@ -1,4 +1,4 @@
-import { settings as settingsTable } from "@christopher/db";
+import { settings as settingsTable } from "@christopher/db/schema";
 import { resolveSettings, type AppSettings } from "@christopher/core";
 import { db } from "./db";
 

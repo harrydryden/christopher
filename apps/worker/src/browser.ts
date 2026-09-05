@@ -16,7 +16,7 @@ export interface BrowserOptions {
 }
 
 const COOKIE_BUTTON_TEXT = /^(accept( all)?( cookies)?|allow all|i agree|agree|got it|ok(ay)?|accept and close|accept & close)$/i;
-const LOAD_MORE_TEXT = /(load|show|view|see) more|more (jobs|roles|positions|openings)|next page|^next$/i;
+const LOAD_MORE_TEXT = /(load|show|view|see) more|more (jobs|roles|positions|openings)/i;
 
 export class BrowserRenderer {
   private browser: Browser | null = null;

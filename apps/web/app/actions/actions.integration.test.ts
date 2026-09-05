@@ -11,7 +11,8 @@ vi.mock("@/lib/db", () => ({ db: () => database }));
 vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => session ? { value: session } : undefined }) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
-import { decide } from "./decisions";
+import { savePreferenceProfile, savePinnedStatements, acceptReasonTag } from "./learning";
+import { decide, saveDecisionTags } from "./decisions";
 import { saveKeywords } from "./settings";
 import { useDiscoveryCandidate, deleteCompany } from "./companies";
 
@@ -24,7 +25,7 @@ beforeAll(async () => {
 });
 afterAll(async () => { await pool?.end(); });
 beforeEach(async () => {
-  await database.execute(sql`truncate companies, decisions, tasks, settings restart identity cascade`);
+  await database.execute(sql`truncate companies, decisions, tasks, settings, preference_profiles, tag_vocabulary restart identity cascade`);
   session = await createSessionCookieValue(process.env.SESSION_SECRET!);
 });
 async function fixture() {
@@ -76,5 +77,38 @@ describe("authenticated mutations", () => {
     expect(await database.select().from(schema.jobs)).toHaveLength(0);
     const decisions = await database.select().from(schema.decisions).where(eq(schema.decisions.companyName, "Acme"));
     expect(decisions.some(d => d.jobId === null && d.jobTitle === "Operations Manager")).toBe(true);
+  });
+});
+
+
+describe("learning controls", () => {
+  it("creates immutable profile versions and rejects an obsolete edit", async () => {
+    const first = new FormData(); first.set("markdown", "Operations leadership in London"); first.set("profileVersion", "0");
+    await savePreferenceProfile(first);
+    const second = new FormData(); second.set("markdown", "Operations leadership, UK remote"); second.set("profileVersion", "1");
+    await savePreferenceProfile(second);
+    await expect(savePreferenceProfile(second)).rejects.toThrow("changed");
+    const profiles = await database.select().from(schema.preferenceProfiles).orderBy(schema.preferenceProfiles.version);
+    expect(profiles.map(p => p.markdown)).toEqual(["Operations leadership in London", "Operations leadership, UK remote"]);
+  });
+  it("can pin preferences before any model profile exists", async () => {
+    const form = new FormData(); form.set("pinnedStatements", "No relocation."); form.set("profileVersion", "0");
+    await savePinnedStatements(form);
+    const [profile] = await database.select().from(schema.preferenceProfiles);
+    expect(profile!.pinnedStatements).toEqual(["No relocation."]);
+    expect(profile!.version).toBe(1);
+  });
+  it("requires vocabulary approval and preserves manual tag edits", async () => {
+    const { job } = await fixture();
+    await decide(job.id, "skip", "Too junior");
+    const [decision] = await database.select().from(schema.decisions).where(eq(schema.decisions.jobId, job.id));
+    await database.insert(schema.tagVocabulary).values({ tag: "seniority:too_junior", accepted: false });
+    const form = new FormData(); form.append("tags", "seniority:too_junior");
+    await expect(saveDecisionTags(decision!.id, form)).rejects.toThrow("accepted");
+    await acceptReasonTag("seniority:too_junior");
+    await saveDecisionTags(decision!.id, form);
+    const [updated] = await database.select().from(schema.decisions).where(eq(schema.decisions.id, decision!.id));
+    expect(updated!.tags).toEqual(["seniority:too_junior"]);
+    expect(updated!.tagsEdited).toBe(true);
   });
 });

@@ -20,11 +20,15 @@ This document is written to be implemented from directly (by you or by Claude Co
 - **R-6.12 — Decision integrity.** Concurrent decisions on the same role are serialised. Undo supersedes the latest decision rather than deleting its audit record. Model learning uses only active decisions. Every mutation authenticates its session at the server action boundary.
 - **R-7.6 — Ranking.** Unscored roles sort after scored roles for either fit-score direction and within the default status ordering. The near-miss list displays at most ten candidates.
 
+- **R-6.13 — Versioned manual preferences.** Profile edits, pinned statements and answered questions append an immutable version. Forms identify their base version and reject obsolete submissions. No profile is required to save initial pinned statements. A model synthesis based on an older version cannot overwrite a newer user edit.
+- **R-6.14 — Manual reason tags.** Users may approve proposed tags and edit active decisions using accepted vocabulary. A manual edit, including clearing tags, takes precedence over a queued or in-flight model tagging result.
+- **R-3.14 — Bounded HTML traversal and cache.** Follow explicit same-origin next links for at most 20 pages and retain at most 500 postings. A broken later page, loop or unresolved limit produces a partial scan. Cache verified per-page postings with their content hashes; reuse them without a model call when unchanged. Keep compressed snapshots for the three most recent source scans, with HTTP response text capped at two million characters per scan. A pruned or invalid cache triggers fresh extraction. JavaScript-only next controls remain an acceptance gap.
+
 ### Explicit release gates
 
 The real-company golden set, live ATS endpoint checks, real model/API capability and cost checks, a 50-company soak, backup restoration and learning calibration remain necessary. Unit fixtures do not establish live recall, provider availability or preference agreement. Do not describe the application as fully functional until the implementation matrix in REVIEW-PLAN.md and these acceptance checks are complete.
 
-The review also identified features needing further implementation or acceptance evidence: complete HTML pagination and extraction-cache reuse, RSS/Atom discovery, retained raw responses, editable reason tags, grouped decisions, full profile editing/history, in-app password changes, distributed login throttling, and global AI budget reservations. These requirements remain in scope; their absence is not hidden by changing the contract.
+The review also identified features needing further implementation or acceptance evidence: JavaScript-only pagination and pagination-completeness signals, RSS/Atom discovery coverage, grouped decisions, in-app password changes, distributed login throttling, and global AI budget reservations. These requirements remain in scope; their absence is not hidden by changing the contract.
 
 ---
 

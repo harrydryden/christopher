@@ -1,5 +1,5 @@
 import { desc, eq, inArray } from "drizzle-orm";
-import { companies, decisions, filterSuggestions, preferenceProfiles, type FilterSuggestion, type PreferenceProfile } from "@christopher/db/schema";
+import { companies, decisions, filterSuggestions, preferenceProfiles, tagVocabulary, type FilterSuggestion, type PreferenceProfile } from "@christopher/db/schema";
 import { db } from "@/lib/db";
 import { extractSuggestionValue } from "@/lib/filterSuggestions";
 
@@ -75,4 +75,12 @@ export async function listPendingFilterSuggestionsResolved(): Promise<FilterSugg
     const extracted = extractSuggestionValue(suggestion);
     return { suggestion, companyName: extracted.kind === "company" ? (nameById.get(extracted.companyId) ?? null) : null };
   });
+}
+
+export async function getReasonTagEditor() {
+  const [vocabulary, recent] = await Promise.all([
+    db().select().from(tagVocabulary).orderBy(tagVocabulary.tag),
+    db().select().from(decisions).where(eq(decisions.superseded, false)).orderBy(desc(decisions.createdAt)).limit(20),
+  ]);
+  return { vocabulary, recent };
 }

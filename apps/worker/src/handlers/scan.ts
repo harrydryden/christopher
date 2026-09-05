@@ -25,6 +25,7 @@ import {
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { CareerSource } from "@christopher/db";
 import { aiBudgetExceeded, makeFetchContext, type WorkerDeps } from "../context";
+import { gzipSync, gunzipSync } from "node:zlib";
 import { log } from "../log";
 
 type ScanStatus = "ok" | "partial" | "suspect_empty" | "failed";
@@ -83,7 +84,16 @@ async function scanSource(
   scanRunId: string | null,
 ): Promise<SourceOutcome> {
   const started = Date.now();
-  const ctx = makeFetchContext(deps);
+  const baseCtx = makeFetchContext(deps);
+  const responses: Array<{ url: string; status: number; body: string }> = [];
+  let snapshotChars = 0;
+  const ctx: FetchContext = { ...baseCtx, fetchText: async (url, init) => {
+    const response = await baseCtx.fetchText(url, init);
+    const body = response.body.slice(0, Math.max(0, 2_000_000 - snapshotChars));
+    snapshotChars += body.length;
+    if (body) responses.push({ url: response.url, status: response.status, body });
+    return response;
+  } };
   const spec: SourceSpec = {
     type: source.type,
     url: source.url,
@@ -100,6 +110,8 @@ async function scanSource(
   let droppedByValidation = 0;
   let blocked = false;
   let contentHash: string | null = source.contentHash;
+  let htmlPages: CachedHtmlPage[] = [];
+  let incomplete = false;
 
   try {
     if (source.type === "html") {
@@ -108,6 +120,8 @@ async function scanSource(
       fetchMethod = outcome.method;
       droppedByValidation = outcome.dropped;
       contentHash = outcome.contentHash;
+      htmlPages = outcome.pages ?? [];
+      incomplete = outcome.incomplete ?? false;
       if (outcome.unchanged) {
         log.debug("source unchanged since last scan", { company: company.name, url: source.url });
       }
@@ -131,7 +145,9 @@ async function scanSource(
     .limit(1);
   const previousOkCount = previousOk[0]?.postingsFound ?? null;
 
-  const status = classifyScan({ fetchOk, postingsFound: postings.length, previousOkCount, droppedByValidation });
+  if (postings.length > 500) { postings = postings.slice(0, 500); incomplete = true; }
+  const classified = classifyScan({ fetchOk, postingsFound: postings.length, previousOkCount, droppedByValidation });
+  const status = incomplete && classified === "ok" ? "partial" : classified;
   const mode = modeForScanStatus(status);
 
   const existingRows = await deps.db
@@ -291,8 +307,12 @@ async function scanSource(
     closedCount: result.closed.length,
     error,
     durationMs: Date.now() - started,
-    rawSnapshot: null,
+    rawSnapshot: gzipSync(JSON.stringify({ version: 1, responses, htmlPages })).toString("base64"),
   });
+
+  // Keep bounded debugging evidence from the three most recent source scans.
+  await deps.db.execute(sql`update scans set raw_snapshot = null where source_id = ${source.id}
+    and id not in (select id from scans where source_id = ${source.id} order by started_at desc, id desc limit 3)`);
 
   const failures = status === "failed" ? source.consecutiveFailures + 1 : 0;
   await deps.db
@@ -347,6 +367,12 @@ async function scanSource(
   return { status, newCount, closedCount: result.closed.length, postingsFound: postings.length };
 }
 
+interface CachedHtmlPage {
+  url: string;
+  contentHash: string;
+  postings: RawPosting[];
+}
+
 interface HtmlScanOutcome {
   postings: RawPosting[];
   method: "http" | "browser";
@@ -354,6 +380,10 @@ interface HtmlScanOutcome {
   contentHash: string;
   unchanged: boolean;
   recipe?: HtmlRecipe;
+  html?: string;
+  finalUrl?: string;
+  pages?: CachedHtmlPage[];
+  incomplete?: boolean;
 }
 
 /**
@@ -361,6 +391,51 @@ interface HtmlScanOutcome {
  * A model extraction also produces a recipe, so later scans of an unchanged page cost nothing.
  */
 async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: CareerSource, ctx: FetchContext): Promise<HtmlScanOutcome> {
+  const [last] = await deps.db.select({ rawSnapshot: schema.scans.rawSnapshot }).from(schema.scans)
+    .where(and(eq(schema.scans.sourceId, source.id), eq(schema.scans.status, "ok"))).orderBy(desc(schema.scans.startedAt)).limit(1);
+  let cached: CachedHtmlPage[] = [];
+  try {
+    if (last?.rawSnapshot) {
+      const snapshot = JSON.parse(gunzipSync(Buffer.from(last.rawSnapshot, "base64"), { maxOutputLength: 8_000_000 }).toString());
+      if (snapshot.version === 1 && Array.isArray(snapshot.htmlPages)) cached = snapshot.htmlPages.map((page: CachedHtmlPage) => ({ ...page, postings: page.postings.map(posting => ({ ...posting,
+        postedAt: posting.postedAt ? new Date(posting.postedAt) : undefined,
+        updatedAt: posting.updatedAt ? new Date(posting.updatedAt) : undefined,
+      })) }));
+    }
+  } catch { /* Missing or older snapshots trigger fresh extraction. */ }
+  const pages: CachedHtmlPage[] = [];
+  const visited = new Set<string>();
+  let url: string | null = spec.url;
+  let method: "http" | "browser" = "http";
+  let dropped = 0;
+  let recipe: HtmlRecipe | undefined;
+  let unchanged = true;
+  let incomplete = false;
+  while (url && pages.length < 20) {
+    if (visited.has(url)) { incomplete = true; break; }
+    visited.add(url);
+    try {
+      const page = await scanHtmlPage(deps, { ...spec, url }, source, ctx, cached.find(p => p.url === url));
+      if (page.method === "browser") method = "browser";
+      dropped += page.dropped;
+      unchanged = unchanged && page.unchanged;
+      recipe ??= page.recipe;
+      pages.push({ url, contentHash: page.contentHash, postings: page.postings });
+      url = ats.nextListingPage(page.html ?? "", page.finalUrl ?? url);
+      if (pages.reduce((n, p) => n + p.postings.length, 0) >= 500 && url) { incomplete = true; break; }
+    } catch (error) {
+      if (pages.length === 0) throw error;
+      incomplete = true;
+      log.warn("HTML pagination incomplete", { url, error: (error as Error).message });
+      break;
+    }
+  }
+  if (url) incomplete = true;
+  const postings = keyPostings(pages.flatMap(page => page.postings)).keyed;
+  return { postings, method, dropped, contentHash: sha1(pages.map(p => p.contentHash).join("|")), unchanged, recipe, pages, incomplete };
+}
+
+async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSource, ctx: FetchContext, cached?: CachedHtmlPage): Promise<HtmlScanOutcome> {
   let html: string;
   let finalUrl = spec.url;
   let method: "http" | "browser" = "http";
@@ -382,9 +457,10 @@ async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: Career
   }
 
   const contentHash = sha1(html.replace(/\s+/g, " "));
-  const unchanged = contentHash === source.contentHash;
+  const unchanged = contentHash === cached?.contentHash;
 
-  if (postings.length > 0) return { postings, method, dropped: 0, contentHash, unchanged };
+  if (postings.length === 0 && unchanged && cached?.postings.length) postings = cached.postings;
+  if (postings.length > 0) return { postings, method, dropped: 0, contentHash, unchanged, html, finalUrl };
   if (unchanged || !deps.ai.enabled || (await aiBudgetExceeded(deps))) {
     throw new SourceFetchError("HTML extraction found no verifiable postings; cannot establish a successful empty scan", "parse");
   }
@@ -408,7 +484,7 @@ async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: Career
     if (validation.ok) recipe = extraction.recipe;
     else log.info("model recipe rejected", { url: finalUrl, coverage: validation.coverage });
   }
-  return { postings: modelPostings, method, dropped: extraction.dropped, contentHash, unchanged, recipe };
+  return { postings: modelPostings, method, dropped: extraction.dropped, contentHash, unchanged, recipe, html, finalUrl };
 }
 
 export { scanSource as _scanSourceForTests };

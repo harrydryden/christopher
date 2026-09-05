@@ -1,4 +1,4 @@
-import { schema, enqueueTask, reevaluateGate, type Task } from "@christopher/db";
+import { schema, enqueueTask, reevaluateGate, appendProfile, type Task } from "@christopher/db";
 import { decisionDigest } from "@christopher/ai";
 import { dedupeKeyFor, localDateParts, evaluateGate, modelForCallSite, priorityFor, type AppSettings } from "@christopher/core";
 import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
@@ -30,6 +30,7 @@ export async function handleTagReason(task: Task, deps: WorkerDeps): Promise<unk
   const { decisionId } = task.payload as unknown as { decisionId: string };
   const [decision] = await deps.db.select().from(schema.decisions).where(eq(schema.decisions.id, decisionId)).limit(1);
   if (!decision) return { skipped: "decision not found" };
+  if (decision.superseded || decision.tagsEdited) return { skipped: "decision superseded or tags edited by user" };
   if (!decision.reason.trim()) return { skipped: "no reason text" };
   if (await aiBudgetExceeded(deps)) return { skipped: "ai budget exceeded" };
 
@@ -46,7 +47,7 @@ export async function handleTagReason(task: Task, deps: WorkerDeps): Promise<unk
   );
   if (!result) return { skipped: "no ai result" };
 
-  await deps.db.update(schema.decisions).set({ tags: result.tags }).where(eq(schema.decisions.id, decision.id));
+  await deps.db.update(schema.decisions).set({ tags: result.tags }).where(and(eq(schema.decisions.id, decision.id), eq(schema.decisions.tagsEdited, false), eq(schema.decisions.superseded, false)));
   if (result.proposedNewTags.length) {
     await deps.db
       .insert(schema.tagVocabulary)
@@ -194,8 +195,7 @@ export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Pro
 
   const version = (current?.version ?? 0) + 1;
   const openQuestions = result.openQuestions.map((q) => ({ id: q.id, question: q.question }));
-  await deps.db.insert(schema.preferenceProfiles).values({
-    version,
+  await appendProfile(deps.db, current?.version ?? 0, {
     markdown: result.markdown,
     pinnedStatements: current?.pinnedStatements ?? [],
     openQuestions,

@@ -1,4 +1,5 @@
-import { answerOpenQuestion, acceptFilterSuggestion, rejectFilterSuggestion, rescoreAllRoles, resynthesizeNow, savePinnedStatements, saveSeedProfile } from "@/app/actions/learning";
+import { answerOpenQuestion, acceptFilterSuggestion, rejectFilterSuggestion, rescoreAllRoles, resynthesizeNow, savePinnedStatements, saveSeedProfile, savePreferenceProfile, acceptReasonTag } from "@/app/actions/learning";
+import { saveDecisionTags } from "@/app/actions/decisions";
 import { Badge } from "@/components/Badge";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
@@ -7,7 +8,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { SafeMarkdown } from "@/components/SafeMarkdown";
 import { formatPercent, relativeTime } from "@/lib/format";
 import { describeEvidenceItem, describeFilterSuggestion } from "@/lib/filterSuggestions";
-import { getCalibration, getPreferenceProfile, listPendingFilterSuggestionsResolved, listProfileVersions } from "@/lib/queries/learning";
+import { getCalibration, getPreferenceProfile, listPendingFilterSuggestionsResolved, listProfileVersions, getReasonTagEditor } from "@/lib/queries/learning";
 import { getSettings } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
@@ -17,12 +18,13 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
   const requestedVersion = sp.v ? Number(sp.v) : undefined;
   const now = new Date();
 
-  const [profile, versions, calibration, suggestions, settings] = await Promise.all([
+  const [profile, versions, calibration, suggestions, settings, tags] = await Promise.all([
     getPreferenceProfile(Number.isFinite(requestedVersion) ? requestedVersion : undefined),
     listProfileVersions(),
     getCalibration(),
     listPendingFilterSuggestionsResolved(),
     getSettings(),
+    getReasonTagEditor(),
   ]);
 
   const isLatest = versions.length === 0 || (profile && profile.version === versions[0]?.version);
@@ -81,11 +83,23 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
         )}
       </Card>
 
-      <Card title="Pinned statements">
+      {isLatest && <Card title="Edit preference profile">
+        <form action={savePreferenceProfile} className="flex flex-col gap-2">
+          <input type="hidden" name="profileVersion" value={profile?.version ?? 0} />
+          <label htmlFor="profile-markdown" className="text-sm">Your current preferences</label>
+          <textarea id="profile-markdown" name="markdown" required maxLength={50000} rows={10} defaultValue={profile?.markdown ?? settings.seedProfile}
+            className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-950" />
+          <p className="text-xs text-slate-500">Saving creates a new version and queues scores for open roles. Previous versions remain available above.</p>
+          <div><Button type="submit" variant="primary" size="sm">Save profile version</Button></div>
+        </form>
+      </Card>}
+
+      {isLatest && <Card title="Pinned statements">
         <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">
           One per line. These are preserved verbatim by every future synthesis, on top of your decisions.
         </p>
         <form action={savePinnedStatements} className="flex flex-col gap-2">
+          <input type="hidden" name="profileVersion" value={profile?.version ?? 0} />
           <textarea
             name="pinnedStatements"
             rows={4}
@@ -98,7 +112,7 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
             </Button>
           </div>
         </form>
-      </Card>
+      </Card>}
 
       <Card title="Open questions">
         {!profile || profile.openQuestions.length === 0 ? (
@@ -113,8 +127,9 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
                     <span className="font-medium">Answered: </span>
                     {q.answer}
                   </p>
-                ) : (
+                ) : isLatest ? (
                   <form action={answerOpenQuestion.bind(null, q.id)} className="flex items-end gap-2">
+                    <input type="hidden" name="profileVersion" value={profile.version} />
                     <input
                       name="answer"
                       required
@@ -125,7 +140,7 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
                       Save answer
                     </Button>
                   </form>
-                )}
+                ) : <p className="text-xs text-slate-500">View the latest profile to answer this question.</p>}
               </div>
             ))}
           </div>
@@ -149,6 +164,31 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
             </Button>
           </div>
         </form>
+      </Card>
+
+      <Card title="Reason tags">
+        <p className="mb-3 text-sm text-slate-500">Review model-proposed tags and edit the tags on your 20 most recent decisions. Your edits are preserved if a tagging task finishes later.</p>
+        {tags.vocabulary.filter(tag => !tag.accepted).map(tag => (
+          <form key={tag.tag} action={acceptReasonTag.bind(null, tag.tag)} className="mb-2 flex items-center gap-3">
+            <span className="text-sm">{tag.tag}{tag.description ? ` — ${tag.description}` : ""}</span>
+            <Button type="submit" size="sm">Accept tag</Button>
+          </form>
+        ))}
+        {tags.recent.length === 0 && <EmptyState title="No decisions yet" description="Apply or skip a role to start recording your preferences." />}
+        {tags.recent.map(decision => (
+          <details key={decision.id} className="mb-2 rounded border border-slate-200 p-3 dark:border-slate-800">
+            <summary className="cursor-pointer text-sm">{decision.jobTitle} · {decision.companyName} · {decision.decision}</summary>
+            <p className="my-2 text-sm text-slate-500">{decision.reason}</p>
+            <form action={saveDecisionTags.bind(null, decision.id)} className="flex flex-col gap-2">
+              <label htmlFor={`tags-${decision.id}`} className="text-xs">Reason tags (hold Ctrl or Command to select several)</label>
+              <select id={`tags-${decision.id}`} name="tags" multiple defaultValue={decision.tags}
+                className="min-h-28 rounded border border-slate-300 p-2 text-sm dark:border-slate-700 dark:bg-slate-950">
+                {tags.vocabulary.filter(tag => tag.accepted).map(tag => <option key={tag.tag} value={tag.tag}>{tag.tag}</option>)}
+              </select>
+              <div><Button type="submit" size="sm">Save tags</Button></div>
+            </form>
+          </details>
+        ))}
       </Card>
 
       <Card title="Calibration">

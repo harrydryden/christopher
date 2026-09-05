@@ -180,3 +180,18 @@ export function compactDomForModel(html: string, pageUrl: string, maxChars = 60_
   if (text.length > maxChars) text = `${text.slice(0, maxChars)}\n…truncated…`;
   return { text, knownUrls };
 }
+
+/** Follow only explicit same-origin pagination, never a job/apply link or an arbitrary numeric link. */
+export function nextListingPage(html: string, pageUrl: string): string | null {
+  const $ = cheerio.load(html);
+  for (const element of $("a[rel~='next'], link[rel~='next'], a[href]").toArray()) {
+    const node = $(element);
+    const label = cleanText(node.attr("aria-label") || node.text());
+    const explicit = (node.attr("rel") ?? "").split(/\s+/).includes("next");
+    if (!explicit && !/^(next(?: page)?|older (?:jobs|posts)|next [›»→])$/i.test(label)) continue;
+    if (node.attr("aria-disabled") === "true") continue;
+    const target = absoluteUrl(node.attr("href") ?? "", pageUrl);
+    if (target && new URL(target).origin === new URL(pageUrl).origin && normalizeUrl(target) !== normalizeUrl(pageUrl)) return target;
+  }
+  return null;
+}

@@ -2,8 +2,8 @@
 
 import { requireSession } from "@/lib/auth";
 
-import { and, eq } from "drizzle-orm";
-import { companies, decisions, jobEvents, jobs } from "@christopher/db/schema";
+import { and, eq, inArray } from "drizzle-orm";
+import { companies, decisions, jobEvents, jobs, tagVocabulary } from "@christopher/db/schema";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -91,4 +91,20 @@ export async function decide(jobId: string, decision: "apply" | "skip" | null, r
 
   revalidatePath("/");
   return ok();
+}
+
+export async function saveDecisionTags(decisionId: string, formData: FormData): Promise<void> {
+  await requireSession();
+  const id = zUuid().parse(decisionId);
+  const tags = [...new Set(formData.getAll("tags").map(String))];
+  if (tags.length > 30) throw new Error("Choose at most 30 tags.");
+  const accepted = tags.length ? await db().select({ tag: tagVocabulary.tag }).from(tagVocabulary)
+    .where(and(inArray(tagVocabulary.tag, tags), eq(tagVocabulary.accepted, true))) : [];
+  if (accepted.length !== tags.length) throw new Error("Choose accepted reason tags from the list.");
+  const updated = await db().update(decisions).set({ tags, tagsEdited: true })
+    .where(and(eq(decisions.id, id), eq(decisions.superseded, false))).returning({ id: decisions.id });
+  if (!updated.length) throw new Error("This decision has changed. Reload before editing its tags.");
+  await enqueue("synthesize_profile", { force: true });
+  revalidatePath("/learning");
+  revalidatePath("/");
 }

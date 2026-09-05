@@ -191,6 +191,7 @@ export const decisions = pgTable(
     decision: text("decision", { enum: DECISIONS }).notNull(),
     reason: text("reason").notNull().default(""),
     tags: jsonb("tags").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    tagsEdited: boolean("tags_edited").notNull().default(false),
     superseded: boolean("superseded").notNull().default(false),
     // Denormalised snapshot so the learning corpus survives job/company deletion.
     jobTitle: text("job_title").notNull(),

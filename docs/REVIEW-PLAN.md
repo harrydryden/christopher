@@ -63,3 +63,15 @@ Base commit: `6681fc061f0ee37bee8cbc4a3675040d61630660`.
 The Priority 2 items not covered in the table and all Priority 3 acceptance gates remain open. In particular, realistic fixture tests are not a substitute for a supplied live-company list, measured extraction recall, paid-model capability checks, load/soak testing or learning calibration. The review changes are a tested correctness increment, not a release certification.
 
 The decision-retention migration must run before deploying the new web actions. It preserves existing data, but cannot recover decisions already deleted by the old cascade. HTML sources that produce no verifiable postings now require attention rather than automatically closing their last roles; a trustworthy empty-page signal remains future work.
+
+
+## Follow-up development
+
+- Implemented bounded same-origin HTML pagination, posting union, incomplete-page protection, compressed snapshots retained for three scans, and reuse of verified extraction when the page hash is unchanged. Added tests for two-page union, failed later pages, cache reuse without AI and snapshot retention, plus pure pagination-target tests.
+- Added full profile editing, immutable versions for edits/pins/answers and optimistic version checks shared with model synthesis. Historical profiles remain read-only. Initial pins can be saved before any model-generated profile exists.
+- Added model-proposed tag approval and an editor for recent decisions. A new `tags_edited` column prevents late model results from replacing manual tag edits, including clearing tags.
+- Fixed the production smoke script to launch Next.js directly and terminate that process. CI exposed that stopping the previous npx wrapper left a child server alive. A smoke run now renders all seven routes and exits successfully. CI has a 15-minute timeout.
+
+Coverage: `apps/worker/src/e2e.test.ts`, `apps/web/app/actions/actions.integration.test.ts`, and `packages/core/src/ats/pagination.test.ts`. This closes the profile/tag and basic pagination/cache/snapshot gaps above. JavaScript-only pagination, grouped decisions, account controls, the remaining operational guards and live acceptance evidence remain open.
+
+Follow-up local validation: 209 tests passed (including the three Chrome tests run explicitly), workspace type checks and production build passed, and the revised seven-route smoke test exited with code 0.

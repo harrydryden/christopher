@@ -2,9 +2,10 @@
 
 import { requireSession } from "@/lib/auth";
 
+import { appendProfile } from "@christopher/db";
 import { desc, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { companies, filterSuggestions, preferenceProfiles } from "@christopher/db/schema";
+import { companies, filterSuggestions, preferenceProfiles, tagVocabulary } from "@christopher/db/schema";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { extractSuggestionValue } from "@/lib/filterSuggestions";
@@ -24,8 +25,12 @@ export async function savePinnedStatements(formData: FormData): Promise<void> {
     .map((l) => l.trim())
     .filter(Boolean);
   const latest = await getLatestProfileRow();
-  if (!latest) throw new Error("No preference profile exists yet.");
-  await db().update(preferenceProfiles).set({ pinnedStatements: lines }).where(eq(preferenceProfiles.id, latest.id));
+  const expectedVersion = Number(formData.get("profileVersion") ?? latest?.version ?? 0);
+  await appendProfile(db(), expectedVersion, {
+    markdown: latest?.markdown ?? (await getSettings()).seedProfile,
+    pinnedStatements: lines, openQuestions: latest?.openQuestions ?? [],
+    sourceDecisionCount: latest?.sourceDecisionCount ?? 0, model: "user",
+  });
   await enqueue("synthesize_profile", { force: true });
   revalidatePath("/learning");
 }
@@ -42,10 +47,11 @@ export async function answerOpenQuestion(questionId: string, formData: FormData)
 
   const updatedQuestions = questions.map((q) => (q.id === questionId ? { ...q, answer } : q));
   const updatedPinned = [...latest.pinnedStatements, `Q: ${question.question} A: ${answer}`];
-  await db()
-    .update(preferenceProfiles)
-    .set({ openQuestions: updatedQuestions, pinnedStatements: updatedPinned })
-    .where(eq(preferenceProfiles.id, latest.id));
+  const expectedVersion = Number(formData.get("profileVersion") ?? latest.version);
+  await appendProfile(db(), expectedVersion, {
+    markdown: latest.markdown, openQuestions: updatedQuestions, pinnedStatements: updatedPinned,
+    sourceDecisionCount: latest.sourceDecisionCount, model: "user",
+  });
   await enqueue("synthesize_profile", { force: true });
   revalidatePath("/learning");
 }
@@ -105,4 +111,25 @@ export async function rescoreAllRoles(): Promise<void> {
   await enqueue("rescore_all", { onlyInTable: true });
   revalidatePath("/learning");
   revalidatePath("/settings");
+}
+
+export async function savePreferenceProfile(formData: FormData): Promise<void> {
+  await requireSession();
+  const markdown = String(formData.get("markdown") ?? "").trim();
+  if (!markdown || markdown.length > 50_000) throw new Error("Enter a profile of between 1 and 50,000 characters.");
+  const expectedVersion = Number(formData.get("profileVersion") ?? 0);
+  const latest = await getLatestProfileRow();
+  await appendProfile(db(), expectedVersion, {
+    markdown, pinnedStatements: latest?.pinnedStatements ?? [], openQuestions: latest?.openQuestions ?? [],
+    sourceDecisionCount: latest?.sourceDecisionCount ?? 0, model: "user",
+  });
+  await enqueue("rescore_all", { onlyInTable: true });
+  revalidatePath("/learning");
+}
+
+export async function acceptReasonTag(tag: string): Promise<void> {
+  await requireSession();
+  if (!tag || tag.length > 100) throw new Error("Invalid reason tag.");
+  await db().update(tagVocabulary).set({ accepted: true }).where(eq(tagVocabulary.tag, tag));
+  revalidatePath("/learning");
 }

@@ -14,7 +14,7 @@ import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { handlers } from "./handlers";
 import { _scanSourceForTests } from "./handlers/scan";
-import { handleScoreJob } from "./handlers/learning";
+import { handleScoreJob, handleTagReason } from "./handlers/learning";
 import { handleRunDaily, finaliseScanRuns } from "./handlers/daily";
 import { TaskQueue } from "./queue";
 import { startTestServer, type RouteTable, type TestServer } from "./test-server";
@@ -499,4 +499,58 @@ describe("functional review regressions", () => {
     expect(scoreJob).toHaveBeenCalledTimes(1);
     expect(outcomes.filter((r) => (r as { skipped?: string }).skipped === "near-miss daily cap reached")).toHaveLength(2);
   }, 60_000);
+});
+
+
+describe("HTML extraction completion", () => {
+  async function htmlFixture() {
+    const [company] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://www.acme.example" }).returning();
+    const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://www.acme.example/listing" }).returning();
+    return { company: company!, source: source! };
+  }
+  it("unions pages and retains only three compressed scan snapshots", async () => {
+    const { company, source } = await htmlFixture();
+    server.setRoutes({ "www.acme.example": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/listing": { body: '<a href="/jobs/one">Operations Manager</a><a rel="next" href="/listing?page=2">Next</a>' },
+      "/listing?page=2": { body: '<a href="/jobs/two">Operations Lead</a>' },
+    } });
+    for (let i = 0; i < 4; i++) {
+      const result = await _scanSourceForTests(deps, company, source, await deps.settings(), null);
+      expect(result.status).toBe("ok");
+      expect(result.postingsFound).toBe(2);
+    }
+    expect(await db.select().from(schema.jobs)).toHaveLength(2);
+    const scans = await db.select().from(schema.scans);
+    expect(scans.filter(scan => scan.rawSnapshot !== null)).toHaveLength(3);
+  }, 60_000);
+  it("never closes roles when a later listing page fails", async () => {
+    const { company, source } = await htmlFixture();
+    const routes = { "/robots.txt": { body: "User-agent: *\nAllow: /" }, "/listing": { body: '<a href="/jobs/one">Operations Manager</a><a rel="next" href="/listing?page=2">Next</a>' } };
+    server.setRoutes({ "www.acme.example": { ...routes, "/listing?page=2": { body: '<a href="/jobs/two">Operations Lead</a>' } } });
+    await _scanSourceForTests(deps, company, source, await deps.settings(), null);
+    server.setRoutes({ "www.acme.example": { ...routes, "/listing?page=2": { status: 404, body: "Not found" } } });
+    for (let i = 0; i < 2; i++) expect((await _scanSourceForTests(deps, company, source, await deps.settings(), null)).status).toBe("partial");
+    const jobs = await db.select().from(schema.jobs);
+    expect(jobs.every(job => job.status === "open" && job.missingScans === 0)).toBe(true);
+  }, 60_000);
+  it("reuses verified model extraction on unchanged HTML without another model call", async () => {
+    const { company, source } = await htmlFixture();
+    server.setRoutes({ "www.acme.example": { "/robots.txt": { body: "User-agent: *\nAllow: /" }, "/listing": { body: '<a href="/vacancy-one">Operations Manager</a>' } } });
+    const extractPostings = vi.fn().mockResolvedValue({ postings: [{ title: "Operations Manager", url: "https://www.acme.example/vacancy-one" }], dropped: 0 });
+    const modelDeps = { ...deps, ai: { ...deps.ai, enabled: true, extractPostings } } as unknown as WorkerDeps;
+    expect((await _scanSourceForTests(modelDeps, company, source, await deps.settings(), null)).status).toBe("ok");
+    expect((await _scanSourceForTests(deps, company, source, await deps.settings(), null)).status).toBe("ok");
+    expect(extractPostings).toHaveBeenCalledTimes(1);
+    expect(await db.select().from(schema.jobs)).toHaveLength(1);
+  }, 60_000);
+  it("does not overwrite a manually edited reason tag", async () => {
+    const { company, source } = await htmlFixture();
+    const [job] = await db.insert(schema.jobs).values({ companyId: company.id, sourceId: source.id, title: "Operations", normalizedTitle: "operations", url: "https://www.acme.example/jobs/1", externalKey: "one" }).returning();
+    const [decision] = await db.insert(schema.decisions).values({ jobId: job!.id, decision: "skip", reason: "Too junior", jobTitle: "Operations", companyName: "Acme", tags: [], tagsEdited: true }).returning();
+    const tagReason = vi.fn();
+    const modelDeps = { ...deps, ai: { ...deps.ai, enabled: true, tagReason } } as unknown as WorkerDeps;
+    await handleTagReason({ payload: { decisionId: decision!.id } } as never, modelDeps);
+    expect(tagReason).not.toHaveBeenCalled();
+  });
 });

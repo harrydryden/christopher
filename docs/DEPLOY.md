@@ -99,7 +99,7 @@ repository root.
 |---|---|
 | `DATABASE_URL` | the **External** database URL |
 | `SESSION_SECRET` | from above |
-| `APP_PASSWORD_HASH` | from above |
+| `APP_PASSWORD_HASH` | from above. Or set `APP_PASSWORD` to the password itself if you have no terminal to hand — simpler, but then the password is stored rather than only its hash |
 
 Vercel's egress addresses vary, so the database is protected by TLS and a strong password rather
 than an IP allowlist. Leave `CRON_SECRET` unset and the daily cron in `apps/web/vercel.json` is

@@ -17,15 +17,24 @@ export interface WorkerDeps {
   ai: AiEngine;
   /** Fresh settings from the database; cached for a few seconds to avoid hammering the table. */
   settings(): Promise<AppSettings>;
+  /** Drop the cached settings so the next read hits the database. */
+  invalidateSettings(): void;
   now(): Date;
   close(): Promise<void>;
 }
 
-export async function createDeps(env: WorkerEnv, overrides: Partial<Pick<WorkerDeps, "now">> = {}): Promise<WorkerDeps> {
+export interface DepsOverrides {
+  now?: () => Date;
+  /** How long a settings read stays cached. Tests set 0 so a change takes effect at once. */
+  settingsTtlMs?: number;
+}
+
+export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}): Promise<WorkerDeps> {
   const { db, pool } = createDb(env.databaseUrl, { max: Math.max(4, env.concurrency + 2) });
+  const settingsTtlMs = overrides.settingsTtlMs ?? 5000;
   let cached: { at: number; value: AppSettings } | null = null;
   const settings = async () => {
-    if (cached && Date.now() - cached.at < 5000) return cached.value;
+    if (cached && Date.now() - cached.at < settingsTtlMs) return cached.value;
     const value = await loadSettings(db);
     cached = { at: Date.now(), value };
     return value;
@@ -75,6 +84,9 @@ export async function createDeps(env: WorkerEnv, overrides: Partial<Pick<WorkerD
     browser,
     ai,
     settings,
+    invalidateSettings() {
+      cached = null;
+    },
     now: overrides.now ?? (() => new Date()),
     async close() {
       await browser?.close();

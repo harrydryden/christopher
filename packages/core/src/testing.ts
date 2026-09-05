@@ -1,5 +1,6 @@
 /** In-memory fetch contexts for tests. Not exported from the package index. */
-import type { DiscoveryContext, FetchContext, FetchInit, FetchResponse, RawPosting, RenderedPage, SourceSpec, VerifyResult } from "./types";
+import type { FetchContext, FetchInit, FetchResponse, RawPosting, RenderedPage, SourceSpec, VerifyResult } from "./types";
+import type { DiscoveryContext } from "./discovery/types";
 import { normalizeUrl } from "./normalize";
 import { specFromAnyUrl, findAtsSpecsInText, getAdapter } from "./ats/registry";
 import { extractPostingsFromHtml } from "./ats/html";

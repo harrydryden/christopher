@@ -66,9 +66,15 @@ describe("location filter", () => {
     expect(evaluateGate({ title: "Operations Manager", location: "Edinburgh, Scotland" }, uk).locationOk).toBe(true);
     expect(evaluateGate({ title: "Operations Manager", location: "New York, NY" }, uk).locationOk).toBe(false);
   });
-  it("does not expand a city term to its whole country", () => {
+  it("does not expand a city term to other cities in its country", () => {
     expect(evaluateGate({ title: "Operations Manager", location: "London, UK" }, london).locationOk).toBe(true);
     expect(evaluateGate({ title: "Operations Manager", location: "Manchester, UK" }, london).locationOk).toBe(false);
+  });
+  it("still admits country-wide remote roles for a city filter", () => {
+    // Remote work is location-flexible, so it is matched at country granularity: someone who
+    // filters on London wants UK-remote roles, but not a fixed post in Manchester.
+    expect(evaluateGate({ title: "Operations Manager", location: "Remote - UK" }, london).locationOk).toBe(true);
+    expect(evaluateGate({ title: "Operations Manager", location: "Remote - USA" }, london).locationOk).toBe(false);
   });
   it("passes a bare remote role but not one anchored to another region", () => {
     expect(evaluateGate({ title: "Operations Manager", location: "Remote" }, uk).locationOk).toBe(true);

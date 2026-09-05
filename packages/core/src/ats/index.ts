@@ -9,6 +9,8 @@ export {
   specFromAnyUrl,
   findAtsSpecsInText,
   isAtsHost,
+  fetchDescriptionFor,
+  fetchHtmlPage,
 } from "./registry";
 export { extractJsonLdPostings } from "./jsonld";
-export { extractPostingsFromHtml, applyRecipe, validateRecipe, findJobLinks } from "./html";
+export { extractPostingsFromHtml, applyRecipe, validateRecipe, findJobLinks, compactDomForModel } from "./html";

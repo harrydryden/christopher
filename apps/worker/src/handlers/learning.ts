@@ -1,4 +1,5 @@
 import { schema, enqueueTask, type Task } from "@christopher/db";
+import { decisionDigest } from "@christopher/ai";
 import { dedupeKeyFor, evaluateGate, priorityFor, type AppSettings } from "@christopher/core";
 import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
@@ -117,7 +118,7 @@ async function decisionRows(deps: WorkerDeps, limit = 200) {
 
 async function buildDigest(deps: WorkerDeps): Promise<string> {
   const rows = await decisionRows(deps, 100);
-  return deps.ai.decisionDigest(
+  return decisionDigest(
     rows.map((d) => ({
       title: d.jobTitle,
       company: d.companyName,
@@ -238,7 +239,7 @@ export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promis
   if (!result) return { skipped: "no ai result" };
 
   let inserted = 0;
-  for (const s of result.suggestions) {
+  for (const s of result) {
     const duplicate = await deps.db
       .select({ id: schema.filterSuggestions.id })
       .from(schema.filterSuggestions)

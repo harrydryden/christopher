@@ -1,8 +1,8 @@
-import { schema, type Task } from "@christopher/db";
-import { ats, sha1, stripHtml } from "@christopher/core";
+import { schema, reevaluateGate, enqueueTask, type Task } from "@christopher/db";
+import { ats, sha1, stripHtml, dedupeKeyFor, priorityFor } from "@christopher/core";
 import { eq } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
-import { makeFetchContext } from "../context";
+import { makeFetchContext, aiBudgetExceeded } from "../context";
 import { log } from "../log";
 
 interface Payload {
@@ -40,7 +40,7 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
       if (res.status < 400) {
         const jsonLd = ats.extractJsonLdPostings(res.body, job.url).find((p) => p.descriptionText);
         text = jsonLd?.descriptionText ?? extractMainText(res.body);
-        if ((!text || text.length < 200) && deps.ai.enabled) {
+        if ((!text || text.length < 200) && !(await aiBudgetExceeded(deps))) {
           const cleaned = await deps.ai.cleanDescription({ title: job.title, rawText: stripHtml(res.body).slice(0, 20_000) }, { refType: "job", refId: job.id });
           if (cleaned?.descriptionText) {
             text = cleaned.descriptionText;
@@ -70,6 +70,9 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
     .set({ descriptionText: trimmed, descriptionHash: sha1(trimmed), descriptionFetchedAt: deps.now() })
     .where(eq(schema.jobs.id, job.id));
   await deps.db.insert(schema.jobEvents).values({ jobId: job.id, type: "description_fetched", payload: { chars: trimmed.length } });
+  await reevaluateGate(deps.db, await deps.settings(), deps.now());
+  const payload = { jobId };
+  await enqueueTask(deps.db, "score_job", payload, { dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") });
   return { jobId, stored: true, chars: trimmed.length };
 }
 

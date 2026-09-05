@@ -165,6 +165,9 @@ importers:
 
   packages/db:
     dependencies:
+      '@christopher/core':
+        specifier: workspace:*
+        version: link:../core
       drizzle-orm:
         specifier: latest
         version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)

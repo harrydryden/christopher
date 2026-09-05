@@ -1,10 +1,30 @@
 # Christopher — Careers Page Monitor
 
-**Specification v0.1 (draft for review)** · 2026-09-04 · Single-user tool
+**Specification v0.2 (reviewed contract; release verification pending)** · 2026-09-05 · Single-user tool
 
 Christopher watches the careers pages of companies you list, once a day. It records which roles appeared and which disappeared, keeps only roles that match your keywords, and shows them in a table where you decide *apply* or *skip* with a reason. Those reasons train a preference model that ranks future roles and proposes changes to your filters. It also recommends companies similar to the ones you already track.
 
-This document is written to be implemented from directly (by you or by Claude Code). Sections 3 to 7 are normative; section 9 is the acceptance bar.
+This document is written to be implemented from directly (by you or by Claude Code). Sections 3 to 7 and the v0.2 clarifications below are normative; section 9 is the acceptance bar. Requirements describe the target, not a claim that every feature has passed acceptance. See [REVIEW-PLAN.md](REVIEW-PLAN.md) for implementation and verification status.
+
+---
+
+## v0.2 clarifications and acceptance gaps
+
+- **R-1.6 — State changes and repeated submissions.** Archived companies are excluded from the main inbox and near-miss list. Queued scans recheck company state before fetching. Repeating a source confirmation is idempotent, including concurrent submissions; rediscovery retains prior user confirmation and proposes any different source.
+- **R-3.11 — Run accounting.** Fan-out is atomic. A daily run remains unfinished while any associated company task is queued or running. A company without a usable source is unsuccessful. Company scans are serialised so overlapping manual and scheduled scans cannot reconcile the same source concurrently. Every run has its own task association even when another scan is already queued.
+- **R-3.13 — Unverifiable HTML empties.** An HTML page with no verifiable postings is a failed extraction, including an unchanged page without a usable recipe or a disabled/unavailable model. A content hash alone never establishes an empty board. Structured feeds can still confirm a real empty result.
+- **R-3.12 — Refresh semantics.** Subsequent observations refresh URLs, titles, locations, department, employment type, remote status, salary, posted dates and feed descriptions when supplied. Missing optional fields preserve stored data. Gate membership and matched terms are recalculated from the refreshed fields. Snapshots and their 14-day refresh do not require an enabled model or remaining AI budget.
+- **R-4.9 — Partial observations.** A partial scan may add or refresh observed roles and reopen a positively observed role; it must not change any missing counter or close an absent role. Failed and suspect-empty scans do not change role state. The configurable closure threshold has a minimum of two, including legacy stored settings. “Consecutive successful scans” ignores intervening unsuccessful scans; only an ok observation resets the counter.
+- **R-5.6 — Save consistency.** A gate change and reevaluation commit together before the settings action returns, including matched-term chips when membership is unchanged. Reevaluate all open roles and at least the last 30 days of closed roles. The worker may subsequently score newly eligible roles.
+- **R-6.11 — Near-miss allowance.** Reserve the daily allowance atomically immediately before A5, using the configured local calendar date. Count attempts, including failed or refused model calls. Apply the same allowance to discovery scans, settings changes and rescores. A zero allowance makes no near-miss model calls. Unused allowance is not carried forward.
+- **R-6.12 — Decision integrity.** Concurrent decisions on the same role are serialised. Undo supersedes the latest decision rather than deleting its audit record. Model learning uses only active decisions. Every mutation authenticates its session at the server action boundary.
+- **R-7.6 — Ranking.** Unscored roles sort after scored roles for either fit-score direction and within the default status ordering. The near-miss list displays at most ten candidates.
+
+### Explicit release gates
+
+The real-company golden set, live ATS endpoint checks, real model/API capability and cost checks, a 50-company soak, backup restoration and learning calibration remain necessary. Unit fixtures do not establish live recall, provider availability or preference agreement. Do not describe the application as fully functional until the implementation matrix in REVIEW-PLAN.md and these acceptance checks are complete.
+
+The review also identified features needing further implementation or acceptance evidence: complete HTML pagination and extraction-cache reuse, RSS/Atom discovery, retained raw responses, editable reason tags, grouped decisions, full profile editing/history, in-app password changes, distributed login throttling, and global AI budget reservations. These requirements remain in scope; their absence is not hidden by changing the contract.
 
 ---
 

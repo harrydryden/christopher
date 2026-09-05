@@ -1,5 +1,7 @@
 "use server";
 
+import { requireSession } from "@/lib/auth";
+
 import { and, eq } from "drizzle-orm";
 import { companies, decisions, jobEvents, jobs } from "@christopher/db/schema";
 import { revalidatePath } from "next/cache";
@@ -20,6 +22,7 @@ const DecideSchema = z.object({
  * denormalised snapshot so the learning corpus survives job/company deletion.
  */
 export async function decide(jobId: string, decision: "apply" | "skip" | null, reason: string): Promise<ActionResult> {
+  await requireSession();
   const parsed = DecideSchema.safeParse({ jobId, decision, reason });
   if (!parsed.success) return fail("Invalid request.");
   const input = parsed.data;
@@ -32,6 +35,8 @@ export async function decide(jobId: string, decision: "apply" | "skip" | null, r
 
   try {
     await db().transaction(async (tx) => {
+      const [locked] = await tx.select({ id: jobs.id }).from(jobs).where(eq(jobs.id, input.jobId)).for("update");
+      if (!locked) throw new Error("Role not found.");
       const existingRows = await tx
         .select()
         .from(decisions)
@@ -40,7 +45,7 @@ export async function decide(jobId: string, decision: "apply" | "skip" | null, r
       const existing = existingRows[0] ?? null;
 
       if (input.decision === null) {
-        if (existing) await tx.delete(decisions).where(eq(decisions.id, existing.id));
+        if (existing) await tx.update(decisions).set({ superseded: true }).where(eq(decisions.id, existing.id));
         await tx.insert(jobEvents).values({ jobId: input.jobId, type: "decided", payload: { decision: null } });
         return;
       }

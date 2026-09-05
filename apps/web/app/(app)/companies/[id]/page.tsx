@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import {
   archiveCompany,
   deleteSource,
+  deleteCompany,
   disableSource,
   enableSource,
   markSourceConfirmed,
@@ -409,6 +410,13 @@ export default async function CompanyDetailPage({ params }: { params: Promise<{ 
         ) : (
           <EmptyState title="No profile yet" description="Refresh to generate a company profile from its homepage and about page." />
         )}
+      </Card>
+
+      <Card title="Delete company">
+        <p className="mb-3 text-sm text-slate-500">Remove this company, its sources and roles. Your decision snapshots remain in the learning history.</p>
+        <form action={deleteCompany.bind(null, company.id)}>
+          <ConfirmSubmitButton confirmMessage={`Delete ${company.name} and all its roles? Decision snapshots will be retained.`}>Delete company</ConfirmSubmitButton>
+        </form>
       </Card>
 
       {latestRun && Array.isArray(latestRun.log) && latestRun.log.length > 0 && (

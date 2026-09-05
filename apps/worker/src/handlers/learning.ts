@@ -1,6 +1,6 @@
-import { schema, enqueueTask, type Task } from "@christopher/db";
+import { schema, enqueueTask, reevaluateGate, type Task } from "@christopher/db";
 import { decisionDigest } from "@christopher/ai";
-import { dedupeKeyFor, evaluateGate, modelForCallSite, priorityFor, type AppSettings } from "@christopher/core";
+import { dedupeKeyFor, localDateParts, evaluateGate, modelForCallSite, priorityFor, type AppSettings } from "@christopher/core";
 import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { aiBudgetExceeded } from "../context";
@@ -60,9 +60,22 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
   const { jobId } = task.payload as unknown as { jobId: string; nearMiss?: boolean };
   const [job] = await deps.db.select().from(schema.jobs).where(eq(schema.jobs.id, jobId)).limit(1);
   if (!job) return { skipped: "job not found" };
+  if (job.status !== "open") return { skipped: "job is closed" };
   const settings = await deps.settings();
   if (!job.inTable && !(job.nearMiss && settings.nearMissEnabled)) return { skipped: "not in table and near-miss disabled" };
   if (await aiBudgetExceeded(deps)) return { skipped: "ai budget exceeded" };
+
+  if (!job.inTable) {
+    // Reserve before the model call. Atomic JSON counter also covers concurrent worker processes.
+    const day = localDateParts(deps.now(), settings.timezone).ymd;
+    const key = `internal:nearMissAllowance:${day}`;
+    const reservation = settings.nearMissDailyCap > 0 ? await deps.db.execute(sql`
+      insert into settings (key, value, updated_at) values (${key}, '1'::jsonb, now())
+      on conflict (key) do update set value = to_jsonb((settings.value #>> '{}')::int + 1), updated_at = now()
+      where (settings.value #>> '{}')::int < ${settings.nearMissDailyCap}
+      returning key`) : null;
+    if (!reservation?.rows.length) return { skipped: "near-miss daily cap reached" };
+  }
 
   const [company] = await deps.db.select().from(schema.companies).where(eq(schema.companies.id, job.companyId)).limit(1);
   const profile = await latestProfile(deps);
@@ -254,65 +267,7 @@ export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promis
 
 /** Re-evaluate the keyword and location gate for every stored job after a settings change. */
 export async function handleReevaluateGate(task: Task, deps: WorkerDeps): Promise<unknown> {
-  const settings = await deps.settings();
-  const cutoff = new Date(deps.now().getTime() - settings.showClosedDays * 86_400_000);
-  const rows = await deps.db
-    .select()
-    .from(schema.jobs)
-    .where(or(eq(schema.jobs.status, "open"), gte(schema.jobs.closedAt, cutoff)));
-
-  let changed = 0;
-  const toScore: string[] = [];
-  const descriptionMatch = settings.gate.matchFields.includes("description");
-  for (const job of rows) {
-    const gate = evaluateGate(
-      {
-        title: job.title,
-        department: job.department,
-        description: descriptionMatch ? job.descriptionText : null,
-        location: job.location,
-        locations: job.locations,
-        remote: job.remote,
-      },
-      settings.gate,
-    );
-    // Matches the rule used when a role is first stored: the location filter is a hard boundary,
-    // so a role outside it is never surfaced as a near miss.
-    const nearMiss = !gate.inTable && settings.nearMissEnabled && !gate.excluded && gate.locationOk;
-    const hidden = settings.hideThreshold !== null && gate.inTable && job.fitScore !== null ? job.fitScore < settings.hideThreshold : false;
-    if (
-      gate.inTable === job.inTable &&
-      gate.keywordMatched === job.keywordMatched &&
-      gate.excluded === job.excluded &&
-      gate.locationOk === job.locationOk &&
-      nearMiss === job.nearMiss &&
-      hidden === job.hidden
-    ) {
-      continue;
-    }
-    await deps.db
-      .update(schema.jobs)
-      .set({
-        keywordMatched: gate.keywordMatched,
-        keywordTerms: gate.keywordTerms,
-        excluded: gate.excluded,
-        locationOk: gate.locationOk,
-        inTable: gate.inTable,
-        nearMiss,
-        hidden,
-        updatedAt: deps.now(),
-      })
-      .where(eq(schema.jobs.id, job.id));
-    changed++;
-    if ((gate.inTable || nearMiss) && job.fitScore === null && job.status === "open") toScore.push(job.id);
-  }
-
-  for (const id of toScore.slice(0, 200)) {
-    const p = { jobId: id };
-    await enqueueTask(deps.db, "score_job", p, { dedupeKey: dedupeKeyFor("score_job", p), priority: priorityFor("score_job") });
-  }
-  log.info("gate re-evaluated", { examined: rows.length, changed, queuedForScoring: Math.min(toScore.length, 200) });
-  return { examined: rows.length, changed, queuedForScoring: Math.min(toScore.length, 200) };
+  return reevaluateGate(deps.db, await deps.settings(), deps.now());
 }
 
 export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<unknown> {

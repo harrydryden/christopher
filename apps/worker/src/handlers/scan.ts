@@ -31,9 +31,19 @@ type ScanStatus = "ok" | "partial" | "suspect_empty" | "failed";
 
 export async function handleScanCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
   const payload = task.payload as { companyId: string; scanRunId?: string };
+  // One company must never reconcile overlapping snapshots concurrently.
+  return deps.db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`christopher:scan:${payload.companyId}`}))`);
+    return scanCompany(task, { ...deps, db: tx as unknown as WorkerDeps["db"] });
+  });
+}
+
+async function scanCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
+  const payload = task.payload as { companyId: string; scanRunId?: string };
   const settings = await deps.settings();
   const [company] = await deps.db.select().from(schema.companies).where(eq(schema.companies.id, payload.companyId)).limit(1);
   if (!company) return { skipped: "company not found" };
+  if (company.status !== "active") return { skipped: "company is not active" };
 
   const sources = await deps.db
     .select()
@@ -55,19 +65,6 @@ export async function handleScanCompany(task: Task, deps: WorkerDeps): Promise<u
     totalClosed += outcome.closedCount;
   }
 
-  if (payload.scanRunId) {
-    const ok = statuses.some((s) => s === "ok" || s === "partial");
-    await deps.db
-      .update(schema.scanRuns)
-      .set({
-        companiesOk: sql`${schema.scanRuns.companiesOk} + ${ok ? 1 : 0}`,
-        companiesFailed: sql`${schema.scanRuns.companiesFailed} + ${ok ? 0 : 1}`,
-        newRoles: sql`${schema.scanRuns.newRoles} + ${totalNew}`,
-        closedRoles: sql`${schema.scanRuns.closedRoles} + ${totalClosed}`,
-        finishedAt: deps.now(),
-      })
-      .where(eq(schema.scanRuns.id, payload.scanRunId));
-  }
   return { sources: sources.length, new: totalNew, closed: totalClosed, statuses };
 }
 
@@ -139,6 +136,17 @@ async function scanSource(
 
   const existingRows = await deps.db
     .select({
+      descriptionText: schema.jobs.descriptionText,
+      descriptionFetchedAt: schema.jobs.descriptionFetchedAt,
+      url: schema.jobs.url,
+      locations: schema.jobs.locations,
+      department: schema.jobs.department,
+      employmentType: schema.jobs.employmentType,
+      remote: schema.jobs.remote,
+      salaryText: schema.jobs.salaryText,
+      postedAt: schema.jobs.postedAt,
+      fitScore: schema.jobs.fitScore,
+      inTable: schema.jobs.inTable,
       id: schema.jobs.id,
       externalKey: schema.jobs.externalKey,
       status: schema.jobs.status,
@@ -210,27 +218,50 @@ async function scanSource(
     newCount++;
     await deps.db.insert(schema.jobEvents).values({ jobId: created.id, type: "discovered", payload: { method: fetchMethod, seeded: isFirstScan } });
     if (gate.inTable || nearMiss) scoreQueue.push({ jobId: created.id, nearMiss });
-    if (gate.inTable && !insert.descriptionText) descriptionQueue.push(created.id);
+    if ((gate.inTable || nearMiss) && !insert.descriptionText) descriptionQueue.push(created.id);
   }
 
   if (result.seen.length > 0) {
-    await deps.db.update(schema.jobs).set({ lastSeenAt: deps.now(), missingScans: 0 }).where(inArray(schema.jobs.id, result.seen));
+    await deps.db.update(schema.jobs).set({ lastSeenAt: deps.now(), ...(mode === "ok" ? { missingScans: 0 } : {}) }).where(inArray(schema.jobs.id, result.seen));
   }
-  for (const update of result.updates) {
-    await deps.db
-      .update(schema.jobs)
-      .set({
-        ...(update.changes.title ? { title: update.changes.title, normalizedTitle: normalizeTitle(update.changes.title) } : {}),
-        ...(update.changes.location !== undefined ? { location: update.changes.location ?? null } : {}),
-        updatedAt: deps.now(),
-      })
-      .where(eq(schema.jobs.id, update.id));
-    await deps.db.insert(schema.jobEvents).values({ jobId: update.id, type: "updated", payload: { fields: update.changedFields } });
+  // Refresh every observed posting, including fields the identity reconciliation does not compare.
+  const observed = new Map(keyPostings(postings).keyed.map((p) => [p.externalKey, p]));
+  for (const job of existingRows.filter((j) => result.seen.includes(j.id))) {
+    const posting = observed.get(job.externalKey)!;
+    const fields = {
+      title: posting.title, url: posting.url,
+      location: posting.location ?? job.location,
+      locations: posting.locations ?? (posting.location ? [posting.location] : job.locations),
+      department: posting.department ?? job.department,
+      employmentType: posting.employmentType ?? job.employmentType,
+      remote: posting.remote ?? job.remote,
+      salaryText: posting.salaryText ?? job.salaryText,
+      postedAt: posting.postedAt ?? job.postedAt,
+      descriptionText: posting.descriptionText?.slice(0, 30_000) ?? job.descriptionText,
+    };
+    const changedFields = Object.keys(fields).filter((key) =>
+      JSON.stringify(fields[key as keyof typeof fields]) !== JSON.stringify(job[key as keyof typeof job]));
+    const gate = evaluateGate({ ...fields, description: fields.descriptionText }, settings.gate);
+    const nearMiss = !gate.inTable && settings.nearMissEnabled && !gate.excluded && gate.locationOk;
+    await deps.db.update(schema.jobs).set({
+      ...fields, normalizedTitle: normalizeTitle(fields.title),
+      keywordMatched: gate.keywordMatched, keywordTerms: gate.keywordTerms,
+      excluded: gate.excluded, locationOk: gate.locationOk, inTable: gate.inTable, nearMiss,
+      ...(posting.descriptionText !== undefined ? {
+        descriptionHash: sha1(fields.descriptionText ?? ""), descriptionFetchedAt: deps.now(),
+      } : {}),
+      updatedAt: deps.now(),
+    }).where(eq(schema.jobs.id, job.id));
+    if (changedFields.length) await deps.db.insert(schema.jobEvents).values({ jobId: job.id, type: "updated", payload: { fields: changedFields } });
+    if ((gate.inTable || nearMiss) && (changedFields.length || !job.inTable && gate.inTable || job.fitScore === null)) scoreQueue.push({ jobId: job.id, nearMiss });
+    const descriptionStale = !job.descriptionFetchedAt || deps.now().getTime() - job.descriptionFetchedAt.getTime() >= 14 * 86_400_000;
+    const sourceUpdated = posting.updatedAt && (!job.descriptionFetchedAt || posting.updatedAt > job.descriptionFetchedAt);
+    if ((gate.inTable || nearMiss) && posting.descriptionText === undefined && (descriptionStale || sourceUpdated)) descriptionQueue.push(job.id);
   }
   if (result.reopened.length > 0) {
     await deps.db
       .update(schema.jobs)
-      .set({ status: "open", closedAt: null, missingScans: 0, reopenedCount: sql`${schema.jobs.reopenedCount} + 1` })
+      .set({ status: "open", closedAt: null, ...(mode === "ok" ? { missingScans: 0 } : {}), reopenedCount: sql`${schema.jobs.reopenedCount} + 1` })
       .where(inArray(schema.jobs.id, result.reopened));
     for (const id of result.reopened) await deps.db.insert(schema.jobEvents).values({ jobId: id, type: "reopened", payload: {} });
   }
@@ -298,9 +329,10 @@ async function scanSource(
     for (const item of [...inTableToScore, ...nearMissCandidates.slice(0, nearMissBudget)]) {
       await enqueueTask(deps.db, "score_job", item, { dedupeKey: dedupeKeyFor("score_job", item), priority: priorityFor("score_job") });
     }
-    for (const jobId of descriptionQueue.slice(0, 50)) {
-      await enqueueTask(deps.db, "fetch_description", { jobId }, { dedupeKey: dedupeKeyFor("fetch_description", { jobId }), priority: priorityFor("fetch_description") });
-    }
+  }
+  // Snapshot fetching is useful even when no model is configured or the AI budget is exhausted.
+  for (const jobId of descriptionQueue) {
+    await enqueueTask(deps.db, "fetch_description", { jobId }, { dedupeKey: dedupeKeyFor("fetch_description", { jobId }), priority: priorityFor("fetch_description") });
   }
 
   log.info("source scanned", {
@@ -340,6 +372,9 @@ async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: Career
   let postings = ats.extractPostingsFromHtml(html, finalUrl, spec.recipe);
   if (postings.length === 0 && deps.browser) {
     const rendered = await deps.browser.render(spec.url, { scrollAndExpand: true });
+    if (rendered.status !== null && rendered.status >= 400) {
+      throw new SourceFetchError(`Browser returned HTTP ${rendered.status}`, rendered.status === 403 || rendered.status === 429 ? "blocked" : "http", rendered.status);
+    }
     html = rendered.html;
     finalUrl = rendered.finalUrl;
     method = "browser";
@@ -349,14 +384,15 @@ async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: Career
   const contentHash = sha1(html.replace(/\s+/g, " "));
   const unchanged = contentHash === source.contentHash;
 
-  if (postings.length > 0 || unchanged || !deps.ai.enabled || (await aiBudgetExceeded(deps))) {
-    return { postings, method, dropped: 0, contentHash, unchanged };
+  if (postings.length > 0) return { postings, method, dropped: 0, contentHash, unchanged };
+  if (unchanged || !deps.ai.enabled || (await aiBudgetExceeded(deps))) {
+    throw new SourceFetchError("HTML extraction found no verifiable postings; cannot establish a successful empty scan", "parse");
   }
 
   // Nothing came out of the heuristics and the page has changed: ask the model, and keep its recipe.
   const compact = ats.compactDomForModel(html, finalUrl);
   const extraction = await deps.ai.extractPostings({ pageUrl: finalUrl, compactDom: compact.text, knownUrls: compact.knownUrls }, { refType: "source", refId: source.id });
-  if (!extraction) return { postings, method, dropped: 0, contentHash, unchanged };
+  if (!extraction || extraction.postings.length === 0) throw new SourceFetchError("HTML extraction produced no verifiable postings", "parse");
 
   const modelPostings: RawPosting[] = extraction.postings.map((p) => ({
     title: p.title,

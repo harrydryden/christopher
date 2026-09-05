@@ -187,7 +187,7 @@ export const decisions = pgTable(
   "decisions",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    jobId: uuid("job_id").notNull().references(() => jobs.id, { onDelete: "cascade" }),
+    jobId: uuid("job_id").references(() => jobs.id, { onDelete: "set null" }),
     decision: text("decision", { enum: DECISIONS }).notNull(),
     reason: text("reason").notNull().default(""),
     tags: jsonb("tags").$type<string[]>().notNull().default(sql`'[]'::jsonb`),

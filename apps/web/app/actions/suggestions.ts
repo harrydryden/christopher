@@ -1,5 +1,7 @@
 "use server";
 
+import { requireSession } from "@/lib/auth";
+
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { careerSources, companies, companySuggestions, SOURCE_TYPES } from "@christopher/db/schema";
@@ -8,6 +10,7 @@ import { enqueue } from "@/lib/enqueue";
 import { zUuid } from "@/lib/validation";
 
 export async function acceptSuggestion(suggestionId: string): Promise<void> {
+  await requireSession();
   const id = zUuid().parse(suggestionId);
   const [suggestion] = await db().select().from(companySuggestions).where(eq(companySuggestions.id, id)).limit(1);
   if (!suggestion || suggestion.status !== "pending") return;
@@ -41,6 +44,7 @@ export async function acceptSuggestion(suggestionId: string): Promise<void> {
 }
 
 export async function rejectSuggestion(suggestionId: string, formData: FormData): Promise<void> {
+  await requireSession();
   const id = zUuid().parse(suggestionId);
   const reason = String(formData.get("reason") ?? "").trim();
   if (!reason) throw new Error("A reason is required to reject a suggestion.");
@@ -55,6 +59,7 @@ export async function rejectSuggestion(suggestionId: string, formData: FormData)
 }
 
 export async function findMoreSuggestions(): Promise<void> {
+  await requireSession();
   await enqueue("suggest_companies", {});
   revalidatePath("/suggestions");
 }

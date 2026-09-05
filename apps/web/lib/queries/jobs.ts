@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, ne } from "drizzle-orm";
 import { careerSources, companies, decisions, jobEvents, jobs, type Job, type SourceType } from "@christopher/db/schema";
 import { displayStatus, formatDuration, liveFor, type AppSettings, type DisplayStatus } from "@christopher/core";
 import { db } from "@/lib/db";
@@ -65,14 +65,14 @@ function baseRolesSelect() {
 
 /** Every in-table (keyword+location gate passed) job: the main roles table before display filters. */
 export async function fetchTableJobs(): Promise<RoleRow[]> {
-  const rows = await baseRolesSelect().where(eq(jobs.inTable, true));
+  const rows = await baseRolesSelect().where(and(eq(jobs.inTable, true), ne(companies.status, "archived")));
   return rows.map((r) => ({ ...r, events: [] as RoleEvent[] }));
 }
 
 /** Roles that failed the keyword/location gate but scored well: "Outside your keywords". */
-export async function fetchNearMissJobs(settings: Pick<AppSettings, "nearMissMinScore">, cap = 30): Promise<RoleRow[]> {
+export async function fetchNearMissJobs(settings: Pick<AppSettings, "nearMissMinScore">, cap = 10): Promise<RoleRow[]> {
   const rows = await baseRolesSelect()
-    .where(and(eq(jobs.nearMiss, true), eq(jobs.status, "open"), gte(jobs.fitScore, settings.nearMissMinScore)))
+    .where(and(ne(companies.status, "archived"), eq(jobs.nearMiss, true), eq(jobs.status, "open"), gte(jobs.fitScore, settings.nearMissMinScore)))
     .orderBy(desc(jobs.firstSeenAt))
     .limit(cap);
   return rows.map((r) => ({ ...r, events: [] as RoleEvent[] }));
@@ -238,7 +238,7 @@ function compareRows(a: RoleRow, b: RoleRow, sort: SortKey, now: Date): number {
       const sb = displayStatus(b.job, now);
       const rankDiff = statusRank(sa) - statusRank(sb);
       if (rankDiff !== 0) return rankDiff;
-      const fitDiff = compareFitAsc(b, a); // desc by default within the same status
+      const fitDiff = a.job.fitScore === null || b.job.fitScore === null ? compareFitAsc(a, b) : compareFitAsc(b, a); // desc by default within the same status
       if (fitDiff !== 0) return fitDiff;
       return b.job.firstSeenAt.getTime() - a.job.firstSeenAt.getTime();
     }
@@ -260,8 +260,10 @@ function compareRows(a: RoleRow, b: RoleRow, sort: SortKey, now: Date): number {
 }
 
 export function sortRoleRows(rows: RoleRow[], sort: SortKey, dir: SortDir, now: Date = new Date()): RoleRow[] {
-  const sorted = [...rows].sort((a, b) => compareRows(a, b, sort, now));
-  if (dir === "desc") sorted.reverse();
+  const sorted = [...rows].sort((a, b) => {
+    if (sort === "fit" && (a.job.fitScore === null || b.job.fitScore === null)) return compareFitAsc(a, b);
+    return compareRows(a, b, sort, now) * (dir === "desc" ? -1 : 1);
+  });
   return sorted;
 }
 

@@ -26,6 +26,7 @@
     "lint": "echo 'no lint configured'"
   },
   "dependencies": {
+    "@christopher/core": "workspace:*",
     "drizzle-orm": "latest",
     "pg": "latest"
   },

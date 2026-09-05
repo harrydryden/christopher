@@ -3,6 +3,7 @@ import { dedupeKeyFor, localDateParts, priorityFor } from "@christopher/core";
 import { and, eq, lt, sql } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 import { log } from "./log";
+import { finaliseScanRuns } from "./handlers/daily";
 import { requeueStale } from "./queue";
 import { getInternal, setInternal } from "./settings";
 
@@ -43,6 +44,8 @@ export async function schedulerTick(deps: WorkerDeps): Promise<void> {
       log.info("scheduled weekly jobs", { ymd });
     }
   }
+
+  await finaliseScanRuns(deps);
 
   const requeued = await requeueStale(deps.db);
   if (requeued) log.warn("requeued stale tasks", { requeued });

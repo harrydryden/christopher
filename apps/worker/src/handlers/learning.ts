@@ -1,6 +1,6 @@
 import { schema, enqueueTask, type Task } from "@christopher/db";
 import { decisionDigest } from "@christopher/ai";
-import { dedupeKeyFor, evaluateGate, priorityFor, type AppSettings } from "@christopher/core";
+import { dedupeKeyFor, evaluateGate, modelForCallSite, priorityFor, type AppSettings } from "@christopher/core";
 import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { aiBudgetExceeded } from "../context";
@@ -187,7 +187,7 @@ export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Pro
     pinnedStatements: current?.pinnedStatements ?? [],
     openQuestions,
     sourceDecisionCount: decisions.length,
-    model: "ai",
+    model: modelForCallSite(settings, "A7"),
     generatedAt: deps.now(),
   });
   log.info("profile synthesised", { version, decisions: decisions.length, questions: openQuestions.length });

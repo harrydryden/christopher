@@ -15,7 +15,9 @@
     "dev:web": "pnpm --filter @christopher/web dev",
     "dev:worker": "pnpm --filter @christopher/worker dev",
     "db:generate": "pnpm --filter @christopher/db generate",
-    "db:migrate": "pnpm --filter @christopher/db migrate"
+    "db:migrate": "pnpm --filter @christopher/db migrate",
+    "smoke:web": "node scripts/smoke-web.mjs",
+    "seed:demo": "pnpm --filter @christopher/worker exec tsx src/seed-demo.ts"
   },
   "devDependencies": {
     "@types/node": "latest",

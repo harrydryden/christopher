@@ -1,0 +1,22 @@
+# The build context is the whole repository; keep it small and reproducible.
+node_modules
+**/node_modules
+.git
+.github
+.next
+**/.next
+dist
+**/dist
+coverage
+**/coverage
+*.log
+*.tsbuildinfo
+**/*.tsbuildinfo
+.env
+.env.*
+!.env.example
+docs
+scripts
+README.md
+CLAUDE.md
+vercel.json

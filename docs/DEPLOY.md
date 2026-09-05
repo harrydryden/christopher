@@ -59,11 +59,20 @@ above). Or create it by hand: **New → Web Service**, runtime **Docker**, Docke
 `Dockerfile`, Docker context `.`, health check path `/healthz`, instance type
 **Starter** (the free type sleeps, which stops the scheduler).
 
+### Linking the database
+
+`DATABASE_URL` is the one value that cannot be set through the API, because Render never exposes a
+database password over it. In the dashboard, open the worker service, go to **Environment**, add a
+variable named `DATABASE_URL`, and use the database picker in the value field to select
+**christopher-db → Internal Connection String**. Saving triggers a redeploy.
+
+Until it is set, the worker builds and starts but exits with `DATABASE_URL is required`.
+
 Set these on the service:
 
 | Variable | Value |
 |---|---|
-| `DATABASE_URL` | the **Internal** database URL if the database is in the same Render region, else the external one |
+| `DATABASE_URL` | linked from the database as above; use the **Internal** string when the service and database share a region |
 | `ANTHROPIC_API_KEY` | your key. Without it, scanning still works and scoring is skipped |
 | `SCRAPER_CONTACT_EMAIL` | an address you read; it goes in the user agent |
 | `TZ` | e.g. `Europe/London` |
@@ -158,3 +167,6 @@ optional model calls when it is exceeded.
 | A company shows no source | Discovery could not find one | Open the company and paste the careers or board URL |
 | A source says "blocked" | Bot protection | Paste the underlying board URL; the tool does not try to evade protection |
 | Cron returns 503 | `CRON_SECRET` is unset | Set it, or ignore it in shape A |
+| Worker exits with `DATABASE_URL is required` | The database is not linked | Add `DATABASE_URL` to the service, picking the database's internal connection string |
+| Pushing to the branch does not deploy | Render is not connected to the GitHub account, so there is no webhook | Connect GitHub in Render, or trigger the deploy by hand |
+| Worker cannot reach the database over TLS | The internal endpoint negotiated differently than expected | Set `DATABASE_SSL=disable` for an internal URL, or `require` for an external one |

@@ -96,6 +96,7 @@ Full instructions, including what to set where and what to do when something is 
 | `DATABASE_URL` | both | PostgreSQL connection string |
 | `SESSION_SECRET` | web | signs the session cookie |
 | `APP_PASSWORD_HASH` | web | scrypt hash of your password, from `pnpm --filter @christopher/web hash-password` |
+| `APP_PASSWORD` | web | alternative to the hash when you have no terminal: the password itself. The hash wins if both are set |
 | `ANTHROPIC_API_KEY` | worker | optional; without it scanning still works and scoring is skipped |
 | `SCRAPER_CONTACT_EMAIL` | worker | included in the user agent so site owners can reach you |
 | `TZ` | worker | the timezone the daily run is scheduled in |

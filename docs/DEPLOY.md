@@ -47,6 +47,14 @@ the same learning loop.
    pnpm --filter @christopher/web hash-password 'your password' # APP_PASSWORD_HASH
    ```
 
+   Without the repository checked out, this prints the same hash from any machine with Node:
+
+   ```bash
+   node -e 'const{randomBytes,scryptSync}=require("node:crypto");const N=16384,r=8,p=1,s=randomBytes(16);console.log(`scrypt$${N}$${r}$${p}$${s.toString("base64")}$${scryptSync(process.argv[1].normalize("NFKC"),s,64,{N,r,p,maxmem:128*N*r*2}).toString("base64")}`)' 'your password'
+   ```
+
+   Only the hash is stored, so the password itself never leaves your machine.
+
 ---
 
 ## Shape A · Vercel + Render worker
@@ -91,7 +99,7 @@ repository root.
 |---|---|
 | `DATABASE_URL` | the **External** database URL |
 | `SESSION_SECRET` | from above |
-| `APP_PASSWORD_HASH` | from above |
+| `APP_PASSWORD_HASH` | from above. Or set `APP_PASSWORD` to the password itself if you have no terminal to hand — simpler, but then the password is stored rather than only its hash |
 
 Vercel's egress addresses vary, so the database is protected by TLS and a strong password rather
 than an IP allowlist. Leave `CRON_SECRET` unset and the daily cron in `apps/web/vercel.json` is

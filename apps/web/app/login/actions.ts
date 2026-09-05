@@ -2,14 +2,14 @@
 
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { verifyPassword } from "@/lib/password";
+import { checkPassword, readPasswordConfig } from "@/lib/password";
 import { isLoginRateLimited, recordLoginFailure, resetLoginFailures } from "@/lib/rate-limit";
 import { createSessionCookieValue, isSecureHost, sanitizeNextPath, SESSION_COOKIE_NAME, DEFAULT_SESSION_TTL_SECONDS } from "@/lib/session";
 
 export async function login(formData: FormData): Promise<void> {
   const password = String(formData.get("password") ?? "");
   const next = sanitizeNextPath(String(formData.get("next") ?? "/"));
-  const hash = process.env.APP_PASSWORD_HASH;
+  const config = readPasswordConfig();
   const secret = process.env.SESSION_SECRET;
 
   const loginUrl = (error: string) => {
@@ -19,14 +19,17 @@ export async function login(formData: FormData): Promise<void> {
     return `${url.pathname}${url.search}`;
   };
 
-  if (!hash || !secret) {
+  if (config.kind === "malformed") {
+    redirect(loginUrl("malformed_hash"));
+  }
+  if (config.kind === "missing" || !secret) {
     redirect(loginUrl("not_configured"));
   }
   if (isLoginRateLimited()) {
     redirect(loginUrl("rate_limited"));
   }
 
-  const valid = await verifyPassword(password, hash);
+  const valid = await checkPassword(password, config);
   if (!valid) {
     recordLoginFailure();
     redirect(loginUrl("invalid"));

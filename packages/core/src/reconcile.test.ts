@@ -85,8 +85,13 @@ describe("reconcile", () => {
     const r = reconcile([closed], [posting({ externalId: "new" })], { mode: "ok", now });
     expect(r.inserts[0]!.repostOfJobId).toBeUndefined();
   });
+  it("does not allow a saved threshold to weaken the two-scan minimum", () => {
+    const result = reconcile([job()], [], { mode: "ok", now, closeAfterMissing: 1 });
+    expect(result.closed).toEqual([]);
+    expect(result.missing).toEqual(["job-1"]);
+  });
   it("honours a custom close threshold", () => {
-    const r = reconcile([job()], [], { mode: "ok", now, closeAfterMissing: 1 });
+    const r = reconcile([job({ missingScans: 2 })], [], { mode: "ok", now, closeAfterMissing: 3 });
     expect(r.closed).toEqual(["job-1"]);
   });
 });

@@ -1,5 +1,7 @@
 "use server";
 
+import { requireSession } from "@/lib/auth";
+
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { tasks } from "@christopher/db/schema";
@@ -7,6 +9,7 @@ import { db } from "@/lib/db";
 import { zUuid } from "@/lib/validation";
 
 export async function retryTask(taskId: string): Promise<void> {
+  await requireSession();
   const id = zUuid().parse(taskId);
   await db()
     .update(tasks)

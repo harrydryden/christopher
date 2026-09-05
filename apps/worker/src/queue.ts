@@ -1,6 +1,7 @@
 import { schema, type Db, type Task } from "@christopher/db";
 import { and, eq, lt, sql } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
+import { finaliseScanRuns } from "./handlers/daily";
 import { log } from "./log";
 
 export type TaskHandler = (task: Task, deps: WorkerDeps) => Promise<unknown>;
@@ -128,6 +129,7 @@ export class TaskQueue {
       log.info("task start", { id: task.id, type: task.type, attempt: task.attempts });
       const result = await handler(task, this.deps);
       await completeTask(this.deps.db, task, result);
+      if (task.type === "scan_company" || task.type === "run_daily") await finaliseScanRuns(this.deps);
       log.info("task done", { id: task.id, type: task.type, ms: Date.now() - started });
     } catch (err) {
       const outcome = await failTask(this.deps.db, task, err).catch((e) => {

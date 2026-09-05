@@ -7,6 +7,7 @@ recommends companies similar to the ones you already track.
 
 Single user. Give it a homepage URL and it finds the careers page itself.
 
+- **Functional review and remaining release gates:** [docs/REVIEW-PLAN.md](docs/REVIEW-PLAN.md)
 - **Specification:** [docs/SPEC.md](docs/SPEC.md)
 - **Interface:** Next.js on Vercel. **Worker and database:** Render.
 

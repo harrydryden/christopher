@@ -125,7 +125,7 @@ export default async function SettingsPage() {
             </label>
             <label className={labelClass}>
               <span className={fieldLabelClass}>Close after N missing scans</span>
-              <input name="closeAfterMissingScans" type="number" min={1} max={5} defaultValue={settings.closeAfterMissingScans} className={inputClass} />
+              <input name="closeAfterMissingScans" type="number" min={2} max={5} defaultValue={settings.closeAfterMissingScans} className={inputClass} />
             </label>
           </div>
           <label className="flex items-center gap-1.5 text-sm">

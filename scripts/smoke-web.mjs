@@ -5,9 +5,13 @@
  *   node scripts/smoke-web.mjs            (build then test)
  *   node scripts/smoke-web.mjs --no-build  (test an already built app)
  */
+import { createRequire } from "node:module";
+import { once } from "node:events";
 import { spawn } from "node:child_process";
 import { createHmac } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
+
+const nextBin = createRequire(new URL("../apps/web/package.json", import.meta.url)).resolve("next/dist/bin/next");
 
 const PORT = Number(process.env.SMOKE_PORT ?? 3123);
 const SECRET = "smoke-test-secret";
@@ -70,11 +74,11 @@ const env = {
 async function main() {
   if (!skipBuild) {
     console.log("building…");
-    await run("npx", ["next", "build"], { cwd: "apps/web", env });
+    await run(process.execPath, [nextBin, "build"], { cwd: "apps/web", env });
   }
 
   console.log(`starting on :${PORT}…`);
-  const server = spawn("npx", ["next", "start", "-p", String(PORT)], { cwd: "apps/web", env, stdio: ["ignore", "pipe", "pipe"] });
+  const server = spawn(process.execPath, [nextBin, "start", "-p", String(PORT)], { cwd: "apps/web", env, stdio: ["ignore", "pipe", "pipe"] });
   let serverLog = "";
   server.stdout.on("data", (d) => (serverLog += d.toString()));
   server.stderr.on("data", (d) => (serverLog += d.toString()));
@@ -129,8 +133,13 @@ async function main() {
     console.log(`  ${res.status}  ${path}  (${body.length} bytes)`);
   }
 
+  const exited = once(server, "exit");
   server.kill("SIGTERM");
-  await sleep(500);
+  await Promise.race([exited, sleep(5000)]);
+  if (server.exitCode === null && server.signalCode === null) {
+    server.kill("SIGKILL");
+    await exited;
+  }
 
   if (failures.length) {
     console.error("\nFAILURES:");

@@ -25,15 +25,26 @@ import {
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { CareerSource } from "@christopher/db";
 import { aiBudgetExceeded, makeFetchContext, type WorkerDeps } from "../context";
+import { gzipSync, gunzipSync } from "node:zlib";
 import { log } from "../log";
 
 type ScanStatus = "ok" | "partial" | "suspect_empty" | "failed";
 
 export async function handleScanCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
   const payload = task.payload as { companyId: string; scanRunId?: string };
+  // One company must never reconcile overlapping snapshots concurrently.
+  return deps.db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`christopher:scan:${payload.companyId}`}))`);
+    return scanCompany(task, { ...deps, db: tx as unknown as WorkerDeps["db"] });
+  });
+}
+
+async function scanCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
+  const payload = task.payload as { companyId: string; scanRunId?: string };
   const settings = await deps.settings();
   const [company] = await deps.db.select().from(schema.companies).where(eq(schema.companies.id, payload.companyId)).limit(1);
   if (!company) return { skipped: "company not found" };
+  if (company.status !== "active") return { skipped: "company is not active" };
 
   const sources = await deps.db
     .select()
@@ -55,19 +66,6 @@ export async function handleScanCompany(task: Task, deps: WorkerDeps): Promise<u
     totalClosed += outcome.closedCount;
   }
 
-  if (payload.scanRunId) {
-    const ok = statuses.some((s) => s === "ok" || s === "partial");
-    await deps.db
-      .update(schema.scanRuns)
-      .set({
-        companiesOk: sql`${schema.scanRuns.companiesOk} + ${ok ? 1 : 0}`,
-        companiesFailed: sql`${schema.scanRuns.companiesFailed} + ${ok ? 0 : 1}`,
-        newRoles: sql`${schema.scanRuns.newRoles} + ${totalNew}`,
-        closedRoles: sql`${schema.scanRuns.closedRoles} + ${totalClosed}`,
-        finishedAt: deps.now(),
-      })
-      .where(eq(schema.scanRuns.id, payload.scanRunId));
-  }
   return { sources: sources.length, new: totalNew, closed: totalClosed, statuses };
 }
 
@@ -86,7 +84,16 @@ async function scanSource(
   scanRunId: string | null,
 ): Promise<SourceOutcome> {
   const started = Date.now();
-  const ctx = makeFetchContext(deps);
+  const baseCtx = makeFetchContext(deps);
+  const responses: Array<{ url: string; status: number; body: string }> = [];
+  let snapshotChars = 0;
+  const ctx: FetchContext = { ...baseCtx, fetchText: async (url, init) => {
+    const response = await baseCtx.fetchText(url, init);
+    const body = response.body.slice(0, Math.max(0, 2_000_000 - snapshotChars));
+    snapshotChars += body.length;
+    if (body) responses.push({ url: response.url, status: response.status, body });
+    return response;
+  } };
   const spec: SourceSpec = {
     type: source.type,
     url: source.url,
@@ -103,6 +110,8 @@ async function scanSource(
   let droppedByValidation = 0;
   let blocked = false;
   let contentHash: string | null = source.contentHash;
+  let htmlPages: CachedHtmlPage[] = [];
+  let incomplete = false;
 
   try {
     if (source.type === "html") {
@@ -111,6 +120,8 @@ async function scanSource(
       fetchMethod = outcome.method;
       droppedByValidation = outcome.dropped;
       contentHash = outcome.contentHash;
+      htmlPages = outcome.pages ?? [];
+      incomplete = outcome.incomplete ?? false;
       if (outcome.unchanged) {
         log.debug("source unchanged since last scan", { company: company.name, url: source.url });
       }
@@ -134,11 +145,24 @@ async function scanSource(
     .limit(1);
   const previousOkCount = previousOk[0]?.postingsFound ?? null;
 
-  const status = classifyScan({ fetchOk, postingsFound: postings.length, previousOkCount, droppedByValidation });
+  if (postings.length > 500) { postings = postings.slice(0, 500); incomplete = true; }
+  const classified = classifyScan({ fetchOk, postingsFound: postings.length, previousOkCount, droppedByValidation });
+  const status = incomplete && classified === "ok" ? "partial" : classified;
   const mode = modeForScanStatus(status);
 
   const existingRows = await deps.db
     .select({
+      descriptionText: schema.jobs.descriptionText,
+      descriptionFetchedAt: schema.jobs.descriptionFetchedAt,
+      url: schema.jobs.url,
+      locations: schema.jobs.locations,
+      department: schema.jobs.department,
+      employmentType: schema.jobs.employmentType,
+      remote: schema.jobs.remote,
+      salaryText: schema.jobs.salaryText,
+      postedAt: schema.jobs.postedAt,
+      fitScore: schema.jobs.fitScore,
+      inTable: schema.jobs.inTable,
       id: schema.jobs.id,
       externalKey: schema.jobs.externalKey,
       status: schema.jobs.status,
@@ -210,27 +234,50 @@ async function scanSource(
     newCount++;
     await deps.db.insert(schema.jobEvents).values({ jobId: created.id, type: "discovered", payload: { method: fetchMethod, seeded: isFirstScan } });
     if (gate.inTable || nearMiss) scoreQueue.push({ jobId: created.id, nearMiss });
-    if (gate.inTable && !insert.descriptionText) descriptionQueue.push(created.id);
+    if ((gate.inTable || nearMiss) && !insert.descriptionText) descriptionQueue.push(created.id);
   }
 
   if (result.seen.length > 0) {
-    await deps.db.update(schema.jobs).set({ lastSeenAt: deps.now(), missingScans: 0 }).where(inArray(schema.jobs.id, result.seen));
+    await deps.db.update(schema.jobs).set({ lastSeenAt: deps.now(), ...(mode === "ok" ? { missingScans: 0 } : {}) }).where(inArray(schema.jobs.id, result.seen));
   }
-  for (const update of result.updates) {
-    await deps.db
-      .update(schema.jobs)
-      .set({
-        ...(update.changes.title ? { title: update.changes.title, normalizedTitle: normalizeTitle(update.changes.title) } : {}),
-        ...(update.changes.location !== undefined ? { location: update.changes.location ?? null } : {}),
-        updatedAt: deps.now(),
-      })
-      .where(eq(schema.jobs.id, update.id));
-    await deps.db.insert(schema.jobEvents).values({ jobId: update.id, type: "updated", payload: { fields: update.changedFields } });
+  // Refresh every observed posting, including fields the identity reconciliation does not compare.
+  const observed = new Map(keyPostings(postings).keyed.map((p) => [p.externalKey, p]));
+  for (const job of existingRows.filter((j) => result.seen.includes(j.id))) {
+    const posting = observed.get(job.externalKey)!;
+    const fields = {
+      title: posting.title, url: posting.url,
+      location: posting.location ?? job.location,
+      locations: posting.locations ?? (posting.location ? [posting.location] : job.locations),
+      department: posting.department ?? job.department,
+      employmentType: posting.employmentType ?? job.employmentType,
+      remote: posting.remote ?? job.remote,
+      salaryText: posting.salaryText ?? job.salaryText,
+      postedAt: posting.postedAt ?? job.postedAt,
+      descriptionText: posting.descriptionText?.slice(0, 30_000) ?? job.descriptionText,
+    };
+    const changedFields = Object.keys(fields).filter((key) =>
+      JSON.stringify(fields[key as keyof typeof fields]) !== JSON.stringify(job[key as keyof typeof job]));
+    const gate = evaluateGate({ ...fields, description: fields.descriptionText }, settings.gate);
+    const nearMiss = !gate.inTable && settings.nearMissEnabled && !gate.excluded && gate.locationOk;
+    await deps.db.update(schema.jobs).set({
+      ...fields, normalizedTitle: normalizeTitle(fields.title),
+      keywordMatched: gate.keywordMatched, keywordTerms: gate.keywordTerms,
+      excluded: gate.excluded, locationOk: gate.locationOk, inTable: gate.inTable, nearMiss,
+      ...(posting.descriptionText !== undefined ? {
+        descriptionHash: sha1(fields.descriptionText ?? ""), descriptionFetchedAt: deps.now(),
+      } : {}),
+      updatedAt: deps.now(),
+    }).where(eq(schema.jobs.id, job.id));
+    if (changedFields.length) await deps.db.insert(schema.jobEvents).values({ jobId: job.id, type: "updated", payload: { fields: changedFields } });
+    if ((gate.inTable || nearMiss) && (changedFields.length || !job.inTable && gate.inTable || job.fitScore === null)) scoreQueue.push({ jobId: job.id, nearMiss });
+    const descriptionStale = !job.descriptionFetchedAt || deps.now().getTime() - job.descriptionFetchedAt.getTime() >= 14 * 86_400_000;
+    const sourceUpdated = posting.updatedAt && (!job.descriptionFetchedAt || posting.updatedAt > job.descriptionFetchedAt);
+    if ((gate.inTable || nearMiss) && posting.descriptionText === undefined && (descriptionStale || sourceUpdated)) descriptionQueue.push(job.id);
   }
   if (result.reopened.length > 0) {
     await deps.db
       .update(schema.jobs)
-      .set({ status: "open", closedAt: null, missingScans: 0, reopenedCount: sql`${schema.jobs.reopenedCount} + 1` })
+      .set({ status: "open", closedAt: null, ...(mode === "ok" ? { missingScans: 0 } : {}), reopenedCount: sql`${schema.jobs.reopenedCount} + 1` })
       .where(inArray(schema.jobs.id, result.reopened));
     for (const id of result.reopened) await deps.db.insert(schema.jobEvents).values({ jobId: id, type: "reopened", payload: {} });
   }
@@ -260,8 +307,12 @@ async function scanSource(
     closedCount: result.closed.length,
     error,
     durationMs: Date.now() - started,
-    rawSnapshot: null,
+    rawSnapshot: gzipSync(JSON.stringify({ version: 1, responses, htmlPages })).toString("base64"),
   });
+
+  // Keep bounded debugging evidence from the three most recent source scans.
+  await deps.db.execute(sql`update scans set raw_snapshot = null where source_id = ${source.id}
+    and id not in (select id from scans where source_id = ${source.id} order by started_at desc, id desc limit 3)`);
 
   const failures = status === "failed" ? source.consecutiveFailures + 1 : 0;
   await deps.db
@@ -298,9 +349,10 @@ async function scanSource(
     for (const item of [...inTableToScore, ...nearMissCandidates.slice(0, nearMissBudget)]) {
       await enqueueTask(deps.db, "score_job", item, { dedupeKey: dedupeKeyFor("score_job", item), priority: priorityFor("score_job") });
     }
-    for (const jobId of descriptionQueue.slice(0, 50)) {
-      await enqueueTask(deps.db, "fetch_description", { jobId }, { dedupeKey: dedupeKeyFor("fetch_description", { jobId }), priority: priorityFor("fetch_description") });
-    }
+  }
+  // Snapshot fetching is useful even when no model is configured or the AI budget is exhausted.
+  for (const jobId of descriptionQueue) {
+    await enqueueTask(deps.db, "fetch_description", { jobId }, { dedupeKey: dedupeKeyFor("fetch_description", { jobId }), priority: priorityFor("fetch_description") });
   }
 
   log.info("source scanned", {
@@ -315,6 +367,12 @@ async function scanSource(
   return { status, newCount, closedCount: result.closed.length, postingsFound: postings.length };
 }
 
+interface CachedHtmlPage {
+  url: string;
+  contentHash: string;
+  postings: RawPosting[];
+}
+
 interface HtmlScanOutcome {
   postings: RawPosting[];
   method: "http" | "browser";
@@ -322,6 +380,10 @@ interface HtmlScanOutcome {
   contentHash: string;
   unchanged: boolean;
   recipe?: HtmlRecipe;
+  html?: string;
+  finalUrl?: string;
+  pages?: CachedHtmlPage[];
+  incomplete?: boolean;
 }
 
 /**
@@ -329,6 +391,51 @@ interface HtmlScanOutcome {
  * A model extraction also produces a recipe, so later scans of an unchanged page cost nothing.
  */
 async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: CareerSource, ctx: FetchContext): Promise<HtmlScanOutcome> {
+  const [last] = await deps.db.select({ rawSnapshot: schema.scans.rawSnapshot }).from(schema.scans)
+    .where(and(eq(schema.scans.sourceId, source.id), eq(schema.scans.status, "ok"))).orderBy(desc(schema.scans.startedAt)).limit(1);
+  let cached: CachedHtmlPage[] = [];
+  try {
+    if (last?.rawSnapshot) {
+      const snapshot = JSON.parse(gunzipSync(Buffer.from(last.rawSnapshot, "base64"), { maxOutputLength: 8_000_000 }).toString());
+      if (snapshot.version === 1 && Array.isArray(snapshot.htmlPages)) cached = snapshot.htmlPages.map((page: CachedHtmlPage) => ({ ...page, postings: page.postings.map(posting => ({ ...posting,
+        postedAt: posting.postedAt ? new Date(posting.postedAt) : undefined,
+        updatedAt: posting.updatedAt ? new Date(posting.updatedAt) : undefined,
+      })) }));
+    }
+  } catch { /* Missing or older snapshots trigger fresh extraction. */ }
+  const pages: CachedHtmlPage[] = [];
+  const visited = new Set<string>();
+  let url: string | null = spec.url;
+  let method: "http" | "browser" = "http";
+  let dropped = 0;
+  let recipe: HtmlRecipe | undefined;
+  let unchanged = true;
+  let incomplete = false;
+  while (url && pages.length < 20) {
+    if (visited.has(url)) { incomplete = true; break; }
+    visited.add(url);
+    try {
+      const page = await scanHtmlPage(deps, { ...spec, url }, source, ctx, cached.find(p => p.url === url));
+      if (page.method === "browser") method = "browser";
+      dropped += page.dropped;
+      unchanged = unchanged && page.unchanged;
+      recipe ??= page.recipe;
+      pages.push({ url, contentHash: page.contentHash, postings: page.postings });
+      url = ats.nextListingPage(page.html ?? "", page.finalUrl ?? url);
+      if (pages.reduce((n, p) => n + p.postings.length, 0) >= 500 && url) { incomplete = true; break; }
+    } catch (error) {
+      if (pages.length === 0) throw error;
+      incomplete = true;
+      log.warn("HTML pagination incomplete", { url, error: (error as Error).message });
+      break;
+    }
+  }
+  if (url) incomplete = true;
+  const postings = keyPostings(pages.flatMap(page => page.postings)).keyed;
+  return { postings, method, dropped, contentHash: sha1(pages.map(p => p.contentHash).join("|")), unchanged, recipe, pages, incomplete };
+}
+
+async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSource, ctx: FetchContext, cached?: CachedHtmlPage): Promise<HtmlScanOutcome> {
   let html: string;
   let finalUrl = spec.url;
   let method: "http" | "browser" = "http";
@@ -340,6 +447,9 @@ async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: Career
   let postings = ats.extractPostingsFromHtml(html, finalUrl, spec.recipe);
   if (postings.length === 0 && deps.browser) {
     const rendered = await deps.browser.render(spec.url, { scrollAndExpand: true });
+    if (rendered.status !== null && rendered.status >= 400) {
+      throw new SourceFetchError(`Browser returned HTTP ${rendered.status}`, rendered.status === 403 || rendered.status === 429 ? "blocked" : "http", rendered.status);
+    }
     html = rendered.html;
     finalUrl = rendered.finalUrl;
     method = "browser";
@@ -347,16 +457,18 @@ async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: Career
   }
 
   const contentHash = sha1(html.replace(/\s+/g, " "));
-  const unchanged = contentHash === source.contentHash;
+  const unchanged = contentHash === cached?.contentHash;
 
-  if (postings.length > 0 || unchanged || !deps.ai.enabled || (await aiBudgetExceeded(deps))) {
-    return { postings, method, dropped: 0, contentHash, unchanged };
+  if (postings.length === 0 && unchanged && cached?.postings.length) postings = cached.postings;
+  if (postings.length > 0) return { postings, method, dropped: 0, contentHash, unchanged, html, finalUrl };
+  if (unchanged || !deps.ai.enabled || (await aiBudgetExceeded(deps))) {
+    throw new SourceFetchError("HTML extraction found no verifiable postings; cannot establish a successful empty scan", "parse");
   }
 
   // Nothing came out of the heuristics and the page has changed: ask the model, and keep its recipe.
   const compact = ats.compactDomForModel(html, finalUrl);
   const extraction = await deps.ai.extractPostings({ pageUrl: finalUrl, compactDom: compact.text, knownUrls: compact.knownUrls }, { refType: "source", refId: source.id });
-  if (!extraction) return { postings, method, dropped: 0, contentHash, unchanged };
+  if (!extraction || extraction.postings.length === 0) throw new SourceFetchError("HTML extraction produced no verifiable postings", "parse");
 
   const modelPostings: RawPosting[] = extraction.postings.map((p) => ({
     title: p.title,
@@ -372,7 +484,7 @@ async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: Career
     if (validation.ok) recipe = extraction.recipe;
     else log.info("model recipe rejected", { url: finalUrl, coverage: validation.coverage });
   }
-  return { postings: modelPostings, method, dropped: extraction.dropped, contentHash, unchanged, recipe };
+  return { postings: modelPostings, method, dropped: extraction.dropped, contentHash, unchanged, recipe, html, finalUrl };
 }
 
 export { scanSource as _scanSourceForTests };

@@ -8,6 +8,7 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16
@@ -33,3 +34,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r typecheck
       - run: pnpm -r test
+      - run: pnpm --filter @christopher/worker exec playwright install --with-deps chromium
+      - run: pnpm --filter @christopher/worker exec vitest run src/browser.test.ts
+        env:
+          CHRISTOPHER_DISABLE_BROWSER: "0"
+      - run: pnpm db:migrate
+      - run: pnpm smoke:web

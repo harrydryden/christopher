@@ -77,7 +77,7 @@ function sameArray(a?: string[] | null, b?: string[] | null): boolean {
 
 export function reconcile(existing: ExistingJob[], postings: RawPosting[], opts: ReconcileOptions): ReconcileResult {
   const now = opts.now ?? new Date();
-  const closeAfter = opts.closeAfterMissing ?? 2;
+  const closeAfter = Math.max(2, Number.isFinite(opts.closeAfterMissing) ? Math.floor(opts.closeAfterMissing!) : 2);
   const repostWindowMs = (opts.repostWindowDays ?? 30) * 86_400_000;
   const result: ReconcileResult = {
     mode: opts.mode,

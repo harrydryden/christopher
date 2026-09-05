@@ -5,7 +5,7 @@
  *
  * Requires a database: set TEST_DATABASE_URL (defaults to the local christopher_test database).
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {createDb, schema, enqueueTask, type Db} from "@christopher/db";
 import { runMigrations } from "@christopher/db/migrate";
 import { dedupeKeyFor, displayStatus, liveFor, priorityFor } from "@christopher/core";
@@ -13,6 +13,9 @@ import { desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { handlers } from "./handlers";
+import { _scanSourceForTests } from "./handlers/scan";
+import { handleScoreJob, handleTagReason } from "./handlers/learning";
+import { handleRunDaily, finaliseScanRuns } from "./handlers/daily";
 import { TaskQueue } from "./queue";
 import { startTestServer, type RouteTable, type TestServer } from "./test-server";
 
@@ -392,4 +395,162 @@ describe("end to end", () => {
     expect(run!.companiesOk).toBe(1);
     expect(run!.companiesFailed).toBe(0);
   }, 60_000);
+});
+
+
+describe("functional review regressions", () => {
+  it("refreshes metadata, descriptions and gate results on an existing posting", async () => {
+    await setGate({ locationTerms: ["UK"] });
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    setJobs([{ ...JOB_OPERATIONS_MANAGER, title: "Engineering Manager", location: { name: "New York, USA" }, offices: [], content: "A changed engineering description", absolute_url: "https://job-boards.greenhouse.io/acme/jobs/4001001?updated=1" }, JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
+    const [source] = await db.select().from(schema.careerSources);
+    await _scanSourceForTests(deps, company, source!, await deps.settings(), null);
+    const [job] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, "id:4001001"));
+    expect(job!.title).toBe("Engineering Manager");
+    expect(job!.descriptionText).toContain("changed engineering");
+    expect(job!.url).toContain("updated=1");
+    expect(job!.inTable).toBe(false);
+    expect(job!.locationOk).toBe(false);
+    expect(job!.nearMiss).toBe(false);
+  }, 60_000);
+
+  it("does not reset missing counters on a partial scan", async () => {
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources);
+    await db.update(schema.jobs).set({ missingScans: 1 });
+    await db.insert(schema.scans).values({ sourceId: source!.id, status: "ok", postingsFound: 20, startedAt: new Date("2099-01-01") });
+    setJobs([JOB_OPERATIONS_MANAGER, JOB_ENGINEER]);
+    const outcome = await _scanSourceForTests(deps, company, source!, await deps.settings(), null);
+    expect(outcome.status).toBe("partial");
+    const jobs = await db.select().from(schema.jobs);
+    expect(jobs.every(job => job.missingScans === 1 && job.status === "open")).toBe(true);
+  }, 60_000);
+
+  it("does not call an unextractable HTML page a successful empty scan", async () => {
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.insert(schema.careerSources).values({ companyId: company.id, type: "html", url: "https://www.acme.example/empty" }).returning();
+    server.setRoutes({ "www.acme.example": { "/empty": { body: "<html><body>Loading careers...</body></html>" }, "/robots.txt": { body: "User-agent: *\nAllow: /" } } });
+    const outcome = await _scanSourceForTests(deps, company, source!, await deps.settings(), null);
+    expect(outcome.status).toBe("failed");
+  }, 60_000);
+
+  it("refreshes matched-term chips even when table membership is unchanged", async () => {
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    await setGate({ includeKeywords: ["operations", "manager"] });
+    await enqueueTask(db, "reevaluate_gate", {});
+    await queue.drain();
+    const [job] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, "id:4001001"));
+    expect(job!.keywordTerms).toEqual(["operations", "manager"]);
+    expect(job!.inTable).toBe(true);
+  }, 60_000);
+
+  it("queues description snapshots without AI", async () => {
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    setJobs([{ ...JOB_OPERATIONS_MANAGER, id: 99999, content: "" }, JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
+    const [source] = await db.select().from(schema.careerSources);
+    await _scanSourceForTests(deps, company, source!, await deps.settings(), null);
+    const tasks = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"));
+    expect(tasks.some((task) => task.status === "queued")).toBe(true);
+  }, 60_000);
+
+  it("proposes an ATS migration instead of activating it silently", async () => {
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    await db.update(schema.careerSources).set({ atsSlug: "old-board", confirmedByUser: true });
+    await enqueueTask(db, "discover", { companyId: company.id, reason: "failing" });
+    await queue.drain();
+    const sources = await db.select().from(schema.careerSources);
+    expect(sources).toHaveLength(1);
+    expect(sources[0]!.atsSlug).toBe("old-board");
+    const runs = await db.select().from(schema.discoveryRuns).orderBy(desc(schema.discoveryRuns.startedAt));
+    expect(runs[0]!.status).toBe("needs_confirmation");
+  }, 60_000);
+
+  it("does not finish a daily run until all company tasks are terminal", async () => {
+    await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    await db.insert(schema.companies).values({ name: "No source", domain: "none.example", homepageUrl: "https://none.example" });
+    await handleRunDaily({ payload: { trigger: "manual" } } as never, deps);
+    expect(await finaliseScanRuns(deps)).toBe(0);
+    const [pending] = await db.select().from(schema.scanRuns);
+    expect(pending!.finishedAt).toBeNull();
+    await queue.drain();
+    const [finished] = await db.select().from(schema.scanRuns);
+    expect(finished!.finishedAt).not.toBeNull();
+    expect(finished!.companiesOk).toBe(1);
+    expect(finished!.companiesFailed).toBe(1);
+  }, 60_000);
+
+  it("reserves the near-miss daily allowance atomically across concurrent scores", async () => {
+    await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const near = await db.select().from(schema.jobs).where(eq(schema.jobs.nearMiss, true));
+    expect(near.length).toBeGreaterThan(0);
+    await db.insert(schema.settings).values({ key: "nearMissDailyCap", value: 1 });
+    const scoreJob = vi.fn().mockResolvedValue({ score: 80, verdict: "strong", rationale: "Fixture" });
+    const aiDeps = { ...deps, ai: { ...deps.ai, enabled: true, scoreJob } } as unknown as WorkerDeps;
+    const task = { payload: { jobId: near[0]!.id } } as never;
+    const outcomes = await Promise.all([handleScoreJob(task, aiDeps), handleScoreJob(task, aiDeps), handleScoreJob(task, aiDeps)]);
+    expect(scoreJob).toHaveBeenCalledTimes(1);
+    expect(outcomes.filter((r) => (r as { skipped?: string }).skipped === "near-miss daily cap reached")).toHaveLength(2);
+  }, 60_000);
+});
+
+
+describe("HTML extraction completion", () => {
+  async function htmlFixture() {
+    const [company] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://www.acme.example" }).returning();
+    const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://www.acme.example/listing" }).returning();
+    return { company: company!, source: source! };
+  }
+  it("unions pages and retains only three compressed scan snapshots", async () => {
+    const { company, source } = await htmlFixture();
+    server.setRoutes({ "www.acme.example": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/listing": { body: '<a href="/jobs/one">Operations Manager</a><a rel="next" href="/listing?page=2">Next</a>' },
+      "/listing?page=2": { body: '<a href="/jobs/two">Operations Lead</a>' },
+    } });
+    for (let i = 0; i < 4; i++) {
+      const result = await _scanSourceForTests(deps, company, source, await deps.settings(), null);
+      expect(result.status).toBe("ok");
+      expect(result.postingsFound).toBe(2);
+    }
+    expect(await db.select().from(schema.jobs)).toHaveLength(2);
+    const scans = await db.select().from(schema.scans);
+    expect(scans.filter(scan => scan.rawSnapshot !== null)).toHaveLength(3);
+  }, 60_000);
+  it("never closes roles when a later listing page fails", async () => {
+    const { company, source } = await htmlFixture();
+    const routes = { "/robots.txt": { body: "User-agent: *\nAllow: /" }, "/listing": { body: '<a href="/jobs/one">Operations Manager</a><a rel="next" href="/listing?page=2">Next</a>' } };
+    server.setRoutes({ "www.acme.example": { ...routes, "/listing?page=2": { body: '<a href="/jobs/two">Operations Lead</a>' } } });
+    await _scanSourceForTests(deps, company, source, await deps.settings(), null);
+    server.setRoutes({ "www.acme.example": { ...routes, "/listing?page=2": { status: 404, body: "Not found" } } });
+    for (let i = 0; i < 2; i++) expect((await _scanSourceForTests(deps, company, source, await deps.settings(), null)).status).toBe("partial");
+    const jobs = await db.select().from(schema.jobs);
+    expect(jobs.every(job => job.status === "open" && job.missingScans === 0)).toBe(true);
+  }, 60_000);
+  it("reuses verified model extraction on unchanged HTML without another model call", async () => {
+    const { company, source } = await htmlFixture();
+    server.setRoutes({ "www.acme.example": { "/robots.txt": { body: "User-agent: *\nAllow: /" }, "/listing": { body: '<a href="/vacancy-one">Operations Manager</a>' } } });
+    const extractPostings = vi.fn().mockResolvedValue({ postings: [{ title: "Operations Manager", url: "https://www.acme.example/vacancy-one" }], dropped: 0 });
+    const modelDeps = { ...deps, ai: { ...deps.ai, enabled: true, extractPostings } } as unknown as WorkerDeps;
+    expect((await _scanSourceForTests(modelDeps, company, source, await deps.settings(), null)).status).toBe("ok");
+    expect((await _scanSourceForTests(deps, company, source, await deps.settings(), null)).status).toBe("ok");
+    expect(extractPostings).toHaveBeenCalledTimes(1);
+    expect(await db.select().from(schema.jobs)).toHaveLength(1);
+  }, 60_000);
+  it("does not overwrite a manually edited reason tag", async () => {
+    const { company, source } = await htmlFixture();
+    const [job] = await db.insert(schema.jobs).values({ companyId: company.id, sourceId: source.id, title: "Operations", normalizedTitle: "operations", url: "https://www.acme.example/jobs/1", externalKey: "one" }).returning();
+    const [decision] = await db.insert(schema.decisions).values({ jobId: job!.id, decision: "skip", reason: "Too junior", jobTitle: "Operations", companyName: "Acme", tags: [], tagsEdited: true }).returning();
+    const tagReason = vi.fn();
+    const modelDeps = { ...deps, ai: { ...deps.ai, enabled: true, tagReason } } as unknown as WorkerDeps;
+    await handleTagReason({ payload: { decisionId: decision!.id } } as never, modelDeps);
+    expect(tagReason).not.toHaveBeenCalled();
+  });
 });

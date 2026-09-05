@@ -14,6 +14,13 @@ interface DailyPayload {
  * Idempotent per (runDate, trigger) so a restart mid-run does not duplicate it.
  */
 export async function handleRunDaily(task: Task, deps: WorkerDeps): Promise<unknown> {
+  return deps.db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('christopher:daily-runs'))`);
+    return runDaily(task, { ...deps, db: tx as unknown as WorkerDeps["db"] });
+  });
+}
+
+async function runDaily(task: Task, deps: WorkerDeps): Promise<unknown> {
   const payload = task.payload as unknown as DailyPayload;
   const settings = await deps.settings();
   const runDate = payload.runDate ?? localDateParts(deps.now(), settings.timezone).ymd;
@@ -40,7 +47,7 @@ export async function handleRunDaily(task: Task, deps: WorkerDeps): Promise<unkn
 
   for (const company of companies) {
     const p = { companyId: company.id, scanRunId: run.id, trigger: payload.trigger };
-    await enqueueTask(deps.db, "scan_company", p, { dedupeKey: dedupeKeyFor("scan_company", p), priority: priorityFor("scan_company") });
+    await enqueueTask(deps.db, "scan_company", p, { dedupeKey: `${dedupeKeyFor("scan_company", p)}:${run.id}`, priority: priorityFor("scan_company") });
   }
 
   log.info("daily run started", { runId: run.id, runDate, companies: companies.length });
@@ -49,6 +56,13 @@ export async function handleRunDaily(task: Task, deps: WorkerDeps): Promise<unkn
 
 /** Summarise a scan run once its scans are done. Called after the queue drains and by the scheduler. */
 export async function finaliseScanRuns(deps: WorkerDeps): Promise<number> {
+  return deps.db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('christopher:daily-runs'))`);
+    return finalise({ ...deps, db: tx as unknown as WorkerDeps["db"] });
+  });
+}
+
+async function finalise(deps: WorkerDeps): Promise<number> {
   const open = await deps.db
     .select()
     .from(schema.scanRuns)
@@ -73,26 +87,19 @@ export async function finaliseScanRuns(deps: WorkerDeps): Promise<number> {
       select count(distinct cs.company_id)::int as n from scans s
       join career_sources cs on cs.id = s.source_id
       where s.scan_run_id = ${run.id} and s.status in ('ok','partial')`);
-    const companiesFailed = await deps.db.execute<{ n: number }>(sql`
-      select count(distinct cs.company_id)::int as n from scans s
-      join career_sources cs on cs.id = s.source_id
-      where s.scan_run_id = ${run.id} and s.status in ('failed','suspect_empty')
-        and cs.company_id not in (
-          select cs2.company_id from scans s2 join career_sources cs2 on cs2.id = s2.source_id
-          where s2.scan_run_id = ${run.id} and s2.status in ('ok','partial'))`);
 
     await deps.db
       .update(schema.scanRuns)
       .set({
         finishedAt: deps.now(),
         companiesOk: companiesOk.rows[0]?.n ?? 0,
-        companiesFailed: companiesFailed.rows[0]?.n ?? 0,
+        companiesFailed: Math.max(0, run.companiesTotal - (companiesOk.rows[0]?.n ?? 0)),
         newRoles: row?.new_roles ?? 0,
         closedRoles: row?.closed_roles ?? 0,
       })
       .where(eq(schema.scanRuns.id, run.id));
     finalised++;
-    log.info("scan run finalised", { runId: run.id, ok: companiesOk.rows[0]?.n, failed: companiesFailed.rows[0]?.n, newRoles: row?.new_roles });
+    log.info("scan run finalised", { runId: run.id, ok: companiesOk.rows[0]?.n, failed: Math.max(0, run.companiesTotal - (companiesOk.rows[0]?.n ?? 0)), newRoles: row?.new_roles });
   }
   return finalised;
 }

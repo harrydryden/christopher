@@ -8,6 +8,20 @@
       "when": 1788565261775,
       "tag": "0000_great_hitman",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788627836984,
+      "tag": "0001_many_sentinels",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788629959679,
+      "tag": "0002_married_lilith",
+      "breakpoints": true
     }
   ]
 }

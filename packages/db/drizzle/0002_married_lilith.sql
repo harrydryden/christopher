@@ -1,0 +1,1 @@
+ALTER TABLE "decisions" ADD COLUMN "tags_edited" boolean DEFAULT false NOT NULL;

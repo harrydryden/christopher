@@ -13,4 +13,4 @@ export {
   fetchHtmlPage,
 } from "./registry";
 export { extractJsonLdPostings } from "./jsonld";
-export { extractPostingsFromHtml, applyRecipe, validateRecipe, findJobLinks, compactDomForModel } from "./html";
+export { extractPostingsFromHtml, applyRecipe, validateRecipe, findJobLinks, compactDomForModel, nextListingPage } from "./html";

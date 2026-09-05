@@ -43,12 +43,19 @@ export async function handleDiscover(task: Task, deps: WorkerDeps): Promise<unkn
   let status: "resolved" | "needs_confirmation" | "not_found" = result.outcome;
 
   if (result.best && result.best.confidence >= AUTO_ACCEPT) {
-    chosenSourceId = await upsertSource(deps.db, company.id, result.best, false);
-    status = "resolved";
-    await enqueueTask(deps.db, "scan_company", { companyId: company.id, trigger: "manual" }, {
-      dedupeKey: dedupeKeyFor("scan_company", { companyId: company.id }),
-      priority: priorityFor("scan_company"),
-    });
+    const existing = await deps.db.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
+    const best = result.best;
+    const same = existing.find((source) => source.type === best.spec.type &&
+      (best.spec.atsSlug ? source.atsSlug === best.spec.atsSlug && source.atsSite === (best.spec.atsSite ?? null) : source.url === best.spec.url));
+    if (existing.length > 0 && !same) {
+      status = "needs_confirmation";
+    } else {
+      chosenSourceId = await upsertSource(deps.db, company.id, best, same?.confirmedByUser ?? false);
+      status = "resolved";
+      await enqueueTask(deps.db, "scan_company", { companyId: company.id, trigger: "manual" }, {
+        dedupeKey: dedupeKeyFor("scan_company", { companyId: company.id }), priority: priorityFor("scan_company"),
+      });
+    }
   }
 
   await deps.db

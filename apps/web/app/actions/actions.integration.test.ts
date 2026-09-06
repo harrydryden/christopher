@@ -62,8 +62,7 @@ describe("authenticated mutations", () => {
     form.set("includeKeywords", "engineering");
     await saveKeywords({ ok: true }, form);
     const [updated] = await database.select().from(schema.jobs).where(eq(schema.jobs.id, job.id));
-    expect(updated!.inTable).toBe(false);
-    expect(updated!.keywordTerms).toEqual([]);
+    expect(updated).toBeUndefined();
   });
   it("makes concurrent repeated source confirmation idempotent", async () => {
     const { company } = await fixture();
@@ -138,7 +137,10 @@ describe("priority workflows", () => {
     expect((await decideRoles(ids, "skip", "")).ok).toBe(false);
     expect(await database.select().from(schema.decisions)).toHaveLength(0);
     expect((await decideRoles(ids, "skip", "Too junior")).ok).toBe(true);
-    expect(await database.select().from(schema.decisions)).toHaveLength(2);
+    const decisions = await database.select().from(schema.decisions);
+    expect(decisions).toHaveLength(2);
+    expect(decisions.every(d => d.reason === "Too junior")).toBe(true);
+    expect((await database.select().from(schema.tasks)).some(t => t.type === "suggest_filters")).toBe(true);
   });
   it("versions libraries and snapshots generation inputs atomically with its task", async () => {
     const { job } = await fixture();

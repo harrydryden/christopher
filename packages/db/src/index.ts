@@ -8,5 +8,5 @@ export * as schema from "./schema";
 export { createDb, getDb, type Db, type CreateDbOptions } from "./client";
 export { enqueueTask, pendingTaskCounts, taskById, activeTaskFor, type EnqueueOptions } from "./tasks";
 
-export { reevaluateGate } from "./gate";
+export { reevaluateGate, pruneNonMatches } from "./gate";
 export { appendProfile } from "./profiles";

@@ -2,7 +2,7 @@
  * The daily scan. For each company: fetch every active source, normalise postings, reconcile them
  * against what is stored, apply the keyword and location gate, and queue scoring for anything new.
  */
-import { schema, enqueueTask, type Db, type Task } from "@christopher/db";
+import { schema, enqueueTask, pruneNonMatches, type Db, type Task } from "@christopher/db";
 import {
   ats,
   classifyScan,
@@ -195,9 +195,8 @@ async function scanSource(
       },
       settings.gate,
     );
-    // A near miss is a role that failed the keyword gate but is still plausibly relevant. It is
-    // recorded cheaply here; only a capped number are scored each day (see below).
-    const nearMiss = !gate.inTable && settings.nearMissEnabled && !gate.excluded && gate.locationOk;
+    if (!gate.inTable) continue;
+    const nearMiss = false;
     const [created] = await deps.db
       .insert(schema.jobs)
       .values({
@@ -258,7 +257,7 @@ async function scanSource(
     const changedFields = Object.keys(fields).filter((key) =>
       JSON.stringify(fields[key as keyof typeof fields]) !== JSON.stringify(job[key as keyof typeof job]));
     const gate = evaluateGate({ ...fields, description: fields.descriptionText }, settings.gate);
-    const nearMiss = !gate.inTable && settings.nearMissEnabled && !gate.excluded && gate.locationOk;
+    const nearMiss = false;
     await deps.db.update(schema.jobs).set({
       ...fields, normalizedTitle: normalizeTitle(fields.title),
       keywordMatched: gate.keywordMatched, keywordTerms: gate.keywordTerms,
@@ -364,6 +363,7 @@ async function scanSource(
     closed: result.closed.length,
     ms: Date.now() - started,
   });
+  await pruneNonMatches(deps.db, source.id);
   return { status, newCount, closedCount: result.closed.length, postingsFound: postings.length };
 }
 

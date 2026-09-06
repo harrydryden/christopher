@@ -13,6 +13,8 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 import { savePreferenceProfile, savePinnedStatements, acceptReasonTag } from "./learning";
 import { decide, saveDecisionTags, archiveRoles, decideRoles } from "./decisions";
+import { recordApplication, updateApplication } from "./applications";
+import { GET as downloadApplication } from "@/app/api/applications/[id]/pdf/route";
 import { saveCvLibrary, requestCv, saveCvDraft, saveCvModel } from "./cv";
 import { fetchTableJobs } from "@/lib/queries/jobs";
 import { saveKeywords } from "./settings";
@@ -62,8 +64,7 @@ describe("authenticated mutations", () => {
     form.set("includeKeywords", "engineering");
     await saveKeywords({ ok: true }, form);
     const [updated] = await database.select().from(schema.jobs).where(eq(schema.jobs.id, job.id));
-    expect(updated!.inTable).toBe(false);
-    expect(updated!.keywordTerms).toEqual([]);
+    expect(updated).toBeUndefined();
   });
   it("makes concurrent repeated source confirmation idempotent", async () => {
     const { company } = await fixture();
@@ -138,7 +139,10 @@ describe("priority workflows", () => {
     expect((await decideRoles(ids, "skip", "")).ok).toBe(false);
     expect(await database.select().from(schema.decisions)).toHaveLength(0);
     expect((await decideRoles(ids, "skip", "Too junior")).ok).toBe(true);
-    expect(await database.select().from(schema.decisions)).toHaveLength(2);
+    const decisions = await database.select().from(schema.decisions);
+    expect(decisions).toHaveLength(2);
+    expect(decisions.every(d => d.reason === "Too junior")).toBe(true);
+    expect((await database.select().from(schema.tasks)).some(t => t.type === "suggest_filters")).toBe(true);
   });
   it("versions libraries and snapshots generation inputs atomically with its task", async () => {
     const { job } = await fixture();
@@ -154,11 +158,32 @@ describe("priority workflows", () => {
     expect(draft!.librarySnapshot).toEqual(content); expect(draft!.model).toBe("claude-sonnet-5");
     expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(1);
     await database.update(schema.cvDrafts).set({ status: "ready", revision: 1, content: { name: content.name, contact: content.contact, summary: "Original", sections: [{ entryId: "one", kind: "experience", heading: "Director · Acme", bullets: ["Led a team"] }], gaps: [] } }).where(eq(schema.cvDrafts.id, draft!.id));
-    const edit = new FormData(); edit.set("summary", "Edited summary"); edit.set("section-0", "Led the operations team");
+    const edit = new FormData(); edit.set("summary", "Edited summary"); edit.set("section-0", "Led the operations team"); edit.set("rememberWording", "on");
     await expect(saveCvDraft(draft!.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
     const versions = await database.select().from(schema.cvDrafts).orderBy(schema.cvDrafts.revision);
     expect(versions.map(v => v.content?.summary)).toEqual(["Original", "Edited summary"]);
     expect(versions[1]!.parentId).toBe(draft!.id);
+    const libraries = await database.select().from(schema.cvLibraries).orderBy(schema.cvLibraries.version);
+    expect(libraries).toHaveLength(2);
+    expect(libraries[0]!.content.preferredWording).toBeUndefined();
+    expect(libraries[1]!.content.preferredWording).toContain("Led the operations team");
+    const application = new FormData(); application.set("appliedOn", "2026-02-30");
+    expect((await recordApplication(versions[1]!.id, { ok: true }, application)).ok).toBe(false);
+    application.set("appliedOn", "2026-09-06");
+    expect((await recordApplication(versions[1]!.id, { ok: true }, application)).ok).toBe(true);
+    expect((await recordApplication(versions[1]!.id, { ok: true }, application)).ok).toBe(false);
+    const [savedApplication] = await database.select().from(schema.applications);
+    const frozen = savedApplication!.pdfBase64;
+    expect(Buffer.from(frozen, "base64").subarray(0, 5).toString()).toBe("%PDF-");
+    const update = new FormData(); update.set("status", "interview"); update.set("notes", "First interview arranged");
+    expect((await updateApplication(savedApplication!.id, { ok: true }, update)).ok).toBe(true);
+    const [after] = await database.select().from(schema.applications);
+    expect(after!.history.map(h => h.status)).toEqual(["applied", "interview"]);
+    expect(after!.pdfBase64).toBe(frozen);
+    expect(after!.cvId).toBe(versions[1]!.id);
+    const response = await downloadApplication(new Request("https://example.test"), { params: Promise.resolve({ id: after!.id }) });
+    expect(Buffer.from(await response.arrayBuffer()).toString("base64")).toBe(frozen);
+
   });
   it("does not allow the CV and scraping model to be the same", async () => {
     const form = new FormData(); form.set("cvModel", "claude-opus-5");

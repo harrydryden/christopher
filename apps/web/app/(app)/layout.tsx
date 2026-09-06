@@ -27,6 +27,8 @@ const NAV_ITEMS = [
   { href: "/companies", label: "Companies" },
   { href: "/suggestions", label: "Suggestions" },
   { href: "/cv", label: "CV builder" },
+  { href: "/cv/library", label: "Evidence library" },
+  { href: "/applications", label: "Applications" },
   { href: "/learning", label: "Learning" },
   { href: "/health", label: "Health" },
   { href: "/settings", label: "Settings" },

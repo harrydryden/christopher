@@ -110,7 +110,7 @@ describe("the cron route", () => {
     expect(source!.atsSlug).toBe("acme");
 
     const jobs = await db.select().from(schema.jobs);
-    expect(jobs).toHaveLength(2);
+    expect(jobs).toHaveLength(1);
     expect(jobs.filter((j) => j.inTable).map((j) => j.title)).toEqual(["Operations Manager"]);
     expect(jobs.find((j) => j.title === "Operations Manager")!.location).toBe("London, UK");
   }, 120_000);

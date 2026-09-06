@@ -1,5 +1,5 @@
 import { evaluateGate, dedupeKeyFor, priorityFor, type AppSettings } from "@christopher/core";
-import { eq, gte, or } from "drizzle-orm";
+import { eq, gte, or, sql } from "drizzle-orm";
 import type { Db } from "./client";
 import * as schema from "./schema";
 import { enqueueTask } from "./tasks";
@@ -12,7 +12,7 @@ export async function reevaluateGate(db: Db, settings: AppSettings, now = new Da
   let queuedForScoring = 0;
   for (const job of rows) {
     const gate = evaluateGate({ ...job, description: job.descriptionText }, settings.gate);
-    const nearMiss = !gate.inTable && settings.nearMissEnabled && !gate.excluded && gate.locationOk;
+    const nearMiss = false;
     const hidden = settings.hideThreshold !== null && gate.inTable && job.fitScore !== null && job.fitScore < settings.hideThreshold;
     const values = { keywordMatched: gate.keywordMatched, keywordTerms: gate.keywordTerms,
       excluded: gate.excluded, locationOk: gate.locationOk, inTable: gate.inTable, nearMiss, hidden };
@@ -25,5 +25,17 @@ export async function reevaluateGate(db: Db, settings: AppSettings, now = new Da
       if (await enqueueTask(db, "score_job", payload, { dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") })) queuedForScoring++;
     }
   }
-  return { examined: rows.length, changed, queuedForScoring };
+  const removed = await pruneNonMatches(db);
+  return { removed, examined: rows.length, changed, queuedForScoring };
+}
+
+/** Retain every decision (including superseded decisions), CV and explicitly archived role. */
+export async function pruneNonMatches(db: Db, sourceId?: string): Promise<number> {
+  const result = await db.execute(sql`
+    delete from jobs j where j.in_table = false and j.archived_at is null
+    and (${sourceId ?? null}::uuid is null or j.source_id = ${sourceId ?? null}::uuid)
+    and not exists (select 1 from decisions d where d.job_id = j.id)
+    and not exists (select 1 from cv_drafts c where c.job_id = j.id)
+    returning j.id`);
+  return result.rows.length;
 }

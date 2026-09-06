@@ -214,7 +214,7 @@ export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promis
   if (await aiBudgetExceeded(deps)) return { skipped: "ai budget exceeded" };
   const settings = await deps.settings();
   const decisions = await decisionRows(deps, 300);
-  if (decisions.length < 5) return { skipped: "not enough decisions" };
+  if (decisions.length === 0) return { skipped: "no decisions" };
 
   const nearMissIds = await deps.db
     .select({ id: schema.jobs.id })

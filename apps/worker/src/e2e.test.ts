@@ -6,7 +6,7 @@
  * Requires a database: set TEST_DATABASE_URL (defaults to the local christopher_test database).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import {createDb, schema, enqueueTask, type Db} from "@christopher/db";
+import {createDb, schema, enqueueTask, reevaluateGate, type Db} from "@christopher/db";
 import { runMigrations } from "@christopher/db/migrate";
 import { dedupeKeyFor, displayStatus, liveFor, priorityFor } from "@christopher/core";
 import { desc, eq, sql } from "drizzle-orm";
@@ -214,22 +214,21 @@ describe("end to end", () => {
     expect(scan!.fetchMethod).toBe("api");
   }, 60_000);
 
-  it("puts only keyword-matching roles in the table, and records the rest", async () => {
+  it("stores only matching roles while counting the complete listing", async () => {
     await setGate({});
     await addCompany("https://www.acme.example/", "acme.example");
     await queue.drain();
 
     const rows = await jobsInTable();
-    expect(rows).toHaveLength(5);
+    expect(rows).toHaveLength(4);
     const inTable = rows.filter((r) => r.inTable).map((r) => r.title);
     expect(inTable).toEqual(["Head of Business Operations", "Operations Analyst", "Operations Manager", "Senior Operations Associate"]);
-    expect(rows.find((r) => r.title.startsWith("Software"))!.inTable).toBe(false);
+    expect(rows.find((r) => r.title.startsWith("Software"))).toBeUndefined();
     expect(rows.find((r) => r.title === "Operations Manager")!.keywordTerms).toEqual(["operations"]);
     // Every role from the first scan is flagged as seeded so a day-one table is not read as news.
     expect(rows.every((r) => r.seeded)).toBe(true);
-    // The engineering role missed the keywords but is otherwise plausible, so it is kept as a
-    // near miss the learning loop can surface. Nothing is deleted.
-    expect(rows.find((r) => r.title.startsWith("Software"))!.nearMiss).toBe(true);
+    // Non-matches are never persisted or scored.
+    expect(rows.some(r => r.nearMiss)).toBe(false);
   }, 60_000);
 
   it("filters by location, expanding UK and keeping UK-remote roles", async () => {
@@ -241,11 +240,11 @@ describe("end to end", () => {
     const inTable = rows.filter((r) => r.inTable).map((r) => r.title);
     expect(inTable).toEqual(["Operations Analyst", "Operations Manager"]);
     // New York is out; "Remote - USA" is out because it names another region.
-    expect(rows.find((r) => r.title === "Head of Business Operations")!.inTable).toBe(false);
-    expect(rows.find((r) => r.title === "Senior Operations Associate")!.inTable).toBe(false);
+    expect(rows.find((r) => r.title === "Head of Business Operations")).toBeUndefined();
+    expect(rows.find((r) => r.title === "Senior Operations Associate")).toBeUndefined();
     expect(rows.find((r) => r.title === "Operations Analyst")!.location).toBe("Remote - UK");
     // A role outside the location filter is not a near miss either: the filter is a hard boundary.
-    expect(rows.find((r) => r.title === "Head of Business Operations")!.nearMiss).toBe(false);
+    expect(rows.some(r => r.nearMiss)).toBe(false);
   }, 60_000);
 
   it("re-evaluates the gate in place when the location filter changes", async () => {
@@ -403,6 +402,8 @@ describe("functional review regressions", () => {
     await setGate({ locationTerms: ["UK"] });
     const company = await addCompany("https://www.acme.example/", "acme.example");
     await queue.drain();
+    const [saved] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, "id:4001001"));
+    await db.insert(schema.decisions).values({ jobId: saved!.id, decision: "skip", reason: "Too junior", jobTitle: saved!.title, companyName: company.name });
     setJobs([{ ...JOB_OPERATIONS_MANAGER, title: "Engineering Manager", location: { name: "New York, USA" }, offices: [], content: "A changed engineering description", absolute_url: "https://job-boards.greenhouse.io/acme/jobs/4001001?updated=1" }, JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
     const [source] = await db.select().from(schema.careerSources);
     await _scanSourceForTests(deps, company, source!, await deps.settings(), null);
@@ -414,6 +415,24 @@ describe("functional review regressions", () => {
     expect(job!.locationOk).toBe(false);
     expect(job!.nearMiss).toBe(false);
   }, 60_000);
+
+  it("cleans non-matches but preserves decisions, CVs and archived roles", async () => {
+    await setGate({});
+    await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const rows = await db.select().from(schema.jobs);
+    expect(rows).toHaveLength(4);
+    await db.insert(schema.decisions).values({ jobId: rows[0]!.id, decision: "skip", reason: "Too junior", jobTitle: rows[0]!.title, companyName: "Acme" });
+    await db.update(schema.jobs).set({ archivedAt: new Date() }).where(eq(schema.jobs.id, rows[1]!.id));
+    await db.insert(schema.cvDrafts).values({ jobId: rows[2]!.id, jobTitle: rows[2]!.title, companyName: "Acme", jobDescription: "Role", libraryVersion: 1, librarySnapshot: { name: "Test", contact: "", profile: "", entries: [] }, model: "fixture" });
+    await setGate({ includeKeywords: ["no-match"] });
+    const result = await reevaluateGate(db, await deps.settings());
+    expect(result.removed).toBe(1);
+    const kept = await db.select().from(schema.jobs);
+    expect(kept).toHaveLength(3);
+    expect(kept.every(j => !j.inTable && !j.nearMiss)).toBe(true);
+    expect((await db.select().from(schema.decisions))[0]!.reason).toBe("Too junior");
+  });
 
   it("does not reset missing counters on a partial scan", async () => {
     const company = await addCompany("https://www.acme.example/", "acme.example");
@@ -489,6 +508,8 @@ describe("functional review regressions", () => {
   it("reserves the near-miss daily allowance atomically across concurrent scores", async () => {
     await addCompany("https://www.acme.example/", "acme.example");
     await queue.drain();
+    // Legacy retained near-misses still obey their scoring cap.
+    await db.update(schema.jobs).set({ inTable: false, nearMiss: true });
     const near = await db.select().from(schema.jobs).where(eq(schema.jobs.nearMiss, true));
     expect(near.length).toBeGreaterThan(0);
     await db.insert(schema.settings).values({ key: "nearMissDailyCap", value: 1 });

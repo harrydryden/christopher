@@ -88,6 +88,7 @@ export async function decide(jobId: string, decision: "apply" | "skip" | null, r
 
   if (decisionId) await enqueue("tag_reason", { decisionId });
   await enqueue("synthesize_profile", { force: false });
+  await enqueue("suggest_filters", {});
 
   revalidatePath("/");
   return ok();

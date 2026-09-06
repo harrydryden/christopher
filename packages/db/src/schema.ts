@@ -381,3 +381,17 @@ export const cvDrafts = pgTable("cv_drafts", {
   parentId: uuid("parent_id"),
   createdAt: tsNow("created_at"),
 });
+
+/** PDF bytes and CV identity are immutable after recording an application. */
+export const applications = pgTable("applications", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  cvId: uuid("cv_id").notNull().references(() => cvDrafts.id),
+  jobTitle: text("job_title").notNull(),
+  companyName: text("company_name").notNull(),
+  appliedOn: text("applied_on").notNull(),
+  pdfBase64: text("pdf_base64").notNull(),
+  status: text("status").notNull().default("applied"),
+  notes: text("notes").notNull().default(""),
+  history: jsonb("history").$type<Array<{ status: string; at: string; notes: string }>>().notNull(),
+  createdAt: tsNow("created_at"),
+});

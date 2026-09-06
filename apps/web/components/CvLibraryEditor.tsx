@@ -12,10 +12,11 @@ export function CvLibraryEditor({ library, version }: { library: CvLibrary | nul
   const [value, setValue] = useState(library ?? empty);
   const [state, action, pending] = useActionState(saveCvLibrary, { ok: true } as Awaited<ReturnType<typeof saveCvLibrary>>);
   useEffect(() => { if (state.ok) router.refresh(); }, [state, router]);
-  function field(key: "name" | "contact" | "profile", label: string, rows = 1) {
-    return <label className="block space-y-1 text-sm"><span>{label}</span><textarea rows={rows} className={input} value={value[key]} onChange={e => setValue({ ...value, [key]: e.target.value })} /></label>;
+  function field(key: "name" | "contact" | "profile" | "stylePreferences" | "preferredWording", label: string, rows = 1) {
+    return <label className="block space-y-1 text-sm"><span>{label}</span><textarea rows={rows} className={input} value={value[key] ?? ""} onChange={e => setValue({ ...value, [key]: e.target.value })} /></label>;
   }
   return <form action={action} className="space-y-4">
+    <p className="text-sm">{version ? `Stored version ${version}: ${value.entries.length} evidence blocks. Edit any field below, then save a new version.` : "Your library is empty. Import your library JSON or add evidence below, then save."}</p>
     <div className="flex flex-wrap items-center gap-3 text-sm">
       <label>Import library JSON<input type="file" accept="application/json,.json" className="ml-2" onChange={async e => {
         const file = e.target.files?.[0]; if (!file) return;
@@ -29,6 +30,8 @@ export function CvLibraryEditor({ library, version }: { library: CvLibrary | nul
     <input type="hidden" name="library" value={JSON.stringify(value)} /><input type="hidden" name="version" value={version} />
     {field("name", "Full name")}
     <label className="block space-y-1 text-sm">LinkedIn profile URL<input type="url" className={input} value={value.linkedinUrl ?? ""} placeholder="https://www.linkedin.com/in/your-profile" onChange={e => setValue({ ...value, linkedinUrl: e.target.value })} /></label>{field("contact", "Contact details (email, phone, location, links)")}{field("profile", "Career overview: facts the model may use", 4)}
+    {field("stylePreferences", "Preferred CV style (tone, length and wording to avoid)", 3)}
+    {field("preferredWording", "Remembered wording corrections (review, edit or remove)", 5)}
     <p className="text-sm text-slate-500">Keep experience in reverse chronological order. Add achievements, numbers, skills and interests you can substantiate. Each draft keeps a snapshot of this evidence.</p>
     {value.entries.map((entry, i) => <fieldset key={entry.id} className="space-y-2 rounded border border-slate-200 p-3">
       <legend className="text-sm font-medium">Evidence {i + 1}</legend>

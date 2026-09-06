@@ -623,3 +623,16 @@ Scale-up stage (Series A to C), remit that includes hiring and process design, r
 - CV evidence entries are reusable building blocks. Each role may use different supported wording and selected bullets; saved library versions and earlier drafts remain unchanged. Layout, source headings and identity fields are controlled by the application.
 - Health shows the persistent worker's last report and last reported Anthropic/browser configuration. A report older than two minutes is treated as missing recent activity, not proof that a process has stopped. Configuration alone does not prove a model call succeeds.
 - Before declaring the live CV flow complete, verify a successful generation and PDF download against the deployed worker. Daily web cron execution does not replace an always-on worker for long-running generation.
+
+### Store matching roles only
+- Evaluate role, seniority and location gates before inserting new roles. Non-matches are discarded; near-miss storage/scoring is disabled.
+- Scan completeness and closure detection still use the full observed listing, never only matching jobs. Scan counts describe observed postings; company role counts describe stored roles.
+- Re-evaluating filters and scanning remove stored non-matches unless they have any decision, a saved CV or an explicit archive marker. These retained records stay outside the inbox.
+- Widened filters discover newly eligible roles on the next scan.
+- Skip requires a non-blank reason for both individual and bulk decisions. Bulk reasons are copied to each affected role. Decision snapshots feed profile synthesis and filter suggestions immediately; accepted suggestions re-evaluate storage and table membership.
+
+### Evidence visibility, reusable feedback and applications
+- Evidence library has its own navigation entry and shows every editable block, saved version, style preferences and remembered wording. Saving creates an immutable new library version; generation snapshots it.
+- Editing a CV offers a checked option to remember changed profile/bullet wording in the latest library. It does not add facts to evidence entries. Remembered wording is visible, editable and removable; style preferences affect phrasing only. Old drafts remain unchanged.
+- A ready CV can be recorded as an application with an explicit application date. The application stores PDF bytes and its immutable CV revision, plus company/title snapshots. This records a user-reported submission; it does not submit to an employer or verify an external upload.
+- Applications track applied, screening, interview, offer, rejected, withdrawn and accepted statuses with timestamped notes history. Status changes cannot overwrite the submitted PDF or CV reference. Duplicate recording of the same revision is rejected.

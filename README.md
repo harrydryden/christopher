@@ -147,3 +147,9 @@ writes nothing to the database.
   near-misses in their own section, which you can switch off in Settings.
 - **Blocked sites are reported, not fought.** Bot protection marks a source blocked and puts it on the
   Health page. The usual fix is pasting the underlying board URL, which is rarely protected.
+
+### Role filtering, table clean-up and CVs
+
+Settings supports separate role and title-seniority keyword lists, combined with location filtering. Use `strateg*` for strategy/strategic. The table offers grouped and bulk decisions plus reversible archive/restore.
+
+CV builder maintains a versioned evidence library and creates saved CVs for individual roles using a separately selected Anthropic model. Import/export the library as JSON, edit draft text, and download a selectable-text A4 PDF. Apply migrations and run the background worker with `ANTHROPIC_API_KEY` before generating. Missing credentials are shown on the draft; local tests do not call paid models. See [the specification](docs/SPEC.md) and [validation record](docs/REVIEW-PLAN.md).

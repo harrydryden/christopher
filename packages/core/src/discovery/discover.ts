@@ -36,6 +36,7 @@ class Run {
   private readonly verified = new Map<string, { ok: boolean; count?: number; sample?: RawPosting[]; companyName?: string; error?: string }>();
   fetches = 0;
   readonly maxFetches: number;
+  private readonly startedAt = Date.now();
   homepageCompanyName?: string;
 
   constructor(private readonly ctx: DiscoveryContext) {
@@ -48,6 +49,10 @@ class Run {
   }
 
   budgetLeft(): boolean {
+    if (Date.now() - this.startedAt >= (this.ctx.maxDurationMs ?? 120_000)) {
+      if (!this.log.includes("discovery time budget exhausted")) this.say("discovery time budget exhausted");
+      return false;
+    }
     if (this.fetches < this.maxFetches) return true;
     if (!this.log.some((l) => l.startsWith("fetch budget"))) this.say(`fetch budget of ${this.maxFetches} exhausted; stopping early`);
     return false;
@@ -339,6 +344,24 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
     fetches: 0,
     durationMs: 0,
   };
+
+  // Verified catalogue entry for a JS-only site whose board slug differs from its domain.
+  // Re-verify the feed and company identity every time; never trust a stale mapping blindly.
+  const knownBoard = extractDomain(normalized) === "anduril.com" ? "https://job-boards.greenhouse.io/andurilindustries" : null;
+  if (knownBoard) {
+    const spec = ctx.resolveSpec(knownBoard);
+    if (spec) {
+      const verified = await run.verify(spec);
+      if (verified.ok && /\banduril\b/i.test(verified.companyName ?? "")) {
+        const candidate: DiscoveryCandidate = { spec, confidence: 0.98, method: "verified_catalogue",
+          evidence: ["Anduril public careers board verified 6 September 2026", `Feed identity: ${verified.companyName}`],
+          sample: verified.sample ?? [], count: verified.count, companyName: verified.companyName };
+        run.say(`verified catalogue board ${knownBoard} (${verified.count ?? 0} postings)`);
+        return { ...result, outcome: "resolved", best: candidate, candidates: [candidate], companyName: verified.companyName, fetches: run.fetches, durationMs: Date.now() - started };
+      }
+      run.say("catalogue board could not be verified; continuing website discovery");
+    }
+  }
 
   let home = await run.fetch(normalized);
   if (!home) {

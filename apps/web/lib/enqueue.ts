@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { tasks } from "@christopher/db/schema";
 import { dedupeKeyFor, priorityFor, type TaskPayloads, type TaskType } from "@christopher/core";
 import { db } from "./db";
@@ -15,7 +16,7 @@ export async function enqueue<T extends TaskType>(type: T, payload: TaskPayloads
       payload: payload as unknown as Record<string, unknown>,
       dedupeKey: dedupeKeyFor(type, payload),
       priority: priorityFor(type),
-      runAfter: new Date(),
+      runAfter: sql`now()`,
       maxAttempts: 3,
     })
     .onConflictDoNothing()

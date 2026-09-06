@@ -140,9 +140,28 @@ export default async function CompanyDetailPage({ params }: { params: Promise<{ 
         </form>
       </Card>
 
+      <Card title="Careers URL">
+          <form action={pasteDiscoveryUrl.bind(null, company.id)} className="mt-4 flex flex-wrap items-end gap-2 border-t border-slate-200 pt-3 dark:border-slate-800">
+            <label className="flex flex-1 flex-col gap-1 text-xs font-medium text-slate-500">
+              Paste careers or board URL
+              <input
+                name="url"
+                type="text"
+                required
+                placeholder="https://boards.greenhouse.io/acme"
+                className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-950"
+              />
+            </label>
+            <Button type="submit" size="sm">
+              Try this URL
+            </Button>
+          </form>
+        <p className="mt-2 text-xs text-slate-500">Paste a known careers board at any time, including while homepage discovery is queued.</p>
+      </Card>
+
       <Card title="Sources">
         {sources.length === 0 ? (
-          <EmptyState title="No careers source yet" description="Run discovery, or paste a careers/board URL below once a discovery run has been started." />
+          <EmptyState title="No careers source yet" description="Run discovery, or paste a careers/board URL above." />
         ) : (
           <div className="space-y-3">
             {sources.map((s) => (
@@ -258,21 +277,7 @@ export default async function CompanyDetailPage({ params }: { params: Promise<{ 
             ))}
             {candidates.length === 0 && <p className="text-sm text-slate-400">No candidates were found.</p>}
           </div>
-          <form action={pasteDiscoveryUrl.bind(null, company.id)} className="mt-4 flex flex-wrap items-end gap-2 border-t border-slate-200 pt-3 dark:border-slate-800">
-            <label className="flex flex-1 flex-col gap-1 text-xs font-medium text-slate-500">
-              Paste careers or board URL
-              <input
-                name="url"
-                type="text"
-                required
-                placeholder="https://boards.greenhouse.io/acme"
-                className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-950"
-              />
-            </label>
-            <Button type="submit" size="sm">
-              Try this URL
-            </Button>
-          </form>
+
         </Card>
       )}
 

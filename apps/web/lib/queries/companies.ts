@@ -24,6 +24,7 @@ export interface CompanyListRow {
   openRoles: number;
   inTableRoles: number;
   discovering: boolean;
+  discoveryState: "queued" | "running" | null;
 }
 
 export async function listCompanies(): Promise<CompanyListRow[]> {
@@ -34,7 +35,7 @@ export async function listCompanies(): Promise<CompanyListRow[]> {
       .select({
         companyId: jobs.companyId,
         openRoles: sql<number>`count(*) filter (where ${jobs.status} = 'open')::int`,
-        inTableRoles: sql<number>`count(*) filter (where ${jobs.inTable} = true)::int`,
+        inTableRoles: sql<number>`count(*) filter (where ${jobs.inTable} = true and ${jobs.archivedAt} is null)::int`,
       })
       .from(jobs)
       .groupBy(jobs.companyId),
@@ -48,7 +49,7 @@ export async function listCompanies(): Promise<CompanyListRow[]> {
       .innerJoin(careerSources, eq(scans.sourceId, careerSources.id))
       .orderBy(careerSources.companyId, desc(scans.startedAt)),
     db()
-      .select({ payload: tasks.payload })
+      .select({ payload: tasks.payload, status: tasks.status })
       .from(tasks)
       .where(and(eq(tasks.type, "discover"), inArray(tasks.status, ["queued", "running"]))),
   ]);
@@ -72,6 +73,8 @@ export async function listCompanies(): Promise<CompanyListRow[]> {
     openRoles: countsByCompany.get(company.id)?.openRoles ?? 0,
     inTableRoles: countsByCompany.get(company.id)?.inTableRoles ?? 0,
     discovering: discoveringSet.has(company.id),
+    discoveryState: discoveringRows.some(r => (r.payload as { companyId?: string }).companyId === company.id && r.status === "running") ? "running"
+      : discoveringSet.has(company.id) ? "queued" : null,
   }));
 }
 

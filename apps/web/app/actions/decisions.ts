@@ -108,3 +108,27 @@ export async function saveDecisionTags(decisionId: string, formData: FormData): 
   revalidatePath("/learning");
   revalidatePath("/");
 }
+
+/** Archive is a user preference, independent of source status and future scans. */
+export async function archiveRoles(jobIds: string[], archived: boolean): Promise<ActionResult> {
+  await requireSession();
+  const parsed = z.array(zUuid()).min(1).max(500).safeParse(jobIds);
+  if (!parsed.success || typeof archived !== "boolean") return fail("Select between 1 and 500 roles.");
+  await db().update(jobs).set({ archivedAt: archived ? new Date() : null }).where(inArray(jobs.id, [...new Set(parsed.data)]));
+  revalidatePath("/");
+  return ok();
+}
+
+export async function decideRoles(jobIds: string[], decision: "apply" | "skip" | null, reason: string): Promise<ActionResult> {
+  await requireSession();
+  const ids = z.array(zUuid()).min(1).max(100).safeParse(jobIds);
+  const input = DecideSchema.omit({ jobId: true }).safeParse({ decision, reason });
+  if (!ids.success || !input.success) return fail("Select between 1 and 100 roles.");
+  if (decision === "skip" && !reason.trim()) return fail("A reason is required to skip.");
+  // Each decision is independently durable; report a failure without claiming the whole batch succeeded.
+  for (const id of [...new Set(ids.data)].sort()) {
+    const result = await decide(id, decision, reason);
+    if (!result.ok) return fail(`Stopped at a role that could not be saved: ${result.error}. Earlier changes were saved.`);
+  }
+  return ok();
+}

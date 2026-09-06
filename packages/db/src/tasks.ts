@@ -26,7 +26,7 @@ export async function enqueueTask(
       payload,
       dedupeKey: options.dedupeKey ?? null,
       priority: options.priority ?? 5,
-      runAfter: options.runAfter ?? new Date(),
+      runAfter: options.runAfter ?? sql`now()`,
       maxAttempts: options.maxAttempts ?? 3,
     })
     .onConflictDoNothing()

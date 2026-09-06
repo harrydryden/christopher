@@ -262,3 +262,19 @@ describe("HTML extraction", () => {
     expect(text.length).toBeLessThan(60_000);
   });
 });
+
+describe("large and incomplete Greenhouse boards", () => {
+  it("retains every role on an Anduril-sized board", async () => {
+    const jobs = Array.from({ length: 2212 }, (_, i) => ({ id: i + 1, title: `Operations Director ${i}`, absolute_url: `https://job-boards.greenhouse.io/large/jobs/${i + 1}` }));
+    const ctx = createFakeFetchContext({ routes: { "https://boards-api.greenhouse.io/v1/boards/large/jobs?content=true": { body: { jobs } } } });
+    const postings = await getAdapter("greenhouse").fetchPostings({ type: "greenhouse", url: "https://job-boards.greenhouse.io/large", atsSlug: "large" }, ctx);
+    expect(postings).toHaveLength(2212);
+    expect(postings.at(-1)?.externalId).toBe("2212");
+  });
+  it("rejects malformed responses instead of treating them as an empty board", async () => {
+    for (const body of [{ error: "unavailable" }, { jobs: [{ id: 1, title: "Missing URL" }] }]) {
+      const ctx = createFakeFetchContext({ routes: { "https://boards-api.greenhouse.io/v1/boards/large/jobs?content=true": { body } } });
+      await expect(getAdapter("greenhouse").fetchPostings({ type: "greenhouse", url: "https://job-boards.greenhouse.io/large", atsSlug: "large" }, ctx)).rejects.toThrow();
+    }
+  });
+});

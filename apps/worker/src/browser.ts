@@ -107,22 +107,37 @@ export class BrowserRenderer {
       status = response?.status() ?? null;
       await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => undefined);
 
+      const listingPages: Array<{ html: string; url: string }> = [];
+      let incomplete = false;
       if (opts.scrollAndExpand) {
         await this.dismissCookieBanners(page);
-        for (let i = 0; i < 10; i++) {
-          const before = await page.evaluate(() => document.body?.innerHTML.length ?? 0);
+        const seen = new Set<string>();
+        const deadline = Date.now() + 60_000;
+        for (let i = 0; i < 20; i++) {
+          const html = await page.content();
+          if (seen.has(html)) { incomplete = true; break; }
+          seen.add(html);
+          listingPages.push({ html, url: page.url() });
+          if (Date.now() >= deadline) { incomplete = true; break; }
+          const before = await page.locator("body").innerText();
           await page.mouse.wheel(0, 4000).catch(() => undefined);
           await page.waitForTimeout(600);
-          const clicked = await this.clickLoadMore(page);
-          if (clicked) await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => undefined);
-          const after = await page.evaluate(() => document.body?.innerHTML.length ?? 0);
+          const clicked = await this.clickListingControl(page);
+          if (clicked) {
+            await page.waitForFunction(old => document.body.innerText !== old, before, { timeout: 8000 }).catch(() => { incomplete = true; });
+            await page.waitForLoadState("networkidle", { timeout: 3000 }).catch(() => undefined);
+          }
+          const after = await page.locator("body").innerText();
           if (!clicked && after === before) break;
+          if (clicked && after === before) { incomplete = true; break; }
+          if (i === 19) incomplete = true;
         }
       } else {
         await page.waitForTimeout(500);
       }
       const html = await page.content();
-      return { html, finalUrl: page.url(), requests: [...new Set(requests)], status };
+      return { html, finalUrl: page.url(), requests: [...new Set(requests)], status, listingPages, incomplete };
+
     } catch (err) {
       log.warn("render failed", { url, error: (err as Error).message });
       throw err;
@@ -159,16 +174,19 @@ export class BrowserRenderer {
     }
   }
 
-  private async clickLoadMore(page: import("playwright").Page): Promise<boolean> {
+  private async clickListingControl(page: import("playwright").Page): Promise<boolean> {
     const candidates = page.locator("button, a, [role=button]");
-    const n = Math.min(await candidates.count().catch(() => 0), 200);
+    const n = Math.min(await candidates.count().catch(() => 0), 500);
     for (let i = 0; i < n; i++) {
       const c = candidates.nth(i);
-      const text = ((await c.textContent().catch(() => "")) ?? "").trim();
-      if (text.length <= 40 && LOAD_MORE_TEXT.test(text) && (await c.isVisible().catch(() => false))) {
-        await c.click({ timeout: 2000 }).catch(() => undefined);
-        return true;
-      }
+      const text = ((await c.getAttribute("aria-label")) || (await c.textContent()) || "").trim();
+      const rel = await c.getAttribute("rel");
+      const matches = text.length <= 60 && (LOAD_MORE_TEXT.test(text) || /^next(?: page| jobs| roles| results)?(?:\s*[›»→>])?$/i.test(text) || rel === "next");
+      if (!matches || !(await c.isVisible()) || !(await c.isEnabled()) || await c.getAttribute("aria-disabled") === "true") continue;
+      const href = await c.getAttribute("href");
+      if (href && new URL(href, page.url()).origin !== new URL(page.url()).origin) continue;
+      await c.click({ timeout: 3000 });
+      return true;
     }
     return false;
   }

@@ -75,3 +75,28 @@ The decision-retention migration must run before deploying the new web actions. 
 Coverage: `apps/worker/src/e2e.test.ts`, `apps/web/app/actions/actions.integration.test.ts`, and `packages/core/src/ats/pagination.test.ts`. This closes the profile/tag and basic pagination/cache/snapshot gaps above. JavaScript-only pagination, grouped decisions, account controls, the remaining operational guards and live acceptance evidence remain open.
 
 Follow-up local validation: 209 tests passed (including the three Chrome tests run explicitly), workspace type checks and production build passed, and the revised seven-route smoke test exited with code 0.
+
+## User-prioritised delivery — 6 September 2026
+
+Scraping/refresh, deterministic role and seniority filtering, and table clean-up take precedence. Role-specific CVs are the next feature. Learning and recommendations are longer-term work; additional security/account controls are deferred.
+
+Delivered:
+- Removed the Greenhouse 500-role truncation and allowed bounded large responses. HTTP size limits now fail explicitly instead of silently slicing content. Invalid Greenhouse arrays/roles cannot become successful empty scans.
+- Verified Anduril's public board mapping and company identity. The catalogue path resolves in 2.1 seconds; the previous generic browser crawl made 20 logical fetches and repeatedly rendered the same careers pages. Generic discovery has a soft time budget; the interface distinguishes queued from running and refreshes. A supplied board URL is always accessible and has its own queue deduplication key.
+- Added JavaScript-next pagination snapshots and incomplete-observation handling. Chromium fixtures cover replacement pages, disabled controls and a stuck next button.
+- Added independent title seniority keywords combined with role/location gates, synchronous reevaluation, bulk/group decisions, archive/restore and archive CSV export. Archive state is preserved by scans and filter changes.
+- Added versioned evidence libraries, import/export, per-role background CV generation using a separate Anthropic model, evidence-reference validation, failure states, editable immutable revisions and saved PDF downloads.
+
+Live evidence (isolated local database, no production data changed):
+- 6 September 2026, 07:37 UTC: two complete Anduril scans, each with 2,211 stored roles and descriptions. First scan inserted 2,211; second inserted zero, closed zero and preserved an archived role. The board returned 2,212 at an earlier check; counts are time-dependent.
+- User's positive example: requisition 13514 / posting 5220149007, Associate Director, Strategic Execution - International, London. `strateg*` + `director` + London returns exactly that role in the captured dataset, excluding the US counterpart. The website's Growth label differs from the ATS department; title and location are the reliable test inputs here.
+- Browser exercised sign-in, archive/restore, library save (version 2), CV enqueue, missing-key error, editing a source-text layout fixture into revision 2, and PDF download returning HTTP 200/application/pdf.
+- PDF layout inspected across both pages using source text. This is a layout fixture, not a paid Anthropic result. No API credentials are configured locally; actual generation quality remains unverified.
+
+Apply migration `0003_furry_nighthawk.sql` before running the new code. It adds role archive state, CV libraries and CV drafts without deleting existing records. Ensure the worker runs continuously and has `ANTHROPIC_API_KEY`; a once-daily serverless queue drain is not sufficient for responsive CV generation. The production screenshot's pending task is not evidence that a worker is healthy, and local fixes are not yet deployed.
+
+Remaining acceptance: live Anthropic output review for the named London role; production worker/queue verification and rollout; additional company/provider coverage when supplied; arbitrary custom pagination, existing non-Greenhouse adapter caps, and longer soak evidence. Learning quality and recommendation calibration stay deferred.
+
+Implementation references: [Anthropic structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs), [model catalogue](https://platform.claude.com/docs/en/models/overview), [PDFKit guide](https://pdfkit.org/docs/guide.pdf).
+
+Final validation: 233 tests passed (228 in the workspace suite plus five explicit Chromium tests), workspace type checks and production build passed, and all nine authenticated smoke routes returned 200 with clean process exit. The browser also confirmed that applying to one grouped row creates decisions for both underlying postings. Immediate tasks now use the database clock, fixing a clock-skew race exposed by the final queue tests.

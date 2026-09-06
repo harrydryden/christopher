@@ -51,6 +51,7 @@ export interface FetchInit {
   headers?: Record<string, string>;
   body?: string;
   timeoutMs?: number;
+  maxBodyBytes?: number;
 }
 
 export interface FetchResponse {
@@ -62,6 +63,8 @@ export interface FetchResponse {
 }
 
 export interface RenderedPage {
+  listingPages?: Array<{ html: string; url: string }>;
+  incomplete?: boolean;
   html: string;
   finalUrl: string;
   /** Every request URL the page made while loading; used to sniff ATS APIs. */

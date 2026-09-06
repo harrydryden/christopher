@@ -1,3 +1,4 @@
+import { handleGenerateCv } from "./cv";
 import type { HandlerMap } from "../queue";
 import { handleDiscover } from "./discover";
 import { handleRunDaily } from "./daily";
@@ -14,6 +15,7 @@ import {
 } from "./learning";
 
 export const handlers: HandlerMap = {
+  generate_cv: handleGenerateCv,
   discover: handleDiscover,
   run_daily: handleRunDaily,
   scan_company: handleScanCompany,

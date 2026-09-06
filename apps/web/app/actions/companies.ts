@@ -1,4 +1,5 @@
 "use server";
+import { enqueueTask } from "@christopher/db";
 
 import { requireSession } from "@/lib/auth";
 
@@ -202,7 +203,7 @@ export async function pasteDiscoveryUrl(companyId: string, formData: FormData): 
   await requireSession();
   const id = zUuid().parse(companyId);
   const url = zUrlString().parse(String(formData.get("url") ?? ""));
-  await enqueue("discover", { companyId: id, url, reason: "pasted" });
+  await enqueueTask(db(), "discover", { companyId: id, url, reason: "pasted" }, { dedupeKey: `discover:${id}:url:${url}`, priority: 1 });
   revalidatePath(`/companies/${id}`);
 }
 

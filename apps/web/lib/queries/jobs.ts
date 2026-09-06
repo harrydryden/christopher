@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, ne } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, ne, isNull, isNotNull } from "drizzle-orm";
 import { careerSources, companies, decisions, jobEvents, jobs, type Job, type SourceType } from "@christopher/db/schema";
 import { displayStatus, formatDuration, liveFor, type AppSettings, type DisplayStatus } from "@christopher/core";
 import { db } from "@/lib/db";
@@ -64,15 +64,15 @@ function baseRolesSelect() {
 }
 
 /** Every in-table (keyword+location gate passed) job: the main roles table before display filters. */
-export async function fetchTableJobs(): Promise<RoleRow[]> {
-  const rows = await baseRolesSelect().where(and(eq(jobs.inTable, true), ne(companies.status, "archived")));
+export async function fetchTableJobs(archived = false): Promise<RoleRow[]> {
+  const rows = await baseRolesSelect().where(and(archived ? isNotNull(jobs.archivedAt) : isNull(jobs.archivedAt), archived ? undefined : eq(jobs.inTable, true), ne(companies.status, "archived")));
   return rows.map((r) => ({ ...r, events: [] as RoleEvent[] }));
 }
 
 /** Roles that failed the keyword/location gate but scored well: "Outside your keywords". */
 export async function fetchNearMissJobs(settings: Pick<AppSettings, "nearMissMinScore">, cap = 10): Promise<RoleRow[]> {
   const rows = await baseRolesSelect()
-    .where(and(ne(companies.status, "archived"), eq(jobs.nearMiss, true), eq(jobs.status, "open"), gte(jobs.fitScore, settings.nearMissMinScore)))
+    .where(and(isNull(jobs.archivedAt), ne(companies.status, "archived"), eq(jobs.nearMiss, true), eq(jobs.status, "open"), gte(jobs.fitScore, settings.nearMissMinScore)))
     .orderBy(desc(jobs.firstSeenAt))
     .limit(cap);
   return rows.map((r) => ({ ...r, events: [] as RoleEvent[] }));

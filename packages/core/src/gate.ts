@@ -9,6 +9,8 @@ export type MatchField = "title" | "department" | "description";
 export interface GateSettings {
   includeKeywords: string[];
   excludeKeywords: string[];
+  /** Title-only seniority: OR within this list, AND with role keywords. */
+  seniorityKeywords?: string[];
   matchFields: MatchField[];
   /** Location terms the user cares about, e.g. ["London", "UK"]. Empty means every location passes. */
   locationTerms: string[];
@@ -239,12 +241,15 @@ export function evaluateGate(input: GateInput, settings: GateSettings): GateResu
   // Exclusions are checked against title and department regardless of matchFields, never against description alone.
   const excludeHaystack = [input.title, input.department ?? ""].join("\n");
   const excludedTerms = matchTerms(excludeHaystack, settings.excludeKeywords);
-  const excluded = excludedTerms.length > 0;
+  const seniority = settings.seniorityKeywords ?? [];
+  const seniorityTerms = matchTerms(input.title, seniority);
+  const seniorityOk = !seniority.some(t => t.trim()) || seniorityTerms.length > 0;
+  const excluded = excludedTerms.length > 0 || !seniorityOk;
 
   const loc = evaluateLocation(input, settings);
   return {
     keywordMatched,
-    keywordTerms,
+    keywordTerms: [...keywordTerms, ...seniorityTerms.filter(t => !keywordTerms.includes(t))],
     excluded,
     excludedTerms,
     locationOk: loc.ok,

@@ -40,6 +40,8 @@ const PAGES = [
   ["/learning", ["Learning"]],
   ["/health", ["Health"]],
   ["/settings", ["Settings"]],
+  ["/cv", ["CV builder", "evidence library"]],
+  ["/?archive=1", ["Archived roles"]],
   ["/api/export.csv", ["company"]],
 ];
 

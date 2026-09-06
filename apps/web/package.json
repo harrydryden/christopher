@@ -15,17 +15,19 @@
   "dependencies": {
     "@christopher/core": "workspace:*",
     "@christopher/db": "workspace:*",
+    "@christopher/worker": "workspace:*",
     "drizzle-orm": "latest",
     "next": "15",
+    "pdfkit": "^0.20.2",
     "pg": "latest",
     "react": "19",
     "react-dom": "19",
-    "zod": "latest",
-    "@christopher/worker": "workspace:*"
+    "zod": "latest"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "latest",
     "@types/node": "latest",
+    "@types/pdfkit": "^0.17.6",
     "@types/pg": "latest",
     "@types/react": "19",
     "@types/react-dom": "19",

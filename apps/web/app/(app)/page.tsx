@@ -23,14 +23,15 @@ export const dynamic = "force-dynamic";
 
 export default async function RolesPage({ searchParams }: { searchParams: Promise<RawSearchParams> }) {
   const sp = await searchParams;
-  const filters = parseRolesFilters(sp);
+  const archived = sp.archive === "1";
+  const filters = parseRolesFilters(archived && !sp.status ? { ...sp, status: ["new", "active", "closed"], closed: "1" } : sp);
   const now = new Date();
 
   const settings = await getSettings();
   const [companyOptions, tableRowsRaw, nearMissRowsRaw] = await Promise.all([
     listCompanyOptions(),
-    fetchTableJobs(),
-    settings.nearMissEnabled ? fetchNearMissJobs(settings, 30) : Promise.resolve([]),
+    fetchTableJobs(archived),
+    settings.nearMissEnabled && !archived ? fetchNearMissJobs(settings, 10) : Promise.resolve([]),
   ]);
 
   const allJobIds = [...tableRowsRaw, ...nearMissRowsRaw].map((r) => r.job.id);
@@ -45,16 +46,18 @@ export default async function RolesPage({ searchParams }: { searchParams: Promis
   const hiddenVM = hidden.map((r) => buildRoleRowVM(r, now));
   const nearMissVM = sortRoleRows(nearMissRows, "firstSeen", "desc", now).map((r) => buildRoleRowVM(r, now));
 
-  const exportHref = `/api/export.csv?${filtersToQueryString(filters)}`;
+  const exportHref = `/api/export.csv?${filtersToQueryString(filters)}${archived ? "&archive=1" : ""}`;
 
   return (
     <div>
-      <PageHeader title="Roles" description="Keyword-matched roles across every company you track." />
+      <PageHeader title={archived ? "Archived roles" : "Roles"} description="Role and seniority matches across your tracked companies." />
+      <div className="mb-4 flex gap-4 text-sm underline"><Link href="/">Inbox</Link><Link href="/?archive=1">Archive</Link><Link href="/settings">Edit keyword filters</Link></div>
 
-      <RolesFilterBar filters={filters} companyOptions={companyOptions} hideThresholdSet={settings.hideThreshold !== null} exportHref={exportHref} />
+      <RolesFilterBar archived={archived} filters={filters} companyOptions={companyOptions} hideThresholdSet={settings.hideThreshold !== null} exportHref={exportHref} />
 
       <RolesTable
         rows={visibleVM}
+        archived={archived}
         keyboard
         emptyState={
           <EmptyState
@@ -72,7 +75,7 @@ export default async function RolesPage({ searchParams }: { searchParams: Promis
         }
       />
 
-      {settings.nearMissEnabled && (
+      {settings.nearMissEnabled && !archived && (
         <section className="mt-8">
           <h2 className="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">Outside your keywords</h2>
           <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">

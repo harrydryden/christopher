@@ -23,9 +23,11 @@ export function pathSegments(u: URL): string[] {
   return u.pathname.split("/").filter(Boolean);
 }
 
-export async function fetchJson<T = unknown>(ctx: FetchContext, url: string, init?: { method?: "GET" | "POST"; body?: unknown; headers?: Record<string, string> }): Promise<{ data: T; res: FetchResponse }> {
+export async function fetchJson<T = unknown>(ctx: FetchContext, url: string, init?: { maxBodyBytes?: number; timeoutMs?: number; method?: "GET" | "POST"; body?: unknown; headers?: Record<string, string> }): Promise<{ data: T; res: FetchResponse }> {
   const res = await ctx.fetchText(url, {
     method: init?.method ?? "GET",
+    maxBodyBytes: init?.maxBodyBytes,
+    timeoutMs: init?.timeoutMs,
     headers: { accept: "application/json", ...(init?.body !== undefined ? { "content-type": "application/json" } : {}), ...(init?.headers ?? {}) },
     body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
   });

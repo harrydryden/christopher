@@ -1,12 +1,42 @@
 # Christopher — Careers Page Monitor
 
-**Specification v0.2 (reviewed contract; release verification pending)** · 2026-09-05 · Single-user tool
+**Specification v0.3 (user-prioritised delivery; live model verification pending)** · 2026-09-06 · Single-user tool
 
 Christopher watches the careers pages of companies you list, once a day. It records which roles appeared and which disappeared, keeps only roles that match your keywords, and shows them in a table where you decide *apply* or *skip* with a reason. Those reasons train a preference model that ranks future roles and proposes changes to your filters. It also recommends companies similar to the ones you already track.
 
 This document is written to be implemented from directly (by you or by Claude Code). Sections 3 to 7 and the v0.2 clarifications below are normative; section 9 is the acceptance bar. Requirements describe the target, not a claim that every feature has passed acceptance. See [REVIEW-PLAN.md](REVIEW-PLAN.md) for implementation and verification status.
 
 ---
+
+## v0.3 priorities and acceptance
+
+The user's order is: (1) reliable discovery, scraping and refresh of tracked company vacancies; (2) deterministic role and seniority filtering before the main table; (3) simple, reversible table clean-up; (4) a role-specific CV builder. Learning and company/job recommendations are useful later and must not delay these flows. Additional security and account-management work is deferred; existing session checks remain.
+
+### Finding and filtering roles
+
+- Anduril is the first supplied company. Its public homepage is a JavaScript shell. A verified catalogue mapping to `andurilindustries` must recheck the feed and company identity at discovery time, then fall back to normal discovery if verification fails. It does not silently replace another confirmed source.
+- Generic discovery has a two-minute soft time budget (checked between requests), in addition to its fetch-count budget. Pending tasks are shown as queued or running and the companies page refreshes. A known board URL can be supplied before discovery finishes; an old queued homepage task cannot swallow that explicit URL.
+- Role-keyword matches use OR within their list. Optional seniority-keyword matches use OR within their own list, against the title only. Role, seniority and location conditions use AND; exclusions win. Blank seniority allows every level. Failed filters stay in the internal source inventory for reconciliation, but never enter the main table. Seniority exclusions cannot be promoted through the near-miss list.
+- Prefix terms are explicit: `strateg*` matches both strategy and strategic. Never infer candidate interest solely from a department label; website-facing departments can differ from the ATS taxonomy.
+- The first user-confirmed positive example is **Associate Director, Strategic Execution - International**, London, requisition 13514, Greenhouse posting 5220149007. `strateg*` + `director` + London (remote disabled) includes this role and excludes its Costa Mesa counterpart. These are a starting test case, not learned preferences or a judgement on all future roles.
+- Browser pagination retains every observed page, including pages replaced by JavaScript next buttons. Disabled controls stop traversal; stuck controls, loops and caps mark the observation incomplete. Incomplete scans cannot close unseen postings.
+
+### Keeping the table clean
+
+- Select rows, apply/skip/undo a group with a shared reason, and archive or restore selected roles. Skip requires a reason. Bulk decisions allow 100 roles; archive allows 500 per submission. A partially failed decision batch reports that earlier changes were saved.
+- Grouping combines identical titles within a company for display, preserves each posting and its source URL, and applies group decisions to all members. Expanded groups expose locations, individual decisions and per-posting CV links.
+- Archive is a user-owned timestamp independent of open/closed status, gate membership and AI scores. Scans and filter saves preserve it. Archived roles leave the inbox and near-miss list but are accessible in the Archive view, including roles that no longer pass the gate. Restore makes a role eligible for the inbox only if it still passes the gate.
+
+### CV builder
+
+- Maintain an editable, ordered evidence library: name, contact details, LinkedIn profile URL, career overview, experience, education, skills and interests. Entries have stable IDs, headings and source evidence. Add/remove/reorder entries and import/export JSON. Library saves append immutable versions and reject obsolete edits.
+- Create a CV from a stored role and description (or an explicit pasted description). Snapshot the job, library version and full evidence, plus model ID, before atomically enqueueing generation. CVs survive job/company deletion through snapshots.
+- Use Anthropic with a separately editable `cvModel`, default `claude-sonnet-5`, distinct from scraping call site A3. Generation uses the worker's `ANTHROPIC_API_KEY` and monthly AI budget. Model configuration is captured per draft. Repeated queue delivery must not regenerate a completed draft.
+- The model selects evidence IDs and tailors supported bullets/summary. Application code supplies name/contact/headings from the library and rejects invented or repeated evidence IDs. Instructions inside job descriptions or imported documents are data, not authority. Never deliberately fabricate skills, dates, employers, qualifications or metrics. Reference validation is not proof of semantic accuracy: the user reviews generated claims.
+- Persist ready/failed state, actionable errors, generated content and review-only evidence gaps. Missing credentials or invalid model output produces a failed draft that can be regenerated; it must never be presented as a successful CV.
+- The user can edit the summary and bullets and save a new immutable revision. Downloads always use saved content. The PDF uses selectable text, A4, a restrained navy/grey style, chronological experience, a combined Education and Skills section (one bullet per qualification/certification), and optional interests, with page numbers and automatic page breaks. A clickable LinkedIn label appears under the name when its URL is supplied. Aim for two pages; longer content must flow onto additional pages rather than clip. Evidence gaps are excluded from the PDF.
+- Library data and generated CVs belong in the user's database/downloads, not committed application fixtures. The supplied CV is an example and source evidence, not an instruction document. Interests absent from it remain blank.
+- A running background worker and Anthropic credentials are deployment prerequisites for live generation. Local fixture tests do not establish paid-model quality or production worker availability.
 
 ## v0.2 clarifications and acceptance gaps
 
@@ -104,7 +134,7 @@ These are the places where the literal request cannot be delivered as stated, or
 ### Non-goals (v1)
 
 - Multiple users, sharing, or public access.
-- Applying on your behalf, CV tailoring, cover letters.
+- Applying on your behalf and cover letters. CV tailoring is included in v0.3 below.
 - Aggregator sources (LinkedIn, Indeed, Otta). Company pages only.
 - Email or push notifications (natural v2; the "New" filter is the daily inbox).
 - Historical backfill of roles posted before a company was added.
@@ -168,7 +198,7 @@ Pipeline, in order. Every step adds candidates with a confidence; the best candi
 - **R-3.6** Anti-hallucination validation of model extraction: every returned URL must be present in the harvested anchor set; every title must appear in page text (fuzzy ≥0.9). Violators are dropped; if more than 20% violate, the scan is marked `partial`.
 - **R-3.7** Job description snapshot. For postings that pass the keyword gate (and near-miss candidates), store the description text (from the feed when the ATS supplies it; otherwise fetch the detail page and extract the main content). Cap 30k characters. Re-fetch when the source's `updated_at` changes or every 14 days. This keeps the description readable after the role closes and the link dies.
 - **R-3.8** Scan outcome: `ok`, `partial` (some postings dropped by validation, or count fell >70% from the previous ok scan), `suspect_empty` (zero postings where the previous ok scan had ≥3), `failed` (fetch error, HTTP ≥400, bot-protection challenge, parser exception). Only `ok` scans may close roles (3.4).
-- **R-3.9** Cap 500 postings per source per scan. Store the last 3 raw responses (compressed) per source for debugging.
+- **R-3.9** Greenhouse boards must retain all valid roles up to 10,000, with a bounded 60 MB response allowance and no silent truncation. Other adapters retain their existing source-specific caps, which remain a coverage limitation. Generic HTML traversal is bounded to 20 pages / 500 roles; hitting a bound is partial and cannot close roles. Oversized HTTP responses fail explicitly. Store bounded compressed response evidence for the last three scans.
 - **R-3.10** Manual "Rescan now" per company and "Run daily scan now" globally.
 
 ### 3.4 Change detection, statuses, "live for"
@@ -588,3 +618,8 @@ Scale-up stage (Series A to C), remit that includes hiring and process design, r
 | Sophistication in finding careers pages accurately | 3.2, R-3.5, R-3.6, Appendix A |
 | Sophistication in learning my preferences | 3.6, A5–A8 |
 | Homepage URL should be enough | 3.2, R-2.1 to R-2.3 |
+
+### Release verification: worker and reusable CV blocks
+- CV evidence entries are reusable building blocks. Each role may use different supported wording and selected bullets; saved library versions and earlier drafts remain unchanged. Layout, source headings and identity fields are controlled by the application.
+- Health shows the persistent worker's last report and last reported Anthropic/browser configuration. A report older than two minutes is treated as missing recent activity, not proof that a process has stopped. Configuration alone does not prove a model call succeeds.
+- Before declaring the live CV flow complete, verify a successful generation and PDF download against the deployed worker. Daily web cron execution does not replace an always-on worker for long-running generation.

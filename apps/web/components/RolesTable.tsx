@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { decide } from "@/app/actions/decisions";
+import { decide, archiveRoles, decideRoles } from "@/app/actions/decisions";
 import { Badge, decisionTone, jobStatusTone } from "@/components/Badge";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import type { RoleRowVM } from "@/lib/queries/jobs";
@@ -55,8 +55,35 @@ function ChevronIcon({ open }: { open: boolean }) {
   );
 }
 
-export function RolesTable({ rows, keyboard = false, emptyState }: { rows: RoleRowVM[]; keyboard?: boolean; emptyState: React.ReactNode }) {
+export function RolesTable({ rows: inputRows, keyboard = false, archived = false, emptyState }: { archived?: boolean; rows: RoleRowVM[]; keyboard?: boolean; emptyState: React.ReactNode }) {
   const router = useRouter();
+  const [groupByRole, setGroupByRole] = useState(false);
+  const groups = new Map<string, RoleRowVM[]>();
+  for (const row of inputRows) {
+    const key = groupByRole ? `${row.companyId}:${row.title.toLocaleLowerCase().replace(/\s+/g, " ").trim()}` : row.id;
+    const group = groups.get(key) ?? []; group.push(row); groups.set(key, group);
+  }
+  const members = new Map([...groups.values()].map(group => [group[0]!.id, group]));
+  const rows = [...members.values()].map(group => {
+    const first = group[0]!;
+    const sameDecision = group.every(member => member.decision?.decision === first.decision?.decision && member.decision?.reason === first.decision?.reason);
+    return sameDecision ? first : { ...first, decision: null };
+  });
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkReason, setBulkReason] = useState("");
+  const [bulkPending, setBulkPending] = useState(false);
+  const selectedIds = inputRows.filter(row => selected.has(row.id)).map(row => row.id);
+  async function bulk(action: "archive" | "apply" | "skip" | "undo") {
+    setBulkPending(true); setFlashError(null);
+    try {
+      const result = action === "archive" ? await archiveRoles(selectedIds, !archived)
+        : await decideRoles(selectedIds, action === "undo" ? null : action, bulkReason);
+      if (!result.ok) setFlashError(result.error);
+      else { setSelected(new Set()); setBulkReason(""); }
+      router.refresh();
+    } catch { setFlashError("Could not save. Reload to check the current state before retrying."); }
+    finally { setBulkPending(false); }
+  }
   const [highlightIndex, setHighlightIndex] = useState(-1);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [reasonBox, setReasonBox] = useState<ReasonBoxState | null>(null);
@@ -83,7 +110,8 @@ export function RolesTable({ rows, keyboard = false, emptyState }: { rows: RoleR
     setFlashError(null);
     const isBoxed = reasonBoxRef.current?.jobId === jobId;
     if (isBoxed) setReasonBox((b) => (b ? { ...b, pending: true, error: null } : b));
-    const result = await decide(jobId, decision, reason);
+    const group = members.get(jobId) ?? [];
+    const result = group.length > 1 ? await decideRoles(group.map(row => row.id), decision, reason) : await decide(jobId, decision, reason);
     if (!result.ok) {
       if (isBoxed) setReasonBox((b) => (b ? { ...b, pending: false, error: result.error } : b));
       else setFlashError(result.error);
@@ -119,6 +147,12 @@ export function RolesTable({ rows, keyboard = false, emptyState }: { rows: RoleR
           e.preventDefault();
           setHighlightIndex((i) => Math.max(0, i - 1));
           break;
+        case "g":
+          setGroupByRole(value => !value); setReasonBox(null); setHighlightIndex(-1);
+          break;
+        case "x":
+          if (row) setSelected(prev => { const next = new Set(prev); const group = members.get(row.id) ?? [row]; const remove = group.every(member => prev.has(member.id)); for (const member of group) { if (remove) next.delete(member.id); else next.add(member.id); } return next; });
+          break;
         case "e":
           if (row) toggleExpand(row.id);
           break;
@@ -138,7 +172,7 @@ export function RolesTable({ rows, keyboard = false, emptyState }: { rows: RoleR
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keyboard, rows, highlightIndex]);
+  }, [keyboard, rows, highlightIndex, groupByRole]);
 
   useEffect(() => {
     if (highlightIndex < 0) return;
@@ -153,16 +187,25 @@ export function RolesTable({ rows, keyboard = false, emptyState }: { rows: RoleR
     <div>
       {keyboard && (
         <p className="mb-2 text-xs text-slate-400">
-          <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>a</kbd> apply · <kbd>s</kbd> skip · <kbd>o</kbd> open · <kbd>e</kbd> expand
+          <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>a</kbd> apply · <kbd>s</kbd> skip · <kbd>o</kbd> open · <kbd>e</kbd> expand · <kbd>g</kbd> group · <kbd>x</kbd> select
         </p>
       )}
       {flashError && (
         <p className="mb-2 rounded-md bg-red-50 px-3 py-1.5 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">{flashError}</p>
       )}
+      <div className="mb-3 flex flex-wrap items-center gap-3 rounded border border-slate-200 p-3 text-sm">
+        <label><input type="checkbox" aria-label="Select all visible roles" checked={inputRows.length > 0 && selectedIds.length === inputRows.length} onChange={e => setSelected(e.target.checked ? new Set(inputRows.slice(0, 500).map(r => r.id)) : new Set())} /> Select visible</label>
+        <label><input type="checkbox" checked={groupByRole} onChange={e => { setGroupByRole(e.target.checked); setReasonBox(null); setHighlightIndex(-1); }} /> Group identical roles</label>
+        <span>{selectedIds.length} selected</span>
+        <button disabled={!selectedIds.length || bulkPending} onClick={() => void bulk("archive")} className="underline disabled:opacity-40">{archived ? "Restore" : "Archive"} selected</button>
+        <input aria-label="Shared decision reason" placeholder="Reason for selected roles" value={bulkReason} onChange={e => setBulkReason(e.target.value)} className="rounded border p-1 dark:bg-slate-950" />
+        {(["apply", "skip", "undo"] as const).map(action => <button key={action} disabled={!selectedIds.length || selectedIds.length > 100 || bulkPending || (action === "skip" && !bulkReason.trim())} onClick={() => void bulk(action)} className="capitalize underline disabled:opacity-40">{action} selected</button>)}
+        {bulkPending && <span role="status">Saving…</span>}
+      </div>
       <Table>
         <THead>
           <tr>
-            <TH className="w-6" />
+            <TH className="w-6">Select</TH>
             <TH>Company</TH>
             <TH className="w-8" />
             <TH>Role</TH>
@@ -176,12 +219,14 @@ export function RolesTable({ rows, keyboard = false, emptyState }: { rows: RoleR
         </THead>
         <TBody>
           {rows.map((row, index) => {
+            const group = members.get(row.id) ?? [row];
             const expanded = expandedIds.has(row.id);
             const boxed = reasonBox?.jobId === row.id ? reasonBox : null;
             return (
               <Fragment key={row.id}>
                 <TR highlighted={index === highlightIndex}>
                   <TD className="w-6 pr-0" id={`role-row-${row.id}`}>
+                    <input type="checkbox" aria-label={`Select ${row.title}`} checked={group.every(member => selected.has(member.id))} onChange={e => setSelected(prev => { const next = new Set(prev); for (const member of group) { if (e.target.checked) next.add(member.id); else next.delete(member.id); } return next; })} />
                     <button
                       type="button"
                       onClick={() => toggleExpand(row.id)}
@@ -227,9 +272,11 @@ export function RolesTable({ rows, keyboard = false, emptyState }: { rows: RoleR
                     <a href={row.url} target="_blank" rel="noopener noreferrer" className="font-medium text-slate-900 hover:underline dark:text-slate-100">
                       {row.title}
                     </a>
+                    {group.length > 1 && <p className="mt-1 text-xs text-slate-500">{group.length} postings · decisions apply to the whole group</p>}
                   </TD>
                   <TD className="max-w-[10rem]">
                     <div className="flex flex-wrap items-center gap-1">
+                      {group.length > 1 && <span className="text-xs text-slate-500">Multiple postings — expand to view all.</span>}
                       {row.location && <span className="truncate">{row.location}</span>}
                       {row.locations.length > 1 && (
                         <span title={row.locations.join(", ")} className="text-xs text-slate-400">
@@ -346,6 +393,8 @@ export function RolesTable({ rows, keyboard = false, emptyState }: { rows: RoleR
                 {expanded && (
                   <tr className="bg-slate-50/70 dark:bg-slate-900/40">
                     <td colSpan={10} className="px-4 py-3">
+                      {group.length > 1 && <ul className="mb-3 space-y-1 text-sm">{group.map(member => <li key={member.id}><a className="underline" href={member.url} target="_blank" rel="noopener noreferrer">{member.location || "Location unspecified"}</a> · {member.decision?.decision ?? "undecided"} · <a className="underline" href={`/cv?job=${member.id}`}>Build CV</a></li>)}</ul>}
+                      <a href={`/cv?job=${row.id}`} className="mb-3 inline-block text-sm font-medium underline">Build CV for this role</a>
                       <RoleExpandPanel row={row} />
                     </td>
                   </tr>

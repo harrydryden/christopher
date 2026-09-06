@@ -1,3 +1,4 @@
+import { AutoRefresh } from "@/components/AutoRefresh";
 import Link from "next/link";
 import { addCompanies, archiveCompany, pauseCompany, rediscoverCompany, rescanCompany, resumeCompany } from "@/app/actions/companies";
 import { Badge, companyStatusTone, scanStatusTone, sourceStatusTone } from "@/components/Badge";
@@ -49,6 +50,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
         </form>
       </Card>
 
+      {rows.some(row => row.discovering) && <div className="mb-4"><AutoRefresh message="Discovery work is pending. This page refreshes automatically; check Health if it remains queued." /></div>}
       {rows.length === 0 ? (
         <EmptyState title="No companies yet" description="Add a homepage URL above to start tracking a company's careers page." />
       ) : (
@@ -64,7 +66,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
             </tr>
           </THead>
           <TBody>
-            {rows.map(({ company, sources, lastScan, openRoles, inTableRoles, discovering }) => (
+            {rows.map(({ company, sources, lastScan, openRoles, inTableRoles, discovering, discoveryState }) => (
               <TR key={company.id}>
                 <TD>
                   <Link href={`/companies/${company.id}`} className="flex items-center gap-2 hover:underline">
@@ -97,7 +99,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                       ))}
                     </div>
                   )}
-                  {discovering && <p className="mt-1 text-xs text-indigo-500">Discovering…</p>}
+                  {discovering && <p className="mt-1 text-xs text-indigo-500">{discoveryState === "running" ? "Discovering…" : "Queued — waiting for worker"}</p>}
                 </TD>
                 <TD className="whitespace-nowrap">
                   {lastScan ? (

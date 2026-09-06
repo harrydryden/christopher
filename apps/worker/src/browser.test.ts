@@ -41,7 +41,9 @@ beforeAll(async () => {
   if (skip) return;
   server = await startTestServer(
     {
-      "www.acmeind.example": { "/open-roles": { body: SHELL_PAGE } },
+      "www.acmeind.example": { "/open-roles": { body: SHELL_PAGE },
+        "/paginated": { body: `<html><body><ul id="jobs"><li><a href="/jobs/one">Operations Director</a></li></ul><button id="next" onclick="document.getElementById('jobs').innerHTML='<li><a href=/jobs/two>Finance Director</a></li>';this.disabled=true">Next</button></body></html>` },
+        "/stuck": { body: `<html><body><ul><li><a href="/jobs/one">Operations Director</a></li></ul><button>Next</button></body></html>` } },
       "boards-api.greenhouse.io": { "/v1/boards/acmeindustries/jobs": { body: JOBS } },
     },
     ["www.acmeind.example", "boards-api.greenhouse.io"],
@@ -59,6 +61,16 @@ afterAll(async () => {
 });
 
 describe.skipIf(skip)("headless rendering", () => {
+  it("preserves roles from every JavaScript page and stops at a disabled next button", async () => {
+    const page = await renderer.render("https://www.acmeind.example/paginated", { scrollAndExpand: true });
+    const postings = page.listingPages!.flatMap(p => ats.extractPostingsFromHtml(p.html, p.url));
+    expect(postings.map(p => p.title)).toEqual(["Operations Director", "Finance Director"]);
+    expect(page.incomplete).toBe(false);
+  }, 120000);
+  it("marks an unresponsive next button incomplete", async () => {
+    const page = await renderer.render("https://www.acmeind.example/stuck", { scrollAndExpand: true });
+    expect(page.incomplete).toBe(true);
+  }, 120000);
   it("renders roles that only exist after JavaScript runs", async () => {
     const page = await renderer.render("https://www.acmeind.example/open-roles", { scrollAndExpand: true });
     expect(page.html).toContain("Mission Operations Lead");

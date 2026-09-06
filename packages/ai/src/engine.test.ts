@@ -237,3 +237,13 @@ describe("helpers", () => {
     expect(extractJsonBlock("")).toBeNull();
   });
 });
+
+it("routes CV generation separately, validates output and records usage", async () => {
+  const { client, calls } = fakeClient({ summary: "Operations leader", sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] });
+  const usage: AiUsageRecord[] = [];
+  const engine = createAiEngine({ client, getModel: site => site === "CV" ? "claude-sonnet-5" : "claude-opus-5", onUsage: record => { usage.push(record); } });
+  const result = await engine.buildCv({ library: { name: "Candidate", contact: "London", profile: "Leader", entries: [{ id: "one", kind: "experience", heading: "Director", details: "Led a team" }] }, jobTitle: "Director", company: "Acme", description: "Lead operations" }, { refType: "cv", refId: "draft" });
+  expect(result?.sections[0]?.entryId).toBe("one");
+  expect(calls[0]!.params.model).toBe("claude-sonnet-5");
+  expect(usage[0]).toMatchObject({ callSite: "CV", refId: "draft", ok: true });
+});

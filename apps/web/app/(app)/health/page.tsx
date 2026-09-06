@@ -9,6 +9,7 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { formatUsd, relativeTime } from "@/lib/format";
 import {
   getAiSpendThisMonth,
+  getWorkerHeartbeat,
   getQueueCounts,
   listCompaniesWithNoSource,
   listFailedTasks,
@@ -23,7 +24,7 @@ export const dynamic = "force-dynamic";
 
 export default async function HealthPage() {
   const now = new Date();
-  const [attentionSources, noSourceCompanies, problemScans, failedTasks, queueCounts, spend, aiCalls, scanRuns, settings] = await Promise.all([
+  const [attentionSources, noSourceCompanies, problemScans, failedTasks, queueCounts, spend, aiCalls, scanRuns, settings, heartbeat] = await Promise.all([
     listSourcesNeedingAttention(),
     listCompaniesWithNoSource(),
     listRecentProblemScans(7),
@@ -33,6 +34,7 @@ export default async function HealthPage() {
     listRecentAiCalls(20),
     listRecentScanRuns(10),
     getSettings(),
+    getWorkerHeartbeat(),
   ]);
 
   const budget = settings.monthlyAiBudgetUsd;
@@ -42,6 +44,17 @@ export default async function HealthPage() {
   return (
     <div className="space-y-6">
       <PageHeader title="Health" description="Everything that needs your attention lives here." />
+
+      <Card title="Background worker">
+        <p className="text-sm">
+          {heartbeat && now.getTime() - heartbeat.at.getTime() < 120_000
+            ? `Worker reported ${relativeTime(heartbeat.at, now)}.`
+            : "No recent worker report. Check that the background worker is deployed, running and connected to this database; queued scans and CVs may be waiting."}
+        </p>
+        {heartbeat && <p className="mt-2 text-sm text-slate-500">
+          Last reported configuration: Anthropic key {heartbeat.aiConfigured ? "configured" : "missing"}; browser {heartbeat.browserAvailable ? "available" : "unavailable"}. A configured key still needs a successful model call to confirm access.
+        </p>}
+      </Card>
 
       <Card title={`Sources needing attention (${attentionSources.length + noSourceCompanies.length})`}>
         {attentionSources.length === 0 && noSourceCompanies.length === 0 ? (

@@ -111,3 +111,24 @@ describe("parseTermList", () => {
     expect(parseTermList("ops,, ops\n\n")).toEqual(["ops"]);
   });
 });
+
+describe("independent seniority filter", () => {
+  const gate = { includeKeywords: ["operations", "finance"], seniorityKeywords: ["director", "head", "vp"], excludeKeywords: ["assistant"], matchFields: ["title", "description"] as const, locationTerms: [], includeRemote: true };
+  it("requires both role and title seniority and lets exclusions win", () => {
+    for (const [title, expected] of [["Director of Operations", true], ["VP Finance", true], ["Director of Engineering", false], ["Operations Analyst", false], ["Assistant to the VP of Operations", false]] as const) {
+      expect(evaluateGate({ title }, { ...gate, matchFields: [...gate.matchFields] }).inTable).toBe(expected);
+    }
+  });
+  it("does not infer seniority from the hiring manager in the description", () => {
+    expect(evaluateGate({ title: "Operations Associate", description: "Reports to the Director" }, { ...gate, matchFields: [...gate.matchFields] }).inTable).toBe(false);
+  });
+  it("allows every level when seniority is blank", () => {
+    expect(evaluateGate({ title: "Operations Associate" }, { ...gate, seniorityKeywords: [], matchFields: ["title"] }).inTable).toBe(true);
+  });
+});
+
+it("includes the user's London strategic-execution target and excludes its US counterpart", () => {
+  const settings: GateSettings = { includeKeywords: ["strateg*"], seniorityKeywords: ["director"], excludeKeywords: [], matchFields: ["title"], locationTerms: ["London"], includeRemote: false };
+  expect(evaluateGate({ title: "Associate Director, Strategic Execution - International", location: "London, England, United Kingdom" }, settings).inTable).toBe(true);
+  expect(evaluateGate({ title: "Associate Director, Strategic Execution - TRS", location: "Costa Mesa, California, United States" }, settings).inTable).toBe(false);
+});

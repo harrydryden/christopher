@@ -15,7 +15,8 @@ export async function saveKeywords(_prev: ActionResult, formData: FormData): Pro
   const settings = await getSettings();
   const includeKeywords = parseTermList(String(formData.get("includeKeywords") ?? ""));
   const excludeKeywords = parseTermList(String(formData.get("excludeKeywords") ?? ""));
-  await saveSettingsAndGate({ gate: { ...settings.gate, includeKeywords, excludeKeywords } });
+  const seniorityKeywords = formData.has("seniorityKeywords") ? parseTermList(String(formData.get("seniorityKeywords") ?? "")) : settings.gate.seniorityKeywords ?? [];
+  await saveSettingsAndGate({ gate: { ...settings.gate, includeKeywords, excludeKeywords, seniorityKeywords } });
   revalidatePath("/settings");
   revalidatePath("/");
   return ok();

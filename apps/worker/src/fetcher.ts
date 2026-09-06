@@ -137,11 +137,24 @@ export class PoliteFetcher {
         redirect: "follow",
         signal: controller.signal,
       });
-      const max = this.opts.maxBodyBytes ?? 5_000_000;
+      const max = this.opts.maxBodyBytes ?? init.maxBodyBytes ?? 5_000_000;
       let body = "";
       if (init.method !== "HEAD") {
-        const buf = Buffer.from(await res.arrayBuffer());
-        body = buf.subarray(0, max).toString("utf8");
+        const reader = res.body?.getReader();
+        const chunks: Uint8Array[] = [];
+        let size = 0;
+        if (reader) {
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              size += value.byteLength;
+              if (size > max) { await reader.cancel(); throw new SourceFetchError(`Response exceeds ${max} bytes; refusing truncated content`, "parse"); }
+              chunks.push(value);
+            }
+          } finally { reader.releaseLock(); }
+        }
+        body = Buffer.concat(chunks).toString("utf8");
       }
       const outHeaders: Record<string, string> = {};
       res.headers.forEach((v, k) => (outHeaders[k] = v));
@@ -161,6 +174,7 @@ export class PoliteFetcher {
       }
       return { status: res.status, url: finalUrl, headers: outHeaders, body };
     } catch (err) {
+      if (err instanceof SourceFetchError) throw err;
       if ((err as Error).name === "AbortError") throw new SourceFetchError(`timeout fetching ${url}`, "timeout");
       throw new SourceFetchError(`network error fetching ${url}: ${(err as Error).message}`, "network");
     } finally {

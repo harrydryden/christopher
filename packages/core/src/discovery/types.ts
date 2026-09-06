@@ -29,6 +29,7 @@ export interface DiscoveryContext extends FetchContext {
   ai?: DiscoveryAiHooks;
   /** Hard cap on fetches per discovery run. Default 40. */
   maxFetches?: number;
+  maxDurationMs?: number;
 }
 
 export interface DiscoveryCandidate {

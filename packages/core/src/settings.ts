@@ -19,6 +19,7 @@ export interface AppSettings {
   monthlyAiBudgetUsd: number;
   /** Model id per call site; missing keys fall back to `defaultModel`. */
   defaultModel: string;
+  cvModel: string;
   modelOverrides: Record<string, string>;
   /** Days a closed role stays visible in the table by default. */
   showClosedDays: number;
@@ -49,6 +50,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   seedProfile: "",
   monthlyAiBudgetUsd: 25,
   defaultModel: "claude-opus-5",
+  cvModel: "claude-sonnet-5",
   modelOverrides: {},
   showClosedDays: 30,
   closeAfterMissingScans: 2,

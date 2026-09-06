@@ -1,6 +1,7 @@
 import { and, desc, eq, gte, inArray, ne, sql } from "drizzle-orm";
 import {
   aiCalls,
+  settings,
   careerSources,
   companies,
   scanRuns,
@@ -97,4 +98,13 @@ export async function listRecentAiCalls(limit = 20): Promise<AiCall[]> {
 
 export async function listRecentScanRuns(limit = 10): Promise<ScanRun[]> {
   return db().select().from(scanRuns).orderBy(desc(scanRuns.startedAt)).limit(limit);
+}
+
+/** Last report from the persistent worker; configuration is not a successful API probe. */
+export async function getWorkerHeartbeat() {
+  const [row] = await db().select({ value: settings.value }).from(settings)
+    .where(eq(settings.key, "internal:workerHeartbeat")).limit(1);
+  const value = row?.value as { at?: unknown; aiConfigured?: unknown; browserAvailable?: unknown } | undefined;
+  if (!value || typeof value.at !== "string" || !Number.isFinite(Date.parse(value.at))) return null;
+  return { at: new Date(value.at), aiConfigured: value.aiConfigured === true, browserAvailable: value.browserAvailable === true };
 }

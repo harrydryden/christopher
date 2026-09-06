@@ -145,7 +145,7 @@ async function scanSource(
     .limit(1);
   const previousOkCount = previousOk[0]?.postingsFound ?? null;
 
-  if (postings.length > 500) { postings = postings.slice(0, 500); incomplete = true; }
+  if (postings.length > 10_000) { postings = postings.slice(0, 10_000); incomplete = true; }
   const classified = classifyScan({ fetchOk, postingsFound: postings.length, previousOkCount, droppedByValidation });
   const status = incomplete && classified === "ok" ? "partial" : classified;
   const mode = modeForScanStatus(status);
@@ -384,6 +384,7 @@ interface HtmlScanOutcome {
   finalUrl?: string;
   pages?: CachedHtmlPage[];
   incomplete?: boolean;
+  traversed?: boolean;
 }
 
 /**
@@ -421,7 +422,8 @@ async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: Career
       unchanged = unchanged && page.unchanged;
       recipe ??= page.recipe;
       pages.push({ url, contentHash: page.contentHash, postings: page.postings });
-      url = ats.nextListingPage(page.html ?? "", page.finalUrl ?? url);
+      incomplete ||= page.incomplete ?? false;
+      url = page.traversed ? null : ats.nextListingPage(page.html ?? "", page.finalUrl ?? url);
       if (pages.reduce((n, p) => n + p.postings.length, 0) >= 500 && url) { incomplete = true; break; }
     } catch (error) {
       if (pages.length === 0) throw error;
@@ -435,25 +437,31 @@ async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: Career
   return { postings, method, dropped, contentHash: sha1(pages.map(p => p.contentHash).join("|")), unchanged, recipe, pages, incomplete };
 }
 
-async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSource, ctx: FetchContext, cached?: CachedHtmlPage): Promise<HtmlScanOutcome> {
+async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSource, ctx: FetchContext, cached?: CachedHtmlPage, supplied?: { html: string; url: string }): Promise<HtmlScanOutcome> {
   let html: string;
   let finalUrl = spec.url;
   let method: "http" | "browser" = "http";
 
-  const page = await ats.fetchHtmlPage(spec, ctx);
+  const page = supplied ?? await ats.fetchHtmlPage(spec, ctx);
   html = page.html;
   finalUrl = page.url;
 
   let postings = ats.extractPostingsFromHtml(html, finalUrl, spec.recipe);
-  if (postings.length === 0 && deps.browser) {
+  if (!supplied && deps.browser && (postings.length === 0 || /<(?:button|a)[^>]*>\s*(?:next|load more|show more)/i.test(html))) {
     const rendered = await deps.browser.render(spec.url, { scrollAndExpand: true });
     if (rendered.status !== null && rendered.status >= 400) {
       throw new SourceFetchError(`Browser returned HTTP ${rendered.status}`, rendered.status === 403 || rendered.status === 429 ? "blocked" : "http", rendered.status);
     }
-    html = rendered.html;
-    finalUrl = rendered.finalUrl;
-    method = "browser";
-    postings = ats.extractPostingsFromHtml(html, finalUrl, spec.recipe);
+    const captures = rendered.listingPages?.length ? rendered.listingPages : [{ html: rendered.html, url: rendered.finalUrl }];
+    const outcomes: HtmlScanOutcome[] = [];
+    let incomplete = rendered.incomplete ?? false;
+    for (const capture of captures) {
+      try { outcomes.push(await scanHtmlPage(deps, spec, source, ctx, captures.length === 1 ? cached : undefined, capture)); }
+      catch (error) { if (!outcomes.length) throw error; incomplete = true; }
+    }
+    return { postings: keyPostings(outcomes.flatMap(p => p.postings)).keyed, method: "browser", dropped: outcomes.reduce((n, p) => n + p.dropped, 0),
+      contentHash: sha1(captures.map(p => p.html).join("|")), unchanged: false, incomplete, traversed: true };
+
   }
 
   const contentHash = sha1(html.replace(/\s+/g, " "));

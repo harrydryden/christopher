@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
   const now = new Date();
   const filters = parseRolesFilters(rawParamsFrom(request.nextUrl.searchParams));
   const settings = await getSettings();
-  const rows = await fetchTableJobs();
+  const rows = await fetchTableJobs(request.nextUrl.searchParams.get("archive") === "1");
   const filteredSorted = sortRoleRows(applyRolesFilters(rows, filters, now), filters.sort, filters.dir, now);
   const { visible } = splitHidden(filteredSorted, settings.hideThreshold, filters.showHidden);
 

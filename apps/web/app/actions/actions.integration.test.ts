@@ -12,7 +12,9 @@ vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => session ? { 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 import { savePreferenceProfile, savePinnedStatements, acceptReasonTag } from "./learning";
-import { decide, saveDecisionTags } from "./decisions";
+import { decide, saveDecisionTags, archiveRoles, decideRoles } from "./decisions";
+import { saveCvLibrary, requestCv, saveCvDraft, saveCvModel } from "./cv";
+import { fetchTableJobs } from "@/lib/queries/jobs";
 import { saveKeywords } from "./settings";
 import { useDiscoveryCandidate, deleteCompany } from "./companies";
 
@@ -25,7 +27,7 @@ beforeAll(async () => {
 });
 afterAll(async () => { await pool?.end(); });
 beforeEach(async () => {
-  await database.execute(sql`truncate companies, decisions, tasks, settings, preference_profiles, tag_vocabulary restart identity cascade`);
+  await database.execute(sql`truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary restart identity cascade`);
   session = await createSessionCookieValue(process.env.SESSION_SECRET!);
 });
 async function fixture() {
@@ -111,4 +113,66 @@ describe("learning controls", () => {
     expect(updated!.tags).toEqual(["seniority:too_junior"]);
     expect(updated!.tagsEdited).toBe(true);
   });
+});
+
+
+describe("priority workflows", () => {
+  it("archives without deleting evidence, restores and synchronously applies seniority", async () => {
+    const { job } = await fixture();
+    expect((await fetchTableJobs()).length).toBe(1);
+    expect((await archiveRoles([job.id], true)).ok).toBe(true);
+    expect(await fetchTableJobs()).toHaveLength(0);
+    expect(await fetchTableJobs(true)).toHaveLength(1);
+    const form = new FormData(); form.set("includeKeywords", "operations"); form.set("seniorityKeywords", "director");
+    await saveKeywords({ ok: true }, form);
+    expect(await fetchTableJobs(true)).toHaveLength(1);
+    await archiveRoles([job.id], false);
+    expect(await fetchTableJobs()).toHaveLength(0);
+    const [stored] = await database.select().from(schema.jobs).where(eq(schema.jobs.id, job.id));
+    expect(stored!.archivedAt).toBeNull(); expect(stored!.inTable).toBe(false);
+  });
+  it("records bulk decisions with required reasons and retained snapshots", async () => {
+    const { job, company, source } = await fixture();
+    const [second] = await database.insert(schema.jobs).values({ companyId: company.id, sourceId: source.id, externalKey: "two", title: "Finance Director", normalizedTitle: "finance director", url: "https://acme.example/two" }).returning();
+    const ids = [job.id, second!.id];
+    expect((await decideRoles(ids, "skip", "")).ok).toBe(false);
+    expect(await database.select().from(schema.decisions)).toHaveLength(0);
+    expect((await decideRoles(ids, "skip", "Too junior")).ok).toBe(true);
+    expect(await database.select().from(schema.decisions)).toHaveLength(2);
+  });
+  it("versions libraries and snapshots generation inputs atomically with its task", async () => {
+    const { job } = await fixture();
+    const content = { name: "Test Candidate", contact: "London", profile: "Operations leader", entries: [{ id: "one", kind: "experience", heading: "Director · Acme", details: "Led an operations team" }] };
+    const form = new FormData(); form.set("library", JSON.stringify(content)); form.set("version", "0");
+    expect((await saveCvLibrary({ ok: true }, form)).ok).toBe(true);
+    expect((await saveCvLibrary({ ok: true }, form)).ok).toBe(false);
+    const generate = new FormData(); generate.set("jobId", job.id);
+    expect((await requestCv({ ok: true }, generate)).ok).toBe(false);
+    generate.set("description", "Lead a business operations team, develop the annual operating plan and work with finance and commercial leaders.");
+    await expect(requestCv({ ok: true }, generate)).rejects.toThrow("redirect:/cv/");
+    const [draft] = await database.select().from(schema.cvDrafts);
+    expect(draft!.librarySnapshot).toEqual(content); expect(draft!.model).toBe("claude-sonnet-5");
+    expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(1);
+    await database.update(schema.cvDrafts).set({ status: "ready", revision: 1, content: { name: content.name, contact: content.contact, summary: "Original", sections: [{ entryId: "one", kind: "experience", heading: "Director · Acme", bullets: ["Led a team"] }], gaps: [] } }).where(eq(schema.cvDrafts.id, draft!.id));
+    const edit = new FormData(); edit.set("summary", "Edited summary"); edit.set("section-0", "Led the operations team");
+    await expect(saveCvDraft(draft!.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
+    const versions = await database.select().from(schema.cvDrafts).orderBy(schema.cvDrafts.revision);
+    expect(versions.map(v => v.content?.summary)).toEqual(["Original", "Edited summary"]);
+    expect(versions[1]!.parentId).toBe(draft!.id);
+  });
+  it("does not allow the CV and scraping model to be the same", async () => {
+    const form = new FormData(); form.set("cvModel", "claude-opus-5");
+    expect((await saveCvModel({ ok: true }, form)).ok).toBe(false);
+  });
+});
+
+it("queues an explicit board URL even while homepage discovery is pending", async () => {
+  const { company } = await fixture();
+  await database.insert(schema.tasks).values({ type: "discover", payload: { companyId: company.id }, dedupeKey: `discover:${company.id}` });
+  const { pasteDiscoveryUrl } = await import("./companies");
+  const form = new FormData(); form.set("url", "https://job-boards.greenhouse.io/acme");
+  await pasteDiscoveryUrl(company.id, form);
+  const tasks = await database.select().from(schema.tasks).where(eq(schema.tasks.type, "discover"));
+  expect(tasks).toHaveLength(2);
+  expect(tasks.some(t => (t.payload as { url?: string }).url?.includes("greenhouse"))).toBe(true);
 });

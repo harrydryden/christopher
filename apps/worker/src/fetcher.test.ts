@@ -127,3 +127,11 @@ describe("polite fetcher", () => {
     expect(res.status).toBe(404);
   });
 });
+
+  it("rejects an oversized response instead of passing truncated HTML to extraction", async () => {
+    const f = fetcher({ maxBodyBytes: 10, respectRobots: () => false });
+    await expect(f.fetchText("https://www.example.test/")).rejects.toThrow("refusing truncated");
+    const normal = fetcher({ respectRobots: () => false });
+    await expect(normal.fetchText("https://www.example.test/", { maxBodyBytes: 10 })).rejects.toThrow("refusing truncated");
+    await expect(normal.fetchText("https://www.example.test/", { maxBodyBytes: 100 })).resolves.toMatchObject({ status: 200 });
+  });

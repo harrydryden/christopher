@@ -39,6 +39,11 @@ export default async function SettingsPage() {
       <Card title="Keywords">
         <SettingsForm action={saveKeywords}>
           <label className={labelClass}>
+            <span className={fieldLabelClass}>Seniority keywords (title only)</span>
+            <textarea name="seniorityKeywords" rows={2} defaultValue={(settings.gate.seniorityKeywords ?? []).join("\n")} placeholder="Head, Director, VP, Chief" className={inputClass} />
+          </label>
+          <p className={helpClass}>Roles must match a role keyword AND a seniority keyword. Each list uses OR. Leave seniority blank to allow all levels. Exclusions win. Use strateg* to match strategy and strategic. Saving immediately refilters existing roles.</p>
+          <label className={labelClass}>
             <span className={fieldLabelClass}>Include keywords</span>
             <textarea name="includeKeywords" rows={2} defaultValue={settings.gate.includeKeywords.join("\n")} className={inputClass} />
           </label>

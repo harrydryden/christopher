@@ -13,11 +13,13 @@ const SORT_LABELS: Record<(typeof SORT_KEYS)[number], string> = {
 };
 
 export function RolesFilterBar({
+  archived = false,
   filters,
   companyOptions,
   hideThresholdSet,
   exportHref,
 }: {
+  archived?: boolean;
   filters: RolesFilters;
   companyOptions: Array<{ id: string; name: string }>;
   hideThresholdSet: boolean;
@@ -27,6 +29,7 @@ export function RolesFilterBar({
     "rounded-md border border-slate-300 bg-white px-2 py-1 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-950";
   return (
     <form method="get" className="mb-4 flex flex-wrap items-end gap-3 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+      {archived && <input type="hidden" name="archive" value="1" />}
       <fieldset className="flex flex-col gap-1">
         <legend className="text-xs font-medium text-slate-500">Status</legend>
         <div className="flex gap-2">

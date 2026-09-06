@@ -2,6 +2,7 @@
  * Database schema for Christopher. See docs/SPEC.md section 5.
  * Conventions: snake_case columns, timestamptz everywhere, uuid primary keys.
  */
+import type { CvLibrary, CvContent } from "@christopher/core";
 import { sql } from "drizzle-orm";
 import {
   boolean,
@@ -32,7 +33,7 @@ export const DECISIONS = ["apply", "skip"] as const;
 export const TASK_TYPES = [
   "discover", "scan_company", "run_daily", "fetch_description", "score_job", "tag_reason",
   "synthesize_profile", "suggest_filters", "profile_company", "suggest_companies", "rescore_all",
-  "reevaluate_gate",
+  "reevaluate_gate", "generate_cv",
 ] as const;
 export const TASK_STATUSES = ["queued", "running", "done", "failed"] as const;
 
@@ -158,6 +159,7 @@ export const jobs = pgTable(
     fitProfileVersion: integer("fit_profile_version"),
     fitScoredAt: ts("fit_scored_at"),
     hidden: boolean("hidden").notNull().default(false),
+    archivedAt: ts("archived_at"),
     createdAt: tsNow("created_at"),
     updatedAt: tsNow("updated_at"),
   },
@@ -355,3 +357,27 @@ export type NewTask = typeof tasks.$inferInsert;
 export type AiCall = typeof aiCalls.$inferSelect;
 export type TaskType = (typeof TASK_TYPES)[number];
 export type SourceType = (typeof SOURCE_TYPES)[number];
+
+
+export const cvLibraries = pgTable("cv_libraries", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  version: integer("version").notNull().unique(),
+  content: jsonb("content").$type<CvLibrary>().notNull(),
+  createdAt: tsNow("created_at"),
+});
+export const cvDrafts = pgTable("cv_drafts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  jobId: uuid("job_id").references(() => jobs.id, { onDelete: "set null" }),
+  jobTitle: text("job_title").notNull(),
+  companyName: text("company_name").notNull(),
+  jobDescription: text("job_description").notNull(),
+  libraryVersion: integer("library_version").notNull(),
+  librarySnapshot: jsonb("library_snapshot").$type<CvLibrary>().notNull(),
+  model: text("model").notNull(),
+  status: text("status", { enum: ["queued", "generating", "ready", "failed"] }).notNull().default("queued"),
+  content: jsonb("content").$type<CvContent>(),
+  error: text("error"),
+  revision: integer("revision").notNull().default(0),
+  parentId: uuid("parent_id"),
+  createdAt: tsNow("created_at"),
+});

@@ -11,11 +11,16 @@ export async function renderCvPdf(content: CvContent): Promise<Buffer> {
   const text = (value: string, bold = false, size = 10) => { doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(size).fillColor(bold ? "#16243d" : "#263244").text(clean(value), { width, lineGap: 2.5 }); };
   const room = (height: number) => { if (doc.y + height > doc.page.height - 55) doc.addPage(); };
   const heading = (value: string) => { room(65); doc.moveDown(0.7); text(value.toUpperCase(), true, 11); doc.moveTo(44, doc.y + 2).lineTo(doc.page.width - 44, doc.y + 2).strokeColor("#16243d").lineWidth(0.6).stroke(); doc.moveDown(0.65); };
-  text(content.name.toUpperCase(), true, 22); doc.moveDown(0.3); text(content.contact, false, 9); doc.moveDown(0.5);
+  text(content.name.toUpperCase(), true, 22); doc.moveDown(0.3); text(content.contact, false, 9);
+  if (content.linkedinUrl) {
+    doc.moveDown(0.25);
+    doc.font("Helvetica").fontSize(9).fillColor("#16243d").text("LinkedIn", { link: content.linkedinUrl, underline: true, width });
+  }
+  doc.moveDown(0.5);
   heading("Profile"); text(content.summary);
-  const groups = [["experience", "Work experience"], ["skill", "Skills"], ["education", "Education & certifications"], ["interest", "Interests"]] as const;
+  const groups = [["experience", "Work experience"], ["education", "Education and Skills"], ["interest", "Interests"]] as const;
   for (const [kind, title] of groups) {
-    const sections = content.sections.filter(s => s.kind === kind);
+    const sections = content.sections.filter(s => s.kind === kind || kind === "education" && s.kind === "skill").sort((a, b) => kind === "education" ? Number(a.kind === "skill") - Number(b.kind === "skill") : 0);
     if (!sections.length) continue;
     heading(title);
     for (const section of sections) {

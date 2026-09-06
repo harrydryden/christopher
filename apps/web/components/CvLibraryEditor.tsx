@@ -27,7 +27,8 @@ export function CvLibraryEditor({ library, version }: { library: CvLibrary | nul
     </div>
     {importError && <p role="alert" className="text-red-600">{importError}</p>}
     <input type="hidden" name="library" value={JSON.stringify(value)} /><input type="hidden" name="version" value={version} />
-    {field("name", "Full name")}{field("contact", "Contact details (email, phone, location, links)")}{field("profile", "Career overview: facts the model may use", 4)}
+    {field("name", "Full name")}
+    <label className="block space-y-1 text-sm">LinkedIn profile URL<input type="url" className={input} value={value.linkedinUrl ?? ""} placeholder="https://www.linkedin.com/in/your-profile" onChange={e => setValue({ ...value, linkedinUrl: e.target.value })} /></label>{field("contact", "Contact details (email, phone, location, links)")}{field("profile", "Career overview: facts the model may use", 4)}
     <p className="text-sm text-slate-500">Keep experience in reverse chronological order. Add achievements, numbers, skills and interests you can substantiate. Each draft keeps a snapshot of this evidence.</p>
     {value.entries.map((entry, i) => <fieldset key={entry.id} className="space-y-2 rounded border border-slate-200 p-3">
       <legend className="text-sm font-medium">Evidence {i + 1}</legend>

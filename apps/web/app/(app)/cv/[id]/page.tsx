@@ -25,7 +25,7 @@ export default async function CvDraftPage({ params }: { params: Promise<{ id: st
       <p className="text-sm text-slate-500">Downloads use the saved version. Save your edits first. Check factual accuracy, especially rewritten achievements.</p>
       {content.gaps.length > 0 && <aside className="rounded border border-amber-300 p-4 text-sm"><strong>Evidence gaps (excluded from the PDF)</strong><ul className="mt-2 list-disc pl-5">{content.gaps.map((gap, i) => <li key={i}>{gap}</li>)}</ul></aside>}
       <SettingsForm action={saveCvDraft.bind(null, id)} submitLabel="Save as new revision">
-        <h2 className="text-xl font-semibold">{content.name}</h2><p className="text-sm">{content.contact}</p>
+        <h2 className="text-xl font-semibold">{content.name}</h2><p className="text-sm">{content.contact}</p>{content.linkedinUrl && <a href={content.linkedinUrl} target="_blank" rel="noopener noreferrer" className="text-sm underline">LinkedIn</a>}
         <label className="text-sm">Profile<textarea name="summary" defaultValue={content.summary} rows={5} className="mt-1 block w-full rounded border p-2 dark:bg-slate-950" /></label>
         {content.sections.map((section, i) => <label key={section.entryId} className="text-sm"><span className="font-semibold">{section.heading}</span><textarea name={`section-${i}`} defaultValue={section.bullets.join("\n")} rows={Math.max(3, section.bullets.length * 2)} className="mt-1 block w-full rounded border p-2 dark:bg-slate-950" /><span className="text-xs text-slate-500">One bullet per line.</span></label>)}
       </SettingsForm>

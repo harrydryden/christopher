@@ -630,3 +630,9 @@ Scale-up stage (Series A to C), remit that includes hiring and process design, r
 - Re-evaluating filters and scanning remove stored non-matches unless they have any decision, a saved CV or an explicit archive marker. These retained records stay outside the inbox.
 - Widened filters discover newly eligible roles on the next scan.
 - Skip requires a non-blank reason for both individual and bulk decisions. Bulk reasons are copied to each affected role. Decision snapshots feed profile synthesis and filter suggestions immediately; accepted suggestions re-evaluate storage and table membership.
+
+### Evidence visibility, reusable feedback and applications
+- Evidence library has its own navigation entry and shows every editable block, saved version, style preferences and remembered wording. Saving creates an immutable new library version; generation snapshots it.
+- Editing a CV offers a checked option to remember changed profile/bullet wording in the latest library. It does not add facts to evidence entries. Remembered wording is visible, editable and removable; style preferences affect phrasing only. Old drafts remain unchanged.
+- A ready CV can be recorded as an application with an explicit application date. The application stores PDF bytes and its immutable CV revision, plus company/title snapshots. This records a user-reported submission; it does not submit to an employer or verify an external upload.
+- Applications track applied, screening, interview, offer, rejected, withdrawn and accepted statuses with timestamped notes history. Status changes cannot overwrite the submitted PDF or CV reference. Duplicate recording of the same revision is rejected.

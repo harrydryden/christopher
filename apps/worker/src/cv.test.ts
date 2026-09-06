@@ -8,7 +8,7 @@ import type { WorkerDeps } from "./context";
 const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
 const library = { name: "Test Candidate", contact: "London", profile: "Operations", entries: [{ id: "one", kind: "experience" as const, heading: "Director · Acme", details: "Led a team" }] };
 beforeAll(async () => { await runMigrations(client.db); });
-beforeEach(async () => { vi.restoreAllMocks(); await client.db.execute(sql`truncate cv_drafts, ai_calls`); });
+beforeEach(async () => { vi.restoreAllMocks(); await client.db.execute(sql`truncate applications, cv_drafts, ai_calls`); });
 afterAll(async () => { vi.restoreAllMocks(); await client.pool.end(); });
 async function setup(apiKey: string | undefined = "fixture-key") {
   const [draft] = await client.db.insert(schema.cvDrafts).values({ jobTitle: "Operations Director", companyName: "Acme", jobDescription: "Lead a team", libraryVersion: 1, librarySnapshot: library, model: "claude-sonnet-5" }).returning();

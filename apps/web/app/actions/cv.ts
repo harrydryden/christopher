@@ -22,6 +22,7 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
       await tx.insert(cvLibraries).values({ version: (latest?.version ?? 0) + 1, content });
     });
   } catch (error) { return fail(error instanceof Error ? error.message : "Could not save the library."); }
+  revalidatePath("/cv/library");
   revalidatePath("/cv");
   return ok();
 }
@@ -32,6 +33,7 @@ export async function saveCvModel(_prev: ActionResult, form: FormData): Promise<
   if (!/^claude-[a-z0-9.-]{3,100}$/.test(model)) return fail("Enter an Anthropic Claude model ID.");
   if (model === modelForCallSite(settings, "A3")) return fail("Choose a different model from the website extraction model.");
   await setSetting("cvModel", model);
+  revalidatePath("/cv/library");
   revalidatePath("/cv");
   return ok();
 }
@@ -57,6 +59,7 @@ export async function requestCv(_prev: ActionResult, form: FormData): Promise<Ac
       return draft!.id;
     });
   } catch (error) { return fail(error instanceof Error ? error.message : "Could not queue the CV."); }
+  revalidatePath("/cv/library");
   revalidatePath("/cv");
   redirect(`/cv/${draftId}`);
 }
@@ -72,9 +75,29 @@ export async function saveCvDraft(id: string, _prev: ActionResult, form: FormDat
     content.sections = content.sections.map((section, i) => ({ ...section, bullets: String(form.get(`section-${i}`) ?? "").split("\n").map(t => t.trim()).filter(Boolean) }));
     CvContentSchema.parse(content);
     const { id: _id, createdAt: _created, ...original } = draft;
-    const [saved] = await db().insert(cvDrafts).values({ ...original, content, parentId: id, revision: draft.revision + 1 }).returning();
-    savedId = saved!.id;
+    savedId = await db().transaction(async tx => {
+      const [saved] = await tx.insert(cvDrafts).values({ ...original, content, parentId: id, revision: draft.revision + 1 }).returning();
+      if (form.get("rememberWording") === "on") {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext('cv:library'))`);
+        const [latest] = await tx.select().from(cvLibraries).orderBy(desc(cvLibraries.version)).limit(1);
+        if (latest) {
+          const changes: string[] = [];
+          if (content.summary !== draft.content!.summary) changes.push(`Profile phrasing: ${content.summary}`);
+          content.sections.forEach((section, i) => {
+            if (JSON.stringify(section.bullets) !== JSON.stringify(draft.content!.sections[i]!.bullets))
+              changes.push(`${section.heading}: ${section.bullets.join(" ")}`);
+          });
+          if (changes.length) {
+            const preferredWording = [latest.content.preferredWording, ...changes].filter(Boolean).join("\n\n");
+            if (preferredWording.length > 12000) throw new Error("Remembered wording is full. Edit or remove older examples in your evidence library first.");
+            await tx.insert(cvLibraries).values({ version: latest.version + 1, content: CvLibrarySchema.parse({ ...latest.content, preferredWording }) });
+          }
+        }
+      }
+      return saved!.id;
+    });
   } catch (error) { return fail(error instanceof Error ? error.message : "Could not save the draft."); }
+  revalidatePath("/cv/library");
   revalidatePath("/cv");
   redirect(`/cv/${savedId}`);
 }

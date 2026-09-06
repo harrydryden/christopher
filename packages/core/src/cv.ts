@@ -16,6 +16,8 @@ export const CvLibrarySchema = z.object({
   contact: z.string().trim().max(500),
   linkedinUrl: LinkedInSchema,
   profile: z.string().trim().max(5000),
+  stylePreferences: z.string().max(4000).optional(),
+  preferredWording: z.string().max(12000).optional(),
   entries: z.array(CvEntrySchema).min(1).max(100),
 }).refine(l => new Set(l.entries.map(e => e.id)).size === l.entries.length, "Library entry IDs must be unique");
 export type CvLibrary = z.infer<typeof CvLibrarySchema>;

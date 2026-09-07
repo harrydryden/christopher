@@ -36,6 +36,25 @@ export function createDb(connectionString: string, options: CreateDbOptions = {}
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
   });
+  pool.on("connect", client => {
+    const original = client.query.bind(client);
+    client.query = ((...args: unknown[]) => {
+      const started = performance.now();
+      let reported = false;
+      const finish = () => {
+        if (reported) return;
+        reported = true;
+        const durationMs = Math.round(performance.now() - started);
+        if (durationMs >= 250) console.info(JSON.stringify({ event: "slow_database_query", durationMs }));
+      };
+      const callback = args[args.length - 1];
+      if (typeof callback === "function") args[args.length - 1] = (...values: unknown[]) => { finish(); return callback(...values); };
+      try {
+        const result = Reflect.apply(original, client, args);
+        return result && typeof result.finally === "function" ? result.finally(finish) : result;
+      } catch (error) { finish(); throw error; }
+    }) as typeof client.query;
+  });
   const db = drizzle(pool, { schema, casing: "snake_case" });
   return { db, pool };
 }

@@ -20,7 +20,7 @@ export default async function CvDraftPage({ params }: { params: Promise<{ id: st
   return <div className="max-w-4xl space-y-5">
     <PageHeader title={`${draft.companyName} · ${draft.jobTitle}`} description={`CV revision ${draft.revision} · library ${draft.libraryVersion} · ${draft.model}`} />
     <Link href={draft.jobId ? `/cv?job=${draft.jobId}` : "/cv"} className="text-sm underline">Back to CV builder / generate another version</Link>
-    {(draft.status === "queued" || draft.status === "generating") && <AutoRefresh />}
+    {(draft.status === "queued" || draft.status === "generating") && <AutoRefresh cvId={id} />}
     {draft.status === "failed" && <p role="alert" className="rounded bg-red-50 p-4 text-sm text-red-700">{draft.error}</p>}
     {content && <>
       <a href={`/api/cv/${id}/pdf`} className="inline-block rounded bg-slate-900 px-4 py-2 text-sm text-white">Download saved PDF</a>

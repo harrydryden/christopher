@@ -48,6 +48,25 @@ function fetcher(over: Partial<ConstructorParameters<typeof PoliteFetcher>[0]> =
   });
 }
 
+describe("conditional HTTP cache", () => {
+  it("reuses a validated body on 304 and reads changed ETags", async () => {
+    const seen: unknown[] = [];
+    let tag = 'v1';
+    const fixture = await startTestServer({ 'cache.test': { '/': req => {
+      seen.push(req.headers['if-none-match']);
+      return req.headers['if-none-match'] === tag ? { status: 304, body: '', headers: { etag: tag } } : { body: tag, headers: { etag: tag } };
+    } } }, ['cache.test']);
+    try {
+      const fetcher = new PoliteFetcher({ userAgent: 'test', hostMap: fixture.hostMap, perHostDelayMs: 0 });
+      expect((await fetcher.fetchText('https://cache.test/')).body).toBe('v1');
+      expect((await fetcher.fetchText('https://cache.test/')).body).toBe('v1');
+      tag = 'v2';
+      expect((await fetcher.fetchText('https://cache.test/')).body).toBe('v2');
+      expect(seen).toEqual([undefined, 'v1', 'v1']);
+    } finally { await fixture.close(); }
+  });
+});
+
 describe("polite fetcher", () => {
   it("identifies itself with a contact address", async () => {
     const res = await fetcher().fetchText("https://www.example.test/echo");

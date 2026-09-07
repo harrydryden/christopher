@@ -1,3 +1,4 @@
+import { getCompanyWorkStatus } from "@/lib/work-status";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import Link from "next/link";
 import { addCompanies, archiveCompany, pauseCompany, rediscoverCompany, rescanCompany, resumeCompany } from "@/app/actions/companies";
@@ -15,7 +16,7 @@ export const dynamic = "force-dynamic";
 
 export default async function CompaniesPage({ searchParams }: { searchParams: Promise<{ added?: string; skipped?: string }> }) {
   const sp = await searchParams;
-  const rows = await listCompanies();
+  const [rows, work] = await Promise.all([listCompanies(), getCompanyWorkStatus()]);
   const now = new Date();
 
   return (
@@ -50,7 +51,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
         </form>
       </Card>
 
-      {rows.some(row => row.discovering) && <div className="mb-4"><AutoRefresh message="Discovery work is pending. This page refreshes automatically; check Health if it remains queued." /></div>}
+      {work.active && <div className="mb-4"><AutoRefresh message="Company scanning or discovery is pending. Status updates automatically." /></div>}
       {rows.length === 0 ? (
         <EmptyState title="No companies yet" description="Add a homepage URL above to start tracking a company's careers page." />
       ) : (

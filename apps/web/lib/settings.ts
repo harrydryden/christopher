@@ -2,7 +2,7 @@ import { cache } from "react";
 import { notLike } from "drizzle-orm";
 import { settings as settingsTable } from "@christopher/db/schema";
 import { resolveSettings, type AppSettings } from "@christopher/core";
-import { reevaluateGate } from "@christopher/db";
+import { enqueueTask, reevaluateGate } from "@christopher/db";
 import { db } from "./db";
 
 export const getSettings = cache(async (): Promise<AppSettings> => {
@@ -31,7 +31,8 @@ export async function saveSettingsAndGate(entries: Partial<AppSettings>): Promis
       await tx.insert(settingsTable).values({ key, value: value as object, updatedAt: new Date() })
         .onConflictDoUpdate({ target: settingsTable.key, set: { value: value as object, updatedAt: new Date() } });
     }
-    const rows = await tx.select({ key: settingsTable.key, value: settingsTable.value }).from(settingsTable);
+    const rows = await tx.select({ key: settingsTable.key, value: settingsTable.value }).from(settingsTable).where(notLike(settingsTable.key, "internal:%"));
     await reevaluateGate(tx as unknown as ReturnType<typeof db>, resolveSettings(rows));
+    await enqueueTask(tx, "rescore_all", { onlyInTable: true }, { dedupeKey: "rescore_all", priority: 5 });
   });
 }

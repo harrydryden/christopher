@@ -1,3 +1,5 @@
+import { AutoRefresh } from "@/components/AutoRefresh";
+import { getCompanyWorkStatus } from "@/lib/work-status";
 import Link from "next/link";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
@@ -5,16 +7,12 @@ import { RolesFilterBar } from "@/components/RolesFilterBar";
 import { RolesTable } from "@/components/RolesTable";
 import { listCompanyOptions } from "@/lib/queries/companies";
 import {
-  applyRolesFilters,
   attachEvents,
   buildRoleRowVM,
   fetchRecentEventsFor,
-  fetchTableJobs,
-  fetchRoleDetails,
+  fetchRolePage,
   filtersToQueryString,
   parseRolesFilters,
-  sortRoleRows,
-  splitHidden,
   type RawSearchParams,
 } from "@/lib/queries/jobs";
 import { getSettings } from "@/lib/settings";
@@ -27,32 +25,19 @@ export default async function RolesPage({ searchParams }: { searchParams: Promis
   const filters = parseRolesFilters(archived ? { ...sp, decision: sp.decision ?? "all", ...(!sp.status ? { status: ["new", "active", "closed"], closed: "1" } : {}) } : sp);
   const now = new Date();
 
-  const [settings, companyOptions, tableRowsRaw] = await Promise.all([
-    getSettings(),
-    listCompanyOptions(),
-    fetchTableJobs(archived, true),
-
-  ]);
-
-  const filteredSorted = sortRoleRows(applyRolesFilters(tableRowsRaw, filters, now), filters.sort, filters.dir, now);
-  const { visible, hidden } = splitHidden(filteredSorted, settings.hideThreshold, filters.showHidden);
-  const pageSize = 50;
-  const pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
-  const requestedPage = Number(sp.page);
-  const page = Math.min(pageCount, Math.max(1, Number.isSafeInteger(requestedPage) ? requestedPage : 1));
-  const pageRows = visible.slice((page - 1) * pageSize, page * pageSize);
-  const hiddenRows = hidden.slice(0, pageSize);
-  const ids = [...pageRows, ...hiddenRows].map(row => row.job.id);
-  const [details, events] = await Promise.all([fetchRoleDetails(ids), fetchRecentEventsFor(ids)]);
-  const byId = new Map(attachEvents(details, events).map(row => [row.job.id, row]));
-  const visibleVM = pageRows.map(row => buildRoleRowVM(byId.get(row.job.id) ?? row, now));
-  const hiddenVM = hiddenRows.map(row => buildRoleRowVM(byId.get(row.job.id) ?? row, now));
+  const [settings, companyOptions, work] = await Promise.all([getSettings(), listCompanyOptions(), getCompanyWorkStatus()]);
+  const result = await fetchRolePage(filters, archived, settings.hideThreshold, Number(sp.page), now);
+  const { page, pageCount } = result;
+  const events = await fetchRecentEventsFor([...result.visible, ...result.hidden].map(row => row.job.id));
+  const visibleVM = attachEvents(result.visible, events).map(row => buildRoleRowVM(row, now));
+  const hiddenVM = attachEvents(result.hidden, events).map(row => buildRoleRowVM(row, now));
   const pageHref = (n: number) => `/?${filtersToQueryString(filters)}&page=${n}${archived ? "&archive=1" : ""}`;
 
   const exportHref = `/api/export.csv?${filtersToQueryString(filters)}${archived ? "&archive=1" : ""}`;
 
   return (
     <div>
+      {work.active && <AutoRefresh message="Company scanning or discovery is pending. Results update when work changes." />}
       <PageHeader title={archived ? "Archived roles" : filters.decision === "skip" ? "Skipped roles" : filters.decision === "apply" ? "Shortlist" : "Roles"} description="Role and seniority matches across your tracked companies." />
       <nav aria-label="Role views" className="mb-4 flex flex-wrap gap-2 text-sm">
         {[
@@ -89,13 +74,13 @@ export default async function RolesPage({ searchParams }: { searchParams: Promis
 
       <nav aria-label="Role pages" className="my-4 flex items-center gap-4 text-sm">
         {page > 1 && <Link className="underline" href={pageHref(page - 1)}>Previous</Link>}
-        <span>Page {page} of {pageCount} · {visible.length} roles</span>
+        <span>Page {page} of {pageCount} · {result.total} roles</span>
         {page < pageCount && <Link className="underline" href={pageHref(page + 1)}>Next</Link>}
       </nav>
       {settings.hideThreshold !== null && (
         <details className="mt-8 rounded-lg border border-slate-200 dark:border-slate-800">
           <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold text-slate-900 dark:text-slate-100">
-            Hidden by your preferences ({hidden.length}; showing up to 50)
+            Hidden by your preferences ({result.hiddenTotal}; showing up to 50)
           </summary>
           <div className="border-t border-slate-200 p-4 dark:border-slate-800">
             <RolesTable

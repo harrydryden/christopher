@@ -1,6 +1,6 @@
 import { schema, enqueueTask, reevaluateGate, appendProfile, type Task } from "@christopher/db";
 import { decisionDigest } from "@christopher/ai";
-import { dedupeKeyFor, modelForCallSite, priorityFor } from "@christopher/core";
+import { sha1, dedupeKeyFor, modelForCallSite, priorityFor } from "@christopher/core";
 import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { aiBudgetExceeded } from "../context";
@@ -70,8 +70,8 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
   const profile = await latestProfile(deps);
   const digest = await buildDigest(deps);
 
-  const result = await deps.ai.scoreJob(
-    {
+  const [library] = await deps.db.select({ content: schema.cvLibraries.content }).from(schema.cvLibraries).orderBy(desc(schema.cvLibraries.version)).limit(1);
+  const input = {
       profileMarkdown: profile?.markdown ?? settings.seedProfile ?? "",
       decisionDigest: digest,
       job: {
@@ -84,7 +84,13 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
         description: job.inTable ? job.descriptionText ?? undefined : undefined,
         keywordTerms: job.keywordTerms,
       },
-    },
+    };
+  if (library) input.profileMarkdown += "\nEvidence library (absence is not proof of inability):\n" + JSON.stringify({ profile: library.content.profile, entries: library.content.entries });
+  const fingerprint = sha1(JSON.stringify([input, modelForCallSite(settings, "A5")]));
+  const key = `internal:scoreInput:${job.id}`;
+  const [previous] = await deps.db.select({ value: schema.settings.value }).from(schema.settings).where(eq(schema.settings.key, key));
+  if (job.fitScore !== null && previous?.value === fingerprint) return { skipped: "scoring inputs unchanged" };
+  const result = await deps.ai.scoreJob(input,
     { refType: "job", refId: job.id },
   );
   if (!result) return { skipped: "no ai result" };
@@ -100,6 +106,7 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
       hidden: settings.hideThreshold !== null && job.inTable ? result.score < settings.hideThreshold : false,
     })
     .where(eq(schema.jobs.id, job.id));
+  await deps.db.insert(schema.settings).values({ key, value: fingerprint }).onConflictDoUpdate({ target: schema.settings.key, set: { value: fingerprint, updatedAt: deps.now() } });
   await deps.db.insert(schema.jobEvents).values({ jobId: job.id, type: "scored", payload: { score: result.score, verdict: result.verdict } });
   return { score: result.score, verdict: result.verdict };
 }
@@ -259,23 +266,14 @@ export async function handleReevaluateGate(_task: Task, deps: WorkerDeps): Promi
 }
 
 export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<unknown> {
-  const settings = await deps.settings();
-  const profile = await latestProfile(deps);
-  const rows = await deps.db
-    .select({ id: schema.jobs.id })
-    .from(schema.jobs)
-    .where(
-      and(
-        eq(schema.jobs.status, "open"),
-        eq(schema.jobs.inTable, true),
-        profile ? or(isNull(schema.jobs.fitProfileVersion), lt(schema.jobs.fitProfileVersion, profile.version)) : undefined,
-      ),
-    )
-    .limit(500);
+  const shortlisted = sql<boolean>`exists (select 1 from decisions d where d.job_id = ${schema.jobs.id} and d.superseded = false and d.decision = 'apply')`;
+  const rows = await deps.db.select({ id: schema.jobs.id, shortlisted }).from(schema.jobs)
+    .where(and(eq(schema.jobs.status, "open"), eq(schema.jobs.inTable, true))).orderBy(desc(shortlisted));
   let queued = 0;
-  for (const row of rows) {
-    const p = { jobId: row.id };
-    if (await enqueueTask(deps.db, "score_job", p, { dedupeKey: dedupeKeyFor("score_job", p), priority: priorityFor("score_job") })) queued++;
+  for (let offset = 0; offset < rows.length; offset += 250) {
+    const values = rows.slice(offset, offset + 250).map(row => ({ type: 'score_job' as const, payload: { jobId: row.id }, dedupeKey: dedupeKeyFor('score_job', { jobId: row.id }), priority: row.shortlisted ? 1 : priorityFor('score_job') }));
+    const inserted = await deps.db.insert(schema.tasks).values(values).onConflictDoNothing().returning({ id: schema.tasks.id });
+    queued += inserted.length;
   }
   return { queued };
 }

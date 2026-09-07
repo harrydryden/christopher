@@ -168,6 +168,7 @@ export const jobs = pgTable(
     index("jobs_company_status_idx").on(t.companyId, t.status),
     index("jobs_table_idx").on(t.inTable, t.status, t.fitScore),
     index("jobs_first_seen_idx").on(t.firstSeenAt),
+    index("jobs_inbox_page_idx").on(t.inTable, t.archivedAt, t.status, t.firstSeenAt),
   ],
 );
 

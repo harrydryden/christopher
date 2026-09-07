@@ -393,3 +393,43 @@ export function buildRoleRowVM(row: RoleRow, now: Date = new Date()): RoleRowVM 
     events: row.events.map((e) => ({ id: e.id, type: e.type, label: eventTypeLabel(e.type), title: `${relativeTime(e.at, now)} · ${e.at.toISOString()}` })),
   };
 }
+
+/** SQL filters and pagination: descriptions for at most one visible and one hidden page. */
+export async function fetchRolePage(filters: RolesFilters, archived: boolean, threshold: number | null, requestedPage: number, now = new Date()) {
+  const started = Date.now();
+  const liveStart = sql`case when ${jobs.postedAt} <= ${jobs.firstSeenAt} + interval '1 day' then ${jobs.postedAt} else ${jobs.firstSeenAt} end`;
+  const status = sql`case when ${jobs.status} = 'closed' then 'closed' when ${liveStart} >= ${new Date(now.getTime() - 7 * 86400000)} then 'new' else 'active' end`;
+  const statuses = filters.closed ? [...new Set([...filters.status, 'closed'])] : filters.status;
+  const conditions = and(
+    archived ? isNotNull(jobs.archivedAt) : and(isNull(jobs.archivedAt), eq(jobs.inTable, true)), ne(companies.status, 'archived'),
+    statuses.length ? inArray(status, statuses) : undefined,
+    filters.company ? eq(companies.id, filters.company) : undefined,
+    filters.decision === 'inbox' ? sql`(${decisions.decision} is null or ${decisions.decision} <> 'skip')` : filters.decision === 'undecided' ? isNull(decisions.id) : ['apply','skip'].includes(filters.decision) ? eq(decisions.decision, filters.decision as 'apply' | 'skip') : undefined,
+    filters.minFit !== null ? sql`${jobs.fitScore} >= ${filters.minFit}` : undefined,
+    filters.q ? sql`position(lower(${filters.q}) in lower(${jobs.title})) > 0` : undefined,
+    filters.location ? sql`(position(lower(${filters.location}) in lower(coalesce(${jobs.location}, ''))) > 0 or exists (select 1 from jsonb_array_elements_text(${jobs.locations}) l where position(lower(${filters.location}) in lower(l)) > 0))` : undefined,
+  );
+  const hidden = threshold !== null && !filters.showHidden ? sql`(${jobs.status} = 'open' and ${jobs.fitScore} is not null and ${jobs.fitScore} < ${threshold})` : sql`false`;
+  const countFor = async (extra: ReturnType<typeof sql>) => {
+    const [row] = await db().select({ n: sql<number>`count(*)::int` }).from(baseRolesSelect(true).where(and(conditions, extra)).as('filtered'));
+    return row?.n ?? 0;
+  };
+  const [total, hiddenTotal] = await Promise.all([countFor(sql`not ${hidden}`), countFor(hidden)]);
+  const pageCount = Math.max(1, Math.ceil(total / 50));
+  const page = Math.min(pageCount, Math.max(1, Number.isSafeInteger(requestedPage) ? requestedPage : 1));
+  const direction = sql.raw(filters.dir === 'desc' ? 'desc' : 'asc');
+  const sorts = {
+    status: sql`case ${status} when 'new' then 0 when 'active' then 1 else 2 end`,
+    fit: jobs.fitScore, company: companies.name, firstSeen: jobs.firstSeenAt, title: jobs.title, location: sql`coalesce(${jobs.location}, '')`,
+    liveFor: sql`greatest(0, floor(extract(epoch from (case when ${jobs.status} = 'closed' then coalesce(${jobs.closedAt}, ${now}) else ${now} end - (${liveStart}))) / 86400))`,
+  };
+  const order = filters.sort === 'status'
+    ? [sql`${sorts.status} ${direction}`, sql`${jobs.fitScore} ${filters.dir === 'asc' ? sql`desc nulls last` : sql`asc nulls first`}`, sql`${jobs.firstSeenAt} ${filters.dir === 'asc' ? sql`desc` : sql`asc`}`, jobs.id]
+    : [sql`${sorts[filters.sort]} ${direction} nulls last`, jobs.id];
+  const [visible, concealed] = await Promise.all([
+    baseRolesSelect().where(and(conditions, sql`not ${hidden}`)).orderBy(...order).limit(50).offset((page - 1) * 50),
+    hiddenTotal ? baseRolesSelect().where(and(conditions, hidden)).orderBy(...order).limit(50) : Promise.resolve([]),
+  ]);
+  console.info(JSON.stringify({ event: 'role_page', durationMs: Date.now() - started, rows: visible.length, total, page }));
+  return { visible: visible.map(row => ({ ...row, events: [] as RoleEvent[] })), hidden: concealed.map(row => ({ ...row, events: [] as RoleEvent[] })), total, hiddenTotal, page, pageCount };
+}

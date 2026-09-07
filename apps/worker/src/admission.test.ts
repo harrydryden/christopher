@@ -16,6 +16,17 @@ describe("description admission", () => {
     await prepareForAdmission(posts, source, context(`<main>${"Design and build products. ".repeat(25)}</main>`), gate);
     expect(evaluateGate({ ...posts[0]!, description: posts[0]!.descriptionText }, gate).inTable).toBe(false);
   });
+  it("reuses a rejected fingerprint and retries after filter changes", async () => {
+    const entries = new Set<string>();
+    const cache = { has: (key: string) => entries.has(key), remember: (key: string) => entries.add(key) };
+    const ctx = context(`<main>${"Build products. ".repeat(30)}</main>`);
+    const posting = () => [{ title: 'Director', url: 'https://example.com/job' }];
+    await prepareForAdmission(posting(), source, ctx, gate, cache);
+    await prepareForAdmission(posting(), source, ctx, gate, cache);
+    expect(ctx.fetchText).toHaveBeenCalledTimes(1);
+    await prepareForAdmission(posting(), source, ctx, { ...gate, includeKeywords: ['products'] }, cache);
+    expect(ctx.fetchText).toHaveBeenCalledTimes(2);
+  });
   it("defers failed details without fabricating a description", async () => {
     const posts = [{ title: "Director", url: "https://example.com/job" }];
     expect(await prepareForAdmission(posts, source, context("unavailable", 503), gate)).toEqual(new Set([posts[0]!.url]));

@@ -19,6 +19,10 @@
     "./client": {
       "types": "./src/client.ts",
       "default": "./src/client.ts"
+    },
+    "./tasks": {
+      "types": "./src/tasks.ts",
+      "default": "./src/tasks.ts"
     }
   },
   "scripts": {

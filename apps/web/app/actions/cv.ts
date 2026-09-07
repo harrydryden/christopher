@@ -1,6 +1,6 @@
 "use server";
 import { desc, eq, sql } from "drizzle-orm";
-import { cvLibraries, cvDrafts, jobs, companies, enqueueTask, type Db } from "@christopher/db";
+import { cvLibraries, cvDrafts, jobs, companies, enqueueTask } from "@christopher/db";
 import { CvLibrarySchema, CvContentSchema, modelForCallSite } from "@christopher/core";
 import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -55,7 +55,7 @@ export async function requestCv(_prev: ActionResult, form: FormData): Promise<Ac
     draftId = await db().transaction(async tx => {
       const [draft] = await tx.insert(cvDrafts).values({ jobId: id, jobTitle: row.job.title, companyName: row.company,
         jobDescription: description, libraryVersion: library.version, librarySnapshot: library.content, model: settings.cvModel }).returning();
-      await enqueueTask(tx as unknown as Db, "generate_cv", { draftId: draft!.id }, { dedupeKey: `generate_cv:${draft!.id}`, priority: 2 });
+      await enqueueTask(tx, "generate_cv", { draftId: draft!.id }, { dedupeKey: `generate_cv:${draft!.id}`, priority: 2 });
       return draft!.id;
     });
   } catch (error) { return fail(error instanceof Error ? error.message : "Could not queue the CV."); }

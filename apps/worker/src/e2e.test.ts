@@ -434,6 +434,22 @@ describe("functional review regressions", () => {
     expect((await db.select().from(schema.decisions))[0]!.reason).toBe("Too junior");
   });
 
+  it("limits description gate refreshes to their role and rechecks old closed roles globally", async () => {
+    await setGate({});
+    await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const rows = await db.select().from(schema.jobs);
+    await db.update(schema.jobs).set({ status: "closed", closedAt: new Date("2000-01-01") });
+    await setGate({ includeKeywords: ["no-match"] });
+    const targeted = await reevaluateGate(db, await deps.settings(), new Date(), rows[0]!.id);
+    expect(targeted.examined).toBe(1);
+    expect(targeted.removed).toBe(1);
+    expect(await db.select().from(schema.jobs)).toHaveLength(rows.length - 1);
+    const all = await reevaluateGate(db, await deps.settings());
+    expect(all.removed).toBe(rows.length - 1);
+    expect(await db.select().from(schema.jobs)).toHaveLength(0);
+  });
+
   it("does not reset missing counters on a partial scan", async () => {
     const company = await addCompany("https://www.acme.example/", "acme.example");
     await queue.drain();

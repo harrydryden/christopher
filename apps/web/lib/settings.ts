@@ -1,12 +1,14 @@
+import { cache } from "react";
+import { notLike } from "drizzle-orm";
 import { settings as settingsTable } from "@christopher/db/schema";
 import { resolveSettings, type AppSettings } from "@christopher/core";
 import { reevaluateGate } from "@christopher/db";
 import { db } from "./db";
 
-export async function getSettings(): Promise<AppSettings> {
-  const rows = await db().select({ key: settingsTable.key, value: settingsTable.value }).from(settingsTable);
+export const getSettings = cache(async (): Promise<AppSettings> => {
+  const rows = await db().select({ key: settingsTable.key, value: settingsTable.value }).from(settingsTable).where(notLike(settingsTable.key, "internal:%"));
   return resolveSettings(rows);
-}
+});
 
 /** Upsert one settings key. `value` must be JSON-serialisable. */
 export async function setSetting(key: string, value: unknown): Promise<void> {

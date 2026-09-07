@@ -1,7 +1,7 @@
 import { schema, enqueueTask, reevaluateGate, appendProfile, type Task } from "@christopher/db";
 import { decisionDigest } from "@christopher/ai";
-import { dedupeKeyFor, localDateParts, evaluateGate, modelForCallSite, priorityFor, type AppSettings } from "@christopher/core";
-import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { dedupeKeyFor, localDateParts, modelForCallSite, priorityFor } from "@christopher/core";
+import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { aiBudgetExceeded } from "../context";
 import { log } from "../log";
@@ -210,7 +210,7 @@ export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Pro
   return { version, decisions: decisions.length };
 }
 
-export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promise<unknown> {
+export async function handleSuggestFilters(_task: Task, deps: WorkerDeps): Promise<unknown> {
   if (await aiBudgetExceeded(deps)) return { skipped: "ai budget exceeded" };
   const settings = await deps.settings();
   const decisions = await decisionRows(deps, 300);
@@ -266,7 +266,7 @@ export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promis
 }
 
 /** Re-evaluate the keyword and location gate for every stored job after a settings change. */
-export async function handleReevaluateGate(task: Task, deps: WorkerDeps): Promise<unknown> {
+export async function handleReevaluateGate(_task: Task, deps: WorkerDeps): Promise<unknown> {
   return reevaluateGate(deps.db, await deps.settings(), deps.now());
 }
 

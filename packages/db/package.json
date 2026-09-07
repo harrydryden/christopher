@@ -15,6 +15,10 @@
     "./migrate": {
       "types": "./src/migrate.ts",
       "default": "./src/migrate.ts"
+    },
+    "./client": {
+      "types": "./src/client.ts",
+      "default": "./src/client.ts"
     }
   },
   "scripts": {

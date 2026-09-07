@@ -4,7 +4,7 @@
  */
 import { schema, enqueueTask, type Task } from "@christopher/db";
 import { dedupeKeyFor, discovery, ensureHttpUrl, extractDomain, priorityFor, stripHtml, type DiscoveryResult } from "@christopher/core";
-import { and, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { aiBudgetExceeded, makeDiscoveryContext, makeFetchContext, type WorkerDeps } from "../context";
 import { serialiseCandidate } from "./discover";
 import { latestProfile } from "./learning";

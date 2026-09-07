@@ -126,7 +126,7 @@ export class TaskQueue {
     this.active++;
     try {
       if (!handler) throw new Error(`no handler for task type ${task.type}`);
-      log.info("task start", { id: task.id, type: task.type, attempt: task.attempts });
+      log.info("task start", { id: task.id, type: task.type, attempt: task.attempts, queueWaitMs: Math.max(0, Date.now() - task.createdAt.getTime()) });
       const result = await handler(task, this.deps);
       await completeTask(this.deps.db, task, result);
       if (task.type === "scan_company" || task.type === "run_daily") await finaliseScanRuns(this.deps);

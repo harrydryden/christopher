@@ -25,6 +25,8 @@ export class PoliteFetcher {
   private robotsCache = new Map<string, { fetchedAt: number; disallow: string[]; allow: string[] } | null>();
   private queues = new Map<string, Promise<void>>();
   public requests = 0;
+  private responses = new Map<string, { response: FetchResponse; at: number }>();
+  private responseBytes = 0;
 
   constructor(private readonly opts: FetcherOptions) {}
 
@@ -128,6 +130,12 @@ export class PoliteFetcher {
       ...(init.headers ?? {}),
     };
     if (target !== url) headers["x-forwarded-host"] = originalHost;
+    const cacheKey = JSON.stringify([url, init.headers ?? {}, init.maxBodyBytes ?? null]);
+    const cached = (init.method ?? "GET") === "GET" && !init.body ? this.responses.get(cacheKey) : undefined;
+    const usable = cached && Date.now() - cached.at < 7 * 86400000 ? cached : undefined;
+    if (usable?.response.headers.etag) headers["if-none-match"] = usable.response.headers.etag;
+    else if (usable?.response.headers["last-modified"]) headers["if-modified-since"] = usable.response.headers["last-modified"];
+    const started = Date.now();
     this.requests += 1;
     try {
       const res = await fetch(target, {
@@ -137,6 +145,10 @@ export class PoliteFetcher {
         redirect: "follow",
         signal: controller.signal,
       });
+      if (res.status === 304 && usable) {
+        log.info("http revalidated", { host: originalHost, durationMs: Date.now() - started, bytes: 0 });
+        return usable.response;
+      }
       const max = this.opts.maxBodyBytes ?? init.maxBodyBytes ?? 5_000_000;
       let body = "";
       if (init.method !== "HEAD") {
@@ -172,7 +184,19 @@ export class PoliteFetcher {
           finalUrl = url;
         }
       }
-      return { status: res.status, url: finalUrl, headers: outHeaders, body };
+      const response = { status: res.status, url: finalUrl, headers: outHeaders, body };
+      const bytes = Buffer.byteLength(body);
+      if ((init.method ?? "GET") === "GET" && !init.body && res.status === 200 && bytes <= 2_000_000 && !/no-store|private/i.test(outHeaders["cache-control"] ?? "") && !outHeaders["set-cookie"] && !headers.authorization && !headers.cookie && (outHeaders.etag || outHeaders["last-modified"])) {
+        const old = this.responses.get(cacheKey);
+        if (old) { this.responseBytes -= Buffer.byteLength(old.response.body); this.responses.delete(cacheKey); }
+        this.responses.set(cacheKey, { response, at: Date.now() }); this.responseBytes += bytes;
+        while (this.responseBytes > 20_000_000 || this.responses.size > 200) {
+          const key = this.responses.keys().next().value!;
+          this.responseBytes -= Buffer.byteLength(this.responses.get(key)!.response.body); this.responses.delete(key);
+        }
+      }
+      log.info("http fetched", { host: originalHost, status: res.status, durationMs: Date.now() - started, bytes });
+      return response;
     } catch (err) {
       if (err instanceof SourceFetchError) throw err;
       if ((err as Error).name === "AbortError") throw new SourceFetchError(`timeout fetching ${url}`, "timeout");

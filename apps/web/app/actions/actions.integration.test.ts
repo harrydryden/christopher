@@ -14,9 +14,10 @@ vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error
 import { savePreferenceProfile, savePinnedStatements, acceptReasonTag } from "./learning";
 import { decide, saveDecisionTags, archiveRoles, decideRoles } from "./decisions";
 import { recordApplication, updateApplication } from "./applications";
+import { GET as workStatus } from "@/app/api/work-status/route";
 import { GET as downloadApplication } from "@/app/api/applications/[id]/pdf/route";
 import { saveCvLibrary, requestCv, saveCvDraft, saveCvModel } from "./cv";
-import { fetchRoleDetails, fetchTableJobs, fetchRecentEventsFor } from "@/lib/queries/jobs";
+import { fetchRolePage, fetchRoleDetails, parseRolesFilters, fetchTableJobs, fetchRecentEventsFor } from "@/lib/queries/jobs";
 import { saveKeywords } from "./settings";
 import { useDiscoveryCandidate, deleteCompany } from "./companies";
 
@@ -131,6 +132,27 @@ describe("priority workflows", () => {
     expect(await fetchTableJobs()).toHaveLength(0);
     const [stored] = await database.select().from(schema.jobs).where(eq(schema.jobs.id, job.id));
     expect(stored!.archivedAt).toBeNull(); expect(stored!.inTable).toBe(false);
+  });
+  it("reports completion without returning full company or CV records", async () => {
+    const [task] = await database.insert(schema.tasks).values({ type: 'scan_company', payload: {}, priority: 3 }).returning();
+    const pending = await workStatus(new Request('http://localhost/api/work-status'));
+    expect((await pending.json()).active).toBe(true);
+    await database.update(schema.tasks).set({ status: 'done' }).where(eq(schema.tasks.id, task!.id));
+    expect((await (await workStatus(new Request('http://localhost/api/work-status'))).json()).active).toBe(false);
+  });
+  it("filters and pages roles in SQL before loading descriptions", async () => {
+    const { job, company, source } = await fixture();
+    await database.insert(schema.jobs).values(Array.from({ length: 55 }, (_, i) => ({ companyId: company.id, sourceId: source.id, externalKey: `page-${i}`, title: `Role ${String(i).padStart(2, '0')}`, normalizedTitle: `role ${i}`, url: `https://acme.example/${i}`, inTable: true, location: 'London' })));
+    const filters = parseRolesFilters({ q: 'Role', location: 'London', sort: 'title' });
+    const first = await fetchRolePage(filters, false, null, 1);
+    const second = await fetchRolePage(filters, false, null, 2);
+    expect(first.total).toBe(55);
+    expect(first.visible).toHaveLength(50);
+    expect(second.visible).toHaveLength(5);
+    expect(first.visible[0]!.job.title).toBe('Role 00');
+    await decide(second.visible[0]!.job.id, 'skip', 'Not relevant');
+    expect((await fetchRolePage(filters, false, null, 2)).total).toBe(54);
+    expect((await fetchRolePage({ ...filters, decision: 'skip' }, false, null, 1)).visible).toHaveLength(1);
   });
   it("loads descriptions only for requested role detail IDs", async () => {
     const { job } = await fixture();

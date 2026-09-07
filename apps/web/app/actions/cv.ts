@@ -20,6 +20,7 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
       const [latest] = await tx.select().from(cvLibraries).orderBy(desc(cvLibraries.version)).limit(1);
       if ((latest?.version ?? 0) !== Number(form.get("version"))) throw new Error("The library changed. Reload before saving.");
       await tx.insert(cvLibraries).values({ version: (latest?.version ?? 0) + 1, content });
+      await enqueueTask(tx, "rescore_all", { onlyInTable: true }, { dedupeKey: "rescore_all", priority: 5 });
     });
   } catch (error) { return fail(error instanceof Error ? error.message : "Could not save the library."); }
   revalidatePath("/cv/library");

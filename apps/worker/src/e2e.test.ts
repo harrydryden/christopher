@@ -142,7 +142,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.execute(sql`truncate companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, tasks, settings, ai_calls, company_profiles, company_suggestions, filter_suggestions, preference_profiles restart identity cascade`);
+  await db.execute(sql`truncate companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, tasks, settings, ai_calls, company_profiles, company_suggestions, filter_suggestions, preference_profiles, cv_libraries restart identity cascade`);
   now = new Date("2026-09-05T06:00:00Z");
   setJobs([JOB_OPERATIONS_MANAGER, JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
 });
@@ -521,6 +521,20 @@ describe("functional review regressions", () => {
     expect(finished!.companiesFailed).toBe(1);
   }, 60_000);
 
+  it("reuses a score until its evidence changes", async () => {
+    await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [job] = await db.select().from(schema.jobs).where(eq(schema.jobs.inTable, true));
+    const scoreJob = vi.fn().mockResolvedValue({ score: 80, verdict: 'strong', rationale: 'Fixture' });
+    const scoringDeps = { ...deps, ai: { ...deps.ai, enabled: true, scoreJob } } as unknown as WorkerDeps;
+    const task = { payload: { jobId: job!.id } } as never;
+    await handleScoreJob(task, scoringDeps);
+    await handleScoreJob(task, scoringDeps);
+    expect(scoreJob).toHaveBeenCalledTimes(1);
+    await db.insert(schema.cvLibraries).values({ version: 100, content: { name: 'Test', contact: '', profile: 'New evidence', entries: [] } });
+    await handleScoreJob(task, scoringDeps);
+    expect(scoreJob).toHaveBeenCalledTimes(2);
+  });
   it("does not score legacy non-matches even when old settings enabled them", async () => {
     await addCompany("https://www.acme.example/", "acme.example");
     await queue.drain();

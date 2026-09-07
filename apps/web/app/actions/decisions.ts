@@ -83,6 +83,7 @@ export async function decide(jobId: string, decision: "apply" | "skip" | null, r
         type: "decided",
         payload: { decision: input.decision, reason: trimmedReason },
       });
+      if (input.decision === "apply") await enqueue("score_job", { jobId: input.jobId }, tx);
       if (decisionId) await enqueue("tag_reason", { decisionId }, tx);
       await enqueue("synthesize_profile", { force: false }, tx);
       await enqueue("suggest_filters", {}, tx);

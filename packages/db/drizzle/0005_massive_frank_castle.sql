@@ -1,0 +1,1 @@
+CREATE INDEX "jobs_inbox_page_idx" ON "jobs" USING btree ("in_table","archived_at","status","first_seen_at");

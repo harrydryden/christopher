@@ -67,7 +67,7 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
   const trimmed = text.slice(0, MAX_DESCRIPTION);
   await deps.db
     .update(schema.jobs)
-    .set({ descriptionText: trimmed, descriptionHash: sha1(trimmed), descriptionFetchedAt: deps.now(), fitScore: null })
+    .set({ descriptionText: trimmed, descriptionHash: sha1(trimmed), descriptionFetchedAt: deps.now(), fitScore: sha1(trimmed) === job.descriptionHash ? job.fitScore : null })
     .where(eq(schema.jobs.id, job.id));
   await deps.db.insert(schema.jobEvents).values({ jobId: job.id, type: "description_fetched", payload: { chars: trimmed.length } });
   await reevaluateGate(deps.db, await deps.settings(), deps.now(), jobId);

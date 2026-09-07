@@ -8,6 +8,7 @@ export interface Route {
   status?: number;
   body: string | object;
   contentType?: string;
+  headers?: Record<string, string>;
 }
 
 export type RouteTable = Record<string, Record<string, Route | ((req: http.IncomingMessage, body: string) => Route)>>;
@@ -41,7 +42,7 @@ export async function startTestServer(routes: RouteTable, hosts: string[]): Prom
       }
       const route = typeof entry === "function" ? entry(req, body) : entry;
       const payload = typeof route.body === "string" ? route.body : JSON.stringify(route.body);
-      res.writeHead(route.status ?? 200, { "content-type": route.contentType ?? (typeof route.body === "string" ? "text/html" : "application/json") });
+      res.writeHead(route.status ?? 200, { ...route.headers, "content-type": route.contentType ?? (typeof route.body === "string" ? "text/html" : "application/json") });
       res.end(payload);
     });
   });

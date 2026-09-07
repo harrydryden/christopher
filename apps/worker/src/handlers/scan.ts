@@ -26,6 +26,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { CareerSource } from "@christopher/db";
 import { aiBudgetExceeded, makeFetchContext, type WorkerDeps } from "../context";
 import { gzipSync, gunzipSync } from "node:zlib";
+import { loadAdmissionCache } from "../admission-cache";
 import { prepareForAdmission } from "../admission";
 import { log } from "../log";
 
@@ -147,7 +148,16 @@ async function scanSource(
   const previousOkCount = previousOk[0]?.postingsFound ?? null;
 
   if (postings.length > 10_000) { postings = postings.slice(0, 10_000); incomplete = true; }
-  const unresolved = fetchOk ? await prepareForAdmission(postings, spec, ctx, settings.gate) : new Set<string>();
+  const savedDescriptions = await deps.db.select({ externalKey: schema.jobs.externalKey, url: schema.jobs.url, text: schema.jobs.descriptionText, at: schema.jobs.descriptionFetchedAt }).from(schema.jobs).where(eq(schema.jobs.sourceId, source.id));
+  const reusedDescriptions = new Set<string>();
+  const savedByUrl = new Map(savedDescriptions.map(row => [row.url, row]));
+  for (const posting of postings) {
+    const saved = savedByUrl.get(posting.url);
+    if (posting.externalId && saved?.externalKey === `id:${posting.externalId}` && !posting.descriptionText && saved?.text && saved.at && deps.now().getTime() - saved.at.getTime() < 7 * 86400000 && (!posting.updatedAt || posting.updatedAt <= saved.at)) { posting.descriptionText = saved.text; reusedDescriptions.add(posting.url); }
+  }
+  const rejectionCache = await loadAdmissionCache(deps.db, source.id, deps.now());
+  const unresolved = fetchOk ? await prepareForAdmission(postings, spec, ctx, settings.gate, rejectionCache) : new Set<string>();
+  await rejectionCache.save();
   if (unresolved.size) {
     incomplete = true;
     error = `${unresolved.size} descriptions unavailable; admission deferred until the next scan`;
@@ -271,7 +281,7 @@ async function scanSource(
       keywordMatched: gate.keywordMatched, keywordTerms: gate.keywordTerms,
       excluded: gate.excluded, locationOk: gate.locationOk, inTable: gate.inTable, nearMiss,
       ...(posting.descriptionText !== undefined ? {
-        descriptionHash: sha1(fields.descriptionText ?? ""), descriptionFetchedAt: deps.now(),
+        descriptionHash: sha1(fields.descriptionText ?? ""), descriptionFetchedAt: reusedDescriptions.has(posting.url) ? savedByUrl.get(posting.url)!.at : deps.now(),
       } : {}),
       updatedAt: deps.now(),
     }).where(eq(schema.jobs.id, job.id));

@@ -1,7 +1,6 @@
 import { acceptSuggestion, findMoreSuggestions, rejectSuggestion } from "@/app/actions/suggestions";
 import { Badge } from "@/components/Badge";
 import { Button } from "@/components/Button";
-import { Card } from "@/components/Card";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { relativeTime } from "@/lib/format";

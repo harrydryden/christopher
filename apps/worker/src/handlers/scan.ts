@@ -2,7 +2,7 @@
  * The daily scan. For each company: fetch every active source, normalise postings, reconcile them
  * against what is stored, apply the keyword and location gate, and queue scoring for anything new.
  */
-import { schema, enqueueTask, pruneNonMatches, type Db, type Task } from "@christopher/db";
+import { schema, enqueueTask, pruneNonMatches, type Task } from "@christopher/db";
 import {
   ats,
   classifyScan,

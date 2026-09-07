@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, sql, getTableColumns } from "drizzle-orm";
 import {
   careerSources,
   companies,
@@ -12,7 +12,6 @@ import {
   type Company,
   type CompanyProfile,
   type DiscoveryRun,
-  type Job,
   type Scan,
 } from "@christopher/db/schema";
 import { db } from "@/lib/db";
@@ -111,14 +110,15 @@ export async function getLatestDiscoveryRun(companyId: string): Promise<Discover
   return rows[0] ?? null;
 }
 
-export interface CompanyScanRow extends Scan {
+export interface CompanyScanRow extends Omit<Scan, "rawSnapshot"> {
   sourceType: CareerSource["type"];
   sourceUrl: string;
 }
 
 export async function getCompanyScans(companyId: string, limit = 20): Promise<CompanyScanRow[]> {
+  const { rawSnapshot: _snapshot, ...scanFields } = getTableColumns(scans);
   const rows = await db()
-    .select({ scan: scans, sourceType: careerSources.type, sourceUrl: careerSources.url })
+    .select({ scan: scanFields, sourceType: careerSources.type, sourceUrl: careerSources.url })
     .from(scans)
     .innerJoin(careerSources, eq(scans.sourceId, careerSources.id))
     .where(eq(careerSources.companyId, companyId))
@@ -127,8 +127,10 @@ export async function getCompanyScans(companyId: string, limit = 20): Promise<Co
   return rows.map((r) => ({ ...r.scan, sourceType: r.sourceType, sourceUrl: r.sourceUrl }));
 }
 
-export async function getCompanyRoles(companyId: string): Promise<Job[]> {
-  return db().select().from(jobs).where(eq(jobs.companyId, companyId)).orderBy(desc(jobs.firstSeenAt));
+export async function getCompanyRoles(companyId: string) {
+  return db().select({ id: jobs.id, title: jobs.title, url: jobs.url, location: jobs.location,
+    postedAt: jobs.postedAt, status: jobs.status, firstSeenAt: jobs.firstSeenAt, closedAt: jobs.closedAt, seeded: jobs.seeded,
+    inTable: jobs.inTable, nearMiss: jobs.nearMiss, fitScore: jobs.fitScore }).from(jobs).where(eq(jobs.companyId, companyId)).orderBy(desc(jobs.firstSeenAt));
 }
 
 export async function getCompanyProfile(companyId: string): Promise<CompanyProfile | null> {

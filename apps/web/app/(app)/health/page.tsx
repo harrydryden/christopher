@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { retryTask } from "@/app/actions/health";
-import { Badge, companyStatusTone, jobStatusTone, scanStatusTone, sourceStatusTone, taskStatusTone } from "@/components/Badge";
+import { Badge, scanStatusTone, sourceStatusTone, taskStatusTone } from "@/components/Badge";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { EmptyState } from "@/components/EmptyState";

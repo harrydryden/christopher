@@ -1,5 +1,5 @@
 import { schema, enqueueTask, type Db, type Task } from "@christopher/db";
-import { dedupeKeyFor, discovery, extractDomain, priorityFor, type DiscoveryCandidate, type DiscoveryResult } from "@christopher/core";
+import { dedupeKeyFor, discovery, priorityFor, type DiscoveryCandidate, type DiscoveryResult } from "@christopher/core";
 import { and, eq, ne } from "drizzle-orm";
 import { makeDiscoveryContext, type WorkerDeps } from "../context";
 import { log } from "../log";

@@ -27,13 +27,14 @@ export default async function RolesPage({ searchParams }: { searchParams: Promis
   const filters = parseRolesFilters(archived && !sp.status ? { ...sp, status: ["new", "active", "closed"], closed: "1" } : sp);
   const now = new Date();
 
-  const settings = await getSettings();
-  const [companyOptions, tableRowsRaw, nearMissRowsRaw] = await Promise.all([
+  const [settings, companyOptions, tableRowsRaw] = await Promise.all([
+    getSettings(),
     listCompanyOptions(),
     fetchTableJobs(archived),
-    settings.nearMissEnabled && !archived ? fetchNearMissJobs(settings, 10) : Promise.resolve([]),
+
   ]);
 
+  const nearMissRowsRaw = settings.nearMissEnabled && !archived ? await fetchNearMissJobs(settings, 10) : [];
   const allJobIds = [...tableRowsRaw, ...nearMissRowsRaw].map((r) => r.job.id);
   const eventsByJob = await fetchRecentEventsFor(allJobIds);
   const tableRows = attachEvents(tableRowsRaw, eventsByJob);

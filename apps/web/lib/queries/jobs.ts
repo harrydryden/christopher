@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, ne, isNull, isNotNull } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, ne, isNull, isNotNull, sql, lte } from "drizzle-orm";
 import { careerSources, companies, decisions, jobEvents, jobs, type Job, type SourceType } from "@christopher/db/schema";
 import { displayStatus, formatDuration, liveFor, type AppSettings, type DisplayStatus } from "@christopher/core";
 import { db } from "@/lib/db";
@@ -82,11 +82,11 @@ export async function fetchNearMissJobs(settings: Pick<AppSettings, "nearMissMin
 export async function fetchRecentEventsFor(jobIds: string[], perJobLimit = 6): Promise<Map<string, RoleEvent[]>> {
   const map = new Map<string, RoleEvent[]>();
   if (jobIds.length === 0) return map;
-  const rows = await db()
-    .select({ id: jobEvents.id, jobId: jobEvents.jobId, type: jobEvents.type, payload: jobEvents.payload, at: jobEvents.at })
-    .from(jobEvents)
-    .where(inArray(jobEvents.jobId, jobIds))
-    .orderBy(desc(jobEvents.at));
+  const ranked = db().select({ id: jobEvents.id, jobId: jobEvents.jobId, type: jobEvents.type,
+    payload: jobEvents.payload, at: jobEvents.at,
+    rank: sql<number>`row_number() over (partition by ${jobEvents.jobId} order by ${jobEvents.at} desc, ${jobEvents.id})`.as("event_rank"),
+  }).from(jobEvents).where(inArray(jobEvents.jobId, jobIds)).as("ranked_events");
+  const rows = await db().select().from(ranked).where(lte(ranked.rank, perJobLimit)).orderBy(desc(ranked.at));
   for (const row of rows) {
     const existing = map.get(row.jobId);
     const entry: RoleEvent = { id: row.id, type: row.type, payload: row.payload, at: row.at };

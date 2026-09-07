@@ -16,7 +16,7 @@ import { decide, saveDecisionTags, archiveRoles, decideRoles } from "./decisions
 import { recordApplication, updateApplication } from "./applications";
 import { GET as downloadApplication } from "@/app/api/applications/[id]/pdf/route";
 import { saveCvLibrary, requestCv, saveCvDraft, saveCvModel } from "./cv";
-import { fetchTableJobs } from "@/lib/queries/jobs";
+import { fetchTableJobs, fetchRecentEventsFor } from "@/lib/queries/jobs";
 import { saveKeywords } from "./settings";
 import { useDiscoveryCandidate, deleteCompany } from "./companies";
 
@@ -200,4 +200,11 @@ it("queues an explicit board URL even while homepage discovery is pending", asyn
   const tasks = await database.select().from(schema.tasks).where(eq(schema.tasks.type, "discover"));
   expect(tasks).toHaveLength(2);
   expect(tasks.some(t => (t.payload as { url?: string }).url?.includes("greenhouse"))).toBe(true);
+});
+
+it("returns only the newest requested events per role", async () => {
+  const { job } = await fixture();
+  await database.insert(schema.jobEvents).values(Array.from({ length: 30 }, (_, i) => ({ jobId: job.id, type: "updated" as const, payload: { i }, at: new Date(1700000000000 + i * 1000) })));
+  const events = await fetchRecentEventsFor([job.id], 3);
+  expect(events.get(job.id)!.map(e => e.payload.i)).toEqual([29, 28, 27]);
 });

@@ -26,6 +26,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { CareerSource } from "@christopher/db";
 import { aiBudgetExceeded, makeFetchContext, type WorkerDeps } from "../context";
 import { gzipSync, gunzipSync } from "node:zlib";
+import { prepareForAdmission } from "../admission";
 import { log } from "../log";
 
 type ScanStatus = "ok" | "partial" | "suspect_empty" | "failed";
@@ -146,6 +147,11 @@ async function scanSource(
   const previousOkCount = previousOk[0]?.postingsFound ?? null;
 
   if (postings.length > 10_000) { postings = postings.slice(0, 10_000); incomplete = true; }
+  const unresolved = fetchOk ? await prepareForAdmission(postings, spec, ctx, settings.gate) : new Set<string>();
+  if (unresolved.size) {
+    incomplete = true;
+    error = `${unresolved.size} descriptions unavailable; admission deferred until the next scan`;
+  }
   const classified = classifyScan({ fetchOk, postingsFound: postings.length, previousOkCount, droppedByValidation });
   const status = incomplete && classified === "ok" ? "partial" : classified;
   const mode = modeForScanStatus(status);
@@ -184,6 +190,7 @@ async function scanSource(
   const descriptionQueue: string[] = [];
 
   for (const insert of result.inserts) {
+    if (unresolved.has(insert.url)) continue;
     const gate = evaluateGate(
       {
         title: insert.title,
@@ -243,6 +250,7 @@ async function scanSource(
   const observed = new Map(keyPostings(postings).keyed.map((p) => [p.externalKey, p]));
   for (const job of existingRows.filter((j) => result.seen.includes(j.id))) {
     const posting = observed.get(job.externalKey)!;
+    if (unresolved.has(posting.url)) continue;
     const fields = {
       title: posting.title, url: posting.url,
       location: posting.location ?? job.location,
@@ -334,18 +342,7 @@ async function scanSource(
   }
 
   if (!(await aiBudgetExceeded(deps))) {
-    // Roles in the table are always scored. Near misses are scored only up to the daily cap, so a
-    // wide keyword change cannot turn into hundreds of model calls.
-    const inTableToScore = scoreQueue.filter((item) => !item.nearMiss);
-    let nearMissBudget = 0;
-    const nearMissCandidates = scoreQueue.filter((item) => item.nearMiss);
-    if (nearMissCandidates.length > 0) {
-      const scoredToday = await deps.db.execute<{ n: number }>(sql`
-        select count(*)::int as n from jobs
-        where near_miss and fit_scored_at >= date_trunc('day', now())`);
-      nearMissBudget = Math.max(0, settings.nearMissDailyCap - (scoredToday.rows[0]?.n ?? 0));
-    }
-    for (const item of [...inTableToScore, ...nearMissCandidates.slice(0, nearMissBudget)]) {
+    for (const item of scoreQueue) {
       await enqueueTask(deps.db, "score_job", item, { dedupeKey: dedupeKeyFor("score_job", item), priority: priorityFor("score_job") });
     }
   }

@@ -521,10 +521,10 @@ describe("functional review regressions", () => {
     expect(finished!.companiesFailed).toBe(1);
   }, 60_000);
 
-  it("reserves the near-miss daily allowance atomically across concurrent scores", async () => {
+  it("does not score legacy non-matches even when old settings enabled them", async () => {
     await addCompany("https://www.acme.example/", "acme.example");
     await queue.drain();
-    // Legacy retained near-misses still obey their scoring cap.
+    // Stored legacy flags cannot re-enable retired near-miss scoring.
     await db.update(schema.jobs).set({ inTable: false, nearMiss: true });
     const near = await db.select().from(schema.jobs).where(eq(schema.jobs.nearMiss, true));
     expect(near.length).toBeGreaterThan(0);
@@ -533,8 +533,8 @@ describe("functional review regressions", () => {
     const aiDeps = { ...deps, ai: { ...deps.ai, enabled: true, scoreJob } } as unknown as WorkerDeps;
     const task = { payload: { jobId: near[0]!.id } } as never;
     const outcomes = await Promise.all([handleScoreJob(task, aiDeps), handleScoreJob(task, aiDeps), handleScoreJob(task, aiDeps)]);
-    expect(scoreJob).toHaveBeenCalledTimes(1);
-    expect(outcomes.filter((r) => (r as { skipped?: string }).skipped === "near-miss daily cap reached")).toHaveLength(2);
+    expect(scoreJob).not.toHaveBeenCalled();
+    expect(outcomes.filter((r) => (r as { skipped?: string }).skipped === "not in table and near-miss disabled")).toHaveLength(3);
   }, 60_000);
 });
 

@@ -8,6 +8,7 @@
  * Harmless to leave enabled alongside a Render worker: task claiming is atomic and the scan run
  * is deduplicated per day, so whichever gets there first does the work.
  */
+import { getWorkerHeartbeat } from "@/lib/queries/health";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { claimTask, createDeps, handlers, readEnv, schedulerTick, TaskQueue } from "@christopher/worker";
@@ -51,7 +52,9 @@ async function runScheduledWork(budgetMs: number) {
 
   try {
     await schedulerTick(deps);
-    while (Date.now() - started < budgetMs) {
+    const heartbeat = await getWorkerHeartbeat();
+    const persistentWorker = heartbeat && Date.now() - heartbeat.at.getTime() < 120_000;
+    while (process.env.CHRISTOPHER_SERVERLESS_FALLBACK === "1" && !persistentWorker && Date.now() - started < budgetMs) {
       const task = await claimTask(deps.db, "vercel-cron");
       if (!task) break;
       await queue.runTask(task);

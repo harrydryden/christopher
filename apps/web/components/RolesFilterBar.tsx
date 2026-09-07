@@ -1,7 +1,7 @@
 import { DECISION_VALUES, SORT_KEYS, STATUS_VALUES, type RolesFilters } from "@/lib/queries/jobs";
 
 const STATUS_LABELS: Record<(typeof STATUS_VALUES)[number], string> = { new: "New", active: "Active", closed: "Closed" };
-const DECISION_LABELS: Record<(typeof DECISION_VALUES)[number], string> = { inbox: "Inbox", all: "All decisions", undecided: "Undecided", apply: "Marked to apply", skip: "Skipped" };
+const DECISION_LABELS: Record<(typeof DECISION_VALUES)[number], string> = { inbox: "Inbox", all: "All decisions", undecided: "Undecided", apply: "Shortlist", skip: "Skipped" };
 const SORT_LABELS: Record<(typeof SORT_KEYS)[number], string> = {
   status: "Status (default)",
   fit: "Fit score",

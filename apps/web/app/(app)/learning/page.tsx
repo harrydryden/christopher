@@ -174,7 +174,7 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
             <Button type="submit" size="sm">Accept tag</Button>
           </form>
         ))}
-        {tags.recent.length === 0 && <EmptyState title="No decisions yet" description="Apply or skip a role to start recording your preferences." />}
+        {tags.recent.length === 0 && <EmptyState title="No decisions yet" description="Shortlist or skip a role to start recording your preferences." />}
         {tags.recent.map(decision => (
           <details key={decision.id} className="mb-2 rounded border border-slate-200 p-3 dark:border-slate-800">
             <summary className="cursor-pointer text-sm">{decision.jobTitle} · {decision.companyName} · {decision.decision}</summary>

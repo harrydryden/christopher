@@ -11,9 +11,6 @@ export interface AppSettings {
   timezone: string;
   /** Fit-score threshold under which in-table roles are collapsed. null = off. */
   hideThreshold: number | null;
-  nearMissEnabled: boolean;
-  nearMissDailyCap: number;
-  nearMissMinScore: number;
   /** Free text written by the user at setup; never overwritten by the model. */
   seedProfile: string;
   monthlyAiBudgetUsd: number;
@@ -44,9 +41,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   scanTime: "06:00",
   timezone: "Europe/London",
   hideThreshold: null,
-  nearMissEnabled: true,
-  nearMissDailyCap: 10,
-  nearMissMinScore: 70,
   seedProfile: "",
   monthlyAiBudgetUsd: 25,
   defaultModel: "claude-opus-5",

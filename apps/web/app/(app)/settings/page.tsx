@@ -101,19 +101,7 @@ export default async function SettingsPage() {
               <span className={fieldLabelClass}>Show closed roles for (days)</span>
               <input name="showClosedDays" type="number" min={0} max={365} defaultValue={settings.showClosedDays} className={inputClass} />
             </label>
-            <label className={labelClass}>
-              <span className={fieldLabelClass}>Near-miss daily cap</span>
-              <input name="nearMissDailyCap" type="number" min={0} max={100} defaultValue={settings.nearMissDailyCap} className={inputClass} />
-            </label>
-            <label className={labelClass}>
-              <span className={fieldLabelClass}>Near-miss minimum score</span>
-              <input name="nearMissMinScore" type="number" min={0} max={100} defaultValue={settings.nearMissMinScore} className={inputClass} />
-            </label>
           </div>
-          <label className="flex items-center gap-1.5 text-sm">
-            <input type="checkbox" name="nearMissEnabled" value="1" defaultChecked={settings.nearMissEnabled} />
-            Show &quot;Outside your keywords&quot; section
-          </label>
         </SettingsForm>
       </Card>
 
@@ -156,7 +144,7 @@ export default async function SettingsPage() {
             <input type="checkbox" name="suggestionsEnabled" value="1" defaultChecked={settings.suggestionsEnabled} />
             Enable weekly company suggestions
           </label>
-          <p className={helpClass}>Non-essential AI calls (near-miss scoring, then suggestions) are skipped once the monthly budget is exceeded.</p>
+          <p className={helpClass}>Scoring and suggestions pause when the monthly AI budget is reached.</p>
         </SettingsForm>
       </Card>
 

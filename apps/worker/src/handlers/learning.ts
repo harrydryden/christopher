@@ -1,6 +1,6 @@
 import { schema, enqueueTask, reevaluateGate, appendProfile, type Task } from "@christopher/db";
 import { decisionDigest } from "@christopher/ai";
-import { dedupeKeyFor, localDateParts, modelForCallSite, priorityFor } from "@christopher/core";
+import { dedupeKeyFor, modelForCallSite, priorityFor } from "@christopher/core";
 import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { aiBudgetExceeded } from "../context";
@@ -63,20 +63,8 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
   if (!job) return { skipped: "job not found" };
   if (job.status !== "open") return { skipped: "job is closed" };
   const settings = await deps.settings();
-  if (!job.inTable && !(job.nearMiss && settings.nearMissEnabled)) return { skipped: "not in table and near-miss disabled" };
+  if (!job.inTable) return { skipped: "not in table and near-miss disabled" };
   if (await aiBudgetExceeded(deps)) return { skipped: "ai budget exceeded" };
-
-  if (!job.inTable) {
-    // Reserve before the model call. Atomic JSON counter also covers concurrent worker processes.
-    const day = localDateParts(deps.now(), settings.timezone).ymd;
-    const key = `internal:nearMissAllowance:${day}`;
-    const reservation = settings.nearMissDailyCap > 0 ? await deps.db.execute(sql`
-      insert into settings (key, value, updated_at) values (${key}, '1'::jsonb, now())
-      on conflict (key) do update set value = to_jsonb((settings.value #>> '{}')::int + 1), updated_at = now()
-      where (settings.value #>> '{}')::int < ${settings.nearMissDailyCap}
-      returning key`) : null;
-    if (!reservation?.rows.length) return { skipped: "near-miss daily cap reached" };
-  }
 
   const [company] = await deps.db.select().from(schema.companies).where(eq(schema.companies.id, job.companyId)).limit(1);
   const profile = await latestProfile(deps);
@@ -271,7 +259,6 @@ export async function handleReevaluateGate(_task: Task, deps: WorkerDeps): Promi
 }
 
 export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<unknown> {
-  const { onlyInTable } = (task.payload ?? {}) as { onlyInTable?: boolean };
   const settings = await deps.settings();
   const profile = await latestProfile(deps);
   const rows = await deps.db
@@ -280,7 +267,7 @@ export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<un
     .where(
       and(
         eq(schema.jobs.status, "open"),
-        onlyInTable === false ? undefined : eq(schema.jobs.inTable, true),
+        eq(schema.jobs.inTable, true),
         profile ? or(isNull(schema.jobs.fitProfileVersion), lt(schema.jobs.fitProfileVersion, profile.version)) : undefined,
       ),
     )
@@ -289,13 +276,6 @@ export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<un
   for (const row of rows) {
     const p = { jobId: row.id };
     if (await enqueueTask(deps.db, "score_job", p, { dedupeKey: dedupeKeyFor("score_job", p), priority: priorityFor("score_job") })) queued++;
-  }
-  if (settings.nearMissEnabled && onlyInTable === false) {
-    const near = await deps.db.select({ id: schema.jobs.id }).from(schema.jobs).where(and(eq(schema.jobs.nearMiss, true), eq(schema.jobs.status, "open"))).limit(200);
-    for (const row of near) {
-      const p = { jobId: row.id, nearMiss: true };
-      if (await enqueueTask(deps.db, "score_job", p, { dedupeKey: dedupeKeyFor("score_job", p), priority: priorityFor("score_job") })) queued++;
-    }
   }
   return { queued };
 }

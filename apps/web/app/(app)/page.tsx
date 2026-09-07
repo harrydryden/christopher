@@ -10,6 +10,7 @@ import {
   buildRoleRowVM,
   fetchRecentEventsFor,
   fetchTableJobs,
+  fetchRoleDetails,
   filtersToQueryString,
   parseRolesFilters,
   sortRoleRows,
@@ -29,29 +30,34 @@ export default async function RolesPage({ searchParams }: { searchParams: Promis
   const [settings, companyOptions, tableRowsRaw] = await Promise.all([
     getSettings(),
     listCompanyOptions(),
-    fetchTableJobs(archived),
+    fetchTableJobs(archived, true),
 
   ]);
 
-  const allJobIds = tableRowsRaw.map((r) => r.job.id);
-  const eventsByJob = await fetchRecentEventsFor(allJobIds);
-  const tableRows = attachEvents(tableRowsRaw, eventsByJob);
-
-  const filteredSorted = sortRoleRows(applyRolesFilters(tableRows, filters, now), filters.sort, filters.dir, now);
+  const filteredSorted = sortRoleRows(applyRolesFilters(tableRowsRaw, filters, now), filters.sort, filters.dir, now);
   const { visible, hidden } = splitHidden(filteredSorted, settings.hideThreshold, filters.showHidden);
-
-  const visibleVM = visible.map((r) => buildRoleRowVM(r, now));
-  const hiddenVM = hidden.map((r) => buildRoleRowVM(r, now));
+  const pageSize = 50;
+  const pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
+  const requestedPage = Number(sp.page);
+  const page = Math.min(pageCount, Math.max(1, Number.isSafeInteger(requestedPage) ? requestedPage : 1));
+  const pageRows = visible.slice((page - 1) * pageSize, page * pageSize);
+  const hiddenRows = hidden.slice(0, pageSize);
+  const ids = [...pageRows, ...hiddenRows].map(row => row.job.id);
+  const [details, events] = await Promise.all([fetchRoleDetails(ids), fetchRecentEventsFor(ids)]);
+  const byId = new Map(attachEvents(details, events).map(row => [row.job.id, row]));
+  const visibleVM = pageRows.map(row => buildRoleRowVM(byId.get(row.job.id) ?? row, now));
+  const hiddenVM = hiddenRows.map(row => buildRoleRowVM(byId.get(row.job.id) ?? row, now));
+  const pageHref = (n: number) => `/?${filtersToQueryString(filters)}&page=${n}${archived ? "&archive=1" : ""}`;
 
   const exportHref = `/api/export.csv?${filtersToQueryString(filters)}${archived ? "&archive=1" : ""}`;
 
   return (
     <div>
-      <PageHeader title={archived ? "Archived roles" : filters.decision === "skip" ? "Skipped roles" : filters.decision === "apply" ? "Marked to apply" : "Roles"} description="Role and seniority matches across your tracked companies." />
+      <PageHeader title={archived ? "Archived roles" : filters.decision === "skip" ? "Skipped roles" : filters.decision === "apply" ? "Shortlist" : "Roles"} description="Role and seniority matches across your tracked companies." />
       <nav aria-label="Role views" className="mb-4 flex flex-wrap gap-2 text-sm">
         {[
           { href: "/", label: "Inbox", active: !archived && filters.decision === "inbox" },
-          { href: "/?decision=apply", label: "Marked to apply", active: !archived && filters.decision === "apply" },
+          { href: "/?decision=apply", label: "Shortlist", active: !archived && filters.decision === "apply" },
           { href: "/?decision=skip", label: "Skipped", active: !archived && filters.decision === "skip" },
           { href: "/?archive=1", label: "Archive", active: archived },
         ].map(view => <Link key={view.href} href={view.href} aria-current={view.active ? "page" : undefined}
@@ -81,10 +87,15 @@ export default async function RolesPage({ searchParams }: { searchParams: Promis
         }
       />
 
+      <nav aria-label="Role pages" className="my-4 flex items-center gap-4 text-sm">
+        {page > 1 && <Link className="underline" href={pageHref(page - 1)}>Previous</Link>}
+        <span>Page {page} of {pageCount} · {visible.length} roles</span>
+        {page < pageCount && <Link className="underline" href={pageHref(page + 1)}>Next</Link>}
+      </nav>
       {settings.hideThreshold !== null && (
         <details className="mt-8 rounded-lg border border-slate-200 dark:border-slate-800">
           <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold text-slate-900 dark:text-slate-100">
-            Hidden by your preferences ({hiddenVM.length})
+            Hidden by your preferences ({hidden.length}; showing up to 50)
           </summary>
           <div className="border-t border-slate-200 p-4 dark:border-slate-800">
             <RolesTable

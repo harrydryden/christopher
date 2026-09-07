@@ -187,7 +187,7 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
     <div>
       {keyboard && (
         <details className="mb-2 text-xs text-slate-400"><summary className="cursor-pointer">Keyboard shortcuts</summary><p>
-          <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>a</kbd> apply · <kbd>s</kbd> skip · <kbd>o</kbd> open · <kbd>e</kbd> expand · <kbd>g</kbd> group · <kbd>x</kbd> select
+          <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>a</kbd> shortlist · <kbd>s</kbd> skip · <kbd>o</kbd> open · <kbd>e</kbd> expand · <kbd>g</kbd> group · <kbd>x</kbd> select
         </p></details>
       )}
       {flashError && (
@@ -195,12 +195,12 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
       )}
       <div className="mb-3 flex flex-wrap items-center gap-3 rounded border border-slate-200 p-3 text-sm">
         <label><input type="checkbox" aria-label="Select all visible roles" checked={inputRows.length > 0 && selectedIds.length === inputRows.length} onChange={e => setSelected(e.target.checked ? new Set(inputRows.slice(0, 500).map(r => r.id)) : new Set())} /> Select visible</label>
-        <label><input type="checkbox" checked={groupByRole} onChange={e => { setGroupByRole(e.target.checked); setReasonBox(null); setHighlightIndex(-1); }} /> Group identical roles</label>
+        <label><input type="checkbox" checked={groupByRole} onChange={e => { setGroupByRole(e.target.checked); setReasonBox(null); setHighlightIndex(-1); }} /> Group identical roles on this page</label>
         {selectedIds.length > 0 && <>
         <span>{selectedIds.length} selected</span>
         <button disabled={!selectedIds.length || bulkPending} onClick={() => void bulk("archive")} className="underline disabled:opacity-40">{archived ? "Restore" : "Archive"} selected</button>
         <input aria-label="Shared decision reason" placeholder="Reason for selected roles" value={bulkReason} onChange={e => setBulkReason(e.target.value)} className="rounded border p-1 dark:bg-slate-950" />
-        {(["apply", "skip", "undo"] as const).map(action => <button key={action} disabled={!selectedIds.length || selectedIds.length > 100 || bulkPending || (action === "skip" && !bulkReason.trim())} onClick={() => void bulk(action)} className="capitalize underline disabled:opacity-40">{action} selected</button>)}
+        {(["apply", "skip", "undo"] as const).map(action => <button key={action} disabled={!selectedIds.length || selectedIds.length > 100 || bulkPending || (action === "skip" && !bulkReason.trim())} onClick={() => void bulk(action)} className="capitalize underline disabled:opacity-40">{action === "apply" ? "shortlist" : action} selected</button>)}
         {bulkPending && <span role="status">Saving…</span>}
         </>}
       </div>
@@ -216,7 +216,6 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
             <TH>Status</TH>
             <TH>Fit</TH>
             <TH>Decision</TH>
-            <TH>Source</TH>
           </tr>
         </THead>
         <TBody>
@@ -307,7 +306,7 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
                             onClick={() => setReasonBox({ ...boxed, kind: "apply" })}
                             className={`rounded px-1.5 py-0.5 text-xs font-medium ${boxed.kind === "apply" ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"}`}
                           >
-                            Apply
+                            Shortlist
                           </button>
                           <button
                             type="button"
@@ -352,7 +351,7 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
                       </div>
                     ) : row.decision ? (
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <Badge tone={decisionTone(row.decision.decision)}>{row.decision.decision}</Badge>
+                        <Badge tone={decisionTone(row.decision.decision)}>{row.decision.decision === "apply" ? "shortlisted" : "skipped"}</Badge>
                         <span title={row.decision.reason} className="max-w-[8rem] truncate text-xs text-slate-500 dark:text-slate-400">
                           {row.decision.reason ? truncate(row.decision.reason, 40) : <em>no reason</em>}
                         </span>
@@ -376,7 +375,7 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
                           onClick={() => openReasonBox(row.id, "apply")}
                           className="rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300"
                         >
-                          Apply
+                          Shortlist
                         </button>
                         <button
                           type="button"
@@ -388,16 +387,13 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
                       </div>
                     )}
                   </TD>
-                  <TD>
-                    <Badge tone="neutral">{row.sourceType}</Badge>
-                  </TD>
                 </TR>
                 {expanded && (
                   <tr className="bg-slate-50/70 dark:bg-slate-900/40">
-                    <td colSpan={10} className="px-4 py-3">
+                    <td colSpan={9} className="px-4 py-3">
                       {group.length > 1 && <ul className="mb-3 space-y-1 text-sm">{group.map(member => <li key={member.id}><a className="underline" href={member.url} target="_blank" rel="noopener noreferrer">{member.location || "Location unspecified"}</a> · {member.decision?.decision ?? "undecided"} · <a className="underline" href={`/cv?job=${member.id}`}>Build CV</a></li>)}</ul>}
                       <a href={`/cv?job=${row.id}`} className="mb-3 inline-block text-sm font-medium underline">Build CV for this role</a>
-                      <RoleExpandPanel row={row} />
+                      <p className="mb-2 text-xs text-slate-500">Source: {row.sourceType}</p><RoleExpandPanel row={row} />
                     </td>
                   </tr>
                 )}

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Suspense, type ReactNode } from "react";
 import { logout } from "@/app/login/actions";
+import { WorkspaceNav } from "@/components/WorkspaceNav";
 import { NavLink } from "@/components/NavLink";
 import { getLatestScanRun } from "@/lib/queries/companies";
 import { getSettings } from "@/lib/settings";
@@ -25,12 +26,8 @@ function scanBanner(run: ScanRun | null, tz: string, now: Date): { text: string;
 const NAV_ITEMS = [
   { href: "/", label: "Roles" },
   { href: "/companies", label: "Companies" },
-  { href: "/suggestions", label: "Suggestions" },
-  { href: "/cv", label: "CV builder" },
-  { href: "/cv/library", label: "Evidence library" },
+  { href: "/cv", label: "CVs" },
   { href: "/applications", label: "Applications" },
-  { href: "/learning", label: "Learning" },
-  { href: "/health", label: "Health" },
   { href: "/settings", label: "Settings" },
 ];
 
@@ -62,7 +59,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             </button>
           </form>
         </aside>
-        <main className="min-w-0 flex-1 p-6">{children}</main>
+        <main className="min-w-0 flex-1 p-6"><WorkspaceNav />{children}</main>
       </div>
     </div>
   );

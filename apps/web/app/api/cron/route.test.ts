@@ -41,6 +41,7 @@ let pool: { end(): Promise<void> };
 let GET: (request: Request) => Promise<Response>;
 
 beforeAll(async () => {
+  process.env.CHRISTOPHER_SERVERLESS_FALLBACK = "1";
   server = await startTestServer(
     {
       "www.acme.example": SITE,
@@ -86,6 +87,13 @@ describe("the cron route", () => {
   it("refuses a call with no secret, and one with the wrong secret", async () => {
     expect((await call()).status).toBe(401);
     expect((await call("not-the-secret")).status).toBe(401);
+  });
+
+  it("leaves work to a recently reporting persistent worker", async () => {
+    await db.insert(schema.settings).values({ key: "internal:workerHeartbeat", value: { at: new Date().toISOString() } });
+    const response = await call(SECRET);
+    expect(response.status).toBe(200);
+    expect((await response.json()).processed).toBe(0);
   });
 
   it("discovers a careers source and scans it, with no worker running", async () => {

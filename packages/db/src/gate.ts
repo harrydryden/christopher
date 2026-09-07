@@ -2,11 +2,13 @@ import { evaluateGate, dedupeKeyFor, priorityFor, type AppSettings } from "@chri
 import { eq, sql } from "drizzle-orm";
 import type { Db } from "./client";
 import * as schema from "./schema";
-import { enqueueTask } from "./tasks";
+
 
 /** Shared by synchronous settings saves and background maintenance. */
 export async function reevaluateGate(db: Db, settings: AppSettings, now = new Date(), jobId?: string) {
   const rows = await db.select().from(schema.jobs).where(jobId ? eq(schema.jobs.id, jobId) : undefined);
+  const updates: Array<Record<string, unknown>> = [];
+  const scoring: Array<typeof schema.tasks.$inferInsert> = [];
   let changed = 0;
   let queuedForScoring = 0;
   for (const job of rows) {
@@ -16,13 +18,24 @@ export async function reevaluateGate(db: Db, settings: AppSettings, now = new Da
     const values = { keywordMatched: gate.keywordMatched, keywordTerms: gate.keywordTerms,
       excluded: gate.excluded, locationOk: gate.locationOk, inTable: gate.inTable, nearMiss, hidden };
     if (Object.entries(values).some(([k, v]) => JSON.stringify(v) !== JSON.stringify(job[k as keyof typeof job]))) {
-      await db.update(schema.jobs).set({ ...values, updatedAt: now }).where(eq(schema.jobs.id, job.id));
+      updates.push({ id: job.id, ...values });
       changed++;
     }
     if ((gate.inTable || nearMiss) && job.fitScore === null && job.status === "open") {
       const payload = { jobId: job.id, nearMiss };
-      if (await enqueueTask(db, "score_job", payload, { dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") })) queuedForScoring++;
+      scoring.push({ type: "score_job", payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") });
     }
+  }
+  for (let offset = 0; offset < updates.length; offset += 250) {
+    await db.execute(sql`update jobs j set keyword_matched = v."keywordMatched", keyword_terms = v."keywordTerms",
+      excluded = v.excluded, location_ok = v."locationOk", in_table = v."inTable", near_miss = false, hidden = v.hidden, updated_at = ${now}
+      from jsonb_to_recordset(${JSON.stringify(updates.slice(offset, offset + 250))}::jsonb)
+      as v(id uuid, "keywordMatched" boolean, "keywordTerms" jsonb, excluded boolean, "locationOk" boolean, "inTable" boolean, hidden boolean)
+      where j.id = v.id`);
+  }
+  for (let offset = 0; offset < scoring.length; offset += 250) {
+    const queued = await db.insert(schema.tasks).values(scoring.slice(offset, offset + 250)).onConflictDoNothing().returning({ id: schema.tasks.id });
+    queuedForScoring += queued.length;
   }
   const removed = await pruneNonMatches(db, undefined, jobId);
   return { removed, examined: rows.length, changed, queuedForScoring };

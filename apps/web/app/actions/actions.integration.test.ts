@@ -16,7 +16,7 @@ import { decide, saveDecisionTags, archiveRoles, decideRoles } from "./decisions
 import { recordApplication, updateApplication } from "./applications";
 import { GET as downloadApplication } from "@/app/api/applications/[id]/pdf/route";
 import { saveCvLibrary, requestCv, saveCvDraft, saveCvModel } from "./cv";
-import { fetchTableJobs, fetchRecentEventsFor } from "@/lib/queries/jobs";
+import { fetchRoleDetails, fetchTableJobs, fetchRecentEventsFor } from "@/lib/queries/jobs";
 import { saveKeywords } from "./settings";
 import { useDiscoveryCandidate, deleteCompany } from "./companies";
 
@@ -131,6 +131,16 @@ describe("priority workflows", () => {
     expect(await fetchTableJobs()).toHaveLength(0);
     const [stored] = await database.select().from(schema.jobs).where(eq(schema.jobs.id, job.id));
     expect(stored!.archivedAt).toBeNull(); expect(stored!.inTable).toBe(false);
+  });
+  it("loads descriptions only for requested role detail IDs", async () => {
+    const { job } = await fixture();
+    await database.update(schema.jobs).set({ descriptionText: "Stored role description" }).where(eq(schema.jobs.id, job.id));
+    const summaries = await fetchTableJobs(false, true);
+    expect(summaries.find(row => row.job.id === job.id)!.job.descriptionText).toBeNull();
+    const details = await fetchRoleDetails([job.id]);
+    expect(details).toHaveLength(1);
+    expect(details[0]!.job.descriptionText).toBe("Stored role description");
+    expect(await fetchRoleDetails([])).toEqual([]);
   });
   it("records bulk decisions with required reasons and retained snapshots", async () => {
     const { job, company, source } = await fixture();

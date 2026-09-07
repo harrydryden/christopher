@@ -59,23 +59,7 @@ export async function saveTableSettings(_prev: ActionResult, formData: FormData)
     return fail("Show-closed-days must be a whole number between 0 and 365.");
   }
 
-  const nearMissEnabled = formData.get("nearMissEnabled") === "1";
-
-  const nearMissDailyCap = Number(formData.get("nearMissDailyCap"));
-  if (!Number.isInteger(nearMissDailyCap) || nearMissDailyCap < 0 || nearMissDailyCap > 100) {
-    return fail("Near-miss daily cap must be a whole number between 0 and 100.");
-  }
-
-  const nearMissMinScore = Number(formData.get("nearMissMinScore"));
-  if (!Number.isInteger(nearMissMinScore) || nearMissMinScore < 0 || nearMissMinScore > 100) {
-    return fail("Near-miss minimum score must be a whole number between 0 and 100.");
-  }
-
-  await setSetting("hideThreshold", hideThreshold);
-  await setSetting("showClosedDays", showClosedDays);
-  await setSetting("nearMissEnabled", nearMissEnabled);
-  await setSetting("nearMissDailyCap", nearMissDailyCap);
-  await saveSettingsAndGate({ nearMissMinScore });
+  await saveSettingsAndGate({ hideThreshold, showClosedDays });
   revalidatePath("/settings");
   revalidatePath("/");
   return ok();

@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, ne, isNull, isNotNull, sql, lte } from "drizzle-orm";
+import { getTableColumns, and, desc, eq, inArray, ne, isNull, isNotNull, sql, lte } from "drizzle-orm";
 import { careerSources, companies, decisions, jobEvents, jobs, type Job, type SourceType } from "@christopher/db/schema";
 import { displayStatus, formatDuration, liveFor, type AppSettings, type DisplayStatus } from "@christopher/core";
 import { db } from "@/lib/db";
@@ -54,9 +54,9 @@ const roleRowSelection = {
   },
 } as const;
 
-function baseRolesSelect() {
+function baseRolesSelect(summary = false) {
   return db()
-    .select(roleRowSelection)
+    .select({ ...roleRowSelection, job: { ...getTableColumns(jobs), descriptionText: summary ? sql<string | null>`null` : jobs.descriptionText } })
     .from(jobs)
     .innerJoin(companies, eq(jobs.companyId, companies.id))
     .innerJoin(careerSources, eq(jobs.sourceId, careerSources.id))
@@ -64,18 +64,16 @@ function baseRolesSelect() {
 }
 
 /** Every in-table (keyword+location gate passed) job: the main roles table before display filters. */
-export async function fetchTableJobs(archived = false): Promise<RoleRow[]> {
-  const rows = await baseRolesSelect().where(and(archived ? isNotNull(jobs.archivedAt) : isNull(jobs.archivedAt), archived ? undefined : eq(jobs.inTable, true), ne(companies.status, "archived")));
+export async function fetchTableJobs(archived = false, summary = false): Promise<RoleRow[]> {
+  const rows = await baseRolesSelect(summary).where(and(archived ? isNotNull(jobs.archivedAt) : isNull(jobs.archivedAt), archived ? undefined : eq(jobs.inTable, true), ne(companies.status, "archived")));
   return rows.map((r) => ({ ...r, events: [] as RoleEvent[] }));
 }
 
-/** Roles that failed the keyword/location gate but scored well: "Outside your keywords". */
-export async function fetchNearMissJobs(settings: Pick<AppSettings, "nearMissMinScore">, cap = 10): Promise<RoleRow[]> {
-  const rows = await baseRolesSelect()
-    .where(and(isNull(jobs.archivedAt), ne(companies.status, "archived"), eq(jobs.nearMiss, true), eq(jobs.status, "open"), gte(jobs.fitScore, settings.nearMissMinScore)))
-    .orderBy(desc(jobs.firstSeenAt))
-    .limit(cap);
-  return rows.map((r) => ({ ...r, events: [] as RoleEvent[] }));
+/** Fetch the large description payload only for the current page. */
+export async function fetchRoleDetails(ids: string[]): Promise<RoleRow[]> {
+  if (!ids.length) return [];
+  const rows = await baseRolesSelect().where(inArray(jobs.id, ids)).limit(ids.length);
+  return rows.map(row => ({ ...row, events: [] }));
 }
 
 /** Most recent job_events per job id, newest first, capped per job. */

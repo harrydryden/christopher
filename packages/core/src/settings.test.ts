@@ -8,7 +8,7 @@ describe("resolveSettings", () => {
 
   it("applies a stored value of the same kind", () => {
     expect(resolveSettings([{ key: "scanTime", value: "07:30" }]).scanTime).toBe("07:30");
-    expect(resolveSettings([{ key: "nearMissEnabled", value: false }]).nearMissEnabled).toBe(false);
+    expect(resolveSettings([{ key: "nearMissEnabled", value: true }])).not.toHaveProperty("nearMissEnabled");
     expect(resolveSettings([{ key: "monthlyAiBudgetUsd", value: 40 }]).monthlyAiBudgetUsd).toBe(40);
   });
 
@@ -27,7 +27,7 @@ describe("resolveSettings", () => {
   it("ignores a stored value of the wrong kind", () => {
     expect(resolveSettings([{ key: "scanTime", value: 6 }]).scanTime).toBe(DEFAULT_SETTINGS.scanTime);
     expect(resolveSettings([{ key: "hideThreshold", value: { nope: true } }]).hideThreshold).toBeNull();
-    expect(resolveSettings([{ key: "nearMissDailyCap", value: "ten" }]).nearMissDailyCap).toBe(DEFAULT_SETTINGS.nearMissDailyCap);
+    expect(resolveSettings([{ key: "showClosedDays", value: "ten" }]).showClosedDays).toBe(DEFAULT_SETTINGS.showClosedDays);
   });
 
   it("merges the gate onto its defaults rather than replacing it", () => {

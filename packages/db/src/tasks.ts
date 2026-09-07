@@ -14,7 +14,7 @@ export interface EnqueueOptions {
  * Returns the task id, or null when deduplicated.
  */
 export async function enqueueTask(
-  db: Db,
+  db: Pick<Db, "insert">,
   type: (typeof tasks.$inferInsert)["type"],
   payload: Record<string, unknown>,
   options: EnqueueOptions = {},

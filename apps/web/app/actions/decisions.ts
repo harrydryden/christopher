@@ -47,6 +47,8 @@ export async function decide(jobId: string, decision: "apply" | "skip" | null, r
       if (input.decision === null) {
         if (existing) await tx.update(decisions).set({ superseded: true }).where(eq(decisions.id, existing.id));
         await tx.insert(jobEvents).values({ jobId: input.jobId, type: "decided", payload: { decision: null } });
+        await enqueue("synthesize_profile", { force: true }, tx);
+        await enqueue("suggest_filters", {}, tx);
         return;
       }
 
@@ -81,14 +83,14 @@ export async function decide(jobId: string, decision: "apply" | "skip" | null, r
         type: "decided",
         payload: { decision: input.decision, reason: trimmedReason },
       });
+      if (decisionId) await enqueue("tag_reason", { decisionId }, tx);
+      await enqueue("synthesize_profile", { force: false }, tx);
+      await enqueue("suggest_filters", {}, tx);
     });
   } catch (err) {
     return fail(err instanceof Error ? err.message : "Failed to save decision.");
   }
 
-  if (decisionId) await enqueue("tag_reason", { decisionId });
-  await enqueue("synthesize_profile", { force: false });
-  await enqueue("suggest_filters", {});
 
   revalidatePath("/");
   return ok();

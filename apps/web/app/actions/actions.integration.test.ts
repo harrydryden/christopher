@@ -144,6 +144,17 @@ describe("priority workflows", () => {
     expect(decisions.every(d => d.reason === "Too junior")).toBe(true);
     expect((await database.select().from(schema.tasks)).some(t => t.type === "suggest_filters")).toBe(true);
   });
+  it("rolls back a decision when its learning task cannot be persisted", async () => {
+    const { job } = await fixture();
+    await database.execute(sql`alter table tasks add constraint audit_reject_tag_task check (type <> 'tag_reason') not valid`);
+    try {
+      expect((await decide(job.id, "skip", "Too junior")).ok).toBe(false);
+      expect(await database.select().from(schema.decisions)).toHaveLength(0);
+      expect(await database.select().from(schema.tasks)).toHaveLength(0);
+    } finally {
+      await database.execute(sql`alter table tasks drop constraint audit_reject_tag_task`);
+    }
+  });
   it("versions libraries and snapshots generation inputs atomically with its task", async () => {
     const { job } = await fixture();
     const content = { name: "Test Candidate", contact: "London", profile: "Operations leader", entries: [{ id: "one", kind: "experience", heading: "Director · Acme", details: "Led an operations team" }] };

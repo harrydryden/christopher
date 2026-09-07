@@ -34,6 +34,17 @@ beforeEach(async () => {
 });
 
 describe("task queue", () => {
+  it("serialises concurrent migrations without leaking session locks", async () => {
+    const client = createDb(DATABASE_URL, { max: 3 });
+    try {
+      await Promise.all([runMigrations(client.db), runMigrations(client.db)]);
+      const locks = await client.db.execute(sql`select count(*)::int as n from pg_locks where locktype = 'advisory' and objid = 74233101`);
+      expect(locks.rows[0]!.n).toBe(0);
+    } finally {
+      await client.pool.end();
+    }
+  }, 30_000);
+
   it("claims one task at a time, in priority then age order", async () => {
     await enqueueTask(db, "suggest_companies", {}, { priority: 7 });
     await enqueueTask(db, "discover", { companyId: "a" }, { priority: 1 });

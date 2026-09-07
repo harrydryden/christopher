@@ -111,7 +111,7 @@ export function attachEvents(rows: RoleRow[], eventsByJob: Map<string, RoleEvent
 export const STATUS_VALUES = ["new", "active", "closed"] as const;
 export type StatusFilter = (typeof STATUS_VALUES)[number];
 
-export const DECISION_VALUES = ["all", "undecided", "apply", "skip"] as const;
+export const DECISION_VALUES = ["inbox", "all", "undecided", "apply", "skip"] as const;
 export type DecisionFilter = (typeof DECISION_VALUES)[number];
 
 export const SORT_KEYS = ["status", "fit", "company", "liveFor", "firstSeen", "title", "location"] as const;
@@ -162,7 +162,7 @@ export function parseRolesFilters(sp: RawSearchParams): RolesFilters {
   const status = sp.status === undefined ? (["new", "active"] as StatusFilter[]) : statusRaw;
 
   const decisionRaw = first(sp.decision);
-  const decision = (DECISION_VALUES as readonly string[]).includes(decisionRaw ?? "") ? (decisionRaw as DecisionFilter) : "all";
+  const decision = (DECISION_VALUES as readonly string[]).includes(decisionRaw ?? "") ? (decisionRaw as DecisionFilter) : "inbox";
 
   const minFitRaw = first(sp.minFit);
   const minFitNum = minFitRaw === undefined || minFitRaw === "" ? NaN : Number(minFitRaw);
@@ -201,6 +201,7 @@ export function matchesRolesFilters(row: RoleRow, filters: RolesFilters, now: Da
 
   if (filters.company && row.company.id !== filters.company) return false;
 
+  if (filters.decision === "inbox" && row.decision?.decision === "skip") return false;
   if (filters.decision === "undecided" && row.decision) return false;
   if (filters.decision === "apply" && row.decision?.decision !== "apply") return false;
   if (filters.decision === "skip" && row.decision?.decision !== "skip") return false;
@@ -272,7 +273,7 @@ export function filtersToQueryString(filters: RolesFilters): string {
   const params = new URLSearchParams();
   for (const s of filters.status) params.append("status", s);
   if (filters.company) params.set("company", filters.company);
-  if (filters.decision !== "all") params.set("decision", filters.decision);
+  if (filters.decision !== "inbox") params.set("decision", filters.decision);
   if (filters.minFit !== null) params.set("minFit", String(filters.minFit));
   if (filters.location) params.set("location", filters.location);
   if (filters.q) params.set("q", filters.q);

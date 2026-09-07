@@ -186,9 +186,9 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
   return (
     <div>
       {keyboard && (
-        <p className="mb-2 text-xs text-slate-400">
+        <details className="mb-2 text-xs text-slate-400"><summary className="cursor-pointer">Keyboard shortcuts</summary><p>
           <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>a</kbd> apply · <kbd>s</kbd> skip · <kbd>o</kbd> open · <kbd>e</kbd> expand · <kbd>g</kbd> group · <kbd>x</kbd> select
-        </p>
+        </p></details>
       )}
       {flashError && (
         <p className="mb-2 rounded-md bg-red-50 px-3 py-1.5 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">{flashError}</p>
@@ -196,11 +196,13 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
       <div className="mb-3 flex flex-wrap items-center gap-3 rounded border border-slate-200 p-3 text-sm">
         <label><input type="checkbox" aria-label="Select all visible roles" checked={inputRows.length > 0 && selectedIds.length === inputRows.length} onChange={e => setSelected(e.target.checked ? new Set(inputRows.slice(0, 500).map(r => r.id)) : new Set())} /> Select visible</label>
         <label><input type="checkbox" checked={groupByRole} onChange={e => { setGroupByRole(e.target.checked); setReasonBox(null); setHighlightIndex(-1); }} /> Group identical roles</label>
+        {selectedIds.length > 0 && <>
         <span>{selectedIds.length} selected</span>
         <button disabled={!selectedIds.length || bulkPending} onClick={() => void bulk("archive")} className="underline disabled:opacity-40">{archived ? "Restore" : "Archive"} selected</button>
         <input aria-label="Shared decision reason" placeholder="Reason for selected roles" value={bulkReason} onChange={e => setBulkReason(e.target.value)} className="rounded border p-1 dark:bg-slate-950" />
         {(["apply", "skip", "undo"] as const).map(action => <button key={action} disabled={!selectedIds.length || selectedIds.length > 100 || bulkPending || (action === "skip" && !bulkReason.trim())} onClick={() => void bulk(action)} className="capitalize underline disabled:opacity-40">{action} selected</button>)}
         {bulkPending && <span role="status">Saving…</span>}
+        </>}
       </div>
       <Table>
         <THead>

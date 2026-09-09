@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDb, schema, type Db } from "@christopher/db";
+import { DEFAULT_SETTINGS, modelForCallSite } from "@christopher/core";
 import { runMigrations } from "@christopher/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { createSessionCookieValue } from "@/lib/session";
@@ -229,7 +230,13 @@ describe("priority workflows", () => {
 
   });
   it("does not allow the CV and scraping model to be the same", async () => {
-    const form = new FormData(); form.set("cvModel", "claude-opus-5");
+    // Derived from the defaults rather than hardcoded, so the collision stays real if the default model changes.
+    const form = new FormData(); form.set("cvModel", modelForCallSite(DEFAULT_SETTINGS, "A3"));
+    expect((await saveCvModel({ ok: true }, form)).ok).toBe(false);
+  });
+  it("rejects a model ID outside the supported list", async () => {
+    // A dotted version passed the old regex, was stored, and then failed on every call.
+    const form = new FormData(); form.set("cvModel", "claude-fable-5.1");
     expect((await saveCvModel({ ok: true }, form)).ok).toBe(false);
   });
 });

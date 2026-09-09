@@ -380,6 +380,9 @@ export const cvDrafts = pgTable("cv_drafts", {
   error: text("error"),
   revision: integer("revision").notNull().default(0),
   parentId: uuid("parent_id"),
+  /** Hides the draft from the CV list without destroying it. Applications reference cv_drafts
+   *  with a non-null foreign key, so a CV that has been applied with cannot be deleted. */
+  archivedAt: ts("archived_at"),
   createdAt: tsNow("created_at"),
 });
 

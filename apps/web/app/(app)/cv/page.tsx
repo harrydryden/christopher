@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { desc, eq, and, isNull, sql, ne } from "drizzle-orm";
+import { desc, eq, and, isNull, isNotNull, sql, ne } from "drizzle-orm";
 import { cvLibraries, cvDrafts, jobs, companies } from "@christopher/db";
 import { db } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
@@ -7,13 +7,16 @@ import { PageHeader } from "@/components/PageHeader";
 import { Card } from "@/components/Card";
 import { SettingsForm } from "@/components/SettingsForm";
 import { ModelSelect } from "@/components/ModelSelect";
-import { requestCv, saveCvModel } from "@/app/actions/cv";
+import { requestCv, saveCvModel, setCvArchived } from "@/app/actions/cv";
+import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
+import { buttonClass } from "@/components/Button";
 export const dynamic = "force-dynamic";
 export default async function CvPage({ searchParams }: { searchParams: Promise<{ job?: string }> }) {
   const { job } = await searchParams;
-  const [libraries, drafts, roles, settings] = await Promise.all([
+  const [libraries, drafts, archivedDrafts, roles, settings] = await Promise.all([
     db().select({ version: cvLibraries.version }).from(cvLibraries).orderBy(desc(cvLibraries.version)).limit(1),
-    db().select({ id: cvDrafts.id, jobTitle: cvDrafts.jobTitle, company: cvDrafts.companyName, status: cvDrafts.status, revision: cvDrafts.revision }).from(cvDrafts).orderBy(desc(cvDrafts.createdAt)).limit(50),
+    db().select({ id: cvDrafts.id, jobTitle: cvDrafts.jobTitle, company: cvDrafts.companyName, status: cvDrafts.status, revision: cvDrafts.revision }).from(cvDrafts).where(isNull(cvDrafts.archivedAt)).orderBy(desc(cvDrafts.createdAt)).limit(50),
+    db().select({ id: cvDrafts.id, jobTitle: cvDrafts.jobTitle, company: cvDrafts.companyName, status: cvDrafts.status, revision: cvDrafts.revision }).from(cvDrafts).where(isNotNull(cvDrafts.archivedAt)).orderBy(desc(cvDrafts.createdAt)).limit(50),
     db().select({ id: jobs.id, title: jobs.title, company: companies.name }).from(jobs).innerJoin(companies, eq(jobs.companyId, companies.id)).where(and(eq(jobs.inTable, true), isNull(jobs.archivedAt), ne(companies.status, "archived"), sql`not exists (select 1 from decisions d where d.job_id = ${jobs.id} and d.superseded = false and d.decision = 'skip')`)).orderBy(companies.name, jobs.title),
     getSettings(),
   ]);
@@ -31,6 +34,16 @@ export default async function CvPage({ searchParams }: { searchParams: Promise<{
     </SettingsForm></Card>
     <Card title="Your evidence library"><p className="text-sm">Saved version: {libraries[0]?.version ?? "none"}. Review and edit your experience, skills and CV preferences in one place.</p><Link href="/cv/library" className="underline">Open evidence library</Link></Card>
     <details><summary className="cursor-pointer text-sm">Advanced model settings</summary><Card title="CV model"><SettingsForm action={saveCvModel}><label className="text-sm">Model<ModelSelect name="cvModel" value={settings.cvModel} className="mt-1 block w-full rounded border p-2 dark:bg-slate-950" /></label><p className="text-xs text-slate-500">Configured separately from website extraction. Uses the worker’s ANTHROPIC_API_KEY and the monthly AI budget.</p></SettingsForm></Card></details>
-    <Card title="Saved CVs"><ul className="space-y-2 text-sm">{drafts.map(d => <li key={d.id}><Link className="underline" href={`/cv/${d.id}`}>{d.company} · {d.jobTitle}</Link> — {d.status}, revision {d.revision}</li>)}</ul>{!drafts.length && <p className="text-sm text-slate-500">No CVs generated yet.</p>}</Card>
+    <Card title="Saved CVs"><ul className="space-y-2 text-sm">{drafts.map(d => <li key={d.id} className="flex flex-wrap items-center justify-between gap-2">
+      <span><Link className="underline" href={`/cv/${d.id}`}>{d.company} · {d.jobTitle}</Link> — {d.status}, revision {d.revision}</span>
+      <form action={setCvArchived.bind(null, d.id, true)}><ConfirmSubmitButton confirmMessage={`Archive the ${d.status} CV for ${d.company} · ${d.jobTitle}? It is hidden from this list but kept, and you can restore it.`}>Archive</ConfirmSubmitButton></form>
+    </li>)}</ul>{!drafts.length && <p className="text-sm text-slate-500">No CVs generated yet.</p>}</Card>
+    {archivedDrafts.length > 0 && <Card title="Archived CVs"><details><summary className="cursor-pointer text-sm text-slate-500">{archivedDrafts.length} archived</summary>
+      <ul className="mt-2 space-y-2 text-sm">{archivedDrafts.map(d => <li key={d.id} className="flex flex-wrap items-center justify-between gap-2">
+        <span><Link className="underline" href={`/cv/${d.id}`}>{d.company} · {d.jobTitle}</Link> — {d.status}, revision {d.revision}</span>
+        <form action={setCvArchived.bind(null, d.id, false)}><button type="submit" className={buttonClass("secondary", "sm")}>Restore</button></form>
+      </li>)}</ul>
+      <p className="mt-2 text-xs text-slate-500">Archived CVs are kept, not deleted. They stay downloadable by link, and any application recorded against one is unaffected.</p>
+    </details></Card>}
   </div>;
 }

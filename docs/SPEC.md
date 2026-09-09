@@ -297,6 +297,7 @@ Guardrails common to all call sites:
 - Scores are clamped; tags must come from the vocabulary or be explicitly proposed.
 - Scraped page content is untrusted. It is placed in the user turn, clearly delimited, with an instruction that it is data; nothing in it can change the task. No tool that acts on the world is exposed to A3/A4.
 - Every call writes an `ai_calls` row (call site, model, tokens, cache reads, cost, duration, outcome). The Health panel shows month-to-date spend against the budget setting.
+- A response the model returned is billed whether or not it satisfies the schema, so the engine validates after the request rather than letting the SDK throw mid-parse. A refused or schema-rejected call records its real token usage and cost, and counts against the monthly budget, with the rejected field named in the error so the call log stays diagnosable. Only a call that never reached the model, such as a transport or authentication failure, records zero.
 - Model choice is a setting per call site, defaulting to `claude-sonnet-5`. Swapping bulk sites (A3, A5, A6) to a cheaper model is your decision to make once you have seen real costs; the spec does not pre-empt it.
 - Both model settings are picked from a fixed list of supported models, one current release per family, and validated on save. An unrecognised ID cannot be stored, so a typo fails at the form rather than silently at call time. Pricing keeps a wider map including superseded models so historical `ai_calls` rows still cost out.
 

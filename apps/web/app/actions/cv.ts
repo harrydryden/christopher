@@ -38,6 +38,19 @@ export async function saveCvModel(_prev: ActionResult, form: FormData): Promise<
   revalidatePath("/cv");
   return ok();
 }
+/**
+ * Hide a CV from the list, or bring it back. Soft by design: applications reference
+ * cv_drafts with a non-null foreign key, so a CV that has been applied with cannot be
+ * deleted, and a draft still holds the library snapshot the CV was generated from.
+ */
+export async function setCvArchived(cvId: string, archived: boolean): Promise<void> {
+  await requireSession();
+  const id = zUuid().parse(cvId);
+  await db().update(cvDrafts).set({ archivedAt: archived ? new Date() : null }).where(eq(cvDrafts.id, id));
+  revalidatePath("/cv");
+  revalidatePath(`/cv/${id}`);
+}
+
 export async function requestCv(_prev: ActionResult, form: FormData): Promise<ActionResult> {
   await requireSession();
   let draftId: string;

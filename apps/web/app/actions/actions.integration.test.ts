@@ -17,7 +17,7 @@ import { decide, saveDecisionTags, archiveRoles, decideRoles } from "./decisions
 import { recordApplication, updateApplication } from "./applications";
 import { GET as workStatus } from "@/app/api/work-status/route";
 import { GET as downloadApplication } from "@/app/api/applications/[id]/pdf/route";
-import { saveCvLibrary, requestCv, saveCvDraft, saveCvModel } from "./cv";
+import { saveCvLibrary, requestCv, saveCvDraft, saveCvModel, setCvArchived } from "./cv";
 import { fetchRolePage, fetchRoleDetails, parseRolesFilters, fetchTableJobs, fetchRecentEventsFor } from "@/lib/queries/jobs";
 import { saveKeywords } from "./settings";
 import { useDiscoveryCandidate, deleteCompany } from "./companies";
@@ -233,6 +233,19 @@ describe("priority workflows", () => {
     // Derived from the defaults rather than hardcoded, so the collision stays real if the default model changes.
     const form = new FormData(); form.set("cvModel", modelForCallSite(DEFAULT_SETTINGS, "A3"));
     expect((await saveCvModel({ ok: true }, form)).ok).toBe(false);
+  });
+  it("archives a CV out of the list and restores it", async () => {
+    const library = { name: "Test Candidate", contact: "London", profile: "Operations leader", entries: [{ id: "one", kind: "experience" as const, heading: "Director · Acme", details: "Led an operations team" }] };
+    const [draft] = await database.insert(schema.cvDrafts).values({ jobTitle: "VP of AI Transformation", companyName: "Humanoid",
+      jobDescription: "Lead the transformation", libraryVersion: 1, librarySnapshot: library, model: DEFAULT_SETTINGS.cvModel, status: "failed" }).returning();
+
+    await setCvArchived(draft!.id, true);
+    const [archived] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft!.id));
+    expect(archived!.archivedAt).toBeInstanceOf(Date);
+
+    await setCvArchived(draft!.id, false);
+    const [restored] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft!.id));
+    expect(restored!.archivedAt).toBeNull();
   });
   it("rejects a model ID outside the supported list", async () => {
     // A dotted version passed the old regex, was stored, and then failed on every call.

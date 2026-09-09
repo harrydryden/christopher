@@ -11,7 +11,7 @@ function fakeClient(parsedOutput: unknown, over: Partial<ParseResponse> = {}) {
   const calls: Captured[] = [];
   const client: AiClientLike = {
     messages: {
-      async parse(params, options) {
+      async create(params, options) {
         calls.push({ params, options });
         return {
           parsed_output: parsedOutput,
@@ -38,6 +38,22 @@ function engineWith(parsedOutput: unknown, over: Partial<ParseResponse> = {}) {
 }
 
 describe("engine plumbing", () => {
+  it("records the tokens for a response the schema rejects, and why it was rejected", async () => {
+    // The model answered and the account was billed. Recording zeros here would keep a failing
+    // call site invisible to the monthly budget, which is how an expensive loop stays unnoticed.
+    const { engine, usage } = engineWith(undefined, {
+      content: [{ type: "text", text: JSON.stringify({ score: 999, reasons: [] }) }],
+      parsed_output: undefined,
+    });
+    expect(await engine.scoreJob({ profileMarkdown: "", decisionDigest: "", job: { title: "t", company: "c" } })).toBeNull();
+    expect(usage).toHaveLength(1);
+    expect(usage[0]!.ok).toBe(false);
+    expect(usage[0]!.inputTokens).toBe(1000);
+    expect(usage[0]!.outputTokens).toBe(200);
+    expect(usage[0]!.costUsd).toBeGreaterThan(0);
+    expect(usage[0]!.error).toMatch(/^schema rejected: /);
+  });
+
   it("is disabled and silent without a key or client", async () => {
     const engine = createAiEngine({ getModel: () => "claude-opus-5" });
     expect(engine.enabled).toBe(false);
@@ -79,7 +95,7 @@ describe("engine plumbing", () => {
   it("returns null and records the failure when the SDK throws", async () => {
     const usage: AiUsageRecord[] = [];
     const engine = createAiEngine({
-      client: { messages: { parse: () => Promise.reject(new Error("boom")) } },
+      client: { messages: { create: () => Promise.reject(new Error("boom")) } },
       getModel: () => "claude-opus-5",
       onUsage: (r) => void usage.push(r),
     });

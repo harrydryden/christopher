@@ -28,10 +28,18 @@ export interface Ref {
   refId?: string;
 }
 
-/** The slice of the Anthropic client this engine uses, so tests can inject a fake. */
+/**
+ * The slice of the Anthropic client this engine uses, so tests can inject a fake.
+ *
+ * Deliberately create, not parse. The SDK parse helper is create().then(parseMessage), and
+ * parseMessage throws an AnthropicError carrying only a string when the response fails the
+ * schema. That discards the usage figures for a call the model did answer and the account was
+ * billed for, so the spend never reaches the monthly budget. Validating here instead keeps the
+ * response, and its usage, in hand whatever the outcome.
+ */
 export interface AiClientLike {
   messages: {
-    parse(params: Record<string, unknown>, options?: Record<string, unknown>): Promise<ParseResponse>;
+    create(params: Record<string, unknown>, options?: Record<string, unknown>): Promise<ParseResponse>;
   };
 }
 
@@ -105,7 +113,7 @@ export class AiEngine {
     if (params.tools) request.tools = params.tools;
 
     try {
-      const response = await this.client.messages.parse(request, { timeout: params.timeoutMs ?? 30_000 });
+      const response = await this.client.messages.create(request, { timeout: params.timeoutMs ?? 30_000 });
       const usage = response.usage ?? {};
       const tokens = {
         inputTokens: usage.input_tokens ?? 0,
@@ -115,7 +123,12 @@ export class AiEngine {
       };
       const refused = response.stop_reason === "refusal";
       const parsed = refused ? null : (response.parsed_output ?? extractJsonBlock(textOf(response)));
-      const validated = parsed === null || parsed === undefined ? null : safeParse<T>(params.schema, parsed);
+      const outcome = refused
+        ? { error: `refusal:${response.stop_details?.category ?? "unknown"}` }
+        : parsed === null || parsed === undefined
+          ? { error: "no parseable output" }
+          : validate<T>(params.schema, parsed);
+      const validated = "data" in outcome ? outcome.data : null;
       await this.record({
         callSite,
         model: response.model ?? model,
@@ -123,7 +136,7 @@ export class AiEngine {
         costUsd: estimateCostUsd(response.model ?? model, tokens),
         durationMs: Date.now() - started,
         ok: validated !== null,
-        error: refused ? `refusal:${response.stop_details?.category ?? "unknown"}` : validated === null ? "no parseable output" : undefined,
+        error: "error" in outcome ? outcome.error : undefined,
         ...ref,
       });
       if (refused) this.log(`${callSite} refused`, response.stop_details);
@@ -625,9 +638,16 @@ export function extractJsonBlock(text: string): unknown {
   return null;
 }
 
-function safeParse<T>(schema: z.ZodType, value: unknown): T | null {
+/**
+ * Validate against the call site schema, keeping the reason on failure. That reason is what
+ * makes a bad response diagnosable from the AI call log: "sections.0.bullets.3: Too big"
+ * names the offending field, where a bare "no parseable output" does not.
+ */
+function validate<T>(schema: z.ZodType, value: unknown): { data: T } | { error: string } {
   const result = schema.safeParse(value);
-  return result.success ? (result.data as T) : null;
+  if (result.success) return { data: result.data as T };
+  const issues = result.error.issues.map(i => `${i.path.join(".")}: ${i.message}`).join("; ");
+  return { error: `schema rejected: ${issues}`.slice(0, 500) };
 }
 
 export function createAiEngine(options: AiEngineOptions): AiEngine {

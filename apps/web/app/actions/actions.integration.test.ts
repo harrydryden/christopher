@@ -198,7 +198,7 @@ describe("priority workflows", () => {
     generate.set("description", "Lead a business operations team, develop the annual operating plan and work with finance and commercial leaders.");
     await expect(requestCv({ ok: true }, generate)).rejects.toThrow("redirect:/cv/");
     const [draft] = await database.select().from(schema.cvDrafts);
-    expect(draft!.librarySnapshot).toEqual(content); expect(draft!.model).toBe("claude-sonnet-5");
+    expect(draft!.librarySnapshot).toEqual(content); expect(draft!.model).toBe("claude-fable-5-1");
     expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(1);
     await database.update(schema.cvDrafts).set({ status: "ready", revision: 1, content: { name: content.name, contact: content.contact, summary: "Original", sections: [{ entryId: "one", kind: "experience", heading: "Director · Acme", bullets: ["Led a team"] }], gaps: [] } }).where(eq(schema.cvDrafts.id, draft!.id));
     const edit = new FormData(); edit.set("summary", "Edited summary"); edit.set("section-0", "Led the operations team"); edit.set("rememberWording", "on");

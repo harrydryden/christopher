@@ -1,7 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import { schema, type Task, type Db } from "@christopher/db";
 import { createAiEngine } from "@christopher/ai";
-import { materialiseCv, CvLibrarySchema } from "@christopher/core";
+import { materialiseCv, CvLibrarySchema, groupCvLibrary } from "@christopher/core";
 import { aiSpendThisMonth, type WorkerDeps } from "../context";
 
 export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
@@ -15,7 +15,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
     try {
       if (!deps.env.anthropicApiKey) throw new Error("Add ANTHROPIC_API_KEY to the worker to generate a CV.");
       if (await aiSpendThisMonth(tx as unknown as Db, deps.now()) >= (await deps.settings()).monthlyAiBudgetUsd) throw new Error("Monthly AI budget reached. Update the budget in Settings, then generate again.");
-      const library = CvLibrarySchema.parse(draft.librarySnapshot);
+      const library = groupCvLibrary(CvLibrarySchema.parse(draft.librarySnapshot));
       const ai = createAiEngine({ apiKey: deps.env.anthropicApiKey, getModel: () => draft.model,
         onUsage: async usage => { await tx.insert(schema.aiCalls).values(usage); } });
       const plan = await ai.buildCv({ library, jobTitle: draft.jobTitle, company: draft.companyName, description: draft.jobDescription }, { refType: "cv", refId: draft.id });

@@ -1,6 +1,6 @@
 "use client";
 import { useActionState, useEffect, useState } from "react";
-import { CvLibrarySchema, type CvLibrary } from "@christopher/core/cv";
+import { CvLibrarySchema, companyForEntry, type CvLibrary } from "@christopher/core/cv";
 import { saveCvLibrary } from "@/app/actions/cv";
 import { useRouter } from "next/navigation";
 
@@ -14,6 +14,12 @@ export function CvLibraryEditor({ library, version }: { library: CvLibrary | nul
   useEffect(() => { if (state.ok) router.refresh(); }, [state, router]);
   function field(key: "name" | "contact" | "profile" | "stylePreferences" | "preferredWording", label: string, rows = 1) {
     return <label className="block space-y-1 text-sm"><span>{label}</span><textarea rows={rows} className={input} value={value[key] ?? ""} onChange={e => setValue({ ...value, [key]: e.target.value })} /></label>;
+  }
+  const companies = [...new Set(value.entries.map(companyForEntry).filter(Boolean))].sort();
+  function setCompany(id: string, company: string) {
+    setValue(current => ({ ...current, entries: current.entries.map(entry => entry.id === id
+      ? { ...entry, company, roleId: undefined }
+      : entry.roleId === id ? { ...entry, company } : entry) }));
   }
   return <form action={action} className="space-y-4">
     <p className="text-sm">{version ? `Stored version ${version}: ${value.entries.length} evidence blocks. Edit any field below, then save a new version.` : "Your library is empty. Import your library JSON or add evidence below, then save."}</p>
@@ -33,15 +39,25 @@ export function CvLibraryEditor({ library, version }: { library: CvLibrary | nul
     {field("stylePreferences", "Preferred CV style (tone, length and wording to avoid)", 3)}
     {field("preferredWording", "Remembered wording corrections (review, edit or remove)", 5)}
     <p className="text-sm text-slate-500">Keep experience in reverse chronological order. Add achievements, numbers, skills and interests you can substantiate. Each draft keeps a snapshot of this evidence.</p>
+    <datalist id="evidence-companies">{companies.map(company => <option key={company} value={company} />)}</datalist>
+    <p className="text-sm">Choose a company, then link related blocks to the same role. Linked blocks produce one CV section. Keep separate jobs as separate roles.</p>
     {value.entries.map((entry, i) => <fieldset key={entry.id} className="space-y-2 rounded border border-slate-200 p-3">
       <legend className="text-sm font-medium">Evidence {i + 1}</legend>
-      <label className="block text-sm">Type <select aria-label={`Evidence ${i + 1} type`} className={input} value={entry.kind} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, kind: e.target.value as typeof entry.kind } : x) })}>{["experience", "education", "skill", "interest"].map(kind => <option key={kind}>{kind}</option>)}</select></label>
+      <label className="block text-sm">Type <select disabled={value.entries.some(child => child.roleId === entry.id)} aria-label={`Evidence ${i + 1} type`} className={input} value={entry.kind} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, kind: e.target.value as typeof entry.kind, roleId: undefined } : x) })}>{["experience", "education", "skill", "interest"].map(kind => <option key={kind}>{kind}</option>)}</select></label>
+      {entry.kind === "experience" && <div className="grid gap-2 sm:grid-cols-2">
+        <label className="block text-sm">Company<input list="evidence-companies" aria-label={`Evidence ${i + 1} company`} className={input} value={companyForEntry(entry)} placeholder="Select or enter a company" onChange={e => setCompany(entry.id, e.target.value)} /></label>
+        <label className="block text-sm">CV role<select aria-label={`Evidence ${i + 1} CV role`} className={input} value={entry.roleId ?? ""} onChange={e => setValue({ ...value, entries: value.entries.map(x => x.id === entry.id ? { ...x, roleId: e.target.value || undefined } : x) })}>
+          <option value="">Separate role — use this block’s heading</option>
+          {value.entries.filter(x => x.id !== entry.id && x.kind === "experience" && !x.roleId && companyForEntry(entry) && companyForEntry(x).toLowerCase() === companyForEntry(entry).toLowerCase() && !value.entries.some(child => child.roleId === entry.id)).map(role => <option key={role.id} value={role.id}>{role.heading}</option>)}
+        </select></label>
+        {entry.roleId && <p className="text-xs sm:col-span-2">Combined under the selected role’s heading and dates. This block’s heading is its library label.</p>}
+      </div>}
       <label className="block text-sm">Heading (role, employer and dates for experience)<input required className={input} value={entry.heading} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, heading: e.target.value } : x) })} /></label>
       <label className="block text-sm">Evidence and achievements<textarea required rows={5} className={input} value={entry.details} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, details: e.target.value } : x) })} /></label>
       <div className="flex gap-3">
       <button type="button" disabled={i === 0} className="text-sm underline disabled:opacity-40" onClick={() => { const entries = [...value.entries]; [entries[i - 1], entries[i]] = [entries[i]!, entries[i - 1]!]; setValue({ ...value, entries }); }}>Move up</button>
       <button type="button" disabled={i === value.entries.length - 1} className="text-sm underline disabled:opacity-40" onClick={() => { const entries = [...value.entries]; [entries[i], entries[i + 1]] = [entries[i + 1]!, entries[i]!]; setValue({ ...value, entries }); }}>Move down</button>
-      <button type="button" className="text-sm underline" onClick={() => setValue({ ...value, entries: value.entries.filter((_, n) => n !== i) })}>Remove entry</button>
+      <button type="button" disabled={value.entries.some(child => child.roleId === entry.id)} title="Unlink related blocks before removing their role" className="text-sm underline disabled:opacity-40" onClick={() => setValue({ ...value, entries: value.entries.filter((_, n) => n !== i) })}>Remove entry</button>
       </div>
     </fieldset>)}
     <button type="button" className="mr-4 text-sm underline" onClick={() => setValue({ ...value, entries: [...value.entries, { id: crypto.randomUUID(), kind: "experience", heading: "", details: "" }] })}>Add evidence</button>

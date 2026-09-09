@@ -1,7 +1,7 @@
 "use server";
 import { desc, eq, sql } from "drizzle-orm";
 import { cvLibraries, cvDrafts, jobs, companies, enqueueTask } from "@christopher/db";
-import { CvLibrarySchema, CvContentSchema, modelForCallSite } from "@christopher/core";
+import { CvLibrarySchema, CvContentSchema, modelForCallSite, isKnownModel } from "@christopher/core";
 import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getSettings, setSetting } from "@/lib/settings";
@@ -31,7 +31,7 @@ export async function saveCvModel(_prev: ActionResult, form: FormData): Promise<
   await requireSession();
   const model = String(form.get("cvModel") ?? "").trim();
   const settings = await getSettings();
-  if (!/^claude-[a-z0-9.-]{3,100}$/.test(model)) return fail("Enter an Anthropic Claude model ID.");
+  if (!isKnownModel(model)) return fail("Choose a supported model for CV generation.");
   if (model === modelForCallSite(settings, "A3")) return fail("Choose a different model from the website extraction model.");
   await setSetting("cvModel", model);
   revalidatePath("/cv/library");

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDb, schema, type Db } from "@christopher/db";
+import { DEFAULT_SETTINGS, modelForCallSite } from "@christopher/core";
 import { runMigrations } from "@christopher/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { createSessionCookieValue } from "@/lib/session";
@@ -198,7 +199,7 @@ describe("priority workflows", () => {
     generate.set("description", "Lead a business operations team, develop the annual operating plan and work with finance and commercial leaders.");
     await expect(requestCv({ ok: true }, generate)).rejects.toThrow("redirect:/cv/");
     const [draft] = await database.select().from(schema.cvDrafts);
-    expect(draft!.librarySnapshot).toEqual(content); expect(draft!.model).toBe("claude-sonnet-5");
+    expect(draft!.librarySnapshot).toEqual(content); expect(draft!.model).toBe("claude-fable-5-1");
     expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(1);
     await database.update(schema.cvDrafts).set({ status: "ready", revision: 1, content: { name: content.name, contact: content.contact, summary: "Original", sections: [{ entryId: "one", kind: "experience", heading: "Director · Acme", bullets: ["Led a team"] }], gaps: [] } }).where(eq(schema.cvDrafts.id, draft!.id));
     const edit = new FormData(); edit.set("summary", "Edited summary"); edit.set("section-0", "Led the operations team"); edit.set("rememberWording", "on");
@@ -229,7 +230,13 @@ describe("priority workflows", () => {
 
   });
   it("does not allow the CV and scraping model to be the same", async () => {
-    const form = new FormData(); form.set("cvModel", "claude-opus-5");
+    // Derived from the defaults rather than hardcoded, so the collision stays real if the default model changes.
+    const form = new FormData(); form.set("cvModel", modelForCallSite(DEFAULT_SETTINGS, "A3"));
+    expect((await saveCvModel({ ok: true }, form)).ok).toBe(false);
+  });
+  it("rejects a model ID outside the supported list", async () => {
+    // A dotted version passed the old regex, was stored, and then failed on every call.
+    const form = new FormData(); form.set("cvModel", "claude-fable-5.1");
     expect((await saveCvModel({ ok: true }, form)).ok).toBe(false);
   });
 });

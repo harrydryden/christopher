@@ -71,7 +71,7 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
   };
   const ai = createAiEngine({
     apiKey: env.anthropicApiKey,
-    getModel: (callSite) => modelForCallSite(cached?.value ?? ({ defaultModel: "claude-opus-5", modelOverrides: {} } as AppSettings), callSite),
+    getModel: (callSite) => modelForCallSite(cached?.value ?? ({ defaultModel: "claude-sonnet-5", modelOverrides: {} } as AppSettings), callSite),
     onUsage,
     logger: (msg, data) => log.debug(`ai ${msg}`, data),
   });

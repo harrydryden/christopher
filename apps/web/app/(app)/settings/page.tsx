@@ -4,6 +4,7 @@ import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
 import { SettingsForm } from "@/components/SettingsForm";
+import { ModelSelect } from "@/components/ModelSelect";
 import { getSettings } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
@@ -133,7 +134,7 @@ export default async function SettingsPage() {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className={labelClass}>
               <span className={fieldLabelClass}>Default model</span>
-              <input name="defaultModel" type="text" defaultValue={settings.defaultModel} className={inputClass} />
+              <ModelSelect name="defaultModel" value={settings.defaultModel} className={inputClass} />
             </label>
             <label className={labelClass}>
               <span className={fieldLabelClass}>Monthly AI budget (USD)</span>

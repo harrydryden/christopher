@@ -4,6 +4,7 @@ export * from "./gate";
 export * from "./reconcile";
 export * from "./status";
 export * from "./settings";
+export * from "./models";
 export * from "./tasks";
 export * as ats from "./ats/index";
 export * as discovery from "./discovery/index";

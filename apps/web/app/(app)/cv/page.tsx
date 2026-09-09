@@ -6,6 +6,7 @@ import { getSettings } from "@/lib/settings";
 import { PageHeader } from "@/components/PageHeader";
 import { Card } from "@/components/Card";
 import { SettingsForm } from "@/components/SettingsForm";
+import { ModelSelect } from "@/components/ModelSelect";
 import { requestCv, saveCvModel } from "@/app/actions/cv";
 export const dynamic = "force-dynamic";
 export default async function CvPage({ searchParams }: { searchParams: Promise<{ job?: string }> }) {
@@ -29,7 +30,7 @@ export default async function CvPage({ searchParams }: { searchParams: Promise<{
       <p className="text-xs text-slate-500">Uses library version {libraries[0]?.version ?? "not yet saved"} and {settings.cvModel}. Generation runs in the background. Review each draft before downloading.</p>
     </SettingsForm></Card>
     <Card title="Your evidence library"><p className="text-sm">Saved version: {libraries[0]?.version ?? "none"}. Review and edit your experience, skills and CV preferences in one place.</p><Link href="/cv/library" className="underline">Open evidence library</Link></Card>
-    <details><summary className="cursor-pointer text-sm">Advanced model settings</summary><Card title="CV model"><SettingsForm action={saveCvModel}><label className="text-sm">Anthropic model ID<input name="cvModel" defaultValue={settings.cvModel} className="mt-1 block w-full rounded border p-2 dark:bg-slate-950" /></label><p className="text-xs text-slate-500">Configured separately from website extraction. Uses the worker’s ANTHROPIC_API_KEY and the monthly AI budget.</p></SettingsForm></Card></details>
+    <details><summary className="cursor-pointer text-sm">Advanced model settings</summary><Card title="CV model"><SettingsForm action={saveCvModel}><label className="text-sm">Model<ModelSelect name="cvModel" value={settings.cvModel} className="mt-1 block w-full rounded border p-2 dark:bg-slate-950" /></label><p className="text-xs text-slate-500">Configured separately from website extraction. Uses the worker’s ANTHROPIC_API_KEY and the monthly AI budget.</p></SettingsForm></Card></details>
     <Card title="Saved CVs"><ul className="space-y-2 text-sm">{drafts.map(d => <li key={d.id}><Link className="underline" href={`/cv/${d.id}`}>{d.company} · {d.jobTitle}</Link> — {d.status}, revision {d.revision}</li>)}</ul>{!drafts.length && <p className="text-sm text-slate-500">No CVs generated yet.</p>}</Card>
   </div>;
 }

@@ -3,7 +3,7 @@
 import { requireSession } from "@/lib/auth";
 
 import { revalidatePath } from "next/cache";
-import { isValidScanTime, isValidTimezone, parseTermList, type MatchField } from "@christopher/core";
+import { isKnownModel, isValidScanTime, isValidTimezone, parseTermList, type MatchField } from "@christopher/core";
 import { enqueue } from "@/lib/enqueue";
 import { getSettings, setSetting, saveSettingsAndGate } from "@/lib/settings";
 import { fail, ok, type ActionResult } from "@/lib/validation";
@@ -92,7 +92,7 @@ export async function saveSchedule(_prev: ActionResult, formData: FormData): Pro
 export async function saveAiSettings(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   await requireSession();
   const defaultModel = String(formData.get("defaultModel") ?? "").trim();
-  if (!defaultModel) return fail("Default model cannot be blank.");
+  if (!isKnownModel(defaultModel)) return fail("Choose a supported model for the default.");
 
   const monthlyAiBudgetUsd = Number(formData.get("monthlyAiBudgetUsd"));
   if (!Number.isFinite(monthlyAiBudgetUsd) || monthlyAiBudgetUsd < 0) return fail("Monthly AI budget must be a non-negative number.");

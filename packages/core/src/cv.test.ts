@@ -122,3 +122,31 @@ describe("structured responsibilities", () => {
     expect(CvLibrarySchema.safeParse(overflow).success).toBe(true);
   });
 });
+
+
+describe("evidence status", () => {
+  const entry = (id: string, status?: "draft" | "active" | "inactive") => ({ id, kind: "skill" as const, heading: id, details: `Evidence for ${id}`, status });
+  const library = { name: "Test", contact: "", profile: "", entries: [entry("active", "active"), entry("draft", "draft"), entry("archived", "inactive")] };
+  it("passes only active evidence to generation and rejects inactive model references", async () => {
+    const { groupCvLibrary, materialiseCv } = await import("./cv");
+    expect(groupCvLibrary(library).entries.map(e => e.id)).toEqual(["active"]);
+    for (const entryId of ["draft", "archived"]) expect(() => materialiseCv(library, { summary: "Test", gaps: [], sections: [{ entryId, bullets: ["Must not appear"] }] })).toThrow();
+    expect(() => groupCvLibrary({ ...library, entries: [entry("draft", "draft")] })).toThrow("Activate at least one");
+    expect(groupCvLibrary({ ...library, entries: [entry("legacy")] }).entries).toHaveLength(1);
+  });
+  it("retains removed blocks as inactive and allows explicit reactivation", async () => {
+    const { retainArchivedEvidence, groupCvLibrary } = await import("./cv");
+    const saved = retainArchivedEvidence(library, { ...library, entries: [entry("active", "active")] });
+    expect(saved.entries.map(e => [e.id, e.status])).toEqual([["active", "active"], ["draft", "inactive"], ["archived", "inactive"]]);
+    const restored = { ...saved, entries: saved.entries.map(e => ({ ...e, status: "active" as const })) };
+    expect(groupCvLibrary(restored).entries).toHaveLength(3);
+  });
+  it("does not combine inactive evidence into an active job section", async () => {
+    const { groupCvLibrary } = await import("./cv");
+    const job = { id: "job", company: "Acme", jobTitle: "Director", startDate: "2020", endDate: "", current: true };
+    const source = { ...library, employment: [job], entries: library.entries.map(e => ({ ...e, kind: "experience" as const, employmentId: job.id })) };
+    const result = groupCvLibrary(source);
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0]!.details).toBe("Evidence for active");
+  });
+});

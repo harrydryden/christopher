@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createAiEngine, decisionDigest, extractJsonBlock, type AiClientLike, type AiUsageRecord, type DecisionForDigest, type ParseResponse } from "./engine";
+import { createAiEngine, decisionDigest, extractJsonBlock, OUTPUT_LIMIT_ERROR, type AiClientLike, type AiUsageRecord, type DecisionForDigest, type ParseResponse } from "./engine";
 import { estimateCostUsd } from "./pricing";
 
 interface Captured {
@@ -38,6 +38,14 @@ function engineWith(parsedOutput: unknown, over: Partial<ParseResponse> = {}) {
 }
 
 describe("engine plumbing", () => {
+  it("rejects truncated responses even when a partial result parses, preserving billed usage", async () => {
+    const { engine, usage } = engineWith({ score: 90, verdict: "strong", rationale: "Fits", flags: [] }, {
+      stop_reason: "max_tokens", usage: { input_tokens: 1000, output_tokens: 4096 },
+    });
+    expect(await engine.scoreJob({ profileMarkdown: "", decisionDigest: "", job: { title: "t", company: "c" } })).toBeNull();
+    expect(usage[0]).toMatchObject({ ok: false, error: OUTPUT_LIMIT_ERROR, outputTokens: 4096 });
+    expect(usage[0]!.costUsd).toBeGreaterThan(0);
+  });
   it("records the tokens for a response the schema rejects, and why it was rejected", async () => {
     // The model answered and the account was billed. Recording zeros here would keep a failing
     // call site invisible to the monthly budget, which is how an expensive loop stays unnoticed.
@@ -261,5 +269,6 @@ it("routes CV generation separately, validates output and records usage", async 
   const result = await engine.buildCv({ library: { name: "Candidate", contact: "London", profile: "Leader", entries: [{ id: "one", kind: "experience", heading: "Director", details: "Led a team" }] }, jobTitle: "Director", company: "Acme", description: "Lead operations" }, { refType: "cv", refId: "draft" });
   expect(result?.sections[0]?.entryId).toBe("one");
   expect(calls[0]!.params.model).toBe("claude-sonnet-5");
+  expect(calls[0]!.params.max_tokens).toBe(12000);
   expect(usage[0]).toMatchObject({ callSite: "CV", refId: "draft", ok: true });
 });

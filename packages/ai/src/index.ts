@@ -1,4 +1,4 @@
-export { AiEngine, createAiEngine, decisionDigest, extractJsonBlock } from "./engine";
+export { AiEngine, createAiEngine, decisionDigest, extractJsonBlock, OUTPUT_LIMIT_ERROR } from "./engine";
 export type { AiEngineOptions, AiUsageRecord, AiClientLike, DecisionForDigest, Effort, Ref } from "./engine";
 export { PRICING, estimateCostUsd, priceFor, type TokenUsage } from "./pricing";
 export * as schemas from "./schemas";

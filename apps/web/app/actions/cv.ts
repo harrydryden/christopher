@@ -1,4 +1,5 @@
 "use server";
+import { z } from "zod";
 import { desc, eq, sql } from "drizzle-orm";
 import { cvLibraries, cvDrafts, jobs, companies, enqueueTask } from "@christopher/db";
 import { CvLibrarySchema, migrateEmploymentHistory, CvContentSchema, modelForCallSite, isKnownModel } from "@christopher/core";
@@ -22,7 +23,14 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
       await tx.insert(cvLibraries).values({ version: (latest?.version ?? 0) + 1, content });
       await enqueueTask(tx, "rescore_all", { onlyInTable: true }, { dedupeKey: "rescore_all", priority: 5 });
     });
-  } catch (error) { return fail(error instanceof Error ? error.message : "Could not save the library."); }
+  } catch (error) {
+    if (error instanceof z.ZodError) return fail(error.issues.map(issue => {
+      const [section, index, field] = issue.path;
+      const label = typeof index === "number" ? `${section === "employment" ? "Job" : "Evidence"} ${index + 1}${field ? ` (${String(field)})` : ""}: ` : "";
+      return label + issue.message;
+    }).join(" "));
+    return fail(error instanceof Error ? error.message : "Could not save the library.");
+  }
   revalidatePath("/cv/library");
   revalidatePath("/cv");
   return ok();

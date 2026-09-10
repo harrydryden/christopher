@@ -6,9 +6,10 @@ import path from "node:path";
 // every PDF download failed with MODULE_NOT_FOUND on Helvetica. The glob covers the chunks/
 // subdirectory too, which the font modules share. Both entry points that render a PDF need it:
 // the download route, and the page whose server action freezes a PDF onto an application.
+// Include only real files in pnpm's store. The app's node_modules/pdfkit is a symlink;
+// tracing its children as well produces an invalid Vercel function deployment package.
 const PDFKIT_STANDARD_FONTS = [
   "../../node_modules/.pnpm/pdfkit@*/node_modules/pdfkit/js/standard-fonts/**",
-  "./node_modules/pdfkit/js/standard-fonts/**",
 ];
 
 const nextConfig: NextConfig = {

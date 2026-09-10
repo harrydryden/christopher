@@ -148,7 +148,7 @@ export function migrateEmploymentHistory(library: CvLibrary): CvLibrary {
   for (const entry of library.entries.filter(entry => entry.kind === "experience" && !entry.roleId)) {
     const parts = entry.heading.split("·").map(part => part.trim());
     const range = parts.length === 3 ? parts[2]!.match(/^(.*?)\s*(?:[–—]|-(?=[A-Za-z\d]))\s*(present|current|now|[A-Za-z]+\s+\d{4}|\d{4}(?:-\d{2})?)$/i) : null;
-    const job: Employment = { id: entry.id, company: companyForEntry(entry), jobTitle: parts[0]!, startDate: range ? parseCareerDate(range[1]!.trim()) : "", endDate: range ? parseCareerDate(range[2]!) : "", current: !!range && /^(present|current|now)$/i.test(range[2]!) };
+    const job: Employment = { id: entry.id, company: companyForEntry(entry) || (parts.length === 2 ? parts[1]! : ""), jobTitle: parts[0]!, startDate: range ? parseCareerDate(range[1]!.trim()) : "", endDate: range ? parseCareerDate(range[2]!) : "", current: !!range && /^(present|current|now)$/i.test(range[2]!) };
     const existing = job.startDate && (job.endDate || job.current) ? employment.find(item => employmentKey(item) === employmentKey(job)) : undefined;
     if (!existing) employment.push(job);
     links.set(entry.id, existing?.id ?? job.id);

@@ -188,9 +188,22 @@ describe("priority workflows", () => {
       await database.execute(sql`alter table tasks drop constraint audit_reject_tag_task`);
     }
   });
+  it("saves legacy employment as a new library version and rejects dangling job links", async () => {
+    const oldContent = { name: "Test Candidate", contact: "London", profile: "Leader", entries: [{ id: "one", kind: "experience" as const, heading: "Director · Acme", details: "Led a team" }] };
+    await database.insert(schema.cvLibraries).values({ version: 1, content: oldContent });
+    const form = new FormData(); form.set("version", "1"); form.set("library", JSON.stringify(oldContent));
+    expect((await saveCvLibrary({ ok: true }, form)).ok).toBe(true);
+    const versions = await database.select().from(schema.cvLibraries).orderBy(schema.cvLibraries.version);
+    expect(versions[0]!.content).toEqual(oldContent);
+    expect(versions[1]!.content.employment).toEqual([{ id: "one", company: "Acme", jobTitle: "Director", startDate: "", endDate: "", current: false }]);
+    expect(versions[1]!.content.entries[0]!.employmentId).toBe("one");
+    form.set("version", "2"); form.set("library", JSON.stringify({ ...versions[1]!.content, employment: [] }));
+    expect((await saveCvLibrary({ ok: true }, form)).ok).toBe(false);
+    expect(await database.select().from(schema.cvLibraries)).toHaveLength(2);
+  });
   it("versions libraries and snapshots generation inputs atomically with its task", async () => {
     const { job } = await fixture();
-    const content = { name: "Test Candidate", contact: "London", profile: "Operations leader", entries: [{ id: "one", kind: "experience", heading: "Director · Acme", details: "Led an operations team" }] };
+    const content = { name: "Test Candidate", contact: "London", profile: "Operations leader", employment: [{ id: "job", company: "Acme", jobTitle: "Director", startDate: "2023-08", endDate: "", current: true }], entries: [{ id: "one", kind: "experience", employmentId: "job", heading: "Leadership", details: "Led an operations team" }] };
     const form = new FormData(); form.set("library", JSON.stringify(content)); form.set("version", "0");
     expect((await saveCvLibrary({ ok: true }, form)).ok).toBe(true);
     expect((await saveCvLibrary({ ok: true }, form)).ok).toBe(false);

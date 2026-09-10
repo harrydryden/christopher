@@ -1,16 +1,16 @@
 "use client";
 import { useActionState, useEffect, useState } from "react";
-import { CvLibrarySchema, migrateEmploymentHistory, employmentHeading, type CvLibrary } from "@christopher/core/cv";
+import { CvLibrarySchema, consolidateExperience, employmentCompanyGroups, employmentHeading, type CvLibrary } from "@christopher/core/cv";
 import { saveCvLibrary } from "@/app/actions/cv";
 import { EmploymentHistoryTable } from "./EmploymentHistoryTable";
 import { useRouter } from "next/navigation";
 
 const input = "w-full rounded border border-slate-300 p-2 text-sm dark:border-slate-700 dark:bg-slate-950";
-const empty: CvLibrary = { name: "", contact: "", profile: "", employment: [], entries: [] };
+const empty: CvLibrary = { name: "", contact: "", profile: "", employment: [], structuredExperience: true, entries: [] };
 export function CvLibraryEditor({ library, version }: { library: CvLibrary | null; version: number }) {
   const router = useRouter();
   const [importError, setImportError] = useState("");
-  const [value, setValue] = useState(() => library ? migrateEmploymentHistory(library) : empty);
+  const [value, setValue] = useState(() => library ? consolidateExperience(library) : empty);
   const [state, action, pending] = useActionState(saveCvLibrary, { ok: true } as Awaited<ReturnType<typeof saveCvLibrary>>);
   useEffect(() => { if (state.ok) router.refresh(); }, [state, router]);
   function field(key: "name" | "contact" | "profile" | "stylePreferences" | "preferredWording", label: string, rows = 1) {
@@ -21,7 +21,7 @@ export function CvLibraryEditor({ library, version }: { library: CvLibrary | nul
     <div className="flex flex-wrap items-center gap-3 text-sm">
       <label>Import library JSON<input type="file" accept="application/json,.json" className="ml-2" onChange={async e => {
         const file = e.target.files?.[0]; if (!file) return;
-        try { if (file.size > 150000) throw new Error("Library file is too large"); setValue(migrateEmploymentHistory(CvLibrarySchema.parse(JSON.parse(await file.text())))); setImportError(""); }
+        try { if (file.size > 150000) throw new Error("Library file is too large"); setValue(consolidateExperience(CvLibrarySchema.parse(JSON.parse(await file.text())))); setImportError(""); }
         catch { setImportError("Could not import this library JSON. Check its format and size."); }
         e.target.value = "";
       }} /></label>
@@ -36,24 +36,42 @@ export function CvLibraryEditor({ library, version }: { library: CvLibrary | nul
     {field("preferredWording", "Remembered wording corrections (review, edit or remove)", 5)}
     <p className="text-sm text-slate-500">Jobs appear in reverse chronological order in generated CVs. Add achievements, numbers, skills and interests you can substantiate. Each draft keeps a snapshot of this evidence.</p>
     <h2 className="text-lg font-semibold">Evidence blocks</h2>
-    {value.entries.map((entry, i) => <fieldset key={entry.id} className="space-y-2 rounded border border-slate-200 p-3">
+    {employmentCompanyGroups(value.employment ?? []).map(group => <section key={group.company.toLowerCase()} className="space-y-3">
+      <h3 className="text-lg font-semibold">{group.company || "New company"}</h3>
+      {group.jobs.map(job => {
+        const entry = value.entries.find(item => item.kind === "experience" && item.employmentId === job.id);
+        const rows = entry ? entry.details.split("\n") : [];
+        function updateRows(next: string[]) {
+          setValue({ ...value, entries: entry ? value.entries.map(item => item.id === entry.id ? { ...item, details: next.join("\n") } : item) : [...value.entries, { id: crypto.randomUUID(), kind: "experience", employmentId: job.id, heading: employmentHeading(job) || "New job", details: next.join("\n") }] });
+        }
+        return <fieldset key={job.id} className="space-y-3 rounded border border-slate-300 p-3">
+          <legend className="font-medium">{employmentHeading(job) || "Complete this job in employment history"}</legend>
+          <p className="text-sm">Responsibilities and outcomes · {rows.length}/20</p>
+          {rows.length > 20 && <p role="alert" className="text-sm text-amber-700">All existing wording has been preserved. Combine related rows to reach 20 or fewer before saving.</p>}
+          {rows.map((row, index) => <div key={index} className="flex items-start gap-2">
+            <label className="min-w-0 flex-1 text-sm"><span>Entry {index + 1}</span><textarea required rows={2} className={input} aria-label={`${job.company} ${job.jobTitle} responsibility ${index + 1}`} value={row} onChange={event => updateRows(rows.map((text, position) => position === index ? event.target.value.replace(/\r?\n/g, " ") : text))} /></label>
+            <button type="button" className="mt-6 text-sm underline" aria-label={`Remove ${job.company} ${job.jobTitle} entry ${index + 1}`} onClick={() => {
+              if (rows.length === 1 && entry) setValue({ ...value, entries: value.entries.filter(item => item.id !== entry.id) });
+              else updateRows(rows.filter((_, position) => position !== index));
+            }}>Remove</button>
+          </div>)}
+          <button type="button" className="text-sm underline disabled:opacity-40" disabled={rows.length >= 20} onClick={() => updateRows([...rows, ""])}>Add new responsibility or outcome</button>
+        </fieldset>;
+      })}
+    </section>)}
+    <h3 className="text-lg font-semibold">Education, skills and interests</h3>
+    {value.entries.map((entry, i) => entry.kind === "experience" ? null : <fieldset key={entry.id} className="space-y-2 rounded border border-slate-200 p-3">
       <legend className="text-sm font-medium">Evidence {i + 1}</legend>
-      <label className="block text-sm">Type <select aria-label={`Evidence ${i + 1} type`} className={input} value={entry.kind} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, kind: e.target.value as typeof entry.kind, employmentId: undefined } : x) })}>{["experience", "education", "skill", "interest"].map(kind => <option key={kind}>{kind}</option>)}</select></label>
-      {entry.kind === "experience" && <label className="block text-sm">Company / job
-        <select required aria-label={`Evidence ${i + 1} employment`} className={input} value={entry.employmentId ?? ""} onChange={e => setValue({ ...value, entries: value.entries.map(x => x.id === entry.id ? { ...x, employmentId: e.target.value || undefined } : x) })}>
-          <option value="">Select a job from employment history</option>
-          {(value.employment ?? []).map(job => <option key={job.id} value={job.id}>{employmentHeading(job) || "New job — complete the row above"}</option>)}
-        </select>
-      </label>}
+      <label className="block text-sm">Type <select aria-label={`Evidence ${i + 1} type`} className={input} value={entry.kind} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, kind: e.target.value as typeof entry.kind, employmentId: undefined } : x) })}>{["education", "skill", "interest"].map(kind => <option key={kind}>{kind}</option>)}</select></label>
       <label className="block text-sm">Evidence label (for example: AI governance programme)<input required className={input} value={entry.heading} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, heading: e.target.value } : x) })} /></label>
-      <label className="block text-sm">Evidence and achievements<textarea required rows={5} className={input} value={entry.details} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, details: e.target.value } : x) })} /></label>
+      <label className="block text-sm">Details<textarea required rows={5} className={input} value={entry.details} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, details: e.target.value } : x) })} /></label>
       <div className="flex gap-3">
       <button type="button" disabled={i === 0} className="text-sm underline disabled:opacity-40" onClick={() => { const entries = [...value.entries]; [entries[i - 1], entries[i]] = [entries[i]!, entries[i - 1]!]; setValue({ ...value, entries }); }}>Move up</button>
       <button type="button" disabled={i === value.entries.length - 1} className="text-sm underline disabled:opacity-40" onClick={() => { const entries = [...value.entries]; [entries[i], entries[i + 1]] = [entries[i + 1]!, entries[i]!]; setValue({ ...value, entries }); }}>Move down</button>
       <button type="button" className="text-sm underline disabled:opacity-40" onClick={() => setValue({ ...value, entries: value.entries.filter((_, n) => n !== i) })}>Remove entry</button>
       </div>
     </fieldset>)}
-    <button type="button" className="mr-4 text-sm underline" onClick={() => setValue({ ...value, entries: [...value.entries, { id: crypto.randomUUID(), kind: "experience", heading: "", details: "" }] })}>Add evidence</button>
+    <button type="button" className="mr-4 text-sm underline" onClick={() => setValue({ ...value, entries: [...value.entries, { id: crypto.randomUUID(), kind: "skill", heading: "", details: "" }] })}>Add education, skill or interest</button>
     <button disabled={pending} className="rounded bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-50">{pending ? "Saving…" : "Save library"}</button>
     {!state.ok && <p role="alert" className="text-sm text-red-600">{state.error}</p>}
     <p className="text-xs text-slate-500">Saved library version: {version || "none"}. Changes to the library do not rewrite existing CVs.</p>

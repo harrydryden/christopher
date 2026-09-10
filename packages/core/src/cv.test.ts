@@ -94,3 +94,31 @@ describe("employment history", () => {
     expect(() => materialiseCv(migrateEmploymentHistory(legacy), { summary: "Leader", sections: ["spill", "agent"].map(entryId => ({ entryId, bullets: ["Supported"] })), gaps: [] })).toThrow("same employment");
   });
 });
+
+
+describe("structured responsibilities", () => {
+  it("groups companies and jobs by most recent employment", async () => {
+    const { employmentCompanyGroups } = await import("./cv");
+    const job = (id: string, company: string, startDate: string, endDate: string, current = false) => ({ id, company, jobTitle: id, startDate, endDate, current });
+    const groups = employmentCompanyGroups([job("old", "Acme", "2010", "2012"), job("other", "Other", "2020", "2023"), job("new", " acme ", "2021", "", true)]);
+    expect(groups.map(group => group.jobs.map(item => item.id))).toEqual([["new", "old"], ["other"]]);
+  });
+  it("consolidates duplicate job blocks and retains qualifications without truncation", async () => {
+    const { consolidateExperience, CvLibrarySchema } = await import("./cv");
+    const library = { name: "Test", contact: "", profile: "", employment: [{ id: "job", company: "Acme", jobTitle: "Director", startDate: "2020", endDate: "", current: true }], entries: [
+      { id: "one", kind: "experience" as const, employmentId: "job", heading: "Director", details: "Led delivery.\nMeasured outcomes." },
+      { id: "two", kind: "experience" as const, employmentId: "job", heading: "Requires confirmation", details: "Led delivery.\nProposed governance work." },
+    ] };
+    const migrated = consolidateExperience(library);
+    expect(migrated.entries).toHaveLength(1);
+    expect(migrated.entries[0]!.details).toBe("Led delivery.\nMeasured outcomes.\nRequires confirmation:\nProposed governance work.");
+    expect(consolidateExperience(migrated)).toEqual(migrated);
+    expect(library.entries).toHaveLength(2);
+    expect(CvLibrarySchema.safeParse(migrated).success).toBe(true);
+    expect(CvLibrarySchema.safeParse({ ...migrated, entries: [...migrated.entries, { ...migrated.entries[0], id: "duplicate" }] }).success).toBe(false);
+    const overflow = { ...library, entries: [{ ...library.entries[0]!, details: Array.from({ length: 21 }, (_, i) => `Outcome ${i}`).join("\n") }] };
+    expect(consolidateExperience(overflow).entries[0]!.details.split("\n")).toHaveLength(21);
+    expect(CvLibrarySchema.safeParse(consolidateExperience(overflow)).success).toBe(false);
+    expect(CvLibrarySchema.safeParse(overflow).success).toBe(true);
+  });
+});

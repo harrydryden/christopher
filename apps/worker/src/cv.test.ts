@@ -36,3 +36,20 @@ it("rejects model claims referencing invented evidence", async () => {
   const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
   expect(saved!.status).toBe("failed"); expect(saved!.content).toBeNull();
 });
+
+it("combines employment evidence and freezes central role metadata without rewriting the library snapshot", async () => {
+  const build = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Leader", sections: [{ entryId: "one", bullets: ["Led a team and built tools"] }], gaps: [] });
+  const { task, deps, draft } = await setup();
+  const snapshot = { ...library, employment: [{ id: "job", company: "Acme", jobTitle: "Operations Director", startDate: "2023-08", endDate: "", current: true }], entries: [
+    { ...library.entries[0]!, employmentId: "job", heading: "Team leadership" },
+    { id: "two", kind: "experience" as const, employmentId: "job", heading: "Automation", details: "Built tools" },
+  ] };
+  await client.db.update(schema.cvDrafts).set({ librarySnapshot: snapshot }).where(eq(schema.cvDrafts.id, draft.id));
+  await handleGenerateCv(task, deps);
+  expect(build.mock.calls[0]![0].library.entries).toHaveLength(1);
+  expect(build.mock.calls[0]![0].library.entries[0]!.details).toContain("Built tools");
+  const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  expect(saved!.status).toBe("ready");
+  expect(saved!.content!.sections[0]!.heading).toBe("Operations Director · Acme · Aug 2023 – Present");
+  expect(saved!.librarySnapshot).toEqual(snapshot);
+});

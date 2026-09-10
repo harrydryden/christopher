@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { materialiseCv, groupCvLibrary, companyForEntry, CvLibrarySchema, type CvLibrary } from "./cv";
+import { migrateEmploymentHistory, EmploymentSchema, evidenceHeading, materialiseCv, groupCvLibrary, companyForEntry, CvLibrarySchema, type CvLibrary } from "./cv";
 const library: CvLibrary = { name: "Test Candidate", contact: "London", profile: "Operations", entries: [
   { id: "recent", kind: "experience", heading: "Director · Acme · 2023-present", details: "Led operations" },
   { id: "older", kind: "education", heading: "BSc · University · 2010", details: "Economics" },
@@ -45,5 +45,52 @@ describe("company and role grouping", () => {
   });
   it("does not allow the model to emit a linked block as a second job", () => {
     expect(() => materialiseCv(groupCvLibrary(grouped), { summary: "Leader", sections: [{ entryId: "project", bullets: ["Built an agent"] }], gaps: [] })).toThrow();
+  });
+});
+
+
+describe("employment history", () => {
+  const legacy: CvLibrary = { ...library, entries: [
+    { id: "spill", kind: "experience", heading: "VP Operations · Spill · Aug 2025 – Present", details: "Led operations" },
+    { id: "agent", kind: "experience", company: "Spill", roleId: "spill", heading: "AI agents", details: "Built agents" },
+    { id: "sales", kind: "experience", heading: "VP Operations · SalesAPE · Aug 2023 – Jul 2025", details: "Built systems" },
+    { id: "previous", kind: "experience", heading: "Manager · Spill · 2020–2022", details: "Managed a team" },
+    library.entries[1]!,
+  ] };
+  it("migrates dates and all linked blocks without changing evidence or old snapshots", () => {
+    const snapshot = JSON.stringify(legacy);
+    const migrated = CvLibrarySchema.parse(migrateEmploymentHistory(legacy));
+    expect(migrated.employment).toHaveLength(3);
+    expect(migrated.employment![0]).toMatchObject({ company: "Spill", jobTitle: "VP Operations", startDate: "2025-08", endDate: "", current: true });
+    expect(migrated.employment![1]).toMatchObject({ startDate: "2023-08", endDate: "2025-07", current: false });
+    expect(migrated.employment![2]).toMatchObject({ startDate: "2020", endDate: "2022" });
+    expect(migrated.entries[1]).toMatchObject({ employmentId: "spill", heading: "AI agents", details: "Built agents" });
+    expect(migrated.entries.every(entry => !entry.roleId && entry.company === undefined)).toBe(true);
+    expect(migrateEmploymentHistory(migrated)).toEqual(migrated);
+    expect(JSON.stringify(legacy)).toBe(snapshot);
+  });
+  it("deduplicates identical jobs but preserves separate tenures", () => {
+    const migrated = migrateEmploymentHistory({ ...legacy, entries: [...legacy.entries, { ...legacy.entries[0]!, id: "duplicate" }] });
+    expect(migrated.employment).toHaveLength(3);
+    expect(migrated.entries.at(-1)!.employmentId).toBe("spill");
+  });
+  it("validates date ranges, duplicate jobs, broken links and non-experience links", () => {
+    const migrated = migrateEmploymentHistory(legacy);
+    const job = migrated.employment![0]!;
+    for (const patch of [{ startDate: "2025-13" }, { startDate: "2025-06", endDate: "2025-05", current: false }, { endDate: "2025-12" }]) expect(EmploymentSchema.safeParse({ ...job, ...patch }).success).toBe(false);
+    expect(CvLibrarySchema.safeParse({ ...migrated, employment: [...migrated.employment!, { ...job, id: "new-id", company: " spill " }] }).success).toBe(false);
+    expect(CvLibrarySchema.safeParse({ ...migrated, employment: [] }).success).toBe(false);
+    expect(CvLibrarySchema.safeParse({ ...migrated, entries: migrated.entries.map(entry => ({ ...entry, employmentId: "spill" })) }).success).toBe(false);
+  });
+  it("uses central metadata, groups once per job and keeps jobs after their original block is removed", () => {
+    const migrated = migrateEmploymentHistory(legacy);
+    migrated.employment![0]!.jobTitle = "Chief Operating Officer";
+    migrated.entries = migrated.entries.filter(entry => entry.id !== "spill");
+    const grouped = groupCvLibrary(migrated);
+    expect(grouped.entries[0]).toMatchObject({ id: "agent", heading: "Chief Operating Officer · Spill · Aug 2025 – Present" });
+    expect(evidenceHeading(migrated, migrated.entries[0]!)).toBe(grouped.entries[0]!.heading);
+    const cv = materialiseCv(grouped, { summary: "Leader", sections: grouped.entries.map(entry => ({ entryId: entry.id, bullets: ["Supported achievement"] })), gaps: [] });
+    expect(cv.sections.filter(section => section.heading.includes("Spill"))).toHaveLength(2);
+    expect(() => materialiseCv(migrateEmploymentHistory(legacy), { summary: "Leader", sections: ["spill", "agent"].map(entryId => ({ entryId, bullets: ["Supported"] })), gaps: [] })).toThrow("same employment");
   });
 });

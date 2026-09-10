@@ -1,7 +1,8 @@
 "use server";
+import { z } from "zod";
 import { desc, eq, sql } from "drizzle-orm";
 import { cvLibraries, cvDrafts, jobs, companies, enqueueTask } from "@christopher/db";
-import { CvLibrarySchema, CvContentSchema, modelForCallSite, isKnownModel } from "@christopher/core";
+import { CvLibrarySchema, migrateEmploymentHistory, CvContentSchema, modelForCallSite, isKnownModel } from "@christopher/core";
 import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getSettings, setSetting } from "@/lib/settings";
@@ -14,7 +15,7 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
   try {
     const raw = String(form.get("library") ?? "");
     if (raw.length > 150_000) return fail("Library is too large. Keep it under 150,000 characters.");
-    const content = CvLibrarySchema.parse(JSON.parse(raw));
+    const content = CvLibrarySchema.parse(migrateEmploymentHistory(CvLibrarySchema.parse(JSON.parse(raw))));
     await db().transaction(async tx => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext('cv:library'))`);
       const [latest] = await tx.select().from(cvLibraries).orderBy(desc(cvLibraries.version)).limit(1);
@@ -22,7 +23,14 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
       await tx.insert(cvLibraries).values({ version: (latest?.version ?? 0) + 1, content });
       await enqueueTask(tx, "rescore_all", { onlyInTable: true }, { dedupeKey: "rescore_all", priority: 5 });
     });
-  } catch (error) { return fail(error instanceof Error ? error.message : "Could not save the library."); }
+  } catch (error) {
+    if (error instanceof z.ZodError) return fail(error.issues.map(issue => {
+      const [section, index, field] = issue.path;
+      const label = typeof index === "number" ? `${section === "employment" ? "Job" : "Evidence"} ${index + 1}${field ? ` (${String(field)})` : ""}: ` : "";
+      return label + issue.message;
+    }).join(" "));
+    return fail(error instanceof Error ? error.message : "Could not save the library.");
+  }
   revalidatePath("/cv/library");
   revalidatePath("/cv");
   return ok();

@@ -638,3 +638,11 @@ Scale-up stage (Series A to C), remit that includes hiring and process design, r
 - Editing a CV offers a checked option to remember changed profile/bullet wording in the latest library. It does not add facts to evidence entries. Remembered wording is visible, editable and removable; style preferences affect phrasing only. Old drafts remain unchanged.
 - A ready CV can be recorded as an application with an explicit application date. The application stores PDF bytes and its immutable CV revision, plus company/title snapshots. This records a user-reported submission; it does not submit to an employer or verify an external upload.
 - Applications track applied, screening, interview, offer, rejected, withdrawn and accepted statuses with timestamped notes history. Status changes cannot overwrite the submitted PDF or CV reference. Duplicate recording of the same revision is rejected.
+
+
+### Employment history and evidence ownership
+
+- The editable CV library stores an employment history table (`employment`) with stable IDs, company, job title, start/end dates and a current-job flag. Each experience evidence block selects one `employmentId`; education, skills and interests do not reference employment.
+- Dates accept known months (YYYY-MM) or years (YYYY); unknown dates stay blank rather than inventing precision. End dates cannot precede start dates; current jobs have no end date. Duplicate company/title/date combinations and dangling links are rejected on save. A job with linked evidence cannot be removed.
+- Existing libraries are upgraded from their original role/employer/date headings and explicit role links when opened/imported and saved as a new version. Evidence labels, details and IDs remain intact; repeated identical employment records are consolidated. Unrecognised metadata is left for review. Old draft snapshots are unchanged and remain supported by the worker.
+- CV generation combines all selected evidence for a job into one section using centrally maintained metadata, sorted by recency. Different jobs at the same company stay separate. Job qualification also resolves headings against employment history, and saving changes queues role rescoring. Historical CVs and submitted applications retain their original content.

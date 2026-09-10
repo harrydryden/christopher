@@ -41,7 +41,7 @@ const PAGES = [
   ["/health", ["Health"]],
   ["/settings", ["Settings"]],
   ["/cv", ["CV builder", "evidence library"]],
-  ["/cv/library", ["Evidence library", "Preferred CV style"]],
+  ["/cv/library", ["Evidence library", "Employment history", "Add job", "Preferred CV style"]],
   ["/applications", ["Applications"]],
   ["/?archive=1", ["Archived roles"]],
   ["/api/export.csv", ["company"]],

@@ -33,6 +33,7 @@ export function employmentHeading(job: Employment): string {
 export const CvEntrySchema = z.object({
   id: z.string().min(1).max(100),
   kind: z.enum(["experience", "education", "skill", "interest"]),
+  status: z.enum(["draft", "active", "inactive"]).optional(),
   heading: z.string().trim().min(1).max(250),
   details: z.string().trim().min(1).max(40000),
   company: z.string().trim().max(160).optional(),
@@ -98,7 +99,7 @@ export function materialiseCv(library: CvLibrary, plan: CvPlan): CvContent {
   const seenJobs = new Set<string>();
   const selected = new Map(plan.sections.map(section => {
     const entry = library.entries.find(e => e.id === section.entryId);
-    if (!entry || seen.has(entry.id)) throw new Error("CV contains unknown or repeated evidence references");
+    if (!entry || !isActiveEvidence(entry) || seen.has(entry.id)) throw new Error("CV contains unknown or repeated evidence references");
     seen.add(entry.id);
     if (entry.employmentId && seenJobs.has(entry.employmentId)) throw new Error("CV repeats the same employment record");
     if (entry.employmentId) seenJobs.add(entry.employmentId);
@@ -119,6 +120,9 @@ export function companyForEntry(entry: z.infer<typeof CvEntrySchema>): string {
 /** Keep the stored library granular; give generation one evidence set per explicit role. */
 export function groupCvLibrary(library: CvLibrary): CvLibrary {
   CvLibrarySchema.parse(library);
+  const eligible = library.entries.filter(entry => isActiveEvidence(entry) && (!entry.roleId || library.entries.some(parent => parent.id === entry.roleId && isActiveEvidence(parent))));
+  if (!eligible.length) throw new Error("Activate at least one evidence block before building a CV.");
+  library = { ...library, employment: library.employment?.filter(job => eligible.some(entry => entry.employmentId === job.id)), entries: eligible };
   if (library.employment !== undefined) {
     const experience = employmentCompanyGroups(library.employment).flatMap(group => group.jobs).flatMap(job => {
       const members = library.entries.filter(entry => entry.employmentId === job.id);
@@ -200,7 +204,8 @@ export function employmentCompanyGroups(employment: Employment[]): { company: st
 
 /** Consolidate editable evidence without truncating historical wording or changing snapshots. */
 export function consolidateExperience(library: CvLibrary): CvLibrary {
-  const migrated = migrateEmploymentHistory(library);
+  const history = migrateEmploymentHistory(library);
+  const migrated = { ...history, entries: history.entries.map(entry => ({ ...entry, status: entry.status ?? "active" as const })) };
   if (migrated.structuredExperience) return migrated;
   const entries = (migrated.employment ?? []).flatMap(job => {
     const members = migrated.entries.filter(entry => entry.kind === "experience" && entry.employmentId === job.id);
@@ -215,7 +220,25 @@ export function consolidateExperience(library: CvLibrary): CvLibrary {
         if (!seen.has(key)) { rows.push(row); seen.add(key); }
       }
     }
-    return [{ ...members[0]!, heading: employmentHeading(job), details: rows.join("\n") }];
+    return [{ ...members[0]!, status: members.every(entry => entry.status === members[0]!.status) ? members[0]!.status : "draft" as const, heading: employmentHeading(job), details: rows.join("\n") }];
   });
   return { ...migrated, structuredExperience: true, entries: [...entries, ...migrated.entries.filter(entry => entry.kind !== "experience")] };
+}
+
+/** Missing statuses belong to legacy snapshots, where evidence was active by default. */
+export function isActiveEvidence(entry: CvLibrary["entries"][number]): boolean {
+  return entry.status === undefined || entry.status === "active";
+}
+
+/** Imports/removals retain a recoverable inactive record instead of deleting evidence. */
+export function retainArchivedEvidence(previous: CvLibrary | undefined, next: CvLibrary): CvLibrary {
+  if (!previous) return next;
+  const existing = consolidateExperience(previous);
+  const removed = existing.entries.filter(entry => !next.entries.some(candidate => candidate.id === entry.id || (entry.employmentId && candidate.employmentId === entry.employmentId)));
+  const employment = [...(next.employment ?? [])];
+  for (const entry of removed) {
+    const job = existing.employment?.find(job => job.id === entry.employmentId);
+    if (job && !employment.some(candidate => candidate.id === job.id)) employment.push(job);
+  }
+  return { ...next, employment, entries: [...next.entries, ...removed.map(entry => ({ ...entry, status: "inactive" as const }))] };
 }

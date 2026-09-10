@@ -652,3 +652,7 @@ Scale-up stage (Series A to C), remit that includes hiring and process design, r
 Editable libraries consolidate experience into one block per employment record (company, job and tenure). Company groups and their jobs are ordered most recent first: current roles, then end date (or start date where unknown), then start date. Company names are grouped without case or whitespace differences.
 
 Each job has up to 20 individually editable responsibilities and outcomes, with add/remove controls. The canonical text contains one row per line, avoiding duplicate data for CV generation and role qualification. Saving validates one block per job and the 20-row limit. Historical library and CV snapshots remain readable and unchanged. Migration retains subsidiary labels, qualifications and all wording; exact duplicate lines are removed. More than 20 migrated rows require consolidation before saving and are never truncated.
+
+
+### Evidence block lifecycle
+Each evidence block has Draft, Active or Inactive status. Existing status-less records retain their prior Active behaviour; newly created blocks start Draft. Only Active blocks are sent to CV generation or role qualification, and output validation rejects references to excluded blocks. A library with no active evidence cannot queue a CV. Archive/removal retains the record as Inactive, including omissions during import; selecting Draft or Active restores it. Historical CV snapshots and submitted PDFs remain unchanged.

@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { desc, eq, sql } from "drizzle-orm";
 import { cvLibraries, cvDrafts, jobs, companies, enqueueTask } from "@christopher/db";
-import { CvLibrarySchema, consolidateExperience, CvContentSchema, modelForCallSite, isKnownModel } from "@christopher/core";
+import { CvLibrarySchema, consolidateExperience, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel } from "@christopher/core";
 import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getSettings, setSetting } from "@/lib/settings";
@@ -20,7 +20,7 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext('cv:library'))`);
       const [latest] = await tx.select().from(cvLibraries).orderBy(desc(cvLibraries.version)).limit(1);
       if ((latest?.version ?? 0) !== Number(form.get("version"))) throw new Error("The library changed. Reload before saving.");
-      await tx.insert(cvLibraries).values({ version: (latest?.version ?? 0) + 1, content });
+      await tx.insert(cvLibraries).values({ version: (latest?.version ?? 0) + 1, content: CvLibrarySchema.parse(retainArchivedEvidence(latest?.content, content)) });
       await enqueueTask(tx, "rescore_all", { onlyInTable: true }, { dedupeKey: "rescore_all", priority: 5 });
     });
   } catch (error) {
@@ -68,6 +68,7 @@ export async function requestCv(_prev: ActionResult, form: FormData): Promise<Ac
     if (settings.cvModel === modelForCallSite(settings, "A3")) return fail("Choose a CV model different from website extraction before generating.");
     const [library] = await db().select().from(cvLibraries).orderBy(desc(cvLibraries.version)).limit(1);
     if (!library) return fail("Save your evidence library first.");
+    groupCvLibrary(CvLibrarySchema.parse(library.content));
     const [row] = await db().select({ job: jobs, company: companies.name }).from(jobs).innerJoin(companies, eq(jobs.companyId, companies.id)).where(eq(jobs.id, id));
     if (!row) return fail("Role not found.");
     const supplied = String(form.get("description") ?? "").trim();

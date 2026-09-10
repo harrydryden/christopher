@@ -34,7 +34,7 @@ export const CvEntrySchema = z.object({
   id: z.string().min(1).max(100),
   kind: z.enum(["experience", "education", "skill", "interest"]),
   heading: z.string().trim().min(1).max(250),
-  details: z.string().trim().min(1).max(8000),
+  details: z.string().trim().min(1).max(40000),
   company: z.string().trim().max(160).optional(),
   employmentId: z.string().min(1).max(100).optional(),
   roleId: z.string().min(1).max(100).optional(),
@@ -46,12 +46,22 @@ export const CvLibrarySchema = z.object({
   profile: z.string().trim().max(5000),
   stylePreferences: z.string().max(4000).optional(),
   preferredWording: z.string().max(12000).optional(),
+  structuredExperience: z.literal(true).optional(),
   employment: z.array(EmploymentSchema).max(100).optional(),
   entries: z.array(CvEntrySchema).min(1).max(100),
 }).superRefine((library, ctx) => {
   if (library.employment) {
     if (new Set(library.employment.map(job => job.id)).size !== library.employment.length) ctx.addIssue({ code: "custom", message: "Employment IDs must be unique." });
     if (new Set(library.employment.map(employmentKey)).size !== library.employment.length) ctx.addIssue({ code: "custom", message: "This company, job title and date range already exist in employment history." });
+  }
+  if (library.structuredExperience) {
+    const jobs = new Set<string>();
+    for (const [index, entry] of library.entries.entries()) {
+      if (entry.kind !== "experience") continue;
+      if (jobs.has(entry.employmentId!)) ctx.addIssue({ code: "custom", path: ["entries", index], message: "Only one responsibilities and outcomes block is allowed per job." });
+      jobs.add(entry.employmentId!);
+      if (responsibilityRows(entry.details).length > 20) ctx.addIssue({ code: "custom", path: ["entries", index, "details"], message: "Keep up to 20 responsibilities and outcomes per job. Combine related rows before saving." });
+    }
   }
   for (const [index, entry] of library.entries.entries()) {
     if (library.employment !== undefined) {
@@ -110,7 +120,7 @@ export function companyForEntry(entry: z.infer<typeof CvEntrySchema>): string {
 export function groupCvLibrary(library: CvLibrary): CvLibrary {
   CvLibrarySchema.parse(library);
   if (library.employment !== undefined) {
-    const experience = [...library.employment].sort((a, b) => Number(b.current) - Number(a.current) || b.startDate.localeCompare(a.startDate)).flatMap(job => {
+    const experience = employmentCompanyGroups(library.employment).flatMap(group => group.jobs).flatMap(job => {
       const members = library.entries.filter(entry => entry.employmentId === job.id);
       if (!members.length) return [];
       return [{ ...members[0]!, heading: employmentHeading(job), details: combineEvidence(members) }];
@@ -163,4 +173,49 @@ export function migrateEmploymentHistory(library: CvLibrary): CvLibrary {
 export function evidenceHeading(library: CvLibrary, entry: CvLibrary["entries"][number]): string {
   const job = library.employment?.find(job => job.id === entry.employmentId);
   return job ? employmentHeading(job) : entry.heading;
+}
+
+/** A single canonical text representation also serves existing scoring and CV consumers. */
+export function responsibilityRows(details: string): string[] {
+  return details.split(/\r?\n/).map(line => line.replace(/^\s*[•*\-]\s+/, "").trim()).filter(Boolean);
+}
+
+export function compareEmploymentDates(a: Employment, b: Employment): number {
+  return Number(b.current) - Number(a.current)
+    || (b.endDate || b.startDate).localeCompare(a.endDate || a.startDate)
+    || b.startDate.localeCompare(a.startDate)
+    || a.jobTitle.localeCompare(b.jobTitle);
+}
+
+export function employmentCompanyGroups(employment: Employment[]): { company: string; jobs: Employment[] }[] {
+  const groups = new Map<string, { company: string; jobs: Employment[] }>();
+  for (const job of employment) {
+    const key = normalise(job.company);
+    const group = groups.get(key) ?? { company: job.company, jobs: [] };
+    group.jobs.push(job); groups.set(key, group);
+  }
+  return [...groups.values()].map(group => ({ ...group, jobs: group.jobs.sort(compareEmploymentDates) }))
+    .sort((a, b) => compareEmploymentDates(a.jobs[0]!, b.jobs[0]!) || a.company.localeCompare(b.company));
+}
+
+/** Consolidate editable evidence without truncating historical wording or changing snapshots. */
+export function consolidateExperience(library: CvLibrary): CvLibrary {
+  const migrated = migrateEmploymentHistory(library);
+  if (migrated.structuredExperience) return migrated;
+  const entries = (migrated.employment ?? []).flatMap(job => {
+    const members = migrated.entries.filter(entry => entry.kind === "experience" && entry.employmentId === job.id);
+    if (!members.length) return [];
+    const rows: string[] = [];
+    const seen = new Set<string>();
+    for (const member of members) {
+      // Preserve subsidiary labels as context: they may qualify unconfirmed statements.
+      if (members.length > 1 && member !== members[0]) rows.push(member.heading + ":");
+      for (const row of responsibilityRows(member.details)) {
+        const key = normalise(row);
+        if (!seen.has(key)) { rows.push(row); seen.add(key); }
+      }
+    }
+    return [{ ...members[0]!, heading: employmentHeading(job), details: rows.join("\n") }];
+  });
+  return { ...migrated, structuredExperience: true, entries: [...entries, ...migrated.entries.filter(entry => entry.kind !== "experience")] };
 }

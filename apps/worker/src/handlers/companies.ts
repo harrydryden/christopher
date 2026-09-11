@@ -8,10 +8,12 @@ import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { aiBudgetExceeded, makeDiscoveryContext, makeFetchContext, type WorkerDeps } from "../context";
 import { serialiseCandidate } from "./discover";
 import { latestProfile } from "./learning";
+import { withResourceLease } from "../lease";
+import { selectExamples, recommendationContext } from "../recommendation-context";
+import { sha1 } from "@christopher/core";
 import { log } from "../log";
 
 const PARKED_MARKERS = /(domain (?:is )?for sale|buy this domain|parked (?:free )?courtesy|this domain has expired|godaddy\.com\/domain)/i;
-const REJECTION_COOLDOWN_DAYS = 180;
 
 export async function handleProfileCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { companyId } = task.payload as { companyId: string };
@@ -82,6 +84,13 @@ async function gatherCompanyText(deps: WorkerDeps, homepageUrl: string): Promise
 
 export async function handleSuggestCompanies(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { limit } = (task.payload ?? {}) as { limit?: number };
+  if (task.id) {
+    const checkpoint = await deps.db.select({ id: schema.discoveryCandidates.id, processedAt: schema.discoveryCandidates.processedAt }).from(schema.discoveryCandidates).where(eq(schema.discoveryCandidates.batchKey, task.id));
+    if (checkpoint.length) {
+      for (const candidate of checkpoint) if (!candidate.processedAt) await enqueueTask(deps.db, "verify_company", { candidateId: candidate.id }, { dedupeKey: `verify_company:${candidate.id}`, priority: 7 });
+      return { resumed: checkpoint.length };
+    }
+  }
   const settings = await deps.settings();
   if (!settings.suggestionsEnabled) return { skipped: "suggestions disabled" };
   if (!deps.ai.enabled || (await aiBudgetExceeded(deps))) return { skipped: "ai unavailable" };
@@ -105,12 +114,10 @@ export async function handleSuggestCompanies(task: Task, deps: WorkerDeps): Prom
     };
   });
 
-  const cutoff = new Date(deps.now().getTime() - REJECTION_COOLDOWN_DAYS * 86_400_000);
-  const previous = await deps.db.select().from(schema.companySuggestions);
-  const excludeDomains = [
-    ...companies.map((c) => c.domain),
-    ...previous.filter((s) => s.status === "accepted" || (s.status === "rejected" && s.resolvedAt && s.resolvedAt > cutoff) || s.status === "pending").map((s) => s.domain),
-  ];
+  const previous = await deps.db.select({ domain: schema.companySuggestions.domain, status: schema.companySuggestions.status, name: schema.companySuggestions.name,
+    rejectionReason: schema.companySuggestions.rejectionReason, resolvedAt: schema.companySuggestions.resolvedAt }).from(schema.companySuggestions);
+  const allDomains = await deps.db.select({ domain: schema.companies.domain }).from(schema.companies);
+  const excludeDomains = [...allDomains.map(c => c.domain), ...previous.map(s => s.domain)];
   const rejected = previous
     .filter((s) => s.status === "rejected" && s.rejectionReason)
     .slice(0, 40)
@@ -118,8 +125,8 @@ export async function handleSuggestCompanies(task: Task, deps: WorkerDeps): Prom
 
   const profile = await latestProfile(deps);
   const candidates = await deps.ai.suggestCompanies({
-    portfolio,
-    preferenceProfile: profile?.markdown,
+    portfolio: selectExamples(portfolio),
+    preferenceProfile: (await recommendationContext(deps)).preferences,
     excludeDomains,
     rejected,
     limit: limit ?? 15,
@@ -127,52 +134,23 @@ export async function handleSuggestCompanies(task: Task, deps: WorkerDeps): Prom
   if (!candidates || candidates.length === 0) return { skipped: "no candidates returned" };
 
   const nameToId = new Map(companies.map((c) => [c.name.toLowerCase(), c.id]));
-  let stored = 0;
-  let rank = 0;
-  const verified: Array<{ candidate: (typeof candidates)[number]; result: VerificationResult }> = [];
-
-  for (const candidate of candidates) {
-    const result = await verifyCandidate(deps, candidate.homepageUrl, settings.gate.includeKeywords.length > 0);
-    if (!result.homepageOk) {
-      log.info("suggestion dropped: homepage unusable", { name: candidate.name, url: candidate.homepageUrl, error: result.error });
-      continue;
+  return deps.db.transaction(async tx => {
+    await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
+    let queued = 0;
+    for (const [rank, candidate] of candidates.entries()) {
+      const domain = extractDomain(candidate.homepageUrl);
+      if (excludeDomains.includes(domain)) continue;
+      const similarTo = candidate.similarTo.map(name => nameToId.get(name.toLowerCase())).filter((id): id is string => !!id);
+      const rows = await tx.insert(schema.discoveryCandidates).values({ name: candidate.name, domain, homepageUrl: candidate.homepageUrl,
+        rationale: candidate.rationale, quote: "", similarTo, rank, batchKey: task.id ?? "manual",
+      }).onConflictDoNothing().returning({ id: schema.discoveryCandidates.id });
+      for (const row of rows) {
+        await enqueueTask(tx, "verify_company", { candidateId: row.id }, { dedupeKey: `verify_company:${row.id}`, priority: 7 });
+        queued++;
+      }
     }
-    if (!result.careersSource) {
-      log.info("suggestion dropped: no careers source found", { name: candidate.name });
-      continue;
-    }
-    verified.push({ candidate, result });
-  }
-
-  verified.sort((a, b) => b.candidate.confidence - a.candidate.confidence || (b.result.matchingRoles ?? 0) - (a.result.matchingRoles ?? 0));
-
-  for (const { candidate, result } of verified.slice(0, 10)) {
-    const domain = extractDomain(candidate.homepageUrl);
-    const similarTo = candidate.similarTo.map((name) => nameToId.get(name.toLowerCase())).filter((id): id is string => !!id);
-    const inserted = await deps.db
-      .insert(schema.companySuggestions)
-      .values({
-        name: candidate.name,
-        homepageUrl: candidate.homepageUrl,
-        domain,
-        rationale: candidate.rationale,
-        similarTo,
-        verification: {
-          homepageOk: true,
-          careersSource: result.careersSource,
-          openRoles: result.openRoles,
-          matchingRoles: result.matchingRoles,
-        },
-        rank: rank++,
-        status: "pending",
-      })
-      .onConflictDoNothing()
-      .returning({ id: schema.companySuggestions.id });
-    if (inserted.length) stored++;
-  }
-
-  log.info("company suggestions", { proposed: candidates.length, verified: verified.length, stored });
-  return { proposed: candidates.length, verified: verified.length, stored };
+    return { proposed: candidates.length, queued };
+  });
 }
 
 interface VerificationResult {
@@ -185,6 +163,21 @@ interface VerificationResult {
 
 /** A suggestion is only shown once we have confirmed the company is real and hiring. */
 export async function verifyCandidate(deps: WorkerDeps, homepageUrl: string, countMatching: boolean): Promise<VerificationResult> {
+  const key = sha1(`${extractDomain(homepageUrl)}:${JSON.stringify((await deps.settings()).gate)}:${countMatching}`);
+  return withResourceLease(deps, `verification:${key}`, async locked => {
+    const [cached] = await deps.db.select().from(schema.verificationCache).where(eq(schema.verificationCache.key, key));
+    if (cached && cached.expiresAt > deps.now()) return cached.result;
+    const result = await verifyUncached(deps, homepageUrl, countMatching);
+    if (!result.error) await deps.db.transaction(async tx => {
+      await locked.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
+      const expiresAt = new Date(deps.now().getTime() + (result.careersSource ? 7 : 1) * 86400000);
+      await tx.insert(schema.verificationCache).values({ key, result, expiresAt }).onConflictDoUpdate({ target: schema.verificationCache.key, set: { result, expiresAt } });
+    });
+    return result;
+  });
+}
+
+async function verifyUncached(deps: WorkerDeps, homepageUrl: string, countMatching: boolean): Promise<VerificationResult> {
   let url: string;
   try {
     url = ensureHttpUrl(homepageUrl);

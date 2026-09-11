@@ -28,16 +28,15 @@ export default async function RolesPage({ searchParams }: { searchParams: Promis
   const [settings, companyOptions, work] = await Promise.all([getSettings(), listCompanyOptions(), getCompanyWorkStatus()]);
   const result = await fetchRolePage(filters, archived, settings.hideThreshold, Number(sp.page), now);
   const { page, pageCount } = result;
-  const events = await fetchRecentEventsFor([...result.visible, ...result.hidden].map(row => row.job.id));
+  const events = await fetchRecentEventsFor(result.visible.map(row => row.job.id));
   const visibleVM = attachEvents(result.visible, events).map(row => buildRoleRowVM(row, now));
-  const hiddenVM = attachEvents(result.hidden, events).map(row => buildRoleRowVM(row, now));
   const pageHref = (n: number) => `/?${filtersToQueryString(filters)}&page=${n}${archived ? "&archive=1" : ""}`;
 
   const exportHref = `/api/export.csv?${filtersToQueryString(filters)}${archived ? "&archive=1" : ""}`;
 
   return (
     <div>
-      {work.active && <AutoRefresh message="Company scanning or discovery is pending. Results update when work changes." />}
+      {work.active && <AutoRefresh message="Scans, discovery or filter updates are pending. Results update as work completes." />}
       <PageHeader title={archived ? "Archived roles" : filters.decision === "skip" ? "Skipped roles" : filters.decision === "apply" ? "Shortlist" : "Roles"} description="Role and seniority matches across your tracked companies." />
       <nav aria-label="Role views" className="mb-4 flex flex-wrap gap-2 text-sm">
         {[
@@ -53,6 +52,7 @@ export default async function RolesPage({ searchParams }: { searchParams: Promis
       <RolesFilterBar key={`${archived}:${filtersToQueryString(filters)}`} archived={archived} filters={filters} companyOptions={companyOptions} hideThresholdSet={settings.hideThreshold !== null} exportHref={exportHref} />
 
       <RolesTable
+        key={`${archived}:${filtersToQueryString(filters)}:${page}`}
         rows={visibleVM}
         archived={archived}
         keyboard
@@ -77,18 +77,8 @@ export default async function RolesPage({ searchParams }: { searchParams: Promis
         <span>Page {page} of {pageCount} · {result.total} roles</span>
         {page < pageCount && <Link className="underline" href={pageHref(page + 1)}>Next</Link>}
       </nav>
-      {settings.hideThreshold !== null && (
-        <details className="mt-8 rounded-lg border border-slate-200 dark:border-slate-800">
-          <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold text-slate-900 dark:text-slate-100">
-            Hidden by your preferences ({result.hiddenTotal}; showing up to 50)
-          </summary>
-          <div className="border-t border-slate-200 p-4 dark:border-slate-800">
-            <RolesTable
-              rows={hiddenVM}
-              emptyState={<EmptyState title="Nothing hidden right now" description={`Open roles scoring under ${settings.hideThreshold} are collapsed here.`} />}
-            />
-          </div>
-        </details>
+      {settings.hideThreshold !== null && !filters.showHidden && result.hiddenTotal > 0 && (
+        <p className="mt-4 text-sm text-slate-500">{result.hiddenTotal} roles hidden by your fit preferences. <Link className="underline" href={`/?${filtersToQueryString({ ...filters, showHidden: true })}${archived ? "&archive=1" : ""}`}>Show hidden roles</Link></p>
       )}
     </div>
   );

@@ -1,16 +1,22 @@
 import { evaluateGate, dedupeKeyFor, priorityFor, type AppSettings } from "@christopher/core";
-import { eq, sql } from "drizzle-orm";
+import { eq, gt, sql } from "drizzle-orm";
 import type { Db } from "./client";
 import * as schema from "./schema";
 
 
 /** Shared by synchronous settings saves and background maintenance. */
 export async function reevaluateGate(db: Db, settings: AppSettings, now = new Date(), jobId?: string) {
-  const rows = await db.select().from(schema.jobs).where(jobId ? eq(schema.jobs.id, jobId) : undefined);
-  const updates: Array<Record<string, unknown>> = [];
-  const scoring: Array<typeof schema.tasks.$inferInsert> = [];
+  let cursor: string | undefined;
+  let examined = 0;
   let changed = 0;
   let queuedForScoring = 0;
+  while (true) {
+  const rows = await db.select().from(schema.jobs).where(jobId ? eq(schema.jobs.id, jobId) : cursor ? gt(schema.jobs.id, cursor) : undefined)
+    .orderBy(schema.jobs.id).limit(250);
+  if (!rows.length) break;
+  examined += rows.length;
+  const updates: Array<Record<string, unknown>> = [];
+  const scoring: Array<typeof schema.tasks.$inferInsert> = [];
   for (const job of rows) {
     const gate = evaluateGate({ ...job, description: job.descriptionText }, settings.gate);
     const nearMiss = false;
@@ -37,8 +43,11 @@ export async function reevaluateGate(db: Db, settings: AppSettings, now = new Da
     const queued = await db.insert(schema.tasks).values(scoring.slice(offset, offset + 250)).onConflictDoNothing().returning({ id: schema.tasks.id });
     queuedForScoring += queued.length;
   }
+  cursor = rows.at(-1)!.id;
+  if (jobId) break;
+  }
   const removed = await pruneNonMatches(db, undefined, jobId);
-  return { removed, examined: rows.length, changed, queuedForScoring };
+  return { removed, examined, changed, queuedForScoring };
 }
 
 /** Retain every decision (including superseded decisions), CV and explicitly archived role. */

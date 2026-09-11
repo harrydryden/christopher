@@ -56,8 +56,8 @@ export function RolesFilterBar({
           Reset
         </a>
       </div>
-      <details className="w-full" open={Boolean(filters.location || filters.minFit !== null || filters.q || filters.closed || filters.showHidden || filters.sort !== "status")}>
-        <summary className="cursor-pointer text-sm text-slate-500">More filters and sorting</summary>
+      <section className="w-full">
+        <h3 className="text-sm text-slate-500">More filters and sorting</h3>
         <div className="mt-3 flex flex-wrap items-end gap-3">
       <fieldset className="flex flex-col gap-1">
         <legend className="text-xs font-medium text-slate-500">Status</legend>
@@ -128,7 +128,7 @@ export function RolesFilterBar({
       )}
 
         </div>
-      </details>
+      </section>
 
     </form>
   );

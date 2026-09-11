@@ -5,11 +5,14 @@ import { sql } from "drizzle-orm";
 import { BrowserRenderer } from "./browser";
 import type { WorkerEnv } from "./env";
 import { PoliteFetcher, userAgentFor } from "./fetcher";
+import { reserveAi } from "./budget";
 import { log } from "./log";
 import { loadSettings } from "./settings";
 
 export interface WorkerDeps {
   db: Db;
+  /** Called inside write transactions to fence reclaimed work. */
+  assertOwnership?(db: Db): Promise<void>;
   pool: { end(): Promise<void> };
   env: WorkerEnv;
   fetcher: PoliteFetcher;
@@ -40,6 +43,14 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
     return value;
   };
   const fetcher = new PoliteFetcher({
+    deferHost: async (host, delayMs) => { await db.execute(sql`insert into host_pacing (host, next_at) values (${host}, now() + ${delayMs} * interval '1 millisecond')
+      on conflict (host) do update set next_at=greatest(host_pacing.next_at, excluded.next_at)`); },
+    reserveHost: async (host, delayMs) => {
+      const result = await db.execute<{ wait: number }>(sql`insert into host_pacing (host, next_at) values (${host}, now() + ${delayMs} * interval '1 millisecond')
+        on conflict (host) do update set next_at = greatest(host_pacing.next_at, now()) + ${delayMs} * interval '1 millisecond'
+        returning greatest(0, extract(epoch from (next_at - now())) * 1000 - ${delayMs})::float as wait`);
+      return Number(result.rows[0]?.wait ?? 0);
+    },
     userAgent: userAgentFor(env.contactEmail),
     hostMap: env.hostMap,
     respectRobots: async () => (await settings()).respectRobotsTxt,
@@ -47,7 +58,7 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
   });
   const browser = env.disableBrowser
     ? null
-    : new BrowserRenderer({ userAgent: userAgentFor(env.contactEmail), executablePath: env.chromiumExecutablePath, hostMap: env.hostMap });
+    : new BrowserRenderer({ beforeRequest: host => fetcher.waitForHost(host), concurrency: env.browserConcurrency, userAgent: userAgentFor(env.contactEmail), executablePath: env.chromiumExecutablePath, hostMap: env.hostMap });
 
   const onUsage = async (r: AiUsageRecord) => {
     try {
@@ -70,6 +81,8 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
     }
   };
   const ai = createAiEngine({
+    reserve: async (callSite, estimate) => reserveAi(db, callSite, estimate, { monthly: (await settings()).monthlyAiBudgetUsd,
+      daily: env.dailyAiBudgetUsd ?? 1000000, discovery: env.discoveryAiBudgetUsd ?? 1000000 }),
     apiKey: env.anthropicApiKey,
     getModel: (callSite) => modelForCallSite(cached?.value ?? ({ defaultModel: "claude-sonnet-5", modelOverrides: {} } as AppSettings), callSite),
     onUsage,

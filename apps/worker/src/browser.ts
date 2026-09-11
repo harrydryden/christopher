@@ -13,6 +13,8 @@ export interface BrowserOptions {
   executablePath?: string;
   hostMap?: Record<string, string>;
   navigationTimeoutMs?: number;
+  concurrency?: number;
+  beforeRequest?: (host: string) => Promise<void>;
 }
 
 const COOKIE_BUTTON_TEXT = /^(accept( all)?( cookies)?|allow all|i agree|agree|got it|ok(ay)?|accept and close|accept & close)$/i;
@@ -21,6 +23,8 @@ const LOAD_MORE_TEXT = /^(?:(?:load|show|view|see) more(?: (?:jobs|roles|positio
 export class BrowserRenderer {
   private browser: Browser | null = null;
   private pw: Playwright | null = null;
+  private active = 0;
+  private waiters: Array<() => void> = [];
   private launching: Promise<Browser> | null = null;
 
   constructor(private readonly opts: BrowserOptions) {}
@@ -52,6 +56,16 @@ export class BrowserRenderer {
   }
 
   async render(url: string, opts: { scrollAndExpand?: boolean } = {}): Promise<RenderedPage> {
+    if (this.active >= (this.opts.concurrency ?? 1)) await new Promise<void>(resolve => this.waiters.push(resolve));
+    else this.active++;
+    try { return await this.renderPage(url, opts); }
+    finally {
+      const next = this.waiters.shift();
+      if (next) next(); else this.active--;
+    }
+  }
+
+  private async renderPage(url: string, opts: { scrollAndExpand?: boolean }): Promise<RenderedPage> {
     const browser = await this.getBrowser();
     const context = await browser.newContext({
       userAgent: this.opts.userAgent,
@@ -70,6 +84,7 @@ export class BrowserRenderer {
         const type = req.resourceType();
         if (type === "image" || type === "font" || type === "media") return route.abort();
         const target = new URL(req.url());
+        if (["document", "xhr", "fetch"].includes(type)) await this.opts.beforeRequest?.(target.hostname);
         const mapped = hostMap[target.hostname] ?? hostMap["*"];
         // A configured host map is exhaustive, so a test cannot reach the real internet through
         // the browser either.

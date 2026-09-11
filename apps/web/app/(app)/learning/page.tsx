@@ -176,8 +176,8 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
         ))}
         {tags.recent.length === 0 && <EmptyState title="No decisions yet" description="Shortlist or skip a role to start recording your preferences." />}
         {tags.recent.map(decision => (
-          <details key={decision.id} className="mb-2 rounded border border-slate-200 p-3 dark:border-slate-800">
-            <summary className="cursor-pointer text-sm">{decision.jobTitle} · {decision.companyName} · {decision.decision}</summary>
+          <section key={decision.id} className="mb-2 rounded border border-slate-200 p-3 dark:border-slate-800">
+            <h3 className="text-sm">{decision.jobTitle} · {decision.companyName} · {decision.decision}</h3>
             <p className="my-2 text-sm text-slate-500">{decision.reason}</p>
             <form action={saveDecisionTags.bind(null, decision.id)} className="flex flex-col gap-2">
               <label htmlFor={`tags-${decision.id}`} className="text-xs">Reason tags (hold Ctrl or Command to select several)</label>
@@ -187,7 +187,7 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
               </select>
               <div><Button type="submit" size="sm">Save tags</Button></div>
             </form>
-          </details>
+          </section>
         ))}
       </Card>
 

@@ -20,7 +20,7 @@ import { GET as downloadApplication } from "@/app/api/applications/[id]/pdf/rout
 import { saveCvLibrary, requestCv, saveCvDraft, saveCvModel, setCvArchived } from "./cv";
 import { fetchRolePage, fetchRoleDetails, parseRolesFilters, fetchTableJobs, fetchRecentEventsFor } from "@/lib/queries/jobs";
 import { saveKeywords } from "./settings";
-import { useDiscoveryCandidate, deleteCompany, updateCompanyDetails } from "./companies";
+import { addCompanies, useDiscoveryCandidate, deleteCompany, updateCompanyDetails, refreshCompany } from "./companies";
 
 beforeAll(async () => {
   const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
@@ -42,6 +42,34 @@ async function fixture() {
 }
 
 describe("authenticated mutations", () => {
+  it("refreshes known sources once and brings scheduled scans forward", async () => {
+    const { company } = await fixture();
+    await Promise.all([refreshCompany(company.id), refreshCompany(company.id)]);
+    const [task] = await database.select().from(schema.tasks);
+    expect(task!.type).toBe("scan_company");
+    expect(await database.select().from(schema.tasks)).toHaveLength(1);
+    await database.update(schema.tasks).set({ runAfter: new Date(Date.now() + 3600000), payload: { companyId: company.id, trigger: "schedule", scanRunId: "preserved-run" } }).where(eq(schema.tasks.id, task!.id));
+    await refreshCompany(company.id);
+    const [updated] = await database.select().from(schema.tasks);
+    expect(updated!.runAfter.getTime()).toBeLessThanOrEqual(Date.now());
+    expect(updated!.payload).toMatchObject({ trigger: "manual", scanRunId: "preserved-run" });
+  });
+  it("discovers missing sources but preserves source confirmation and company pauses", async () => {
+    const { company, source } = await fixture();
+    await database.update(schema.careerSources).set({ status: "needs_confirmation" }).where(eq(schema.careerSources.id, source.id));
+    await expect(refreshCompany(company.id)).rejects.toThrow(`redirect:/companies/${company.id}`);
+    expect(await database.select().from(schema.tasks)).toHaveLength(0);
+    await database.update(schema.careerSources).set({ status: "disabled" }).where(eq(schema.careerSources.id, source.id));
+    await refreshCompany(company.id);
+    expect((await database.select().from(schema.tasks))[0]!.type).toBe("discover");
+    await database.delete(schema.tasks);
+    await database.update(schema.companies).set({ status: "paused" }).where(eq(schema.companies.id, company.id));
+    await refreshCompany(company.id);
+    expect(await database.select().from(schema.tasks)).toHaveLength(0);
+    session = undefined;
+    await expect(refreshCompany(company.id)).rejects.toThrow("Unauthorised");
+  });
+
   it("corrects the homepage and domain without changing sources or roles", async () => {
     const { company, source, job } = await fixture();
     const form = new FormData(); form.set("homepageUrl", "www.corrected.example"); form.set("name", "Acme");
@@ -317,4 +345,14 @@ it("returns only the newest requested events per role", async () => {
   await database.insert(schema.jobEvents).values(Array.from({ length: 30 }, (_, i) => ({ jobId: job.id, type: "updated" as const, payload: { i }, at: new Date(1700000000000 + i * 1000) })));
   const events = await fetchRecentEventsFor([job.id], 3);
   expect(events.get(job.id)!.map(e => e.payload.i)).toEqual([29, 28, 27]);
+});
+
+it("atomically adds 1,000 companies and queues setup, with a bounded response for duplicate imports", async () => {
+  const form = new FormData();
+  form.set("urls", Array.from({length:1000},(_,n)=>`https://bulk${n}.example`).join("\n"));
+  await expect(addCompanies(form)).rejects.toThrow("redirect:/companies?added=1000");
+  expect(await database.select({id:schema.companies.id}).from(schema.companies)).toHaveLength(1000);
+  expect(await database.select({id:schema.tasks.id}).from(schema.tasks).where(eq(schema.tasks.type,"discover"))).toHaveLength(1000);
+  await expect(addCompanies(form)).rejects.toThrow("added=0");
+  expect(await database.select({id:schema.tasks.id}).from(schema.tasks)).toHaveLength(1000);
 });

@@ -1,0 +1,55 @@
+{
+  "at": "2026-09-11T12:34:51.175Z",
+  "environment": {
+    "node": "v22.18.0",
+    "cpu": "Apple M4",
+    "memoryGiB": 24
+  },
+  "companies": 1000,
+  "jobsPerCompany": 100,
+  "consumers": 3,
+  "aiCalls": 0,
+  "syntheticHttp": true,
+  "results": [
+    {
+      "stage": "onboarding",
+      "seconds": 13.53,
+      "requests": 5000,
+      "jobs": 100000,
+      "sources": 1000,
+      "failed_tasks": 0,
+      "pending": 0
+    },
+    {
+      "stage": "steady-state",
+      "seconds": 14.07,
+      "requests": 1000,
+      "jobs": 100000,
+      "sources": 1000,
+      "failed_tasks": 0,
+      "pending": 0
+    },
+    {
+      "stage": "disruption",
+      "seconds": 16.7,
+      "requests": 1000,
+      "jobs": 100000,
+      "sources": 1000,
+      "failed_tasks": 0,
+      "pending": 0
+    },
+    {
+      "stage": "recovery",
+      "seconds": 16.51,
+      "requests": 1000,
+      "jobs": 100000,
+      "sources": 1000,
+      "failed_tasks": 0,
+      "pending": 0
+    }
+  ],
+  "peakWorkerRssMiB": 290,
+  "pageQuerySamples": 609,
+  "pageQueryP95Ms": 4.58,
+  "limitations": "Local synthetic ATS responses, three unrestricted queue consumers; excludes real provider pacing, browser memory, model cost and remote database latency. Dedicated production lanes have separate capacity."
+}

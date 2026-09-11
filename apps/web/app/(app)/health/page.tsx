@@ -1,3 +1,5 @@
+import { workloadMetrics } from "@christopher/db";
+import { db } from "@/lib/db";
 import Link from "next/link";
 import { retryTask } from "@/app/actions/health";
 import { Badge, scanStatusTone, sourceStatusTone, taskStatusTone } from "@/components/Badge";
@@ -24,6 +26,7 @@ export const dynamic = "force-dynamic";
 
 export default async function HealthPage() {
   const now = new Date();
+  const metrics = await workloadMetrics(db());
   const [attentionSources, noSourceCompanies, problemScans, failedTasks, queueCounts, spend, aiCalls, scanRuns, settings, heartbeat] = await Promise.all([
     listSourcesNeedingAttention(),
     listCompaniesWithNoSource(),
@@ -45,6 +48,11 @@ export default async function HealthPage() {
     <div className="space-y-6">
       <PageHeader title="Health" description="Everything that needs your attention lives here." />
 
+      <Card title="Processing capacity">
+        <p className="text-sm">{metrics.ready} tasks ready · {metrics.running} running · oldest ready task waiting {Math.round(metrics.oldest_seconds / 60)} minutes.</p>
+        <p className="mt-2 text-sm">95% of completed tasks in the last day took at most {Math.round(metrics.p95_seconds)} seconds. {metrics.overdueCompanies} companies have no successful scan in 24 hours; {metrics.overdueDiscovery} discovery sources are over a day late.</p>
+        <p className="mt-2 text-sm">AI requests currently reserve {formatUsd(metrics.reservedUsd)} against your budget.</p>
+      </Card>
       <Card title="Background worker">
         <p className="text-sm">
           {heartbeat && now.getTime() - heartbeat.at.getTime() < 120_000
@@ -56,6 +64,7 @@ export default async function HealthPage() {
         </p>}
       </Card>
 
+      <p className="text-sm text-slate-500">Attention lists show up to 100 items each. Use Companies to browse the full portfolio.</p>
       <Card title={`Sources needing attention (${attentionSources.length + noSourceCompanies.length})`}>
         {attentionSources.length === 0 && noSourceCompanies.length === 0 ? (
           <EmptyState title="Nothing needs attention" description="Every source is active and every company has one." />
@@ -185,8 +194,8 @@ export default async function HealthPage() {
           <div className={`h-full rounded-full ${overBudget ? "bg-red-500" : "bg-emerald-500"}`} style={{ width: `${Math.min(100, Math.max(2, spendFraction * 100))}%` }} />
         </div>
         {overBudget && <p className="mb-3 text-sm text-red-600 dark:text-red-400">Over budget — non-essential AI calls (near-miss scoring, then suggestions) are being skipped.</p>}
-        <details>
-          <summary className="cursor-pointer select-none text-sm text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100">Last {aiCalls.length} calls</summary>
+        <section>
+          <h3 className="text-sm text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100">Last {aiCalls.length} calls</h3>
           {aiCalls.length === 0 ? (
             <p className="mt-2 text-sm text-slate-400">No AI calls recorded yet.</p>
           ) : (
@@ -219,7 +228,7 @@ export default async function HealthPage() {
               </TBody>
             </Table>
           )}
-        </details>
+        </section>
       </Card>
 
       <Card title="Recent scan runs">

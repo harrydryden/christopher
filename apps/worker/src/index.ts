@@ -2,7 +2,7 @@
  * Worker entry point. One always-on process that runs the scheduler, the task queue and every
  * outbound fetch and model call. See docs/SPEC.md section 6.
  */
-import { reevaluateGate } from "@christopher/db";
+import { enqueueTask } from "@christopher/db";
 import { runMigrations } from "@christopher/db/migrate";
 import { createDeps } from "./context";
 import { readEnv } from "./env";
@@ -21,8 +21,7 @@ async function main() {
 
   await runMigrations(deps.db);
   await ensureSeedTags(deps);
-  const cleanup = await reevaluateGate(deps.db, await deps.settings());
-  log.info("role storage reconciled", cleanup);
+  await enqueueTask(deps.db, "reevaluate_gate", {}, { dedupeKey: "reevaluate_gate", priority: 6 });
 
   const queue = new TaskQueue(deps, handlers, { concurrency: env.concurrency, workerId: env.workerId });
   queue.start();

@@ -1,8 +1,8 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState } from "react";
+import { startTransition, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { decide, archiveRoles, decideRoles } from "@/app/actions/decisions";
+import { decide, archiveRoles } from "@/app/actions/decisions";
 import { Badge, decisionTone, jobStatusTone } from "@/components/Badge";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import type { RoleRowVM } from "@/lib/queries/jobs";
@@ -40,78 +40,41 @@ function ExternalLinkIcon() {
   );
 }
 
-function ChevronIcon({ open }: { open: boolean }) {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      width="12"
-      height="12"
-      fill="none"
-      aria-hidden="true"
-      className={`inline-block transition-transform ${open ? "rotate-90" : ""}`}
-    >
-      <path d="M6 3.5 10.5 8 6 12.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
 export function RolesTable({ rows: inputRows, keyboard = false, archived = false, emptyState }: { archived?: boolean; rows: RoleRowVM[]; keyboard?: boolean; emptyState: React.ReactNode }) {
   const router = useRouter();
-  const [groupByRole, setGroupByRole] = useState(false);
-  const groups = new Map<string, RoleRowVM[]>();
-  for (const row of inputRows) {
-    const key = groupByRole ? `${row.companyId}:${row.title.toLocaleLowerCase().replace(/\s+/g, " ").trim()}` : row.id;
-    const group = groups.get(key) ?? []; group.push(row); groups.set(key, group);
-  }
-  const members = new Map([...groups.values()].map(group => [group[0]!.id, group]));
-  const rows = [...members.values()].map(group => {
-    const first = group[0]!;
-    const sameDecision = group.every(member => member.decision?.decision === first.decision?.decision && member.decision?.reason === first.decision?.reason);
-    return sameDecision ? first : { ...first, decision: null };
-  });
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [bulkReason, setBulkReason] = useState("");
-  const [bulkPending, setBulkPending] = useState(false);
-  const selectedIds = inputRows.filter(row => selected.has(row.id)).map(row => row.id);
-  async function bulk(action: "archive" | "apply" | "skip" | "undo") {
-    setBulkPending(true); setFlashError(null);
+  const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
+  const rows = inputRows.filter(row => !removedIds.has(row.id));
+  const [archivingId, setArchivingId] = useState<string | null>(null);
+  function archiveRow(id: string) {
+    startTransition(async () => {
+    setArchivingId(id); setFlashError(null);
     try {
-      const result = action === "archive" ? await archiveRoles(selectedIds, !archived)
-        : await decideRoles(selectedIds, action === "undo" ? null : action, bulkReason);
+      const result = await archiveRoles([id], !archived);
       if (!result.ok) setFlashError(result.error);
-      else { setSelected(new Set()); setBulkReason(""); }
+      else setRemovedIds(ids => new Set([...ids, id]));
       router.refresh();
     } catch { setFlashError("Could not save. Reload to check the current state before retrying."); }
-    finally { setBulkPending(false); }
+    finally { setArchivingId(null); }
+    });
   }
   const [highlightIndex, setHighlightIndex] = useState(-1);
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [reasonBox, setReasonBox] = useState<ReasonBoxState | null>(null);
   const [flashError, setFlashError] = useState<string | null>(null);
   const reasonBoxRef = useRef(reasonBox);
   reasonBoxRef.current = reasonBox;
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  function toggleExpand(id: string) {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
   function openReasonBox(jobId: string, kind: ReasonKind, prefill = "") {
     setReasonBox({ jobId, kind, text: prefill, pending: false, error: null });
     requestAnimationFrame(() => textareaRef.current?.focus());
   }
 
-  async function submitDecision(jobId: string, decision: ReasonKind | null, reason: string) {
+  function submitDecision(jobId: string, decision: ReasonKind | null, reason: string) {
+    startTransition(async () => {
     setFlashError(null);
     const isBoxed = reasonBoxRef.current?.jobId === jobId;
     if (isBoxed) setReasonBox((b) => (b ? { ...b, pending: true, error: null } : b));
-    const group = members.get(jobId) ?? [];
-    const result = group.length > 1 ? await decideRoles(group.map(row => row.id), decision, reason) : await decide(jobId, decision, reason);
+    const result = await decide(jobId, decision, reason);
     if (!result.ok) {
       if (isBoxed) setReasonBox((b) => (b ? { ...b, pending: false, error: result.error } : b));
       else setFlashError(result.error);
@@ -119,6 +82,7 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
     }
     if (isBoxed) setReasonBox(null);
     router.refresh();
+    });
   }
 
   // Keyboard nav: only for the primary table (the daily-inbox view). Ignored while typing.
@@ -126,7 +90,7 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
     if (!keyboard) return;
     function onKeyDown(e: KeyboardEvent) {
       const target = e.target as HTMLElement | null;
-      const isEditable = !!target && (target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.isContentEditable);
+      const isEditable = !!target && (target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.tagName === "SELECT" || target.tagName === "BUTTON" || target.tagName === "A" || target.isContentEditable);
 
       if (e.key === "Escape") {
         if (reasonBoxRef.current) {
@@ -135,7 +99,7 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
         }
         return;
       }
-      if (isEditable) return;
+      if (isEditable || e.metaKey || e.ctrlKey || e.altKey) return;
 
       const row = highlightIndex >= 0 ? rows[highlightIndex] : undefined;
       switch (e.key) {
@@ -146,15 +110,6 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
         case "k":
           e.preventDefault();
           setHighlightIndex((i) => Math.max(0, i - 1));
-          break;
-        case "g":
-          setGroupByRole(value => !value); setReasonBox(null); setHighlightIndex(-1);
-          break;
-        case "x":
-          if (row) setSelected(prev => { const next = new Set(prev); const group = members.get(row.id) ?? [row]; const remove = group.every(member => prev.has(member.id)); for (const member of group) { if (remove) next.delete(member.id); else next.add(member.id); } return next; });
-          break;
-        case "e":
-          if (row) toggleExpand(row.id);
           break;
         case "o":
           if (row) window.open(row.url, "_blank", "noopener,noreferrer");
@@ -172,7 +127,7 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keyboard, rows, highlightIndex, groupByRole]);
+  }, [keyboard, rows, highlightIndex]);
 
   useEffect(() => {
     if (highlightIndex < 0) return;
@@ -185,29 +140,13 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
 
   return (
     <div>
-      {keyboard && (
-        <details className="mb-2 text-xs text-slate-400"><summary className="cursor-pointer">Keyboard shortcuts</summary><p>
-          <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>a</kbd> shortlist · <kbd>s</kbd> skip · <kbd>o</kbd> open · <kbd>e</kbd> expand · <kbd>g</kbd> group · <kbd>x</kbd> select
-        </p></details>
-      )}
+      {keyboard && <p className="mb-3 text-xs text-slate-500">Keyboard: <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>a</kbd> shortlist · <kbd>s</kbd> skip · <kbd>o</kbd> open</p>}
       {flashError && (
         <p className="mb-2 rounded-md bg-red-50 px-3 py-1.5 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">{flashError}</p>
       )}
-      <div className="mb-3 flex flex-wrap items-center gap-3 rounded border border-slate-200 p-3 text-sm">
-        <label><input type="checkbox" aria-label="Select all visible roles" checked={inputRows.length > 0 && selectedIds.length === inputRows.length} onChange={e => setSelected(e.target.checked ? new Set(inputRows.slice(0, 500).map(r => r.id)) : new Set())} /> Select visible</label>
-        <label><input type="checkbox" checked={groupByRole} onChange={e => { setGroupByRole(e.target.checked); setReasonBox(null); setHighlightIndex(-1); }} /> Group identical roles on this page</label>
-        {selectedIds.length > 0 && <>
-        <span>{selectedIds.length} selected</span>
-        <button disabled={!selectedIds.length || bulkPending} onClick={() => void bulk("archive")} className="underline disabled:opacity-40">{archived ? "Restore" : "Archive"} selected</button>
-        <input aria-label="Shared decision reason" placeholder="Reason for selected roles" value={bulkReason} onChange={e => setBulkReason(e.target.value)} className="rounded border p-1 dark:bg-slate-950" />
-        {(["apply", "skip", "undo"] as const).map(action => <button key={action} disabled={!selectedIds.length || selectedIds.length > 100 || bulkPending || (action === "skip" && !bulkReason.trim())} onClick={() => void bulk(action)} className="capitalize underline disabled:opacity-40">{action === "apply" ? "shortlist" : action} selected</button>)}
-        {bulkPending && <span role="status">Saving…</span>}
-        </>}
-      </div>
       <Table>
         <THead>
           <tr>
-            <TH className="w-6">Select</TH>
             <TH>Company</TH>
             <TH className="w-8" />
             <TH>Role</TH>
@@ -220,24 +159,10 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
         </THead>
         <TBody>
           {rows.map((row, index) => {
-            const group = members.get(row.id) ?? [row];
-            const expanded = expandedIds.has(row.id);
             const boxed = reasonBox?.jobId === row.id ? reasonBox : null;
             return (
-              <Fragment key={row.id}>
-                <TR highlighted={index === highlightIndex}>
-                  <TD className="w-6 pr-0" id={`role-row-${row.id}`}>
-                    <input type="checkbox" aria-label={`Select ${row.title}`} checked={group.every(member => selected.has(member.id))} onChange={e => setSelected(prev => { const next = new Set(prev); for (const member of group) { if (e.target.checked) next.add(member.id); else next.delete(member.id); } return next; })} />
-                    <button
-                      type="button"
-                      onClick={() => toggleExpand(row.id)}
-                      aria-label={expanded ? "Collapse" : "Expand"}
-                      className="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-                    >
-                      <ChevronIcon open={expanded} />
-                    </button>
-                  </TD>
-                  <TD>
+                <TR key={row.id} highlighted={index === highlightIndex}>
+                  <TD id={`role-row-${row.id}`}>
                     <a href={`/companies/${row.companyId}`} className="flex items-center gap-1.5 hover:underline">
                       {row.companyFaviconUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
@@ -273,17 +198,12 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
                     <a href={row.url} target="_blank" rel="noopener noreferrer" className="font-medium text-slate-900 hover:underline dark:text-slate-100">
                       {row.title}
                     </a>
-                    {group.length > 1 && <p className="mt-1 text-xs text-slate-500">{group.length} postings · decisions apply to the whole group</p>}
+                    <p className="mt-1 text-xs text-slate-500">{[row.department, row.employmentType, row.salaryText].filter(Boolean).join(" · ")}</p>
+                    <a href={`/cv?job=${row.id}`} className="mt-2 inline-block text-xs underline">Build CV</a>
                   </TD>
                   <TD className="max-w-[10rem]">
                     <div className="flex flex-wrap items-center gap-1">
-                      {group.length > 1 && <span className="text-xs text-slate-500">Multiple postings — expand to view all.</span>}
-                      {row.location && <span className="truncate">{row.location}</span>}
-                      {row.locations.length > 1 && (
-                        <span title={row.locations.join(", ")} className="text-xs text-slate-400">
-                          +{row.locations.length - 1}
-                        </span>
-                      )}
+                      <span>{row.locations.length ? row.locations.join(", ") : row.location}</span>
                       {row.remote && <Badge tone="blue">Remote</Badge>}
                       {!row.location && row.locations.length === 0 && !row.remote && <span className="text-slate-400">—</span>}
                     </div>
@@ -294,8 +214,9 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
                   <TD>
                     <Badge tone={jobStatusTone(row.status)}>{row.status}</Badge>
                   </TD>
-                  <TD title={row.fitRationale ?? undefined}>
+                  <TD className="min-w-[12rem] max-w-xs">
                     <FitBar score={row.fitScore} />
+                    {row.fitRationale && <p className="mt-1 text-xs text-slate-500">{row.fitRationale}</p>}
                   </TD>
                   <TD className="min-w-[14rem]">
                     {boxed ? (
@@ -386,99 +307,13 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
                         </button>
                       </div>
                     )}
+                    <button type="button" disabled={archivingId !== null} onClick={() => void archiveRow(row.id)} className="mt-2 text-xs text-slate-500 underline disabled:opacity-40">{archivingId === row.id ? "Saving…" : archived ? "Restore" : "Archive"}</button>
                   </TD>
                 </TR>
-                {expanded && (
-                  <tr className="bg-slate-50/70 dark:bg-slate-900/40">
-                    <td colSpan={9} className="px-4 py-3">
-                      {group.length > 1 && <ul className="mb-3 space-y-1 text-sm">{group.map(member => <li key={member.id}><a className="underline" href={member.url} target="_blank" rel="noopener noreferrer">{member.location || "Location unspecified"}</a> · {member.decision?.decision ?? "undecided"} · <a className="underline" href={`/cv?job=${member.id}`}>Build CV</a></li>)}</ul>}
-                      <a href={`/cv?job=${row.id}`} className="mb-3 inline-block text-sm font-medium underline">Build CV for this role</a>
-                      <p className="mb-2 text-xs text-slate-500">Source: {row.sourceType}</p><RoleExpandPanel row={row} />
-                    </td>
-                  </tr>
-                )}
-              </Fragment>
             );
           })}
         </TBody>
       </Table>
-    </div>
-  );
-}
-
-function RoleExpandPanel({ row }: { row: RoleRowVM }) {
-  return (
-    <div className="grid grid-cols-1 gap-4 text-sm md:grid-cols-2">
-      <div className="space-y-2">
-        {row.keywordTerms.length > 0 && (
-          <div>
-            <div className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">Matched keywords</div>
-            <div className="flex flex-wrap gap-1">
-              {row.keywordTerms.map((t) => (
-                <Badge key={t} tone="blue">
-                  {t}
-                </Badge>
-              ))}
-            </div>
-          </div>
-        )}
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-slate-600 dark:text-slate-300">
-          {row.locations.length > 0 && (
-            <>
-              <dt className="text-slate-400">Locations</dt>
-              <dd>{row.locations.join(", ")}</dd>
-            </>
-          )}
-          <dt className="text-slate-400">Department</dt>
-          <dd>{row.department ?? "—"}</dd>
-          <dt className="text-slate-400">Employment type</dt>
-          <dd>{row.employmentType ?? "—"}</dd>
-          <dt className="text-slate-400">Salary</dt>
-          <dd>{row.salaryText ?? "—"}</dd>
-          <dt className="text-slate-400">First seen</dt>
-          <dd title={row.firstSeenTitle}>{row.firstSeenLabel}</dd>
-          {row.postedLabel && (
-            <>
-              <dt className="text-slate-400">Posted</dt>
-              <dd title={row.postedTitle ?? undefined}>{row.postedLabel}</dd>
-            </>
-          )}
-          {row.closedLabel && (
-            <>
-              <dt className="text-slate-400">Closed</dt>
-              <dd title={row.closedTitle ?? undefined}>{row.closedLabel}</dd>
-            </>
-          )}
-        </dl>
-        {row.fitRationale && (
-          <div>
-            <div className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">Fit rationale</div>
-            <p className="text-slate-600 dark:text-slate-300">{row.fitRationale}</p>
-          </div>
-        )}
-        {row.events.length > 0 && (
-          <div>
-            <div className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">Recent events</div>
-            <ul className="space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
-              {row.events.map((e) => (
-                <li key={e.id} title={e.title}>
-                  {e.label}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </div>
-      <div>
-        <div className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">Description</div>
-        {row.descriptionText ? (
-          <div className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded border border-slate-200 bg-white p-2 text-xs text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
-            {row.descriptionText}
-          </div>
-        ) : (
-          <p className="text-xs text-slate-400">No description stored.</p>
-        )}
-      </div>
     </div>
   );
 }

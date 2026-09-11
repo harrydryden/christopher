@@ -39,7 +39,7 @@ export default async function CvDraftPage({ params }: { params: Promise<{ id: st
           <label>Notes<textarea name="notes" maxLength={4000} className="block w-full rounded border p-2 dark:bg-slate-950" /></label>
         </SettingsForm>}
       </section>
-      <details><summary className="cursor-pointer text-sm">Source evidence and job description used</summary><pre className="mt-2 whitespace-pre-wrap text-xs">{JSON.stringify(draft.librarySnapshot, null, 2)}</pre><p className="mt-4 whitespace-pre-wrap text-xs">{draft.jobDescription}</p></details>
+      <section><h3 className="text-sm">Source evidence and job description used</h3><p className="my-2 text-sm"><a className="underline" href="/cv/library">Open evidence library</a> · The description below is the one used for this draft.</p><p className="mt-4 whitespace-pre-wrap text-xs">{draft.jobDescription}</p></section>
     </>}
   </div>;
 }

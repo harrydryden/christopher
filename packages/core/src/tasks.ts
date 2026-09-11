@@ -1,6 +1,8 @@
 /** Task types and payload shapes shared by the web app (producer) and the worker (consumer). */
 
 export interface TaskPayloads {
+  extract_document: { sourceId: string; documentId: string };
+  verify_company: { sourceId?: string; candidateId: string };
   monitor_source: { sourceId: string };
   generate_cv: { draftId: string };
   discover: { companyId: string; logoOnly?: boolean; homepageUrl?: string; url?: string; reason?: "added" | "manual" | "failing" | "suspect_empty" | "pasted" };
@@ -21,6 +23,8 @@ export type TaskType = keyof TaskPayloads;
 
 export function dedupeKeyFor<T extends TaskType>(type: T, payload: TaskPayloads[T]): string | null {
   switch (type) {
+    case "extract_document": return `extract_document:${(payload as TaskPayloads["extract_document"]).documentId}`;
+    case "verify_company": return `verify_company:${(payload as TaskPayloads["verify_company"]).candidateId}`;
     case "monitor_source": return `monitor_source:${(payload as TaskPayloads["monitor_source"]).sourceId}`;
     case "generate_cv": return `generate_cv:${(payload as TaskPayloads["generate_cv"]).draftId}`;
     case "discover":

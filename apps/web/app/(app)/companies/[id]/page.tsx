@@ -1,3 +1,5 @@
+import { Pagination, pageNumber } from "@/components/Pagination";
+import { companyRoleCount } from "@/lib/queries/companies";
 import { SettingsForm } from "@/components/SettingsForm";
 import { notFound } from "next/navigation";
 import {
@@ -45,16 +47,18 @@ interface DiscoveryCandidateView {
   companyName?: string;
 }
 
-export default async function CompanyDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function CompanyDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ page?: string }> }) {
   const { id } = await params;
   const company = await getCompany(id);
   if (!company) notFound();
 
+  const total = await companyRoleCount(id);
+  const page = Math.min(pageNumber((await searchParams).page), Math.max(1, Math.ceil(total / 50)));
   const [sources, latestRun, scans, roles, profile] = await Promise.all([
     getCompanySources(id),
     getLatestDiscoveryRun(id),
     getCompanyScans(id, 20),
-    getCompanyRoles(id),
+    getCompanyRoles(id, page),
     getCompanyProfile(id),
   ]);
 
@@ -324,7 +328,8 @@ export default async function CompanyDetailPage({ params }: { params: Promise<{ 
         )}
       </Card>
 
-      <Card title={`Roles (${roles.length})`}>
+      <Card title={`Roles (${total})`}>
+        <Pagination page={page} total={total} path={`/companies/${id}`}/>
         {roles.length === 0 ? (
           <EmptyState
             title={scans.some(s => s.status === "ok") ? "No roles retained" : "No roles seen yet"}
@@ -432,12 +437,12 @@ export default async function CompanyDetailPage({ params }: { params: Promise<{ 
       </Card>
 
       {latestRun && Array.isArray(latestRun.log) && latestRun.log.length > 0 && (
-        <details className="rounded-lg border border-slate-200 dark:border-slate-800">
-          <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold text-slate-900 dark:text-slate-100">Discovery log</summary>
+        <section className="rounded-lg border border-slate-200 dark:border-slate-800">
+          <h3 className="px-4 py-2.5 text-sm font-semibold text-slate-900 dark:text-slate-100">Discovery log</h3>
           <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap border-t border-slate-200 p-4 text-xs text-slate-600 dark:border-slate-800 dark:text-slate-400">
             {(latestRun.log as unknown[]).map((line) => String(line)).join("\n")}
           </pre>
-        </details>
+        </section>
       )}
     </div>
   );

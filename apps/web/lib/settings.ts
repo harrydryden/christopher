@@ -1,5 +1,5 @@
 import { cache } from "react";
-import { notLike } from "drizzle-orm";
+import { notLike, sql } from "drizzle-orm";
 import { settings as settingsTable } from "@christopher/db/schema";
 import { resolveSettings, type AppSettings } from "@christopher/core";
 import { enqueueTask, reevaluateGate } from "@christopher/db";
@@ -32,7 +32,11 @@ export async function saveSettingsAndGate(entries: Partial<AppSettings>): Promis
         .onConflictDoUpdate({ target: settingsTable.key, set: { value: value as object, updatedAt: new Date() } });
     }
     const rows = await tx.select({ key: settingsTable.key, value: settingsTable.value }).from(settingsTable).where(notLike(settingsTable.key, "internal:%"));
-    await reevaluateGate(tx as unknown as ReturnType<typeof db>, resolveSettings(rows));
+    const size = await tx.execute(sql`select count(*)::int as n from (select id from jobs limit 501) bounded`);
+    if (Number(size.rows[0]?.n) > 500) {
+      // Every save gets a task, including changes made during an earlier re-evaluation.
+      await enqueueTask(tx, "reevaluate_gate", {}, { priority: 1 });
+    } else await reevaluateGate(tx as unknown as ReturnType<typeof db>, resolveSettings(rows));
     await enqueueTask(tx, "rescore_all", { onlyInTable: true }, { dedupeKey: "rescore_all", priority: 5 });
   });
 }

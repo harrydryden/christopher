@@ -53,6 +53,7 @@ export interface ParseResponse {
 }
 
 export interface AiEngineOptions {
+  reserve?: (callSite: string, estimateUsd: number) => Promise<((actualUsd: number | null) => Promise<void>) | null>;
   apiKey?: string;
   getModel: (callSite: string) => string;
   onUsage?: (record: AiUsageRecord) => void | Promise<void>;
@@ -82,7 +83,7 @@ export class AiEngine {
     if (options.client) {
       this.client = options.client;
     } else if (options.apiKey) {
-      this.client = new Anthropic({ apiKey: options.apiKey }) as unknown as AiClientLike;
+      this.client = new Anthropic({ apiKey: options.apiKey, maxRetries: 0 }) as unknown as AiClientLike;
     } else {
       this.client = null;
     }
@@ -114,6 +115,11 @@ export class AiEngine {
     };
     if (params.tools) request.tools = params.tools;
 
+    const estimate = estimateCostUsd(model, { inputTokens: Buffer.byteLength(params.system + params.user) * 1.25,
+      outputTokens: params.maxTokens ?? 4096, cacheReadTokens: 0, cacheWriteTokens: 0 }) + (params.tools?.length ? 1 : 0);
+    const settle = this.options.reserve ? await this.options.reserve(callSite, estimate) : undefined;
+    if (settle === null) throw new Error("AI budget reserved or exhausted; retry later");
+    let actual: number | null = null;
     try {
       const response = await this.client.messages.create(request, { timeout: params.timeoutMs ?? 30_000 });
       const usage = response.usage ?? {};
@@ -123,6 +129,7 @@ export class AiEngine {
         cacheReadTokens: usage.cache_read_input_tokens ?? 0,
         cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
       };
+      actual = estimateCostUsd(response.model ?? model, tokens);
       const refused = response.stop_reason === "refusal";
       const truncated = response.stop_reason === "max_tokens";
       const parsed = refused || truncated ? null : (response.parsed_output ?? extractJsonBlock(textOf(response)));
@@ -162,6 +169,8 @@ export class AiEngine {
       });
       this.log(`${callSite} failed`, err);
       return null;
+    } finally {
+      await settle?.(actual);
     }
   }
 

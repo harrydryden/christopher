@@ -1,0 +1,57 @@
+{
+  "at": "2026-09-11T14:01:26.825Z",
+  "environment": {
+    "node": "v22.18.0",
+    "cpu": "Apple M4",
+    "memoryGiB": 24,
+    "concurrentLoad": "The regression suite and production build ran on the same host during the early benchmark phases, using a separate test database in the same PostgreSQL container."
+  },
+  "companies": 1000,
+  "jobsPerCompany": 100,
+  "consumers": 3,
+  "queueMode": "production",
+  "aiCalls": 0,
+  "syntheticHttp": true,
+  "results": [
+    {
+      "stage": "onboarding",
+      "seconds": 29.04,
+      "requests": 5000,
+      "jobs": 100000,
+      "sources": 1000,
+      "failed_tasks": 0,
+      "pending": 0
+    },
+    {
+      "stage": "steady-state",
+      "seconds": 20.01,
+      "requests": 1000,
+      "jobs": 100000,
+      "sources": 1000,
+      "failed_tasks": 0,
+      "pending": 0
+    },
+    {
+      "stage": "disruption",
+      "seconds": 21.61,
+      "requests": 1000,
+      "jobs": 100000,
+      "sources": 1000,
+      "failed_tasks": 0,
+      "pending": 0
+    },
+    {
+      "stage": "recovery",
+      "seconds": 19.09,
+      "requests": 1000,
+      "jobs": 100000,
+      "sources": 1000,
+      "failed_tasks": 0,
+      "pending": 0
+    }
+  ],
+  "peakWorkerRssMiB": 190,
+  "pageQuerySamples": 897,
+  "pageQueryP95Ms": 22.6,
+  "limitations": "Local synthetic ATS responses; production queue with one interactive, one scan and one background slot; default 3-second polling and graceful shutdown included. Excludes real provider pacing, browser memory, model cost and remote database latency."
+}

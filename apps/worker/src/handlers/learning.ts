@@ -1,3 +1,4 @@
+import { withResourceLease } from "../lease";
 import { schema, enqueueTask, reevaluateGate, appendProfile, type Task } from "@christopher/db";
 import { decisionDigest } from "@christopher/ai";
 import { eligibleCvEvidence, evidenceHeading, sha1, dedupeKeyFor, modelForCallSite, priorityFor } from "@christopher/core";
@@ -101,7 +102,9 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
   );
   if (!result) return { skipped: "no ai result" };
 
-  await deps.db
+  return deps.db.transaction(async tx => {
+    await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
+  await tx
     .update(schema.jobs)
     .set({
       fitScore: result.score,
@@ -112,9 +115,10 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
       hidden: settings.hideThreshold !== null && job.inTable ? result.score < settings.hideThreshold : false,
     })
     .where(eq(schema.jobs.id, job.id));
-  await deps.db.insert(schema.settings).values({ key, value: fingerprint }).onConflictDoUpdate({ target: schema.settings.key, set: { value: fingerprint, updatedAt: deps.now() } });
-  await deps.db.insert(schema.jobEvents).values({ jobId: job.id, type: "scored", payload: { score: result.score, verdict: result.verdict } });
+  await tx.insert(schema.settings).values({ key, value: fingerprint }).onConflictDoUpdate({ target: schema.settings.key, set: { value: fingerprint, updatedAt: deps.now() } });
+  await tx.insert(schema.jobEvents).values({ jobId: job.id, type: "scored", payload: { score: result.score, verdict: result.verdict } });
   return { score: result.score, verdict: result.verdict };
+  });
 }
 
 export async function latestProfile(deps: WorkerDeps) {
@@ -268,7 +272,14 @@ export async function handleSuggestFilters(_task: Task, deps: WorkerDeps): Promi
 
 /** Re-evaluate the keyword and location gate for every stored job after a settings change. */
 export async function handleReevaluateGate(_task: Task, deps: WorkerDeps): Promise<unknown> {
-  return reevaluateGate(deps.db, await deps.settings(), deps.now());
+  return withResourceLease(deps, "reevaluate-gate", async locked => {
+    deps.invalidateSettings();
+    const settings = await deps.settings();
+    return deps.db.transaction(async tx => {
+      await locked.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
+      return reevaluateGate(tx as unknown as WorkerDeps["db"], settings, deps.now());
+    });
+  });
 }
 
 export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<unknown> {

@@ -44,10 +44,10 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       <div className="border-b border-slate-200 bg-white px-4 py-2 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
         <Suspense fallback={<span>Loading scan status…</span>}><ScanBanner /></Suspense>
       </div>
-      <div className="flex flex-1">
-        <aside className="w-48 shrink-0 border-r border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex flex-1 flex-col md:flex-row">
+        <aside className="w-full shrink-0 border-b md:w-48 md:border-b-0 md:border-r border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
           <div className="mb-4 px-2 text-base font-semibold text-slate-900 dark:text-slate-100">Christopher</div>
-          <nav className="space-y-0.5">
+          <nav className="flex flex-wrap gap-1 md:block md:space-y-0.5">
             {NAV_ITEMS.map((item) => (
               <NavLink key={item.href} href={item.href}>
                 {item.label}
@@ -60,7 +60,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             </button>
           </form>
         </aside>
-        <main className="min-w-0 flex-1 p-6"><WorkspaceNav />{children}</main>
+        <main className="min-w-0 flex-1 p-4 md:p-6"><WorkspaceNav />{children}</main>
       </div>
     </div>
   );

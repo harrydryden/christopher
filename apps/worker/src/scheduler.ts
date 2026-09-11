@@ -45,6 +45,17 @@ export async function schedulerTick(deps: WorkerDeps): Promise<void> {
     }
   }
 
+  if (settings.suggestionsEnabled) {
+    const due = await deps.db.select().from(schema.discoverySources).where(and(
+      eq(schema.discoverySources.enabled, true), sql`${schema.discoverySources.nextRunAt} <= ${now}`,
+    ));
+    for (const source of due) {
+      await enqueueTask(deps.db, "monitor_source", { sourceId: source.id }, {
+        dedupeKey: dedupeKeyFor("monitor_source", { sourceId: source.id }), priority: 7,
+      });
+    }
+  }
+
   await finaliseScanRuns(deps);
 
   const requeued = await requeueStale(deps.db);

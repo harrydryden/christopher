@@ -1,3 +1,9 @@
+import { and, inArray, sql } from "drizzle-orm";
+import { discoverySources, tasks } from "@christopher/db/schema";
+import { db } from "@/lib/db";
+import { getSettings } from "@/lib/settings";
+import { DiscoverySources } from "@/components/DiscoverySources";
+import { DiscoverySourceForm } from "@/components/DiscoverySourceForm";
 import { acceptSuggestion, findMoreSuggestions, rejectSuggestion } from "@/app/actions/suggestions";
 import { Badge } from "@/components/Badge";
 import { Button } from "@/components/Button";
@@ -7,125 +13,71 @@ import { relativeTime } from "@/lib/format";
 import { listPendingSuggestions, listResolvedSuggestions, type SuggestionRow } from "@/lib/queries/suggestions";
 
 export const dynamic = "force-dynamic";
-
 function SuggestionCard({ row }: { row: SuggestionRow }) {
   const { suggestion, profile, similarToNames } = row;
   const verification = suggestion.verification;
-  return (
-    <div className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <a href={suggestion.homepageUrl} target="_blank" rel="noopener noreferrer" className="text-base font-semibold text-slate-900 hover:underline dark:text-slate-100">
-            {suggestion.name}
-          </a>
-          {profile?.oneLiner && <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-300">{profile.oneLiner}</p>}
-        </div>
-        {suggestion.status !== "pending" && (
-          <Badge tone={suggestion.status === "accepted" ? "green" : "gray"}>{suggestion.status}</Badge>
-        )}
-      </div>
-
-      {similarToNames.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1">
-          <span className="text-xs text-slate-400">Similar to:</span>
-          {similarToNames.map((n) => (
-            <Badge key={n} tone="neutral">
-              {n}
-            </Badge>
-          ))}
-        </div>
-      )}
-
-      <div className="mt-2 flex flex-wrap gap-1.5">
-        <Badge tone={verification?.homepageOk ? "green" : "red"}>{verification?.homepageOk ? "homepage OK" : "homepage unreachable"}</Badge>
-        <Badge tone={verification?.careersSource ? "green" : "amber"}>{verification?.careersSource ? `careers source: ${verification.careersSource.type}` : "no careers source found"}</Badge>
-        {typeof verification?.openRoles === "number" && <Badge tone="neutral">{verification.openRoles} open roles</Badge>}
-        {typeof verification?.matchingRoles === "number" && <Badge tone="blue">{verification.matchingRoles} matching your keywords</Badge>}
-      </div>
-
-      {suggestion.rationale && <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">{suggestion.rationale}</p>}
-
-      {suggestion.status === "rejected" && suggestion.rejectionReason && (
-        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-          <span className="font-medium">Rejected: </span>
-          {suggestion.rejectionReason}
-        </p>
-      )}
-
-      {suggestion.status === "pending" && (
-        <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-slate-200 pt-3 dark:border-slate-800">
-          <form action={acceptSuggestion.bind(null, suggestion.id)}>
-            <Button type="submit" variant="primary" size="sm">
-              Accept
-            </Button>
-          </form>
-          <form action={rejectSuggestion.bind(null, suggestion.id)} className="flex flex-1 items-end gap-2">
-            <label className="flex flex-1 flex-col gap-1 text-xs text-slate-500">
-              Reason to reject (required)
-              <input
-                name="reason"
-                required
-                placeholder="e.g. no agencies, not fintech"
-                className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-950"
-              />
-            </label>
-            <Button type="submit" size="sm">
-              Reject
-            </Button>
-          </form>
-        </div>
-      )}
+  return <article aria-label={suggestion.name} className="space-y-3 rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+    <div className="flex flex-wrap items-start justify-between gap-2">
+      <div><h2 className="font-semibold"><a href={suggestion.homepageUrl} target="_blank" rel="noopener noreferrer" className="hover:underline">{suggestion.name} ↗</a></h2>
+        <p className="text-sm text-slate-500">{profile?.oneLiner ?? suggestion.domain}</p></div>
+      <Badge tone={suggestion.status === "accepted" ? "green" : "neutral"}>{suggestion.status === "pending" ? suggestion.evidence ? "From a source" : "Similar employer" : suggestion.status === "accepted" ? "Added" : suggestion.status === "rejected" ? "Dismissed" : "Expired"}</Badge>
     </div>
-  );
+    {suggestion.rationale && <p className="text-sm text-slate-700 dark:text-slate-300">{suggestion.rationale}</p>}
+    {similarToNames.length > 0 && <p className="text-sm text-slate-500">Similar to {similarToNames.join(", ")}</p>}
+    <div className="flex flex-wrap items-center gap-2 text-sm">
+      {typeof verification?.openRoles === "number" && <Badge tone="neutral">{verification.openRoles} roles found</Badge>}
+      {typeof verification?.matchingRoles === "number" && <Badge tone="blue">{verification.matchingRoles} filter matches in sample</Badge>}
+      {verification?.careersSource && <a href={verification.careersSource.url} target="_blank" rel="noreferrer" className="text-indigo-700 underline dark:text-indigo-300">View careers page ↗</a>}
+    </div>
+    {typeof verification?.matchingRoles === "number" && <p className="text-xs text-slate-500">Matches use a sample of roles, not a complete vacancy count. A company can be worth tracking without a current match.</p>}
+    {suggestion.evidence && <details className="rounded bg-slate-50 p-3 text-sm dark:bg-slate-900">
+      <summary className="cursor-pointer font-medium">Evidence from {suggestion.evidence.sourceName}</summary>
+      <div className="mt-2">{suggestion.evidence.url ? <a href={suggestion.evidence.url} target="_blank" rel="noreferrer" className="text-indigo-700 underline dark:text-indigo-300">{suggestion.evidence.title} ↗</a> : <p>{suggestion.evidence.title}</p>}
+        <blockquote className="mt-2 border-l-2 border-slate-300 pl-3 text-slate-600 dark:text-slate-300">“{suggestion.evidence.quote}”</blockquote></div>
+    </details>}
+    {suggestion.rejectionReason && <p className="text-sm text-slate-500">Your reason: {suggestion.rejectionReason}</p>}
+    {suggestion.status === "pending" && <div className="flex flex-wrap items-start gap-3 border-t border-slate-200 pt-3 dark:border-slate-800">
+      <DiscoverySourceForm action={acceptSuggestion.bind(null, suggestion.id)} returnTo="/suggestions" pendingLabel="Adding company…"><Button className="min-h-11" type="submit" variant="primary" size="sm">Add to tracked companies</Button></DiscoverySourceForm>
+      <details className="min-w-0 flex-1"><summary className="cursor-pointer py-1 text-sm underline">Dismiss…</summary>
+        <DiscoverySourceForm action={rejectSuggestion.bind(null, suggestion.id)} returnTo="/suggestions" pendingLabel="Saving decision…" className="mt-2 grid gap-2">
+          <label className="grid gap-1 text-sm">Why is this company unsuitable?<textarea name="reason" required maxLength={1000} rows={2} placeholder="e.g. recruitment agency; I prefer product companies" className="w-full rounded border border-slate-300 bg-transparent p-2 dark:border-slate-700"/></label>
+          <p className="text-xs text-slate-500">Your reason helps inform future recommendations. This company will not be suggested again.</p>
+          <Button className="min-h-11" type="submit" size="sm">Dismiss company</Button>
+        </DiscoverySourceForm>
+      </details>
+    </div>}
+  </article>;
 }
 
-export default async function SuggestionsPage() {
-  const [pending, resolved] = await Promise.all([listPendingSuggestions(), listResolvedSuggestions()]);
+export default async function SuggestionsPage({ searchParams }: { searchParams: Promise<{ view?: string; notice?: string }> }) {
+  const params = await searchParams;
+  const view = params.view === "sources" || params.view === "history" ? params.view : "review";
+  const [pending, resolved, sourceCount, settings, active] = await Promise.all([
+    listPendingSuggestions(), listResolvedSuggestions(),
+    db().select({ count: sql<number>`count(*)::int` }).from(discoverySources), getSettings(),
+    db().select({ id: tasks.id, type: tasks.type, status: tasks.status }).from(tasks).where(and(inArray(tasks.type, ["monitor_source", "suggest_companies"]), inArray(tasks.status, ["queued", "running"]))),
+  ]);
   const now = new Date();
-
-  return (
-    <div>
-      <PageHeader
-        title="Suggestions"
-        description="Companies similar to the ones you track, verified before you see them."
-        actions={
-          <form action={findMoreSuggestions}>
-            <Button type="submit" variant="primary">
-              Find more
-            </Button>
-          </form>
-        }
-      />
-
-      {pending.length === 0 ? (
-        <EmptyState title="No pending suggestions" description="Suggestions run weekly, or click Find more to generate them now." />
-      ) : (
-        <div className="space-y-4">
-          {pending.map((row) => (
-            <SuggestionCard key={row.suggestion.id} row={row} />
-          ))}
-        </div>
-      )}
-
-      {resolved.length > 0 && (
-        <details className="mt-8 rounded-lg border border-slate-200 dark:border-slate-800">
-          <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold text-slate-900 dark:text-slate-100">
-            Accepted / rejected history ({resolved.length})
-          </summary>
-          <div className="space-y-3 border-t border-slate-200 p-4 dark:border-slate-800">
-            {resolved.map((row) => (
-              <div key={row.suggestion.id}>
-                <SuggestionCard row={row} />
-                {row.suggestion.resolvedAt && (
-                  <p className="mt-1 text-xs text-slate-400" title={row.suggestion.resolvedAt.toISOString()}>
-                    Resolved {relativeTime(row.suggestion.resolvedAt, now)}
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>
-        </details>
-      )}
-    </div>
-  );
+  const similarActive = active.some(t => t.type === "suggest_companies");
+  return <div className="mx-auto max-w-5xl">
+    <PageHeader title="Discover companies" description="Review relevant employers, see why they were recommended, and choose which to track."/>
+    <nav aria-label="Discovery views" className="mb-5 flex flex-wrap gap-2 border-b border-slate-200 pb-3 dark:border-slate-800">
+      {[["review", `Review (${pending.length})`], ["sources", `Sources (${sourceCount[0]?.count ?? 0})`], ["history", "History"]].map(([key, label]) => <a key={key} href={key === "review" ? "/suggestions" : `/suggestions?view=${key}`} aria-current={view === key ? "page" : undefined} className={`rounded px-3 py-2 text-sm ${view === key ? "bg-slate-900 font-semibold text-white dark:bg-slate-100 dark:text-slate-950" : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"}`}>{label}</a>)}
+    </nav>
+    {params.notice && <p role="status" className="mb-4 rounded border border-slate-200 p-3 text-sm dark:border-slate-700">{params.notice.slice(0, 300)}</p>}
+    {!settings.suggestionsEnabled && <p role="status" className="mb-4 rounded bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">Discovery is disabled. You can still review recommendations and manage sources. <a href="/settings" className="underline">Enable company suggestions in Settings</a>.</p>}
+    {active.length > 0 && <div role="status" className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded border border-slate-200 p-3 text-sm dark:border-slate-700"><span>{active.filter(t => t.status === "running").length} checks running · {active.filter(t => t.status === "queued").length} queued. New recommendations will appear in Review.</span><a href={view === "review" ? "/suggestions" : `/suggestions?view=${view}`} className="underline">Refresh progress</a></div>}
+    {view === "sources" ? <DiscoverySources/> : view === "history" ? <>
+      <h2 className="mb-3 font-semibold">Recently reviewed and expired recommendations</h2>
+      <p className="mb-4 text-sm text-slate-500">Showing up to 50 recent decisions. Previously suggested companies are not repeated by external sources.</p>
+      {resolved.length ? <div className="space-y-4">{resolved.map(row => <div key={row.suggestion.id}><SuggestionCard row={row}/>{row.suggestion.resolvedAt && <p className="mt-1 text-xs text-slate-500">{row.suggestion.status === "expired" ? "Expired" : "Reviewed"} {relativeTime(row.suggestion.resolvedAt, now)}</p>}</div>)}</div> : <EmptyState title="No review history yet" description="Companies you add or dismiss will appear here."/>}
+    </> : <>
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Companies to review</h2><p className="text-sm text-slate-500">Adding a company starts careers setup and job monitoring. Nothing is added automatically.</p></div>
+        <DiscoverySourceForm action={findMoreSuggestions} returnTo="/suggestions" pendingLabel="Queuing search…"><Button className="min-h-11" type="submit" disabled={!settings.suggestionsEnabled || similarActive}>{similarActive ? "Similar-company search queued" : "Find similar companies"}</Button></DiscoverySourceForm>
+      </div>
+      <p className="mb-4 text-sm text-slate-500">Similar-company searches use employers you already track. To check newsletters and websites, <a href="/suggestions?view=sources" className="underline">manage your sources</a>. <a href="/learning" className="underline">Refine your preference profile</a> to improve relevance.</p>
+      {pending.length ? <div className="space-y-4">{pending.map(row => <SuggestionCard key={row.suggestion.id} row={row}/>)}</div> : <EmptyState title={active.length ? "Discovery is in progress" : "No companies waiting for review"} description={active.length ? "Your checks are queued or running. Refresh progress to see new recommendations." : "Add a source or find similar companies to bring in recommendations. If a check finds nothing new, you can refine your preference profile."}/>}
+      {!pending.length && !active.length && <div className="mt-3 text-center"><a href="/suggestions?view=sources" className="inline-block rounded bg-slate-900 px-4 py-2 text-sm font-semibold text-white dark:bg-slate-100 dark:text-slate-950">Add a discovery source</a></div>}
+    </>}
+  </div>;
 }

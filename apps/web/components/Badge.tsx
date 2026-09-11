@@ -1,9 +1,12 @@
 export type Tone = "green" | "blue" | "gray" | "amber" | "red" | "neutral";
 
+/** Tones map to the status roles in docs/DESIGN-SYSTEM.md, not to raw hues. */
 const TONE_CLASSES: Record<Tone, string> = {
   green: "bg-emerald-50 text-emerald-800 ring-emerald-600/20",
-  blue: "bg-blue-50 text-blue-800 ring-blue-600/20",
-  gray: "bg-gray-50 text-gray-600 ring-gray-500/20",
+  // Informational: the accent, not a fourth blue of its own.
+  blue: "bg-accent-tint text-accent ring-accent/20",
+  // `gray` predates `neutral`; both are the muted tone on the one neutral ramp.
+  gray: "bg-slate-50 text-slate-600 ring-slate-500/20",
   amber: "bg-amber-50 text-amber-800 ring-amber-600/20",
   red: "bg-red-50 text-red-700 ring-red-600/20",
   neutral: "bg-slate-100 text-slate-700 ring-slate-500/20",

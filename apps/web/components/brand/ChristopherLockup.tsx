@@ -19,10 +19,10 @@ export function lockupWidth(markSize: number) {
 }
 
 /**
- * Mark plus wordmark, at the ratios BRAND.md fixes: wordmark cap height equals
+ * Mark plus wordmark, at the ratios docs/DESIGN-SYSTEM.md fixes: wordmark cap height equals
  * one wheel diameter, gap equals a third of the mark width.
  *
- * BRAND.md forbids stacking below 200px wide — `orientation="stacked"` is for
+ * Stacking is not allowed below 200px wide — `orientation="stacked"` is for
  * the login card and marketing, not the sidebar.
  */
 export function ChristopherLockup({

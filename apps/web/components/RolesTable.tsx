@@ -25,7 +25,7 @@ function FitBar({ score }: { score: number | null }) {
   return (
     <div className="flex items-center gap-2">
       <span className="w-6 text-right tabular-nums text-slate-700">{score}</span>
-      <span className="h-1.5 w-14 overflow-hidden rounded-full bg-slate-150">
+      <span className="h-1.5 w-14 overflow-hidden rounded-full bg-track">
         <span className={`block h-full rounded-full ${tone}`} style={{ width: `${Math.max(2, Math.min(100, score))}%` }} />
       </span>
     </div>
@@ -276,7 +276,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                           }}
                           placeholder="Add a reason (optional)"
                           rows={2}
-                          className="w-full rounded border border-slate-300 px-1.5 py-1 text-xs outline-none focus:border-indigo-500"
+                          className="w-full rounded border border-slate-300 px-1.5 py-1 text-xs outline-none focus:border-accent"
                         />
                         {boxed.error && <p className="text-xs text-red-600">{boxed.error}</p>}
                         <div className="flex gap-1.5">
@@ -284,7 +284,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                             type="button"
                             disabled={boxed.pending}
                             onClick={() => void submitDecision(row.id, boxed.kind, boxed.text)}
-                            className="rounded bg-[var(--app-navy)] px-2 py-0.5 text-xs font-medium text-white disabled:opacity-40"
+                            className="rounded bg-accent px-2 py-0.5 text-xs font-medium text-white disabled:opacity-40"
                           >
                             {boxed.pending ? "Saving…" : "Save"}
                           </button>

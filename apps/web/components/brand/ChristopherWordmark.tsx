@@ -8,7 +8,7 @@ import {
 } from "./artwork";
 
 // The path carries a left side bearing on the "C". Trimming to the ink box is
-// what makes the lockup gap measure from the glyph edge, as BRAND.md specifies.
+// what makes the lockup gap measure from the glyph edge, as the lockup rules specify.
 const INK_LEFT = WORDMARK_LEFT;
 const INK_WIDTH = WORDMARK_RIGHT - WORDMARK_LEFT;
 const INK_HEIGHT = WORDMARK_BOTTOM - WORDMARK_TOP;
@@ -28,7 +28,7 @@ export function ChristopherWordmark({
   title = null,
   className,
 }: {
-  /** Cap height in px. BRAND.md pins this to one wheel diameter in a lockup. */
+  /** Cap height in px. In a lockup this is pinned to one wheel diameter. */
   capHeight?: number;
   fill?: string;
   title?: string | null;

@@ -45,7 +45,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
             rows={3}
             required
             placeholder={"acme.com\nhttps://example.org"}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-accent focus:ring-1 focus:ring-accent"
           />
           <div>
             <Button type="submit" variant="primary">
@@ -90,7 +90,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                 </TD>
                 <TD>
                   <Badge tone={companyStatusTone(company.status)}>{company.status}</Badge>
-                  {discovering && <p className="mt-1 text-xs text-indigo-500">{discoveryState === "running" ? "Refreshing…" : "Refresh queued"}</p>}
+                  {discovering && <p className="mt-1 text-xs text-accent">{discoveryState === "running" ? "Refreshing…" : "Refresh queued"}</p>}
                 </TD>
                 <TD className="whitespace-nowrap">
                   {lastScan ? (

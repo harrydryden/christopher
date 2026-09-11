@@ -104,7 +104,7 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
             name="pinnedStatements"
             rows={4}
             defaultValue={(profile?.pinnedStatements ?? []).join("\n")}
-            className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-indigo-500"
+            className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-accent"
           />
           <div>
             <Button type="submit" variant="primary" size="sm">
@@ -134,7 +134,7 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
                       name="answer"
                       required
                       placeholder="Your answer…"
-                      className="flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-indigo-500"
+                      className="flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-accent"
                     />
                     <Button type="submit" size="sm">
                       Save answer
@@ -156,7 +156,7 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
             name="seedProfile"
             rows={4}
             defaultValue={settings.seedProfile}
-            className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-indigo-500"
+            className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-accent"
           />
           <div>
             <Button type="submit" variant="primary" size="sm">

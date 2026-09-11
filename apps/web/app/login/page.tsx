@@ -28,10 +28,10 @@ export default async function LoginPage({
   return (
     <main className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm">
-        {/* Horizontal, because BRAND.md only fixes ratios for that form — and
+        {/* Horizontal, because the brand rules only fix ratios for that form — and
             at 332px it still clears the 200px floor for the card. */}
         <h1 className="mb-3 flex justify-center">
-          <ChristopherLockup markSize={64} color="var(--brand-ink)" id="login-lockup" />
+          <ChristopherLockup markSize={64} color="var(--color-brand-ink)" id="login-lockup" />
         </h1>
         <p className="mb-6 text-center text-sm text-slate-500">Careers page monitor</p>
 
@@ -48,12 +48,12 @@ export default async function LoginPage({
               required
               autoFocus
               autoComplete="current-password"
-              className="mb-3 w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+              className="mb-3 w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-accent focus:ring-1 focus:ring-accent"
             />
             {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
             <button
               type="submit"
-              className="w-full rounded-md bg-[var(--app-navy)] px-3 py-2 text-sm font-medium text-white hover:bg-slate-700"
+              className="w-full rounded-md bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent-hover"
             >
               Log in
             </button>
@@ -89,11 +89,11 @@ export default async function LoginPage({
                 the password is then never stored. Generate it with either command below. If both are set, the hash wins.
               </li>
             </ul>
-            <pre className="overflow-x-auto rounded bg-[var(--app-navy)] p-3 text-xs text-slate-100">
+            <pre className="overflow-x-auto rounded bg-accent p-3 text-xs text-slate-100">
               pnpm --filter @christopher/web hash-password &apos;your password&apos;
             </pre>
             <p className="my-2">or, without the repository checked out:</p>
-            <pre className="overflow-x-auto rounded bg-[var(--app-navy)] p-3 text-xs text-slate-100">{NODE_HASH_COMMAND}</pre>
+            <pre className="overflow-x-auto rounded bg-accent p-3 text-xs text-slate-100">{NODE_HASH_COMMAND}</pre>
           </div>
         )}
       </div>

@@ -190,7 +190,7 @@ export default async function HealthPage() {
           <span className="text-lg font-semibold text-slate-900">{formatUsd(spend)}</span>
           <span className="text-sm text-slate-500">of {formatUsd(budget)} budget</span>
         </div>
-        <div className="mb-3 h-2 w-full overflow-hidden rounded-full bg-slate-150">
+        <div className="mb-3 h-2 w-full overflow-hidden rounded-full bg-track">
           <div className={`h-full rounded-full ${overBudget ? "bg-red-500" : "bg-emerald-500"}`} style={{ width: `${Math.min(100, Math.max(2, spendFraction * 100))}%` }} />
         </div>
         {overBudget && <p className="mb-3 text-sm text-red-600">Over budget — non-essential AI calls (near-miss scoring, then suggestions) are being skipped.</p>}

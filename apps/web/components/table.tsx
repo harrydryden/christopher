@@ -19,7 +19,7 @@ export function TBody({ children }: { children: ReactNode }) {
 export function TR({ children, className = "", highlighted = false }: { children: ReactNode; className?: string; highlighted?: boolean }) {
   return (
     <tr
-      className={`${highlighted ? "bg-indigo-50" : "hover:bg-slate-50"} ${className}`}
+      className={`${highlighted ? "bg-accent-tint" : "hover:bg-slate-50"} ${className}`}
     >
       {children}
     </tr>

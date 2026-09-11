@@ -59,24 +59,26 @@ export function CvLibraryEditor({ library, version }: { library: CvLibrary | nul
           {entry && statusControls(entry)}
           <p className="text-sm">Responsibilities and outcomes · {rows.length}/20 · {rows.filter(row => entry?.confirmedResponsibilities?.includes(responsibilityRows(row)[0] ?? "")).length} confirmed</p>
           {rows.length > 20 && <p role="alert" className="text-sm text-amber-700">All existing wording has been preserved. Combine related rows to reach 20 or fewer before saving.</p>}
-          {rows.map((row, index) => <div key={index} className="flex items-start gap-2">
-            <div className="min-w-0 flex-1 text-sm">
-              <div className="mb-1 flex flex-wrap items-center gap-4"><span>Entry {index + 1}</span>
-                <label className="flex items-center gap-2"><input type="checkbox" className="h-4 w-4 accent-emerald-600" aria-label={`Confirm ${job.company} ${job.jobTitle} entry ${index + 1}`} disabled={!row.trim()} checked={entry?.confirmedResponsibilities?.includes(responsibilityRows(row)[0] ?? "") ?? false} onChange={event => {
+          <div className="overflow-x-auto"><table className="w-full text-left text-sm" aria-label={`${job.company} ${job.jobTitle} responsibilities and outcomes`}>
+            <thead><tr className="border-b border-slate-300 dark:border-slate-700"><th scope="col" className="w-10 p-2">#</th><th scope="col" className="w-28 p-2 text-center">Confirmed</th><th scope="col" className="p-2">Narrative</th></tr></thead>
+            <tbody>{rows.map((row, index) => <tr key={index} className="border-b border-slate-200 align-top dark:border-slate-800">
+              <th scope="row" className="p-2 pt-4 font-normal">{index + 1}</th>
+              <td className="p-2 pt-4 text-center"><input type="checkbox" className="h-4 w-4 accent-emerald-600" aria-label={`Confirm ${job.company} ${job.jobTitle} entry ${index + 1}`} disabled={!row.trim()} checked={entry?.confirmedResponsibilities?.includes(responsibilityRows(row)[0] ?? "") ?? false} onChange={event => {
                   const text = responsibilityRows(row)[0];
                   if (!entry || !text) return;
                   const confirmed = new Set(entry.confirmedResponsibilities ?? []);
                   if (event.target.checked) confirmed.add(text); else confirmed.delete(text);
                   setValue({ ...value, entries: value.entries.map(item => item.id === entry.id ? { ...item, confirmedResponsibilities: [...confirmed] } : item) });
-                }} />Confirmed</label>
-              </div>
+                }} /></td>
+              <td className="p-2"><div className="flex items-start gap-2">
               <textarea required rows={2} className={input} aria-label={`${job.company} ${job.jobTitle} responsibility ${index + 1}`} value={row} onChange={event => updateRows(rows.map((text, position) => position === index ? event.target.value.replace(/\r?\n/g, " ") : text))} />
-            </div>
-            <button type="button" className="mt-6 text-sm underline" aria-label={`Remove ${job.company} ${job.jobTitle} entry ${index + 1}`} onClick={() => {
+            <button type="button" className="mt-2 text-sm underline" aria-label={`Remove ${job.company} ${job.jobTitle} entry ${index + 1}`} onClick={() => {
               if (rows.length === 1 && entry) setValue({ ...value, entries: entry.details.trim() ? value.entries.map(item => item.id === entry.id ? { ...item, status: "inactive" } : item) : value.entries.filter(item => item.id !== entry.id) });
               else updateRows(rows.filter((_, position) => position !== index));
             }}>Remove</button>
-          </div>)}
+              </div></td>
+            </tr>)}</tbody>
+          </table></div>
           <button type="button" className="text-sm underline disabled:opacity-40" disabled={rows.length >= 20} onClick={() => updateRows([...rows, ""])}>Add new responsibility or outcome</button>
         </fieldset>;
       })}

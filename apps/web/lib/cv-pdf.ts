@@ -28,8 +28,12 @@ export async function renderCvPdf(content: CvContent): Promise<Buffer> {
       const headerHeight = doc.heightOfString(clean(section.heading), { width, lineGap: 2.5 });
       doc.font("Helvetica");
       const firstHeight = doc.heightOfString(clean(section.bullets[0] ?? ""), { width: width - 12, lineGap: 2.5 });
-      room(headerHeight + firstHeight + 18);
+      const industries = section.industryDescriptions?.join(" · ");
+      doc.fontSize(9);
+      const industryHeight = industries ? doc.heightOfString(clean(industries), { width, lineGap: 2.5 }) + 4 : 0;
+      room(headerHeight + industryHeight + firstHeight + 18);
       text(section.heading, true); doc.moveDown(0.25);
+      if (industries) { text(industries, false, 9); doc.moveDown(0.25); }
       for (const bullet of section.bullets) {
         doc.font("Helvetica").fontSize(10);
         const height = doc.heightOfString(clean(bullet), { width: width - 12, lineGap: 2.5 });

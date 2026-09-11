@@ -214,7 +214,7 @@ describe("priority workflows", () => {
   });
   it("versions libraries and snapshots generation inputs atomically with its task", async () => {
     const { job } = await fixture();
-    const content = { name: "Test Candidate", contact: "London", profile: "Operations leader", employment: [{ id: "job", company: "Acme", jobTitle: "Director", startDate: "2023-08", endDate: "", current: true }], entries: [{ id: "one", kind: "experience", employmentId: "job", heading: "Leadership", details: "Led an operations team\nAn unconfirmed proposal", confirmedResponsibilities: ["Led an operations team"] }] };
+    const content = { name: "Test Candidate", contact: "London", profile: "Operations leader", employment: [{ id: "job", company: "Acme", industryDescriptions: "Healthcare, SaaS", jobTitle: "Director", startDate: "2023-08", endDate: "", current: true }], entries: [{ id: "one", kind: "experience", employmentId: "job", heading: "Leadership", details: "Led an operations team\nAn unconfirmed proposal", confirmedResponsibilities: ["Led an operations team"] }] };
     const form = new FormData(); form.set("library", JSON.stringify(content)); form.set("version", "0");
     expect((await saveCvLibrary({ ok: true }, form)).ok).toBe(true);
     expect((await saveCvLibrary({ ok: true }, form)).ok).toBe(false);
@@ -225,12 +225,13 @@ describe("priority workflows", () => {
     const [draft] = await database.select().from(schema.cvDrafts);
     expect(draft!.librarySnapshot).toEqual({ ...content, structuredExperience: true, entries: [{ ...content.entries[0], heading: "Director · Acme · Aug 2023 – Present", status: "active", details: "Led an operations team" }] }); expect(draft!.model).toBe("claude-fable-5-1");
     expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(1);
-    await database.update(schema.cvDrafts).set({ status: "ready", revision: 1, content: { name: content.name, contact: content.contact, summary: "Original", sections: [{ entryId: "one", kind: "experience", heading: "Director · Acme", bullets: ["Led a team"] }], gaps: [] } }).where(eq(schema.cvDrafts.id, draft!.id));
+    await database.update(schema.cvDrafts).set({ status: "ready", revision: 1, content: { name: content.name, contact: content.contact, summary: "Original", sections: [{ entryId: "one", kind: "experience", heading: "Director · Acme", industryDescriptions: ["SaaS"], bullets: ["Led a team"] }], gaps: [] } }).where(eq(schema.cvDrafts.id, draft!.id));
     const edit = new FormData(); edit.set("summary", "Edited summary"); edit.set("section-0", "Led the operations team"); edit.set("rememberWording", "on");
     await expect(saveCvDraft(draft!.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
     const versions = await database.select().from(schema.cvDrafts).orderBy(schema.cvDrafts.revision);
     expect(versions.map(v => v.content?.summary)).toEqual(["Original", "Edited summary"]);
     expect(versions[1]!.parentId).toBe(draft!.id);
+    expect(versions[1]!.content?.sections[0]?.industryDescriptions).toEqual(["SaaS"]);
     const libraries = await database.select().from(schema.cvLibraries).orderBy(schema.cvLibraries.version);
     expect(libraries).toHaveLength(2);
     expect(libraries[0]!.content.preferredWording).toBeUndefined();

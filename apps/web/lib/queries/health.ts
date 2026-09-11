@@ -1,3 +1,4 @@
+import { scanRunReport } from "@/lib/scan-run-report";
 import { and, desc, eq, gte, inArray, ne, sql, getTableColumns } from "drizzle-orm";
 import {
   aiCalls,
@@ -97,8 +98,9 @@ export async function listRecentAiCalls(limit = 20): Promise<AiCall[]> {
   return db().select().from(aiCalls).orderBy(desc(aiCalls.at)).limit(limit);
 }
 
-export async function listRecentScanRuns(limit = 10): Promise<ScanRun[]> {
-  return db().select().from(scanRuns).orderBy(desc(scanRuns.startedAt)).limit(limit);
+export async function listRecentScanRuns(limit = 10) {
+  const runs = await db().select().from(scanRuns).orderBy(desc(scanRuns.startedAt)).limit(limit);
+  return Promise.all(runs.map(scanRunReport));
 }
 
 /** Last report from the persistent worker; configuration is not a successful API probe. */

@@ -72,7 +72,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
             </tr>
           </THead>
           <TBody>
-            {rows.map(({ company, lastScan, openRoles, inTableRoles, discovering, discoveryState }) => (
+            {rows.map(({ company, lastScan, reviewRoles, shortlistedRoles, discovering, discoveryState }) => (
               <TR key={company.id}>
                 <TD>
                   <a href={`/companies/${company.id}`} className="flex items-center gap-2 hover:underline">
@@ -103,7 +103,11 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                   )}
                 </TD>
                 <TD>
-                  {openRoles} open · {inTableRoles} in table
+                  {reviewRoles || shortlistedRoles ? <div className="flex flex-wrap gap-x-2">
+                    <a className="hover:underline" href={`/companies/${company.id}?view=auto-matched#roles`}>{reviewRoles} to review</a>
+                    <span>·</span>
+                    <a className="hover:underline" href={`/companies/${company.id}?view=user-shortlisted#roles`}>{shortlistedRoles} shortlisted</a>
+                  </div> : <span className="text-slate-500">No roles to review</span>}
                 </TD>
                 <TD>
                   <div className="flex flex-wrap gap-1.5">

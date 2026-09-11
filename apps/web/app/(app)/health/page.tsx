@@ -241,7 +241,7 @@ export default async function HealthPage() {
                 <TH>Started</TH>
                 <TH>Trigger</TH>
                 <TH>Companies</TH>
-                <TH>New / Closed</TH>
+                <TH>New matches / Closed</TH>
               </tr>
             </THead>
             <TBody>
@@ -254,8 +254,10 @@ export default async function HealthPage() {
                     <Badge tone="neutral">{r.trigger}</Badge>
                   </TD>
                   <TD>
-                    {r.companiesOk} ok
-                    {r.companiesFailed > 0 && <span className="text-red-600"> · {r.companiesFailed} failed</span>} of {r.companiesTotal}
+                    {r.companiesOk} successful
+                    {r.companiesFailed > 0 && <span className="text-red-600"> · {r.companiesFailed} incomplete or failed</span>} of {r.companiesTotal}
+                    {!r.finishedAt && <span className="block text-xs text-slate-500">In progress</span>}
+                    {r.historicalOnly && <span className="block text-xs text-slate-500">Stored summary; source detail unavailable</span>}
                   </TD>
                   <TD>
                     {r.newRoles} / {r.closedRoles}

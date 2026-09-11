@@ -2,7 +2,7 @@
  * The daily scan. For each company: fetch every active source, normalise postings, reconcile them
  * against what is stored, apply the keyword and location gate, and queue scoring for anything new.
  */
-import { schema, enqueueTask, pruneNonMatches, type Task } from "@christopher/db";
+import { schema, enqueueTask, archiveNonMatches, type Task } from "@christopher/db";
 import {
   ats,
   classifyScan,
@@ -395,7 +395,7 @@ async function scanSource(
     closed: result.closed.length,
     ms: Date.now() - started,
   });
-  await pruneNonMatches(deps.db, source.id);
+  await archiveNonMatches(deps.db, source.id);
   return { status, newCount, closedCount: result.closed.length, postingsFound: postings.length };
 }
 

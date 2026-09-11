@@ -118,7 +118,8 @@ describe("authenticated mutations", () => {
     form.set("includeKeywords", "engineering");
     await saveKeywords({ ok: true }, form);
     const [updated] = await database.select().from(schema.jobs).where(eq(schema.jobs.id, job.id));
-    expect(updated).toBeUndefined();
+    expect(updated!.inTable).toBe(false);
+    expect(updated!.archivedAt).not.toBeNull();
   });
   it("makes concurrent repeated source confirmation idempotent", async () => {
     const { company } = await fixture();
@@ -184,7 +185,7 @@ describe("priority workflows", () => {
     await archiveRoles([job.id], false);
     expect(await fetchTableJobs()).toHaveLength(0);
     const [stored] = await database.select().from(schema.jobs).where(eq(schema.jobs.id, job.id));
-    expect(stored!.archivedAt).toBeNull(); expect(stored!.inTable).toBe(false);
+    expect(stored!.archivedAt).not.toBeNull(); expect(stored!.inTable).toBe(false);
   });
   it("reports completion without returning full company or CV records", async () => {
     const [task] = await database.insert(schema.tasks).values({ type: 'scan_company', payload: {}, priority: 3 }).returning();
@@ -217,14 +218,14 @@ describe("priority workflows", () => {
     expect(details[0]!.job.descriptionText).toBe("Stored role description");
     expect(await fetchRoleDetails([])).toEqual([]);
   });
-  it("records bulk decisions with required reasons and retained snapshots", async () => {
+  it("records bulk decisions with optional reasons and retained snapshots", async () => {
     const { job, company, source } = await fixture();
     const [second] = await database.insert(schema.jobs).values({ companyId: company.id, sourceId: source.id, externalKey: "two", title: "Finance Director", normalizedTitle: "finance director", url: "https://acme.example/two" }).returning();
     const ids = [job.id, second!.id];
-    expect((await decideRoles(ids, "skip", "")).ok).toBe(false);
-    expect(await database.select().from(schema.decisions)).toHaveLength(0);
+    expect((await decideRoles(ids, "skip", "")).ok).toBe(true);
+    expect(await database.select().from(schema.decisions)).toHaveLength(2);
     expect((await decideRoles(ids, "skip", "Too junior")).ok).toBe(true);
-    const decisions = await database.select().from(schema.decisions);
+    const decisions = await database.select().from(schema.decisions).where(eq(schema.decisions.superseded, false));
     expect(decisions).toHaveLength(2);
     expect(decisions.every(d => d.reason === "Too junior")).toBe(true);
     expect((await database.select().from(schema.tasks)).some(t => t.type === "suggest_filters")).toBe(true);
@@ -377,4 +378,70 @@ it("atomically adds 1,000 companies and queues setup, with a bounded response fo
   expect(await database.select({id:schema.tasks.id}).from(schema.tasks).where(eq(schema.tasks.type,"discover"))).toHaveLength(1000);
   await expect(addCompanies(form)).rejects.toThrow("added=0");
   expect(await database.select({id:schema.tasks.id}).from(schema.tasks)).toHaveLength(1000);
+});
+
+describe("four-status role workflow", () => {
+  it("keeps counts, filtered pages and export selection aligned across transitions", async () => {
+    const { fetchRoleCounts, applyRolesFilters, splitHidden } = await import("@/lib/queries/jobs");
+    const { listCompanies } = await import("@/lib/queries/companies");
+    const { job, company } = await fixture();
+    const read = async (view: string) => fetchRolePage(parseRolesFilters({ view }), view === "archived", 99, 1);
+    expect((await read("auto-matched")).total).toBe(1);
+    expect((await decide(job.id, "apply", "")).ok).toBe(true);
+    await database.update(schema.jobs).set({ inTable: false, fitScore: 1, status: "closed" }).where(eq(schema.jobs.id, job.id));
+    expect((await read("auto-matched")).total).toBe(0);
+    expect((await read("user-shortlisted")).total).toBe(1);
+    expect((await fetchRoleCounts(company.id))["user-shortlisted"]).toBe(1);
+    const [summary] = await listCompanies();
+    expect(summary!.reviewRoles).toBe(0); expect(summary!.shortlistedRoles).toBe(1);
+    const exported = splitHidden(applyRolesFilters(await fetchTableJobs(), parseRolesFilters({ view: "user-shortlisted" })), 99, false).visible;
+    expect(exported.map(row => row.job.id)).toEqual([job.id]);
+    expect((await archiveRoles([job.id], true)).ok).toBe(true);
+    expect((await read("archived")).total).toBe(1);
+    expect((await read("user-shortlisted")).total).toBe(0);
+    expect((await archiveRoles([job.id], false)).ok).toBe(true);
+    expect((await read("user-shortlisted")).total).toBe(1);
+    expect((await decide(job.id, "skip", "")).ok).toBe(true);
+    expect((await read("user-dismissed")).total).toBe(1);
+    expect((await decide(job.id, null, "")).ok).toBe(true);
+    expect((await read("archived")).total).toBe(1);
+    expect((await archiveRoles([job.id], false)).ok).toBe(false);
+    expect((await decide(job.id, "apply", "")).ok).toBe(true);
+    expect((await read("user-shortlisted")).total).toBe(1);
+  });
+  it("archives a lost match once, retains history and restores after criteria match again", async () => {
+    const { archiveNonMatches } = await import("@christopher/db");
+    const { job } = await fixture();
+    await database.update(schema.jobs).set({ inTable: false }).where(eq(schema.jobs.id, job.id));
+    await archiveNonMatches(database);
+    await archiveNonMatches(database);
+    const events = await database.select().from(schema.jobEvents).where(eq(schema.jobEvents.jobId, job.id));
+    expect(events.filter(event => event.payload.action === "archived")).toHaveLength(1);
+    expect(events[0]!.payload.reason).toBe("No longer matches your criteria");
+    await database.update(schema.jobs).set({ inTable: true }).where(eq(schema.jobs.id, job.id));
+    expect((await archiveRoles([job.id], false)).ok).toBe(true);
+    expect((await fetchRolePage(parseRolesFilters({}), false, null, 1)).total).toBe(1);
+  });
+});
+
+describe("scan reporting", () => {
+  it("counts a company only when all latest source scans succeed and its task is done", async () => {
+    const { scanRunSummary } = await import("@christopher/db");
+    const { company, source } = await fixture();
+    const [other] = await database.insert(schema.careerSources).values({ companyId: company.id, type: "html", url: "https://acme.example/other" }).returning();
+    const [run] = await database.insert(schema.scanRuns).values({ runDate: "2026-09-11", trigger: "manual", companiesTotal: 1 }).returning();
+    const [task] = await database.insert(schema.tasks).values({ type: "scan_company", status: "done", payload: { companyId: company.id, scanRunId: run!.id } }).returning();
+    const at = new Date("2026-09-11T06:00:00Z");
+    await database.insert(schema.scans).values([
+      { sourceId: source.id, scanRunId: run!.id, status: "ok", startedAt: at, finishedAt: at, newCount: 2 },
+      { sourceId: other!.id, scanRunId: run!.id, status: "partial", startedAt: at, finishedAt: at, newCount: 1 },
+    ]);
+    expect((await scanRunSummary(database, run!.id)).companies_ok).toBe(0);
+    await database.insert(schema.scans).values({ sourceId: other!.id, scanRunId: run!.id, status: "ok", startedAt: new Date(at.getTime() + 1000), finishedAt: new Date(at.getTime() + 2000), newCount: 0 });
+    expect(await scanRunSummary(database, run!.id)).toMatchObject({ companies_ok: 1, new_roles: 3, pending: 0 });
+    await database.update(schema.tasks).set({ status: "running" }).where(eq(schema.tasks.id, task!.id));
+    expect(await scanRunSummary(database, run!.id)).toMatchObject({ companies_ok: 0, pending: 1 });
+    await database.update(schema.tasks).set({ status: "failed" }).where(eq(schema.tasks.id, task!.id));
+    expect((await scanRunSummary(database, run!.id)).companies_ok).toBe(0);
+  });
 });

@@ -1,5 +1,5 @@
-import { Pagination, pageNumber } from "@/components/Pagination";
-import { companyRoleCount } from "@/lib/queries/companies";
+import { RoleWorkspace } from "@/components/RoleWorkspace";
+import type { RawSearchParams } from "@/lib/queries/jobs";
 import { SettingsForm } from "@/components/SettingsForm";
 import { notFound } from "next/navigation";
 import {
@@ -18,18 +18,16 @@ import {
   updateCompanyDetails,
   useDiscoveryCandidate,
 } from "@/app/actions/companies";
-import { Badge, companyStatusTone, discoveryStatusTone, jobStatusTone, scanStatusTone, sourceStatusTone } from "@/components/Badge";
+import { Badge, companyStatusTone, discoveryStatusTone, scanStatusTone, sourceStatusTone } from "@/components/Badge";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
 import { EmptyState } from "@/components/EmptyState";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
-import { displayStatus, liveFor, formatDuration } from "@christopher/core";
 import { relativeTime } from "@/lib/format";
 import {
   getCompany,
   getCompanyProfile,
-  getCompanyRoles,
   getCompanyScans,
   getCompanySources,
   getLatestDiscoveryRun,
@@ -47,18 +45,15 @@ interface DiscoveryCandidateView {
   companyName?: string;
 }
 
-export default async function CompanyDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ page?: string }> }) {
+export default async function CompanyDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<RawSearchParams> }) {
   const { id } = await params;
   const company = await getCompany(id);
   if (!company) notFound();
 
-  const total = await companyRoleCount(id);
-  const page = Math.min(pageNumber((await searchParams).page), Math.max(1, Math.ceil(total / 50)));
-  const [sources, latestRun, scans, roles, profile] = await Promise.all([
+  const [sources, latestRun, scans, profile] = await Promise.all([
     getCompanySources(id),
     getLatestDiscoveryRun(id),
     getCompanyScans(id, 20),
-    getCompanyRoles(id, page),
     getCompanyProfile(id),
   ]);
 
@@ -117,6 +112,10 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
           )}
         </div>
       </div>
+
+      <Card title="Roles">
+        <RoleWorkspace searchParams={await searchParams} companyId={id} />
+      </Card>
 
       <Card title="Details">
         <SettingsForm action={updateCompanyDetails.bind(null, company.id)}>
@@ -321,54 +320,6 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
                   <TD className="max-w-[24rem] whitespace-normal break-words text-red-600" title={s.error ?? undefined}>
                     {s.error ?? ""}
                   </TD>
-                </TR>
-              ))}
-            </TBody>
-          </Table>
-        )}
-      </Card>
-
-      <Card title={`Roles (${total})`}>
-        <Pagination page={page} total={total} path={`/companies/${id}`}/>
-        {roles.length === 0 ? (
-          <EmptyState
-            title={scans.some(s => s.status === "ok") ? "No roles retained" : "No roles seen yet"}
-            description={scans.some(s => s.status === "ok")
-              ? "Scanning has completed. Roles that pass your filters or are retained for tracking appear here. See the scan history above for the number checked."
-              : "Roles appear here after the first successful scan."}
-          />
-        ) : (
-          <Table>
-            <THead>
-              <tr>
-                <TH>Title</TH>
-                <TH>Location</TH>
-                <TH>Status</TH>
-                <TH>In table</TH>
-                <TH>Fit</TH>
-                <TH>Live for</TH>
-              </tr>
-            </THead>
-            <TBody>
-              {roles.map((job) => (
-                <TR key={job.id}>
-                  <TD>
-                    <a href={job.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
-                      {job.title}
-                    </a>
-                  </TD>
-                  <TD>{job.location ?? "—"}</TD>
-                  <TD>
-                    <Badge tone={jobStatusTone(displayStatus(job, now))}>{displayStatus(job, now)}</Badge>
-                  </TD>
-                  <TD>
-                    <div className="flex gap-1">
-                      {job.inTable ? <Badge tone="blue">in table</Badge> : <Badge tone="gray">not in table</Badge>}
-                      {job.nearMiss && <Badge tone="amber">near miss</Badge>}
-                    </div>
-                  </TD>
-                  <TD>{job.fitScore ?? "—"}</TD>
-                  <TD>{formatDuration(liveFor(job, now).days)}</TD>
                 </TR>
               ))}
             </TBody>

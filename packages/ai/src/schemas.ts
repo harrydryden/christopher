@@ -69,7 +69,7 @@ export const FilterSuggestionsSchema = z.object({
   suggestions: z
     .array(
       z.object({
-        type: z.enum(["keyword_include", "keyword_exclude", "location", "pause_company", "hide_threshold"]),
+        type: z.enum(["keyword_include", "keyword_exclude", "location", "pause_company"]),
         value: z.record(z.string(), z.unknown()),
         rationale: z.string(),
         evidence: z.array(z.string()).max(8),

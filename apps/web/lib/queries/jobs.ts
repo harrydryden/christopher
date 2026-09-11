@@ -1,3 +1,5 @@
+import { roleStatusSql } from "@christopher/db";
+import { roleStatus, ROLE_STATUSES, type RoleStatus } from "@christopher/core";
 import { getTableColumns, and, desc, eq, inArray, ne, isNull, isNotNull, sql, lte } from "drizzle-orm";
 import { careerSources, companies, decisions, jobEvents, jobs, type Job, type SourceType } from "@christopher/db/schema";
 import { displayStatus, formatDuration, liveFor, type AppSettings, type DisplayStatus } from "@christopher/core";
@@ -65,7 +67,7 @@ function baseRolesSelect(summary = false) {
 
 /** Every in-table (keyword+location gate passed) job: the main roles table before display filters. */
 export async function fetchTableJobs(archived = false, summary = false): Promise<RoleRow[]> {
-  const rows = await baseRolesSelect(summary).where(and(archived ? isNotNull(jobs.archivedAt) : isNull(jobs.archivedAt), archived ? undefined : eq(jobs.inTable, true), ne(companies.status, "archived")));
+  const rows = await baseRolesSelect(summary).where(and(archived ? eq(roleStatusSql, "archived") : ne(roleStatusSql, "archived")));
   return rows.map((r) => ({ ...r, events: [] as RoleEvent[] }));
 }
 
@@ -157,9 +159,10 @@ function toList(v: string | string[] | undefined): string[] {
 
 export function parseRolesFilters(sp: RawSearchParams): RolesFilters {
   const statusRaw = toList(sp.status).filter((s): s is StatusFilter => (STATUS_VALUES as readonly string[]).includes(s));
-  const status = sp.status === undefined ? (["new", "active"] as StatusFilter[]) : statusRaw;
+  const status = sp.status === undefined ? (["new", "active", "closed"] as StatusFilter[]) : statusRaw;
 
-  const decisionRaw = first(sp.decision);
+  const view = first(sp.view);
+  const decisionRaw = view === "user-shortlisted" ? "apply" : view === "user-dismissed" ? "skip" : view === "archived" || first(sp.archive) === "1" ? "all" : view === "auto-matched" ? "inbox" : first(sp.decision);
   const decision = (DECISION_VALUES as readonly string[]).includes(decisionRaw ?? "") ? (decisionRaw as DecisionFilter) : "inbox";
 
   const minFitRaw = first(sp.minFit);
@@ -199,7 +202,7 @@ export function matchesRolesFilters(row: RoleRow, filters: RolesFilters, now: Da
 
   if (filters.company && row.company.id !== filters.company) return false;
 
-  if (filters.decision === "inbox" && row.decision?.decision === "skip") return false;
+  if (filters.decision === "inbox" && row.decision) return false;
   if (filters.decision === "undecided" && row.decision) return false;
   if (filters.decision === "apply" && row.decision?.decision !== "apply") return false;
   if (filters.decision === "skip" && row.decision?.decision !== "skip") return false;
@@ -284,14 +287,7 @@ export function filtersToQueryString(filters: RolesFilters): string {
 
 /** Split in-table open roles below the hide threshold into a separate bucket, unless showHidden is set. */
 export function splitHidden(rows: RoleRow[], hideThreshold: number | null, showHidden: boolean): { visible: RoleRow[]; hidden: RoleRow[] } {
-  if (hideThreshold === null || showHidden) return { visible: rows, hidden: [] };
-  const visible: RoleRow[] = [];
-  const hidden: RoleRow[] = [];
-  for (const row of rows) {
-    const isHiddenCandidate = row.job.status === "open" && (row.job.fitScore === null ? false : row.job.fitScore < hideThreshold);
-    (isHiddenCandidate ? hidden : visible).push(row);
-  }
-  return { visible, hidden };
+  return { visible: rows, hidden: [] };
 }
 
 // ---------------------------------------------------------------------------
@@ -330,6 +326,7 @@ export interface RoleRowVM {
   employmentType: string | null;
   salaryText: string | null;
   status: DisplayStatus;
+  workflowStatus: RoleStatus;
   liveForText: string;
   liveForTitle: string;
   seeded: boolean;
@@ -373,6 +370,7 @@ export function buildRoleRowVM(row: RoleRow, now: Date = new Date()): RoleRowVM 
     employmentType: row.job.employmentType,
     salaryText: row.job.salaryText,
     status,
+    workflowStatus: roleStatus(row.job, row.decision),
     liveForText,
     liveForTitle,
     seeded: row.job.seeded,
@@ -390,7 +388,7 @@ export function buildRoleRowVM(row: RoleRow, now: Date = new Date()): RoleRowVM 
     decision: row.decision
       ? { id: row.decision.id, decision: row.decision.decision, reason: row.decision.reason, createdLabel: relativeTime(row.decision.createdAt, now) }
       : null,
-    events: row.events.map((e) => ({ id: e.id, type: e.type, label: eventTypeLabel(e.type), title: `${relativeTime(e.at, now)} · ${e.at.toISOString()}` })),
+    events: row.events.map((e) => ({ id: e.id, type: e.type, label: e.payload.action === "archived" ? `Archived: ${e.payload.reason ?? "Put away by you"}` : e.payload.action === "restored" ? "Restored by you" : eventTypeLabel(e.type), title: `${relativeTime(e.at, now)} · ${e.at.toISOString()}` })),
   };
 }
 
@@ -401,15 +399,15 @@ export async function fetchRolePage(filters: RolesFilters, archived: boolean, th
   const status = sql`case when ${jobs.status} = 'closed' then 'closed' when ${liveStart} >= ${new Date(now.getTime() - 7 * 86400000)} then 'new' else 'active' end`;
   const statuses = filters.closed ? [...new Set([...filters.status, 'closed'])] : filters.status;
   const conditions = and(
-    archived ? isNotNull(jobs.archivedAt) : and(isNull(jobs.archivedAt), eq(jobs.inTable, true)), ne(companies.status, 'archived'),
+    archived ? eq(roleStatusSql, "archived") : ne(roleStatusSql, "archived"),
     statuses.length ? inArray(status, statuses) : undefined,
     filters.company ? eq(companies.id, filters.company) : undefined,
-    filters.decision === 'inbox' ? sql`(${decisions.decision} is null or ${decisions.decision} <> 'skip')` : filters.decision === 'undecided' ? isNull(decisions.id) : ['apply','skip'].includes(filters.decision) ? eq(decisions.decision, filters.decision as 'apply' | 'skip') : undefined,
+    filters.decision === 'inbox' ? isNull(decisions.id) : filters.decision === 'undecided' ? isNull(decisions.id) : ['apply','skip'].includes(filters.decision) ? eq(decisions.decision, filters.decision as 'apply' | 'skip') : undefined,
     filters.minFit !== null ? sql`${jobs.fitScore} >= ${filters.minFit}` : undefined,
     filters.q ? sql`position(lower(${filters.q}) in lower(${jobs.title})) > 0` : undefined,
     filters.location ? sql`(position(lower(${filters.location}) in lower(coalesce(${jobs.location}, ''))) > 0 or exists (select 1 from jsonb_array_elements_text(${jobs.locations}) l where position(lower(${filters.location}) in lower(l)) > 0))` : undefined,
   );
-  const hidden = threshold !== null && !filters.showHidden ? sql`(${jobs.status} = 'open' and ${jobs.fitScore} is not null and ${jobs.fitScore} < ${threshold})` : sql`false`;
+  const hidden = sql`false`; // Fit is an explicit filter, never a second hidden workflow.
   const countFor = async (extra: ReturnType<typeof sql>) => {
     const [row] = await db().select({ n: sql<number>`count(*)::int` }).from(baseRolesSelect(true).where(and(conditions, extra)).as('filtered'));
     return row?.n ?? 0;
@@ -432,4 +430,14 @@ export async function fetchRolePage(filters: RolesFilters, archived: boolean, th
   ]);
   console.info(JSON.stringify({ event: 'role_page', durationMs: Date.now() - started, rows: visible.length, total, page }));
   return { visible: visible.map(row => ({ ...row, events: [] as RoleEvent[] })), hidden: concealed.map(row => ({ ...row, events: [] as RoleEvent[] })), total, hiddenTotal, page, pageCount };
+}
+
+
+export async function fetchRoleCounts(companyId?: string): Promise<Record<RoleStatus, number>> {
+  const rows = await db().select({ status: roleStatusSql, n: sql<number>`count(*)::int` }).from(jobs)
+    .leftJoin(decisions, and(eq(decisions.jobId, jobs.id), eq(decisions.superseded, false)))
+    .where(companyId ? eq(jobs.companyId, companyId) : undefined).groupBy(roleStatusSql);
+  const counts = Object.fromEntries(ROLE_STATUSES.map(status => [status, 0])) as Record<RoleStatus, number>;
+  for (const row of rows) counts[row.status] = row.n;
+  return counts;
 }

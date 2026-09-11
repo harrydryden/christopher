@@ -64,7 +64,9 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
   if (!job) return { skipped: "job not found" };
   if (job.status !== "open") return { skipped: "job is closed" };
   const settings = await deps.settings();
-  if (!job.inTable) return { skipped: "not in table and near-miss disabled" };
+  const [choice] = await deps.db.select({ decision: schema.decisions.decision }).from(schema.decisions)
+    .where(and(eq(schema.decisions.jobId, jobId), eq(schema.decisions.superseded, false))).limit(1);
+  if (!job.inTable && choice?.decision !== "apply") return { skipped: "role does not match and is not shortlisted" };
   if (await aiBudgetExceeded(deps)) return { skipped: "ai budget exceeded" };
 
   const [company] = await deps.db.select().from(schema.companies).where(eq(schema.companies.id, job.companyId)).limit(1);
@@ -112,7 +114,7 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
       fitRationale: result.rationale,
       fitProfileVersion: profile?.version ?? null,
       fitScoredAt: deps.now(),
-      hidden: settings.hideThreshold !== null && job.inTable ? result.score < settings.hideThreshold : false,
+      hidden: false,
     })
     .where(eq(schema.jobs.id, job.id));
   await tx.insert(schema.settings).values({ key, value: fingerprint }).onConflictDoUpdate({ target: schema.settings.key, set: { value: fingerprint, updatedAt: deps.now() } });
@@ -285,7 +287,7 @@ export async function handleReevaluateGate(_task: Task, deps: WorkerDeps): Promi
 export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<unknown> {
   const shortlisted = sql<boolean>`exists (select 1 from decisions d where d.job_id = ${schema.jobs.id} and d.superseded = false and d.decision = 'apply')`;
   const rows = await deps.db.select({ id: schema.jobs.id, shortlisted }).from(schema.jobs)
-    .where(and(eq(schema.jobs.status, "open"), eq(schema.jobs.inTable, true))).orderBy(desc(shortlisted));
+    .where(and(eq(schema.jobs.status, "open"), sql`(${schema.jobs.inTable} or ${shortlisted})`)).orderBy(desc(shortlisted));
   let queued = 0;
   for (let offset = 0; offset < rows.length; offset += 250) {
     const values = rows.slice(offset, offset + 250).map(row => ({ type: 'score_job' as const, payload: { jobId: row.id }, dedupeKey: dedupeKeyFor('score_job', { jobId: row.id }), priority: row.shortlisted ? 1 : priorityFor('score_job') }));

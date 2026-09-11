@@ -67,7 +67,7 @@ export interface FilterSuggestionRow {
 
 /** Pending filter suggestions, with the target company's name resolved for pause_company ones. */
 export async function listPendingFilterSuggestionsResolved(): Promise<FilterSuggestionRow[]> {
-  const rows = await listPendingFilterSuggestions();
+  const rows = (await listPendingFilterSuggestions()).filter(row => row.type !== "hide_threshold");
   const companyIds = [...new Set(rows.map((r) => (extractSuggestionValue(r).kind === "company" ? (extractSuggestionValue(r) as { companyId: string }).companyId : null)).filter((id): id is string => !!id))];
   const companyRows = companyIds.length ? await db().select({ id: companies.id, name: companies.name }).from(companies).where(inArray(companies.id, companyIds)) : [];
   const nameById = new Map(companyRows.map((c) => [c.id, c.name]));

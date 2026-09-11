@@ -122,7 +122,8 @@ export const A8_SUGGEST_FILTERS = `You propose changes to the keyword and locati
 Base every suggestion on the recorded decisions and on roles that fell outside the current keywords
 but scored well. Return at most five suggestions, each with:
 - type: keyword_include (value {"term": "..."}), keyword_exclude ({"term": "..."}),
-  location ({"term": "..."}), pause_company ({"companyName": "..."}) or hide_threshold ({"threshold": 40}).
+  location ({"term": "..."}) or pause_company ({"companyName": "..."}).
+Never suggest hiding roles by fit score. Scores inform review; user decisions determine workflow.
 - rationale: one sentence.
 - evidence: the specific decisions that support it, as short strings.
 

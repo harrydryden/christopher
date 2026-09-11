@@ -81,7 +81,7 @@ export async function acceptFilterSuggestion(suggestionId: string): Promise<void
   } else if (suggestion.type === "location" && extracted.kind === "term") {
     await saveSettingsAndGate({ gate: { ...settings.gate, locationTerms: [...new Set([...settings.gate.locationTerms, extracted.term])] } });
   } else if (suggestion.type === "hide_threshold" && extracted.kind === "threshold") {
-    await setSetting("hideThreshold", extracted.threshold);
+    throw new Error("Automatic score hiding has been retired. Use the minimum fit filter on Roles.");
   } else if (suggestion.type === "pause_company" && extracted.kind === "company") {
     await db().update(companies).set({ status: "paused" }).where(eq(companies.id, extracted.companyId));
   }

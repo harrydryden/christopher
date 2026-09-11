@@ -431,7 +431,7 @@ describe("functional review regressions", () => {
     expect(job!.nearMiss).toBe(false);
   }, 60_000);
 
-  it("cleans non-matches but preserves decisions, CVs and archived roles", async () => {
+  it("archives retained non-matches but preserves active decisions", async () => {
     await setGate({});
     await addCompany("https://www.acme.example/", "acme.example");
     await queue.drain();
@@ -442,9 +442,10 @@ describe("functional review regressions", () => {
     await db.insert(schema.cvDrafts).values({ jobId: rows[2]!.id, jobTitle: rows[2]!.title, companyName: "Acme", jobDescription: "Role", libraryVersion: 1, librarySnapshot: { name: "Test", contact: "", profile: "", entries: [] }, model: "fixture" });
     await setGate({ includeKeywords: ["no-match"] });
     const result = await reevaluateGate(db, await deps.settings());
-    expect(result.removed).toBe(1);
+    expect(result.removed).toBe(0);
     const kept = await db.select().from(schema.jobs);
-    expect(kept).toHaveLength(3);
+    expect(kept).toHaveLength(4);
+    expect(kept.filter(job => job.archivedAt)).toHaveLength(3);
     expect(kept.every(j => !j.inTable && !j.nearMiss)).toBe(true);
     expect((await db.select().from(schema.decisions))[0]!.reason).toBe("Too junior");
   });
@@ -458,11 +459,11 @@ describe("functional review regressions", () => {
     await setGate({ includeKeywords: ["no-match"] });
     const targeted = await reevaluateGate(db, await deps.settings(), new Date(), rows[0]!.id);
     expect(targeted.examined).toBe(1);
-    expect(targeted.removed).toBe(1);
-    expect(await db.select().from(schema.jobs)).toHaveLength(rows.length - 1);
+    expect(targeted.removed).toBe(0);
+    expect((await db.select().from(schema.jobs)).filter(job => job.archivedAt)).toHaveLength(1);
     const all = await reevaluateGate(db, await deps.settings());
-    expect(all.removed).toBe(rows.length - 1);
-    expect(await db.select().from(schema.jobs)).toHaveLength(0);
+    expect(all.removed).toBe(0);
+    expect((await db.select().from(schema.jobs)).filter(job => job.archivedAt)).toHaveLength(rows.length);
   });
 
   it("does not reset missing counters on a partial scan", async () => {
@@ -563,7 +564,7 @@ describe("functional review regressions", () => {
     const task = { payload: { jobId: near[0]!.id } } as never;
     const outcomes = await Promise.all([handleScoreJob(task, aiDeps), handleScoreJob(task, aiDeps), handleScoreJob(task, aiDeps)]);
     expect(scoreJob).not.toHaveBeenCalled();
-    expect(outcomes.filter((r) => (r as { skipped?: string }).skipped === "not in table and near-miss disabled")).toHaveLength(3);
+    expect(outcomes.filter((r) => (r as { skipped?: string }).skipped === "role does not match and is not shortlisted")).toHaveLength(3);
   }, 60_000);
 });
 

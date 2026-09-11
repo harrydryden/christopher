@@ -1,9 +1,9 @@
-import { DECISION_VALUES, SORT_KEYS, STATUS_VALUES, type RolesFilters } from "@/lib/queries/jobs";
+import { SORT_KEYS, STATUS_VALUES, type RolesFilters } from "@/lib/queries/jobs";
 
-const STATUS_LABELS: Record<(typeof STATUS_VALUES)[number], string> = { new: "New", active: "Active", closed: "Closed" };
-const DECISION_LABELS: Record<(typeof DECISION_VALUES)[number], string> = { inbox: "Inbox", all: "All decisions", undecided: "Undecided", apply: "Shortlist", skip: "Skipped" };
+const STATUS_LABELS: Record<(typeof STATUS_VALUES)[number], string> = { new: "Newly opened", active: "Open", closed: "Closed" };
+
 const SORT_LABELS: Record<(typeof SORT_KEYS)[number], string> = {
-  status: "Status (default)",
+  status: "Vacancy age",
   fit: "Fit score",
   company: "Company",
   liveFor: "Live for",
@@ -13,24 +13,23 @@ const SORT_LABELS: Record<(typeof SORT_KEYS)[number], string> = {
 };
 
 export function RolesFilterBar({
-  archived = false,
+  path = "/", view = "auto-matched", companyScoped = false,
   filters,
   companyOptions,
-  hideThresholdSet,
   exportHref,
 }: {
-  archived?: boolean;
+  path?: string; view?: string; companyScoped?: boolean;
   filters: RolesFilters;
   companyOptions: Array<{ id: string; name: string }>;
-  hideThresholdSet: boolean;
   exportHref: string;
 }) {
   const inputClass =
     "rounded-md border border-slate-300 bg-white px-2 py-1 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500";
   return (
-    <form method="get" className="mb-4 flex flex-wrap items-end gap-3 rounded-lg border border-slate-200 bg-white p-3">
-      {archived && <input type="hidden" name="archive" value="1" />}
-      <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
+    <form action={path} method="get" className="mb-4 flex flex-wrap items-end gap-3 rounded-lg border border-slate-200 bg-white p-3">
+      <input type="hidden" name="view" value={view} />
+      {companyScoped && <input type="hidden" name="company" value={filters.company} />}
+      {!companyScoped && <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
         Company
         <select name="company" defaultValue={filters.company} className={inputClass}>
           <option value="">All companies</option>
@@ -40,7 +39,7 @@ export function RolesFilterBar({
             </option>
           ))}
         </select>
-      </label>
+      </label>}
       <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
         Search title
         <input type="text" name="q" defaultValue={filters.q} placeholder="Search…" className={`w-40 ${inputClass}`} />
@@ -52,38 +51,19 @@ export function RolesFilterBar({
         <button type="submit" className="rounded-md bg-[var(--app-navy)] px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700">
           Apply filters
         </button>
-        <a href={archived ? "/?archive=1" : "/"} className="rounded-md px-2 py-1.5 text-sm text-slate-500 hover:text-slate-800">
+        <a href={`${path}?view=${view}`} className="rounded-md px-2 py-1.5 text-sm text-slate-500 hover:text-slate-800">
           Reset
         </a>
       </div>
-      <section className="w-full">
-        <h3 className="text-sm text-slate-500">More filters and sorting</h3>
+      <details className="w-full">
+        <summary className="cursor-pointer text-xs text-slate-500">More filters and sorting</summary>
         <div className="mt-3 flex flex-wrap items-end gap-3">
       <fieldset className="flex flex-col gap-1">
-        <legend className="text-xs font-medium text-slate-500">Status</legend>
-        <div className="flex gap-2">
-          {STATUS_VALUES.filter(s => s !== "closed").map((s) => (
-            <label key={s} className="flex items-center gap-1 text-sm">
-              <input type="checkbox" name="status" value={s} defaultChecked={filters.status.includes(s)} />
-              {STATUS_LABELS[s]}
-            </label>
-          ))}
-        </div>
+        <legend className="text-xs font-medium text-slate-500">Vacancy availability</legend>
+        <div className="flex gap-2">{STATUS_VALUES.map(status => <label key={status} className="flex items-center gap-1 text-sm">
+          <input type="checkbox" name="status" value={status} defaultChecked={filters.status.includes(status)} />{STATUS_LABELS[status]}
+        </label>)}</div>
       </fieldset>
-
-
-
-      <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
-        Decision
-        <select name="decision" defaultValue={filters.decision} className={inputClass}>
-          {DECISION_VALUES.map((d) => (
-            <option key={d} value={d}>
-              {DECISION_LABELS[d]}
-            </option>
-          ))}
-        </select>
-      </label>
-
       <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
         Location contains
         <input type="text" name="location" defaultValue={filters.location} placeholder="e.g. London" className={`w-32 ${inputClass}`} />
@@ -115,20 +95,8 @@ export function RolesFilterBar({
         </select>
       </label>
 
-      <label className="flex items-center gap-1 pb-1.5 text-sm">
-        <input type="checkbox" name="closed" value="1" defaultChecked={filters.closed || filters.status.includes("closed")} />
-        Show closed
-      </label>
-
-      {hideThresholdSet && (
-        <label className="flex items-center gap-1 pb-1.5 text-sm">
-          <input type="checkbox" name="showHidden" value="1" defaultChecked={filters.showHidden} />
-          Show hidden
-        </label>
-      )}
-
         </div>
-      </section>
+      </details>
 
     </form>
   );

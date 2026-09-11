@@ -7,7 +7,7 @@ export const CvThemeSchema = z.object({
 });
 export type CvTheme = z.infer<typeof CvThemeSchema>;
 export const CV_THEMES: Record<string, CvTheme> = {
-  Navy: { version: 1, primary: "#234766", background: "#ffffff", surface: "#eff4f8", pill: "#e3edf5", introPanel: true, skillPills: true },
+  Navy: { version: 1, primary: "#142D46", background: "#ffffff", surface: "#eff4f8", pill: "#e3edf5", introPanel: true, skillPills: true },
   Gold: { version: 1, primary: "#ffcc00", background: "#ffffff", surface: "#ffffff", pill: "#fff2b3", introPanel: true, skillPills: true },
   Forest: { version: 1, primary: "#285447", background: "#fffefa", surface: "#eef4ee", pill: "#dfebe2", introPanel: true, skillPills: true },
   Plum: { version: 1, primary: "#653d64", background: "#fffcff", surface: "#f5eef5", pill: "#eedfee", introPanel: true, skillPills: true },

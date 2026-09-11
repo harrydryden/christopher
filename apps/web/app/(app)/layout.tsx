@@ -1,29 +1,12 @@
 import { WorkspaceShell } from "@/components/WorkspaceShell";
 import { NavigationMetrics } from "@/components/NavigationMetrics";
-import Link from "next/link";
+import { ScanStatusBanner } from "@/components/ScanStatusBanner";
+import { getScanStatus } from "@/lib/scan-status";
 import { Suspense, type ReactNode } from "react";
 import { logout } from "@/app/login/actions";
 import { WorkspaceNav } from "@/components/WorkspaceNav";
 import { NavLink } from "@/components/NavLink";
-import { getLatestScanRun } from "@/lib/queries/companies";
-import { getSettings } from "@/lib/settings";
-import { localDateParts } from "@christopher/core";
-import type { ScanRun } from "@christopher/db/schema";
-
 export const dynamic = "force-dynamic";
-
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
-
-function scanBanner(run: ScanRun | null, tz: string, now: Date): { text: string; href: string | null } {
-  if (!run) return { text: "No scans yet", href: null };
-  const parts = localDateParts(run.startedAt, tz);
-  const today = localDateParts(now, tz);
-  const [, month, day] = parts.ymd.split("-");
-  const dayLabel = parts.ymd === today.ymd ? "Today" : `${WEEKDAYS[parts.weekday]} ${Number(day)}/${Number(month)}`;
-  const roleWord = run.newRoles === 1 ? "role" : "roles";
-  const text = `${dayLabel} ${parts.hm} · ${run.companiesOk} of ${run.companiesTotal} companies OK · ${run.newRoles} new ${roleWord}`;
-  return { text, href: run.companiesFailed > 0 ? "/health" : null };
-}
 
 const NAV_ITEMS = [
   { href: "/", label: "Roles" },
@@ -34,9 +17,8 @@ const NAV_ITEMS = [
 ];
 
 async function ScanBanner() {
-  const [settings, latestRun] = await Promise.all([getSettings(), getLatestScanRun()]);
-  const banner = scanBanner(latestRun, settings.timezone, new Date());
-  return banner.href ? <Link href={banner.href} className="underline decoration-dotted">{banner.text}</Link> : <span>{banner.text}</span>;
+  const status = await getScanStatus();
+  return <ScanStatusBanner initialText={status.text} />;
 }
 export default function AppLayout({ children }: { children: ReactNode }) {
 

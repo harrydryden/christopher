@@ -1,12 +1,13 @@
 "use client";
 
-import { startTransition, useEffect, useRef, useState } from "react";
+import { Fragment, startTransition, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { decide, archiveRoles } from "@/app/actions/decisions";
-import { Badge, decisionTone, jobStatusTone } from "@/components/Badge";
+import { Badge, decisionTone } from "@/components/Badge";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import type { RoleRowVM } from "@/lib/queries/jobs";
-import { truncate } from "@/lib/format";
+
+import { ROLE_STATUS_LABELS } from "@christopher/core/role-workflow";
 
 type ReasonKind = "apply" | "skip";
 
@@ -31,16 +32,7 @@ function FitBar({ score }: { score: number | null }) {
   );
 }
 
-function ExternalLinkIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true" className="inline-block">
-      <path d="M6 3H3.5A1.5 1.5 0 0 0 2 4.5v8A1.5 1.5 0 0 0 3.5 14h8a1.5 1.5 0 0 0 1.5-1.5V10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-      <path d="M9.5 2H14v4.5M14 2 7 9" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-export function RolesTable({ rows: inputRows, keyboard = false, archived = false, emptyState }: { archived?: boolean; rows: RoleRowVM[]; keyboard?: boolean; emptyState: React.ReactNode }) {
+export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = false, archived = false, emptyState }: { hideCompany?: boolean; archived?: boolean; rows: RoleRowVM[]; keyboard?: boolean; emptyState: React.ReactNode }) {
   const router = useRouter();
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const rows = inputRows.filter(row => !removedIds.has(row.id));
@@ -61,6 +53,7 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
     });
   }
   const [highlightIndex, setHighlightIndex] = useState(-1);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [reasonBox, setReasonBox] = useState<ReasonBoxState | null>(null);
   const [flashError, setFlashError] = useState<string | null>(null);
   const reasonBoxRef = useRef(reasonBox);
@@ -68,6 +61,7 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   function openReasonBox(jobId: string, kind: ReasonKind, prefill = "") {
+    setExpandedId(jobId);
     setReasonBox({ jobId, kind, text: prefill, pending: false, error: null });
     requestAnimationFrame(() => textareaRef.current?.focus());
   }
@@ -87,6 +81,8 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
       return;
     }
     if (isBoxed) setReasonBox(null);
+    const previous = inputRows.find(row => row.id === jobId);
+    if (archived || previous?.decision?.decision !== decision) setRemovedIds(ids => new Set([...ids, jobId]));
     router.refresh();
     } catch {
       const error = "Could not save. Reload to check the current state before retrying.";
@@ -103,6 +99,7 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
       const target = e.target as HTMLElement | null;
       const isEditable = !!target && (target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.tagName === "SELECT" || target.tagName === "BUTTON" || target.tagName === "A" || target.isContentEditable);
 
+      if (reasonBoxRef.current?.pending) return;
       if (e.key === "Escape") {
         if (reasonBoxRef.current) {
           setReasonBox(null);
@@ -151,29 +148,27 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
 
   return (
     <div>
-      {keyboard && <p className="mb-3 text-xs text-slate-500">Keyboard: <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>a</kbd> shortlist · <kbd>s</kbd> skip · <kbd>o</kbd> open</p>}
+      {keyboard && <details className="mb-3 text-xs text-slate-500"><summary className="cursor-pointer">Keyboard shortcuts</summary><p> <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>a</kbd> shortlist · <kbd>s</kbd> dismiss · <kbd>o</kbd> open</p></details>}
       {flashError && (
         <p className="mb-2 rounded-md bg-red-50 px-3 py-1.5 text-sm text-red-700">{flashError}</p>
       )}
       <Table>
         <THead>
           <tr>
-            <TH>Company</TH>
-            <TH className="w-8" />
+            {!hideCompany && <TH>Company</TH>}
             <TH>Role</TH>
             <TH>Location</TH>
-            <TH>Live for</TH>
-            <TH>Status</TH>
             <TH>Fit</TH>
-            <TH>Decision</TH>
+            <TH><span className="sr-only">Action</span></TH>
           </tr>
         </THead>
         <TBody>
           {rows.map((row, index) => {
             const boxed = reasonBox?.jobId === row.id ? reasonBox : null;
             return (
-                <TR key={row.id} highlighted={index === highlightIndex}>
-                  <TD id={`role-row-${row.id}`}>
+              <Fragment key={row.id}>
+                <TR highlighted={index === highlightIndex}>
+                  {!hideCompany && <TD>
                     <a href={`/companies/${row.companyId}`} className="flex items-center gap-1.5 hover:underline">
                       {row.companyFaviconUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
@@ -193,24 +188,12 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
                       )}
                       <span className="max-w-[12rem] truncate">{row.companyName}</span>
                     </a>
-                  </TD>
-                  <TD className="w-8 px-1 text-center">
-                    <a
-                      href={row.companyHomepageUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title={row.companyHomepageUrl}
-                      className="text-slate-500 hover:text-slate-700"
-                    >
-                      <ExternalLinkIcon />
-                    </a>
-                  </TD>
-                  <TD className="max-w-[22rem]">
-                    <a href={row.url} target="_blank" rel="noopener noreferrer" className="font-medium text-slate-900 hover:underline">
+                  </TD>}
+                  <TD id={`role-row-${row.id}`} className="max-w-[22rem]">
+                    <button type="button" disabled={reasonBox?.pending} onClick={() => { setExpandedId(expandedId === row.id ? null : row.id); setReasonBox(null); }} aria-expanded={expandedId === row.id} className="text-left font-medium text-slate-900 hover:underline">
                       {row.title}
-                    </a>
-                    <p className="mt-1 text-xs text-slate-500">{[row.department, row.employmentType, row.salaryText].filter(Boolean).join(" · ")}</p>
-                    <a href={`/cv?job=${row.id}`} className="mt-2 inline-block text-xs underline">Build CV</a>
+                    </button>
+                    <p className="mt-1 text-xs text-slate-500"><span title={row.liveForTitle}>{row.liveForText}</span>{row.status === "closed" && <span className="ml-2 font-medium text-amber-700">Vacancy closed</span>}</p>
                   </TD>
                   <TD className="max-w-[10rem]">
                     <div className="flex flex-wrap items-center gap-1">
@@ -220,35 +203,64 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
                     </div>
                   </TD>
                   <TD className="whitespace-nowrap">
-                    <span title={row.liveForTitle}>{row.liveForText}</span>
-                  </TD>
-                  <TD>
-                    <Badge tone={jobStatusTone(row.status)}>{row.status}</Badge>
-                  </TD>
-                  <TD className="min-w-[12rem] max-w-xs">
                     <FitBar score={row.fitScore} />
-                    {row.fitRationale && <p className="mt-1 text-xs text-slate-500">{row.fitRationale}</p>}
                   </TD>
-                  <TD className="min-w-[14rem]">
+                  <TD className="text-right">
+                    {row.workflowStatus === "user-shortlisted" ? <a href={`/cv?job=${row.id}`} className="whitespace-nowrap rounded border border-slate-200 px-3 py-1 text-xs font-medium">Build CV</a>
+                    : archived ? <button type="button" disabled={archivingId !== null || reasonBox?.pending} onClick={() => void archiveRow(row.id)} className="rounded border border-slate-200 px-3 py-1 text-xs font-medium disabled:opacity-40">{archivingId === row.id ? "Restoring…" : "Restore"}</button>
+                    : <button
+                      type="button"
+                      aria-expanded={expandedId === row.id}
+                      aria-controls={`role-review-${row.id}`}
+                      aria-label={`${expandedId === row.id ? "Close review for" : "Review"} ${row.title} at ${row.companyName}`}
+                      disabled={reasonBox?.pending}
+                      onClick={() => { setExpandedId(expandedId === row.id ? null : row.id); setReasonBox(null); }}
+                      className="rounded border border-slate-200 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-40"
+                    >
+                      {expandedId === row.id ? "Close" : row.workflowStatus === "user-dismissed" ? "Reconsider" : "Review"}
+                    </button>}
+                  </TD>
+                </TR>
+                {expandedId === row.id && (
+                  <tr id={`role-review-${row.id}`} className="bg-slate-50/70">
+                    <td colSpan={hideCompany ? 4 : 5} className="px-4 py-4">
+                      <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(16rem,22rem)]">
+                        <div className="space-y-3">
+                          <p className="text-sm font-medium text-slate-900">{row.title}</p>
+                          <p className="text-xs text-slate-500">{[row.department, row.employmentType, row.salaryText].filter(Boolean).join(" · ")}</p>
+                          {row.fitRationale && <div><h3 className="mb-1 text-xs font-medium text-slate-700">Why this fits</h3><p className="max-w-3xl text-sm text-slate-600">{row.fitRationale}</p></div>}
+                          {row.events.filter(event => event.label.includes("archiv")).map(event => <p key={event.id} className="text-xs text-slate-500">{event.label}</p>)}
+                          <div className="flex flex-wrap items-center gap-4 text-xs">
+                            <a href={`/cv?job=${row.id}`} className="font-medium underline">Build CV</a>
+                            <a href={row.url} target="_blank" rel="noopener noreferrer" className="text-slate-500 underline">View vacancy ↗</a>
+                            <a href={row.companyHomepageUrl} target="_blank" rel="noopener noreferrer" className="text-slate-500 underline">Company website ↗</a>
+                          </div>
+                        </div>
+                        <div className="space-y-3">
+                          <h3 className="text-xs font-medium text-slate-700">{ROLE_STATUS_LABELS[row.workflowStatus]}</h3>
                     {boxed ? (
                       <div className="flex flex-col gap-1.5">
                         <div className="flex gap-1">
                           <button
                             type="button"
-                            onClick={() => setReasonBox({ ...boxed, kind: "apply" })}
+                            disabled={boxed.pending} onClick={() => setReasonBox({ ...boxed, kind: "apply" })}
                             className={`rounded px-1.5 py-0.5 text-xs font-medium ${boxed.kind === "apply" ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600"}`}
                           >
                             Shortlist
                           </button>
                           <button
                             type="button"
-                            onClick={() => setReasonBox({ ...boxed, kind: "skip" })}
+                            disabled={boxed.pending} onClick={() => setReasonBox({ ...boxed, kind: "skip" })}
                             className={`rounded px-1.5 py-0.5 text-xs font-medium ${boxed.kind === "skip" ? "bg-red-600 text-white" : "bg-slate-100 text-slate-600"}`}
                           >
-                            Skip
+                            Dismiss
                           </button>
                         </div>
-                        <textarea
+                        {boxed.kind === "skip" && <div className="flex flex-wrap gap-1">
+                          {["Wrong location", "Wrong seniority", "Not interested"].map(reason => <button key={reason} type="button" disabled={boxed.pending}
+                            onClick={() => setReasonBox({ ...boxed, text: reason })} className="rounded border border-slate-200 px-2 py-1 text-xs hover:bg-slate-100">{reason}</button>)}
+                        </div>}
+                        <textarea disabled={boxed.pending}
                           ref={textareaRef}
                           value={boxed.text}
                           onChange={(e) => setReasonBox({ ...boxed, text: e.target.value })}
@@ -259,10 +271,10 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
                               e.currentTarget.blur();
                             } else if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
                               e.preventDefault();
-                              if (!(boxed.kind === "skip" && boxed.text.trim() === "")) void submitDecision(row.id, boxed.kind, boxed.text);
+                              if (!boxed.pending) void submitDecision(row.id, boxed.kind, boxed.text);
                             }
                           }}
-                          placeholder={boxed.kind === "skip" ? "Why? (required)" : "Why? (optional)"}
+                          placeholder="Add a reason (optional)"
                           rows={2}
                           className="w-full rounded border border-slate-300 px-1.5 py-1 text-xs outline-none focus:border-indigo-500"
                         />
@@ -270,41 +282,39 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
                         <div className="flex gap-1.5">
                           <button
                             type="button"
-                            disabled={boxed.pending || (boxed.kind === "skip" && boxed.text.trim() === "")}
+                            disabled={boxed.pending}
                             onClick={() => void submitDecision(row.id, boxed.kind, boxed.text)}
                             className="rounded bg-[var(--app-navy)] px-2 py-0.5 text-xs font-medium text-white disabled:opacity-40"
                           >
                             {boxed.pending ? "Saving…" : "Save"}
                           </button>
-                          <button type="button" onClick={() => setReasonBox(null)} className="rounded px-2 py-0.5 text-xs text-slate-500 hover:bg-slate-100">
+                          <button type="button" disabled={boxed.pending} onClick={() => setReasonBox(null)} className="rounded px-2 py-0.5 text-xs text-slate-500 hover:bg-slate-100">
                             Cancel
                           </button>
                         </div>
                       </div>
                     ) : row.decision ? (
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <Badge tone={decisionTone(row.decision.decision)}>{row.decision.decision === "apply" ? "shortlisted" : "skipped"}</Badge>
-                        <span title={row.decision.reason} className="max-w-[8rem] truncate text-xs text-slate-500">
-                          {row.decision.reason ? truncate(row.decision.reason, 40) : <em>no reason</em>}
-                        </span>
+                        <Badge tone={decisionTone(row.decision.decision)}>{row.decision.decision === "apply" ? "User-shortlisted" : "User-dismissed"}</Badge>
+                        {row.decision.reason && <p className="w-full text-sm text-slate-600">{row.decision.reason}</p>}
                         <button type="button" onClick={() => openReasonBox(row.id, row.decision!.decision, row.decision!.reason)} className="text-xs text-slate-500 underline hover:text-slate-800">
-                          Edit
+                          Reconsider
                         </button>
                         <button
                           type="button"
                           onClick={() => {
-                            if (confirm("Undo this decision?")) void submitDecision(row.id, null, "");
+                            void submitDecision(row.id, null, "");
                           }}
                           className="text-xs text-slate-500 underline hover:text-slate-800"
                         >
-                          Undo
+                          Reset my decision
                         </button>
                       </div>
                     ) : (
                       <div className="flex gap-1.5">
                         <button
                           type="button"
-                          onClick={() => openReasonBox(row.id, "apply")}
+                          onClick={() => void submitDecision(row.id, "apply", "")}
                           className="rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100"
                         >
                           Shortlist
@@ -314,13 +324,17 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
                           onClick={() => openReasonBox(row.id, "skip")}
                           className="rounded bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-100"
                         >
-                          Skip
+                          Dismiss
                         </button>
                       </div>
                     )}
-                    <button type="button" disabled={archivingId !== null} onClick={() => void archiveRow(row.id)} className="mt-2 text-xs text-slate-500 underline disabled:opacity-40">{archivingId === row.id ? "Saving…" : archived ? "Restore" : "Archive"}</button>
-                  </TD>
-                </TR>
+                    <button type="button" disabled={archivingId !== null || reasonBox?.pending} onClick={() => void archiveRow(row.id)} className="mt-2 text-xs text-slate-500 underline disabled:opacity-40">{archivingId === row.id ? "Saving…" : archived ? "Restore" : "Archive"}</button>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             );
           })}
         </TBody>

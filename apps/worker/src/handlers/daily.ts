@@ -1,4 +1,4 @@
-import { schema, enqueueTask, type Task } from "@christopher/db";
+import { scanRunSummary, schema, enqueueTask, type Task } from "@christopher/db";
 import { dedupeKeyFor, localDateParts, priorityFor } from "@christopher/core";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
@@ -85,32 +85,21 @@ async function finalise(deps: WorkerDeps): Promise<number> {
       where type = 'scan_company' and status in ('queued','running') and payload->>'scanRunId' = ${run.id}`);
     if ((pending.rows[0]?.n ?? 0) > 0) continue;
 
-    const agg = await deps.db.execute<{ ok: number; failed: number; new_roles: number; closed_roles: number; sources: number }>(sql`
-      select
-        count(*) filter (where status in ('ok','partial'))::int as ok,
-        count(*) filter (where status in ('failed','suspect_empty'))::int as failed,
-        coalesce(sum(new_count), 0)::int as new_roles,
-        coalesce(sum(closed_count), 0)::int as closed_roles,
-        count(*)::int as sources
-      from scans where scan_run_id = ${run.id}`);
-    const row = agg.rows[0];
-    const companiesOk = await deps.db.execute<{ n: number }>(sql`
-      select count(distinct cs.company_id)::int as n from scans s
-      join career_sources cs on cs.id = s.source_id
-      where s.scan_run_id = ${run.id} and s.status in ('ok','partial')`);
+    const summary = await scanRunSummary(deps.db, run.id);
+    const companiesOk = Math.min(run.companiesTotal, summary.companies_ok);
 
     await deps.db
       .update(schema.scanRuns)
       .set({
         finishedAt: deps.now(),
-        companiesOk: companiesOk.rows[0]?.n ?? 0,
-        companiesFailed: Math.max(0, run.companiesTotal - (companiesOk.rows[0]?.n ?? 0)),
-        newRoles: row?.new_roles ?? 0,
-        closedRoles: row?.closed_roles ?? 0,
+        companiesOk,
+        companiesFailed: Math.max(0, run.companiesTotal - companiesOk),
+        newRoles: summary.new_roles,
+        closedRoles: summary.closed_roles,
       })
       .where(eq(schema.scanRuns.id, run.id));
     finalised++;
-    log.info("scan run finalised", { runId: run.id, ok: companiesOk.rows[0]?.n, failed: Math.max(0, run.companiesTotal - (companiesOk.rows[0]?.n ?? 0)), newRoles: row?.new_roles });
+    log.info("scan run finalised", { runId: run.id, ok: companiesOk, failed: Math.max(0, run.companiesTotal - companiesOk), newRoles: summary.new_roles });
   }
   return finalised;
 }

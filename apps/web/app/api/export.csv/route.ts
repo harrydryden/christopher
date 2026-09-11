@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { displayStatus, liveFor } from "@christopher/core";
+import { roleStatus, liveFor } from "@christopher/core";
 import { toCsv } from "@/lib/csv";
 import {
   applyRolesFilters,
@@ -22,13 +22,13 @@ function rawParamsFrom(sp: URLSearchParams): RawSearchParams {
   return out;
 }
 
-const HEADER = ["company", "website", "role", "location", "url", "live_for_days", "status", "fit", "decision", "reason", "first_seen", "posted_at", "closed_at"];
+const HEADER = ["company", "website", "role", "location", "url", "live_for_days", "availability", "fit", "status", "reason", "first_seen", "posted_at", "closed_at"];
 
 export async function GET(request: NextRequest) {
   const now = new Date();
   const filters = parseRolesFilters(rawParamsFrom(request.nextUrl.searchParams));
   const settings = await getSettings();
-  const rows = await fetchTableJobs(request.nextUrl.searchParams.get("archive") === "1");
+  const rows = await fetchTableJobs((request.nextUrl.searchParams.get("archive") === "1" || request.nextUrl.searchParams.get("view") === "archived"));
   const filteredSorted = sortRoleRows(applyRolesFilters(rows, filters, now), filters.sort, filters.dir, now);
   const { visible } = splitHidden(filteredSorted, settings.hideThreshold, filters.showHidden);
 
@@ -39,9 +39,9 @@ export async function GET(request: NextRequest) {
     r.job.location ?? "",
     r.job.url,
     liveFor(r.job, now).days,
-    displayStatus(r.job, now),
+    r.job.status,
     r.job.fitScore ?? "",
-    r.decision?.decision ?? "",
+    roleStatus(r.job, r.decision),
     r.decision?.reason ?? "",
     r.job.firstSeenAt.toISOString(),
     r.job.postedAt ? r.job.postedAt.toISOString() : "",

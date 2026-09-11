@@ -11,6 +11,10 @@
     "./cv": {
       "types": "./src/cv.ts",
       "default": "./src/cv.ts"
+    },
+    "./role-workflow": {
+      "types": "./src/role-workflow.ts",
+      "default": "./src/role-workflow.ts"
     }
   },
   "scripts": {

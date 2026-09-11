@@ -1,5 +1,7 @@
+import { roleStatusSql } from "@christopher/db";
 import { and, asc, desc, eq, inArray, ne, sql, getTableColumns, ilike, or } from "drizzle-orm";
 import {
+  decisions,
   careerSources,
   companies,
   companyProfiles,
@@ -19,8 +21,8 @@ import { db } from "@/lib/db";
 export interface CompanyListRow {
   company: Company;
   lastScan: { status: Scan["status"]; startedAt: Date } | null;
-  openRoles: number;
-  inTableRoles: number;
+  reviewRoles: number;
+  shortlistedRoles: number;
   discovering: boolean;
   discoveryState: "queued" | "running" | null;
 }
@@ -42,10 +44,11 @@ export async function listCompanies(page = 1, q = ""): Promise<CompanyListRow[]>
     db()
       .select({
         companyId: jobs.companyId,
-        openRoles: sql<number>`count(*) filter (where ${jobs.status} = 'open')::int`,
-        inTableRoles: sql<number>`count(*) filter (where ${jobs.inTable} = true and ${jobs.archivedAt} is null)::int`,
+        reviewRoles: sql<number>`count(*) filter (where ${roleStatusSql} = 'auto-matched')::int`,
+        shortlistedRoles: sql<number>`count(*) filter (where ${roleStatusSql} = 'user-shortlisted')::int`,
       })
       .from(jobs)
+      .leftJoin(decisions, and(eq(decisions.jobId, jobs.id), eq(decisions.superseded, false)))
       .where(inArray(jobs.companyId, ids))
       .groupBy(jobs.companyId),
     db()
@@ -73,8 +76,8 @@ export async function listCompanies(page = 1, q = ""): Promise<CompanyListRow[]>
   return allCompanies.map((company) => ({
     company,
     lastScan: lastScanByCompany.get(company.id) ?? null,
-    openRoles: countsByCompany.get(company.id)?.openRoles ?? 0,
-    inTableRoles: countsByCompany.get(company.id)?.inTableRoles ?? 0,
+    reviewRoles: countsByCompany.get(company.id)?.reviewRoles ?? 0,
+    shortlistedRoles: countsByCompany.get(company.id)?.shortlistedRoles ?? 0,
     discovering: discoveringSet.has(company.id),
     discoveryState: discoveringRows.some(r => (r.payload as { companyId?: string }).companyId === company.id && r.status === "running") ? "running"
       : discoveringSet.has(company.id) ? "queued" : null,

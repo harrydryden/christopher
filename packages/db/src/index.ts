@@ -8,6 +8,10 @@ export * as schema from "./schema";
 export { createDb, getDb, type Db, type CreateDbOptions } from "./client";
 export { enqueueTask, pendingTaskCounts, taskById, activeTaskFor, type EnqueueOptions } from "./tasks";
 
-export { reevaluateGate, pruneNonMatches } from "./gate";
+export { reevaluateGate, archiveNonMatches } from "./gate";
 export { appendProfile } from "./profiles";
 export { workloadMetrics } from "./scaling";
+
+export { roleStatusSql } from "./role-workflow";
+
+export { scanRunSummary } from "./scan-summary";

@@ -11,12 +11,12 @@ describe("fit ordering", () => {
 });
 
 describe("inbox decisions", () => {
-  it("hides skipped roles by default, retains apply choices and restores undone skips", () => {
+  it("shows only unreviewed roles by default and restores reset decisions", () => {
     const skipped = { ...row(20), decision: { decision: "skip" } } as RoleRow;
     const applied = { ...row(20), decision: { decision: "apply" } } as RoleRow;
     const undecided = { ...row(20), decision: null } as RoleRow;
     const rows = [skipped, applied, undecided];
-    expect(applyRolesFilters(rows, parseRolesFilters({}))).toEqual([applied, undecided]);
+    expect(applyRolesFilters(rows, parseRolesFilters({}))).toEqual([undecided]);
     expect(applyRolesFilters(rows, parseRolesFilters({ decision: "skip" }))).toEqual([skipped]);
     expect(applyRolesFilters(rows, parseRolesFilters({ decision: "all" }))).toHaveLength(3);
     expect(applyRolesFilters([{ ...skipped, decision: null }], parseRolesFilters({}))).toHaveLength(1);

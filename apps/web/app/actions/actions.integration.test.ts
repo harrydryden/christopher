@@ -49,6 +49,11 @@ describe("authenticated mutations", () => {
     const [updated] = await database.select().from(schema.companies).where(eq(schema.companies.id, company.id));
     expect(updated!.homepageUrl).toBe("https://www.corrected.example/");
     expect(updated!.domain).toBe("corrected.example");
+    const logoTasks = await database.select().from(schema.tasks);
+    expect(logoTasks).toHaveLength(1);
+    expect(logoTasks[0]!.payload).toMatchObject({ companyId: company.id, logoOnly: true, homepageUrl: "https://www.corrected.example/" });
+    await updateCompanyDetails(company.id, { ok: true }, form);
+    expect(await database.select().from(schema.tasks)).toHaveLength(1);
     expect((await database.select().from(schema.careerSources))[0]!.url).toBe(source.url);
     expect((await database.select().from(schema.jobs))[0]!.id).toBe(job.id);
     form.set("homepageUrl", "javascript:alert(1)");

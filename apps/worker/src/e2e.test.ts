@@ -25,6 +25,7 @@ const HOSTS = ["www.acme.example", "acme.example", "boards-api.greenhouse.io", "
 /** An Anthropic-style site: homepage -> careers landing -> listing backed by a Greenhouse board. */
 function acmeRoutes(): RouteTable[string] {
   return {
+    "/favicon.png": { body: "test icon", contentType: "image/png" },
     "/": {
       body: `<!doctype html><html><head><title>Acme Robotics | Building the future</title>
         <meta property="og:site_name" content="Acme Robotics"><link rel="icon" href="/favicon.png"></head>
@@ -189,6 +190,20 @@ async function jobsInTable() {
 }
 
 describe("end to end", () => {
+  it("refreshes branding independently without adding careers sources or roles", async () => {
+    const [company] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://www.acme.example/", faviconUrl: "https://old.example/icon.png" }).returning();
+    await enqueueTask(db, "discover", { companyId: company!.id, logoOnly: true, homepageUrl: company!.homepageUrl });
+    await queue.drain();
+    const [updated] = await db.select().from(schema.companies).where(eq(schema.companies.id, company!.id));
+    expect(updated!.faviconUrl).toBe("https://www.acme.example/favicon.png");
+    expect(await db.select().from(schema.careerSources)).toHaveLength(0);
+    expect(await db.select().from(schema.discoveryRuns)).toHaveLength(0);
+    expect(await db.select().from(schema.jobs)).toHaveLength(0);
+    await enqueueTask(db, "discover", { companyId: company!.id, logoOnly: true, homepageUrl: "https://old.example/" });
+    await queue.drain();
+    const [afterStale] = await db.select().from(schema.companies).where(eq(schema.companies.id, company!.id));
+    expect(afterStale!.faviconUrl).toBe(updated!.faviconUrl);
+  });
   it("discovers the careers source from a homepage URL and scans it", async () => {
     await setGate({});
     const company = await addCompany("https://www.acme.example/", "acme.example");

@@ -110,7 +110,7 @@ describe("the cron route", () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as { ok: boolean; processed: number; byType: Record<string, number> };
     expect(body.ok).toBe(true);
-    expect(body.byType.discover).toBe(1);
+    expect(body.byType.discover).toBe(2); // Careers discovery plus its independent logo lookup.
     expect(body.byType.scan_company).toBeGreaterThanOrEqual(1);
 
     const [source] = await db.select().from(schema.careerSources);

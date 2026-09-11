@@ -13,6 +13,7 @@ import { ModelSelect } from "@/components/ModelSelect";
 import { requestCv, saveCvModel, setCvArchived } from "@/app/actions/cv";
 import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
 import { buttonClass } from "@/components/Button";
+import { CvMilestones } from "@/components/CvMilestones";
 export const dynamic = "force-dynamic";
 export default async function CvPage({ searchParams }: { searchParams: Promise<{ job?: string; q?: string; page?: string; archivedPage?: string }> }) {
   const { job: requestedJob, q: query, page, archivedPage } = await searchParams;
@@ -33,7 +34,7 @@ export default async function CvPage({ searchParams }: { searchParams: Promise<{
   const params = { ...(q ? { q } : {}), ...(job ? { job } : {}) };
   return <div className="max-w-4xl space-y-6">
     <PageHeader title="CV builder" description="Tailor a CV to each role using your own skills, experience and interests." />
-    <ol className="flex flex-wrap gap-4 text-sm text-slate-500"><li>1. Choose a role</li><li>2. Generate a draft</li><li>3. Edit and download</li></ol>
+    <CvMilestones current={libraries.length ? "role" : "evidence"} />
     <form method="get" className="flex flex-wrap items-end gap-2"><label className="grid gap-1 text-sm">Find a role or company<input name="q" defaultValue={q} maxLength={200} className="min-h-11 rounded border bg-transparent px-3"/></label><button type="submit" className={buttonClass("secondary", "sm")}>Search roles</button>{q && <a href="/cv" className="underline">Clear search</a>}</form>
     <p className="text-sm text-slate-500">Showing up to 50 recent matching roles. Refine your search, or open the CV builder from a role in your inbox.</p>
     <Card title="Create a role-specific CV"><SettingsForm action={requestCv} submitLabel="Generate CV">

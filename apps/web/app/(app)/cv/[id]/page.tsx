@@ -9,6 +9,7 @@ import { recordApplication } from "@/app/actions/applications";
 import { PageHeader } from "@/components/PageHeader";
 import { SettingsForm } from "@/components/SettingsForm";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { CvMilestones } from "@/components/CvMilestones";
 export const dynamic = "force-dynamic";
 export default async function CvDraftPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -29,6 +30,7 @@ export default async function CvDraftPage({ params }: { params: Promise<{ id: st
         <a href={`/api/cv/${id}/pdf`} className="inline-flex items-center justify-center rounded-md bg-white px-3 py-1.5 text-sm font-medium text-[var(--app-navy)] transition-colors hover:bg-slate-100">Download PDF</a>
       </>}
     />
+    <CvMilestones current={draft.status === "ready" ? "review" : "generate"} failed={draft.status === "failed"} />
     {(draft.status === "queued" || draft.status === "generating") && <AutoRefresh cvId={id} />}
     {draft.status === "failed" && <p role="alert" className="rounded bg-red-50 p-4 text-sm text-red-700">{draft.error}</p>}
     {content && <>

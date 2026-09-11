@@ -16,7 +16,7 @@ export interface BrowserOptions {
 }
 
 const COOKIE_BUTTON_TEXT = /^(accept( all)?( cookies)?|allow all|i agree|agree|got it|ok(ay)?|accept and close|accept & close)$/i;
-const LOAD_MORE_TEXT = /(load|show|view|see) more|more (jobs|roles|positions|openings)/i;
+const LOAD_MORE_TEXT = /^(?:(?:load|show|view|see) more(?: (?:jobs|roles|positions|openings|results))?|more (?:jobs|roles|positions|openings))$/i;
 
 export class BrowserRenderer {
   private browser: Browser | null = null;
@@ -122,7 +122,10 @@ export class BrowserRenderer {
           const before = await page.locator("body").innerText();
           await page.mouse.wheel(0, 4000).catch(() => undefined);
           await page.waitForTimeout(600);
-          const clicked = await this.clickListingControl(page);
+          await this.dismissCookieBanners(page);
+          let clicked: boolean;
+          try { clicked = await this.clickListingControl(page); }
+          catch { incomplete = true; break; }
           if (clicked) {
             await page.waitForFunction(old => document.body.innerText !== old, before, { timeout: 8000 }).catch(() => { incomplete = true; });
             await page.waitForLoadState("networkidle", { timeout: 3000 }).catch(() => undefined);
@@ -148,6 +151,8 @@ export class BrowserRenderer {
 
   private async dismissCookieBanners(page: import("playwright").Page): Promise<void> {
     const selectors = [
+      ".consent-modal .consent-reject",
+      ".consent-modal .consent-agree",
       "#onetrust-accept-btn-handler",
       "button#accept-cookies",
       "button[data-testid*='accept']",
@@ -158,8 +163,7 @@ export class BrowserRenderer {
     for (const sel of selectors) {
       const el = page.locator(sel).first();
       if (await el.isVisible().catch(() => false)) {
-        await el.click({ timeout: 2000 }).catch(() => undefined);
-        return;
+        if (await el.click({ timeout: 2000 }).then(() => true, () => false)) return;
       }
     }
     const buttons = page.locator("button, [role=button]");
@@ -168,8 +172,7 @@ export class BrowserRenderer {
       const b = buttons.nth(i);
       const text = ((await b.textContent().catch(() => "")) ?? "").trim();
       if (COOKIE_BUTTON_TEXT.test(text) && (await b.isVisible().catch(() => false))) {
-        await b.click({ timeout: 2000 }).catch(() => undefined);
-        return;
+        if (await b.click({ timeout: 2000 }).then(() => true, () => false)) return;
       }
     }
   }
@@ -180,6 +183,7 @@ export class BrowserRenderer {
     for (let i = 0; i < n; i++) {
       const c = candidates.nth(i);
       const text = ((await c.getAttribute("aria-label")) || (await c.textContent()) || "").trim();
+      if (await c.getAttribute("data-toggle") === "collapse" || await c.getAttribute("data-bs-toggle") === "collapse") continue;
       const rel = await c.getAttribute("rel");
       const matches = text.length <= 60 && (LOAD_MORE_TEXT.test(text) || /^next(?: page| jobs| roles| results)?(?:\s*[›»→>])?$/i.test(text) || rel === "next");
       if (!matches || !(await c.isVisible()) || !(await c.isEnabled()) || await c.getAttribute("aria-disabled") === "true") continue;

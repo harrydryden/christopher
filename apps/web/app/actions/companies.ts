@@ -11,7 +11,7 @@ import { careerSources, companies, discoveryRuns, SOURCE_TYPES } from "@christop
 import { ensureHttpUrl, extractDomain } from "@christopher/core";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
-import { zUrlString, zUuid } from "@/lib/validation";
+import { zUrlString, zUuid, type ActionResult } from "@/lib/validation";
 
 const CompanyStatusSchema = z.enum(["active", "paused", "archived"]);
 
@@ -97,17 +97,29 @@ export async function rediscoverCompany(companyId: string): Promise<void> {
   revalidatePath(`/companies/${id}`);
 }
 
-export async function updateCompanyDetails(companyId: string, formData: FormData): Promise<void> {
+export async function updateCompanyDetails(companyId: string, _previous: ActionResult, formData: FormData): Promise<ActionResult> {
   await requireSession();
   const id = zUuid().parse(companyId);
+  let homepageUrl: string;
+  try {
+    const raw = String(formData.get("homepageUrl") ?? "").trim();
+    if (!raw || raw.length > 2048 || (/^[a-z][a-z0-9+.-]*:/i.test(raw) && !/^https?:\/\//i.test(raw))) throw new Error();
+    homepageUrl = ensureHttpUrl(raw);
+    const parsed = new URL(homepageUrl);
+    if (parsed.username || parsed.password || !parsed.hostname.includes(".")) throw new Error();
+  } catch { return { ok: false, error: "Enter a valid main website, such as https://anduril.com/." }; }
+  const domain = extractDomain(homepageUrl);
+  const duplicate = await db().select({ id: companies.id }).from(companies).where(eq(companies.domain, domain)).limit(1);
+  if (duplicate[0] && duplicate[0].id !== id) return { ok: false, error: "Another company already uses this domain." };
   const name = String(formData.get("name") ?? "").trim();
   const notes = String(formData.get("notes") ?? "");
   await db()
     .update(companies)
-    .set({ ...(name ? { name } : {}), notes: notes.trim() === "" ? null : notes })
+    .set({ homepageUrl, domain, ...(name ? { name } : {}), notes: notes.trim() === "" ? null : notes })
     .where(eq(companies.id, id));
   revalidatePath(`/companies/${id}`);
   revalidatePath("/companies");
+  return { ok: true };
 }
 
 async function sourceCompanyId(sourceId: string): Promise<string | null> {

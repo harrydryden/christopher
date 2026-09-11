@@ -43,6 +43,7 @@ beforeAll(async () => {
     {
       "www.acmeind.example": { "/open-roles": { body: SHELL_PAGE },
         "/paginated": { body: `<html><body><ul id="jobs"><li><a href="/jobs/one">Operations Director</a></li></ul><button id="next" onclick="document.getElementById('jobs').innerHTML='<li><a href=/jobs/two>Finance Director</a></li>';this.disabled=true">Next</button></body></html>` },
+        "/consent": { body: `<html><body>${'<button>Other</button>'.repeat(45)}<a role="button" data-bs-toggle="collapse" href=".locations">Show more</a><ul id="jobs"><li><a href="/jobs/one">Operations Director</a></li></ul><button onclick="document.getElementById('jobs').innerHTML='<li><a href=/jobs/two>Finance Director</a></li>';this.disabled=true">Next</button><div class="consent-modal" role="dialog" aria-label="Cookie consent" style="position:fixed;inset:0;background:white;z-index:999"><button class="consent-reject" onclick="this.parentElement.remove()">I do not accept</button></div></body></html>` },
         "/stuck": { body: `<html><body><ul><li><a href="/jobs/one">Operations Director</a></li></ul><button>Next</button></body></html>` } },
       "boards-api.greenhouse.io": { "/v1/boards/acmeindustries/jobs": { body: JOBS } },
     },
@@ -65,6 +66,12 @@ describe.skipIf(skip)("headless rendering", () => {
     const page = await renderer.render("https://www.acmeind.example/paginated", { scrollAndExpand: true });
     const postings = page.listingPages!.flatMap(p => ats.extractPostingsFromHtml(p.html, p.url));
     expect(postings.map(p => p.title)).toEqual(["Operations Director", "Finance Director"]);
+    expect(page.incomplete).toBe(false);
+  }, 120000);
+  it("dismisses a consent overlay and ignores location expanders while following pagination", async () => {
+    const page = await renderer.render("https://www.acmeind.example/consent", { scrollAndExpand: true });
+    const titles = page.listingPages!.flatMap(p => ats.extractPostingsFromHtml(p.html, p.url)).map(p => p.title);
+    expect(titles).toContain("Finance Director");
     expect(page.incomplete).toBe(false);
   }, 120000);
   it("marks an unresponsive next button incomplete", async () => {

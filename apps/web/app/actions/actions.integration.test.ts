@@ -20,7 +20,7 @@ import { GET as downloadApplication } from "@/app/api/applications/[id]/pdf/rout
 import { saveCvLibrary, requestCv, saveCvDraft, saveCvModel, setCvArchived } from "./cv";
 import { fetchRolePage, fetchRoleDetails, parseRolesFilters, fetchTableJobs, fetchRecentEventsFor } from "@/lib/queries/jobs";
 import { saveKeywords } from "./settings";
-import { useDiscoveryCandidate, deleteCompany } from "./companies";
+import { useDiscoveryCandidate, deleteCompany, updateCompanyDetails } from "./companies";
 
 beforeAll(async () => {
   const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
@@ -42,6 +42,23 @@ async function fixture() {
 }
 
 describe("authenticated mutations", () => {
+  it("corrects the homepage and domain without changing sources or roles", async () => {
+    const { company, source, job } = await fixture();
+    const form = new FormData(); form.set("homepageUrl", "www.corrected.example"); form.set("name", "Acme");
+    expect(await updateCompanyDetails(company.id, { ok: true }, form)).toEqual({ ok: true });
+    const [updated] = await database.select().from(schema.companies).where(eq(schema.companies.id, company.id));
+    expect(updated!.homepageUrl).toBe("https://www.corrected.example/");
+    expect(updated!.domain).toBe("corrected.example");
+    expect((await database.select().from(schema.careerSources))[0]!.url).toBe(source.url);
+    expect((await database.select().from(schema.jobs))[0]!.id).toBe(job.id);
+    form.set("homepageUrl", "javascript:alert(1)");
+    expect((await updateCompanyDetails(company.id, { ok: true }, form)).ok).toBe(false);
+    await database.insert(schema.companies).values({ name: "Other", domain: "other.example", homepageUrl: "https://other.example/" });
+    form.set("homepageUrl", "other.example");
+    expect((await updateCompanyDetails(company.id, { ok: true }, form)).ok).toBe(false);
+    session = undefined;
+    await expect(updateCompanyDetails(company.id, { ok: true }, form)).rejects.toThrow("Unauthorised");
+  });
   it("rejects unauthenticated action calls before writing", async () => {
     const { job } = await fixture();
     session = undefined;

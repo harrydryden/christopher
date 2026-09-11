@@ -59,9 +59,9 @@ it("rejects model claims referencing invented evidence", async () => {
 });
 
 it("combines employment evidence and freezes central role metadata without rewriting the library snapshot", async () => {
-  const build = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Leader", sections: [{ entryId: "one", bullets: ["Led a team and built tools"] }], gaps: [] });
+  const build = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Leader", sections: [{ entryId: "one", industryDescriptions: ["SaaS"], bullets: ["Led a team and built tools"] }], gaps: [] });
   const { task, deps, draft } = await setup();
-  const snapshot = { ...library, employment: [{ id: "job", company: "Acme", jobTitle: "Operations Director", startDate: "2023-08", endDate: "", current: true }], entries: [
+  const snapshot = { ...library, employment: [{ id: "job", company: "Acme", industryDescriptions: "Healthcare, SaaS", jobTitle: "Operations Director", startDate: "2023-08", endDate: "", current: true }], entries: [
     { ...library.entries[0]!, employmentId: "job", heading: "Team leadership" },
     { id: "two", kind: "experience" as const, employmentId: "job", heading: "Automation", details: "Built tools", confirmedResponsibilities: ["Built tools"] },
   ] };
@@ -72,5 +72,6 @@ it("combines employment evidence and freezes central role metadata without rewri
   const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
   expect(saved!.status).toBe("ready");
   expect(saved!.content!.sections[0]!.heading).toBe("Operations Director · Acme · Aug 2023 – Present");
+  expect(saved!.content!.sections[0]!.industryDescriptions).toEqual(["SaaS"]);
   expect(saved!.librarySnapshot).toEqual(snapshot);
 });

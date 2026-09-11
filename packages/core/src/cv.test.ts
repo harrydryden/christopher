@@ -187,3 +187,28 @@ describe("responsibility confirmation", () => {
     expect(eligibleCvEvidence(reordered)?.details).toBe("Built tools\nLed operations");
   });
 });
+
+describe("employment industry descriptions", () => {
+  const job = { id: "job", company: "Acme", industryDescriptions: "Workplace mental health, SaaS, AI", jobTitle: "Director", startDate: "2020", endDate: "", current: true };
+  const source: CvLibrary = { ...library, employment: [job], entries: [{ ...library.entries[0]!, employmentId: job.id }] };
+  it("parses comma-separated descriptions and shares edits across the same company", async () => {
+    const { industryDescriptions, updateEmploymentIndustries } = await import("./cv");
+    expect(industryDescriptions(" SaaS, Healthcare, saas, , AI ")).toEqual(["SaaS", "Healthcare", "AI"]);
+    const employment = [job, { ...job, id: "older", company: " acme " }, { ...job, id: "other", company: "Other" }];
+    const updated = updateEmploymentIndustries(employment, "job", "Healthcare, AI");
+    expect(updated.map(item => item.industryDescriptions)).toEqual(["Healthcare, AI", "Healthcare, AI", job.industryDescriptions]);
+    expect(updated.map(item => [item.jobTitle, item.startDate, item.endDate])).toEqual(employment.map(item => [item.jobTitle, item.startDate, item.endDate]));
+    expect(employment[0]!.industryDescriptions).toBe(job.industryDescriptions);
+    expect(EmploymentSchema.safeParse({ ...job, industryDescriptions: Array.from({ length: 11 }, (_, i) => `Industry ${i}`).join(",") }).success).toBe(false);
+  });
+  it("grounds selected descriptions in employment history and preserves legacy CVs", () => {
+    const plan = { summary: "Leader", sections: [{ entryId: "recent", industryDescriptions: ["saas", "AI"], bullets: ["Led operations"] }], gaps: [] };
+    const grouped = groupCvLibrary(source);
+    expect(grouped.employment![0]!.industryDescriptions).toBe(job.industryDescriptions);
+    const content = materialiseCv(grouped, plan);
+    expect(content.sections[0]!.industryDescriptions).toEqual(["SaaS", "AI"]);
+    expect(content.sections[0]!.heading).toBe("Director · Acme · 2020 – Present");
+    expect(() => materialiseCv(grouped, { ...plan, sections: [{ ...plan.sections[0]!, industryDescriptions: ["Robotics"] }] })).toThrow("not in employment history");
+    expect(materialiseCv(library, { summary: "Leader", sections: [{ entryId: "recent", bullets: ["Led operations"] }], gaps: [] }).sections[0]!.industryDescriptions).toBeUndefined();
+  });
+});

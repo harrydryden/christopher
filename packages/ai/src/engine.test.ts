@@ -262,12 +262,13 @@ describe("helpers", () => {
   });
 });
 
-it("routes CV generation separately, validates output and records usage", async () => {
-  const { client, calls } = fakeClient({ summary: "Operations leader", sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] });
+it("routes CV generation separately, validates industry selections and records usage", async () => {
+  const { client, calls } = fakeClient({ summary: "Operations leader", sections: [{ entryId: "one", industryDescriptions: ["SaaS"], bullets: ["Led a team"] }], gaps: [] });
   const usage: AiUsageRecord[] = [];
   const engine = createAiEngine({ client, getModel: site => site === "CV" ? "claude-sonnet-5" : "claude-opus-5", onUsage: record => { usage.push(record); } });
-  const result = await engine.buildCv({ library: { name: "Candidate", contact: "London", profile: "Leader", entries: [{ id: "one", kind: "experience", heading: "Director", details: "Led a team" }] }, jobTitle: "Director", company: "Acme", description: "Lead operations" }, { refType: "cv", refId: "draft" });
+  const result = await engine.buildCv({ library: { name: "Candidate", contact: "London", profile: "Leader", employment: [{ id: "job", company: "Previous employer", industryDescriptions: "Healthcare, SaaS", jobTitle: "Director", startDate: "2020", endDate: "", current: true }], entries: [{ id: "one", employmentId: "job", kind: "experience", heading: "Director", details: "Led a team" }] }, jobTitle: "Director", company: "Acme", description: "Lead operations" }, { refType: "cv", refId: "draft" });
   expect(result?.sections[0]?.entryId).toBe("one");
+  expect(result?.sections[0]?.industryDescriptions).toEqual(["SaaS"]);
   expect(calls[0]!.params.model).toBe("claude-sonnet-5");
   expect(calls[0]!.params.max_tokens).toBe(12000);
   expect(usage[0]).toMatchObject({ callSite: "CV", refId: "draft", ok: true });

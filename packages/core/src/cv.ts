@@ -6,9 +6,22 @@ const LinkedInSchema = z.string().max(300).refine(value => {
 }, "Enter an https://www.linkedin.com/in/ profile URL").optional();
 
 const CareerDateSchema = z.string().regex(/^(?:|\d{4}(?:-(?:0[1-9]|1[0-2]))?)$/, "Use YYYY-MM, YYYY, or leave unknown dates blank.");
+export function industryDescriptions(value = ""): string[] {
+  const seen = new Set<string>();
+  return value.split(",").map(item => item.trim()).filter(item => {
+    const key = item.toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key); return true;
+  });
+}
+const IndustryDescriptionsSchema = z.string().trim().max(1200).refine(value => {
+  const descriptions = industryDescriptions(value);
+  return descriptions.length <= 10 && descriptions.every(item => item.length <= 120);
+}, "Use up to 10 comma-separated industry descriptions, each no longer than 120 characters.").optional();
 export const EmploymentSchema = z.object({
   id: z.string().min(1).max(100),
   company: z.string().trim().min(1).max(160),
+  industryDescriptions: IndustryDescriptionsSchema,
   jobTitle: z.string().trim().min(1).max(160),
   startDate: CareerDateSchema,
   endDate: CareerDateSchema,
@@ -19,6 +32,12 @@ export const EmploymentSchema = z.object({
   if (employmentHeading(job).length > 250) ctx.addIssue({ code: "custom", message: "Shorten the company or job title so the CV heading is at most 250 characters." });
 });
 export type Employment = z.infer<typeof EmploymentSchema>;
+/** Industry context is shared by jobs at the same company in the employment editor. */
+export function updateEmploymentIndustries(employment: Employment[], jobId: string, descriptions: string): Employment[] {
+  const company = employment.find(job => job.id === jobId)?.company;
+  if (!company) return employment;
+  return employment.map(job => normalise(job.company) === normalise(company) ? { ...job, industryDescriptions: descriptions } : job);
+}
 const normalise = (value: string) => value.trim().replace(/\s+/g, " ").toLowerCase();
 const employmentKey = (job: Employment) => JSON.stringify([normalise(job.company), normalise(job.jobTitle), job.startDate, job.endDate, job.current]);
 const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -83,14 +102,14 @@ export const CvLibrarySchema = z.object({
 export type CvLibrary = z.infer<typeof CvLibrarySchema>;
 export const CvPlanSchema = z.object({
   summary: z.string().min(1).max(1800),
-  sections: z.array(z.object({ entryId: z.string(), bullets: z.array(z.string().min(1).max(650)).min(1).max(6) })).min(1).max(20),
+  sections: z.array(z.object({ entryId: z.string(), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(650)).min(1).max(6) })).min(1).max(20),
   gaps: z.array(z.string().max(500)).max(12),
 });
 export type CvPlan = z.infer<typeof CvPlanSchema>;
 export const CvContentSchema = z.object({
   linkedinUrl: LinkedInSchema,
   name: z.string().min(1).max(120), contact: z.string().max(500), summary: z.string().min(1).max(1800),
-  sections: z.array(z.object({ entryId: z.string(), kind: CvEntrySchema.shape.kind, heading: z.string().min(1).max(250), bullets: z.array(z.string().min(1).max(650)).min(1).max(6) })).min(1).max(20),
+  sections: z.array(z.object({ entryId: z.string(), kind: CvEntrySchema.shape.kind, heading: z.string().min(1).max(250), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(650)).min(1).max(6) })).min(1).max(20),
   gaps: z.array(z.string().max(500)).max(12),
 });
 export type CvContent = z.infer<typeof CvContentSchema>;
@@ -105,7 +124,14 @@ export function materialiseCv(library: CvLibrary, plan: CvPlan): CvContent {
     seen.add(entry.id);
     if (entry.employmentId && seenJobs.has(entry.employmentId)) throw new Error("CV repeats the same employment record");
     if (entry.employmentId) seenJobs.add(entry.employmentId);
-    return [entry.id, { ...section, kind: entry.kind, heading: evidenceHeading(library, entry) }];
+    const job = library.employment?.find(item => item.id === entry.employmentId);
+    const available = industryDescriptions(job?.industryDescriptions);
+    const selectedIndustries = [...new Set((section.industryDescriptions ?? []).map(description => {
+      const stored = available.find(item => normalise(item) === normalise(description));
+      if (!stored) throw new Error("CV contains an industry description not in employment history");
+      return stored;
+    }))];
+    return [entry.id, { ...section, ...(selectedIndustries.length ? { industryDescriptions: selectedIndustries } : {}), kind: entry.kind, heading: evidenceHeading(library, entry) }];
   }));
   return CvContentSchema.parse({ name: library.name, contact: library.contact, linkedinUrl: library.linkedinUrl, summary: plan.summary,
     sections: library.entries.flatMap(e => selected.has(e.id) ? [selected.get(e.id)!] : []), gaps: plan.gaps });

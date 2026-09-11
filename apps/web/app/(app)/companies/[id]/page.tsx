@@ -1,3 +1,4 @@
+import { SettingsForm } from "@/components/SettingsForm";
 import { notFound } from "next/navigation";
 import {
   archiveCompany,
@@ -114,7 +115,7 @@ export default async function CompanyDetailPage({ params }: { params: Promise<{ 
       </div>
 
       <Card title="Details">
-        <form action={updateCompanyDetails.bind(null, company.id)} className="flex flex-col gap-3">
+        <SettingsForm action={updateCompanyDetails.bind(null, company.id)}>
           <label className="flex flex-col gap-1 text-sm">
             <span className="text-xs font-medium text-slate-500">Name</span>
             <input
@@ -122,6 +123,12 @@ export default async function CompanyDetailPage({ params }: { params: Promise<{ 
               defaultValue={company.name}
               className="w-full max-w-sm rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-950"
             />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-xs font-medium text-slate-500">Main website</span>
+            <input name="homepageUrl" defaultValue={company.homepageUrl} required maxLength={2048}
+              className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-950" />
+            <span className="text-xs text-slate-500">Careers sources are managed separately below. Use Re-discover after correcting a domain to find its careers page.</span>
           </label>
           <label className="flex flex-col gap-1 text-sm">
             <span className="text-xs font-medium text-slate-500">Notes</span>
@@ -132,12 +139,7 @@ export default async function CompanyDetailPage({ params }: { params: Promise<{ 
               className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-950"
             />
           </label>
-          <div>
-            <Button type="submit" variant="primary" size="sm">
-              Save
-            </Button>
-          </div>
-        </form>
+        </SettingsForm>
       </Card>
 
       <Card title="Careers URL">
@@ -312,7 +314,7 @@ export default async function CompanyDetailPage({ params }: { params: Promise<{ 
                     {s.newCount} / {s.closedCount}
                   </TD>
                   <TD>{s.durationMs !== null ? `${(s.durationMs / 1000).toFixed(1)}s` : "—"}</TD>
-                  <TD className="max-w-[16rem] truncate text-red-600 dark:text-red-400" title={s.error ?? undefined}>
+                  <TD className="max-w-[24rem] whitespace-normal break-words text-red-600 dark:text-red-400" title={s.error ?? undefined}>
                     {s.error ?? ""}
                   </TD>
                 </TR>

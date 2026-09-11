@@ -124,6 +124,7 @@ async function scanSource(
       contentHash = outcome.contentHash;
       htmlPages = outcome.pages ?? [];
       incomplete = outcome.incomplete ?? false;
+      error = outcome.incompleteReason ?? null;
       if (outcome.unchanged) {
         log.debug("source unchanged since last scan", { company: company.name, url: source.url });
       }
@@ -391,6 +392,7 @@ interface HtmlScanOutcome {
   finalUrl?: string;
   pages?: CachedHtmlPage[];
   incomplete?: boolean;
+  incompleteReason?: string;
   traversed?: boolean;
 }
 
@@ -419,6 +421,7 @@ async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: Career
   let recipe: HtmlRecipe | undefined;
   let unchanged = true;
   let incomplete = false;
+  let incompleteReason: string | undefined;
   while (url && pages.length < 20) {
     if (visited.has(url)) { incomplete = true; break; }
     visited.add(url);
@@ -430,18 +433,20 @@ async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: Career
       recipe ??= page.recipe;
       pages.push({ url, contentHash: page.contentHash, postings: page.postings });
       incomplete ||= page.incomplete ?? false;
+      incompleteReason ??= page.incompleteReason;
       url = page.traversed ? null : ats.nextListingPage(page.html ?? "", page.finalUrl ?? url);
       if (pages.reduce((n, p) => n + p.postings.length, 0) >= 500 && url) { incomplete = true; break; }
     } catch (error) {
       if (pages.length === 0) throw error;
       incomplete = true;
+      incompleteReason = `Could not finish listing page ${url}: ${(error as Error).message}`.slice(0, 1000);
       log.warn("HTML pagination incomplete", { url, error: (error as Error).message });
       break;
     }
   }
   if (url) incomplete = true;
   const postings = keyPostings(pages.flatMap(page => page.postings)).keyed;
-  return { postings, method, dropped, contentHash: sha1(pages.map(p => p.contentHash).join("|")), unchanged, recipe, pages, incomplete };
+  return { postings, method, dropped, contentHash: sha1(pages.map(p => p.contentHash).join("|")), unchanged, recipe, pages, incomplete, incompleteReason: incomplete ? incompleteReason ?? "Listing pagination stopped before all pages could be verified (page, posting or browser limit)." : undefined };
 }
 
 async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSource, ctx: FetchContext, cached?: CachedHtmlPage, supplied?: { html: string; url: string }): Promise<HtmlScanOutcome> {
@@ -454,7 +459,7 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
   finalUrl = page.url;
 
   let postings = ats.extractPostingsFromHtml(html, finalUrl, spec.recipe);
-  if (!supplied && deps.browser && (postings.length === 0 || /<(?:button|a)[^>]*>\s*(?:next|load more|show more)/i.test(html))) {
+  if (!supplied && deps.browser && (postings.length === 0 || (!ats.nextListingPage(html, finalUrl) && /<(?:button|a)[^>]*>\s*(?:next|load more|show more)/i.test(html)))) {
     const rendered = await deps.browser.render(spec.url, { scrollAndExpand: true });
     if (rendered.status !== null && rendered.status >= 400) {
       throw new SourceFetchError(`Browser returned HTTP ${rendered.status}`, rendered.status === 403 || rendered.status === 429 ? "blocked" : "http", rendered.status);
@@ -467,7 +472,7 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
       catch (error) { if (!outcomes.length) throw error; incomplete = true; }
     }
     return { postings: keyPostings(outcomes.flatMap(p => p.postings)).keyed, method: "browser", dropped: outcomes.reduce((n, p) => n + p.dropped, 0),
-      contentHash: sha1(captures.map(p => p.html).join("|")), unchanged: false, incomplete, traversed: true };
+      contentHash: sha1(captures.map(p => p.html).join("|")), unchanged: false, incomplete, incompleteReason: incomplete ? "Browser pagination could not complete; a control was blocked, did not advance, or reached its limit." : undefined, traversed: true };
 
   }
 

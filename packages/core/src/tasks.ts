@@ -2,7 +2,7 @@
 
 export interface TaskPayloads {
   generate_cv: { draftId: string };
-  discover: { companyId: string; url?: string; reason?: "added" | "manual" | "failing" | "suspect_empty" | "pasted" };
+  discover: { companyId: string; logoOnly?: boolean; homepageUrl?: string; url?: string; reason?: "added" | "manual" | "failing" | "suspect_empty" | "pasted" };
   scan_company: { companyId: string; scanRunId?: string; trigger?: "schedule" | "manual" };
   run_daily: { trigger: "schedule" | "manual"; runDate?: string };
   fetch_description: { jobId: string };
@@ -22,7 +22,8 @@ export function dedupeKeyFor<T extends TaskType>(type: T, payload: TaskPayloads[
   switch (type) {
     case "generate_cv": return `generate_cv:${(payload as TaskPayloads["generate_cv"]).draftId}`;
     case "discover":
-      return `discover:${(payload as TaskPayloads["discover"]).companyId}`;
+      { const p = payload as TaskPayloads["discover"];
+        return p.logoOnly ? `company_logo:${p.companyId}:${p.homepageUrl}` : `discover:${p.companyId}`; }
     case "scan_company":
       return `scan_company:${(payload as TaskPayloads["scan_company"]).companyId}`;
     case "run_daily":

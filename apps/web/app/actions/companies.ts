@@ -113,10 +113,15 @@ export async function updateCompanyDetails(companyId: string, _previous: ActionR
   if (duplicate[0] && duplicate[0].id !== id) return { ok: false, error: "Another company already uses this domain." };
   const name = String(formData.get("name") ?? "").trim();
   const notes = String(formData.get("notes") ?? "");
-  await db()
-    .update(companies)
-    .set({ homepageUrl, domain, ...(name ? { name } : {}), notes: notes.trim() === "" ? null : notes })
-    .where(eq(companies.id, id));
+  await db().transaction(async tx => {
+    const [current] = await tx.select({ homepageUrl: companies.homepageUrl }).from(companies).where(eq(companies.id, id)).for("update");
+    if (!current) return;
+    const changed = current.homepageUrl !== homepageUrl;
+    await tx.update(companies)
+      .set({ homepageUrl, domain, ...(changed ? { faviconUrl: null } : {}), ...(name ? { name } : {}), notes: notes.trim() === "" ? null : notes })
+      .where(eq(companies.id, id));
+    if (changed) await enqueue("discover", { companyId: id, logoOnly: true, homepageUrl }, tx);
+  });
   revalidatePath(`/companies/${id}`);
   revalidatePath("/companies");
   return { ok: true };

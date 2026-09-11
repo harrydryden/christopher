@@ -1,16 +1,29 @@
 import { schema, enqueueTask, type Db, type Task } from "@christopher/db";
-import { dedupeKeyFor, discovery, priorityFor, type DiscoveryCandidate, type DiscoveryResult } from "@christopher/core";
+import { dedupeKeyFor, discovery, priorityFor, type TaskPayloads, type DiscoveryCandidate, type DiscoveryResult } from "@christopher/core";
 import { and, eq, ne } from "drizzle-orm";
-import { makeDiscoveryContext, type WorkerDeps } from "../context";
+import { makeFetchContext, makeDiscoveryContext, type WorkerDeps } from "../context";
 import { log } from "../log";
 
 const AUTO_ACCEPT = 0.85;
 
 export async function handleDiscover(task: Task, deps: WorkerDeps): Promise<unknown> {
-  const payload = task.payload as { companyId: string; url?: string; reason?: string };
+  const payload = task.payload as TaskPayloads["discover"];
   const companies = await deps.db.select().from(schema.companies).where(eq(schema.companies.id, payload.companyId)).limit(1);
   const company = companies[0];
   if (!company) return { skipped: "company not found" };
+
+  if (payload.logoOnly) {
+    if (payload.homepageUrl !== company.homepageUrl) return { skipped: "homepage changed" };
+    const faviconUrl = await discovery.discoverCompanyLogo(company.homepageUrl, makeFetchContext(deps));
+    if (faviconUrl) await deps.db.update(schema.companies).set({ faviconUrl })
+      .where(and(eq(schema.companies.id, company.id), eq(schema.companies.homepageUrl, company.homepageUrl)));
+    return { faviconUrl };
+  }
+  // A direct ATS result must not skip branding. The separate task keeps image failures out of scans.
+  const logoPayload = { companyId: company.id, logoOnly: true, homepageUrl: company.homepageUrl };
+  await enqueueTask(deps.db, "discover", logoPayload, {
+    dedupeKey: dedupeKeyFor("discover", logoPayload), priority: 6,
+  });
 
   const [run] = await deps.db
     .insert(schema.discoveryRuns)
@@ -35,7 +48,6 @@ export async function handleDiscover(task: Task, deps: WorkerDeps): Promise<unkn
   // Fill in the company's display name and favicon the first time we learn them.
   const patch: Partial<typeof schema.companies.$inferInsert> = {};
   if (result.companyName && (company.name === company.domain || !company.name)) patch.name = result.companyName;
-  if (result.faviconUrl && !company.faviconUrl) patch.faviconUrl = result.faviconUrl;
   if (Object.keys(patch).length > 0) await deps.db.update(schema.companies).set(patch).where(eq(schema.companies.id, company.id));
 
   const candidates = result.candidates.map(serialiseCandidate);

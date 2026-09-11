@@ -25,5 +25,10 @@
     "typescript": "~5.9.0",
     "tsx": "latest",
     "vitest": "latest"
+  },
+  "pnpm": {
+    "overrides": {
+      "postcss": "8.5.28"
+    }
   }
 }

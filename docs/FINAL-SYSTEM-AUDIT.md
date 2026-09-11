@@ -12,6 +12,7 @@ Reviewed the integrated changes against main: queue claiming/recovery and operat
 - Reused daily scheduled scan tasks during Refresh, including their run-specific deduplication keys. Expediting a scan preserves its scan-run ID.
 - Discarded scan results when the source was disabled or its URL changed during collection. A late scan cannot reactivate that source or reconcile stale postings.
 - Made company-profile replacement atomic and fenced by task ownership. Failed or reclaimed work retains the previous profile; concurrent replacements serialise on the company row.
+- Overrode Next.js’s transitive PostCSS dependency to compatible patched version 8.5.28. This removed two high and two moderate advisories; the production dependency audit now reports no known vulnerabilities.
 - Guarded repeated role-action clicks and keyboard submissions; failed requests leave an actionable error instead of an indefinitely pending editor.
 
 ## Refactoring
@@ -23,6 +24,7 @@ Further improvements can be separate changes: extract the scan commit block from
 ## Verification
 
 - 350 automated tests: 171 core, 24 AI, 86 worker and 69 web. Real PostgreSQL and Chromium were used; external company sites and paid AI responses were stubbed in tests.
+- A final production build and 13-route smoke run also passed with the patched PostCSS dependency.
 - Workspace type checking and production builds passed. The final Refresh adjustment was rechecked with all 31 action/query integration tests and a fresh web build.
 - All 13 production smoke-test routes rendered successfully, including CSV export.
 - Browser checks verified role facts/filters, no table selection or expanders, Archive/Restore and Shortlist, visible source/review controls, and CV rendering/saving.

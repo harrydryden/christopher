@@ -1,8 +1,8 @@
+import { RefreshCompanyButton } from "@/components/RefreshCompanyButton";
 import { getCompanyWorkStatus } from "@/lib/work-status";
 import { AutoRefresh } from "@/components/AutoRefresh";
-import Link from "next/link";
-import { addCompanies, archiveCompany, pauseCompany, rediscoverCompany, rescanCompany, resumeCompany } from "@/app/actions/companies";
-import { Badge, companyStatusTone, scanStatusTone, sourceStatusTone } from "@/components/Badge";
+import { addCompanies, archiveCompany, pauseCompany, resumeCompany } from "@/app/actions/companies";
+import { Badge, companyStatusTone, scanStatusTone } from "@/components/Badge";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
@@ -10,18 +10,22 @@ import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { relativeTime } from "@/lib/format";
-import { listCompanies } from "@/lib/queries/companies";
+import { Pagination, pageNumber } from "@/components/Pagination";
+import { listCompanies, companyCount } from "@/lib/queries/companies";
 
 export const dynamic = "force-dynamic";
 
-export default async function CompaniesPage({ searchParams }: { searchParams: Promise<{ added?: string; skipped?: string }> }) {
+export default async function CompaniesPage({ searchParams }: { searchParams: Promise<{ added?: string; skipped?: string; page?: string; q?: string }> }) {
   const sp = await searchParams;
-  const [rows, work] = await Promise.all([listCompanies(), getCompanyWorkStatus()]);
+  const q = (sp.q ?? "").slice(0, 200);
+  const total = await companyCount(q);
+  const page = Math.min(pageNumber(sp.page), Math.max(1, Math.ceil(total / 50)));
+  const [rows, work] = await Promise.all([listCompanies(page, q), getCompanyWorkStatus()]);
   const now = new Date();
 
   return (
     <div>
-      <PageHeader title="Companies" description="Every company you track, and where its careers page comes from." />
+      <PageHeader title="Companies" description="Track companies and refresh their roles. Refresh checks existing careers pages and finds one when needed." />
 
       {sp.added !== undefined && (
         <div className="mb-4 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
@@ -51,26 +55,27 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
         </form>
       </Card>
 
+      <form method="get" className="mb-4 flex flex-wrap gap-2"><label className="flex min-w-0 flex-wrap items-center gap-2 text-sm">Search companies<input name="q" defaultValue={q} maxLength={200} className="min-h-11 rounded border bg-transparent px-3" /></label><Button type="submit">Search</Button>{q && <a className="self-center underline" href="/companies">Clear</a>}</form>
+      <Pagination page={page} total={total} path="/companies" params={{ q }}/>
       {work.active && <div className="mb-4"><AutoRefresh message="Company scanning or discovery is pending. Status updates automatically." /></div>}
       {rows.length === 0 ? (
-        <EmptyState title="No companies yet" description="Add a homepage URL above to start tracking a company's careers page." />
+        <EmptyState title={q ? "No matching companies" : "No companies yet"} description={q ? "Try another name or domain." : "Add a homepage URL above to start tracking a company’s careers page."} />
       ) : (
         <Table>
           <THead>
             <tr>
               <TH>Company</TH>
               <TH>Status</TH>
-              <TH>Sources</TH>
               <TH>Last scan</TH>
               <TH>Roles</TH>
               <TH>Actions</TH>
             </tr>
           </THead>
           <TBody>
-            {rows.map(({ company, sources, lastScan, openRoles, inTableRoles, discovering, discoveryState }) => (
+            {rows.map(({ company, lastScan, openRoles, inTableRoles, discovering, discoveryState }) => (
               <TR key={company.id}>
                 <TD>
-                  <Link href={`/companies/${company.id}`} className="flex items-center gap-2 hover:underline">
+                  <a href={`/companies/${company.id}`} className="flex items-center gap-2 hover:underline">
                     {company.faviconUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={company.faviconUrl} alt="" width={16} height={16} referrerPolicy="no-referrer" className="rounded-sm" />
@@ -78,29 +83,14 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                       <span className="inline-block h-4 w-4 rounded-sm bg-slate-200 dark:bg-slate-700" />
                     )}
                     <span className="font-medium text-slate-900 dark:text-slate-100">{company.name}</span>
-                  </Link>
+                  </a>
                   <a href={company.homepageUrl} target="_blank" rel="noopener noreferrer" className="block text-xs text-slate-400 hover:underline">
                     {company.domain}
                   </a>
                 </TD>
                 <TD>
                   <Badge tone={companyStatusTone(company.status)}>{company.status}</Badge>
-                </TD>
-                <TD>
-                  {sources.length === 0 ? (
-                    <Badge tone="red">none</Badge>
-                  ) : (
-                    <div className="flex flex-col gap-1">
-                      {sources.map((s) => (
-                        <div key={s.id} className="flex items-center gap-1.5 text-xs">
-                          <Badge tone="neutral">{s.type}</Badge>
-                          <span className="text-slate-400">{Math.round(s.confidence * 100)}%</span>
-                          <Badge tone={sourceStatusTone(s.status)}>{s.status === "needs_confirmation" ? "needs confirmation" : s.status}</Badge>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {discovering && <p className="mt-1 text-xs text-indigo-500">{discoveryState === "running" ? "Discovering…" : "Queued — waiting for worker"}</p>}
+                  {discovering && <p className="mt-1 text-xs text-indigo-500">{discoveryState === "running" ? "Refreshing…" : "Refresh queued"}</p>}
                 </TD>
                 <TD className="whitespace-nowrap">
                   {lastScan ? (
@@ -117,16 +107,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                 </TD>
                 <TD>
                   <div className="flex flex-wrap gap-1.5">
-                    <form action={rescanCompany.bind(null, company.id)}>
-                      <Button type="submit" size="sm">
-                        Rescan
-                      </Button>
-                    </form>
-                    <form action={rediscoverCompany.bind(null, company.id)}>
-                      <Button type="submit" size="sm">
-                        Re-discover
-                      </Button>
-                    </form>
+                    {company.status === "active" && <RefreshCompanyButton companyId={company.id} running={discoveryState === "running"} />}
                     {company.status === "active" ? (
                       <form action={pauseCompany.bind(null, company.id)}>
                         <Button type="submit" size="sm">

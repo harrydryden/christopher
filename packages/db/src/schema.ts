@@ -31,7 +31,7 @@ export const FETCH_METHODS = ["api", "http", "browser"] as const;
 export const JOB_STATUSES = ["open", "closed"] as const;
 export const DECISIONS = ["apply", "skip"] as const;
 export const TASK_TYPES = [
-  "monitor_source", "discover", "scan_company", "run_daily", "fetch_description", "score_job", "tag_reason",
+  "extract_document", "verify_company", "monitor_source", "discover", "scan_company", "run_daily", "fetch_description", "score_job", "tag_reason",
   "synthesize_profile", "suggest_filters", "profile_company", "suggest_companies", "rescore_all",
   "reevaluate_gate", "generate_cv",
 ] as const;
@@ -67,6 +67,7 @@ export const careerSources = pgTable(
     status: text("status", { enum: SOURCE_STATUSES }).notNull().default("active"),
     consecutiveFailures: integer("consecutive_failures").notNull().default(0),
     lastOkScanAt: ts("last_ok_scan_at"),
+    nextScanAt: ts("next_scan_at"),
     lastPostingsCount: integer("last_postings_count"),
     createdAt: tsNow("created_at"),
     verifiedAt: ts("verified_at"),
@@ -116,7 +117,7 @@ export const scans = pgTable(
     durationMs: integer("duration_ms"),
     rawSnapshot: text("raw_snapshot"),
   },
-  (t) => [index("scans_source_started_idx").on(t.sourceId, t.startedAt)],
+  (t) => [index("scans_source_started_idx").on(t.sourceId, t.startedAt), index("scans_run_idx").on(t.scanRunId)],
 );
 
 export const jobs = pgTable(
@@ -271,7 +272,7 @@ export const discoverySources = pgTable("discovery_sources", {
   lastCheckedAt: ts("last_checked_at"),
   lastError: text("last_error"),
   createdAt: tsNow("created_at"),
-});
+}, t => [index("discovery_sources_due_idx").on(t.nextRunAt).where(sql`${t.enabled} = true`)]);
 
 export const discoveryDocuments = pgTable("discovery_documents", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -282,7 +283,7 @@ export const discoveryDocuments = pgTable("discovery_documents", {
   fingerprint: text("fingerprint").notNull(),
   processedAt: ts("processed_at"),
   createdAt: tsNow("created_at"),
-}, (t) => [uniqueIndex("discovery_document_dedupe").on(t.sourceId, t.fingerprint)]);
+}, (t) => [uniqueIndex("discovery_document_dedupe").on(t.sourceId, t.fingerprint), index("discovery_document_pending_idx").on(t.sourceId, t.createdAt).where(sql`${t.processedAt} is null`)]);
 
 export const companySuggestions = pgTable("company_suggestions", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -305,7 +306,7 @@ export const companySuggestions = pgTable("company_suggestions", {
   rejectionReason: text("rejection_reason"),
   createdAt: tsNow("created_at"),
   resolvedAt: ts("resolved_at"),
-});
+}, t => [index("suggestions_review_idx").on(t.status, t.rank, t.createdAt), index("suggestions_history_idx").on(t.status, t.resolvedAt)]);
 
 export const settings = pgTable("settings", {
   key: text("key").primaryKey(),
@@ -335,6 +336,9 @@ export const tasks = pgTable(
   },
   (t) => [
     index("tasks_status_run_after_idx").on(t.status, t.priority, t.runAfter),
+    index("tasks_scan_run_idx").on(sql`(${t.payload}->>'scanRunId')`, t.status),
+    index("tasks_source_status_idx").on(sql`(${t.payload}->>'sourceId')`, t.status, t.createdAt),
+    index("tasks_lane_idx").on(t.type, t.status, t.priority, t.runAfter),
     uniqueIndex("tasks_dedupe_active_uidx").on(t.dedupeKey).where(sql`${t.status} in ('queued', 'running') and ${t.dedupeKey} is not null`),
   ],
 );
@@ -423,4 +427,49 @@ export const applications = pgTable("applications", {
   notes: text("notes").notNull().default(""),
   history: jsonb("history").$type<Array<{ status: string; at: string; notes: string }>>().notNull(),
   createdAt: tsNow("created_at"),
+});
+
+/** Renewable operation locks do not retain a connection while doing network work. */
+export const resourceLeases = pgTable("resource_leases", {
+  key: text("key").primaryKey(),
+  owner: uuid("owner").notNull(),
+  expiresAt: ts("expires_at").notNull(),
+});
+
+export const discoveryCandidates = pgTable("discovery_candidates", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  documentId: uuid("document_id").references(() => discoveryDocuments.id, { onDelete: "cascade" }),
+  domain: text("domain").notNull(),
+  name: text("name").notNull(),
+  homepageUrl: text("homepage_url").notNull(),
+  rationale: text("rationale").notNull(),
+  quote: text("quote").notNull(),
+  similarTo: jsonb("similar_to").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  rank: integer("rank"),
+  batchKey: text("batch_key"),
+  processedAt: ts("processed_at"),
+  createdAt: tsNow("created_at"),
+}, t => [uniqueIndex("discovery_candidate_document_domain").on(t.documentId, t.domain), uniqueIndex("discovery_candidate_batch_domain").on(t.batchKey, t.domain)]);
+
+export const verificationCache = pgTable("verification_cache", {
+  key: text("key").primaryKey(),
+  result: jsonb("result").$type<NonNullable<typeof companySuggestions.$inferSelect.verification>>().notNull(),
+  expiresAt: ts("expires_at").notNull(),
+});
+
+export const hostPacing = pgTable("host_pacing", {
+  host: text("host").primaryKey(),
+  nextAt: ts("next_at").notNull(),
+});
+
+export const aiReservations = pgTable("ai_reservations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  callSite: text("call_site").notNull(),
+  amount: real("amount").notNull(),
+  createdAt: tsNow("created_at"),
+  expiresAt: ts("expires_at").notNull(),
+});
+export const aiSpendPeriods = pgTable("ai_spend_periods", {
+  key: text("key").primaryKey(),
+  amount: real("amount").notNull().default(0),
 });

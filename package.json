@@ -17,12 +17,18 @@
     "db:generate": "pnpm --filter @christopher/db generate",
     "db:migrate": "pnpm --filter @christopher/db migrate",
     "smoke:web": "node scripts/smoke-web.mjs",
-    "seed:demo": "pnpm --filter @christopher/worker exec tsx src/seed-demo.ts"
+    "seed:demo": "pnpm --filter @christopher/worker exec tsx src/seed-demo.ts",
+    "benchmark:scale": "pnpm --filter @christopher/worker exec tsx src/benchmark-scale.ts"
   },
   "devDependencies": {
     "@types/node": "latest",
     "typescript": "~5.9.0",
     "tsx": "latest",
     "vitest": "latest"
+  },
+  "pnpm": {
+    "overrides": {
+      "postcss": "8.5.28"
+    }
   }
 }

@@ -57,6 +57,41 @@
       "when": 1789122461461,
       "tag": "0007_low_albert_cleary",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789128762993,
+      "tag": "0008_material_aaron_stack",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789129024594,
+      "tag": "0009_motionless_roughhouse",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789129124809,
+      "tag": "0010_hesitant_fallen_one",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789129604169,
+      "tag": "0011_orange_dagger",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789129691269,
+      "tag": "0012_flashy_the_fury",
+      "breakpoints": true
     }
   ]
 }

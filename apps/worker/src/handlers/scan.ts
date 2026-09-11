@@ -22,27 +22,24 @@ import {
   type RawPosting,
   type SourceSpec,
 } from "@christopher/core";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql, or, isNull } from "drizzle-orm";
 import type { CareerSource } from "@christopher/db";
 import { aiBudgetExceeded, makeFetchContext, type WorkerDeps } from "../context";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { loadAdmissionCache } from "../admission-cache";
 import { prepareForAdmission } from "../admission";
+import { withResourceLease } from "../lease";
 import { log } from "../log";
 
 type ScanStatus = "ok" | "partial" | "suspect_empty" | "failed";
 
 export async function handleScanCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
-  const payload = task.payload as { companyId: string; scanRunId?: string };
-  // One company must never reconcile overlapping snapshots concurrently.
-  return deps.db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`christopher:scan:${payload.companyId}`}))`);
-    return scanCompany(task, { ...deps, db: tx as unknown as WorkerDeps["db"] });
-  });
+  const payload = task.payload as { companyId: string; scanRunId?: string; trigger?: string };
+  return withResourceLease(deps, `scan:${payload.companyId}`, locked => scanCompany(task, locked));
 }
 
 async function scanCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
-  const payload = task.payload as { companyId: string; scanRunId?: string };
+  const payload = task.payload as { companyId: string; scanRunId?: string; trigger?: string };
   const settings = await deps.settings();
   const [company] = await deps.db.select().from(schema.companies).where(eq(schema.companies.id, payload.companyId)).limit(1);
   if (!company) return { skipped: "company not found" };
@@ -51,7 +48,7 @@ async function scanCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
   const sources = await deps.db
     .select()
     .from(schema.careerSources)
-    .where(and(eq(schema.careerSources.companyId, company.id), inArray(schema.careerSources.status, ["active", "failing"])));
+    .where(and(eq(schema.careerSources.companyId, company.id), inArray(schema.careerSources.status, ["active", "failing"]), payload.trigger === "schedule" ? or(isNull(schema.careerSources.nextScanAt), sql`${schema.careerSources.nextScanAt} <= ${deps.now()}`) : undefined));
 
   if (sources.length === 0) {
     log.warn("company has no active source", { company: company.name });
@@ -114,6 +111,7 @@ async function scanSource(
   let contentHash: string | null = source.contentHash;
   let htmlPages: CachedHtmlPage[] = [];
   let incomplete = false;
+  let updatedRecipe: HtmlRecipe | undefined;
 
   try {
     if (source.type === "html") {
@@ -129,7 +127,7 @@ async function scanSource(
         log.debug("source unchanged since last scan", { company: company.name, url: source.url });
       }
       if (outcome.recipe) {
-        await deps.db.update(schema.careerSources).set({ recipe: outcome.recipe }).where(eq(schema.careerSources.id, source.id));
+        updatedRecipe = outcome.recipe;
       }
     } else {
       postings = await ats.getAdapter(source.type).fetchPostings(spec, ctx);
@@ -167,6 +165,19 @@ async function scanSource(
   const status = incomplete && classified === "ok" ? "partial" : classified;
   const mode = modeForScanStatus(status);
 
+  return deps.db.transaction(async tx => {
+  await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
+  const [current] = await tx.select().from(schema.careerSources).where(eq(schema.careerSources.id, source.id)).for("update");
+  // A user can disable or replace a source while the network request is in flight.
+  if (!current || !["active", "failing"].includes(current.status) || current.url !== source.url || current.apiUrl !== source.apiUrl) {
+    return { status: "partial", newCount: 0, closedCount: 0, postingsFound: postings.length };
+  }
+  const commitDeps = { ...deps, db: tx as unknown as WorkerDeps["db"] };
+  return commitScan(commitDeps);
+  });
+
+  async function commitScan(deps: WorkerDeps): Promise<SourceOutcome> {
+  if (updatedRecipe) await deps.db.update(schema.careerSources).set({ recipe: updatedRecipe }).where(eq(schema.careerSources.id, source.id));
   const existingRows = await deps.db
     .select({
       descriptionText: schema.jobs.descriptionText,
@@ -200,6 +211,7 @@ async function scanSource(
   const scoreQueue: Array<{ jobId: string; nearMiss: boolean }> = [];
   const descriptionQueue: string[] = [];
 
+  const newRows: Array<typeof schema.jobs.$inferInsert> = [];
   for (const insert of result.inserts) {
     if (unresolved.has(insert.url)) continue;
     const gate = evaluateGate(
@@ -215,9 +227,7 @@ async function scanSource(
     );
     if (!gate.inTable) continue;
     const nearMiss = false;
-    const [created] = await deps.db
-      .insert(schema.jobs)
-      .values({
+    newRows.push({
         companyId: company.id,
         sourceId: source.id,
         externalKey: insert.externalKey,
@@ -244,14 +254,17 @@ async function scanSource(
         locationOk: gate.locationOk,
         inTable: gate.inTable,
         nearMiss,
-      })
-      .onConflictDoNothing()
-      .returning({ id: schema.jobs.id });
-    if (!created) continue;
-    newCount++;
-    await deps.db.insert(schema.jobEvents).values({ jobId: created.id, type: "discovered", payload: { method: fetchMethod, seeded: isFirstScan } });
-    if (gate.inTable || nearMiss) scoreQueue.push({ jobId: created.id, nearMiss });
-    if ((gate.inTable || nearMiss) && !insert.descriptionText) descriptionQueue.push(created.id);
+      });
+  }
+  for (let offset = 0; offset < newRows.length; offset += 100) {
+    const created = await deps.db.insert(schema.jobs).values(newRows.slice(offset, offset + 100)).onConflictDoNothing()
+      .returning({ id: schema.jobs.id, descriptionText: schema.jobs.descriptionText });
+    newCount += created.length;
+    if (created.length) await deps.db.insert(schema.jobEvents).values(created.map(row => ({ jobId: row.id, type: "discovered" as const, payload: { method: fetchMethod, seeded: isFirstScan } })));
+    for (const row of created) {
+      scoreQueue.push({ jobId: row.id, nearMiss: false });
+      if (!row.descriptionText) descriptionQueue.push(row.id);
+    }
   }
 
   if (result.seen.length > 0) {
@@ -259,7 +272,10 @@ async function scanSource(
   }
   // Refresh every observed posting, including fields the identity reconciliation does not compare.
   const observed = new Map(keyPostings(postings).keyed.map((p) => [p.externalKey, p]));
-  for (const job of existingRows.filter((j) => result.seen.includes(j.id))) {
+  const updates: Array<Record<string, unknown>> = [];
+  const updateEvents: Array<typeof schema.jobEvents.$inferInsert> = [];
+  const seenIds = new Set(result.seen);
+  for (const job of existingRows.filter((j) => seenIds.has(j.id))) {
     const posting = observed.get(job.externalKey)!;
     if (unresolved.has(posting.url)) continue;
     const fields = {
@@ -277,27 +293,38 @@ async function scanSource(
       JSON.stringify(fields[key as keyof typeof fields]) !== JSON.stringify(job[key as keyof typeof job]));
     const gate = evaluateGate({ ...fields, description: fields.descriptionText }, settings.gate);
     const nearMiss = false;
-    await deps.db.update(schema.jobs).set({
+    updates.push({ id: job.id,
       ...fields, normalizedTitle: normalizeTitle(fields.title),
       keywordMatched: gate.keywordMatched, keywordTerms: gate.keywordTerms,
       excluded: gate.excluded, locationOk: gate.locationOk, inTable: gate.inTable, nearMiss,
-      ...(posting.descriptionText !== undefined ? {
-        descriptionHash: sha1(fields.descriptionText ?? ""), descriptionFetchedAt: reusedDescriptions.has(posting.url) ? savedByUrl.get(posting.url)!.at : deps.now(),
-      } : {}),
+      descriptionHash: fields.descriptionText ? sha1(fields.descriptionText) : null,
+      descriptionFetchedAt: posting.descriptionText !== undefined && !reusedDescriptions.has(posting.url) ? deps.now() : job.descriptionFetchedAt,
       updatedAt: deps.now(),
-    }).where(eq(schema.jobs.id, job.id));
-    if (changedFields.length) await deps.db.insert(schema.jobEvents).values({ jobId: job.id, type: "updated", payload: { fields: changedFields } });
+    });
+    if (changedFields.length) updateEvents.push({ jobId: job.id, type: "updated", payload: { fields: changedFields } });
     if ((gate.inTable || nearMiss) && (changedFields.length || !job.inTable && gate.inTable || job.fitScore === null)) scoreQueue.push({ jobId: job.id, nearMiss });
     const descriptionStale = !job.descriptionFetchedAt || deps.now().getTime() - job.descriptionFetchedAt.getTime() >= 14 * 86_400_000;
     const sourceUpdated = posting.updatedAt && (!job.descriptionFetchedAt || posting.updatedAt > job.descriptionFetchedAt);
     if ((gate.inTable || nearMiss) && posting.descriptionText === undefined && (descriptionStale || sourceUpdated)) descriptionQueue.push(job.id);
   }
+  for (let offset = 0; offset < updates.length; offset += 250) {
+    await deps.db.execute(sql`update jobs j set title=v.title, url=v.url, location=v.location, locations=v.locations,
+      department=v.department, employment_type=v."employmentType", remote=v.remote, salary_text=v."salaryText", posted_at=v."postedAt",
+      description_text=v."descriptionText", normalized_title=v."normalizedTitle", keyword_matched=v."keywordMatched", keyword_terms=v."keywordTerms",
+      excluded=v.excluded, location_ok=v."locationOk", in_table=v."inTable", near_miss=false,
+      description_hash=v."descriptionHash", description_fetched_at=v."descriptionFetchedAt", updated_at=${deps.now()}
+      from jsonb_to_recordset(${JSON.stringify(updates.slice(offset, offset + 250))}::jsonb) as v(id uuid, title text, url text, location text, locations jsonb,
+        department text, "employmentType" text, remote boolean, "salaryText" text, "postedAt" timestamptz, "descriptionText" text, "normalizedTitle" text,
+        "keywordMatched" boolean, "keywordTerms" jsonb, excluded boolean, "locationOk" boolean, "inTable" boolean, "descriptionHash" text, "descriptionFetchedAt" timestamptz)
+      where j.id=v.id`);
+  }
+  for (let offset = 0; offset < updateEvents.length; offset += 250) await deps.db.insert(schema.jobEvents).values(updateEvents.slice(offset, offset + 250));
   if (result.reopened.length > 0) {
     await deps.db
       .update(schema.jobs)
       .set({ status: "open", closedAt: null, ...(mode === "ok" ? { missingScans: 0 } : {}), reopenedCount: sql`${schema.jobs.reopenedCount} + 1` })
       .where(inArray(schema.jobs.id, result.reopened));
-    for (const id of result.reopened) await deps.db.insert(schema.jobEvents).values({ jobId: id, type: "reopened", payload: {} });
+    await deps.db.insert(schema.jobEvents).values(result.reopened.map(jobId => ({ jobId, type: "reopened" as const, payload: {} })));
   }
   if (result.missing.length > 0) {
     await deps.db
@@ -310,7 +337,7 @@ async function scanSource(
       .update(schema.jobs)
       .set({ status: "closed", closedAt: sql`coalesce(${schema.jobs.lastSeenAt}, now())`, missingScans: sql`${schema.jobs.missingScans} + 1` })
       .where(inArray(schema.jobs.id, result.closed));
-    for (const id of result.closed) await deps.db.insert(schema.jobEvents).values({ jobId: id, type: "closed", payload: {} });
+    await deps.db.insert(schema.jobEvents).values(result.closed.map(jobId => ({ jobId, type: "closed" as const, payload: {} })));
   }
 
   await deps.db.insert(schema.scans).values({
@@ -330,13 +357,15 @@ async function scanSource(
 
   // Keep bounded debugging evidence from the three most recent source scans.
   await deps.db.execute(sql`update scans set raw_snapshot = null where source_id = ${source.id}
-    and id not in (select id from scans where source_id = ${source.id} order by started_at desc, id desc limit 3)`);
+    and id not in (select id from scans where source_id = ${source.id} order by started_at desc, id desc limit 3)
+    and id not in (select id from scans where source_id = ${source.id} and status='ok' order by started_at desc, id desc limit 1)`);
 
   const failures = status === "failed" ? source.consecutiveFailures + 1 : 0;
   await deps.db
     .update(schema.careerSources)
     .set({
       consecutiveFailures: failures,
+      nextScanAt: failures ? new Date(deps.now().getTime() + Math.min(7, 2 ** Math.min(failures - 1, 3)) * 86400000) : null,
       status: blocked ? "blocked" : failures >= 3 ? "failing" : source.status === "failing" && status === "ok" ? "active" : source.status,
       lastOkScanAt: status === "ok" ? deps.now() : source.lastOkScanAt,
       lastPostingsCount: status === "ok" ? postings.length : source.lastPostingsCount,
@@ -352,15 +381,10 @@ async function scanSource(
     });
   }
 
-  if (!(await aiBudgetExceeded(deps))) {
-    for (const item of scoreQueue) {
-      await enqueueTask(deps.db, "score_job", item, { dedupeKey: dedupeKeyFor("score_job", item), priority: priorityFor("score_job") });
-    }
-  }
-  // Snapshot fetching is useful even when no model is configured or the AI budget is exhausted.
-  for (const jobId of descriptionQueue) {
-    await enqueueTask(deps.db, "fetch_description", { jobId }, { dedupeKey: dedupeKeyFor("fetch_description", { jobId }), priority: priorityFor("fetch_description") });
-  }
+  const queued: Array<typeof schema.tasks.$inferInsert> = [];
+  if (!(await aiBudgetExceeded(deps))) for (const payload of scoreQueue) queued.push({ type: "score_job", payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") });
+  for (const jobId of descriptionQueue) queued.push({ type: "fetch_description", payload: { jobId }, dedupeKey: dedupeKeyFor("fetch_description", { jobId }), priority: priorityFor("fetch_description") });
+  for (let offset = 0; offset < queued.length; offset += 250) await deps.db.insert(schema.tasks).values(queued.slice(offset, offset + 250)).onConflictDoNothing();
 
   log.info("source scanned", {
     company: company.name,
@@ -373,6 +397,8 @@ async function scanSource(
   });
   await pruneNonMatches(deps.db, source.id);
   return { status, newCount, closedCount: result.closed.length, postingsFound: postings.length };
+}
+
 }
 
 interface CachedHtmlPage {

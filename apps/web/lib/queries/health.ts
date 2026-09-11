@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, ne, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, ne, sql, getTableColumns } from "drizzle-orm";
 import {
   aiCalls,
   settings,
@@ -21,7 +21,7 @@ export async function listSourcesNeedingAttention(): Promise<Array<CareerSource 
     .from(careerSources)
     .innerJoin(companies, eq(careerSources.companyId, companies.id))
     .where(inArray(careerSources.status, ["needs_confirmation", "failing", "blocked"]))
-    .orderBy(desc(careerSources.createdAt));
+    .orderBy(desc(careerSources.createdAt)).limit(100);
   return rows.map((r) => ({ ...r.source, companyName: r.companyName }));
 }
 
@@ -33,26 +33,27 @@ export async function listCompaniesWithNoSource(): Promise<Array<{ id: string; n
     .leftJoin(careerSources, eq(careerSources.companyId, companies.id))
     .where(ne(companies.status, "archived"))
     .groupBy(companies.id)
-    .having(sql`count(${careerSources.id}) = 0`);
+    .having(sql`count(${careerSources.id}) = 0`).orderBy(companies.name).limit(100);
   return rows.map((r) => ({ id: r.id, name: r.name }));
 }
 
 export interface ProblemScanRow {
-  scan: (typeof scans.$inferSelect);
+  scan: Omit<typeof scans.$inferSelect, "rawSnapshot">;
   companyId: string;
   companyName: string;
   sourceType: CareerSource["type"];
 }
 
 export async function listRecentProblemScans(days = 7): Promise<ProblemScanRow[]> {
+  const { rawSnapshot: _raw, ...scanColumns } = getTableColumns(scans);
   const since = new Date(Date.now() - days * 86_400_000);
   const rows = await db()
-    .select({ scan: scans, companyId: companies.id, companyName: companies.name, sourceType: careerSources.type })
+    .select({ scan: scanColumns, companyId: companies.id, companyName: companies.name, sourceType: careerSources.type })
     .from(scans)
     .innerJoin(careerSources, eq(scans.sourceId, careerSources.id))
     .innerJoin(companies, eq(careerSources.companyId, companies.id))
     .where(and(ne(scans.status, "ok"), gte(scans.startedAt, since)))
-    .orderBy(desc(scans.startedAt));
+    .orderBy(desc(scans.startedAt)).limit(100);
   return rows.map((r) => ({ scan: r.scan, companyId: r.companyId, companyName: r.companyName, sourceType: r.sourceType }));
 }
 

@@ -1,3 +1,4 @@
+import { withResourceLease } from "../lease";
 import { schema, enqueueTask, type Db, type Task } from "@christopher/db";
 import { dedupeKeyFor, discovery, priorityFor, type TaskPayloads, type DiscoveryCandidate, type DiscoveryResult } from "@christopher/core";
 import { and, eq, ne } from "drizzle-orm";
@@ -8,6 +9,11 @@ const AUTO_ACCEPT = 0.85;
 
 export async function handleDiscover(task: Task, deps: WorkerDeps): Promise<unknown> {
   const payload = task.payload as TaskPayloads["discover"];
+  return withResourceLease(deps, `discover:${payload.companyId}:${payload.logoOnly ? "logo" : "careers"}`, locked => discoverCompany(task, locked));
+}
+
+async function discoverCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
+  const payload = task.payload as TaskPayloads["discover"];
   const companies = await deps.db.select().from(schema.companies).where(eq(schema.companies.id, payload.companyId)).limit(1);
   const company = companies[0];
   if (!company) return { skipped: "company not found" };
@@ -15,8 +21,10 @@ export async function handleDiscover(task: Task, deps: WorkerDeps): Promise<unkn
   if (payload.logoOnly) {
     if (payload.homepageUrl !== company.homepageUrl) return { skipped: "homepage changed" };
     const faviconUrl = await discovery.discoverCompanyLogo(company.homepageUrl, makeFetchContext(deps));
-    if (faviconUrl) await deps.db.update(schema.companies).set({ faviconUrl })
-      .where(and(eq(schema.companies.id, company.id), eq(schema.companies.homepageUrl, company.homepageUrl)));
+    if (faviconUrl) await deps.db.transaction(async tx => {
+      await deps.assertOwnership?.(tx as unknown as Db);
+      await tx.update(schema.companies).set({ faviconUrl }).where(and(eq(schema.companies.id, company.id), eq(schema.companies.homepageUrl, company.homepageUrl)));
+    });
     return { faviconUrl };
   }
   // A direct ATS result must not skip branding. The separate task keeps image failures out of scans.
@@ -45,38 +53,41 @@ export async function handleDiscover(task: Task, deps: WorkerDeps): Promise<unkn
     throw err;
   }
 
+  return deps.db.transaction(async tx => {
+    await deps.assertOwnership?.(tx as unknown as Db);
   // Fill in the company's display name and favicon the first time we learn them.
   const patch: Partial<typeof schema.companies.$inferInsert> = {};
   if (result.companyName && (company.name === company.domain || !company.name)) patch.name = result.companyName;
-  if (Object.keys(patch).length > 0) await deps.db.update(schema.companies).set(patch).where(eq(schema.companies.id, company.id));
+  if (Object.keys(patch).length > 0) await tx.update(schema.companies).set(patch).where(eq(schema.companies.id, company.id));
 
   const candidates = result.candidates.map(serialiseCandidate);
   let chosenSourceId: string | null = null;
   let status: "resolved" | "needs_confirmation" | "not_found" = result.outcome;
 
   if (result.best && result.best.confidence >= AUTO_ACCEPT) {
-    const existing = await deps.db.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
+    const existing = await tx.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
     const best = result.best;
     const same = existing.find((source) => source.type === best.spec.type &&
       (best.spec.atsSlug ? source.atsSlug === best.spec.atsSlug && source.atsSite === (best.spec.atsSite ?? null) : source.url === best.spec.url));
     if (existing.length > 0 && !same) {
       status = "needs_confirmation";
     } else {
-      chosenSourceId = await upsertSource(deps.db, company.id, best, same?.confirmedByUser ?? false);
+      chosenSourceId = await upsertSource(tx as unknown as Db, company.id, best, same?.confirmedByUser ?? false);
       status = "resolved";
-      await enqueueTask(deps.db, "scan_company", { companyId: company.id, trigger: "manual" }, {
+      await enqueueTask(tx, "scan_company", { companyId: company.id, trigger: "manual" }, {
         dedupeKey: dedupeKeyFor("scan_company", { companyId: company.id }), priority: priorityFor("scan_company"),
       });
     }
   }
 
-  await deps.db
+  await tx
     .update(schema.discoveryRuns)
     .set({ status, finishedAt: deps.now(), candidates, chosenSourceId, log: result.log })
     .where(eq(schema.discoveryRuns.id, run.id));
 
   log.info("discovery finished", { company: company.name, outcome: status, fetches: result.fetches, best: result.best?.method });
   return { outcome: status, candidates: candidates.length, fetches: result.fetches, sourceId: chosenSourceId };
+  });
 }
 
 export function serialiseCandidate(candidate: DiscoveryCandidate) {

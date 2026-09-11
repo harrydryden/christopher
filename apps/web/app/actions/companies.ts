@@ -3,11 +3,11 @@ import { enqueueTask } from "@christopher/db";
 
 import { requireSession } from "@/lib/auth";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { careerSources, companies, discoveryRuns, SOURCE_TYPES } from "@christopher/db/schema";
+import { careerSources, companies, discoveryRuns, tasks, SOURCE_TYPES } from "@christopher/db/schema";
 import { ensureHttpUrl, extractDomain } from "@christopher/core";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
@@ -24,6 +24,7 @@ export async function addCompanies(formData: FormData): Promise<void> {
   const existingDomains = new Set(existingRows.map((r) => r.domain));
 
   let added = 0;
+  const candidates: Array<typeof companies.$inferInsert> = [];
   const skipped: string[] = [];
 
   for (const line of lines) {
@@ -41,16 +42,22 @@ export async function addCompanies(formData: FormData): Promise<void> {
       continue;
     }
     existingDomains.add(domain);
-    const [inserted] = await db().insert(companies).values({ name: domain, homepageUrl: url, domain }).returning({ id: companies.id });
-    if (inserted) {
-      added += 1;
-      await enqueue("discover", { companyId: inserted.id, reason: "added" });
-    }
+    candidates.push({ name: domain, homepageUrl: url, domain });
   }
+  await db().transaction(async tx => {
+    for (let offset = 0; offset < candidates.length; offset += 100) {
+      const batch = candidates.slice(offset, offset + 100);
+      const inserted = await tx.insert(companies).values(batch).onConflictDoNothing().returning({ id: companies.id, domain: companies.domain });
+      added += inserted.length;
+      const createdDomains = new Set(inserted.map(c => c.domain));
+      skipped.push(...batch.filter(c => !createdDomains.has(c.domain)).map(c => c.domain));
+      if (inserted.length) await tx.insert(tasks).values(inserted.map(c => ({ type: "discover" as const, payload: { companyId: c.id, reason: "added" }, dedupeKey: `discover:${c.id}`, priority: 1 }))).onConflictDoNothing();
+    }
+  });
 
   revalidatePath("/companies");
   const params = new URLSearchParams({ added: String(added) });
-  if (skipped.length) params.set("skipped", skipped.join(", "));
+  if (skipped.length) params.set("skipped", skipped.slice(0, 8).map(s => s.slice(0, 100)).join(", ") + (skipped.length > 8 ? `; and ${skipped.length - 8} more` : ""));
   redirect(`/companies?${params.toString()}`);
 }
 
@@ -79,6 +86,28 @@ export async function resumeCompany(companyId: string): Promise<void> {
 export async function archiveCompany(companyId: string): Promise<void> {
   await requireSession();
   await setCompanyStatus(companyId, "archived");
+}
+
+/** Refresh uses existing sources first; discovery is recovery, not a separate routine action. */
+export async function refreshCompany(companyId: string): Promise<void> {
+  await requireSession();
+  const id = zUuid().parse(companyId);
+  const review = await db().transaction(async tx => {
+    const [company] = await tx.select({ status: companies.status }).from(companies).where(eq(companies.id, id)).for("update");
+    if (!company || company.status !== "active") return false;
+    const pending = await tx.select().from(tasks).where(and(inArray(tasks.type, ["scan_company", "discover"]), sql`${tasks.payload}->>'companyId' = ${id}`, sql`coalesce(${tasks.payload}->>'logoOnly', 'false') != 'true'`, inArray(tasks.status, ["queued", "running"])));
+    if (pending.length) {
+      for (const task of pending) if (task.status === "queued") await tx.update(tasks).set({ runAfter: new Date(), payload: task.type === "scan_company" ? { ...task.payload, trigger: "manual" } : task.payload }).where(and(eq(tasks.id, task.id), eq(tasks.status, "queued")));
+      return false;
+    }
+    const sources = await tx.select({ status: careerSources.status }).from(careerSources).where(eq(careerSources.companyId, id));
+    if (sources.some(source => source.status === "active" || source.status === "failing")) await enqueue("scan_company", { companyId: id, trigger: "manual" }, tx);
+    else if (sources.some(source => source.status === "needs_confirmation")) return true;
+    else await enqueue("discover", { companyId: id, reason: "manual" }, tx);
+    return false;
+  });
+  revalidatePath("/companies"); revalidatePath(`/companies/${id}`);
+  if (review) redirect(`/companies/${id}`);
 }
 
 export async function rescanCompany(companyId: string): Promise<void> {

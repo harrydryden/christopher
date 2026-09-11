@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+import { CvThemeSchema, DEFAULT_CV_THEME } from "./cv-theme";
+export * from "./cv-theme";
+
+const SkillItemsSchema = z.array(z.string().trim().min(1).max(80).refine(value => !/[\r\n]/.test(value), "Each skill must be a single line.")).min(1).max(20)
+  .refine(items => new Set(items.map(item => item.toLowerCase())).size === items.length, "Remove repeated skills.");
+
 const LinkedInSchema = z.string().max(300).refine(value => {
   if (!value) return true;
   try { const url = new URL(value); return url.protocol === "https:" && (url.hostname === "linkedin.com" || url.hostname === "www.linkedin.com") && url.pathname.startsWith("/in/"); } catch { return false; }
@@ -55,6 +61,7 @@ export const CvEntrySchema = z.object({
   status: z.enum(["draft", "active", "inactive"]).optional(),
   heading: z.string().trim().min(1).max(250),
   details: z.string().trim().min(1).max(40000),
+  skillItems: SkillItemsSchema.optional(),
   // Confirmation belongs to the exact wording, so editing or removing a row cannot transfer it.
   confirmedResponsibilities: z.array(z.string().min(1).max(40000)).max(20).optional(),
   company: z.string().trim().max(160).optional(),
@@ -68,6 +75,7 @@ export const CvLibrarySchema = z.object({
   profile: z.string().trim().max(5000),
   stylePreferences: z.string().max(4000).optional(),
   preferredWording: z.string().max(12000).optional(),
+  theme: CvThemeSchema.optional(),
   structuredExperience: z.literal(true).optional(),
   employment: z.array(EmploymentSchema).max(100).optional(),
   entries: z.array(CvEntrySchema).min(1).max(100),
@@ -86,6 +94,7 @@ export const CvLibrarySchema = z.object({
     }
   }
   for (const [index, entry] of library.entries.entries()) {
+    if (entry.skillItems && entry.kind !== "skill") ctx.addIssue({ code: "custom", path: ["entries", index, "skillItems"], message: "Individual skills belong to skill blocks only." });
     if (library.employment !== undefined) {
       if (entry.roleId || entry.company !== undefined) ctx.addIssue({ code: "custom", path: ["entries", index], message: "Company and role must come from employment history." });
       if (entry.kind === "experience" ? !library.employment.some(job => job.id === entry.employmentId) : !!entry.employmentId) ctx.addIssue({ code: "custom", path: ["entries", index, "employmentId"], message: "Select an employment record for experience only." });
@@ -102,14 +111,15 @@ export const CvLibrarySchema = z.object({
 export type CvLibrary = z.infer<typeof CvLibrarySchema>;
 export const CvPlanSchema = z.object({
   summary: z.string().min(1).max(1800),
-  sections: z.array(z.object({ entryId: z.string(), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(650)).min(1).max(6) })).min(1).max(20),
+  sections: z.array(z.object({ entryId: z.string(), skillItems: SkillItemsSchema.optional(), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(650)).min(1).max(6) })).min(1).max(20),
   gaps: z.array(z.string().max(500)).max(12),
 });
 export type CvPlan = z.infer<typeof CvPlanSchema>;
 export const CvContentSchema = z.object({
+  theme: CvThemeSchema.optional(),
   linkedinUrl: LinkedInSchema,
   name: z.string().min(1).max(120), contact: z.string().max(500), summary: z.string().min(1).max(1800),
-  sections: z.array(z.object({ entryId: z.string(), kind: CvEntrySchema.shape.kind, heading: z.string().min(1).max(250), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(650)).min(1).max(6) })).min(1).max(20),
+  sections: z.array(z.object({ entryId: z.string(), kind: CvEntrySchema.shape.kind, skillItems: SkillItemsSchema.optional(), heading: z.string().min(1).max(250), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(650)).min(1).max(6) })).min(1).max(20),
   gaps: z.array(z.string().max(500)).max(12),
 });
 export type CvContent = z.infer<typeof CvContentSchema>;
@@ -124,6 +134,13 @@ export function materialiseCv(library: CvLibrary, plan: CvPlan): CvContent {
     seen.add(entry.id);
     if (entry.employmentId && seenJobs.has(entry.employmentId)) throw new Error("CV repeats the same employment record");
     if (entry.employmentId) seenJobs.add(entry.employmentId);
+    if (section.skillItems && (entry.kind !== "skill" || !entry.skillItems)) throw new Error("CV contains skills without structured source evidence");
+    if (entry.skillItems && !section.skillItems?.length) throw new Error("Select individual skills from the source skill items");
+    const selectedSkills = section.skillItems?.map(item => {
+      const stored = entry.skillItems?.find(source => normalise(source) === normalise(item));
+      if (!stored) throw new Error("CV contains a skill not in the evidence library");
+      return stored;
+    });
     const job = library.employment?.find(item => item.id === entry.employmentId);
     const available = industryDescriptions(job?.industryDescriptions);
     const selectedIndustries = [...new Set((section.industryDescriptions ?? []).map(description => {
@@ -131,9 +148,9 @@ export function materialiseCv(library: CvLibrary, plan: CvPlan): CvContent {
       if (!stored) throw new Error("CV contains an industry description not in employment history");
       return stored;
     }))];
-    return [entry.id, { ...section, ...(selectedIndustries.length ? { industryDescriptions: selectedIndustries } : {}), kind: entry.kind, heading: evidenceHeading(library, entry) }];
+    return [entry.id, { ...section, ...(selectedSkills ? { skillItems: selectedSkills } : {}), ...(selectedIndustries.length ? { industryDescriptions: selectedIndustries } : {}), kind: entry.kind, heading: evidenceHeading(library, entry) }];
   }));
-  return CvContentSchema.parse({ name: library.name, contact: library.contact, linkedinUrl: library.linkedinUrl, summary: plan.summary,
+  return CvContentSchema.parse({ theme: library.theme ?? DEFAULT_CV_THEME, name: library.name, contact: library.contact, linkedinUrl: library.linkedinUrl, summary: plan.summary,
     sections: library.entries.flatMap(e => selected.has(e.id) ? [selected.get(e.id)!] : []), gaps: plan.gaps });
 }
 
@@ -290,4 +307,11 @@ export function retainArchivedEvidence(previous: CvLibrary | undefined, next: Cv
     if (job && !employment.some(candidate => candidate.id === job.id)) employment.push(job);
   }
   return { ...next, employment, entries: [...next.entries, ...removed.map(entry => ({ ...entry, status: "inactive" as const }))] };
+}
+
+/** A shared display order keeps editing and PDF output aligned without changing stored IDs. */
+export function cvDisplaySections(content: CvContent) {
+  const order = { experience: 0, skill: 1, education: 2, interest: 3 };
+  return content.sections.map((section, index) => ({ section, index }))
+    .sort((a, b) => order[a.section.kind] - order[b.section.kind]);
 }

@@ -2,6 +2,7 @@ import { schema, enqueueTask } from "@christopher/db";
 import { dedupeKeyFor, localDateParts, priorityFor } from "@christopher/core";
 import { and, eq, lt, sql } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
+import { maintainHistory } from "./maintenance";
 import { log } from "./log";
 import { finaliseScanRuns } from "./handlers/daily";
 import { requeueStale } from "./queue";
@@ -33,16 +34,19 @@ export async function schedulerTick(deps: WorkerDeps): Promise<void> {
   }
 
   if (weekday === settings.weeklyDay && hm >= addMinutes(settings.scanTime, 60)) {
-    const last = await getInternal<string>(deps.db, "lastWeeklyYmd");
+    await deps.db.transaction(async tx => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('christopher:weekly-jobs'))`);
+    const last = await getInternal<string>(tx as unknown as WorkerDeps["db"], "lastWeeklyYmd");
     if (last !== ymd) {
-      await setInternal(deps.db, "lastWeeklyYmd", ymd);
+      await setInternal(tx as unknown as WorkerDeps["db"], "lastWeeklyYmd", ymd);
       for (const type of ["suggest_filters", "synthesize_profile", "suggest_companies"] as const) {
         if (type === "suggest_companies" && !settings.suggestionsEnabled) continue;
         const payload = type === "synthesize_profile" ? { force: false } : {};
-        await enqueueTask(deps.db, type, payload, { dedupeKey: dedupeKeyFor(type, payload as never), priority: priorityFor(type) });
+        await enqueueTask(tx as unknown as WorkerDeps["db"], type, payload, { dedupeKey: dedupeKeyFor(type, payload as never), priority: priorityFor(type) });
       }
       log.info("scheduled weekly jobs", { ymd });
     }
+    });
   }
 
   if (settings.suggestionsEnabled) {
@@ -66,7 +70,7 @@ export async function schedulerTick(deps: WorkerDeps): Promise<void> {
     .set({ status: "expired", resolvedAt: now })
     .where(and(eq(schema.companySuggestions.status, "pending"), lt(schema.companySuggestions.createdAt, new Date(now.getTime() - 30 * 86_400_000))));
 
-  await deps.db.execute(sql`delete from tasks where status = 'done' and finished_at < now() - interval '14 days'`);
+  await maintainHistory(deps);
 }
 
 export function startScheduler(deps: WorkerDeps, intervalMs = 60_000): { stop(): void } {

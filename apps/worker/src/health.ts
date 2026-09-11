@@ -1,5 +1,5 @@
 import http from "node:http";
-import { pendingTaskCounts } from "@christopher/db";
+import { pendingTaskCounts, workloadMetrics } from "@christopher/db";
 import type { WorkerDeps } from "./context";
 import { log } from "./log";
 
@@ -7,9 +7,9 @@ export function startHealthServer(deps: WorkerDeps, port: number, extra: () => R
   const server = http.createServer(async (req, res) => {
     if (req.url === "/healthz" || req.url === "/" || req.url === "/health") {
       try {
-        const counts = await pendingTaskCounts(deps.db);
+        const [counts, metrics] = await Promise.all([pendingTaskCounts(deps.db), workloadMetrics(deps.db)]);
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true, workerId: deps.env.workerId, queue: counts, ...extra() }));
+        res.end(JSON.stringify({ ok: true, workerId: deps.env.workerId, queue: counts, metrics, memory: process.memoryUsage(), ...extra() }));
       } catch (err) {
         res.writeHead(500, { "content-type": "application/json" });
         res.end(JSON.stringify({ ok: false, error: (err as Error).message }));

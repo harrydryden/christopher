@@ -15,12 +15,15 @@ interface DailyPayload {
  */
 export async function handleRunDaily(task: Task, deps: WorkerDeps): Promise<unknown> {
   return deps.db.transaction(async (tx) => {
+    await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('christopher:daily-runs'))`);
     return runDaily(task, { ...deps, db: tx as unknown as WorkerDeps["db"] });
   });
 }
 
 async function runDaily(task: Task, deps: WorkerDeps): Promise<unknown> {
+  const checkpoint = task.result as { scanRunId?: string } | null;
+  if (checkpoint?.scanRunId) return task.result;
   const payload = task.payload as unknown as DailyPayload;
   const settings = await deps.settings();
   const runDate = payload.runDate ?? localDateParts(deps.now(), settings.timezone).ymd;
@@ -37,7 +40,9 @@ async function runDaily(task: Task, deps: WorkerDeps): Promise<unknown> {
   const companies = await deps.db
     .select({ id: schema.companies.id })
     .from(schema.companies)
-    .where(eq(schema.companies.status, "active"));
+    .where(and(eq(schema.companies.status, "active"), payload.trigger === "schedule" ? sql`(
+      not exists (select 1 from career_sources cs where cs.company_id=${schema.companies.id}) or
+      exists (select 1 from career_sources cs where cs.company_id=${schema.companies.id} and cs.status in ('active','failing') and (cs.next_scan_at is null or cs.next_scan_at <= ${deps.now()})))` : undefined));
 
   const [run] = await deps.db
     .insert(schema.scanRuns)
@@ -45,11 +50,17 @@ async function runDaily(task: Task, deps: WorkerDeps): Promise<unknown> {
     .returning({ id: schema.scanRuns.id });
   if (!run) throw new Error("failed to create scan run");
 
-  for (const company of companies) {
-    const p = { companyId: company.id, scanRunId: run.id, trigger: payload.trigger };
-    await enqueueTask(deps.db, "scan_company", p, { dedupeKey: `${dedupeKeyFor("scan_company", p)}:${run.id}`, priority: priorityFor("scan_company") });
+  const spreadMs = payload.trigger === "schedule" ? (deps.env.scanSpreadMinutes ?? 60) * 60_000 : 0;
+  for (let offset = 0; offset < companies.length; offset += 250) {
+    await deps.db.insert(schema.tasks).values(companies.slice(offset, offset + 250).map(company => {
+      const p = { companyId: company.id, scanRunId: run.id, trigger: payload.trigger };
+      const fraction = Number.parseInt(company.id.replaceAll("-", "").slice(0, 8), 16) / 0xffffffff;
+      return { type: "scan_company" as const, payload: p, dedupeKey: `${dedupeKeyFor("scan_company", p)}:${run.id}`,
+        priority: priorityFor("scan_company"), runAfter: new Date(deps.now().getTime() + fraction * spreadMs) };
+    })).onConflictDoNothing();
   }
 
+  if (task.id) await deps.db.update(schema.tasks).set({ result: { scanRunId: run.id, companies: companies.length } }).where(eq(schema.tasks.id, task.id));
   log.info("daily run started", { runId: run.id, runDate, companies: companies.length });
   return { scanRunId: run.id, companies: companies.length };
 }

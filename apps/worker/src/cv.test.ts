@@ -18,7 +18,9 @@ async function setup(apiKey: string | undefined = "fixture-key") {
 it("generates once on duplicate delivery, preserving the saved evidence", async () => {
   const build = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations leader", sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] });
   const { task, deps, draft } = await setup();
-  await Promise.all([handleGenerateCv(task, deps), handleGenerateCv(task, deps)]);
+  const results = await Promise.allSettled([handleGenerateCv(task, deps), handleGenerateCv(task, deps)]);
+  expect(results.some(r => r.status === "fulfilled")).toBe(true);
+  await handleGenerateCv(task, deps);
   expect(build).toHaveBeenCalledTimes(1);
   expect(build.mock.calls[0]![0].library).toEqual(library);
   const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));

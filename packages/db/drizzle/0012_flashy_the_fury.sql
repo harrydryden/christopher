@@ -1,0 +1,1 @@
+ALTER TABLE "career_sources" ADD COLUMN "next_scan_at" timestamp with time zone;

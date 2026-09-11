@@ -17,7 +17,7 @@ export default async function ApplicationsPage() {
         <label>Status<select name="status" defaultValue={row.status} className="ml-2 rounded border p-2 dark:bg-slate-950">{["applied", "screening", "interview", "offer", "rejected", "withdrawn", "accepted"].map(s => <option key={s}>{s}</option>)}</select></label>
         <label>Notes<textarea name="notes" defaultValue={row.notes} maxLength={4000} className="block w-full rounded border p-2 dark:bg-slate-950" /></label>
       </SettingsForm>
-      <details><summary>Status history</summary><ul className="space-y-2 text-sm">{row.history.map((h, i) => <li key={i}>{h.at} · {h.status}{h.notes && ` — ${h.notes}`}</li>)}</ul></details>
+      <section><h3>Status history</h3><ul className="space-y-2 text-sm">{row.history.map((h, i) => <li key={i}>{h.at} · {h.status}{h.notes && ` — ${h.notes}`}</li>)}</ul></section>
     </section>)}
   </div>;
 }

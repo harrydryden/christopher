@@ -285,3 +285,13 @@ describe("source company extraction", () => {
     expect(await invalid.engine.extractSourceCompanies({ content: "Source", portfolio: [], preferences: "" })).toBeNull();
   });
 });
+
+it('passes structured skills and wording guidance to generation without palette settings', async () => {
+  const { DEFAULT_CV_THEME } = await import('@christopher/core/cv');
+  const { engine, calls } = engineWith({ summary: 'Analyst', sections: [{ entryId: 's', bullets: ['Reporting'], skillItems: ['SQL'] }], gaps: [] });
+  await engine.buildCv({ library: { name: 'Example', contact: '', profile: '', theme: DEFAULT_CV_THEME, stylePreferences: 'Concise', entries: [{ id: 's', kind: 'skill', heading: 'Tools', details: 'Reporting', skillItems: ['SQL'] }] }, jobTitle: 'Analyst', company: 'Example', description: 'Analyse data' });
+  const messages = calls[0]!.params.messages as Array<{ content: string }>;
+  expect(messages[0]!.content).toContain('SQL');
+  expect(messages[0]!.content).toContain('Concise');
+  expect(messages[0]!.content).not.toContain(DEFAULT_CV_THEME.primary);
+});

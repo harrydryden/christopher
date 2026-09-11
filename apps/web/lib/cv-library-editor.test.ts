@@ -26,3 +26,15 @@ it("renders a labelled confirmation checkbox for every responsibility with its s
   expect(html).toContain("1 confirmed");
   expect(html).toContain("Save library");
 });
+
+it("shows explicit skill labels and appearance controls without splitting existing prose", () => {
+  const library: CvLibrary = { name: "Example", contact: "", profile: "", entries: [{ id: "s", kind: "skill", heading: "Tools", details: "SQL, Python and reporting", skillItems: ["SQL", "Python"] }] };
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library, version: 1 }));
+  expect(html).toContain('aria-label="Individual skills: Tools"');
+  expect(html).toContain('SQL\nPython');
+  expect(html).toContain('SQL, Python and reporting');
+  expect(html).toContain('Page background');
+  expect(html).toContain('Profile card');
+  expect(html).toContain('Skill pills');
+  expect(html).toContain('Palette sample');
+});

@@ -10,6 +10,8 @@ import { ats } from "@christopher/core";
 import { log } from "./log";
 
 export interface FetcherOptions {
+  deferHost?: (host: string, delayMs: number) => Promise<void>;
+  reserveHost?: (host: string, delayMs: number) => Promise<number>;
   userAgent: string;
   perHostDelayMs?: number;
   defaultTimeoutMs?: number;
@@ -49,8 +51,13 @@ export class PoliteFetcher {
     return { target: u.toString(), originalHost, unmapped: !mapped && Object.keys(hostMap).length > 0 };
   }
 
-  private async waitTurn(host: string): Promise<void> {
+  async waitForHost(host: string): Promise<void> {
     const delay = this.opts.perHostDelayMs ?? 2000;
+    if (this.opts.reserveHost) {
+      const wait = await this.opts.reserveHost(host, delay);
+      if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
+      return;
+    }
     const prev = this.queues.get(host) ?? Promise.resolve();
     let release!: () => void;
     const mine = new Promise<void>((r) => (release = r));
@@ -121,6 +128,7 @@ export class PoliteFetcher {
       // discovery run that guesses an applicant tracking slug would query the real board.
       throw new SourceFetchError(`refusing to fetch ${originalHost}: not in the test host map`, "network");
     }
+    await this.waitForHost(originalHost);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), init.timeoutMs ?? this.opts.defaultTimeoutMs ?? 20_000);
     const headers: Record<string, string> = {
@@ -214,8 +222,13 @@ export class PoliteFetcher {
         throw new SourceFetchError(`robots.txt disallows ${url}`, "blocked", 999);
       }
     }
-    await this.waitTurn(u.hostname);
     const res = await this.rawFetch(url, init);
+    if (res.status === 429 || res.status === 503) {
+      const retry = res.headers["retry-after"];
+      const seconds = Number(retry);
+      const delay = retry ? Number.isFinite(seconds) ? seconds * 1000 : Date.parse(retry) - Date.now() : 60_000;
+      if (Number.isFinite(delay) && delay > 0) await this.opts.deferHost?.(u.hostname, Math.min(delay, 3600_000));
+    }
     if (res.status === 403 || res.status === 429 || res.status === 503) {
       const challenge = CHALLENGE_MARKERS.some((re) => re.test(res.body.slice(0, 20_000)));
       if (res.status !== 503 || challenge) {

@@ -10,3 +10,4 @@ export { enqueueTask, pendingTaskCounts, taskById, activeTaskFor, type EnqueueOp
 
 export { reevaluateGate, pruneNonMatches } from "./gate";
 export { appendProfile } from "./profiles";
+export { workloadMetrics } from "./scaling";

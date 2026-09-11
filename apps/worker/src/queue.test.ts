@@ -1,4 +1,5 @@
 /** Queue and scheduler behaviour against a real database. */
+import { renewTask, completeTask, assertTaskOwnership } from "./queue";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {createDb, enqueueTask, schema, type Db} from "@christopher/db";
 import { runMigrations } from "@christopher/db/migrate";
@@ -209,4 +210,45 @@ describe("scheduler", () => {
     expect(types).not.toContain("suggest_companies");
     expect(types).toContain("suggest_filters");
   });
+});
+
+it("fences completion, failure and writes from a reclaimed attempt", async () => {
+  await enqueueTask(db, "discover", { companyId: "a" });
+  const old = (await claimTask(db, "same-worker"))!;
+  await db.update(schema.tasks).set({ lockedAt: new Date(0) });
+  await requeueStale(db);
+  const current = (await claimTask(db, "same-worker"))!;
+  expect(await renewTask(db, old)).toBe(false);
+  await completeTask(db, old, { stale: true });
+  await failTask(db, old, new Error("stale"));
+  await expect(assertTaskOwnership(db, old)).rejects.toThrow("lease lost");
+  expect((await db.select().from(schema.tasks))[0]!.status).toBe("running");
+  await completeTask(db, current, { current: true });
+  expect((await db.select().from(schema.tasks))[0]!.result).toEqual({ current: true });
+});
+it("renews a live task lease and isolates queue lanes", async () => {
+  await enqueueTask(db, "discover", { companyId: "a" });
+  await enqueueTask(db, "scan_company", { companyId: "b" });
+  await enqueueTask(db, "suggest_companies", {});
+  expect((await claimTask(db, "scan", "scan"))!.type).toBe("scan_company");
+  expect((await claimTask(db, "background", "background"))!.type).toBe("suggest_companies");
+  const task = (await claimTask(db, "interactive", "interactive"))!;
+  await db.update(schema.tasks).set({ lockedAt: new Date(0) }).where(eq(schema.tasks.id, task.id));
+  expect(await renewTask(db, task)).toBe(true);
+  expect(await requeueStale(db)).toBe(0);
+});
+
+it("does not repeat a manual daily fan-out after a crash between commit and completion", async () => {
+  const { handleRunDaily } = await import("./handlers/daily");
+  await db.insert(schema.companies).values({ name: "Test", domain: "test.example", homepageUrl: "https://test.example" });
+  await enqueueTask(db, "run_daily", { trigger: "manual" }, { priority: 1 });
+  const first = (await claimTask(db, "first"))!;
+  await handleRunDaily(first, deps);
+  await db.update(schema.tasks).set({ lockedAt: new Date(0) }).where(eq(schema.tasks.id, first.id));
+  await requeueStale(db);
+  const retry = (await claimTask(db, "second", "scan"))!;
+  expect(retry.id).toBe(first.id);
+  await handleRunDaily(retry, deps);
+  expect(await db.select().from(schema.scanRuns)).toHaveLength(1);
+  expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "scan_company"))).toHaveLength(1);
 });

@@ -4,7 +4,8 @@ import { runMigrations } from "@christopher/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
-import { articleLinks, handleMonitorSource } from "./handlers/external-sources";
+import { articleLinks, handleMonitorSource, handleExtractDocument, handleVerifyCompany } from "./handlers/external-sources";
+import { claimTask, completeTask } from "./queue";
 import { schedulerTick } from "./scheduler";
 vi.mock("./handlers/companies", () => ({ verifyCandidate: vi.fn(async () => ({ homepageOk: true, careersSource: { type: "greenhouse", url: "https://boards.greenhouse.io/acme", confidence: 0.95 }, openRoles: 4, matchingRoles: 1 })) }));
 const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
@@ -28,6 +29,15 @@ async function sourceWithDocument() {
   await client.db.insert(schema.discoveryDocuments).values({ sourceId: source!.id, title: "Weekly edition", content, fingerprint: "unique" });
   return source!;
 }
+async function runStages() {
+  while (true) {
+    const next = await claimTask(client.db, "source-test", "background");
+    if (!next) break;
+    if (next.type === "extract_document") await handleExtractDocument(next, deps);
+    else if (next.type === "verify_company") await handleVerifyCompany(next, deps);
+    await completeTask(client.db, next, {});
+  }
+}
 function task(sourceId: string) { return { payload: { sourceId } } as unknown as Task; }
 it("follows LinkedIn editions, excludes navigation and deduplicates tracking links", () => {
   expect(articleLinks('<a href="/pulse/edition?trk=a">Edition</a><a href="/pulse/edition?trk=b">Again</a><a href="/login">Login</a>', "https://www.linkedin.com/newsletters/example")).toEqual(["https://www.linkedin.com/pulse/edition"]);
@@ -49,23 +59,24 @@ it("stores verified recommendations with evidence, never adds a company, and doe
     { name: "Invented", homepageUrl: "https://invented.example", rationale: "Fits", quote: "Not in the source", recommended: true },
     { name: "Irrelevant", homepageUrl: "https://other.example", rationale: "Poor fit", quote: "Acme Robotics", recommended: false },
   ] });
-  await handleMonitorSource(task(source.id), deps);
+  await handleMonitorSource(task(source.id), deps); await runStages();
   const suggestions = await client.db.select().from(schema.companySuggestions);
   expect(suggestions).toHaveLength(1);
   expect(suggestions[0]).toMatchObject({ status: "pending", evidence: { sourceName: "Scaling Europe", title: "Weekly edition", quote: "Acme Robotics raised funding" } });
   expect(await client.db.select().from(schema.companies)).toHaveLength(0);
   const [updated] = await client.db.select().from(schema.discoverySources);
   expect(updated!.nextRunAt.toISOString()).toBe("2026-09-18T00:00:00.000Z");
-  await handleMonitorSource(task(source.id), deps);
+  await handleMonitorSource(task(source.id), deps); await runStages();
   expect(extract).toHaveBeenCalledTimes(1);
   await client.db.insert(schema.discoveryDocuments).values({ sourceId: source.id, title: "Another edition", content, fingerprint: "different" });
-  await handleMonitorSource(task(source.id), deps);
+  await handleMonitorSource(task(source.id), deps); await runStages();
   expect(await client.db.select().from(schema.companySuggestions)).toHaveLength(1);
 });
 it("retains unread documents and exposes failures when AI is unavailable", async () => {
   const source = await sourceWithDocument();
   Object.defineProperty(deps.ai, "enabled", { value: false, configurable: true });
-  await expect(handleMonitorSource(task(source.id), deps)).rejects.toThrow("AI unavailable");
+  await handleMonitorSource(task(source.id), deps);
+  await expect(runStages()).rejects.toThrow("AI unavailable");
   const [document] = await client.db.select().from(schema.discoveryDocuments);
   expect(document!.processedAt).toBeNull();
   const [updated] = await client.db.select().from(schema.discoverySources);
@@ -76,7 +87,7 @@ it("still processes imported text when a LinkedIn fetch is blocked", async () =>
   await client.db.update(schema.discoverySources).set({ kind: "linkedin", url: "https://www.linkedin.com/newsletters/example" }).where(eq(schema.discoverySources.id, source.id));
   vi.spyOn(deps.fetcher, "fetchText").mockRejectedValue(new Error("Blocked"));
   vi.spyOn(deps.ai, "extractSourceCompanies").mockResolvedValue({ candidates: [] });
-  await handleMonitorSource(task(source.id), deps);
+  await handleMonitorSource(task(source.id), deps); await runStages();
   const [document] = await client.db.select().from(schema.discoveryDocuments);
   expect(document!.processedAt).not.toBeNull();
   const [updated] = await client.db.select().from(schema.discoverySources);
@@ -91,13 +102,33 @@ it("waits for email content without requiring AI or reporting an error", async (
   expect(updated!.lastError).toBeNull();
 });
 
-it("uses the saved interval if it changes while a check is running", async () => {
+it("uses the saved interval if it changes while collection is running", async () => {
   const source = await sourceWithDocument();
-  vi.spyOn(deps.ai, "extractSourceCompanies").mockImplementation(async () => {
+  await client.db.update(schema.discoverySources).set({ kind: "website", url: "https://example.test/news" }).where(eq(schema.discoverySources.id, source.id));
+  vi.spyOn(deps.fetcher, "fetchText").mockImplementation(async url => {
     await client.db.update(schema.discoverySources).set({ intervalDays: 3 }).where(eq(schema.discoverySources.id, source.id));
-    return { candidates: [] };
+    return { status: 200, body: content, url, headers: {} };
   });
   await handleMonitorSource(task(source.id), deps);
   const [updated] = await client.db.select().from(schema.discoverySources);
   expect(updated!.nextRunAt.toISOString()).toBe("2026-09-14T00:00:00.000Z");
+});
+
+it("checkpoints extraction before verification and resumes paused candidates without calling the model again", async () => {
+  const source = await sourceWithDocument();
+  const extract = vi.spyOn(deps.ai, "extractSourceCompanies").mockResolvedValue({ candidates: [
+    { name: "Acme", homepageUrl: "https://acme.example", rationale: "Fits", quote: "Acme Robotics", recommended: true },
+  ] });
+  await handleMonitorSource(task(source.id), deps);
+  const extraction = (await claimTask(client.db, "test", "background"))!;
+  await handleExtractDocument(extraction, deps);
+  await completeTask(client.db, extraction, {});
+  expect((await client.db.select().from(schema.discoveryDocuments))[0]!.processedAt).not.toBeNull();
+  await client.db.update(schema.discoverySources).set({ enabled: false }).where(eq(schema.discoverySources.id, source.id));
+  await runStages();
+  expect(await client.db.select().from(schema.companySuggestions)).toHaveLength(0);
+  await client.db.update(schema.discoverySources).set({ enabled: true }).where(eq(schema.discoverySources.id, source.id));
+  await handleMonitorSource(task(source.id), deps); await runStages();
+  expect(extract).toHaveBeenCalledTimes(1);
+  expect(await client.db.select().from(schema.companySuggestions)).toHaveLength(1);
 });

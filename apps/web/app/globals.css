@@ -3,6 +3,31 @@
 :root {
   color-scheme: light;
   --app-navy: #142D46;
+
+  /* Brand palette (BRAND.md): the four enamel drum colours, then the neutrals.
+     Slate is the designated product accent; Brass is decorative only, as it
+     fails text contrast on Paper. These cover brand surfaces — the app chrome
+     still runs on --app-navy above. */
+  --brand-rust: #9a3f30;
+  --brand-brass: #b8862f;
+  --brand-verdigris: #3c6a5c;
+  --brand-slate: #2f5678;
+  --brand-ink: #151e25;
+  --brand-paper: #f4f1ea;
+  --brand-bakelite: #3a2419;
+  --brand-steel: #a9b3bb;
+}
+
+/* Motion spec: drums turn while Christopher scans boards, then settle to their
+   resting angles. ChristopherMark picks each drum's speed and direction. */
+@keyframes christopher-cw {
+  to { transform: rotate(360deg); }
+}
+@keyframes christopher-ccw {
+  to { transform: rotate(-360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .christopher-wheel { animation: none !important; }
 }
 
 html { background: #ffffff; }

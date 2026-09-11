@@ -1,5 +1,6 @@
 import { login } from "./actions";
 import { readPasswordConfig } from "@/lib/password";
+import { ChristopherLockup } from "@/components/brand";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +28,11 @@ export default async function LoginPage({
   return (
     <main className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm">
-        <h1 className="mb-1 text-center text-xl font-semibold text-slate-900">Christopher</h1>
+        {/* Horizontal, because BRAND.md only fixes ratios for that form — and
+            at 332px it still clears the 200px floor for the card. */}
+        <h1 className="mb-3 flex justify-center">
+          <ChristopherLockup markSize={64} color="var(--brand-ink)" id="login-lockup" />
+        </h1>
         <p className="mb-6 text-center text-sm text-slate-500">Careers page monitor</p>
 
         {hasPassword && hasSecret ? (

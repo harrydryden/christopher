@@ -23,7 +23,7 @@ export default async function CvDraftPage({ params }: { params: Promise<{ id: st
     {(draft.status === "queued" || draft.status === "generating") && <AutoRefresh cvId={id} />}
     {draft.status === "failed" && <p role="alert" className="rounded bg-red-50 p-4 text-sm text-red-700">{draft.error}</p>}
     {content && <>
-      <a href={`/api/cv/${id}/pdf`} className="inline-block rounded bg-slate-900 px-4 py-2 text-sm text-white">Download saved PDF</a>
+      <a href={`/api/cv/${id}/pdf`} className="inline-block rounded bg-[var(--app-navy)] px-4 py-2 text-sm text-white">Download saved PDF</a>
       <a href={`/api/cv/${id}/pdf?preview=1`} target="_blank" rel="noopener noreferrer" className="ml-3 text-sm underline">Preview saved PDF</a>
       <p className="text-sm text-slate-500">Downloads use the saved version. Save your edits first. Check factual accuracy, especially rewritten achievements.</p>
       {content.gaps.length > 0 && <aside className="rounded border border-amber-300 p-4 text-sm"><strong>Evidence gaps (excluded from the PDF)</strong><ul className="mt-2 list-disc pl-5">{content.gaps.map((gap, i) => <li key={i}>{gap}</li>)}</ul></aside>}
@@ -31,8 +31,8 @@ export default async function CvDraftPage({ params }: { params: Promise<{ id: st
       <section className="rounded border p-4 space-y-3"><h2 className="font-semibold">Application tracking</h2>
         {application ? <Link href="/applications" className="underline">Application recorded — view status and frozen PDF</Link> : <SettingsForm action={recordApplication.bind(null, id)} submitLabel="Record application with this saved CV">
           <p className="text-sm">Use this after submitting this CV revision. This records your application; it does not send anything to the employer.</p>
-          <label>Application date<input type="date" name="appliedOn" required className="ml-2 rounded border p-2 dark:bg-slate-950" /></label>
-          <label>Notes<textarea name="notes" maxLength={4000} className="block w-full rounded border p-2 dark:bg-slate-950" /></label>
+          <label>Application date<input type="date" name="appliedOn" required className="ml-2 rounded border p-2" /></label>
+          <label>Notes<textarea name="notes" maxLength={4000} className="block w-full rounded border p-2" /></label>
         </SettingsForm>}
       </section>
       <section><h3 className="text-sm">Source evidence and job description used</h3><p className="my-2 text-sm"><a className="underline" href="/cv/library">Open evidence library</a> · The description below is the one used for this draft.</p><p className="mt-4 whitespace-pre-wrap text-xs">{draft.jobDescription}</p></section>

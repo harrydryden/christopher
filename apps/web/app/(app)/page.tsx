@@ -45,7 +45,7 @@ export default async function RolesPage({ searchParams }: { searchParams: Promis
           { href: "/?decision=skip", label: "Skipped", active: !archived && filters.decision === "skip" },
           { href: "/?archive=1", label: "Archive", active: archived },
         ].map(view => <Link key={view.href} href={view.href} aria-current={view.active ? "page" : undefined}
-          className={`rounded-md px-3 py-2 ${view.active ? "bg-slate-200 font-medium dark:bg-slate-800" : "text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-900"}`}>{view.label}</Link>)}
+          className={`rounded-md px-3 py-2 ${view.active ? "bg-slate-200 font-medium" : "text-slate-500 hover:bg-slate-100"}`}>{view.label}</Link>)}
         <Link href="/settings" className="ml-auto px-3 py-2 text-slate-500 underline">Edit keyword filters</Link>
       </nav>
 

@@ -26,9 +26,9 @@ export function RolesFilterBar({
   exportHref: string;
 }) {
   const inputClass =
-    "rounded-md border border-slate-300 bg-white px-2 py-1 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-950";
+    "rounded-md border border-slate-300 bg-white px-2 py-1 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500";
   return (
-    <form method="get" className="mb-4 flex flex-wrap items-end gap-3 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+    <form method="get" className="mb-4 flex flex-wrap items-end gap-3 rounded-lg border border-slate-200 bg-white p-3">
       {archived && <input type="hidden" name="archive" value="1" />}
       <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
         Company
@@ -46,13 +46,13 @@ export function RolesFilterBar({
         <input type="text" name="q" defaultValue={filters.q} placeholder="Search…" className={`w-40 ${inputClass}`} />
       </label>
       <div className="ml-auto flex items-end gap-2 pb-0.5">
-        <a href={exportHref} className="rounded-md px-2 py-1 text-sm text-slate-600 underline hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-100">
+        <a href={exportHref} className="rounded-md px-2 py-1 text-sm text-slate-600 underline hover:text-slate-900">
           Export CSV
         </a>
-        <button type="submit" className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700 dark:bg-slate-100 dark:text-slate-900">
+        <button type="submit" className="rounded-md bg-[var(--app-navy)] px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700">
           Apply filters
         </button>
-        <a href={archived ? "/?archive=1" : "/"} className="rounded-md px-2 py-1.5 text-sm text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100">
+        <a href={archived ? "/?archive=1" : "/"} className="rounded-md px-2 py-1.5 text-sm text-slate-500 hover:text-slate-800">
           Reset
         </a>
       </div>

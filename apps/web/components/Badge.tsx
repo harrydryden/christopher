@@ -1,12 +1,12 @@
 export type Tone = "green" | "blue" | "gray" | "amber" | "red" | "neutral";
 
 const TONE_CLASSES: Record<Tone, string> = {
-  green: "bg-emerald-50 text-emerald-800 ring-emerald-600/20 dark:bg-emerald-950 dark:text-emerald-300 dark:ring-emerald-400/30",
-  blue: "bg-blue-50 text-blue-800 ring-blue-600/20 dark:bg-blue-950 dark:text-blue-300 dark:ring-blue-400/30",
-  gray: "bg-gray-50 text-gray-600 ring-gray-500/20 dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-400/20",
-  amber: "bg-amber-50 text-amber-800 ring-amber-600/20 dark:bg-amber-950 dark:text-amber-300 dark:ring-amber-400/30",
-  red: "bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-950 dark:text-red-300 dark:ring-red-400/30",
-  neutral: "bg-slate-100 text-slate-700 ring-slate-500/20 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-400/20",
+  green: "bg-emerald-50 text-emerald-800 ring-emerald-600/20",
+  blue: "bg-blue-50 text-blue-800 ring-blue-600/20",
+  gray: "bg-gray-50 text-gray-600 ring-gray-500/20",
+  amber: "bg-amber-50 text-amber-800 ring-amber-600/20",
+  red: "bg-red-50 text-red-700 ring-red-600/20",
+  neutral: "bg-slate-100 text-slate-700 ring-slate-500/20",
 };
 
 export function Badge({

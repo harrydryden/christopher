@@ -24,7 +24,7 @@ export function SettingsForm({
   return (
     <form action={formAction} className="flex flex-col gap-3">
       {children}
-      {!state.ok && <p className="text-sm text-red-600 dark:text-red-400">{state.error}</p>}
+      {!state.ok && <p className="text-sm text-red-600">{state.error}</p>}
       <div>
         <Button type="submit" variant="primary" size="sm" disabled={isPending}>
           {isPending ? "Saving…" : submitLabel}

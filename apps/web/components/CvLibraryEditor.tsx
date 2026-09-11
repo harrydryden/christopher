@@ -6,7 +6,7 @@ import { CvAppearance } from "./CvAppearance";
 import { EmploymentHistoryTable } from "./EmploymentHistoryTable";
 import { useRouter } from "next/navigation";
 
-const input = "w-full rounded border border-slate-300 p-2 text-sm dark:border-slate-700 dark:bg-slate-950";
+const input = "w-full rounded border border-slate-300 p-2 text-sm";
 const empty: CvLibrary = { name: "", contact: "", profile: "", employment: [], structuredExperience: true, entries: [] };
 export function CvLibraryEditor({ library, version }: { library: CvLibrary | null; version: number }) {
   const router = useRouter();
@@ -62,8 +62,8 @@ export function CvLibraryEditor({ library, version }: { library: CvLibrary | nul
           <p className="text-sm">Responsibilities and outcomes · {rows.length}/20 · {rows.filter(row => entry?.confirmedResponsibilities?.includes(responsibilityRows(row)[0] ?? "")).length} confirmed</p>
           {rows.length > 20 && <p role="alert" className="text-sm text-amber-700">All existing wording has been preserved. Combine related rows to reach 20 or fewer before saving.</p>}
           <div className="overflow-x-auto"><table className="w-full text-left text-sm" aria-label={`${job.company} ${job.jobTitle} responsibilities and outcomes`}>
-            <thead><tr className="border-b border-slate-300 dark:border-slate-700"><th scope="col" className="w-10 p-2">#</th><th scope="col" className="w-28 p-2 text-center">Confirmed</th><th scope="col" className="p-2">Narrative</th></tr></thead>
-            <tbody>{rows.map((row, index) => <tr key={index} className="border-b border-slate-200 align-top dark:border-slate-800">
+            <thead><tr className="border-b border-slate-300"><th scope="col" className="w-10 p-2">#</th><th scope="col" className="w-28 p-2 text-center">Confirmed</th><th scope="col" className="p-2">Narrative</th></tr></thead>
+            <tbody>{rows.map((row, index) => <tr key={index} className="border-b border-slate-200 align-top">
               <th scope="row" className="p-2 pt-4 font-normal">{index + 1}</th>
               <td className="p-2 pt-4 text-center"><input type="checkbox" className="h-4 w-4 accent-emerald-600" aria-label={`Confirm ${job.company} ${job.jobTitle} entry ${index + 1}`} disabled={!row.trim()} checked={entry?.confirmedResponsibilities?.includes(responsibilityRows(row)[0] ?? "") ?? false} onChange={event => {
                   const text = responsibilityRows(row)[0];
@@ -102,7 +102,7 @@ export function CvLibraryEditor({ library, version }: { library: CvLibrary | nul
       </div>
     </fieldset>)}
     <button type="button" className="mr-4 text-sm underline" onClick={() => setValue({ ...value, entries: [...value.entries, { id: crypto.randomUUID(), kind: "skill", status: "draft", heading: "", details: "" }] })}>Add education, skill or interest</button>
-    <button disabled={pending} className="rounded bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-50">{pending ? "Saving…" : "Save library"}</button>
+    <button disabled={pending} className="rounded bg-[var(--app-navy)] px-4 py-2 text-sm text-white disabled:opacity-50">{pending ? "Saving…" : "Save library"}</button>
     {!state.ok && <p role="alert" className="text-sm text-red-600">{state.error}</p>}
     <p className="text-xs text-slate-500">Saved library version: {version || "none"}. Changes to the library do not rewrite existing CVs.</p>
   </form>;

@@ -5,7 +5,7 @@ import { saveCvDraft } from "@/app/actions/cv";
 import { CvAppearance } from "./CvAppearance";
 import { SettingsForm } from "./SettingsForm";
 
-const input = "mt-1 block w-full rounded border border-slate-300 p-2 dark:border-slate-700 dark:bg-slate-950";
+const input = "mt-1 block w-full rounded border border-slate-300 p-2";
 export function CvDraftEditor({ id, content }: { id: string; content: CvContent }) {
   const [summary, setSummary] = useState(content.summary);
   const [theme, setTheme] = useState(content.theme);
@@ -57,7 +57,7 @@ export function CvDraftEditor({ id, content }: { id: string; content: CvContent 
     <section className="space-y-3 rounded-lg border border-slate-200 p-4">
       <h2 className="font-semibold">PDF preview</h2>
       <p className="text-sm">Render the current edits with the download renderer. This does not save a revision or call the writing model.</p>
-      <button type="button" disabled={pending} onClick={updatePreview} className="rounded bg-slate-900 px-3 py-2 text-sm text-white disabled:opacity-50">{pending ? "Rendering…" : "Preview current edits"}</button>
+      <button type="button" disabled={pending} onClick={updatePreview} className="rounded bg-[var(--app-navy)] px-3 py-2 text-sm text-white disabled:opacity-50">{pending ? "Rendering…" : "Preview current edits"}</button>
       {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
       {preview && !currentPreview && <p role="status" className="text-sm">The content or appearance has changed. Refresh the preview to see these edits.</p>}
       {preview && currentPreview && <>

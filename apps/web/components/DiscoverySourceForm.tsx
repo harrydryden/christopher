@@ -27,6 +27,6 @@ export function DiscoverySourceForm({ action, children, className, returnTo = "/
   }}>
     <fieldset disabled={pending} className="contents">{children}</fieldset>
     {pending && <p role="status" className="text-sm text-slate-500">{pendingLabel}</p>}
-    {error && <p role="alert" className="text-sm text-red-700 dark:text-red-400">{error}</p>}
+    {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
   </form>;
 }

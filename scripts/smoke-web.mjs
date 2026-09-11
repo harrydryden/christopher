@@ -34,7 +34,7 @@ function run(cmd, args, opts = {}) {
 }
 
 const PAGES = [
-  ["/", ["Roles", "Location"]],
+  ["/", ["Roles", "Location"], "Auto-matched"],
   ["/companies", ["Companies"]],
   ["/suggestions", ["Discover companies", "Companies to review"]],
   ["/suggestions?view=sources", ["Add a source"]],
@@ -45,7 +45,12 @@ const PAGES = [
   ["/cv", ["CV builder", "evidence library"]],
   ["/cv/library", ["Evidence library", "Employment history", "Add job", "Preferred CV style"]],
   ["/applications", ["Applications"]],
-  ["/?archive=1", ["Archived roles"]],
+  ["/?archive=1", ["History retained"], "Archived"],
+  ["/?view=auto-matched", ["Awaiting your review"], "Auto-matched"],
+  ["/?view=user-shortlisted", ["Your decisions are preserved"], "User-shortlisted"],
+  ["/?view=user-dismissed", ["Your decisions are preserved"], "User-dismissed"],
+  ["/?view=archived", ["History retained"], "Archived"],
+  ["/api/scan-status", ['"text"']],
   ["/api/export.csv", ["company"]],
 ];
 
@@ -116,7 +121,7 @@ async function main() {
   if (anon.status !== 307 && anon.status !== 302) failures.push(`/ without a session returned ${anon.status}, expected a redirect to /login`);
   else if (!(anon.headers.get("location") ?? "").includes("/login")) failures.push(`/ redirected to ${anon.headers.get("location")}, expected /login`);
 
-  for (const [path, expected] of PAGES) {
+  for (const [path, expected, selectedStatus] of PAGES) {
     let res;
     try {
       res = await fetch(`http://127.0.0.1:${PORT}${path}`, { headers: { cookie }, redirect: "manual" });
@@ -135,6 +140,11 @@ async function main() {
     }
     for (const needle of expected) {
       if (!text.includes(needle) && !body.includes(needle)) failures.push(`${path} does not mention "${needle}"`);
+    }
+    if (selectedStatus) {
+      const statusNav = body.match(/<nav\b[^>]*aria-label="Role status"[^>]*>([\s\S]*?)<\/nav>/)?.[1] ?? "";
+      const selected = statusNav.match(/<a\b[^>]*aria-current="page"[^>]*>([\s\S]*?)<\/a>/)?.[1] ?? "";
+      if (!visibleText(selected).includes(selectedStatus)) failures.push(`${path} does not select the ${selectedStatus} view`);
     }
     console.log(`  ${res.status}  ${path}  (${body.length} bytes)`);
   }

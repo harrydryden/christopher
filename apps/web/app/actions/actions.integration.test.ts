@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDb, schema, type Db } from "@christopher/db";
+import { DEFAULT_CV_THEME } from "@christopher/core/cv";
 import { DEFAULT_SETTINGS, modelForCallSite } from "@christopher/core";
 import { runMigrations } from "@christopher/db/migrate";
 import { eq, sql } from "drizzle-orm";
@@ -234,6 +235,26 @@ describe("priority workflows", () => {
     expect(await database.select().from(schema.cvDrafts)).toHaveLength(0);
     expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(0);
   });
+  it("saves skill items and palettes without rewriting the original CV or application", async () => {
+    const library: import("@christopher/core/cv").CvLibrary = { name: "Example", contact: "London", profile: "Analyst", theme: DEFAULT_CV_THEME, entries: [{ id: "skills", kind: "skill", heading: "Tools", details: "Reporting", skillItems: ["SQL", "Python"] }] };
+    const form = new FormData(); form.set("library", JSON.stringify(library)); form.set("version", "0");
+    expect(await saveCvLibrary({ ok: true }, form)).toEqual({ ok: true });
+    expect((await database.select().from(schema.cvLibraries))[0]!.content.entries[0]!.skillItems).toEqual(["SQL", "Python"]);
+    const content = { theme: DEFAULT_CV_THEME, name: "Example", contact: "London", summary: "Analyst", sections: [{ entryId: "skills", kind: "skill" as const, heading: "Tools", bullets: ["Reporting"], skillItems: ["SQL"] }], gaps: [] };
+    const [draft] = await database.insert(schema.cvDrafts).values({ jobTitle: "Analyst", companyName: "Example", jobDescription: "Analysis", libraryVersion: 1, librarySnapshot: library, model: "test", status: "ready", revision: 1, content }).returning();
+    const application = new FormData(); application.set("appliedOn", "2026-09-06");
+    expect(await recordApplication(draft!.id, { ok: true }, application)).toEqual({ ok: true });
+    const frozen = (await database.select().from(schema.applications))[0]!.pdfBase64;
+    const edit = new FormData(); edit.set("summary", "Analyst"); edit.set("skills-0", "SQL\nPython"); edit.set("theme", JSON.stringify({ ...DEFAULT_CV_THEME, primary: "#285447" }));
+    await expect(saveCvDraft(draft!.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
+    const versions = await database.select().from(schema.cvDrafts).orderBy(schema.cvDrafts.revision);
+    expect(versions[0]!.content).toEqual(content);
+    expect(versions[1]!.content!.sections[0]!.skillItems).toEqual(["SQL", "Python"]);
+    expect(versions[1]!.content!.theme!.primary).toBe("#285447");
+    expect((await database.select().from(schema.applications))[0]!.pdfBase64).toBe(frozen);
+    edit.set("theme", JSON.stringify({ ...DEFAULT_CV_THEME, background: "invalid" }));
+    expect((await saveCvDraft(draft!.id, { ok: true }, edit)).ok).toBe(false);
+  });
   it("versions libraries and snapshots generation inputs atomically with its task", async () => {
     const { job } = await fixture();
     const content = { name: "Test Candidate", contact: "London", profile: "Operations leader", employment: [{ id: "job", company: "Acme", industryDescriptions: "Healthcare, SaaS", jobTitle: "Director", startDate: "2023-08", endDate: "", current: true }], entries: [{ id: "one", kind: "experience", employmentId: "job", heading: "Leadership", details: "Led an operations team\nAn unconfirmed proposal", confirmedResponsibilities: ["Led an operations team"] }] };
@@ -245,7 +266,7 @@ describe("priority workflows", () => {
     generate.set("description", "Lead a business operations team, develop the annual operating plan and work with finance and commercial leaders.");
     await expect(requestCv({ ok: true }, generate)).rejects.toThrow("redirect:/cv/");
     const [draft] = await database.select().from(schema.cvDrafts);
-    expect(draft!.librarySnapshot).toEqual({ ...content, structuredExperience: true, entries: [{ ...content.entries[0], heading: "Director · Acme · Aug 2023 – Present", status: "active", details: "Led an operations team" }] }); expect(draft!.model).toBe("claude-fable-5-1");
+    expect(draft!.librarySnapshot).toEqual({ ...content, theme: DEFAULT_CV_THEME, structuredExperience: true, entries: [{ ...content.entries[0], heading: "Director · Acme · Aug 2023 – Present", status: "active", details: "Led an operations team" }] }); expect(draft!.model).toBe("claude-fable-5-1");
     expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(1);
     await database.update(schema.cvDrafts).set({ status: "ready", revision: 1, content: { name: content.name, contact: content.contact, summary: "Original", sections: [{ entryId: "one", kind: "experience", heading: "Director · Acme", industryDescriptions: ["SaaS"], bullets: ["Led a team"] }], gaps: [] } }).where(eq(schema.cvDrafts.id, draft!.id));
     const edit = new FormData(); edit.set("summary", "Edited summary"); edit.set("section-0", "Led the operations team"); edit.set("rememberWording", "on");

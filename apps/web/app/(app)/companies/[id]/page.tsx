@@ -326,7 +326,12 @@ export default async function CompanyDetailPage({ params }: { params: Promise<{ 
 
       <Card title={`Roles (${roles.length})`}>
         {roles.length === 0 ? (
-          <EmptyState title="No roles seen yet" description="Roles appear here after the first successful scan." />
+          <EmptyState
+            title={scans.some(s => s.status === "ok") ? "No roles retained" : "No roles seen yet"}
+            description={scans.some(s => s.status === "ok")
+              ? "Scanning has completed. Roles that pass your filters or are retained for tracking appear here. See the scan history above for the number checked."
+              : "Roles appear here after the first successful scan."}
+          />
         ) : (
           <Table>
             <THead>

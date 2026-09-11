@@ -332,6 +332,29 @@ async function scanSitemaps(run: Run, ctx: DiscoveryContext, origin: string): Pr
   return found;
 }
 
+// Known public boards are hints: verify both feed availability and company identity each time.
+const VERIFIED_BOARDS: Record<string, { url: string; identity: RegExp }> = {
+  "anduril.com": { url: "https://job-boards.greenhouse.io/andurilindustries", identity: /\banduril\b/i },
+  "waymo.com": { url: "https://job-boards.greenhouse.io/waymo", identity: /^waymo(?:\s+llc)?$/i },
+  "withwaymo.com": { url: "https://job-boards.greenhouse.io/waymo", identity: /^waymo(?:\s+llc)?$/i },
+};
+
+async function verifiedCatalogueCandidate(url: string, ctx: DiscoveryContext, run: Run): Promise<DiscoveryCandidate | null> {
+  const board = VERIFIED_BOARDS[extractDomain(url)];
+  if (!board) return null;
+  const spec = ctx.resolveSpec(board.url);
+  if (!spec) return null;
+  const verified = await run.verify(spec);
+  if (!verified.ok || !board.identity.test((verified.companyName ?? "").trim())) {
+    run.say("catalogue board could not be verified; continuing website discovery");
+    return null;
+  }
+  run.say(`verified catalogue board ${board.url} (${verified.count ?? 0} postings)`);
+  return { spec, confidence: 0.98, method: "verified_catalogue",
+    evidence: [`Public careers feed verified for ${extractDomain(url)}`, `Feed identity: ${verified.companyName}`],
+    sample: verified.sample ?? [], count: verified.count, companyName: verified.companyName };
+}
+
 export async function discoverCareersSources(homepageUrl: string, ctx: DiscoveryContext): Promise<DiscoveryResult> {
   const started = Date.now();
   const run = new Run(ctx);
@@ -345,22 +368,9 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
     durationMs: 0,
   };
 
-  // Verified catalogue entry for a JS-only site whose board slug differs from its domain.
-  // Re-verify the feed and company identity every time; never trust a stale mapping blindly.
-  const knownBoard = extractDomain(normalized) === "anduril.com" ? "https://job-boards.greenhouse.io/andurilindustries" : null;
-  if (knownBoard) {
-    const spec = ctx.resolveSpec(knownBoard);
-    if (spec) {
-      const verified = await run.verify(spec);
-      if (verified.ok && /\banduril\b/i.test(verified.companyName ?? "")) {
-        const candidate: DiscoveryCandidate = { spec, confidence: 0.98, method: "verified_catalogue",
-          evidence: ["Anduril public careers board verified 6 September 2026", `Feed identity: ${verified.companyName}`],
-          sample: verified.sample ?? [], count: verified.count, companyName: verified.companyName };
-        run.say(`verified catalogue board ${knownBoard} (${verified.count ?? 0} postings)`);
-        return { ...result, outcome: "resolved", best: candidate, candidates: [candidate], companyName: verified.companyName, fetches: run.fetches, durationMs: Date.now() - started };
-      }
-      run.say("catalogue board could not be verified; continuing website discovery");
-    }
+  const catalogue = await verifiedCatalogueCandidate(normalized, ctx, run);
+  if (catalogue) {
+    return { ...result, outcome: "resolved", best: catalogue, candidates: [catalogue], companyName: catalogue.companyName, fetches: run.fetches, durationMs: Date.now() - started };
   }
 
   let home = await run.fetch(normalized);
@@ -519,6 +529,10 @@ export async function probeUrlAsSource(url: string, ctx: DiscoveryContext): Prom
   const started = Date.now();
   const normalized = ensureHttpUrl(url);
   const run = new Run(ctx);
+  const catalogue = await verifiedCatalogueCandidate(normalized, ctx, run);
+  if (catalogue) {
+    return { homepageUrl: normalized, outcome: "resolved", best: catalogue, candidates: [catalogue], companyName: catalogue.companyName, log: run.log, fetches: run.fetches, durationMs: Date.now() - started };
+  }
   const spec = ctx.resolveSpec(normalized);
   if (spec) {
     const verification = await run.verify(spec);

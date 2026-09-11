@@ -620,3 +620,30 @@ describe("HTML extraction completion", () => {
     expect(tagReason).not.toHaveBeenCalled();
   });
 });
+
+it("discards a late scan when its source has been disabled", async () => {
+  await setGate({});
+  const company = await addCompany("https://www.acme.example/", "acme.example");
+  await queue.drain();
+  const [source] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
+  const before = await db.select().from(schema.jobs);
+  await db.update(schema.careerSources).set({ status: "disabled" }).where(eq(schema.careerSources.id, source!.id));
+  setJobs([]);
+  const outcome = await _scanSourceForTests(deps, company, source!, await deps.settings(), null);
+  expect(outcome.status).toBe("partial");
+  expect((await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id)))[0]!.status).toBe("disabled");
+  expect(await db.select().from(schema.jobs)).toEqual(before);
+});
+
+it("fences company profile replacement and retains previous evidence on lost ownership", async () => {
+  const { handleProfileCompany } = await import("./handlers/companies");
+  const company = await addCompany("https://www.acme.example/", "acme.example");
+  await db.insert(schema.companyProfiles).values({ companyId: company.id, name: company.name, domain: company.domain, sector: "Previous sector" });
+  const fakeAi = { enabled: true, profileCompany: async () => ({ oneLiner: "Updated profile", sector: "New sector" }) } as unknown as WorkerDeps["ai"];
+  const lost = { ...deps, ai: fakeAi, assertOwnership: async () => { throw new Error("lease lost"); } };
+  await expect(handleProfileCompany({ payload: { companyId: company.id } } as unknown as import("@christopher/db").Task, lost)).rejects.toThrow("lease lost");
+  expect((await db.select().from(schema.companyProfiles))[0]!.sector).toBe("Previous sector");
+  await handleProfileCompany({ payload: { companyId: company.id } } as unknown as import("@christopher/db").Task, { ...deps, ai: fakeAi });
+  const profiles = await db.select().from(schema.companyProfiles);
+  expect(profiles).toHaveLength(1); expect(profiles[0]!.sector).toBe("New sector");
+});

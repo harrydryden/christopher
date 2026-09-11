@@ -3,7 +3,7 @@ import { enqueueTask } from "@christopher/db";
 
 import { requireSession } from "@/lib/auth";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
@@ -95,7 +95,7 @@ export async function refreshCompany(companyId: string): Promise<void> {
   const review = await db().transaction(async tx => {
     const [company] = await tx.select({ status: companies.status }).from(companies).where(eq(companies.id, id)).for("update");
     if (!company || company.status !== "active") return false;
-    const pending = await tx.select().from(tasks).where(and(inArray(tasks.dedupeKey, [`scan_company:${id}`, `discover:${id}`]), inArray(tasks.status, ["queued", "running"])));
+    const pending = await tx.select().from(tasks).where(and(inArray(tasks.type, ["scan_company", "discover"]), sql`${tasks.payload}->>'companyId' = ${id}`, sql`coalesce(${tasks.payload}->>'logoOnly', 'false') != 'true'`, inArray(tasks.status, ["queued", "running"])));
     if (pending.length) {
       for (const task of pending) if (task.status === "queued") await tx.update(tasks).set({ runAfter: new Date(), payload: task.type === "scan_company" ? { ...task.payload, trigger: "manual" } : task.payload }).where(and(eq(tasks.id, task.id), eq(tasks.status, "queued")));
       return false;

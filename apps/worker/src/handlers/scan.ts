@@ -167,6 +167,11 @@ async function scanSource(
 
   return deps.db.transaction(async tx => {
   await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
+  const [current] = await tx.select().from(schema.careerSources).where(eq(schema.careerSources.id, source.id)).for("update");
+  // A user can disable or replace a source while the network request is in flight.
+  if (!current || !["active", "failing"].includes(current.status) || current.url !== source.url || current.apiUrl !== source.apiUrl) {
+    return { status: "partial", newCount: 0, closedCount: 0, postingsFound: postings.length };
+  }
   const commitDeps = { ...deps, db: tx as unknown as WorkerDeps["db"] };
   return commitScan(commitDeps);
   });

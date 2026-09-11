@@ -38,3 +38,19 @@ it("queues large filter changes immediately and keeps later changes made during 
   const queued = await database.execute(sql`select count(*)::int as n from tasks where type='reevaluate_gate'`);
   expect(queued.rows[0]!.n).toBe(2);
 });
+
+it("keeps every saved and archived CV reachable with stable, clamped pages", async () => {
+  const { listCvDraftPage } = await import("./cv");
+  await database.execute(sql`truncate cv_drafts cascade`);
+  const at = new Date();
+  await database.insert(schema.cvDrafts).values(Array.from({ length: 102 }, (_, n) => ({
+    jobTitle: `Role ${n}`, companyName: "Example", jobDescription: "Example description", libraryVersion: 1,
+    librarySnapshot: { name: "Example", contact: "", profile: "", entries: [] }, model: "test", createdAt: at,
+    archivedAt: n === 101 ? at : null,
+  })));
+  const first = await listCvDraftPage(false, "1"), second = await listCvDraftPage(false, "2"), last = await listCvDraftPage(false, "999");
+  expect(first.total).toBe(101); expect(first.rows).toHaveLength(50); expect(second.rows).toHaveLength(50);
+  expect(new Set([...first.rows, ...second.rows].map(row => row.id)).size).toBe(100);
+  expect(last.page).toBe(3); expect(last.rows).toHaveLength(1);
+  expect((await listCvDraftPage(true)).total).toBe(1);
+});

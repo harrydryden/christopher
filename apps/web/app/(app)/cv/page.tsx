@@ -1,4 +1,7 @@
 import Link from "next/link";
+import { z } from "zod";
+import { Pagination } from "@/components/Pagination";
+import { listCvDraftPage } from "@/lib/queries/cv";
 import { desc, eq, and, isNull, isNotNull, sql, ne, ilike, or } from "drizzle-orm";
 import { cvLibraries, cvDrafts, jobs, companies } from "@christopher/db";
 import { db } from "@/lib/db";
@@ -11,20 +14,23 @@ import { requestCv, saveCvModel, setCvArchived } from "@/app/actions/cv";
 import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
 import { buttonClass } from "@/components/Button";
 export const dynamic = "force-dynamic";
-export default async function CvPage({ searchParams }: { searchParams: Promise<{ job?: string; q?: string }> }) {
-  const { job, q: query } = await searchParams;
+export default async function CvPage({ searchParams }: { searchParams: Promise<{ job?: string; q?: string; page?: string; archivedPage?: string }> }) {
+  const { job: requestedJob, q: query, page, archivedPage } = await searchParams;
+  const job = z.string().uuid().safeParse(requestedJob).success ? requestedJob : undefined;
   const q = (query ?? "").slice(0,200);
   const pattern = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
-  const [libraries, drafts, archivedDrafts, roles, settings] = await Promise.all([
+  const [libraries, saved, archived, roles, settings] = await Promise.all([
     db().select({ version: cvLibraries.version }).from(cvLibraries).orderBy(desc(cvLibraries.version)).limit(1),
-    db().select({ id: cvDrafts.id, jobTitle: cvDrafts.jobTitle, company: cvDrafts.companyName, status: cvDrafts.status, revision: cvDrafts.revision }).from(cvDrafts).where(isNull(cvDrafts.archivedAt)).orderBy(desc(cvDrafts.createdAt)).limit(50),
-    db().select({ id: cvDrafts.id, jobTitle: cvDrafts.jobTitle, company: cvDrafts.companyName, status: cvDrafts.status, revision: cvDrafts.revision }).from(cvDrafts).where(isNotNull(cvDrafts.archivedAt)).orderBy(desc(cvDrafts.createdAt)).limit(50),
+    listCvDraftPage(false, page),
+    listCvDraftPage(true, archivedPage),
     db().select({ id: jobs.id, title: jobs.title, company: companies.name }).from(jobs).innerJoin(companies, eq(jobs.companyId, companies.id)).where(and(eq(jobs.inTable, true), isNull(jobs.archivedAt), ne(companies.status, "archived"), q ? or(ilike(jobs.title, pattern), ilike(companies.name, pattern)) : undefined, sql`not exists (select 1 from decisions d where d.job_id = ${jobs.id} and d.superseded = false and d.decision = 'skip')`)).orderBy(desc(jobs.firstSeenAt), jobs.id).limit(50),
     getSettings(),
   ]);
-  if (job && !roles.some(r => r.id === job) && /^[0-9a-f-]{36}$/i.test(job)) {
+  if (job && !roles.some(r => r.id === job)) {
     const extra = await db().select({ id: jobs.id, title: jobs.title, company: companies.name }).from(jobs).innerJoin(companies, eq(jobs.companyId, companies.id)).where(eq(jobs.id, job)); roles.unshift(...extra);
   }
+  const drafts = saved.rows, archivedDrafts = archived.rows;
+  const params = { ...(q ? { q } : {}), ...(job ? { job } : {}) };
   return <div className="max-w-4xl space-y-6">
     <PageHeader title="CV builder" description="Tailor a CV to each role using your own skills, experience and interests." />
     <ol className="flex flex-wrap gap-4 text-sm text-slate-500"><li>1. Choose a role</li><li>2. Generate a draft</li><li>3. Edit and download</li></ol>
@@ -41,13 +47,13 @@ export default async function CvPage({ searchParams }: { searchParams: Promise<{
     <Card title="Saved CVs"><ul className="space-y-2 text-sm">{drafts.map(d => <li key={d.id} className="flex flex-wrap items-center justify-between gap-2">
       <span><Link className="underline" href={`/cv/${d.id}`}>{d.company} · {d.jobTitle}</Link> — {d.status}, revision {d.revision}</span>
       <form action={setCvArchived.bind(null, d.id, true)}><ConfirmSubmitButton confirmMessage={`Archive the ${d.status} CV for ${d.company} · ${d.jobTitle}? It is hidden from this list but kept, and you can restore it.`}>Archive</ConfirmSubmitButton></form>
-    </li>)}</ul>{!drafts.length && <p className="text-sm text-slate-500">No CVs generated yet.</p>}</Card>
+    </li>)}</ul>{!drafts.length && <p className="text-sm text-slate-500">No CVs generated yet.</p>}<Pagination page={saved.page} total={saved.total} path="/cv" params={{ ...params, archivedPage: String(archived.page) }} label="Saved CV pages" /></Card>
     {archivedDrafts.length > 0 && <Card title="Archived CVs"><section><h3 className="text-sm text-slate-500">{archivedDrafts.length} archived</h3>
       <ul className="mt-2 space-y-2 text-sm">{archivedDrafts.map(d => <li key={d.id} className="flex flex-wrap items-center justify-between gap-2">
         <span><Link className="underline" href={`/cv/${d.id}`}>{d.company} · {d.jobTitle}</Link> — {d.status}, revision {d.revision}</span>
         <form action={setCvArchived.bind(null, d.id, false)}><button type="submit" className={buttonClass("secondary", "sm")}>Restore</button></form>
       </li>)}</ul>
       <p className="mt-2 text-xs text-slate-500">Archived CVs are kept, not deleted. They stay downloadable by link, and any application recorded against one is unaffected.</p>
-    </section></Card>}
+    <Pagination page={archived.page} total={archived.total} path="/cv" params={{ ...params, page: String(saved.page) }} pageParam="archivedPage" label="Archived CV pages" /></section></Card>}
   </div>;
 }

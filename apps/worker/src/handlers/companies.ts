@@ -30,10 +30,15 @@ export async function handleProfileCompany(task: Task, deps: WorkerDeps): Promis
   );
   if (!profile) return { skipped: "no ai result" };
 
-  await deps.db
+  await deps.db.transaction(async tx => {
+  await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
+  // Serialise replacement and retain the previous profile if the insert fails.
+  const [current] = await tx.select({ id: schema.companies.id }).from(schema.companies).where(eq(schema.companies.id, company.id)).for("update");
+  if (!current) return;
+  await tx
     .delete(schema.companyProfiles)
     .where(and(eq(schema.companyProfiles.companyId, company.id)));
-  await deps.db.insert(schema.companyProfiles).values({
+  await tx.insert(schema.companyProfiles).values({
     companyId: company.id,
     name: company.name,
     domain: company.domain,
@@ -48,6 +53,7 @@ export async function handleProfileCompany(task: Task, deps: WorkerDeps): Promis
     geographies: profile.geographies ?? [],
     tags: profile.tags ?? [],
     raw: profile,
+  });
   });
   return { sector: profile.sector, stage: profile.stage };
 }

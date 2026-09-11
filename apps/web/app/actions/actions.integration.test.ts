@@ -49,11 +49,12 @@ describe("authenticated mutations", () => {
     const [task] = await database.select().from(schema.tasks);
     expect(task!.type).toBe("scan_company");
     expect(await database.select().from(schema.tasks)).toHaveLength(1);
-    await database.update(schema.tasks).set({ runAfter: new Date(Date.now() + 3600000), payload: { companyId: company.id, trigger: "schedule", scanRunId: "preserved-run" } }).where(eq(schema.tasks.id, task!.id));
+    await database.update(schema.tasks).set({ dedupeKey: `scan_company:${company.id}:preserved-run`, runAfter: new Date(Date.now() + 3600000), payload: { companyId: company.id, trigger: "schedule", scanRunId: "preserved-run" } }).where(eq(schema.tasks.id, task!.id));
     await refreshCompany(company.id);
     const [updated] = await database.select().from(schema.tasks);
     expect(updated!.runAfter.getTime()).toBeLessThanOrEqual(Date.now());
     expect(updated!.payload).toMatchObject({ trigger: "manual", scanRunId: "preserved-run" });
+    expect(await database.select().from(schema.tasks)).toHaveLength(1);
   });
   it("discovers missing sources but preserves source confirmation and company pauses", async () => {
     const { company, source } = await fixture();

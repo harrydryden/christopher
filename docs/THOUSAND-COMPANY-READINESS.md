@@ -77,7 +77,7 @@ Verification passed: 333 distinct automated tests (165 core, 23 AI, 84 worker, 6
 
 ## Resumed implementation verification
 
-The scaling work remains on `codex/thousand-company-readiness`; CV visual changes are separately held on `codex/cv-layout-rules`. Neither set has been merged or deployed. Before a combined release, integrate both branches and rerun the CV generation/AI budget tests together. This avoids replacing either the new CV theme/skill handling or the shared model-spend reservation path.
+The scaling and CV branches are now integrated on `codex/thousand-company-readiness`. The combined generation, theme/skill and AI-budget paths have passed regression checks. See `FINAL-SYSTEM-AUDIT.md` for final validation and rollout requirements; production deployment remains separate.
 
 The benchmark now exercises the actual production queue by default. The production-lane run used one interactive, one scan and one background slot, including normal three-second idle polling and graceful shutdown:
 

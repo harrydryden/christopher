@@ -44,8 +44,11 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
   const router = useRouter();
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const rows = inputRows.filter(row => !removedIds.has(row.id));
+  const actionsInFlight = useRef(new Set<string>());
   const [archivingId, setArchivingId] = useState<string | null>(null);
   function archiveRow(id: string) {
+    if (actionsInFlight.current.has(id)) return;
+    actionsInFlight.current.add(id);
     startTransition(async () => {
     setArchivingId(id); setFlashError(null);
     try {
@@ -54,7 +57,7 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
       else setRemovedIds(ids => new Set([...ids, id]));
       router.refresh();
     } catch { setFlashError("Could not save. Reload to check the current state before retrying."); }
-    finally { setArchivingId(null); }
+    finally { actionsInFlight.current.delete(id); setArchivingId(null); }
     });
   }
   const [highlightIndex, setHighlightIndex] = useState(-1);
@@ -70,10 +73,13 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
   }
 
   function submitDecision(jobId: string, decision: ReasonKind | null, reason: string) {
+    if (actionsInFlight.current.has(jobId)) return;
+    actionsInFlight.current.add(jobId);
     startTransition(async () => {
     setFlashError(null);
     const isBoxed = reasonBoxRef.current?.jobId === jobId;
     if (isBoxed) setReasonBox((b) => (b ? { ...b, pending: true, error: null } : b));
+    try {
     const result = await decide(jobId, decision, reason);
     if (!result.ok) {
       if (isBoxed) setReasonBox((b) => (b ? { ...b, pending: false, error: result.error } : b));
@@ -82,6 +88,11 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
     }
     if (isBoxed) setReasonBox(null);
     router.refresh();
+    } catch {
+      const error = "Could not save. Reload to check the current state before retrying.";
+      if (isBoxed) setReasonBox(b => b?.jobId === jobId ? { ...b, pending: false, error } : b);
+      else setFlashError(error);
+    } finally { actionsInFlight.current.delete(jobId); }
     });
   }
 

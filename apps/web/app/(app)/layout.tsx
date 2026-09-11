@@ -1,3 +1,4 @@
+import { WorkspaceShell } from "@/components/WorkspaceShell";
 import { NavigationMetrics } from "@/components/NavigationMetrics";
 import Link from "next/link";
 import { Suspense, type ReactNode } from "react";
@@ -40,7 +41,7 @@ async function ScanBanner() {
 export default function AppLayout({ children }: { children: ReactNode }) {
 
   return (
-    <div className="flex min-h-screen flex-col"><NavigationMetrics />
+    <WorkspaceShell><NavigationMetrics />
       <div className="border-b border-slate-200 bg-white px-4 py-2 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
         <Suspense fallback={<span>Loading scan status…</span>}><ScanBanner /></Suspense>
       </div>
@@ -62,6 +63,6 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         </aside>
         <main className="min-w-0 flex-1 p-4 md:p-6"><WorkspaceNav />{children}</main>
       </div>
-    </div>
+    </WorkspaceShell>
   );
 }

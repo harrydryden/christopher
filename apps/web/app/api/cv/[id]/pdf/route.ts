@@ -16,5 +16,5 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   if (draft.status !== "ready" || !draft.content) return new Response("CV is not ready", { status: 409 });
   const pdf = await renderCvPdf(CvContentSchema.parse(draft.content));
   const filename = `${draft.content.name}-${draft.companyName}-CV`.replace(/[^a-zA-Z0-9-]/g, "-").slice(0, 100);
-  return new Response(new Uint8Array(pdf), { headers: { "content-type": "application/pdf", "content-disposition": `attachment; filename="${filename}.pdf"`, "cache-control": "private, no-store" } });
+  return new Response(new Uint8Array(pdf), { headers: { "content-type": "application/pdf", "content-disposition": `${new URL(_request.url).searchParams.get("preview") === "1" ? "inline" : "attachment"}; filename="${filename}.pdf"`, "cache-control": "private, no-store" } });
 }

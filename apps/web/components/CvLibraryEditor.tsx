@@ -2,6 +2,7 @@
 import { useActionState, useEffect, useState } from "react";
 import { CvLibrarySchema, consolidateExperience, employmentCompanyGroups, employmentHeading, responsibilityRows, updateResponsibilityRows, type CvLibrary } from "@christopher/core/cv";
 import { saveCvLibrary } from "@/app/actions/cv";
+import { CvAppearance } from "./CvAppearance";
 import { EmploymentHistoryTable } from "./EmploymentHistoryTable";
 import { useRouter } from "next/navigation";
 
@@ -42,6 +43,7 @@ export function CvLibraryEditor({ library, version }: { library: CvLibrary | nul
     <EmploymentHistoryTable employment={value.employment ?? []} entries={value.entries} onChange={employment => setValue({ ...value, employment })} />
     {field("name", "Full name")}
     <label className="block space-y-1 text-sm">LinkedIn profile URL<input type="url" className={input} value={value.linkedinUrl ?? ""} placeholder="https://www.linkedin.com/in/your-profile" onChange={e => setValue({ ...value, linkedinUrl: e.target.value })} /></label>{field("contact", "Contact details (email, phone, location, links)")}{field("profile", "Career overview: facts the model may use", 4)}
+    <CvAppearance value={value.theme} onChange={theme => setValue({ ...value, theme })} />
     {field("stylePreferences", "Preferred CV style (tone, length and wording to avoid)", 3)}
     {field("preferredWording", "Remembered wording corrections (review, edit or remove)", 5)}
     <p className="text-sm text-slate-500">Only Active blocks are used in new CVs. For experience, tick Confirmed beside each responsibility or outcome you can substantiate. Unconfirmed rows are excluded from CVs and role qualification. Editing a row requires confirmation again. New blocks start as Draft; archiving makes them Inactive. Save your library before generating a CV. Existing CVs keep their original evidence snapshot.</p>
@@ -87,8 +89,12 @@ export function CvLibraryEditor({ library, version }: { library: CvLibrary | nul
     {value.entries.map((entry, i) => entry.kind === "experience" ? null : <fieldset key={entry.id} className="space-y-2 rounded border border-slate-200 p-3">
       <legend className="text-sm font-medium">Evidence {i + 1}</legend>
       {statusControls(entry)}
-      <label className="block text-sm">Type <select aria-label={`Evidence ${i + 1} type`} className={input} value={entry.kind} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, kind: e.target.value as typeof entry.kind, employmentId: undefined } : x) })}>{["education", "skill", "interest"].map(kind => <option key={kind}>{kind}</option>)}</select></label>
+      <label className="block text-sm">Type <select aria-label={`Evidence ${i + 1} type`} className={input} value={entry.kind} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, kind: e.target.value as typeof entry.kind, skillItems: e.target.value === "skill" ? x.skillItems : undefined, employmentId: undefined } : x) })}>{["education", "skill", "interest"].map(kind => <option key={kind}>{kind}</option>)}</select></label>
       <label className="block text-sm">Evidence label (for example: AI governance programme)<input required className={input} value={entry.heading} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, heading: e.target.value } : x) })} /></label>
+      {entry.kind === "skill" && <label className="block space-y-1 text-sm">Individual skills — one per line
+        <textarea rows={4} className={input} aria-label={`Individual skills: ${entry.heading}`} onBlur={() => setValue(current => ({ ...current, entries: current.entries.map(item => item.id === entry.id ? { ...item, skillItems: item.skillItems?.map(skill => skill.trim()).filter(Boolean).length ? item.skillItems.map(skill => skill.trim()).filter(Boolean) : undefined } : item) }))} value={entry.skillItems?.join("\n") ?? ""} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, skillItems: e.target.value ? e.target.value.split("\n") : undefined } : x) })} />
+        <span className="block text-xs text-slate-500">Up to 20 skills, 80 characters each. Enter labels explicitly; existing prose is not split automatically. Leave blank to retain prose rendering. The supporting details below remain evidence.</span>
+      </label>}
       <label className="block text-sm">Details<textarea required rows={5} className={input} value={entry.details} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, details: e.target.value } : x) })} /></label>
       <div className="flex gap-3">
       <button type="button" disabled={i === 0} className="text-sm underline disabled:opacity-40" onClick={() => { const entries = [...value.entries]; [entries[i - 1], entries[i]] = [entries[i]!, entries[i - 1]!]; setValue({ ...value, entries }); }}>Move up</button>

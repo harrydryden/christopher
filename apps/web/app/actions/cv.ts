@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { desc, eq, sql } from "drizzle-orm";
 import { cvLibraries, cvDrafts, jobs, companies, enqueueTask } from "@christopher/db";
-import { CvLibrarySchema, consolidateExperience, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel } from "@christopher/core";
+import { DEFAULT_CV_THEME, CvLibrarySchema, consolidateExperience, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel } from "@christopher/core";
 import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getSettings, setSetting } from "@/lib/settings";
@@ -15,7 +15,8 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
   try {
     const raw = String(form.get("library") ?? "");
     if (raw.length > 150_000) return fail("Library is too large. Keep it under 150,000 characters.");
-    const content = CvLibrarySchema.parse(consolidateExperience(CvLibrarySchema.parse(JSON.parse(raw))));
+    const parsed = CvLibrarySchema.parse(JSON.parse(raw));
+    const content = CvLibrarySchema.parse(consolidateExperience({ ...parsed, theme: parsed.theme ?? DEFAULT_CV_THEME }));
     await db().transaction(async tx => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext('cv:library'))`);
       const [latest] = await tx.select().from(cvLibraries).orderBy(desc(cvLibraries.version)).limit(1);
@@ -94,8 +95,10 @@ export async function saveCvDraft(id: string, _prev: ActionResult, form: FormDat
     const [draft] = await db().select().from(cvDrafts).where(eq(cvDrafts.id, id));
     if (!draft || draft.status !== "ready" || !draft.content) return fail("Only completed drafts can be edited.");
     const content = structuredClone(draft.content);
+    if (form.has("theme")) content.theme = JSON.parse(String(form.get("theme")));
     content.summary = String(form.get("summary") ?? "").trim();
-    content.sections = content.sections.map((section, i) => ({ ...section, bullets: String(form.get(`section-${i}`) ?? "").split("\n").map(t => t.trim()).filter(Boolean) }));
+    content.sections = content.sections.map((section, i) => ({ ...section, bullets: String(form.get(`section-${i}`) ?? section.bullets.join("\n")).split("\n").map(t => t.trim()).filter(Boolean) }));
+    content.sections = content.sections.map((section, i) => section.kind === "skill" && section.skillItems ? { ...section, skillItems: String(form.get(`skills-${i}`) ?? section.skillItems.join("\n")).split("\n").map(t => t.trim()).filter(Boolean) } : section);
     CvContentSchema.parse(content);
     const { id: _id, createdAt: _created, ...original } = draft;
     savedId = await db().transaction(async tx => {
@@ -107,8 +110,8 @@ export async function saveCvDraft(id: string, _prev: ActionResult, form: FormDat
           const changes: string[] = [];
           if (content.summary !== draft.content!.summary) changes.push(`Profile phrasing: ${content.summary}`);
           content.sections.forEach((section, i) => {
-            if (JSON.stringify(section.bullets) !== JSON.stringify(draft.content!.sections[i]!.bullets))
-              changes.push(`${section.heading}: ${section.bullets.join(" ")}`);
+            if (JSON.stringify(section.skillItems ?? section.bullets) !== JSON.stringify(draft.content!.sections[i]!.skillItems ?? draft.content!.sections[i]!.bullets))
+              changes.push(`${section.heading}: ${(section.skillItems ?? section.bullets).join(" ")}`);
           });
           if (changes.length) {
             const preferredWording = [latest.content.preferredWording, ...changes].filter(Boolean).join("\n\n");

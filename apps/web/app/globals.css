@@ -1,5 +1,14 @@
 @import "tailwindcss";
 
+/* Preserve automatic dark mode outside the deliberately light CV workspace. */
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    &:not(:where([data-cv-light], [data-cv-light] *)) {
+      @slot;
+    }
+  }
+}
+
 :root {
   color-scheme: light dark;
 }
@@ -35,4 +44,26 @@ kbd {
   font-size: 0.7rem;
   text-align: center;
   line-height: 1.5;
+}
+
+
+/* One scoped visual contract for the builder, evidence library and CV editor. */
+[data-cv-light] {
+  color-scheme: light;
+  background: #ffffff;
+  color: #17202a;
+}
+[data-cv-light] [data-page-header] {
+  background: var(--cv-navy);
+  color: white;
+  padding: 1.75rem;
+  border-radius: 0.5rem;
+}
+[data-cv-light] [data-page-header] h1 { color: white; font-size: 1.5rem; }
+[data-cv-light] [data-page-header] p { color: #e3edf5; margin-top: 0.5rem; }
+[data-cv-light] .bg-slate-900 { background-color: var(--cv-navy); }
+[data-cv-light] :is(input, select, textarea) { accent-color: var(--cv-navy); }
+[data-cv-light] :is(input, select, textarea, button, a, summary):focus-visible {
+  outline: 2px solid var(--cv-navy);
+  outline-offset: 3px;
 }

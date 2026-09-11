@@ -14,7 +14,10 @@ import {
   handleTagReason,
 } from "./learning";
 
+import { handleMonitorSource } from "./external-sources";
+
 export const handlers: HandlerMap = {
+  monitor_source: handleMonitorSource,
   generate_cv: handleGenerateCv,
   discover: handleDiscover,
   run_daily: handleRunDaily,

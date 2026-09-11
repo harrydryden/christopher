@@ -31,7 +31,7 @@ export const FETCH_METHODS = ["api", "http", "browser"] as const;
 export const JOB_STATUSES = ["open", "closed"] as const;
 export const DECISIONS = ["apply", "skip"] as const;
 export const TASK_TYPES = [
-  "discover", "scan_company", "run_daily", "fetch_description", "score_job", "tag_reason",
+  "monitor_source", "discover", "scan_company", "run_daily", "fetch_description", "score_job", "tag_reason",
   "synthesize_profile", "suggest_filters", "profile_company", "suggest_companies", "rescore_all",
   "reevaluate_gate", "generate_cv",
 ] as const;
@@ -260,12 +260,37 @@ export const companyProfiles = pgTable("company_profiles", {
   generatedAt: tsNow("generated_at"),
 });
 
+export const discoverySources = pgTable("discovery_sources", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  kind: text("kind", { enum: ["website", "email", "linkedin"] }).notNull(),
+  url: text("url"),
+  enabled: boolean("enabled").notNull().default(true),
+  intervalDays: integer("interval_days").notNull().default(7),
+  nextRunAt: tsNow("next_run_at"),
+  lastCheckedAt: ts("last_checked_at"),
+  lastError: text("last_error"),
+  createdAt: tsNow("created_at"),
+});
+
+export const discoveryDocuments = pgTable("discovery_documents", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  sourceId: uuid("source_id").notNull().references(() => discoverySources.id, { onDelete: "cascade" }),
+  url: text("url"),
+  title: text("title").notNull(),
+  content: text("content").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  processedAt: ts("processed_at"),
+  createdAt: tsNow("created_at"),
+}, (t) => [uniqueIndex("discovery_document_dedupe").on(t.sourceId, t.fingerprint)]);
+
 export const companySuggestions = pgTable("company_suggestions", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
   homepageUrl: text("homepage_url").notNull(),
   domain: text("domain").notNull().unique(),
   profileId: uuid("profile_id").references(() => companyProfiles.id, { onDelete: "set null" }),
+  evidence: jsonb("evidence").$type<{ sourceName: string; url?: string; title: string; quote: string }>(),
   rationale: text("rationale"),
   similarTo: jsonb("similar_to").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   verification: jsonb("verification").$type<{

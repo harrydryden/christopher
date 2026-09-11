@@ -184,7 +184,7 @@ interface VerificationResult {
 }
 
 /** A suggestion is only shown once we have confirmed the company is real and hiring. */
-async function verifyCandidate(deps: WorkerDeps, homepageUrl: string, countMatching: boolean): Promise<VerificationResult> {
+export async function verifyCandidate(deps: WorkerDeps, homepageUrl: string, countMatching: boolean): Promise<VerificationResult> {
   let url: string;
   try {
     url = ensureHttpUrl(homepageUrl);

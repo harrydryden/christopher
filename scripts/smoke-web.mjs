@@ -36,7 +36,9 @@ function run(cmd, args, opts = {}) {
 const PAGES = [
   ["/", ["Roles", "Location"]],
   ["/companies", ["Companies"]],
-  ["/suggestions", ["Suggestions"]],
+  ["/suggestions", ["Discover companies", "Companies to review"]],
+  ["/suggestions?view=sources", ["Add a source"]],
+  ["/suggestions?view=history", ["Recently reviewed"]],
   ["/learning", ["Learning"]],
   ["/health", ["Health"]],
   ["/settings", ["Settings"]],

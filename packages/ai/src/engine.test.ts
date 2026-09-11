@@ -273,3 +273,15 @@ it("routes CV generation separately, validates industry selections and records u
   expect(calls[0]!.params.max_tokens).toBe(12000);
   expect(usage[0]).toMatchObject({ callSite: "CV", refId: "draft", ok: true });
 });
+
+describe("source company extraction", () => {
+  it("validates evidence and recommendation decisions and records usage", async () => {
+    const candidate = { name: "Acme", homepageUrl: "https://acme.example", rationale: "Relevant operations employer", quote: "Acme raised funding", recommended: true };
+    const { engine, calls, usage } = engineWith({ candidates: [candidate] });
+    expect(await engine.extractSourceCompanies({ content: "Acme raised funding", portfolio: ["Example"], preferences: "London operations" }, { refType: "discovery_source", refId: "source" })).toEqual({ candidates: [candidate] });
+    expect(usage[0]).toMatchObject({ callSite: "A10", refType: "discovery_source", refId: "source", ok: true });
+    expect(JSON.stringify(calls[0]!.params.system)).toContain("untrusted data");
+    const invalid = engineWith({ candidates: [{ name: "No evidence" }] });
+    expect(await invalid.engine.extractSourceCompanies({ content: "Source", portfolio: [], preferences: "" })).toBeNull();
+  });
+});

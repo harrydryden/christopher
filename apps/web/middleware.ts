@@ -6,7 +6,7 @@ import { SESSION_COOKIE_NAME, verifySessionCookieValue } from "@/lib/session";
  * route, which authenticates itself with CRON_SECRET rather than a browser session.
  */
 export const config = {
-  matcher: ["/((?!login|api/health|api/cron|_next|favicon.ico).*)"],
+  matcher: ["/((?!login|api/health|api/cron|api/newsletters|_next|favicon.ico).*)"],
 };
 
 export async function middleware(req: NextRequest) {

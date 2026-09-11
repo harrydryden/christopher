@@ -153,3 +153,11 @@ writes nothing to the database.
 Settings supports separate role and title-seniority keyword lists, combined with location filtering. Use `strateg*` for strategy/strategic. The table offers grouped and bulk decisions plus reversible archive/restore.
 
 CV builder maintains a versioned evidence library and creates saved CVs for individual roles using a separately selected Anthropic model. Import/export the library as JSON, edit draft text, and download a selectable-text A4 PDF. Apply migrations and run the background worker with `ANTHROPIC_API_KEY` before generating. Missing credentials are shown on the draft; local tests do not call paid models. See [the specification](docs/SPEC.md) and [validation record](docs/REVIEW-PLAN.md).
+
+### Discover companies from external sources
+
+In **Discover companies → Sources**, add websites, LinkedIn posts/newsletters, or emailed
+newsletters. Each source checks weekly by default, with a configurable 1–90 day interval, pause and
+Check now controls. Relevant companies are verified and presented with a source link, supporting
+quote and rationale for your approval. Emailed content can be pasted or delivered through the
+authenticated inbound endpoint. See [email delivery and source setup](docs/DEPLOY.md#external-company-discovery-and-emailed-newsletters).

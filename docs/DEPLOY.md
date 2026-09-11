@@ -178,3 +178,34 @@ optional model calls when it is exceeded.
 | Worker exits with `DATABASE_URL is required` | The database is not linked | Add `DATABASE_URL` to the service, picking the database's internal connection string |
 | Pushing to the branch does not deploy | Render is not connected to the GitHub account, so there is no webhook | Connect GitHub in Render, or trigger the deploy by hand |
 | Worker cannot reach the database over TLS | The internal endpoint negotiated differently than expected | Set `DATABASE_SSL=disable` for an internal URL, or `require` for an external one |
+
+### External company discovery and emailed newsletters
+
+Apply the database migrations before deploying the web app and worker. Suggestions now has a
+Discovery sources section for websites, LinkedIn posts/newsletters and email newsletters. Each
+source defaults to a check every seven days; change the interval (1–90 days), pause it, or use
+Check now. Checks require company suggestions enabled, a running worker/scheduler and available
+AI budget. Source content is untrusted input. A supporting quote, relevance assessment and live
+homepage/careers verification are required before a pending recommendation is shown. Acceptance
+is always manual. Already tracked or previously suggested domains are suppressed.
+
+Website checks read the supplied page and up to ten linked articles (one level, common article
+paths; LinkedIn pulse/posts links). Use individual article URLs for sites with other URL structures.
+Pages that require sign-in or block fetching are reported on the source. Paste their readable text
+using Import newsletter or post text. No LinkedIn credentials or private mailbox access are used.
+Up to twelve unread documents are evaluated per check; a remaining backlog or a fetch error is
+checked again the next day. Duplicate content is not reprocessed. Each document is limited to the
+first 40,000 readable characters for fetched pages. Manual and inbound email imports accept up to 40,000 characters and reject longer editions; split them into separate imports.
+
+For automatic email delivery:
+
+1. Create an Emailed newsletter source in Suggestions and copy its displayed source ID.
+2. Set a long random `NEWSLETTER_INGEST_SECRET` on the web deployment.
+3. Configure your email provider or forwarding automation to POST JSON to `/api/newsletters`,
+   with `Authorization: Bearer <NEWSLETTER_INGEST_SECRET>` and the fields `sourceId`, `title`
+   (email subject) and `content` (plain text or HTML body). This is a provider-neutral endpoint;
+   configure a provider adapter if its webhook uses a different payload or authentication format.
+4. The endpoint returns 202 for both a saved edition and a duplicate. Content waits for the next
+   scheduled check, or select Check now. Paused sources can receive editions but do not process them.
+
+The app does not create a receiving email address or automatically subscribe to newsletters.

@@ -115,3 +115,8 @@ export type ProfileOutput = z.infer<typeof ProfileSchema>;
 export type FilterSuggestionsOutput = z.infer<typeof FilterSuggestionsSchema>;
 export type CompanyProfileOutput = z.infer<typeof CompanyProfileSchema>;
 export type CompanySuggestionsOutput = z.infer<typeof CompanySuggestionsSchema>;
+
+export const SourceCompaniesSchema = z.object({ candidates: z.array(z.object({
+  name: z.string(), homepageUrl: z.string(), rationale: z.string(), quote: z.string(),
+  recommended: z.boolean(),
+})).max(20) });

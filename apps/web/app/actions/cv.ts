@@ -68,7 +68,7 @@ export async function requestCv(_prev: ActionResult, form: FormData): Promise<Ac
     if (settings.cvModel === modelForCallSite(settings, "A3")) return fail("Choose a CV model different from website extraction before generating.");
     const [library] = await db().select().from(cvLibraries).orderBy(desc(cvLibraries.version)).limit(1);
     if (!library) return fail("Save your evidence library first.");
-    groupCvLibrary(CvLibrarySchema.parse(library.content));
+    const generationLibrary = groupCvLibrary(CvLibrarySchema.parse(library.content));
     const [row] = await db().select({ job: jobs, company: companies.name }).from(jobs).innerJoin(companies, eq(jobs.companyId, companies.id)).where(eq(jobs.id, id));
     if (!row) return fail("Role not found.");
     const supplied = String(form.get("description") ?? "").trim();
@@ -77,7 +77,7 @@ export async function requestCv(_prev: ActionResult, form: FormData): Promise<Ac
     if (description.length > 60_000) return fail("Keep the job description under 60,000 characters.");
     draftId = await db().transaction(async tx => {
       const [draft] = await tx.insert(cvDrafts).values({ jobId: id, jobTitle: row.job.title, companyName: row.company,
-        jobDescription: description, libraryVersion: library.version, librarySnapshot: library.content, model: settings.cvModel }).returning();
+        jobDescription: description, libraryVersion: library.version, librarySnapshot: generationLibrary, model: settings.cvModel }).returning();
       await enqueueTask(tx, "generate_cv", { draftId: draft!.id }, { dedupeKey: `generate_cv:${draft!.id}`, priority: 2 });
       return draft!.id;
     });

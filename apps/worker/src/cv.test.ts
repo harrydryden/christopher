@@ -6,7 +6,7 @@ import { eq, sql } from "drizzle-orm";
 import { handleGenerateCv } from "./handlers/cv";
 import type { WorkerDeps } from "./context";
 const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
-const library = { name: "Test Candidate", contact: "London", profile: "Operations", entries: [{ id: "one", kind: "experience" as const, heading: "Director · Acme", details: "Led a team" }] };
+const library = { name: "Test Candidate", contact: "London", profile: "Operations", entries: [{ id: "one", kind: "experience" as const, heading: "Director · Acme", details: "Led a team", confirmedResponsibilities: ["Led a team"] }] };
 beforeAll(async () => { await runMigrations(client.db); });
 beforeEach(async () => { vi.restoreAllMocks(); await client.db.execute(sql`truncate applications, cv_drafts, ai_calls`); });
 afterAll(async () => { vi.restoreAllMocks(); await client.pool.end(); });
@@ -30,6 +30,27 @@ it("shows missing credentials as a recoverable failed draft", async () => {
   const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
   expect(saved!.status).toBe("failed"); expect(saved!.error).toContain("ANTHROPIC_API_KEY");
 });
+it("excludes unconfirmed rows from the model while preserving the original snapshot", async () => {
+  const build = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Leader", sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] });
+  const { task, deps, draft } = await setup();
+  const snapshot = { ...library, entries: [{ ...library.entries[0]!, details: "Led a team\nAn unconfirmed proposal" }] };
+  await client.db.update(schema.cvDrafts).set({ librarySnapshot: snapshot }).where(eq(schema.cvDrafts.id, draft.id));
+  await handleGenerateCv(task, deps);
+  expect(build.mock.calls[0]![0].library.entries[0]!.details).toBe("Led a team");
+  const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  expect(saved!.status).toBe("ready");
+  expect(saved!.librarySnapshot).toEqual(snapshot);
+});
+it("does not spend an AI call when all experience rows are unconfirmed", async () => {
+  const build = vi.spyOn(AiEngine.prototype, "buildCv");
+  const { task, deps, draft } = await setup();
+  await client.db.update(schema.cvDrafts).set({ librarySnapshot: { ...library, entries: [{ ...library.entries[0]!, confirmedResponsibilities: [] }] } }).where(eq(schema.cvDrafts.id, draft.id));
+  await handleGenerateCv(task, deps);
+  expect(build).not.toHaveBeenCalled();
+  const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  expect(saved!.status).toBe("failed");
+  expect(saved!.error).toContain("confirm the responsibilities");
+});
 it("rejects model claims referencing invented evidence", async () => {
   vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Leader", sections: [{ entryId: "fabricated", bullets: ["Piloted aircraft"] }], gaps: [] });
   const { task, deps, draft } = await setup(); await handleGenerateCv(task, deps);
@@ -42,7 +63,7 @@ it("combines employment evidence and freezes central role metadata without rewri
   const { task, deps, draft } = await setup();
   const snapshot = { ...library, employment: [{ id: "job", company: "Acme", jobTitle: "Operations Director", startDate: "2023-08", endDate: "", current: true }], entries: [
     { ...library.entries[0]!, employmentId: "job", heading: "Team leadership" },
-    { id: "two", kind: "experience" as const, employmentId: "job", heading: "Automation", details: "Built tools" },
+    { id: "two", kind: "experience" as const, employmentId: "job", heading: "Automation", details: "Built tools", confirmedResponsibilities: ["Built tools"] },
   ] };
   await client.db.update(schema.cvDrafts).set({ librarySnapshot: snapshot }).where(eq(schema.cvDrafts.id, draft.id));
   await handleGenerateCv(task, deps);

@@ -197,13 +197,24 @@ describe("priority workflows", () => {
     expect(versions[0]!.content).toEqual(oldContent);
     expect(versions[1]!.content.employment).toEqual([{ id: "one", company: "Acme", jobTitle: "Director", startDate: "", endDate: "", current: false }]);
     expect(versions[1]!.content.entries[0]!.employmentId).toBe("one");
+    expect(versions[1]!.content.entries[0]!.confirmedResponsibilities).toEqual([]);
     form.set("version", "2"); form.set("library", JSON.stringify({ ...versions[1]!.content, employment: [] }));
     expect((await saveCvLibrary({ ok: true }, form)).ok).toBe(false);
     expect(await database.select().from(schema.cvLibraries)).toHaveLength(2);
   });
+  it("does not queue a CV from unconfirmed experience", async () => {
+    const { job } = await fixture();
+    await database.insert(schema.cvLibraries).values({ version: 1, content: { name: "Test Candidate", contact: "London", profile: "", entries: [{ id: "one", kind: "experience", status: "active", heading: "Director · Acme", details: "An unconfirmed proposal" }] } });
+    const generate = new FormData(); generate.set("jobId", job.id);
+    const result = await requestCv({ ok: true }, generate);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("confirm the responsibilities");
+    expect(await database.select().from(schema.cvDrafts)).toHaveLength(0);
+    expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(0);
+  });
   it("versions libraries and snapshots generation inputs atomically with its task", async () => {
     const { job } = await fixture();
-    const content = { name: "Test Candidate", contact: "London", profile: "Operations leader", employment: [{ id: "job", company: "Acme", jobTitle: "Director", startDate: "2023-08", endDate: "", current: true }], entries: [{ id: "one", kind: "experience", employmentId: "job", heading: "Leadership", details: "Led an operations team" }] };
+    const content = { name: "Test Candidate", contact: "London", profile: "Operations leader", employment: [{ id: "job", company: "Acme", jobTitle: "Director", startDate: "2023-08", endDate: "", current: true }], entries: [{ id: "one", kind: "experience", employmentId: "job", heading: "Leadership", details: "Led an operations team\nAn unconfirmed proposal", confirmedResponsibilities: ["Led an operations team"] }] };
     const form = new FormData(); form.set("library", JSON.stringify(content)); form.set("version", "0");
     expect((await saveCvLibrary({ ok: true }, form)).ok).toBe(true);
     expect((await saveCvLibrary({ ok: true }, form)).ok).toBe(false);
@@ -212,7 +223,7 @@ describe("priority workflows", () => {
     generate.set("description", "Lead a business operations team, develop the annual operating plan and work with finance and commercial leaders.");
     await expect(requestCv({ ok: true }, generate)).rejects.toThrow("redirect:/cv/");
     const [draft] = await database.select().from(schema.cvDrafts);
-    expect(draft!.librarySnapshot).toEqual({ ...content, structuredExperience: true, entries: [{ ...content.entries[0], heading: "Director · Acme · Aug 2023 – Present", status: "active" }] }); expect(draft!.model).toBe("claude-fable-5-1");
+    expect(draft!.librarySnapshot).toEqual({ ...content, structuredExperience: true, entries: [{ ...content.entries[0], heading: "Director · Acme · Aug 2023 – Present", status: "active", details: "Led an operations team" }] }); expect(draft!.model).toBe("claude-fable-5-1");
     expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(1);
     await database.update(schema.cvDrafts).set({ status: "ready", revision: 1, content: { name: content.name, contact: content.contact, summary: "Original", sections: [{ entryId: "one", kind: "experience", heading: "Director · Acme", bullets: ["Led a team"] }], gaps: [] } }).where(eq(schema.cvDrafts.id, draft!.id));
     const edit = new FormData(); edit.set("summary", "Edited summary"); edit.set("section-0", "Led the operations team"); edit.set("rememberWording", "on");

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { migrateEmploymentHistory, EmploymentSchema, evidenceHeading, materialiseCv, groupCvLibrary, companyForEntry, CvLibrarySchema, type CvLibrary } from "./cv";
 const library: CvLibrary = { name: "Test Candidate", contact: "London", profile: "Operations", entries: [
-  { id: "recent", kind: "experience", heading: "Director · Acme · 2023-present", details: "Led operations" },
+  { id: "recent", kind: "experience", heading: "Director · Acme · 2023-present", details: "Led operations", confirmedResponsibilities: ["Led operations"] },
   { id: "older", kind: "education", heading: "BSc · University · 2010", details: "Economics" },
 ] };
 describe("CV evidence grounding", () => {
@@ -21,8 +21,8 @@ describe("CV evidence grounding", () => {
 describe("company and role grouping", () => {
   const grouped: CvLibrary = { ...library, entries: [
     { ...library.entries[0]!, company: "Acme" },
-    { id: "project", kind: "experience", company: "Acme", roleId: "recent", heading: "AI project", details: "Led operations\nBuilt an agent" },
-    { id: "previous", kind: "experience", company: "Acme", heading: "Manager · Acme · 2020–2022", details: "Managed a team" },
+    { id: "project", kind: "experience", company: "Acme", roleId: "recent", heading: "AI project", details: "Led operations\nBuilt an agent", confirmedResponsibilities: ["Led operations", "Built an agent"] },
+    { id: "previous", kind: "experience", company: "Acme", heading: "Manager · Acme · 2020–2022", details: "Managed a team", confirmedResponsibilities: ["Managed a team"] },
     library.entries[1]!,
   ] };
   it("combines linked evidence before generation while keeping other jobs distinct", () => {
@@ -51,10 +51,10 @@ describe("company and role grouping", () => {
 
 describe("employment history", () => {
   const legacy: CvLibrary = { ...library, entries: [
-    { id: "spill", kind: "experience", heading: "VP Operations · Spill · Aug 2025 – Present", details: "Led operations" },
-    { id: "agent", kind: "experience", company: "Spill", roleId: "spill", heading: "AI agents", details: "Built agents" },
-    { id: "sales", kind: "experience", heading: "VP Operations · SalesAPE · Aug 2023 – Jul 2025", details: "Built systems" },
-    { id: "previous", kind: "experience", heading: "Manager · Spill · 2020–2022", details: "Managed a team" },
+    { id: "spill", kind: "experience", heading: "VP Operations · Spill · Aug 2025 – Present", details: "Led operations", confirmedResponsibilities: ["Led operations"] },
+    { id: "agent", kind: "experience", company: "Spill", roleId: "spill", heading: "AI agents", details: "Built agents", confirmedResponsibilities: ["Built agents"] },
+    { id: "sales", kind: "experience", heading: "VP Operations · SalesAPE · Aug 2023 – Jul 2025", details: "Built systems", confirmedResponsibilities: ["Built systems"] },
+    { id: "previous", kind: "experience", heading: "Manager · Spill · 2020–2022", details: "Managed a team", confirmedResponsibilities: ["Managed a team"] },
     library.entries[1]!,
   ] };
   it("migrates dates and all linked blocks without changing evidence or old snapshots", () => {
@@ -144,9 +144,46 @@ describe("evidence status", () => {
   it("does not combine inactive evidence into an active job section", async () => {
     const { groupCvLibrary } = await import("./cv");
     const job = { id: "job", company: "Acme", jobTitle: "Director", startDate: "2020", endDate: "", current: true };
-    const source = { ...library, employment: [job], entries: library.entries.map(e => ({ ...e, kind: "experience" as const, employmentId: job.id })) };
+    const source = { ...library, employment: [job], entries: library.entries.map(e => ({ ...e, kind: "experience" as const, employmentId: job.id, confirmedResponsibilities: [e.details] })) };
     const result = groupCvLibrary(source);
     expect(result.entries).toHaveLength(1);
     expect(result.entries[0]!.details).toBe("Evidence for active");
+  });
+});
+
+describe("responsibility confirmation", () => {
+  const experience: CvLibrary["entries"][number] = { id: "job", kind: "experience", status: "active", heading: "Director · Acme", details: "Led operations\nBuilt tools\nProposed a new programme", confirmedResponsibilities: ["Led operations", "Built tools"] };
+  it("passes only explicitly confirmed wording to CV generation and qualification", async () => {
+    const { eligibleCvEvidence } = await import("./cv");
+    const snapshot = JSON.stringify(experience);
+    expect(eligibleCvEvidence(experience)?.details).toBe("Led operations\nBuilt tools");
+    const grouped = groupCvLibrary({ ...library, entries: [experience] });
+    expect(grouped.entries[0]!.details).not.toContain("Proposed");
+    expect(groupCvLibrary(grouped)).toEqual(grouped);
+    expect(JSON.stringify(experience)).toBe(snapshot);
+    for (const patch of [{ confirmedResponsibilities: undefined }, { confirmedResponsibilities: [] }, { status: "draft" as const }, { status: "inactive" as const }]) {
+      expect(eligibleCvEvidence({ ...experience, ...patch })).toBeUndefined();
+      expect(() => materialiseCv({ ...library, entries: [{ ...experience, ...patch }] }, { summary: "Leader", sections: [{ entryId: "job", bullets: ["A claim"] }], gaps: [] })).toThrow("unconfirmed");
+    }
+  });
+  it("does not infer confirmation from a legacy active block or stale text", async () => {
+    const { consolidateExperience, eligibleCvEvidence } = await import("./cv");
+    const legacy = { ...experience, heading: "Director · Acme · 2020–Present", confirmedResponsibilities: undefined };
+    const migrated = consolidateExperience({ ...library, entries: [legacy] });
+    expect(migrated.entries[0]!.confirmedResponsibilities).toEqual([]);
+    expect(eligibleCvEvidence(migrated.entries[0]!)).toBeUndefined();
+    expect(() => groupCvLibrary(migrated)).toThrow("confirm the responsibilities");
+    expect(eligibleCvEvidence({ ...experience, confirmedResponsibilities: ["A removed statement"] })).toBeUndefined();
+  });
+  it("clears changed and removed rows without shifting confirmation to their replacements", async () => {
+    const { updateResponsibilityRows, eligibleCvEvidence } = await import("./cv");
+    const changed = updateResponsibilityRows(experience, ["New operations claim", "Built tools", "Proposed a new programme", "New row"]);
+    expect(changed.confirmedResponsibilities).toEqual(["Built tools"]);
+    expect(eligibleCvEvidence(changed)?.details).toBe("Built tools");
+    const removed = updateResponsibilityRows(changed, ["Proposed a new programme", "New row"]);
+    expect(removed.confirmedResponsibilities).toEqual([]);
+    expect(eligibleCvEvidence(removed)).toBeUndefined();
+    const reordered = updateResponsibilityRows(experience, ["Built tools", "Led operations"]);
+    expect(eligibleCvEvidence(reordered)?.details).toBe("Built tools\nLed operations");
   });
 });

@@ -36,6 +36,8 @@ export const CvEntrySchema = z.object({
   status: z.enum(["draft", "active", "inactive"]).optional(),
   heading: z.string().trim().min(1).max(250),
   details: z.string().trim().min(1).max(40000),
+  // Confirmation belongs to the exact wording, so editing or removing a row cannot transfer it.
+  confirmedResponsibilities: z.array(z.string().min(1).max(40000)).max(20).optional(),
   company: z.string().trim().max(160).optional(),
   employmentId: z.string().min(1).max(100).optional(),
   roleId: z.string().min(1).max(100).optional(),
@@ -99,7 +101,7 @@ export function materialiseCv(library: CvLibrary, plan: CvPlan): CvContent {
   const seenJobs = new Set<string>();
   const selected = new Map(plan.sections.map(section => {
     const entry = library.entries.find(e => e.id === section.entryId);
-    if (!entry || !isActiveEvidence(entry) || seen.has(entry.id)) throw new Error("CV contains unknown or repeated evidence references");
+    if (!entry || !eligibleCvEvidence(entry) || seen.has(entry.id)) throw new Error("CV contains unknown, unconfirmed or repeated evidence references");
     seen.add(entry.id);
     if (entry.employmentId && seenJobs.has(entry.employmentId)) throw new Error("CV repeats the same employment record");
     if (entry.employmentId) seenJobs.add(entry.employmentId);
@@ -120,21 +122,25 @@ export function companyForEntry(entry: z.infer<typeof CvEntrySchema>): string {
 /** Keep the stored library granular; give generation one evidence set per explicit role. */
 export function groupCvLibrary(library: CvLibrary): CvLibrary {
   CvLibrarySchema.parse(library);
-  const eligible = library.entries.filter(entry => isActiveEvidence(entry) && (!entry.roleId || library.entries.some(parent => parent.id === entry.roleId && isActiveEvidence(parent))));
-  if (!eligible.length) throw new Error("Activate at least one evidence block before building a CV.");
+  const eligible = library.entries.flatMap(entry => {
+    const usable = eligibleCvEvidence(entry);
+    return usable && (!entry.roleId || library.entries.some(parent => parent.id === entry.roleId && isActiveEvidence(parent))) ? [usable] : [];
+  });
+  if (!eligible.length) throw new Error("Activate at least one evidence block and confirm the responsibilities you want to use, then save your library before building a CV.");
   library = { ...library, employment: library.employment?.filter(job => eligible.some(entry => entry.employmentId === job.id)), entries: eligible };
   if (library.employment !== undefined) {
     const experience = employmentCompanyGroups(library.employment).flatMap(group => group.jobs).flatMap(job => {
       const members = library.entries.filter(entry => entry.employmentId === job.id);
       if (!members.length) return [];
-      return [{ ...members[0]!, heading: employmentHeading(job), details: combineEvidence(members) }];
+      const details = combineEvidence(members);
+      return [{ ...members[0]!, heading: employmentHeading(job), details, confirmedResponsibilities: responsibilityRows(details) }];
     });
     return { ...library, entries: [...experience, ...library.entries.filter(entry => entry.kind !== "experience")] };
   }
   return { ...library, entries: library.entries.filter(entry => !entry.roleId).map(role => {
     const members = library.entries.filter(entry => entry.id === role.id || entry.roleId === role.id);
     const details = combineEvidence(members);
-    return { ...role, details };
+    return role.kind === "experience" ? { ...role, details, confirmedResponsibilities: responsibilityRows(details) } : { ...role, details };
   }) };
 }
 
@@ -184,6 +190,22 @@ export function responsibilityRows(details: string): string[] {
   return details.split(/\r?\n/).map(line => line.replace(/^\s*[•*\-]\s+/, "").trim()).filter(Boolean);
 }
 
+/** Editing/removing a row clears its confirmation; other rows retain theirs. */
+export function updateResponsibilityRows(entry: CvLibrary["entries"][number], rows: string[]): CvLibrary["entries"][number] {
+  const details = rows.join("\n");
+  const retained = new Set(responsibilityRows(details));
+  return { ...entry, details, confirmedResponsibilities: (entry.confirmedResponsibilities ?? []).filter(row => retained.has(row)) };
+}
+
+/** One eligibility rule for CV generation and role qualification. Missing confirmation is unconfirmed. */
+export function eligibleCvEvidence(entry: CvLibrary["entries"][number]): CvLibrary["entries"][number] | undefined {
+  if (!isActiveEvidence(entry)) return undefined;
+  if (entry.kind !== "experience") return entry;
+  const confirmed = new Set(entry.confirmedResponsibilities ?? []);
+  const rows = responsibilityRows(entry.details).filter(row => confirmed.has(row));
+  return rows.length ? { ...entry, details: rows.join("\n"), confirmedResponsibilities: [...new Set(rows)] } : undefined;
+}
+
 export function compareEmploymentDates(a: Employment, b: Employment): number {
   return Number(b.current) - Number(a.current)
     || (b.endDate || b.startDate).localeCompare(a.endDate || a.startDate)
@@ -220,7 +242,8 @@ export function consolidateExperience(library: CvLibrary): CvLibrary {
         if (!seen.has(key)) { rows.push(row); seen.add(key); }
       }
     }
-    return [{ ...members[0]!, status: members.every(entry => entry.status === members[0]!.status) ? members[0]!.status : "draft" as const, heading: employmentHeading(job), details: rows.join("\n") }];
+    const confirmed = new Set(members.flatMap(member => member.confirmedResponsibilities ?? []));
+    return [{ ...members[0]!, status: members.every(entry => entry.status === members[0]!.status) ? members[0]!.status : "draft" as const, heading: employmentHeading(job), details: rows.join("\n"), confirmedResponsibilities: rows.filter(row => confirmed.has(row)) }];
   });
   return { ...migrated, structuredExperience: true, entries: [...entries, ...migrated.entries.filter(entry => entry.kind !== "experience")] };
 }

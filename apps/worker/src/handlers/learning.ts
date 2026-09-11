@@ -1,6 +1,6 @@
 import { schema, enqueueTask, reevaluateGate, appendProfile, type Task } from "@christopher/db";
 import { decisionDigest } from "@christopher/ai";
-import { isActiveEvidence, evidenceHeading, sha1, dedupeKeyFor, modelForCallSite, priorityFor } from "@christopher/core";
+import { eligibleCvEvidence, evidenceHeading, sha1, dedupeKeyFor, modelForCallSite, priorityFor } from "@christopher/core";
 import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { aiBudgetExceeded } from "../context";
@@ -85,7 +85,13 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
         keywordTerms: job.keywordTerms,
       },
     };
-  if (library) input.profileMarkdown += "\nEvidence library (absence is not proof of inability):\n" + JSON.stringify({ profile: library.content.profile, employment: library.content.employment?.filter(job => library.content.entries.some(entry => entry.employmentId === job.id && isActiveEvidence(entry))), entries: library.content.entries.filter(isActiveEvidence).map(entry => ({ ...entry, heading: evidenceHeading(library.content, entry) })) });
+  if (library) {
+    const entries = library.content.entries.flatMap(entry => {
+      const eligible = eligibleCvEvidence(entry);
+      return eligible ? [{ ...eligible, heading: evidenceHeading(library.content, eligible) }] : [];
+    });
+    input.profileMarkdown += "\nEvidence library (absence is not proof of inability):\n" + JSON.stringify({ profile: library.content.profile, employment: library.content.employment?.filter(job => entries.some(entry => entry.employmentId === job.id)), entries });
+  }
   const fingerprint = sha1(JSON.stringify([input, modelForCallSite(settings, "A5")]));
   const key = `internal:scoreInput:${job.id}`;
   const [previous] = await deps.db.select({ value: schema.settings.value }).from(schema.settings).where(eq(schema.settings.key, key));

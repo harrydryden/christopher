@@ -73,16 +73,16 @@ export default async function HealthPage() {
             {attentionSources.map((s) => (
               <li key={s.id} className="flex flex-wrap items-center gap-2">
                 <Badge tone={sourceStatusTone(s.status)}>{s.status === "needs_confirmation" ? "needs confirmation" : s.status}</Badge>
-                <Link href={`/companies/${s.companyId}`} className="font-medium text-slate-800 hover:underline dark:text-slate-200">
+                <Link href={`/companies/${s.companyId}`} className="font-medium text-slate-800 hover:underline">
                   {s.companyName}
                 </Link>
-                <span className="text-xs text-slate-400">{s.type}</span>
+                <span className="text-xs text-slate-500">{s.type}</span>
               </li>
             ))}
             {noSourceCompanies.map((c) => (
               <li key={c.id} className="flex flex-wrap items-center gap-2">
                 <Badge tone="red">no source</Badge>
-                <Link href={`/companies/${c.id}`} className="font-medium text-slate-800 hover:underline dark:text-slate-200">
+                <Link href={`/companies/${c.id}`} className="font-medium text-slate-800 hover:underline">
                   {c.name}
                 </Link>
               </li>
@@ -120,7 +120,7 @@ export default async function HealthPage() {
                   <TD className="whitespace-nowrap" title={p.scan.startedAt.toISOString()}>
                     {relativeTime(p.scan.startedAt, now)}
                   </TD>
-                  <TD className="max-w-[20rem] truncate text-red-600 dark:text-red-400" title={p.scan.error ?? undefined}>
+                  <TD className="max-w-[20rem] truncate text-red-600" title={p.scan.error ?? undefined}>
                     {p.scan.error ?? ""}
                   </TD>
                 </TR>
@@ -150,7 +150,7 @@ export default async function HealthPage() {
                   <TD>
                     <Badge tone="neutral">{t.type}</Badge>
                   </TD>
-                  <TD className="max-w-[24rem] truncate text-red-600 dark:text-red-400" title={t.error ?? undefined}>
+                  <TD className="max-w-[24rem] truncate text-red-600" title={t.error ?? undefined}>
                     {t.error ?? ""}
                   </TD>
                   <TD className="whitespace-nowrap">{t.finishedAt ? relativeTime(t.finishedAt, now) : "—"}</TD>
@@ -175,10 +175,10 @@ export default async function HealthPage() {
         ) : (
           <div className="flex flex-wrap gap-2">
             {queueCounts.map((c) => (
-              <div key={`${c.type}-${c.status}`} className="flex items-center gap-1.5 rounded-md border border-slate-200 px-2 py-1 text-xs dark:border-slate-800">
-                <span className="text-slate-500 dark:text-slate-400">{c.type}</span>
+              <div key={`${c.type}-${c.status}`} className="flex items-center gap-1.5 rounded-md border border-slate-200 px-2 py-1 text-xs">
+                <span className="text-slate-500">{c.type}</span>
                 <Badge tone={taskStatusTone(c.status)}>{c.status}</Badge>
-                <span className="font-medium text-slate-800 dark:text-slate-200">{c.n}</span>
+                <span className="font-medium text-slate-800">{c.n}</span>
               </div>
             ))}
           </div>
@@ -187,17 +187,17 @@ export default async function HealthPage() {
 
       <Card title="AI spend this month">
         <div className="mb-2 flex items-baseline gap-2">
-          <span className="text-lg font-semibold text-slate-900 dark:text-slate-100">{formatUsd(spend)}</span>
-          <span className="text-sm text-slate-400">of {formatUsd(budget)} budget</span>
+          <span className="text-lg font-semibold text-slate-900">{formatUsd(spend)}</span>
+          <span className="text-sm text-slate-500">of {formatUsd(budget)} budget</span>
         </div>
-        <div className="mb-3 h-2 w-full overflow-hidden rounded-full bg-slate-150 dark:bg-slate-800">
+        <div className="mb-3 h-2 w-full overflow-hidden rounded-full bg-slate-150">
           <div className={`h-full rounded-full ${overBudget ? "bg-red-500" : "bg-emerald-500"}`} style={{ width: `${Math.min(100, Math.max(2, spendFraction * 100))}%` }} />
         </div>
-        {overBudget && <p className="mb-3 text-sm text-red-600 dark:text-red-400">Over budget — non-essential AI calls (near-miss scoring, then suggestions) are being skipped.</p>}
+        {overBudget && <p className="mb-3 text-sm text-red-600">Over budget — non-essential AI calls (near-miss scoring, then suggestions) are being skipped.</p>}
         <section>
-          <h3 className="text-sm text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100">Last {aiCalls.length} calls</h3>
+          <h3 className="text-sm text-slate-500 hover:text-slate-800">Last {aiCalls.length} calls</h3>
           {aiCalls.length === 0 ? (
-            <p className="mt-2 text-sm text-slate-400">No AI calls recorded yet.</p>
+            <p className="mt-2 text-sm text-slate-500">No AI calls recorded yet.</p>
           ) : (
             <Table className="mt-2">
               <THead>
@@ -255,7 +255,7 @@ export default async function HealthPage() {
                   </TD>
                   <TD>
                     {r.companiesOk} ok
-                    {r.companiesFailed > 0 && <span className="text-red-600 dark:text-red-400"> · {r.companiesFailed} failed</span>} of {r.companiesTotal}
+                    {r.companiesFailed > 0 && <span className="text-red-600"> · {r.companiesFailed} failed</span>} of {r.companiesTotal}
                   </TD>
                   <TD>
                     {r.newRoles} / {r.closedRoles}

@@ -1,7 +1,7 @@
 "use client";
 import { updateEmploymentIndustries, type CvLibrary, type Employment } from "@christopher/core/cv";
 
-const input = "w-full min-w-28 rounded border border-slate-300 p-2 text-sm dark:border-slate-700 dark:bg-slate-950";
+const input = "w-full min-w-28 rounded border border-slate-300 p-2 text-sm";
 export function EmploymentHistoryTable({ employment, entries, onChange }: {
   employment: Employment[]; entries: CvLibrary["entries"]; onChange: (jobs: Employment[]) => void;
 }) {

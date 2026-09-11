@@ -28,15 +28,15 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
       <PageHeader title="Companies" description="Track companies and refresh their roles. Refresh checks existing careers pages and finds one when needed." />
 
       {sp.added !== undefined && (
-        <div className="mb-4 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+        <div className="mb-4 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
           Added {sp.added} {sp.added === "1" ? "company" : "companies"}.
-          {sp.skipped && <span className="block text-emerald-700/80 dark:text-emerald-400/80">Skipped (already tracked or invalid): {sp.skipped}</span>}
+          {sp.skipped && <span className="block text-emerald-700/80">Skipped (already tracked or invalid): {sp.skipped}</span>}
         </div>
       )}
 
       <Card title="Add companies" className="mb-6">
         <form action={addCompanies} className="flex flex-col gap-2">
-          <label htmlFor="urls" className="text-sm text-slate-500 dark:text-slate-400">
+          <label htmlFor="urls" className="text-sm text-slate-500">
             One homepage URL per line, or comma-separated. Each is discovered independently.
           </label>
           <textarea
@@ -45,7 +45,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
             rows={3}
             required
             placeholder={"acme.com\nhttps://example.org"}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-950"
+            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
           />
           <div>
             <Button type="submit" variant="primary">
@@ -80,11 +80,11 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={company.faviconUrl} alt="" width={16} height={16} referrerPolicy="no-referrer" className="rounded-sm" />
                     ) : (
-                      <span className="inline-block h-4 w-4 rounded-sm bg-slate-200 dark:bg-slate-700" />
+                      <span className="inline-block h-4 w-4 rounded-sm bg-slate-200" />
                     )}
-                    <span className="font-medium text-slate-900 dark:text-slate-100">{company.name}</span>
+                    <span className="font-medium text-slate-900">{company.name}</span>
                   </a>
-                  <a href={company.homepageUrl} target="_blank" rel="noopener noreferrer" className="block text-xs text-slate-400 hover:underline">
+                  <a href={company.homepageUrl} target="_blank" rel="noopener noreferrer" className="block text-xs text-slate-500 hover:underline">
                     {company.domain}
                   </a>
                 </TD>
@@ -99,7 +99,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                       {relativeTime(lastScan.startedAt, now)}
                     </span>
                   ) : (
-                    <span className="text-slate-400">never</span>
+                    <span className="text-slate-500">never</span>
                   )}
                 </TD>
                 <TD>

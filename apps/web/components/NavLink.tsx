@@ -10,10 +10,11 @@ export function NavLink({ href, children }: { href: string; children: ReactNode 
   return (
     <Link
       href={href}
+      aria-current={active ? "page" : undefined}
       className={`block rounded-md px-3 py-1.5 text-sm font-medium ${
         active
-          ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
-          : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+          ? "bg-white/15 text-white ring-1 ring-inset ring-white/40"
+          : "text-white hover:bg-white/10"
       }`}
     >
       {children}

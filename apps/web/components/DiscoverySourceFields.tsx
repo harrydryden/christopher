@@ -2,7 +2,7 @@
 import { useState } from "react";
 export function DiscoverySourceFields() {
   const [kind, setKind] = useState("website");
-  const input = "min-h-11 w-full rounded border border-slate-300 bg-transparent p-2 text-sm dark:border-slate-700";
+  const input = "min-h-11 w-full rounded border border-slate-300 bg-transparent p-2 text-sm";
   return <>
     <label className="grid gap-1 text-sm">Source type<select name="kind" value={kind} onChange={e => setKind(e.target.value)} className={input}><option value="website">Website</option><option value="linkedin">LinkedIn post or newsletter</option><option value="email">Email newsletter</option></select></label>
     <label className="grid gap-1 text-sm">Source name<input name="name" required maxLength={200} placeholder="e.g. Scaling Europe Daily" className={input}/></label>

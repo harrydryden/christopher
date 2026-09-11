@@ -42,13 +42,13 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <WorkspaceShell><NavigationMetrics />
-      <div className="border-b border-slate-200 bg-white px-4 py-2 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+      <div className="scan-banner border-b border-white/20 px-4 py-2 text-sm">
         <Suspense fallback={<span>Loading scan status…</span>}><ScanBanner /></Suspense>
       </div>
       <div className="flex flex-1 flex-col md:flex-row">
-        <aside className="w-full shrink-0 border-b md:w-48 md:border-b-0 md:border-r border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
-          <div className="mb-4 px-2 text-base font-semibold text-slate-900 dark:text-slate-100">Christopher</div>
-          <nav className="flex flex-wrap gap-1 md:block md:space-y-0.5">
+        <aside className="app-sidebar w-full shrink-0 border-b border-white/20 p-3 md:w-48 md:border-b-0 md:border-r">
+          <div className="mb-4 px-2 text-base font-semibold text-white">Christopher</div>
+          <nav aria-label="Main navigation" className="flex flex-wrap gap-1 md:block md:space-y-0.5">
             {NAV_ITEMS.map((item) => (
               <NavLink key={item.href} href={item.href}>
                 {item.label}
@@ -56,7 +56,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             ))}
           </nav>
           <form action={logout} className="mt-4 px-2">
-            <button type="submit" className="text-sm text-slate-500 hover:text-slate-800 hover:underline dark:text-slate-400 dark:hover:text-slate-100">
+            <button type="submit" className="text-sm text-white hover:underline">
               Logout
             </button>
           </form>

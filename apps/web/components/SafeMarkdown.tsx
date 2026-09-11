@@ -46,12 +46,12 @@ export function SafeMarkdown({ markdown, className = "" }: { markdown: string; c
   const blocks = parseBlocks(markdown);
   if (blocks.length === 0) return null;
   return (
-    <div className={`space-y-2.5 text-sm leading-relaxed text-slate-700 dark:text-slate-300 ${className}`}>
+    <div className={`space-y-2.5 text-sm leading-relaxed text-slate-700 ${className}`}>
       {blocks.map((b, i) => {
         if (b.type === "heading") {
-          if (b.level === 1) return <h3 key={i} className="mt-4 text-base font-semibold text-slate-900 first:mt-0 dark:text-slate-100">{b.text}</h3>;
-          if (b.level === 2) return <h4 key={i} className="mt-3 text-sm font-semibold text-slate-900 dark:text-slate-100">{b.text}</h4>;
-          return <h5 key={i} className="mt-2 text-sm font-medium text-slate-800 dark:text-slate-200">{b.text}</h5>;
+          if (b.level === 1) return <h3 key={i} className="mt-4 text-base font-semibold text-slate-900 first:mt-0">{b.text}</h3>;
+          if (b.level === 2) return <h4 key={i} className="mt-3 text-sm font-semibold text-slate-900">{b.text}</h4>;
+          return <h5 key={i} className="mt-2 text-sm font-medium text-slate-800">{b.text}</h5>;
         }
         if (b.type === "list") {
           return (

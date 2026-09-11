@@ -19,12 +19,12 @@ interface ReasonBoxState {
 }
 
 function FitBar({ score }: { score: number | null }) {
-  if (score === null) return <span className="text-slate-400">—</span>;
+  if (score === null) return <span className="text-slate-500">—</span>;
   const tone = score >= 70 ? "bg-emerald-500" : score >= 30 ? "bg-amber-500" : "bg-red-400";
   return (
     <div className="flex items-center gap-2">
-      <span className="w-6 text-right tabular-nums text-slate-700 dark:text-slate-200">{score}</span>
-      <span className="h-1.5 w-14 overflow-hidden rounded-full bg-slate-150 dark:bg-slate-800">
+      <span className="w-6 text-right tabular-nums text-slate-700">{score}</span>
+      <span className="h-1.5 w-14 overflow-hidden rounded-full bg-slate-150">
         <span className={`block h-full rounded-full ${tone}`} style={{ width: `${Math.max(2, Math.min(100, score))}%` }} />
       </span>
     </div>
@@ -153,7 +153,7 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
     <div>
       {keyboard && <p className="mb-3 text-xs text-slate-500">Keyboard: <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>a</kbd> shortlist · <kbd>s</kbd> skip · <kbd>o</kbd> open</p>}
       {flashError && (
-        <p className="mb-2 rounded-md bg-red-50 px-3 py-1.5 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">{flashError}</p>
+        <p className="mb-2 rounded-md bg-red-50 px-3 py-1.5 text-sm text-red-700">{flashError}</p>
       )}
       <Table>
         <THead>
@@ -189,7 +189,7 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
                           }}
                         />
                       ) : (
-                        <span className="inline-block h-3.5 w-3.5 rounded-sm bg-slate-200 dark:bg-slate-700" />
+                        <span className="inline-block h-3.5 w-3.5 rounded-sm bg-slate-200" />
                       )}
                       <span className="max-w-[12rem] truncate">{row.companyName}</span>
                     </a>
@@ -200,13 +200,13 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
                       target="_blank"
                       rel="noopener noreferrer"
                       title={row.companyHomepageUrl}
-                      className="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                      className="text-slate-500 hover:text-slate-700"
                     >
                       <ExternalLinkIcon />
                     </a>
                   </TD>
                   <TD className="max-w-[22rem]">
-                    <a href={row.url} target="_blank" rel="noopener noreferrer" className="font-medium text-slate-900 hover:underline dark:text-slate-100">
+                    <a href={row.url} target="_blank" rel="noopener noreferrer" className="font-medium text-slate-900 hover:underline">
                       {row.title}
                     </a>
                     <p className="mt-1 text-xs text-slate-500">{[row.department, row.employmentType, row.salaryText].filter(Boolean).join(" · ")}</p>
@@ -216,7 +216,7 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
                     <div className="flex flex-wrap items-center gap-1">
                       <span>{row.locations.length ? row.locations.join(", ") : row.location}</span>
                       {row.remote && <Badge tone="blue">Remote</Badge>}
-                      {!row.location && row.locations.length === 0 && !row.remote && <span className="text-slate-400">—</span>}
+                      {!row.location && row.locations.length === 0 && !row.remote && <span className="text-slate-500">—</span>}
                     </div>
                   </TD>
                   <TD className="whitespace-nowrap">
@@ -236,14 +236,14 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
                           <button
                             type="button"
                             onClick={() => setReasonBox({ ...boxed, kind: "apply" })}
-                            className={`rounded px-1.5 py-0.5 text-xs font-medium ${boxed.kind === "apply" ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"}`}
+                            className={`rounded px-1.5 py-0.5 text-xs font-medium ${boxed.kind === "apply" ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600"}`}
                           >
                             Shortlist
                           </button>
                           <button
                             type="button"
                             onClick={() => setReasonBox({ ...boxed, kind: "skip" })}
-                            className={`rounded px-1.5 py-0.5 text-xs font-medium ${boxed.kind === "skip" ? "bg-red-600 text-white" : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"}`}
+                            className={`rounded px-1.5 py-0.5 text-xs font-medium ${boxed.kind === "skip" ? "bg-red-600 text-white" : "bg-slate-100 text-slate-600"}`}
                           >
                             Skip
                           </button>
@@ -264,19 +264,19 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
                           }}
                           placeholder={boxed.kind === "skip" ? "Why? (required)" : "Why? (optional)"}
                           rows={2}
-                          className="w-full rounded border border-slate-300 px-1.5 py-1 text-xs outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-950"
+                          className="w-full rounded border border-slate-300 px-1.5 py-1 text-xs outline-none focus:border-indigo-500"
                         />
-                        {boxed.error && <p className="text-xs text-red-600 dark:text-red-400">{boxed.error}</p>}
+                        {boxed.error && <p className="text-xs text-red-600">{boxed.error}</p>}
                         <div className="flex gap-1.5">
                           <button
                             type="button"
                             disabled={boxed.pending || (boxed.kind === "skip" && boxed.text.trim() === "")}
                             onClick={() => void submitDecision(row.id, boxed.kind, boxed.text)}
-                            className="rounded bg-slate-900 px-2 py-0.5 text-xs font-medium text-white disabled:opacity-40 dark:bg-slate-100 dark:text-slate-900"
+                            className="rounded bg-[var(--app-navy)] px-2 py-0.5 text-xs font-medium text-white disabled:opacity-40"
                           >
                             {boxed.pending ? "Saving…" : "Save"}
                           </button>
-                          <button type="button" onClick={() => setReasonBox(null)} className="rounded px-2 py-0.5 text-xs text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
+                          <button type="button" onClick={() => setReasonBox(null)} className="rounded px-2 py-0.5 text-xs text-slate-500 hover:bg-slate-100">
                             Cancel
                           </button>
                         </div>
@@ -284,10 +284,10 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
                     ) : row.decision ? (
                       <div className="flex flex-wrap items-center gap-1.5">
                         <Badge tone={decisionTone(row.decision.decision)}>{row.decision.decision === "apply" ? "shortlisted" : "skipped"}</Badge>
-                        <span title={row.decision.reason} className="max-w-[8rem] truncate text-xs text-slate-500 dark:text-slate-400">
+                        <span title={row.decision.reason} className="max-w-[8rem] truncate text-xs text-slate-500">
                           {row.decision.reason ? truncate(row.decision.reason, 40) : <em>no reason</em>}
                         </span>
-                        <button type="button" onClick={() => openReasonBox(row.id, row.decision!.decision, row.decision!.reason)} className="text-xs text-slate-500 underline hover:text-slate-800 dark:hover:text-slate-200">
+                        <button type="button" onClick={() => openReasonBox(row.id, row.decision!.decision, row.decision!.reason)} className="text-xs text-slate-500 underline hover:text-slate-800">
                           Edit
                         </button>
                         <button
@@ -295,7 +295,7 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
                           onClick={() => {
                             if (confirm("Undo this decision?")) void submitDecision(row.id, null, "");
                           }}
-                          className="text-xs text-slate-500 underline hover:text-slate-800 dark:hover:text-slate-200"
+                          className="text-xs text-slate-500 underline hover:text-slate-800"
                         >
                           Undo
                         </button>
@@ -305,14 +305,14 @@ export function RolesTable({ rows: inputRows, keyboard = false, archived = false
                         <button
                           type="button"
                           onClick={() => openReasonBox(row.id, "apply")}
-                          className="rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300"
+                          className="rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100"
                         >
                           Shortlist
                         </button>
                         <button
                           type="button"
                           onClick={() => openReasonBox(row.id, "skip")}
-                          className="rounded bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-100 dark:bg-red-950 dark:text-red-300"
+                          className="rounded bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-100"
                         >
                           Skip
                         </button>

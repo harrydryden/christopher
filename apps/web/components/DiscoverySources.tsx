@@ -9,7 +9,7 @@ import { Badge } from "./Badge";
 import { DiscoverySourceForm } from "./DiscoverySourceForm";
 import { DiscoverySourceFields } from "./DiscoverySourceFields";
 
-const input = "min-h-11 w-full rounded border border-slate-300 bg-transparent p-2 text-sm dark:border-slate-700";
+const input = "min-h-11 w-full rounded border border-slate-300 bg-transparent p-2 text-sm";
 export async function DiscoverySources() {
   const [sources, counts, recentTasks, settings] = await Promise.all([
     db().select().from(discoverySources).orderBy(asc(discoverySources.createdAt)),
@@ -27,7 +27,7 @@ export async function DiscoverySources() {
       <p className="text-sm text-slate-500">Sources bring new companies into Review. Previously reviewed companies are not recommended again.</p>
       {!recentTasks.some(t => t.status === "queued" || t.status === "running") && <a className="text-sm underline" href="/suggestions?view=sources">Refresh status</a>}
     </div>
-    <section className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+    <section className="rounded-lg border border-slate-200 p-4">
       <h3 className="font-semibold">Add a source</h3>
       <DiscoverySourceForm action={saveDiscoverySource} className="mt-4 grid max-w-xl gap-4">
         <DiscoverySourceFields/>
@@ -41,16 +41,16 @@ export async function DiscoverySources() {
       const lastResult = sourceTasks.find(t => t.status === "done" && t.type === "monitor_source")?.result as { stored?: number; documents?: number; skipped?: string } | undefined;
       const state = discoverySourceState({ ...source, waiting, suggestionsEnabled: settings.suggestionsEnabled, activeStatus: active?.status });
       const canCheck = source.enabled && settings.suggestionsEnabled && !active && (source.kind !== "email" || waiting > 0);
-      return <article key={source.id} aria-label={source.name} className="space-y-3 rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+      return <article key={source.id} aria-label={source.name} className="space-y-3 rounded-lg border border-slate-200 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0"><h2 className="font-semibold">{source.name}</h2><p className="text-sm text-slate-500">{SOURCE_KIND_LABELS[source.kind]} · {source.intervalDays === 7 ? "Weekly" : `Every ${source.intervalDays} days`}</p></div>
           <Badge tone={state === "Needs attention" ? "amber" : active ? "blue" : "neutral"}>{state}</Badge>
         </div>
-        {source.url && <a className="block break-all text-sm text-indigo-700 underline dark:text-indigo-300" href={source.url} target="_blank" rel="noreferrer">Open source ↗</a>}
+        {source.url && <a className="block break-all text-sm text-indigo-700 underline" href={source.url} target="_blank" rel="noreferrer">Open source ↗</a>}
         <p className="text-sm">{waiting} {waiting === 1 ? "edition or page" : "editions or pages"} waiting to be checked</p>
         <p className="text-xs text-slate-500">Last checked: {source.lastCheckedAt ? date(source.lastCheckedAt) : "Not yet"}. {source.enabled && settings.suggestionsEnabled && !active ? `Next: ${source.nextRunAt <= new Date() ? "due now" : date(source.nextRunAt)}.` : ""} Times shown in {settings.timezone}.</p>
         {!active && typeof lastResult?.stored === "number" && <p className="text-sm text-slate-500">Last collection: {lastResult.documents ?? 0} new or changed pages queued for evaluation. Verified companies appear in Review.</p>}
-        {source.lastError && <div role="status" className="rounded bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200"><p>{/AI unavailable|budget|extraction failed/i.test(source.lastError) ? <>Company evaluation is unavailable. <a href="/settings" className="underline">Check your AI settings and budget</a>, then try again.</> : "Some content could not be checked. You can import the text below or try again."}</p><section className="mt-1"><h3 className="cursor-pointer">Technical details</h3><p className="mt-1 break-words">{source.lastError}</p></section></div>}
+        {source.lastError && <div role="status" className="rounded bg-amber-50 p-3 text-sm text-amber-900"><p>{/AI unavailable|budget|extraction failed/i.test(source.lastError) ? <>Company evaluation is unavailable. <a href="/settings" className="underline">Check your AI settings and budget</a>, then try again.</> : "Some content could not be checked. You can import the text below or try again."}</p><section className="mt-1"><h3 className="cursor-pointer">Technical details</h3><p className="mt-1 break-words">{source.lastError}</p></section></div>}
         <DiscoverySourceForm action={checkDiscoverySource.bind(null, source.id)} pendingLabel="Queuing check…"><Button className="min-h-11" size="sm" type="submit" disabled={!canCheck}>{active?.status === "running" ? "Checking…" : active ? "Check queued" : "Check now"}</Button></DiscoverySourceForm>
         {source.kind === "email" && waiting === 0 && <p className="text-sm text-slate-500">Import an edition below to make content available for checking.</p>}
         <section><h3 className="text-sm font-medium">Import text</h3>

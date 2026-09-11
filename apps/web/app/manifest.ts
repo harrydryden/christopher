@@ -7,8 +7,8 @@ export default function manifest(): MetadataRoute.Manifest {
     description: "Careers page monitor",
     start_url: "/",
     display: "standalone",
-    // Slate is the product accent in BRAND.md and matches the favicon drum, so
-    // the installed app's chrome reads as the same brand as the tab.
+    // Brand Slate matches the favicon drum and reads better than the deep navy
+    // accent at icon size, so the installed app and the tab agree.
     background_color: "#f4f1ea",
     theme_color: "#2f5678",
     icons: [

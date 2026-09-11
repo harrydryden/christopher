@@ -46,7 +46,7 @@ export async function DiscoverySources() {
           <div className="min-w-0"><h2 className="font-semibold">{source.name}</h2><p className="text-sm text-slate-500">{SOURCE_KIND_LABELS[source.kind]} · {source.intervalDays === 7 ? "Weekly" : `Every ${source.intervalDays} days`}</p></div>
           <Badge tone={state === "Needs attention" ? "amber" : active ? "blue" : "neutral"}>{state}</Badge>
         </div>
-        {source.url && <a className="block break-all text-sm text-indigo-700 underline" href={source.url} target="_blank" rel="noreferrer">Open source ↗</a>}
+        {source.url && <a className="block break-all text-sm text-accent underline" href={source.url} target="_blank" rel="noreferrer">Open source ↗</a>}
         <p className="text-sm">{waiting} {waiting === 1 ? "edition or page" : "editions or pages"} waiting to be checked</p>
         <p className="text-xs text-slate-500">Last checked: {source.lastCheckedAt ? date(source.lastCheckedAt) : "Not yet"}. {source.enabled && settings.suggestionsEnabled && !active ? `Next: ${source.nextRunAt <= new Date() ? "due now" : date(source.nextRunAt)}.` : ""} Times shown in {settings.timezone}.</p>
         {!active && typeof lastResult?.stored === "number" && <p className="text-sm text-slate-500">Last collection: {lastResult.documents ?? 0} new or changed pages queued for evaluation. Verified companies appear in Review.</p>}

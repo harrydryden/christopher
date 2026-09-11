@@ -102,7 +102,7 @@ export function CvLibraryEditor({ library, version }: { library: CvLibrary | nul
       </div>
     </fieldset>)}
     <button type="button" className="mr-4 text-sm underline" onClick={() => setValue({ ...value, entries: [...value.entries, { id: crypto.randomUUID(), kind: "skill", status: "draft", heading: "", details: "" }] })}>Add education, skill or interest</button>
-    <button disabled={pending} className="rounded bg-[var(--app-navy)] px-4 py-2 text-sm text-white disabled:opacity-50">{pending ? "Saving…" : "Save library"}</button>
+    <button disabled={pending} className="rounded bg-accent px-4 py-2 text-sm text-white disabled:opacity-50">{pending ? "Saving…" : "Save library"}</button>
     {!state.ok && <p role="alert" className="text-sm text-red-600">{state.error}</p>}
     <p className="text-xs text-slate-500">Saved library version: {version || "none"}. Changes to the library do not rewrite existing CVs.</p>
   </form>;

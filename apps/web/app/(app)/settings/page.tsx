@@ -10,7 +10,7 @@ import { getSettings } from "@/lib/settings";
 export const dynamic = "force-dynamic";
 
 const inputClass =
-  "w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500";
+  "w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-accent focus:ring-1 focus:ring-accent";
 const helpClass = "text-xs text-slate-500";
 const labelClass = "flex flex-col gap-1 text-sm";
 const fieldLabelClass = "text-xs font-medium text-slate-500";
@@ -154,7 +154,7 @@ export default async function SettingsPage() {
           Christopher has a single application password, checked against <code>APP_PASSWORD_HASH</code>. This app cannot change environment variables
           itself — to set a new password, generate a fresh hash and update it on your host:
         </p>
-        <pre className="overflow-x-auto rounded bg-[var(--app-navy)] p-3 text-xs text-slate-100">pnpm --filter @christopher/web hash-password &apos;your new password&apos;</pre>
+        <pre className="overflow-x-auto rounded bg-accent p-3 text-xs text-slate-100">pnpm --filter @christopher/web hash-password &apos;your new password&apos;</pre>
         <p className="mt-2 text-xs text-slate-500">
           Set the result as <code>APP_PASSWORD_HASH</code> and redeploy. <code>SESSION_SECRET</code> can be any long random string; changing it signs
           everyone out.

@@ -10,7 +10,7 @@ import {
 } from "./artwork";
 
 /**
- * The four-drum mark, simplified build (BRAND.md: 40-160px).
+ * The four-drum mark, simplified build — 40-160px (docs/DESIGN-SYSTEM.md).
  *
  * `searching` turns the drums at the speeds and directions from the design's
  * motion spec; `prefers-reduced-motion` stops them, handled in globals.css.

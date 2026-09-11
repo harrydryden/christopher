@@ -23,7 +23,7 @@ export default async function CvDraftPage({ params }: { params: Promise<{ id: st
     {(draft.status === "queued" || draft.status === "generating") && <AutoRefresh cvId={id} />}
     {draft.status === "failed" && <p role="alert" className="rounded bg-red-50 p-4 text-sm text-red-700">{draft.error}</p>}
     {content && <>
-      <a href={`/api/cv/${id}/pdf`} className="inline-block rounded bg-[var(--app-navy)] px-4 py-2 text-sm text-white">Download saved PDF</a>
+      <a href={`/api/cv/${id}/pdf`} className="inline-block rounded bg-accent px-4 py-2 text-sm text-white">Download saved PDF</a>
       <a href={`/api/cv/${id}/pdf?preview=1`} target="_blank" rel="noopener noreferrer" className="ml-3 text-sm underline">Preview saved PDF</a>
       <p className="text-sm text-slate-500">Downloads use the saved version. Save your edits first. Check factual accuracy, especially rewritten achievements.</p>
       {content.gaps.length > 0 && <aside className="rounded border border-amber-300 p-4 text-sm"><strong>Evidence gaps (excluded from the PDF)</strong><ul className="mt-2 list-disc pl-5">{content.gaps.map((gap, i) => <li key={i}>{gap}</li>)}</ul></aside>}

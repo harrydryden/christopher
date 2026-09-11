@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  // Slate, the product accent in BRAND.md, matching the favicon drum.
+  // Brand Slate: it reads better than the deep navy accent at favicon size.
   themeColor: "#2f5678",
 };
 

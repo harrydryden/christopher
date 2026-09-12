@@ -8,7 +8,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {createDb, schema, enqueueTask, reevaluateGate, type Db} from "@christopher/db";
 import { runMigrations } from "@christopher/db/migrate";
-import { dedupeKeyFor, displayStatus, liveFor, priorityFor } from "@christopher/core";
+import { dedupeKeyFor, displayStatus, liveFor, priorityFor, sha1 } from "@christopher/core";
 import { desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -425,10 +425,18 @@ describe("functional review regressions", () => {
     const [job] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, "id:4001001"));
     expect(job!.title).toBe("Engineering Manager");
     expect(job!.descriptionText).toContain("changed engineering");
+    expect(job!.descriptionSource).toBe("direct");
+    expect(job!.descriptionTruncated).toBe(false);
     expect(job!.url).toContain("updated=1");
     expect(job!.inTable).toBe(false);
     expect(job!.locationOk).toBe(false);
     expect(job!.nearMiss).toBe(false);
+    setJobs([{ ...JOB_OPERATIONS_MANAGER, content: 'Operations planning and reporting. '.repeat(1200) }]);
+    await _scanSourceForTests(deps, company, source!, await deps.settings(), null);
+    const [truncated] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, saved!.id));
+    expect(truncated!.descriptionText).toHaveLength(30000);
+    expect(truncated!.descriptionTruncated).toBe(true);
+    expect(truncated!.descriptionHash).toBe(sha1(truncated!.descriptionText!));
   }, 60_000);
 
   it("archives retained non-matches but preserves active decisions", async () => {

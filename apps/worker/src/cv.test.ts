@@ -1,3 +1,7 @@
+import {
+  rubricFixture,
+  reviewFixture,
+} from "../../../packages/core/test/cv-review-fixture";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb, schema, type Task } from "@christopher/db";
 import { runMigrations } from "@christopher/db/migrate";
@@ -8,7 +12,13 @@ import type { WorkerDeps } from "./context";
 const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
 const library = { name: "Test Candidate", contact: "London", profile: "Operations", entries: [{ id: "one", kind: "experience" as const, heading: "Director · Acme", details: "Led a team", confirmedResponsibilities: ["Led a team"] }] };
 beforeAll(async () => { await runMigrations(client.db); });
-beforeEach(async () => { vi.restoreAllMocks(); await client.db.execute(sql`truncate applications, cv_drafts, ai_calls`); });
+beforeEach(async () => { vi.restoreAllMocks();
+  vi.spyOn(AiEngine.prototype, "analyseCvJob").mockImplementation(
+    async (description) => rubricFixture(description),
+  );
+  vi.spyOn(AiEngine.prototype, "assessCv").mockImplementation(async (input) =>
+    reviewFixture(input),
+  ); await client.db.execute(sql`truncate applications, cv_drafts, ai_calls`); });
 afterAll(async () => { vi.restoreAllMocks(); await client.pool.end(); });
 async function setup(apiKey: string | undefined = "fixture-key") {
   const [draft] = await client.db.insert(schema.cvDrafts).values({ jobTitle: "Operations Director", companyName: "Acme", jobDescription: "Lead a team", libraryVersion: 1, librarySnapshot: library, model: "claude-sonnet-5" }).returning();
@@ -19,7 +29,7 @@ it("generates once on duplicate delivery, preserving the saved evidence", async 
   const build = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations leader", sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] });
   const { task, deps, draft } = await setup();
   const results = await Promise.allSettled([handleGenerateCv(task, deps), handleGenerateCv(task, deps)]);
-  expect(results.some(r => r.status === "fulfilled")).toBe(true);
+  expect(results.some((r) => r.status === "fulfilled")).toBe(true);
   await handleGenerateCv(task, deps);
   expect(build).toHaveBeenCalledTimes(1);
   expect(build.mock.calls[0]![0].library).toEqual(library);
@@ -79,41 +89,153 @@ it("combines employment evidence and freezes central role metadata without rewri
 });
 
 it("measures generated content and retries an oversized CV before marking it ready", async () => {
-  const short = { summary: "Operations leader", sections: ["one", "two", "three", "four", "five", "six", "seven", "eight"].map(entryId => ({ entryId, bullets: ["Led a team"] })), gaps: [] };
-  const long = { ...short, summary: "Operations leader with experience planning and reporting. ".repeat(29), sections: ["one", "two", "three", "four", "five", "six", "seven", "eight"].map(entryId => ({ entryId, bullets: Array.from({ length: 6 }, () => "Managed operational planning and reporting. ".repeat(14)) })) };
+  const short = { summary: "Operations leader", sections: ["one", "two", "three", "four", "five", "six", "seven", "eight"].map((entryId) => ({ entryId, bullets: ["Led a team"] })), gaps: [] };
+  const long = { ...short, summary: "Operations leader with experience planning and reporting. ".repeat(29), sections: ["one", "two", "three", "four", "five", "six", "seven", "eight"].map((entryId) => ({ entryId, bullets: Array.from({ length: 6 }, () => "Managed operational planning and reporting. ".repeat(14)) })) };
   const build = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValueOnce(long).mockResolvedValueOnce(short);
   const { task, deps, draft } = await setup();
-  await client.db.update(schema.cvDrafts).set({ librarySnapshot: { ...library, entries: ["one", "two", "three", "four", "five", "six", "seven", "eight"].map(id => ({ ...library.entries[0]!, id, heading: `Director ${id}` })) } }).where(eq(schema.cvDrafts.id, draft.id));
+  await client.db.update(schema.cvDrafts).set({ librarySnapshot: { ...library, entries: ["one", "two", "three", "four", "five", "six", "seven", "eight"].map((id) => ({ ...library.entries[0]!, id, heading: `Director ${id}`,
+        })),
+      },
+    })
+    .where(eq(schema.cvDrafts.id, draft.id));
   await handleGenerateCv(task, deps);
   expect(build).toHaveBeenCalledTimes(2);
   expect(build.mock.calls[1]![0].layoutFeedback?.pageCount).toBeGreaterThan(2);
-  const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  const [saved] = await client.db
+    .select()
+    .from(schema.cvDrafts)
+    .where(eq(schema.cvDrafts.id, draft.id));
   expect(saved!.status).toBe("ready");
   expect(saved!.content!.summary).toBe(short.summary);
 });
 it("fails after three oversized attempts instead of returning an over-limit CV", async () => {
-  const build = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations leader with experience planning and reporting. ".repeat(29), sections: ["one", "two", "three", "four", "five", "six", "seven", "eight"].map(entryId => ({ entryId, bullets: Array.from({ length: 6 }, () => "Managed operational planning and reporting. ".repeat(14)) })), gaps: [] });
+  const build = vi
+    .spyOn(AiEngine.prototype, "buildCv")
+    .mockResolvedValue({
+      summary:
+        "Operations leader with experience planning and reporting. ".repeat(29),
+      sections: [
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+      ].map((entryId) => ({
+        entryId,
+        bullets: Array.from({ length: 6 }, () =>
+          "Managed operational planning and reporting. ".repeat(14),
+        ),
+      })),
+      gaps: [],
+    });
   const { task, deps, draft } = await setup();
-  await client.db.update(schema.cvDrafts).set({ librarySnapshot: { ...library, entries: ["one", "two", "three", "four", "five", "six", "seven", "eight"].map(id => ({ ...library.entries[0]!, id, heading: `Director ${id}` })) } }).where(eq(schema.cvDrafts.id, draft.id));
+  await client.db
+    .update(schema.cvDrafts)
+    .set({
+      librarySnapshot: {
+        ...library,
+        entries: [
+          "one",
+          "two",
+          "three",
+          "four",
+          "five",
+          "six",
+          "seven",
+          "eight",
+        ].map((id) => ({
+          ...library.entries[0]!,
+          id,
+          heading: `Director ${id}`,
+        })),
+      },
+    })
+    .where(eq(schema.cvDrafts.id, draft.id));
   await handleGenerateCv(task, deps);
   expect(build).toHaveBeenCalledTimes(3);
-  const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  const [saved] = await client.db
+    .select()
+    .from(schema.cvDrafts)
+    .where(eq(schema.cvDrafts.id, draft.id));
   expect(saved!.status).toBe("failed");
   expect(saved!.error).toContain("after three budgeted attempts");
   expect(saved!.content).toBeNull();
 });
 
 it("refits the submitted wording and preserves the queued revision number", async () => {
-  const sourcePlan = { summary: "Current edited profile", sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] };
-  const build = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ ...sourcePlan, summary: "Operations leader" });
+  const sourcePlan = {
+    summary: "Current edited profile",
+    sections: [{ entryId: "one", bullets: ["Led a team"] }],
+    gaps: [],
+  };
+  const build = vi
+    .spyOn(AiEngine.prototype, "buildCv")
+    .mockResolvedValue({ ...sourcePlan, summary: "Operations leader" });
   const { task, deps, draft } = await setup();
   task.payload = { draftId: draft.id, sourcePlan };
-  await client.db.update(schema.cvDrafts).set({ revision: 5 }).where(eq(schema.cvDrafts.id, draft.id));
+  await client.db
+    .update(schema.cvDrafts)
+    .set({ revision: 5 })
+    .where(eq(schema.cvDrafts.id, draft.id));
   await handleGenerateCv(task, deps);
-  expect(build.mock.calls[0]![0].layoutFeedback?.previousPlan).toEqual(sourcePlan);
+  expect(build.mock.calls[0]![0].layoutFeedback?.previousPlan).toEqual(
+    sourcePlan,
+  );
   expect(build.mock.calls[0]![0].writingBudget?.summaryCharacters).toBe(420);
-  const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  const [saved] = await client.db
+    .select()
+    .from(schema.cvDrafts)
+    .where(eq(schema.cvDrafts.id, draft.id));
   expect(saved!.status).toBe("ready");
   expect(saved!.revision).toBe(5);
-  expect(saved!.content!.fitNotes).toContain("Profile rewritten within the two-page content budget.");
+  expect(saved!.content!.fitNotes).toContain(
+    "Profile rewritten within the two-page content budget.",
+  );
+});
+
+it("retains authored content when assessment fails, then retries assessment without rewriting", async () => {
+  const plan = {
+    summary: "Operations leader",
+    sections: [{ entryId: "one", bullets: ["Led a team"] }],
+    gaps: [],
+  };
+  const build = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue(plan);
+  vi.mocked(AiEngine.prototype.assessCv).mockResolvedValueOnce(null);
+  const { task, deps, draft } = await setup();
+  await handleGenerateCv(task, deps);
+  const [failed] = await client.db
+    .select()
+    .from(schema.cvDrafts)
+    .where(eq(schema.cvDrafts.id, draft.id));
+  expect(failed!.status).toBe("failed");
+  expect(failed!.content!.summary).toBe(plan.summary);
+  expect(failed!.error).toContain("assessing");
+  expect(failed!.finalisedAt).toBeNull();
+  task.payload = { draftId: draft.id, mode: "assess" };
+  await handleGenerateCv(task, deps);
+  expect(build).toHaveBeenCalledTimes(1);
+  const [ready] = await client.db
+    .select()
+    .from(schema.cvDrafts)
+    .where(eq(schema.cvDrafts.id, draft.id));
+  expect(ready!.status).toBe("ready");
+  expect(ready!.assessment!.score).toBe(100);
+});
+it("does not author a CV against a hallucinated requirement", async () => {
+  vi.mocked(AiEngine.prototype.analyseCvJob).mockResolvedValue(
+    rubricFixture("Invented requirement"),
+  );
+  const build = vi.spyOn(AiEngine.prototype, "buildCv");
+  const { task, deps, draft } = await setup();
+  await handleGenerateCv(task, deps);
+  expect(build).not.toHaveBeenCalled();
+  const [saved] = await client.db
+    .select()
+    .from(schema.cvDrafts)
+    .where(eq(schema.cvDrafts.id, draft.id));
+  expect(saved!.error).toContain("not quoted");
+  expect(saved!.assessment).toBeNull();
 });

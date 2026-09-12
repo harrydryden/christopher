@@ -24,6 +24,7 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
 
   const ctx = makeFetchContext(deps);
   let text: string | undefined;
+  let descriptionSource: "direct" | "model" = "direct";
   let extra: Partial<typeof schema.jobs.$inferInsert> = {};
 
   const adapterText = await ats
@@ -45,6 +46,7 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
           const cleaned = await deps.ai.cleanDescription({ title: job.title, rawText: stripHtml(res.body).slice(0, 20_000) }, { refType: "job", refId: job.id });
           if (cleaned?.descriptionText) {
             text = cleaned.descriptionText;
+            descriptionSource = "model";
             extra = { salaryText: cleaned.salaryText ?? job.salaryText, employmentType: cleaned.employmentType ?? job.employmentType, remote: cleaned.remote ?? job.remote };
           }
         }
@@ -55,7 +57,7 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
   }
 
   const settings = await deps.settings();
-  return deps.db.transaction(async tx => {
+  return deps.db.transaction(async (tx) => {
     await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
   if (!text) {
     await tx.update(schema.jobs).set({ descriptionFetchedAt: deps.now() }).where(eq(schema.jobs.id, job.id));
@@ -64,7 +66,9 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
   const trimmed = text.slice(0, MAX_DESCRIPTION);
   await tx
     .update(schema.jobs)
-    .set({ ...extra, descriptionText: trimmed, descriptionHash: sha1(trimmed), descriptionFetchedAt: deps.now(), fitScore: sha1(trimmed) === job.descriptionHash ? job.fitScore : null })
+    .set({ ...extra,
+        descriptionSource,
+        descriptionTruncated: text.length > MAX_DESCRIPTION, descriptionText: trimmed, descriptionHash: sha1(trimmed), descriptionFetchedAt: deps.now(), fitScore: sha1(trimmed) === job.descriptionHash ? job.fitScore : null })
     .where(eq(schema.jobs.id, job.id));
   await tx.insert(schema.jobEvents).values({ jobId: job.id, type: "description_fetched", payload: { chars: trimmed.length } });
   await reevaluateGate(tx as unknown as WorkerDeps["db"], settings, deps.now(), jobId);

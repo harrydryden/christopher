@@ -181,6 +181,8 @@ async function scanSource(
   const existingRows = await deps.db
     .select({
       descriptionText: schema.jobs.descriptionText,
+      descriptionSource: schema.jobs.descriptionSource,
+      descriptionTruncated: schema.jobs.descriptionTruncated,
       descriptionFetchedAt: schema.jobs.descriptionFetchedAt,
       url: schema.jobs.url,
       locations: schema.jobs.locations,
@@ -246,7 +248,9 @@ async function scanSource(
         seeded: isFirstScan,
         repostOfJobId: insert.repostOfJobId ?? null,
         descriptionText: insert.descriptionText?.slice(0, 30_000) ?? null,
-        descriptionHash: insert.descriptionText ? sha1(insert.descriptionText) : null,
+        descriptionSource: insert.descriptionText ? "direct" : null,
+        descriptionTruncated: (insert.descriptionText?.length ?? 0) > 30_000,
+        descriptionHash: insert.descriptionText ? sha1(insert.descriptionText.slice(0, 30_000)) : null,
         descriptionFetchedAt: insert.descriptionText ? deps.now() : null,
         keywordMatched: gate.keywordMatched,
         keywordTerms: gate.keywordTerms,
@@ -288,6 +292,8 @@ async function scanSource(
       salaryText: posting.salaryText ?? job.salaryText,
       postedAt: posting.postedAt ?? job.postedAt,
       descriptionText: posting.descriptionText?.slice(0, 30_000) ?? job.descriptionText,
+      descriptionSource: posting.descriptionText !== undefined && !reusedDescriptions.has(posting.url) ? "direct" as const : job.descriptionSource,
+      descriptionTruncated: posting.descriptionText !== undefined && !reusedDescriptions.has(posting.url) ? posting.descriptionText.length > 30_000 : job.descriptionTruncated,
     };
     const changedFields = Object.keys(fields).filter((key) =>
       JSON.stringify(fields[key as keyof typeof fields]) !== JSON.stringify(job[key as keyof typeof job]));
@@ -310,11 +316,11 @@ async function scanSource(
   for (let offset = 0; offset < updates.length; offset += 250) {
     await deps.db.execute(sql`update jobs j set title=v.title, url=v.url, location=v.location, locations=v.locations,
       department=v.department, employment_type=v."employmentType", remote=v.remote, salary_text=v."salaryText", posted_at=v."postedAt",
-      description_text=v."descriptionText", normalized_title=v."normalizedTitle", keyword_matched=v."keywordMatched", keyword_terms=v."keywordTerms",
+      description_text=v."descriptionText", description_source=v."descriptionSource", description_truncated=v."descriptionTruncated", normalized_title=v."normalizedTitle", keyword_matched=v."keywordMatched", keyword_terms=v."keywordTerms",
       excluded=v.excluded, location_ok=v."locationOk", in_table=v."inTable", near_miss=false,
       description_hash=v."descriptionHash", description_fetched_at=v."descriptionFetchedAt", updated_at=${deps.now()}
       from jsonb_to_recordset(${JSON.stringify(updates.slice(offset, offset + 250))}::jsonb) as v(id uuid, title text, url text, location text, locations jsonb,
-        department text, "employmentType" text, remote boolean, "salaryText" text, "postedAt" timestamptz, "descriptionText" text, "normalizedTitle" text,
+        department text, "employmentType" text, remote boolean, "salaryText" text, "postedAt" timestamptz, "descriptionText" text, "descriptionSource" text, "descriptionTruncated" boolean, "normalizedTitle" text,
         "keywordMatched" boolean, "keywordTerms" jsonb, excluded boolean, "locationOk" boolean, "inTable" boolean, "descriptionHash" text, "descriptionFetchedAt" timestamptz)
       where j.id=v.id`);
   }

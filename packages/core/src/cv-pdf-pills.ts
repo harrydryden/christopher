@@ -5,10 +5,12 @@ export const PILL_STYLES = {
   industry: { fontSize: 8, paddingX: 8, paddingY: 4, gapX: 5, gapY: 4, radius: 7 },
   skill: { fontSize: 9, paddingX: 10, paddingY: 6, gapX: 6, gapY: 6, radius: 11 },
 } as const;
-type PillStyle = typeof PILL_STYLES[keyof typeof PILL_STYLES];
-type Pill = { label: string; x: number; width: number; height: number; textHeight: number; lineHeight: number };
+type PillStyle = (typeof PILL_STYLES)[keyof typeof PILL_STYLES];
+type Pill = { label: string; x: number; width: number; height: number; textHeight: number; lineHeight: number;
+};
 export type PillRow = { pills: Pill[]; height: number };
-export const cleanCvText = (value: string) => value.replace(/[\u2010-\u2015]/g, "-").replace(/\s+/g, " ").trim();
+import { cleanCvText } from "./cv-format";
+export { cleanCvText } from "./cv-format";
 
 /** Measurement and drawing share all font, wrapping and alignment options. */
 export function measurePillRows(doc: PDFKit.PDFDocument, labels: string[], width: number, style: PillStyle): PillRow[] {

@@ -40,3 +40,6 @@ Old skill prose is retained. When pills are enabled, explicit middle-dot lists c
 - PDF inspection: user CV plus light/dark palettes, disabled toggles, long contacts, wrapped labels and multi-page diagnostics. Check text/page bounds, links, hierarchy and actual footers.
 
 Local tests use an isolated disposable PostgreSQL database and a fixed model response. They do not establish that the currently deployed web/worker are running these changes or replace a fresh deployed model-generation check.
+
+
+See [the full builder review](CV-BUILDER-REVIEW.md) for evidence retrieval, assessment, source provenance, factual checks and finalisation. Skills always use pills, including legacy themes that stored the disabled flag. Final downloads and new application records require a current assessment and explicit finalisation.

@@ -1,8 +1,58 @@
 @import "tailwindcss";
 
+/* Design tokens. See docs/DESIGN-SYSTEM.md.
+   `@theme` registers these with Tailwind, so each one also becomes a utility:
+   --color-accent gives bg-accent / text-accent / border-accent / ring-accent /
+   outline-accent, and so on. Reach for the semantic name over a raw palette
+   shade — that is what keeps the system one system.
+
+   `static` because plain @theme only emits the custom properties it can see a
+   use for. Tailwind cannot see a `var(--color-brand-rust)` written into an
+   inline style or passed as a prop, so without this the brand palette would
+   compile away and those references would resolve to nothing. */
+@theme static {
+  /* The single interactive accent: chrome, primary buttons, focus, links.
+     Deep navy, deliberately chosen in #30. */
+  --color-accent: #142D46;
+  /* Hover step of the navy ramp. This is brand Slate, so the ramp stays inside
+     the brand palette instead of drifting to a different hue. */
+  --color-accent-hover: #2f5678;
+  /* Faintest accent wash: selected table rows, highlighted cells. */
+  --color-accent-tint: #eef1f6;
+
+  /* Neutral rail for progress bars and meters. Sits between slate-100 and -200,
+     which is why the code used to ask for a `slate-150` that does not exist. */
+  --color-track: #e5eaf0;
+
+  /* Brand palette (docs/DESIGN-SYSTEM.md). The four enamel drum colours, then
+     the neutrals. Brass is decorative only — it fails text contrast on Paper. */
+  --color-brand-rust: #9a3f30;
+  --color-brand-brass: #b8862f;
+  --color-brand-verdigris: #3c6a5c;
+  --color-brand-slate: #2f5678;
+  --color-brand-ink: #151e25;
+  --color-brand-paper: #f4f1ea;
+  --color-brand-bakelite: #3a2419;
+  --color-brand-steel: #a9b3bb;
+}
+
 :root {
   color-scheme: light;
-  --app-navy: #142D46;
+  /* Retained so any `var(--app-navy)` left in the tree keeps resolving. New
+     code should use the `accent` utilities instead. */
+  --app-navy: var(--color-accent);
+}
+
+/* Motion spec: drums turn while Christopher scans boards, then settle to their
+   resting angles. ChristopherMark picks each drum's speed and direction. */
+@keyframes christopher-cw {
+  to { transform: rotate(360deg); }
+}
+@keyframes christopher-ccw {
+  to { transform: rotate(-360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .christopher-wheel { animation: none !important; }
 }
 
 html { background: #ffffff; }
@@ -13,7 +63,7 @@ body {
 }
 
 ::selection {
-  background-color: rgb(99 102 241 / 0.25);
+  background-color: color-mix(in srgb, var(--color-accent) 22%, transparent);
 }
 
 /* Dense, calm defaults for the keyboard-first table UI. */
@@ -47,9 +97,12 @@ kbd {
   outline: 2px solid #ffffff;
   outline-offset: 3px;
 }
-:is(input, select, textarea) { accent-color: var(--app-navy); }
+:is(input, select, textarea) { accent-color: var(--color-accent); }
+/* One focus ring for the whole app. Components must not set their own colour:
+   a Tailwind `focus-visible:outline-*` utility outranks this rule, which is how
+   buttons ended up focusing a different colour from every other control. */
 :is(input, select, textarea, button, a):focus-visible {
-  outline: 2px solid var(--app-navy);
+  outline: 2px solid var(--color-accent);
   outline-offset: 3px;
 }
 [data-page-header] :is(button, a):focus-visible { outline-color: #ffffff; }

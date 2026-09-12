@@ -26,7 +26,7 @@ export default async function CvDraftPage({ params }: { params: Promise<{ id: st
       description={`CV revision ${draft.revision} · library ${draft.libraryVersion} · ${draft.model}`}
       actions={content && <>
         <a href={`/api/cv/${id}/pdf?preview=1`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center rounded-md border border-white/60 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-white/10">Preview PDF</a>
-        <a href={`/api/cv/${id}/pdf`} className="inline-flex items-center justify-center rounded-md bg-white px-3 py-1.5 text-sm font-medium text-[var(--app-navy)] transition-colors hover:bg-slate-100">Download PDF</a>
+        <a href={`/api/cv/${id}/pdf`} className="inline-flex items-center justify-center rounded-md bg-white px-3 py-1.5 text-sm font-medium text-accent transition-colors hover:bg-slate-100">Download PDF</a>
       </>}
     />
     {(draft.status === "queued" || draft.status === "generating") && <AutoRefresh cvId={id} />}

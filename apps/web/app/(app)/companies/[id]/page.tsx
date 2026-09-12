@@ -124,7 +124,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
             <input
               name="name"
               defaultValue={company.name}
-              className="w-full max-w-sm rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-indigo-500"
+              className="w-full max-w-sm rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-accent"
             />
           </label>
           <label className="flex flex-col gap-1 text-sm">
@@ -139,7 +139,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
               name="notes"
               defaultValue={company.notes ?? ""}
               rows={3}
-              className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-indigo-500"
+              className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-accent"
             />
           </label>
         </SettingsForm>
@@ -154,7 +154,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
                 type="text"
                 required
                 placeholder="https://boards.greenhouse.io/acme"
-                className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-indigo-500"
+                className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-accent"
               />
             </label>
             <Button type="submit" size="sm">

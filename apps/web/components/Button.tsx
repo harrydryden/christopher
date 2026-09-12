@@ -3,11 +3,14 @@ import type { ButtonHTMLAttributes } from "react";
 export type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
 export type ButtonSize = "sm" | "md";
 
+// No focus ring here: globals.css gives every control the same one. A
+// `focus-visible:outline-*` utility would outrank it and desynchronise buttons
+// from the rest of the app, which is exactly what used to happen.
 const BASE =
-  "inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500";
+  "inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none";
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
-  primary: "bg-[var(--app-navy)] text-white hover:bg-slate-700",
+  primary: "bg-accent text-white hover:bg-accent-hover",
   secondary: "bg-white text-slate-700 ring-1 ring-inset ring-slate-300 hover:bg-slate-50",
   danger: "bg-red-600 text-white hover:bg-red-500",
   ghost: "text-slate-600 hover:bg-slate-100",

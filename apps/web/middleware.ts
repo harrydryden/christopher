@@ -4,9 +4,15 @@ import { SESSION_COOKIE_NAME, verifySessionCookieValue } from "@/lib/session";
 /**
  * Everything is behind the session cookie except the login page, the health check, and the cron
  * route, which authenticates itself with CRON_SECRET rather than a browser session.
+ *
+ * Brand assets are public too: the browser asks for the icons and the manifest before anyone has
+ * a session, and the login page itself renders the lockup. Redirecting those to /login leaves the
+ * tab with no icon and the manifest unreadable.
  */
 export const config = {
-  matcher: ["/((?!login|api/health|api/cron|api/newsletters|_next|favicon.ico).*)"],
+  matcher: [
+    "/((?!login|api/health|api/cron|api/newsletters|_next|favicon\\.ico|icon\\.svg|apple-icon\\.png|manifest\\.webmanifest|brand/).*)",
+  ],
 };
 
 export async function middleware(req: NextRequest) {

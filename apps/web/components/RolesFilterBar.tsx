@@ -24,7 +24,7 @@ export function RolesFilterBar({
   exportHref: string;
 }) {
   const inputClass =
-    "rounded-md border border-slate-300 bg-white px-2 py-1 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500";
+    "rounded-md border border-slate-300 bg-white px-2 py-1 text-sm outline-none focus:border-accent focus:ring-1 focus:ring-accent";
   return (
     <form action={path} method="get" className="mb-4 flex flex-wrap items-end gap-3 rounded-lg border border-slate-200 bg-white p-3">
       <input type="hidden" name="view" value={view} />
@@ -48,7 +48,7 @@ export function RolesFilterBar({
         <a href={exportHref} className="rounded-md px-2 py-1 text-sm text-slate-600 underline hover:text-slate-900">
           Export CSV
         </a>
-        <button type="submit" className="rounded-md bg-[var(--app-navy)] px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700">
+        <button type="submit" className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-hover">
           Apply filters
         </button>
         <a href={`${path}?view=${view}`} className="rounded-md px-2 py-1.5 text-sm text-slate-500 hover:text-slate-800">

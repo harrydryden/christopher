@@ -1,3 +1,13 @@
+import { createCvAssessment } from "@christopher/core/cv-review";
+import {
+  cvTextItems,
+  cvClaimItems,
+  cvEvidenceItems,
+} from "@christopher/core/cv-assessment";
+import {
+  rubricFixture,
+  reviewFixture,
+} from "../../../../packages/core/test/cv-review-fixture";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDb, schema, type Db } from "@christopher/db";
 import { DEFAULT_CV_THEME } from "@christopher/core/cv";
@@ -6,39 +16,136 @@ import { runMigrations } from "@christopher/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { createSessionCookieValue } from "@/lib/session";
 
+async function completeAssessment(id: string) {
+  const [draft] = await database
+    .select()
+    .from(schema.cvDrafts)
+    .where(eq(schema.cvDrafts.id, id));
+  const content = draft!.content!,
+    library = draft!.librarySnapshot,
+    rubric = rubricFixture(draft!.jobDescription);
+  const review = reviewFixture({
+    rubric,
+    cv: cvTextItems(content),
+    claims: cvClaimItems(content),
+    evidence: cvEvidenceItems(library),
+  });
+  const assessment = createCvAssessment({
+    content,
+    description: draft!.jobDescription,
+    library,
+    rubric,
+    review,
+    model: "test",
+    pageCount: 2,
+  });
+  await database
+    .update(schema.cvDrafts)
+    .set({ status: "ready", assessment })
+    .where(eq(schema.cvDrafts.id, id));
+  const form = new FormData();
+  form.set("reviewed", "on");
+  expect(await finaliseCvDraft(id, { ok: true }, form)).toEqual({ ok: true });
+}
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 let session: string | undefined;
 vi.mock("@/lib/db", () => ({ db: () => database }));
-vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => session ? { value: session } : undefined }) }));
+vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (session ? { value: session } : undefined),
+  }) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
-vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
-import { savePreferenceProfile, savePinnedStatements, acceptReasonTag } from "./learning";
-import { decide, saveDecisionTags, archiveRoles, decideRoles } from "./decisions";
+vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`);
+  },
+}));
+import {
+  savePreferenceProfile,
+  savePinnedStatements,
+  acceptReasonTag,
+} from "./learning";
+import {
+  decide,
+  saveDecisionTags,
+  archiveRoles,
+  decideRoles,
+} from "./decisions";
 import { recordApplication, updateApplication } from "./applications";
 import { GET as workStatus } from "@/app/api/work-status/route";
 import { GET as downloadApplication } from "@/app/api/applications/[id]/pdf/route";
-import { saveCvLibrary, requestCv, saveCvDraft, saveCvModel, setCvArchived } from "./cv";
-import { fetchRolePage, fetchRoleDetails, parseRolesFilters, fetchTableJobs, fetchRecentEventsFor } from "@/lib/queries/jobs";
+import {
+  saveCvLibrary,
+  requestCv,
+  saveCvDraft,
+  saveCvModel,
+  setCvArchived,
+  finaliseCvDraft,
+  assessCvDraft,
+} from "./cv";
+import {
+  fetchRolePage,
+  fetchRoleDetails,
+  parseRolesFilters,
+  fetchTableJobs,
+  fetchRecentEventsFor,
+} from "@/lib/queries/jobs";
 import { saveKeywords } from "./settings";
-import { addCompanies, useDiscoveryCandidate, deleteCompany, updateCompanyDetails, refreshCompany } from "./companies";
+import {
+  addCompanies,
+  useDiscoveryCandidate,
+  deleteCompany,
+  updateCompanyDetails,
+  refreshCompany,
+} from "./companies";
 
 beforeAll(async () => {
-  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
+  const client = createDb(
+    process.env.TEST_DATABASE_URL ??
+      "postgres://postgres:postgres@127.0.0.1:5432/christopher_test",
+  );
   database = client.db;
   pool = client.pool;
   await runMigrations(database);
   process.env.SESSION_SECRET = "integration-test-secret";
 });
-afterAll(async () => { await pool?.end(); });
+afterAll(async () => {
+  await pool?.end();
+});
 beforeEach(async () => {
-  await database.execute(sql`truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary restart identity cascade`);
+  await database.execute(
+    sql`truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary restart identity cascade`,
+  );
   session = await createSessionCookieValue(process.env.SESSION_SECRET!);
 });
 async function fixture() {
-  const [company] = await database.insert(schema.companies).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://acme.example" }).returning();
-  const [source] = await database.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://acme.example/jobs" }).returning();
-  const [job] = await database.insert(schema.jobs).values({ companyId: company!.id, sourceId: source!.id, title: "Operations Manager", normalizedTitle: "operations manager", externalKey: "one", url: "https://acme.example/jobs/one", inTable: true, keywordMatched: true, keywordTerms: ["operations"] }).returning();
+  const [company] = await database
+    .insert(schema.companies)
+    .values({
+      name: "Acme",
+      domain: "acme.example",
+      homepageUrl: "https://acme.example",
+    })
+    .returning();
+  const [source] = await database
+    .insert(schema.careerSources)
+    .values({
+      companyId: company!.id,
+      type: "html",
+      url: "https://acme.example/jobs",
+    })
+    .returning();
+  const [job] = await database
+    .insert(schema.jobs)
+    .values({
+      companyId: company!.id,
+      sourceId: source!.id,
+      title: "Operations Manager",
+      normalizedTitle: "operations manager",
+      externalKey: "one",
+      url: "https://acme.example/jobs/one",
+      inTable: true,
+      keywordMatched: true,
+      keywordTerms: ["operations"],
+    })
+    .returning();
   return { company: company!, job: job!, source: source! };
 }
 
@@ -49,23 +156,50 @@ describe("authenticated mutations", () => {
     const [task] = await database.select().from(schema.tasks);
     expect(task!.type).toBe("scan_company");
     expect(await database.select().from(schema.tasks)).toHaveLength(1);
-    await database.update(schema.tasks).set({ dedupeKey: `scan_company:${company.id}:preserved-run`, runAfter: new Date(Date.now() + 3600000), payload: { companyId: company.id, trigger: "schedule", scanRunId: "preserved-run" } }).where(eq(schema.tasks.id, task!.id));
+    await database
+      .update(schema.tasks)
+      .set({
+        dedupeKey: `scan_company:${company.id}:preserved-run`,
+        runAfter: new Date(Date.now() + 3600000),
+        payload: {
+          companyId: company.id,
+          trigger: "schedule",
+          scanRunId: "preserved-run",
+        },
+      })
+      .where(eq(schema.tasks.id, task!.id));
     await refreshCompany(company.id);
     const [updated] = await database.select().from(schema.tasks);
     expect(updated!.runAfter.getTime()).toBeLessThanOrEqual(Date.now());
-    expect(updated!.payload).toMatchObject({ trigger: "manual", scanRunId: "preserved-run" });
+    expect(updated!.payload).toMatchObject({
+      trigger: "manual",
+      scanRunId: "preserved-run",
+    });
     expect(await database.select().from(schema.tasks)).toHaveLength(1);
   });
   it("discovers missing sources but preserves source confirmation and company pauses", async () => {
     const { company, source } = await fixture();
-    await database.update(schema.careerSources).set({ status: "needs_confirmation" }).where(eq(schema.careerSources.id, source.id));
-    await expect(refreshCompany(company.id)).rejects.toThrow(`redirect:/companies/${company.id}`);
+    await database
+      .update(schema.careerSources)
+      .set({ status: "needs_confirmation" })
+      .where(eq(schema.careerSources.id, source.id));
+    await expect(refreshCompany(company.id)).rejects.toThrow(
+      `redirect:/companies/${company.id}`,
+    );
     expect(await database.select().from(schema.tasks)).toHaveLength(0);
-    await database.update(schema.careerSources).set({ status: "disabled" }).where(eq(schema.careerSources.id, source.id));
+    await database
+      .update(schema.careerSources)
+      .set({ status: "disabled" })
+      .where(eq(schema.careerSources.id, source.id));
     await refreshCompany(company.id);
-    expect((await database.select().from(schema.tasks))[0]!.type).toBe("discover");
+    expect((await database.select().from(schema.tasks))[0]!.type).toBe(
+      "discover",
+    );
     await database.delete(schema.tasks);
-    await database.update(schema.companies).set({ status: "paused" }).where(eq(schema.companies.id, company.id));
+    await database
+      .update(schema.companies)
+      .set({ status: "paused" })
+      .where(eq(schema.companies.id, company.id));
     await refreshCompany(company.id);
     expect(await database.select().from(schema.tasks)).toHaveLength(0);
     session = undefined;
@@ -74,83 +208,163 @@ describe("authenticated mutations", () => {
 
   it("corrects the homepage and domain without changing sources or roles", async () => {
     const { company, source, job } = await fixture();
-    const form = new FormData(); form.set("homepageUrl", "www.corrected.example"); form.set("name", "Acme");
-    expect(await updateCompanyDetails(company.id, { ok: true }, form)).toEqual({ ok: true });
-    const [updated] = await database.select().from(schema.companies).where(eq(schema.companies.id, company.id));
+    const form = new FormData();
+    form.set("homepageUrl", "www.corrected.example");
+    form.set("name", "Acme");
+    expect(await updateCompanyDetails(company.id, { ok: true }, form)).toEqual({
+      ok: true,
+    });
+    const [updated] = await database
+      .select()
+      .from(schema.companies)
+      .where(eq(schema.companies.id, company.id));
     expect(updated!.homepageUrl).toBe("https://www.corrected.example/");
     expect(updated!.domain).toBe("corrected.example");
     const logoTasks = await database.select().from(schema.tasks);
     expect(logoTasks).toHaveLength(1);
-    expect(logoTasks[0]!.payload).toMatchObject({ companyId: company.id, logoOnly: true, homepageUrl: "https://www.corrected.example/" });
+    expect(logoTasks[0]!.payload).toMatchObject({
+      companyId: company.id,
+      logoOnly: true,
+      homepageUrl: "https://www.corrected.example/",
+    });
     await updateCompanyDetails(company.id, { ok: true }, form);
     expect(await database.select().from(schema.tasks)).toHaveLength(1);
-    expect((await database.select().from(schema.careerSources))[0]!.url).toBe(source.url);
+    expect((await database.select().from(schema.careerSources))[0]!.url).toBe(
+      source.url,
+    );
     expect((await database.select().from(schema.jobs))[0]!.id).toBe(job.id);
     form.set("homepageUrl", "javascript:alert(1)");
-    expect((await updateCompanyDetails(company.id, { ok: true }, form)).ok).toBe(false);
-    await database.insert(schema.companies).values({ name: "Other", domain: "other.example", homepageUrl: "https://other.example/" });
+    expect(
+      (await updateCompanyDetails(company.id, { ok: true }, form)).ok,
+    ).toBe(false);
+    await database
+      .insert(schema.companies)
+      .values({
+        name: "Other",
+        domain: "other.example",
+        homepageUrl: "https://other.example/",
+      });
     form.set("homepageUrl", "other.example");
-    expect((await updateCompanyDetails(company.id, { ok: true }, form)).ok).toBe(false);
+    expect(
+      (await updateCompanyDetails(company.id, { ok: true }, form)).ok,
+    ).toBe(false);
     session = undefined;
-    await expect(updateCompanyDetails(company.id, { ok: true }, form)).rejects.toThrow("Unauthorised");
+    await expect(
+      updateCompanyDetails(company.id, { ok: true }, form),
+    ).rejects.toThrow("Unauthorised");
   });
   it("rejects unauthenticated action calls before writing", async () => {
     const { job } = await fixture();
     session = undefined;
-    await expect(decide(job.id, "apply", "Good fit")).rejects.toThrow("Unauthorised");
+    await expect(decide(job.id, "apply", "Good fit")).rejects.toThrow(
+      "Unauthorised",
+    );
     expect(await database.select().from(schema.decisions)).toHaveLength(0);
   });
   it("serialises competing decisions and retains history on undo", async () => {
     const { job } = await fixture();
-    const results = await Promise.all([decide(job.id, "apply", "Good fit"), decide(job.id, "skip", "Too junior")]);
-    expect(results.every(r => r.ok)).toBe(true);
-    let rows = await database.select().from(schema.decisions).where(eq(schema.decisions.jobId, job.id));
+    const results = await Promise.all([
+      decide(job.id, "apply", "Good fit"),
+      decide(job.id, "skip", "Too junior"),
+    ]);
+    expect(results.every((r) => r.ok)).toBe(true);
+    let rows = await database
+      .select()
+      .from(schema.decisions)
+      .where(eq(schema.decisions.jobId, job.id));
     expect(rows).toHaveLength(2);
-    expect(rows.filter(r => !r.superseded)).toHaveLength(1);
+    expect(rows.filter((r) => !r.superseded)).toHaveLength(1);
     await decide(job.id, null, "");
-    rows = await database.select().from(schema.decisions).where(eq(schema.decisions.jobId, job.id));
+    rows = await database
+      .select()
+      .from(schema.decisions)
+      .where(eq(schema.decisions.jobId, job.id));
     expect(rows).toHaveLength(2);
-    expect(rows.every(r => r.superseded)).toBe(true);
+    expect(rows.every((r) => r.superseded)).toBe(true);
   });
   it("updates gate membership before a keyword save returns", async () => {
     const { job } = await fixture();
     const form = new FormData();
     form.set("includeKeywords", "engineering");
     await saveKeywords({ ok: true }, form);
-    const [updated] = await database.select().from(schema.jobs).where(eq(schema.jobs.id, job.id));
+    const [updated] = await database
+      .select()
+      .from(schema.jobs)
+      .where(eq(schema.jobs.id, job.id));
     expect(updated!.inTable).toBe(false);
     expect(updated!.archivedAt).not.toBeNull();
   });
   it("makes concurrent repeated source confirmation idempotent", async () => {
     const { company } = await fixture();
-    const [run] = await database.insert(schema.discoveryRuns).values({ companyId: company.id, status: "needs_confirmation", candidates: [{ spec: { type: "greenhouse", url: "https://job-boards.greenhouse.io/acme", atsSlug: "acme" } }] }).returning();
-    await Promise.all([useDiscoveryCandidate(run!.id, 0), useDiscoveryCandidate(run!.id, 0)]);
-    const sources = await database.select().from(schema.careerSources).where(eq(schema.careerSources.type, "greenhouse"));
+    const [run] = await database
+      .insert(schema.discoveryRuns)
+      .values({
+        companyId: company.id,
+        status: "needs_confirmation",
+        candidates: [
+          {
+            spec: {
+              type: "greenhouse",
+              url: "https://job-boards.greenhouse.io/acme",
+              atsSlug: "acme",
+            },
+          },
+        ],
+      })
+      .returning();
+    await Promise.all([
+      useDiscoveryCandidate(run!.id, 0),
+      useDiscoveryCandidate(run!.id, 0),
+    ]);
+    const sources = await database
+      .select()
+      .from(schema.careerSources)
+      .where(eq(schema.careerSources.type, "greenhouse"));
     expect(sources).toHaveLength(1);
   });
   it("retains decision snapshots when a company is deleted", async () => {
     const { company, job } = await fixture();
     await decide(job.id, "apply", "Good fit");
-    await expect(deleteCompany(company.id)).rejects.toThrow("redirect:/companies");
+    await expect(deleteCompany(company.id)).rejects.toThrow(
+      "redirect:/companies",
+    );
     expect(await database.select().from(schema.jobs)).toHaveLength(0);
-    const decisions = await database.select().from(schema.decisions).where(eq(schema.decisions.companyName, "Acme"));
-    expect(decisions.some(d => d.jobId === null && d.jobTitle === "Operations Manager")).toBe(true);
+    const decisions = await database
+      .select()
+      .from(schema.decisions)
+      .where(eq(schema.decisions.companyName, "Acme"));
+    expect(
+      decisions.some(
+        (d) => d.jobId === null && d.jobTitle === "Operations Manager",
+      ),
+    ).toBe(true);
   });
 });
 
-
 describe("learning controls", () => {
   it("creates immutable profile versions and rejects an obsolete edit", async () => {
-    const first = new FormData(); first.set("markdown", "Operations leadership in London"); first.set("profileVersion", "0");
+    const first = new FormData();
+    first.set("markdown", "Operations leadership in London");
+    first.set("profileVersion", "0");
     await savePreferenceProfile(first);
-    const second = new FormData(); second.set("markdown", "Operations leadership, UK remote"); second.set("profileVersion", "1");
+    const second = new FormData();
+    second.set("markdown", "Operations leadership, UK remote");
+    second.set("profileVersion", "1");
     await savePreferenceProfile(second);
     await expect(savePreferenceProfile(second)).rejects.toThrow("changed");
-    const profiles = await database.select().from(schema.preferenceProfiles).orderBy(schema.preferenceProfiles.version);
-    expect(profiles.map(p => p.markdown)).toEqual(["Operations leadership in London", "Operations leadership, UK remote"]);
+    const profiles = await database
+      .select()
+      .from(schema.preferenceProfiles)
+      .orderBy(schema.preferenceProfiles.version);
+    expect(profiles.map((p) => p.markdown)).toEqual([
+      "Operations leadership in London",
+      "Operations leadership, UK remote",
+    ]);
   });
   it("can pin preferences before any model profile exists", async () => {
-    const form = new FormData(); form.set("pinnedStatements", "No relocation."); form.set("profileVersion", "0");
+    const form = new FormData();
+    form.set("pinnedStatements", "No relocation.");
+    form.set("profileVersion", "0");
     await savePinnedStatements(form);
     const [profile] = await database.select().from(schema.preferenceProfiles);
     expect(profile!.pinnedStatements).toEqual(["No relocation."]);
@@ -159,18 +373,28 @@ describe("learning controls", () => {
   it("requires vocabulary approval and preserves manual tag edits", async () => {
     const { job } = await fixture();
     await decide(job.id, "skip", "Too junior");
-    const [decision] = await database.select().from(schema.decisions).where(eq(schema.decisions.jobId, job.id));
-    await database.insert(schema.tagVocabulary).values({ tag: "seniority:too_junior", accepted: false });
-    const form = new FormData(); form.append("tags", "seniority:too_junior");
-    await expect(saveDecisionTags(decision!.id, form)).rejects.toThrow("accepted");
+    const [decision] = await database
+      .select()
+      .from(schema.decisions)
+      .where(eq(schema.decisions.jobId, job.id));
+    await database
+      .insert(schema.tagVocabulary)
+      .values({ tag: "seniority:too_junior", accepted: false });
+    const form = new FormData();
+    form.append("tags", "seniority:too_junior");
+    await expect(saveDecisionTags(decision!.id, form)).rejects.toThrow(
+      "accepted",
+    );
     await acceptReasonTag("seniority:too_junior");
     await saveDecisionTags(decision!.id, form);
-    const [updated] = await database.select().from(schema.decisions).where(eq(schema.decisions.id, decision!.id));
+    const [updated] = await database
+      .select()
+      .from(schema.decisions)
+      .where(eq(schema.decisions.id, decision!.id));
     expect(updated!.tags).toEqual(["seniority:too_junior"]);
     expect(updated!.tagsEdited).toBe(true);
   });
 });
-
 
 describe("priority workflows", () => {
   it("archives without deleting evidence, restores and synchronously applies seniority", async () => {
@@ -179,24 +403,57 @@ describe("priority workflows", () => {
     expect((await archiveRoles([job.id], true)).ok).toBe(true);
     expect(await fetchTableJobs()).toHaveLength(0);
     expect(await fetchTableJobs(true)).toHaveLength(1);
-    const form = new FormData(); form.set("includeKeywords", "operations"); form.set("seniorityKeywords", "director");
+    const form = new FormData();
+    form.set("includeKeywords", "operations");
+    form.set("seniorityKeywords", "director");
     await saveKeywords({ ok: true }, form);
     expect(await fetchTableJobs(true)).toHaveLength(1);
     await archiveRoles([job.id], false);
     expect(await fetchTableJobs()).toHaveLength(0);
-    const [stored] = await database.select().from(schema.jobs).where(eq(schema.jobs.id, job.id));
-    expect(stored!.archivedAt).not.toBeNull(); expect(stored!.inTable).toBe(false);
+    const [stored] = await database
+      .select()
+      .from(schema.jobs)
+      .where(eq(schema.jobs.id, job.id));
+    expect(stored!.archivedAt).not.toBeNull();
+    expect(stored!.inTable).toBe(false);
   });
   it("reports completion without returning full company or CV records", async () => {
-    const [task] = await database.insert(schema.tasks).values({ type: 'scan_company', payload: {}, priority: 3 }).returning();
-    const pending = await workStatus(new Request('http://localhost/api/work-status'));
+    const [task] = await database
+      .insert(schema.tasks)
+      .values({ type: "scan_company", payload: {}, priority: 3 })
+      .returning();
+    const pending = await workStatus(
+      new Request("http://localhost/api/work-status"),
+    );
     expect((await pending.json()).active).toBe(true);
-    await database.update(schema.tasks).set({ status: 'done' }).where(eq(schema.tasks.id, task!.id));
-    expect((await (await workStatus(new Request('http://localhost/api/work-status'))).json()).active).toBe(false);
+    await database
+      .update(schema.tasks)
+      .set({ status: "done" })
+      .where(eq(schema.tasks.id, task!.id));
+    expect(
+      (
+        await (
+          await workStatus(new Request("http://localhost/api/work-status"))
+        ).json()
+      ).active,
+    ).toBe(false);
   });
   it("filters and pages roles in SQL before loading descriptions", async () => {
     const { job, company, source } = await fixture();
-    await database.insert(schema.jobs).values(Array.from({ length: 55 }, (_, i) => ({ companyId: company.id, sourceId: source.id, externalKey: `page-${i}`, title: `Role ${String(i).padStart(2, '0')}`, normalizedTitle: `role ${i}`, url: `https://acme.example/${i}`, inTable: true, location: 'London' })));
+    await database
+      .insert(schema.jobs)
+      .values(
+        Array.from({ length: 55 }, (_, i) => ({
+          companyId: company.id,
+          sourceId: source.id,
+          externalKey: `page-${i}`,
+          title: `Role ${String(i).padStart(2, '0')}`,
+          normalizedTitle: `role ${i}`,
+          url: `https://acme.example/${i}`,
+          inTable: true,
+          location: "London",
+        })),
+      );
     const filters = parseRolesFilters({ q: 'Role', location: 'London', sort: 'title' });
     const first = await fetchRolePage(filters, false, null, 1);
     const second = await fetchRolePage(filters, false, null, 2);
@@ -212,7 +469,7 @@ describe("priority workflows", () => {
     const { job } = await fixture();
     await database.update(schema.jobs).set({ descriptionText: "Stored role description" }).where(eq(schema.jobs.id, job.id));
     const summaries = await fetchTableJobs(false, true);
-    expect(summaries.find(row => row.job.id === job.id)!.job.descriptionText).toBeNull();
+    expect(summaries.find((row) => row.job.id === job.id)!.job.descriptionText).toBeNull();
     const details = await fetchRoleDetails([job.id]);
     expect(details).toHaveLength(1);
     expect(details[0]!.job.descriptionText).toBe("Stored role description");
@@ -227,8 +484,9 @@ describe("priority workflows", () => {
     expect((await decideRoles(ids, "skip", "Too junior")).ok).toBe(true);
     const decisions = await database.select().from(schema.decisions).where(eq(schema.decisions.superseded, false));
     expect(decisions).toHaveLength(2);
-    expect(decisions.every(d => d.reason === "Too junior")).toBe(true);
-    expect((await database.select().from(schema.tasks)).some(t => t.type === "suggest_filters")).toBe(true);
+    expect(decisions.every((d) => d.reason === "Too junior")).toBe(true);
+    expect((await database.select().from(schema.tasks)).some(
+        (t) => t.type === "suggest_filters")).toBe(true);
   });
   it("rolls back a decision when its learning task cannot be persisted", async () => {
     const { job } = await fixture();
@@ -273,6 +531,7 @@ describe("priority workflows", () => {
     const content = { theme: DEFAULT_CV_THEME, name: "Example", contact: "London", summary: "Analyst", sections: [{ entryId: "skills", kind: "skill" as const, heading: "Tools", bullets: ["Reporting"], skillItems: ["SQL"] }], gaps: [] };
     const [draft] = await database.insert(schema.cvDrafts).values({ jobTitle: "Analyst", companyName: "Example", jobDescription: "Analysis", libraryVersion: 1, librarySnapshot: library, model: "test", status: "ready", revision: 1, content }).returning();
     const application = new FormData(); application.set("appliedOn", "2026-09-06");
+    await completeAssessment(draft!.id);
     expect(await recordApplication(draft!.id, { ok: true }, application)).toEqual({ ok: true });
     const frozen = (await database.select().from(schema.applications))[0]!.pdfBase64;
     const edit = new FormData(); edit.set("summary", "Analyst"); edit.set("skills-0", "SQL\nPython"); edit.set("theme", JSON.stringify({ ...DEFAULT_CV_THEME, primary: "#285447" }));
@@ -302,7 +561,7 @@ describe("priority workflows", () => {
     const edit = new FormData(); edit.set("summary", "Edited summary"); edit.set("section-0", "Led the operations team"); edit.set("rememberWording", "on");
     await expect(saveCvDraft(draft!.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
     const versions = await database.select().from(schema.cvDrafts).orderBy(schema.cvDrafts.revision);
-    expect(versions.map(v => v.content?.summary)).toEqual(["Original", "Edited summary"]);
+    expect(versions.map((v) => v.content?.summary)).toEqual(["Original", "Edited summary"]);
     expect(versions[1]!.parentId).toBe(draft!.id);
     expect(versions[1]!.content?.sections[0]?.industryDescriptions).toEqual(["SaaS"]);
     const libraries = await database.select().from(schema.cvLibraries).orderBy(schema.cvLibraries.version);
@@ -312,6 +571,7 @@ describe("priority workflows", () => {
     const application = new FormData(); application.set("appliedOn", "2026-02-30");
     expect((await recordApplication(versions[1]!.id, { ok: true }, application)).ok).toBe(false);
     application.set("appliedOn", "2026-09-06");
+    await completeAssessment(versions[1]!.id);
     expect((await recordApplication(versions[1]!.id, { ok: true }, application)).ok).toBe(true);
     expect((await recordApplication(versions[1]!.id, { ok: true }, application)).ok).toBe(false);
     const [savedApplication] = await database.select().from(schema.applications);
@@ -320,7 +580,7 @@ describe("priority workflows", () => {
     const update = new FormData(); update.set("status", "interview"); update.set("notes", "First interview arranged");
     expect((await updateApplication(savedApplication!.id, { ok: true }, update)).ok).toBe(true);
     const [after] = await database.select().from(schema.applications);
-    expect(after!.history.map(h => h.status)).toEqual(["applied", "interview"]);
+    expect(after!.history.map((h) => h.status)).toEqual(["applied", "interview"]);
     expect(after!.pdfBase64).toBe(frozen);
     expect(after!.cvId).toBe(versions[1]!.id);
     const response = await downloadApplication(new Request("https://example.test"), { params: Promise.resolve({ id: after!.id }) });
@@ -354,25 +614,48 @@ describe("priority workflows", () => {
 
 it("queues an explicit board URL even while homepage discovery is pending", async () => {
   const { company } = await fixture();
-  await database.insert(schema.tasks).values({ type: "discover", payload: { companyId: company.id }, dedupeKey: `discover:${company.id}` });
+  await database.insert(schema.tasks).values({ type: "discover", payload: { companyId: company.id }, dedupeKey: `discover:${company.id}`,
+    });
   const { pasteDiscoveryUrl } = await import("./companies");
-  const form = new FormData(); form.set("url", "https://job-boards.greenhouse.io/acme");
+  const form = new FormData();
+  form.set("url", "https://job-boards.greenhouse.io/acme");
   await pasteDiscoveryUrl(company.id, form);
-  const tasks = await database.select().from(schema.tasks).where(eq(schema.tasks.type, "discover"));
+  const tasks = await database
+    .select()
+    .from(schema.tasks)
+    .where(eq(schema.tasks.type, "discover"));
   expect(tasks).toHaveLength(2);
-  expect(tasks.some(t => (t.payload as { url?: string }).url?.includes("greenhouse"))).toBe(true);
+  expect(
+    tasks.some((t) =>
+      (t.payload as { url?: string }).url?.includes("greenhouse"),
+    ),
+  ).toBe(true);
 });
 
 it("returns only the newest requested events per role", async () => {
   const { job } = await fixture();
-  await database.insert(schema.jobEvents).values(Array.from({ length: 30 }, (_, i) => ({ jobId: job.id, type: "updated" as const, payload: { i }, at: new Date(1700000000000 + i * 1000) })));
+  await database
+    .insert(schema.jobEvents)
+    .values(
+      Array.from({ length: 30 }, (_, i) => ({
+        jobId: job.id,
+        type: "updated" as const,
+        payload: { i },
+        at: new Date(1700000000000 + i * 1000),
+      })),
+    );
   const events = await fetchRecentEventsFor([job.id], 3);
-  expect(events.get(job.id)!.map(e => e.payload.i)).toEqual([29, 28, 27]);
+  expect(events.get(job.id)!.map((e) => e.payload.i)).toEqual([29, 28, 27]);
 });
 
 it("atomically adds 1,000 companies and queues setup, with a bounded response for duplicate imports", async () => {
   const form = new FormData();
-  form.set("urls", Array.from({length:1000},(_,n)=>`https://bulk${n}.example`).join("\n"));
+  form.set(
+    "urls",
+    Array.from({ length: 1000 }, (_, n) => `https://bulk${n}.example`).join(
+      "\n",
+    ),
+  );
   await expect(addCompanies(form)).rejects.toThrow("redirect:/companies?added=1000");
   expect(await database.select({id:schema.companies.id}).from(schema.companies)).toHaveLength(1000);
   expect(await database.select({id:schema.tasks.id}).from(schema.tasks).where(eq(schema.tasks.type,"discover"))).toHaveLength(1000);
@@ -395,7 +678,7 @@ describe("four-status role workflow", () => {
     const [summary] = await listCompanies();
     expect(summary!.reviewRoles).toBe(0); expect(summary!.shortlistedRoles).toBe(1);
     const exported = splitHidden(applyRolesFilters(await fetchTableJobs(), parseRolesFilters({ view: "user-shortlisted" })), 99, false).visible;
-    expect(exported.map(row => row.job.id)).toEqual([job.id]);
+    expect(exported.map((row) => row.job.id)).toEqual([job.id]);
     expect((await archiveRoles([job.id], true)).ok).toBe(true);
     expect((await read("archived")).total).toBe(1);
     expect((await read("user-shortlisted")).total).toBe(0);
@@ -416,7 +699,7 @@ describe("four-status role workflow", () => {
     await archiveNonMatches(database);
     await archiveNonMatches(database);
     const events = await database.select().from(schema.jobEvents).where(eq(schema.jobEvents.jobId, job.id));
-    expect(events.filter(event => event.payload.action === "archived")).toHaveLength(1);
+    expect(events.filter((event) => event.payload.action === "archived")).toHaveLength(1);
     expect(events[0]!.payload.reason).toBe("No longer matches your criteria");
     await database.update(schema.jobs).set({ inTable: true }).where(eq(schema.jobs.id, job.id));
     expect((await archiveRoles([job.id], false)).ok).toBe(true);
@@ -449,79 +732,601 @@ describe("scan reporting", () => {
 it("blocks oversized saved revisions, downloads and new application PDFs", async () => {
   const { GET: downloadCv } = await import("@/app/api/cv/[id]/pdf/route");
   const library = { name: "Example", contact: "London", profile: "Leader", entries: [{ id: "one", kind: "experience" as const, heading: "Director", details: "Led a team" }] };
-  const content = { name: "Example", contact: "London", summary: "Leader", sections: Array.from({ length: 5 }, (_, i) => ({ entryId: String(i), kind: "experience" as const, heading: `Director ${i}`, bullets: Array.from({ length: 6 }, () => "Managed operational planning and reporting. ".repeat(14)) })), gaps: [] };
-  const [draft] = await database.insert(schema.cvDrafts).values({ jobTitle: "Director", companyName: "Example", jobDescription: "Operations", libraryVersion: 1, librarySnapshot: library, model: "test", status: "ready", revision: 1, content }).returning();
-  const edit = new FormData(); edit.set("summary", "Leader");
-  expect(await saveCvDraft(draft!.id, { ok: true }, edit)).toMatchObject({ ok: false, error: expect.stringContaining("the maximum is 2") });
+  const content = { name: "Example", contact: "London", summary: "Leader", sections: Array.from({ length: 5 }, (_, i) => ({ entryId: String(i), kind: "experience" as const, heading: `Director ${i}`,
+      bullets: Array.from({ length: 6 }, () =>
+        "Managed operational planning and reporting. ".repeat(14),
+      ),
+    })),
+    gaps: [],
+  };
+  const [draft] = await database
+    .insert(schema.cvDrafts)
+    .values({
+      jobTitle: "Director",
+      companyName: "Example",
+      jobDescription: "Operations",
+      libraryVersion: 1,
+      librarySnapshot: library,
+      model: "test",
+      status: "ready",
+      revision: 1,
+      content,
+    })
+    .returning();
+  const edit = new FormData();
+  edit.set("summary", "Leader");
+  expect(await saveCvDraft(draft!.id, { ok: true }, edit)).toMatchObject({
+    ok: false,
+    error: expect.stringContaining("the maximum is 2"),
+  });
   expect(await database.select().from(schema.cvDrafts)).toHaveLength(1);
-  const response = await downloadCv(new Request("http://localhost/api/cv/pdf"), { params: Promise.resolve({ id: draft!.id }) });
-  expect(response.status).toBe(422);
-  const application = new FormData(); application.set("appliedOn", "2026-09-11");
-  expect(await recordApplication(draft!.id, { ok: true }, application)).toMatchObject({ ok: false, error: expect.stringContaining("the maximum is 2") });
+  const response = await downloadCv(
+    new Request("http://localhost/api/cv/pdf"),
+    { params: Promise.resolve({ id: draft!.id }) },
+  );
+  expect(response.status).toBe(409);
+  const preview = await downloadCv(
+    new Request("http://localhost/api/cv/pdf?preview=1"),
+    { params: Promise.resolve({ id: draft!.id }) },
+  );
+  expect(preview.status).toBe(422);
+  const application = new FormData();
+  application.set("appliedOn", "2026-09-11");
+  expect(
+    await recordApplication(draft!.id, { ok: true }, application),
+  ).toMatchObject({ ok: false, error: expect.stringContaining("finalise") });
   expect(await database.select().from(schema.applications)).toHaveLength(0);
 });
 
 it("carries library styling through generation, revision, matching preview/download and immutable application bytes", async () => {
   const { AiEngine } = await import("../../../../packages/ai/src/index");
+  vi.spyOn(AiEngine.prototype, "analyseCvJob").mockImplementation(
+    async (description) => rubricFixture(description),
+  );
+  vi.spyOn(AiEngine.prototype, "assessCv").mockImplementation(async (input) =>
+    reviewFixture(input),
+  );
   const { handleGenerateCv } = await import("../../../worker/src/handlers/cv");
   const { GET: downloadCv } = await import("@/app/api/cv/[id]/pdf/route");
   const { POST: previewCv } = await import("@/app/api/cv/preview/route");
   const { inflateSync } = await import("node:zlib");
-  const streams = (pdf: Buffer) => [...pdf.toString("latin1").matchAll(/stream\n([\s\S]*?)\nendstream/g)].map(match => {
-    try { return inflateSync(Buffer.from(match[1]!, "latin1")).toString("hex"); } catch { return match[1]; }
-  });
+  const streams = (pdf: Buffer) =>
+    [...pdf.toString("latin1").matchAll(/stream\n([\s\S]*?)\nendstream/g)].map(
+      (match) => {
+        try {
+          return inflateSync(Buffer.from(match[1]!, "latin1")).toString("hex");
+        } catch {
+          return match[1];
+        }
+      },
+    );
   const { job } = await fixture();
-  const library = { name: "Example Candidate", contact: "London · example@example.test", linkedinUrl: "https://www.linkedin.com/in/example", profile: "Operations leader", theme: DEFAULT_CV_THEME,
-    employment: [{ id: "role", company: "Example Company", industryDescriptions: "Healthcare, Software & SaaS", jobTitle: "Director", startDate: "2020", endDate: "", current: true }], entries: [
-      { id: "role", employmentId: "role", kind: "experience", heading: "Director", details: "Led a team", confirmedResponsibilities: ["Led a team"] },
-      { id: "skills", kind: "skill", heading: "Tools", details: "SQL and reporting", skillItems: ["SQL", "Financial planning"] },
-      { id: "degree", kind: "education", heading: "BSc Economics · Example University", details: "BSc Economics, Example University." },
-    ] };
-  const save = new FormData(); save.set("library", JSON.stringify(library)); save.set("version", "0");
+  const library = {
+    name: "Example Candidate",
+    contact: "London · example@example.test",
+    linkedinUrl: "https://www.linkedin.com/in/example",
+    profile: "Operations leader",
+    theme: DEFAULT_CV_THEME,
+    employment: [
+      {
+        id: "role",
+        company: "Example Company",
+        industryDescriptions: "Healthcare, Software & SaaS",
+        jobTitle: "Director",
+        startDate: "2020",
+        endDate: "",
+        current: true,
+      },
+    ],
+    entries: [
+      {
+        id: "role",
+        employmentId: "role",
+        kind: "experience",
+        heading: "Director",
+        details: "Led a team",
+        confirmedResponsibilities: ["Led a team"],
+      },
+      {
+        id: "skills",
+        kind: "skill",
+        heading: "Tools",
+        details: "SQL and reporting",
+        skillItems: ["SQL", "Financial planning"],
+      },
+      {
+        id: "degree",
+        kind: "education",
+        heading: "BSc Economics · Example University",
+        details: "BSc Economics, Example University.",
+      },
+    ],
+  };
+  const save = new FormData();
+  save.set("library", JSON.stringify(library));
+  save.set("version", "0");
   expect(await saveCvLibrary({ ok: true }, save)).toEqual({ ok: true });
-  const generate = new FormData(); generate.set("jobId", job.id); generate.set("description", "Lead operations, financial planning and reporting across the organisation. " .repeat(5));
-  await expect(requestCv({ ok: true }, generate)).rejects.toThrow("redirect:/cv/");
+  const generate = new FormData();
+  generate.set("jobId", job.id);
+  generate.set(
+    "description",
+    "Lead operations, financial planning and reporting across the organisation. ".repeat(
+      5,
+    ),
+  );
+  await expect(requestCv({ ok: true }, generate)).rejects.toThrow(
+    "redirect:/cv/",
+  );
   const [draft] = await database.select().from(schema.cvDrafts);
-  const [task] = await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"));
-  const model = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations leader with experience in planning and reporting.", sections: [
-    { entryId: "role", industryDescriptions: ["Healthcare", "Software & SaaS"], bullets: ["Led a team."] },
-    { entryId: "skills", bullets: ["SQL and reporting"], skillItems: ["SQL", "Financial planning"] },
-    { entryId: "degree", bullets: ["BSc Economics, Example University."] },
-  ], gaps: ["Review-only evidence gap"] });
+  const [task] = await database
+    .select()
+    .from(schema.tasks)
+    .where(eq(schema.tasks.type, "generate_cv"));
+  const model = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({
+    summary: "Operations leader with experience in planning and reporting.",
+    sections: [
+      {
+        entryId: "role",
+        industryDescriptions: ["Healthcare", "Software & SaaS"],
+        bullets: ["Led a team."],
+      },
+      {
+        entryId: "skills",
+        bullets: ["SQL and reporting"],
+        skillItems: ["SQL", "Financial planning"],
+      },
+      { entryId: "degree", bullets: ["BSc Economics, Example University."] },
+    ],
+    gaps: ["Review-only evidence gap"],
+  });
   try {
-    await handleGenerateCv(task!, { db: database, env: { anthropicApiKey: "fixture-key" }, settings: async () => ({ monthlyAiBudgetUsd: 100 }), now: () => new Date() } as unknown as import("../../../worker/src/context").WorkerDeps);
-  } finally { model.mockRestore(); }
-  const [ready] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft!.id));
+    await handleGenerateCv(task!, {
+      db: database,
+      env: { anthropicApiKey: "fixture-key" },
+      settings: async () => ({ monthlyAiBudgetUsd: 100 }),
+      now: () => new Date(),
+    } as unknown as import("../../../worker/src/context").WorkerDeps);
+  } finally {
+    model.mockRestore();
+  }
+  const [ready] = await database
+    .select()
+    .from(schema.cvDrafts)
+    .where(eq(schema.cvDrafts.id, draft!.id));
   expect(ready!.status).toBe("ready");
   expect(ready!.content!.theme).toEqual(DEFAULT_CV_THEME);
-  const edit = new FormData(); edit.set("summary", ready!.content!.summary); edit.set("theme", JSON.stringify({ ...DEFAULT_CV_THEME, primary: "#285447" }));
-  await expect(saveCvDraft(ready!.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
-  const [revised] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, ready!.id));
-  const preview = await previewCv(new Request("http://localhost/api/cv/preview", { method: "POST", body: JSON.stringify(revised!.content) }));
-  const download = await downloadCv(new Request("http://localhost/api/cv/pdf"), { params: Promise.resolve({ id: revised!.id }) });
-  expect(preview.status).toBe(200); expect(download.status).toBe(200);
+  const edit = new FormData();
+  edit.set("summary", ready!.content!.summary);
+  edit.set(
+    "theme",
+    JSON.stringify({ ...DEFAULT_CV_THEME, primary: "#285447" }),
+  );
+  await expect(saveCvDraft(ready!.id, { ok: true }, edit)).rejects.toThrow(
+    "redirect:/cv/",
+  );
+  const [revised] = await database
+    .select()
+    .from(schema.cvDrafts)
+    .where(eq(schema.cvDrafts.parentId, ready!.id));
+  await completeAssessment(revised!.id);
+  const preview = await previewCv(
+    new Request("http://localhost/api/cv/preview", {
+      method: "POST",
+      body: JSON.stringify(revised!.content),
+    }),
+  );
+  const download = await downloadCv(
+    new Request("http://localhost/api/cv/pdf"),
+    { params: Promise.resolve({ id: revised!.id }) },
+  );
+  expect(preview.status).toBe(200);
+  expect(download.status).toBe(200);
   expect(Number(preview.headers.get("x-cv-page-count"))).toBeLessThanOrEqual(2);
-  expect(streams(Buffer.from(await preview.arrayBuffer()))).toEqual(streams(Buffer.from(await download.arrayBuffer())));
-  const application = new FormData(); application.set("appliedOn", "2026-09-11");
-  expect(await recordApplication(revised!.id, { ok: true }, application)).toEqual({ ok: true });
+  expect(streams(Buffer.from(await preview.arrayBuffer()))).toEqual(
+    streams(Buffer.from(await download.arrayBuffer())),
+  );
+  const application = new FormData();
+  application.set("appliedOn", "2026-09-11");
+  await completeAssessment(revised!.id);
+  expect(
+    await recordApplication(revised!.id, { ok: true }, application),
+  ).toEqual({ ok: true });
   const [frozen] = await database.select().from(schema.applications);
   edit.set("summary", "Updated wording for a future application.");
-  await expect(saveCvDraft(revised!.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
-  const stored = await downloadApplication(new Request("http://localhost/api/applications/pdf"), { params: Promise.resolve({ id: frozen!.id }) });
-  expect(Buffer.from(await stored.arrayBuffer()).toString("base64")).toBe(frozen!.pdfBase64);
+  await expect(saveCvDraft(revised!.id, { ok: true }, edit)).rejects.toThrow(
+    "redirect:/cv/",
+  );
+  const stored = await downloadApplication(
+    new Request("http://localhost/api/applications/pdf"),
+    { params: Promise.resolve({ id: frozen!.id }) },
+  );
+  expect(Buffer.from(await stored.arrayBuffer()).toString("base64")).toBe(
+    frozen!.pdfBase64,
+  );
 });
 
 it("queues fitting from unsaved draft edits without overwriting the source or requiring it to fit first", async () => {
-  const library = { name: "Example", contact: "London", profile: "Leader", entries: [{ id: "one", kind: "experience" as const, heading: "Director", details: "Led a team", confirmedResponsibilities: ["Led a team"] }] };
-  const content = { name: "Example", contact: "London", summary: "Original profile", sections: [{ entryId: "one", kind: "experience" as const, heading: "Director", bullets: ["Led a team"] }], gaps: [] };
-  const [draft] = await database.insert(schema.cvDrafts).values({ jobTitle: "Director", companyName: "Example", jobDescription: "Finance operations", libraryVersion: 1, librarySnapshot: library, model: "test", status: "ready", revision: 4, content }).returning();
-  const edits = new FormData(); edits.set("intent", "fit"); edits.set("summary", "Current unsaved profile"); edits.set("section-0", "Led a team and reporting"); edits.set("theme", JSON.stringify({ ...DEFAULT_CV_THEME, primary: "#285447" }));
-  await expect(saveCvDraft(draft!.id, { ok: true }, edits)).rejects.toThrow("redirect:/cv/");
-  const [source] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft!.id));
+  const library = {
+    name: "Example",
+    contact: "London",
+    profile: "Leader",
+    entries: [
+      {
+        id: "one",
+        kind: "experience" as const,
+        heading: "Director",
+        details: "Led a team",
+        confirmedResponsibilities: ["Led a team"],
+      },
+    ],
+  };
+  const content = {
+    name: "Example",
+    contact: "London",
+    summary: "Original profile",
+    sections: [
+      {
+        entryId: "one",
+        kind: "experience" as const,
+        heading: "Director",
+        bullets: ["Led a team"],
+      },
+    ],
+    gaps: [],
+  };
+  const [draft] = await database
+    .insert(schema.cvDrafts)
+    .values({
+      jobTitle: "Director",
+      companyName: "Example",
+      jobDescription: "Finance operations",
+      libraryVersion: 1,
+      librarySnapshot: library,
+      model: "test",
+      status: "ready",
+      revision: 4,
+      content,
+    })
+    .returning();
+  const edits = new FormData();
+  edits.set("intent", "fit");
+  edits.set("summary", "Current unsaved profile");
+  edits.set("section-0", "Led a team and reporting");
+  edits.set(
+    "theme",
+    JSON.stringify({ ...DEFAULT_CV_THEME, primary: "#285447" }),
+  );
+  await expect(saveCvDraft(draft!.id, { ok: true }, edits)).rejects.toThrow(
+    "redirect:/cv/",
+  );
+  const [source] = await database
+    .select()
+    .from(schema.cvDrafts)
+    .where(eq(schema.cvDrafts.id, draft!.id));
   expect(source!.content).toEqual(content);
-  const [fitting] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, draft!.id));
-  expect(fitting).toMatchObject({ revision: 5, status: "queued", content: null });
+  const [fitting] = await database
+    .select()
+    .from(schema.cvDrafts)
+    .where(eq(schema.cvDrafts.parentId, draft!.id));
+  expect(fitting).toMatchObject({
+    revision: 5,
+    status: "queued",
+    content: null,
+  });
   expect(fitting!.librarySnapshot.theme!.primary).toBe("#285447");
-  const [task] = await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"));
-  expect(task!.payload).toMatchObject({ draftId: fitting!.id, sourcePlan: { summary: "Current unsaved profile", sections: [{ entryId: "one", bullets: ["Led a team and reporting"] }] } });
+  const [task] = await database
+    .select()
+    .from(schema.tasks)
+    .where(eq(schema.tasks.type, "generate_cv"));
+  expect(task!.payload).toMatchObject({
+    draftId: fitting!.id,
+    sourcePlan: {
+      summary: "Current unsaved profile",
+      sections: [{ entryId: "one", bullets: ["Led a team and reporting"] }],
+    },
+  });
+});
+
+it("assesses, improves with current evidence, finalises and exports through the real revision workflow", async () => {
+  const { AiEngine } = await import("../../../../packages/ai/src/index");
+  const { handleGenerateCv } = await import("../../../worker/src/handlers/cv");
+  const { GET: downloadCv } = await import("@/app/api/cv/[id]/pdf/route");
+  const { job } = await fixture();
+  const library = {
+    name: "Example",
+    contact: "London",
+    profile: "Operations leader",
+    entries: [
+      {
+        id: "role",
+        kind: "experience" as const,
+        heading: "Director",
+        details: "Led operations",
+        confirmedResponsibilities: ["Led operations"],
+      },
+      {
+        id: "skills",
+        kind: "skill" as const,
+        heading: "Tools",
+        details: "SQL",
+        skillItems: ["SQL"],
+      },
+    ],
+  };
+  await database
+    .insert(schema.cvLibraries)
+    .values({ version: 1, content: library });
+  const description =
+    "Must lead operations. SQL is desirable. The role works with finance teams to improve reliable reporting and planning.";
+  const rubric = {
+    requirements: [
+      {
+        id: "r1",
+        label: "Lead operations",
+        quote: "Must lead operations.",
+        importance: "essential" as const,
+        category: "experience" as const,
+      },
+      {
+        id: "r2",
+        label: "SQL",
+        quote: "SQL is desirable.",
+        importance: "desirable" as const,
+        category: "skills" as const,
+      },
+    ],
+    caveats: [],
+  };
+  const analyse = vi
+    .spyOn(AiEngine.prototype, "analyseCvJob")
+    .mockResolvedValue(rubric);
+  const writer = vi
+    .spyOn(AiEngine.prototype, "buildCv")
+    .mockImplementation(async () => ({
+      summary: "Operations leader",
+      sections: [
+        { entryId: "role", bullets: ["Led operations"] },
+        ...(writer.mock.calls.length > 1
+          ? [{ entryId: "skills", bullets: ["SQL"], skillItems: ["SQL"] }]
+          : []),
+      ],
+      gaps: [],
+    }));
+  const reviewer = vi
+    .spyOn(AiEngine.prototype, "assessCv")
+    .mockImplementation(async (input) => {
+      const result = reviewFixture(input);
+      const sql = input.cv.find((item) => item.text === "SQL");
+      Object.assign(result.matches[1]!, {
+        status: sql ? "demonstrated" : "missing",
+        cvEvidence: sql ? [{ id: sql.id, quote: "SQL" }] : [],
+        libraryEvidence: [{ id: "entry:skills", quote: "SQL" }],
+        improvement: "Include the confirmed SQL skill in the skills section.",
+      });
+      return result;
+    });
+  const deps = {
+    db: database,
+    env: { anthropicApiKey: "fixture-key" },
+    settings: async () => ({ monthlyAiBudgetUsd: 100 }),
+    now: () => new Date(),
+  } as unknown as import("../../../worker/src/context").WorkerDeps;
+  async function run(id: string) {
+    const [task] = await database
+      .select()
+      .from(schema.tasks)
+      .where(sql`payload->>'draftId' = ${id}`)
+      .orderBy(schema.tasks.createdAt);
+    await handleGenerateCv(task!, deps);
+    await database
+      .update(schema.tasks)
+      .set({ status: "done" })
+      .where(eq(schema.tasks.id, task!.id));
+    return (
+      await database
+        .select()
+        .from(schema.cvDrafts)
+        .where(eq(schema.cvDrafts.id, id))
+    )[0]!;
+  }
+  try {
+    const form = new FormData();
+    form.set("jobId", job.id);
+    form.set("description", description);
+    await expect(requestCv({ ok: true }, form)).rejects.toThrow(
+      "redirect:/cv/",
+    );
+    const first = (await database.select().from(schema.cvDrafts))[0]!;
+    const ready = await run(first.id);
+    expect(ready.status).toBe("ready");
+    expect(ready.assessment!.score).toBe(67);
+    expect(ready.jobSource!.kind).toBe("user_supplied");
+    expect(ready.finalisedAt).toBeNull();
+    const endpoint = () => ({ params: Promise.resolve({ id: ready.id }) });
+    expect(
+      (await downloadCv(new Request("http://localhost/api/cv/pdf"), endpoint()))
+        .status,
+    ).toBe(409);
+    expect(
+      (
+        await downloadCv(
+          new Request("http://localhost/api/cv/pdf?preview=1"),
+          endpoint(),
+        )
+      ).status,
+    ).toBe(200);
+    await database
+      .insert(schema.cvLibraries)
+      .values({
+        version: 2,
+        content: { ...library, profile: "Operations and reporting leader" },
+      });
+    await database
+      .update(schema.jobs)
+      .set({ descriptionText: "Changed upstream description" })
+      .where(eq(schema.jobs.id, job.id));
+    const improve = new FormData();
+    improve.set("summary", ready.content!.summary);
+    improve.set("intent", "improve");
+    await expect(saveCvDraft(ready.id, { ok: true }, improve)).rejects.toThrow(
+      "redirect:/cv/",
+    );
+    const child = (
+      await database
+        .select()
+        .from(schema.cvDrafts)
+        .where(eq(schema.cvDrafts.parentId, ready.id))
+    )[0]!;
+    expect(child.libraryVersion).toBe(2);
+    expect(child.jobDescription).toBe(description);
+    expect(child.assessment).toBeNull();
+    expect(child.finalisedAt).toBeNull();
+    const improved = await run(child.id);
+    expect(improved.assessment!.score).toBe(100);
+    expect(analyse).toHaveBeenCalledTimes(1);
+    expect(writer.mock.calls[1]![0].improvements).toContain(
+      "Include the confirmed SQL skill in the skills section.",
+    );
+    const approve = new FormData();
+    expect((await finaliseCvDraft(child.id, { ok: true }, approve)).ok).toBe(
+      false,
+    );
+    approve.set("reviewed", "on");
+    expect(await finaliseCvDraft(child.id, { ok: true }, approve)).toEqual({
+      ok: true,
+    });
+    expect(
+      (
+        await downloadCv(new Request("http://localhost/api/cv/pdf"), {
+          params: Promise.resolve({ id: child.id }),
+        })
+      ).status,
+    ).toBe(200);
+    const application = new FormData();
+    application.set("appliedOn", "2026-09-12");
+    expect(
+      await recordApplication(child.id, { ok: true }, application),
+    ).toEqual({ ok: true });
+    const frozen = (await database.select().from(schema.applications))[0]!;
+    const edit = new FormData();
+    edit.set("summary", "Operations and reporting leader");
+    await expect(saveCvDraft(child.id, { ok: true }, edit)).rejects.toThrow(
+      "redirect:/cv/",
+    );
+    const revised = (
+      await database
+        .select()
+        .from(schema.cvDrafts)
+        .where(eq(schema.cvDrafts.parentId, child.id))
+    )[0]!;
+    expect(revised.assessment).toBeNull();
+    expect(revised.finalisedAt).toBeNull();
+    const reviewed = await run(revised.id);
+    expect(reviewed.status).toBe("ready");
+    expect(writer).toHaveBeenCalledTimes(2);
+    expect(reviewer).toHaveBeenCalledTimes(3);
+    expect(
+      (await database.select().from(schema.applications))[0]!.pdfBase64,
+    ).toBe(frozen.pdfBase64);
+  } finally {
+    analyse.mockRestore();
+    writer.mockRestore();
+    reviewer.mockRestore();
+  }
+});
+
+it("requires the original advert when a stored description was model-rewritten or truncated", async () => {
+  const { job } = await fixture();
+  await database
+    .insert(schema.cvLibraries)
+    .values({
+      version: 1,
+      content: {
+        name: "Example",
+        contact: "",
+        profile: "Analyst",
+        entries: [
+          {
+            id: "s",
+            kind: "skill",
+            heading: "Tools",
+            details: "SQL",
+            skillItems: ["SQL"],
+          },
+        ],
+      },
+    });
+  await database
+    .update(schema.jobs)
+    .set({
+      descriptionSource: "model",
+      descriptionText:
+        "Lead operational planning, financial reporting and work with company leadership to improve delivery.",
+    })
+    .where(eq(schema.jobs.id, job.id));
+  const form = new FormData();
+  form.set("jobId", job.id);
+  expect(await requestCv({ ok: true }, form)).toMatchObject({
+    ok: false,
+    error: expect.stringContaining("original company advert"),
+  });
+  await database
+    .update(schema.jobs)
+    .set({ descriptionSource: "direct", descriptionTruncated: true })
+    .where(eq(schema.jobs.id, job.id));
+  expect((await requestCv({ ok: true }, form)).ok).toBe(false);
+  expect(await database.select().from(schema.cvDrafts)).toHaveLength(0);
+  form.set(
+    "description",
+    "Lead operational planning, financial reporting and work with company leadership to improve delivery. SQL is desirable.",
+  );
+  await expect(requestCv({ ok: true }, form)).rejects.toThrow("redirect:/cv/");
+  expect(
+    (await database.select().from(schema.cvDrafts))[0]!.jobSource!.method,
+  ).toBe("pasted");
+});
+it("does not strand an assessment retry while the previous task is still finishing", async () => {
+  const library = {
+    name: "Example",
+    contact: "",
+    profile: "Analyst",
+    entries: [
+      {
+        id: "s",
+        kind: "skill" as const,
+        heading: "Tools",
+        details: "SQL",
+        skillItems: ["SQL"],
+      },
+    ],
+  };
+  const [draft] = await database
+    .insert(schema.cvDrafts)
+    .values({
+      jobTitle: "Analyst",
+      companyName: "Example",
+      jobDescription: "Use SQL",
+      libraryVersion: 1,
+      librarySnapshot: library,
+      model: "test",
+      status: "failed",
+    })
+    .returning();
+  await database
+    .insert(schema.tasks)
+    .values({
+      type: "generate_cv",
+      status: "running",
+      payload: { draftId: draft!.id },
+      dedupeKey: `generate_cv:${draft!.id}`,
+    });
+  expect(
+    await assessCvDraft(draft!.id, { ok: true }, new FormData()),
+  ).toMatchObject({
+    ok: false,
+    error: expect.stringContaining("still finishing"),
+  });
+  expect((await database.select().from(schema.cvDrafts))[0]!.status).toBe(
+    "failed",
+  );
 });

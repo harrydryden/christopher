@@ -1,9 +1,11 @@
 "use server";
+import { assertCvFinalisable } from "@christopher/core/cv-review";
 import { renderCvPdf } from "@/lib/cv-pdf";
 import { z } from "zod";
 import { desc, eq, sql } from "drizzle-orm";
 import { cvLibraries, cvDrafts, jobs, companies, enqueueTask } from "@christopher/db";
-import { DEFAULT_CV_THEME, CvLibrarySchema, consolidateExperience, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel } from "@christopher/core";
+import { DEFAULT_CV_THEME,
+  createCvWritingBudget, CvLibrarySchema, consolidateExperience, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel } from "@christopher/core";
 import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getSettings, setSetting } from "@/lib/settings";
@@ -18,7 +20,7 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
     if (raw.length > 150_000) return fail("Library is too large. Keep it under 150,000 characters.");
     const parsed = CvLibrarySchema.parse(JSON.parse(raw));
     const content = CvLibrarySchema.parse(consolidateExperience({ ...parsed, theme: parsed.theme ?? DEFAULT_CV_THEME }));
-    await db().transaction(async tx => {
+    await db().transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext('cv:library'))`);
       const [latest] = await tx.select().from(cvLibraries).orderBy(desc(cvLibraries.version)).limit(1);
       if ((latest?.version ?? 0) !== Number(form.get("version"))) throw new Error("The library changed. Reload before saving.");
@@ -26,7 +28,7 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
       await enqueueTask(tx, "rescore_all", { onlyInTable: true }, { dedupeKey: "rescore_all", priority: 5 });
     });
   } catch (error) {
-    if (error instanceof z.ZodError) return fail(error.issues.map(issue => {
+    if (error instanceof z.ZodError) return fail(error.issues.map((issue) => {
       const [section, index, field] = issue.path;
       const label = typeof index === "number" ? `${section === "employment" ? "Job" : "Evidence"} ${index + 1}${field ? ` (${String(field)})` : ""}: ` : "";
       return label + issue.message;
@@ -61,79 +63,363 @@ export async function setCvArchived(cvId: string, archived: boolean): Promise<vo
   revalidatePath(`/cv/${id}`);
 }
 
-export async function requestCv(_prev: ActionResult, form: FormData): Promise<ActionResult> {
+export async function requestCv(
+  _prev: ActionResult,
+  form: FormData,
+): Promise<ActionResult> {
   await requireSession();
   let draftId: string;
   try {
     const id = zUuid().parse(String(form.get("jobId")));
     const settings = await getSettings();
-    if (settings.cvModel === modelForCallSite(settings, "A3")) return fail("Choose a CV model different from website extraction before generating.");
-    const [library] = await db().select().from(cvLibraries).orderBy(desc(cvLibraries.version)).limit(1);
+    if (settings.cvModel === modelForCallSite(settings, "A3"))
+      return fail(
+        "Choose a CV model different from website extraction before generating.",
+      );
+    const [library] = await db()
+      .select()
+      .from(cvLibraries)
+      .orderBy(desc(cvLibraries.version))
+      .limit(1);
     if (!library) return fail("Save your evidence library first.");
-    const generationLibrary = groupCvLibrary(CvLibrarySchema.parse(library.content));
-    const [row] = await db().select({ job: jobs, company: companies.name }).from(jobs).innerJoin(companies, eq(jobs.companyId, companies.id)).where(eq(jobs.id, id));
+    const generationLibrary = groupCvLibrary(
+      CvLibrarySchema.parse(library.content),
+    );
+    const [row] = await db()
+      .select({ job: jobs, company: companies.name })
+      .from(jobs)
+      .innerJoin(companies, eq(jobs.companyId, companies.id))
+      .where(eq(jobs.id, id));
     if (!row) return fail("Role not found.");
     const supplied = String(form.get("description") ?? "").trim();
+    if (
+      !supplied &&
+      (row.job.descriptionTruncated ||
+        row.job.descriptionSource === "model" ||
+        (!row.job.descriptionSource &&
+          (row.job.descriptionText?.length ?? 0) >= 30_000))
+    )
+      return fail(
+        "The stored description is shortened or was rewritten during extraction. Paste the complete original company advert so the CV assessment uses its actual requirements.",
+      );
     const description = supplied || row.job.descriptionText || "";
-    if (description.length < 80) return fail("This role has no usable description yet. Paste the full job description below.");
-    if (description.length > 60_000) return fail("Keep the job description under 60,000 characters.");
-    draftId = await db().transaction(async tx => {
-      const [draft] = await tx.insert(cvDrafts).values({ jobId: id, jobTitle: row.job.title, companyName: row.company,
-        jobDescription: description, libraryVersion: library.version, librarySnapshot: generationLibrary, model: settings.cvModel }).returning();
-      await enqueueTask(tx, "generate_cv", { draftId: draft!.id }, { dedupeKey: `generate_cv:${draft!.id}`, priority: 2 });
+    if (description.length < 80)
+      return fail(
+        "This role has no usable description yet. Paste the full job description below.",
+      );
+    if (description.length > 60_000)
+      return fail("Keep the job description under 60,000 characters.");
+    createCvWritingBudget(generationLibrary, `${row.job.title} ${description}`);
+    draftId = await db().transaction(async (tx) => {
+      const [draft] = await tx
+        .insert(cvDrafts)
+        .values({
+          jobId: id,
+          jobTitle: row.job.title,
+          companyName: row.company,
+          jobDescription: description,
+          jobSource: {
+            kind: supplied ? "user_supplied" : "company_snapshot",
+            url: row.job.url,
+            capturedAt: new Date().toISOString(),
+            method: supplied
+              ? "pasted"
+              : row.job.descriptionSource === "direct"
+                ? "direct"
+                : "unknown",
+          },
+          libraryVersion: library.version,
+          librarySnapshot: generationLibrary,
+          model: settings.cvModel,
+        })
+        .returning();
+      await enqueueTask(
+        tx,
+        "generate_cv",
+        { draftId: draft!.id },
+        { dedupeKey: `generate_cv:${draft!.id}`, priority: 2 },
+      );
       return draft!.id;
     });
-  } catch (error) { return fail(error instanceof Error ? error.message : "Could not queue the CV."); }
+  } catch (error) {
+    return fail(
+      error instanceof Error ? error.message : "Could not queue the CV.",
+    );
+  }
   revalidatePath("/cv/library");
   revalidatePath("/cv");
   redirect(`/cv/${draftId}`);
 }
-export async function saveCvDraft(id: string, _prev: ActionResult, form: FormData): Promise<ActionResult> {
+export async function saveCvDraft(
+  id: string,
+  _prev: ActionResult,
+  form: FormData,
+): Promise<ActionResult> {
   await requireSession();
   let savedId: string;
   try {
     zUuid().parse(id);
-    const [draft] = await db().select().from(cvDrafts).where(eq(cvDrafts.id, id));
-    if (!draft || draft.status !== "ready" || !draft.content) return fail("Only completed drafts can be edited.");
+    const [draft] = await db()
+      .select()
+      .from(cvDrafts)
+      .where(eq(cvDrafts.id, id));
+    if (!draft || draft.status !== "ready" || !draft.content)
+      return fail("Only completed drafts can be edited.");
     const content = structuredClone(draft.content);
-    if (form.has("theme")) content.theme = JSON.parse(String(form.get("theme")));
+    if (form.has("theme"))
+      content.theme = JSON.parse(String(form.get("theme")));
     content.summary = String(form.get("summary") ?? "").trim();
-    content.sections = content.sections.map((section, i) => ({ ...section, bullets: String(form.get(`section-${i}`) ?? section.bullets.join("\n")).split("\n").map(t => t.trim()).filter(Boolean) }));
-    content.sections = content.sections.map((section, i) => section.kind === "skill" && section.skillItems ? { ...section, skillItems: String(form.get(`skills-${i}`) ?? section.skillItems.join("\n")).split("\n").map(t => t.trim()).filter(Boolean) } : section);
+    content.sections = content.sections.map((section, i) => ({
+      ...section,
+      bullets: String(form.get(`section-${i}`) ?? section.bullets.join("\n"))
+        .split("\n")
+        .map((t) => t.trim())
+        .filter(Boolean),
+    }));
+    content.sections = content.sections.map((section, i) =>
+      section.kind === "skill" && section.skillItems
+        ? {
+            ...section,
+            skillItems: String(
+              form.get(`skills-${i}`) ?? section.skillItems.join("\n"),
+            )
+              .split("\n")
+              .map((t) => t.trim())
+              .filter(Boolean),
+          }
+        : section,
+    );
     CvContentSchema.parse(content);
-    const fit = form.get("intent") === "fit";
+    const intent = form.get("intent");
+    const fit = intent === "fit" || intent === "improve";
     if (!fit) await renderCvPdf(content);
-    const { id: _id, createdAt: _created, ...original } = draft;
-    savedId = await db().transaction(async tx => {
+    const {
+      id: _id,
+      createdAt: _created,
+      assessment: _assessment,
+      finalisedAt: _finalised,
+      ...original
+    } = draft;
+    savedId = await db().transaction(async (tx) => {
       if (fit) {
-        const librarySnapshot = CvLibrarySchema.parse({ ...draft.librarySnapshot, theme: content.theme ?? DEFAULT_CV_THEME });
-        const [fitting] = await tx.insert(cvDrafts).values({ ...original, librarySnapshot, content: null, status: "queued", error: null, archivedAt: null, parentId: id, revision: draft.revision + 1 }).returning();
-        const sourcePlan = { summary: content.summary, sections: content.sections.map(({ entryId, bullets, skillItems, industryDescriptions }) => ({ entryId, bullets, skillItems, industryDescriptions })), gaps: content.gaps };
-        await enqueueTask(tx, "generate_cv", { draftId: fitting!.id, sourcePlan }, { dedupeKey: `generate_cv:${fitting!.id}`, priority: 2 });
+        const [latest] =
+          intent === "improve"
+            ? await tx
+                .select()
+                .from(cvLibraries)
+                .orderBy(desc(cvLibraries.version))
+                .limit(1)
+            : [];
+        const evidence = latest
+          ? groupCvLibrary(CvLibrarySchema.parse(latest.content))
+          : draft.librarySnapshot;
+        const librarySnapshot = CvLibrarySchema.parse({
+          ...evidence,
+          theme: content.theme ?? DEFAULT_CV_THEME,
+        });
+        const [fitting] = await tx
+          .insert(cvDrafts)
+          .values({
+            ...original,
+            libraryVersion: latest?.version ?? draft.libraryVersion,
+            librarySnapshot,
+            content: null,
+            status: "queued",
+            error: null,
+            archivedAt: null,
+            parentId: id,
+            revision: draft.revision + 1,
+          })
+          .returning();
+        const sourcePlan = {
+          summary: content.summary,
+          sections: content.sections.map(
+            ({ entryId, bullets, skillItems, industryDescriptions }) => ({
+              entryId,
+              bullets,
+              skillItems,
+              industryDescriptions,
+            }),
+          ),
+          gaps: content.gaps,
+        };
+        await enqueueTask(
+          tx,
+          "generate_cv",
+          {
+            draftId: fitting!.id,
+            ...(content.sections.every((section) =>
+              librarySnapshot.entries.some(
+                (entry) => entry.id === section.entryId,
+              ),
+            )
+              ? { sourcePlan }
+              : {}),
+            ...(intent === "improve" ? { mode: "improve" } : {}),
+          },
+          { dedupeKey: `generate_cv:${fitting!.id}`, priority: 2 },
+        );
         return fitting!.id;
       }
-      const [saved] = await tx.insert(cvDrafts).values({ ...original, content, parentId: id, revision: draft.revision + 1 }).returning();
+      const [saved] = await tx
+        .insert(cvDrafts)
+        .values({
+          ...original,
+          content,
+          status: "queued",
+          error: null,
+          archivedAt: null,
+          parentId: id,
+          revision: draft.revision + 1,
+        })
+        .returning();
+      await enqueueTask(
+        tx,
+        "generate_cv",
+        { draftId: saved!.id, mode: "assess" },
+        { dedupeKey: `generate_cv:${saved!.id}`, priority: 2 },
+      );
       if (form.get("rememberWording") === "on") {
-        await tx.execute(sql`select pg_advisory_xact_lock(hashtext('cv:library'))`);
-        const [latest] = await tx.select().from(cvLibraries).orderBy(desc(cvLibraries.version)).limit(1);
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtext('cv:library'))`,
+        );
+        const [latest] = await tx
+          .select()
+          .from(cvLibraries)
+          .orderBy(desc(cvLibraries.version))
+          .limit(1);
         if (latest) {
           const changes: string[] = [];
-          if (content.summary !== draft.content!.summary) changes.push(`Profile phrasing: ${content.summary}`);
+          if (content.summary !== draft.content!.summary)
+            changes.push(`Profile phrasing: ${content.summary}`);
           content.sections.forEach((section, i) => {
-            if (JSON.stringify(section.skillItems ?? section.bullets) !== JSON.stringify(draft.content!.sections[i]!.skillItems ?? draft.content!.sections[i]!.bullets))
-              changes.push(`${section.heading}: ${(section.skillItems ?? section.bullets).join(" ")}`);
+            if (
+              JSON.stringify(section.skillItems ?? section.bullets) !==
+              JSON.stringify(
+                draft.content!.sections[i]!.skillItems ??
+                  draft.content!.sections[i]!.bullets,
+              )
+            )
+              changes.push(
+                `${section.heading}: ${(section.skillItems ?? section.bullets).join(" ")}`,
+              );
           });
           if (changes.length) {
-            const preferredWording = [latest.content.preferredWording, ...changes].filter(Boolean).join("\n\n");
-            if (preferredWording.length > 12000) throw new Error("Remembered wording is full. Edit or remove older examples in your evidence library first.");
-            await tx.insert(cvLibraries).values({ version: latest.version + 1, content: CvLibrarySchema.parse({ ...latest.content, preferredWording }) });
+            const preferredWording = [
+              latest.content.preferredWording,
+              ...changes,
+            ]
+              .filter(Boolean)
+              .join("\n\n");
+            if (preferredWording.length > 12000)
+              throw new Error(
+                "Remembered wording is full. Edit or remove older examples in your evidence library first.",
+              );
+            await tx
+              .insert(cvLibraries)
+              .values({
+                version: latest.version + 1,
+                content: CvLibrarySchema.parse({
+                  ...latest.content,
+                  preferredWording,
+                }),
+              });
           }
         }
       }
       return saved!.id;
     });
-  } catch (error) { return fail(error instanceof Error ? error.message : "Could not save the draft."); }
+  } catch (error) {
+    return fail(
+      error instanceof Error ? error.message : "Could not save the draft.",
+    );
+  }
   revalidatePath("/cv/library");
   revalidatePath("/cv");
   redirect(`/cv/${savedId}`);
+}
+
+/** Assessment retries preserve saved wording and use the original JD/evidence snapshot. */
+export async function assessCvDraft(
+  id: string,
+  _prev: ActionResult,
+  _form: FormData,
+): Promise<ActionResult> {
+  await requireSession();
+  try {
+    zUuid().parse(id);
+    await db().transaction(async (tx) => {
+      const [draft] = await tx
+        .select()
+        .from(cvDrafts)
+        .where(eq(cvDrafts.id, id))
+        .for("update");
+      if (
+        !draft ||
+        draft.finalisedAt ||
+        draft.status === "queued" ||
+        draft.status === "generating"
+      )
+        throw new Error(
+          "Choose an unfinished saved draft that is not already being processed.",
+        );
+      await tx
+        .update(cvDrafts)
+        .set({ status: "queued", error: null })
+        .where(eq(cvDrafts.id, id));
+      const queued = await enqueueTask(
+        tx,
+        "generate_cv",
+        { draftId: id, ...(draft.content ? { mode: "assess" } : {}) },
+        { dedupeKey: `generate_cv:${id}`, priority: 2 },
+      );
+      if (!queued)
+        throw new Error("The previous task is still finishing. Retry shortly.");
+    });
+  } catch (error) {
+    return fail(
+      error instanceof Error
+        ? error.message
+        : "Could not queue the assessment.",
+    );
+  }
+  revalidatePath(`/cv/${id}`);
+  return ok();
+}
+
+export async function finaliseCvDraft(
+  id: string,
+  _prev: ActionResult,
+  form: FormData,
+): Promise<ActionResult> {
+  await requireSession();
+  try {
+    zUuid().parse(id);
+    if (form.get("reviewed") !== "on")
+      return fail(
+        "Review the score, evidence gaps and factual wording before finalising.",
+      );
+    await db().transaction(async (tx) => {
+      const [draft] = await tx
+        .select()
+        .from(cvDrafts)
+        .where(eq(cvDrafts.id, id))
+        .for("update");
+      if (!draft?.content || draft.status !== "ready")
+        throw new Error("Wait for this revision’s assessment to finish.");
+      assertCvFinalisable({ ...draft, content: draft.content });
+      await renderCvPdf(draft.content);
+      if (!draft.finalisedAt)
+        await tx
+          .update(cvDrafts)
+          .set({ finalisedAt: new Date() })
+          .where(eq(cvDrafts.id, id));
+    });
+  } catch (error) {
+    return fail(
+      error instanceof Error ? error.message : "Could not finalise the CV.",
+    );
+  }
+  revalidatePath(`/cv/${id}`);
+  return ok();
 }

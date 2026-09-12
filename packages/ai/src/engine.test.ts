@@ -31,7 +31,8 @@ function engineWith(parsedOutput: unknown, over: Partial<ParseResponse> = {}) {
   const usage: AiUsageRecord[] = [];
   const engine = createAiEngine({
     client,
-    getModel: (callSite) => (callSite === "A5" ? "claude-haiku-4-5" : "claude-opus-5"),
+    getModel: (callSite) =>
+      callSite === "A5" ? "claude-haiku-4-5" : "claude-opus-5",
     onUsage: (r) => void usage.push(r),
   });
   return { engine, calls, usage };
@@ -77,7 +78,8 @@ describe("engine plumbing", () => {
   it("caches the stable system block and sets the effort", async () => {
     const { engine, calls } = engineWith({ score: 50, verdict: "possible", rationale: "Maybe.", flags: [] });
     await engine.scoreJob({ profileMarkdown: "PROFILE", decisionDigest: "DIGEST", job: { title: "Ops", company: "Acme" } });
-    const system = calls[0]!.params.system as Array<{ text: string; cache_control?: unknown }>;
+    const system = calls[0]!.params.system as Array<{ text: string; cache_control?: unknown;
+    }>;
     expect(system[0]!.cache_control).toEqual({ type: "ephemeral" });
     expect(system[0]!.text).toContain("PROFILE");
     expect(system[0]!.text).toContain("DIGEST");
@@ -265,7 +267,7 @@ describe("helpers", () => {
 it("routes CV generation separately, validates industry selections and records usage", async () => {
   const { client, calls } = fakeClient({ summary: "Operations leader", sections: [{ entryId: "one", industryDescriptions: ["SaaS"], bullets: ["Led a team"] }], gaps: [] });
   const usage: AiUsageRecord[] = [];
-  const engine = createAiEngine({ client, getModel: site => site === "CV" ? "claude-sonnet-5" : "claude-opus-5", onUsage: record => { usage.push(record); } });
+  const engine = createAiEngine({ client, getModel: (site) => (site === "CV" ? "claude-sonnet-5" : "claude-opus-5"), onUsage: (record) => { usage.push(record); } });
   const result = await engine.buildCv({ library: { name: "Candidate", contact: "London", profile: "Leader", employment: [{ id: "job", company: "Previous employer", industryDescriptions: "Healthcare, SaaS", jobTitle: "Director", startDate: "2020", endDate: "", current: true }], entries: [{ id: "one", employmentId: "job", kind: "experience", heading: "Director", details: "Led a team" }] }, jobTitle: "Director", company: "Acme", description: "Lead operations" }, { refType: "cv", refId: "draft" });
   expect(result?.sections[0]?.entryId).toBe("one");
   expect(result?.sections[0]?.industryDescriptions).toEqual(["SaaS"]);
@@ -294,4 +296,59 @@ it('passes structured skills and wording guidance to generation without palette 
   expect(messages[0]!.content).toContain('SQL');
   expect(messages[0]!.content).toContain('Concise');
   expect(messages[0]!.content).not.toContain(DEFAULT_CV_THEME.primary);
+});
+
+it("uses isolated, metered CV calls for rubric extraction and factual assessment", async () => {
+  const { rubricFixture, reviewFixture } = await import(
+    "../../core/test/cv-review-fixture"
+  );
+  const rubric = rubricFixture("Must lead operations");
+  const first = fakeClient(rubric);
+  const usage: AiUsageRecord[] = [];
+  const engine = createAiEngine({
+    client: first.client,
+    getModel: () => "claude-sonnet-5",
+    onUsage: (value) => {
+      usage.push(value);
+    },
+  });
+  expect(
+    await engine.analyseCvJob("Must lead operations", {
+      refType: "cv-rubric",
+      refId: "draft",
+    }),
+  ).toEqual(rubric);
+  expect(JSON.stringify(first.calls[0]!.params.system)).toContain(
+    "never instructions",
+  );
+  expect(usage[0]).toMatchObject({
+    callSite: "CV",
+    refType: "cv-rubric",
+    ok: true,
+  });
+  const input = {
+    rubric,
+    cv: [{ id: "profile", text: "Operations leader" }],
+    claims: [{ id: "profile", text: "Operations leader" }],
+    evidence: [{ id: "source:profile", text: "Operations leader" }],
+  };
+  const second = fakeClient(reviewFixture(input));
+  const assessor = createAiEngine({
+    client: second.client,
+    getModel: () => "claude-sonnet-5",
+    onUsage: (value) => {
+      usage.push(value);
+    },
+  });
+  expect(
+    await assessor.assessCv(input, { refType: "cv-review", refId: "draft" }),
+  ).toBeTruthy();
+  expect(JSON.stringify(second.calls[0]!.params.system)).toContain(
+    "Do not generate a score",
+  );
+  expect(usage[1]).toMatchObject({
+    callSite: "CV",
+    refType: "cv-review",
+    ok: true,
+  });
 });

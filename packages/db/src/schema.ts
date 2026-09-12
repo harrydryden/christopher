@@ -3,6 +3,7 @@
  * Conventions: snake_case columns, timestamptz everywhere, uuid primary keys.
  */
 import type { CvLibrary, CvContent } from "@christopher/core";
+import type { CvAssessment, CvJobSource } from "@christopher/core/cv-assessment";
 import { sql } from "drizzle-orm";
 import {
   boolean,
@@ -146,6 +147,8 @@ export const jobs = pgTable(
     reopenedCount: integer("reopened_count").notNull().default(0),
     repostOfJobId: uuid("repost_of_job_id"),
     descriptionText: text("description_text"),
+    descriptionSource: text("description_source", { enum: ["direct", "model"] }),
+    descriptionTruncated: boolean("description_truncated").notNull().default(false),
     descriptionHash: text("description_hash"),
     descriptionFetchedAt: ts("description_fetched_at"),
     keywordMatched: boolean("keyword_matched").notNull().default(false),
@@ -401,6 +404,9 @@ export const cvDrafts = pgTable("cv_drafts", {
   jobTitle: text("job_title").notNull(),
   companyName: text("company_name").notNull(),
   jobDescription: text("job_description").notNull(),
+  jobSource: jsonb("job_source").$type<CvJobSource>(),
+  assessment: jsonb("assessment").$type<CvAssessment>(),
+  finalisedAt: ts("finalised_at"),
   libraryVersion: integer("library_version").notNull(),
   librarySnapshot: jsonb("library_snapshot").$type<CvLibrary>().notNull(),
   model: text("model").notNull(),

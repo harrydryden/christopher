@@ -35,6 +35,6 @@ it("shows explicit skill labels and appearance controls without splitting existi
   expect(html).toContain('SQL, Python and reporting');
   expect(html).toContain('Page background');
   expect(html).toContain('Profile card');
-  expect(html).toContain('Skill pills');
+  expect(html).toContain("Skills and industries always use centred pills.");
   expect(html).toContain('Palette sample');
 });

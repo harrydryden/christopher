@@ -33,14 +33,14 @@ export default async function CvPage({ searchParams }: { searchParams: Promise<{
   const params = { ...(q ? { q } : {}), ...(job ? { job } : {}) };
   return <div className="max-w-4xl space-y-6">
     <PageHeader title="CV builder" description="Tailor a CV to each role using your own skills, experience and interests." />
-    <ol className="flex flex-wrap gap-4 text-sm text-slate-500"><li>1. Choose a role</li><li>2. Generate a draft</li><li>3. Edit and download</li></ol>
+    <ol className="flex flex-wrap gap-4 text-sm text-slate-500"><li>1. Choose a role</li><li>2. Generate a draft</li><li>3. Assess and improve</li><li>4. Finalise and download</li></ol>
     <form method="get" className="flex flex-wrap items-end gap-2"><label className="grid gap-1 text-sm">Find a role or company<input name="q" defaultValue={q} maxLength={200} className="min-h-11 rounded border bg-transparent px-3"/></label><button type="submit" className={buttonClass("secondary", "sm")}>Search roles</button>{q && <a href="/cv" className="underline">Clear search</a>}</form>
     <p className="text-sm text-slate-500">Showing up to 50 recent matching roles. Refine your search, or open the CV builder from a role in your inbox.</p>
     <Card title="Create a role-specific CV"><SettingsForm action={requestCv} submitLabel="Generate CV">
       <label className="text-sm">Role<select name="jobId" defaultValue={job ?? roles[0]?.id} required className="mt-1 block w-full rounded border p-2">{roles.map(r => <option key={r.id} value={r.id}>{r.company} · {r.title}</option>)}</select></label>
       {!roles.length && <p className="text-sm">No matching roles found. Try another search, or add a company and scan its roles.</p>}
       <section><h3 className="text-sm">Paste or override the job description</h3><textarea name="description" rows={7} maxLength={60000} placeholder="Leave blank to use the scraped description." className="mt-2 w-full rounded border p-2 text-sm" /></section>
-      <p className="text-xs text-slate-500">Uses library version {libraries[0]?.version ?? "not yet saved"} and {settings.cvModel}. Generation runs in the background. Review each draft before downloading.</p>
+      <p className="text-xs text-slate-500">Uses library version {libraries[0]?.version ?? "not yet saved"} and {settings.cvModel}. Generation runs in the background. Review the evidence-based match score and factual checks, then finalise before downloading.</p>
     </SettingsForm></Card>
     <Card title="Your evidence library"><p className="text-sm">Saved version: {libraries[0]?.version ?? "none"}. Review and edit your experience, skills and CV preferences in one place.</p><Link href="/cv/library" className="underline">Open evidence library</Link></Card>
     <section><h3 className="text-sm">Advanced model settings</h3><Card title="CV model"><SettingsForm action={saveCvModel}><label className="text-sm">Model<ModelSelect name="cvModel" value={settings.cvModel} className="mt-1 block w-full rounded border p-2" /></label><p className="text-xs text-slate-500">Configured separately from website extraction. Uses the worker’s ANTHROPIC_API_KEY and the monthly AI budget.</p></SettingsForm></Card></section>

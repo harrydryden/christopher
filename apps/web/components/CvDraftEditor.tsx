@@ -1,9 +1,15 @@
 "use client";
+import { useFormStatus } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 import { DEFAULT_CV_THEME, CV_LIMITS, CvContentSchema, cvDisplaySections, type CvContent } from "@christopher/core/cv";
 import { saveCvDraft } from "@/app/actions/cv";
 import { CvAppearance } from "./CvAppearance";
 import { SettingsForm } from "./SettingsForm";
+
+function FitButton() {
+  const { pending } = useFormStatus();
+  return <button type="submit" name="intent" value="fit" disabled={pending} className="rounded bg-accent px-3 py-2 text-sm text-white disabled:opacity-50">{pending ? "Working…" : "Fit to two pages"}</button>;
+}
 
 const input = "mt-1 block w-full rounded border border-slate-300 p-2";
 export function CvDraftEditor({ id, content }: { id: string; content: CvContent }) {
@@ -36,6 +42,7 @@ export function CvDraftEditor({ id, content }: { id: string; content: CvContent 
   }
   return <SettingsForm action={saveCvDraft.bind(null, id)} submitLabel="Save as new revision">
     <div className="rounded border border-slate-200 p-3 text-sm" role="status">{dirty ? "Unsaved changes. Preview these edits, then save a new revision to update the downloadable CV." : "Editing the saved revision. Appearance and wording are saved together."}</div>
+    {!!content.fitNotes?.length && <aside className="rounded border border-slate-200 p-3 text-sm"><strong>Fitting changes</strong><ul className="mt-2 list-disc pl-5">{content.fitNotes.map((note, index) => <li key={index}>{note}</li>)}</ul></aside>}
     <section className="rounded-lg border border-slate-200 p-4"><h3 className="font-semibold">Appearance</h3>
       <div className="mt-3"><CvAppearance value={theme} onChange={setTheme} /></div>
       {!content.theme && <p className="mt-2 text-sm">This older CV now uses the default Navy appearance. Saved application PDFs retain their original appearance.</p>}
@@ -61,10 +68,15 @@ export function CvDraftEditor({ id, content }: { id: string; content: CvContent 
       {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
       {preview && !currentPreview && <p role="status" className="text-sm">The content or appearance has changed. Refresh the preview to see these edits.</p>}
       {preview && currentPreview && <>
-        <p className="text-sm" role="status">{preview.pages} {preview.pages === 1 ? "page" : "pages"}{preview.pages > CV_LIMITS.pages ? " — exceeds the two-page maximum. Shorten the content before saving or downloading; nothing has been clipped." : ""}. {dirty ? "Unsaved preview." : "Current revision preview."}</p>
+        <p className="text-sm" role="status">{preview.pages} {preview.pages === 1 ? "page" : "pages"}{preview.pages > CV_LIMITS.pages ? " — use Fit to two pages to prioritise and shorten this draft." : ""}. {dirty ? "Unsaved preview." : "Current revision preview."}</p>
         <a className="text-sm underline" href={preview.url} target="_blank" rel="noopener noreferrer">Open current preview</a>
         <iframe title="Current CV PDF preview" src={preview.url} className="h-[650px] w-full rounded border" />
       </>}
+    </section>
+    <section className="space-y-2 rounded-lg border border-slate-200 p-4">
+      <h2 className="font-semibold">Fit to two pages</h2>
+      <p className="text-sm">Prioritise relevant achievements and shorten the profile and bullets using the writing model. Includes your current edits and appearance. Creates a new revision for review; the original and submitted PDFs are preserved.</p>
+      <FitButton />
     </section>
     <label className="text-sm"><input type="checkbox" name="rememberWording" defaultChecked /> Remember wording corrections for future CVs. Palette changes apply only to this revision; change the library’s Appearance settings to set your default.</label>
   </SettingsForm>;

@@ -51,8 +51,11 @@
 @keyframes christopher-ccw {
   to { transform: rotate(-360deg); }
 }
+.brand-motion-fallback { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .christopher-wheel { animation: none !important; }
+  .brand-motion-mark { display: none; }
+  .brand-motion-fallback { display: block; }
 }
 
 html { background: #ffffff; }

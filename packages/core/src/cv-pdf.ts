@@ -6,7 +6,7 @@ import { cleanCvText, measurePillRows, drawPillRow, PILL_STYLES } from "./cv-pdf
 export const CV_MAX_PAGES = CV_LIMITS.pages;
 export class CvLayoutError extends Error {}
 export function assertCvPageLimit(pageCount: number): void {
-  if (pageCount > CV_MAX_PAGES) throw new CvLayoutError(`CV is ${pageCount} pages; the maximum is ${CV_MAX_PAGES}. Shorten the profile and bullets, then preview again. No content has been clipped.`);
+  if (pageCount > CV_MAX_PAGES) throw new CvLayoutError(`CV is ${pageCount} pages; the maximum is ${CV_MAX_PAGES}. Open the draft and choose Fit to two pages to prioritise and shorten it into a new revision.`);
 }
 
 /** Server-side, selectable-text A4 PDF. No browser, remote fonts or model-authored HTML. */

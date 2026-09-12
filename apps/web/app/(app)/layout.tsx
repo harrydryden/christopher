@@ -6,7 +6,7 @@ import { Suspense, type ReactNode } from "react";
 import { logout } from "@/app/login/actions";
 import { WorkspaceNav } from "@/components/WorkspaceNav";
 import { NavLink } from "@/components/NavLink";
-import { ChristopherLockup } from "@/components/brand";
+import { ChristopherMark } from "@/components/brand";
 import Link from "next/link";
 export const dynamic = "force-dynamic";
 
@@ -31,10 +31,8 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       </div>
       <div className="flex flex-1 flex-col md:flex-row">
         <aside className="app-sidebar w-full shrink-0 border-b border-white/20 p-3 md:w-48 md:border-b-0 md:border-r">
-          {/* 32px is the largest mark this 192px sidebar fits at the brand lockup
-              ratios; docs/DESIGN-SYSTEM.md records the trade-off. */}
           <Link href="/" className="mb-4 block px-2" aria-label="Christopher home">
-            <ChristopherLockup markSize={32} color="#ffffff" id="sidebar-lockup" />
+            <ChristopherMark size={48} searching tone="paper" id="sidebar-mark" />
           </Link>
           <nav aria-label="Main navigation" className="flex flex-wrap gap-1 md:block md:space-y-0.5">
             {NAV_ITEMS.map((item) => (

@@ -100,9 +100,18 @@ export async function saveCvDraft(id: string, _prev: ActionResult, form: FormDat
     content.summary = String(form.get("summary") ?? "").trim();
     content.sections = content.sections.map((section, i) => ({ ...section, bullets: String(form.get(`section-${i}`) ?? section.bullets.join("\n")).split("\n").map(t => t.trim()).filter(Boolean) }));
     content.sections = content.sections.map((section, i) => section.kind === "skill" && section.skillItems ? { ...section, skillItems: String(form.get(`skills-${i}`) ?? section.skillItems.join("\n")).split("\n").map(t => t.trim()).filter(Boolean) } : section);
-    await renderCvPdf(CvContentSchema.parse(content));
+    CvContentSchema.parse(content);
+    const fit = form.get("intent") === "fit";
+    if (!fit) await renderCvPdf(content);
     const { id: _id, createdAt: _created, ...original } = draft;
     savedId = await db().transaction(async tx => {
+      if (fit) {
+        const librarySnapshot = CvLibrarySchema.parse({ ...draft.librarySnapshot, theme: content.theme ?? DEFAULT_CV_THEME });
+        const [fitting] = await tx.insert(cvDrafts).values({ ...original, librarySnapshot, content: null, status: "queued", error: null, archivedAt: null, parentId: id, revision: draft.revision + 1 }).returning();
+        const sourcePlan = { summary: content.summary, sections: content.sections.map(({ entryId, bullets, skillItems, industryDescriptions }) => ({ entryId, bullets, skillItems, industryDescriptions })), gaps: content.gaps };
+        await enqueueTask(tx, "generate_cv", { draftId: fitting!.id, sourcePlan }, { dedupeKey: `generate_cv:${fitting!.id}`, priority: 2 });
+        return fitting!.id;
+      }
       const [saved] = await tx.insert(cvDrafts).values({ ...original, content, parentId: id, revision: draft.revision + 1 }).returning();
       if (form.get("rememberWording") === "on") {
         await tx.execute(sql`select pg_advisory_xact_lock(hashtext('cv:library'))`);

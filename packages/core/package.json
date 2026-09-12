@@ -19,6 +19,10 @@
     "./cv-pdf": {
       "types": "./src/cv-pdf.ts",
       "default": "./src/cv-pdf.ts"
+    },
+    "./cv-fit": {
+      "types": "./src/cv-fit.ts",
+      "default": "./src/cv-fit.ts"
     }
   },
   "scripts": {

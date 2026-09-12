@@ -1,3 +1,4 @@
+export * from "./cv-budget";
 import { CV_LIMITS, CV_SECTION_ORDER } from "./cv-format";
 export * from "./cv-format";
 import { z } from "zod";
@@ -118,6 +119,7 @@ export const CvPlanSchema = z.object({
 });
 export type CvPlan = z.infer<typeof CvPlanSchema>;
 export const CvContentSchema = z.object({
+  fitNotes: z.array(z.string().max(500)).max(50).optional(),
   theme: CvThemeSchema.optional(),
   linkedinUrl: LinkedInSchema,
   name: z.string().min(1).max(120), contact: z.string().max(500), summary: z.string().min(1).max(CV_LIMITS.summaryCharacters),

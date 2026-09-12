@@ -18,6 +18,7 @@ import {
 export function ChristopherMark({
   size = 40,
   searching = false,
+  tone = "ink",
   bars = true,
   title = null,
   id = "christopher-mark",
@@ -27,6 +28,8 @@ export function ChristopherMark({
   size?: number;
   /** Turn the drums, for "Christopher is scanning boards". */
   searching?: boolean;
+  /** Monochrome fallback colour, including reduced-motion mode. */
+  tone?: "ink" | "paper";
   /** Steel bars behind the block. Drop them when the mark sits very small. */
   bars?: boolean;
   /** Accessible name. Leave null for decoration sitting beside real text. */
@@ -41,12 +44,17 @@ export function ChristopherMark({
   // `artwork.ts` marks every gradient id with "@" for exactly this.
   const scope = (svg: string) => svg.replaceAll("@", `${id}-`);
 
+  const monochrome = <img src={`/brand/christopher-logo-mark-mono-${tone}.svg`} width={size} height={size} alt={title ?? ""} className={searching ? "brand-motion-fallback" : className} />;
+  if (!searching) return monochrome;
+
   return (
+    <span className={className} style={{ display: "inline-flex", width: size, height: size }}>
+    {monochrome}
     <svg
       viewBox={`0 0 ${BLOCK} ${BLOCK}`}
       width={size}
       height={size}
-      className={className}
+      className="brand-motion-mark"
       role={title ? "img" : undefined}
       aria-label={title ?? undefined}
       aria-hidden={title ? undefined : true}
@@ -90,5 +98,6 @@ export function ChristopherMark({
         );
       })}
     </svg>
+    </span>
   );
 }

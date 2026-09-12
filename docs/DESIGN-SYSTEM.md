@@ -58,8 +58,7 @@ particular fails text contrast on Paper** and is decorative only.
 ## Typography
 
 System sans (`ui-sans-serif`), with `font-variant-numeric: tabular-nums` on
-`body` so figures line up in tables. The wordmark is the only place Spectral
-appears, and it is pre-outlined, so the app loads no webfont at all.
+`body` so figures line up in tables. The product uses wheel marks without a wordmark and loads no brand webfont.
 
 | Size | Use | Share |
 | --- | --- | --- |
@@ -93,7 +92,7 @@ All in `apps/web/components`. Compose these rather than restyling a `<div>`.
 | `EmptyState` | Zero-state copy and call to action. |
 | `table.tsx` | Table primitives; highlighted rows use `bg-accent-tint`. |
 | `NavLink` / `WorkspaceNav` | Sidebar and section navigation, with `aria-current`. |
-| `brand/` | Mark, wordmark and lockup — see below. |
+| `brand/` | Motion wheels and monochrome fallback marks — see below. |
 
 ### Focus
 
@@ -114,59 +113,18 @@ The mark is four Bombe drums on steel bars — the machine Turing's team called
 Christopher. Designed in Claude Design; the prototype and chat history live in
 the handoff bundle, not in this repo.
 
-### Components
+### Product branding
 
-`@/components/brand` exports three server components. None ships client
-JavaScript, and none needs a webfont.
+Do not display the Christopher wordmark anywhere in the product. Prefer the animated four-wheel mark. When motion is unavailable or inappropriate, use the supplied monochrome Ink mark on light backgrounds or Paper mark on dark backgrounds. The favicon is the colour exception; leave its artwork unchanged.
 
-| Component | Use |
-| --- | --- |
-| `ChristopherMark` | The four-drum block. `searching` turns the drums. |
-| `ChristopherWordmark` | "Christopher" in Spectral Medium, pre-outlined. |
-| `ChristopherLockup` | Mark + wordmark at the ratios below. |
+`@/components/brand` exports `ChristopherMark`, a server component with CSS animation and no client JavaScript. Set `searching` for motion, `tone="paper"` on dark backgrounds, and a unique `id` to namespace SVG gradients. Without `searching`, it renders the monochrome asset. With reduced motion enabled, CSS replaces the animated artwork with the same monochrome fallback.
 
-```tsx
-import { ChristopherLockup, ChristopherMark } from "@/components/brand";
+- Sidebar: 48px motion wheels, Paper fallback.
+- Login: 96px motion wheels, Ink fallback.
+- Loading: 40px motion wheels, Ink fallback.
+- Favicon: existing coloured artwork unchanged.
 
-<ChristopherLockup markSize={64} color="var(--color-brand-ink)" id="hero" />
-<ChristopherMark size={40} searching id="scanning" />
-```
-
-`id` namespaces the SVG gradient ids. SVG ids are document-global, so **give
-every mark on a page a distinct `id`** or their gradients collide.
-
-`lockupWidth(markSize)` and `wordmarkWidth(capHeight)` return the px width each
-will occupy, for fitting a lockup into a fixed column.
-
-### Where it appears
-
-- Sidebar (`app/(app)/layout.tsx`) — horizontal lockup, `markSize={32}`.
-- Login (`app/login/page.tsx`) — horizontal lockup, `markSize={64}`.
-- Route loading (`app/(app)/loading.tsx`) — mark with `searching`.
-- Tab, home screen and installed icons — `app/favicon.ico`, `app/icon.svg`,
-  `app/apple-icon.png`, `app/manifest.ts`.
-
-### Variants
-
-| Variant | Size | File |
-| --- | --- | --- |
-| Full | >= 160px | `public/brand/christopher-logo-mark.svg` |
-| Compact | >= 160px, bars stop at the wheel edge | `...-compact.svg` |
-| Simplified | 40-160px — what the components render | `...-simplified.svg` |
-| Monochrome | print, embossing, co-branding | `...-mono-ink.svg` / `-mono-paper.svg` |
-| Favicon | single Slate drum; detailed >= 64, flat <= 48 | `christopher-favicon.svg` / `-flat.svg` |
-
-### Rules
-
-**Clear space.** Half a wheel diameter on every side; a full wheel for the
-extended-bar version.
-
-**Lockup.** Wordmark cap height = one wheel diameter. Gap = 1/3 of the mark
-width. Do not stack the mark above the wordmark below 200px wide.
-
-**Motion.** The drums turn at 2.6-4s per revolution, alternating direction, and
-settle to their resting angles when results arrive. `prefers-reduced-motion`
-stops them.
+Keep half a wheel diameter of clear space around the mark. Drums turn at 2.6–4 seconds per revolution, alternating direction. Motion is decorative and does not replace status text.
 
 ---
 
@@ -186,10 +144,6 @@ stops them.
 
 ## Known deviations
 
-- **Sidebar mark is 32px, below the 40px floor for the simplified build.** At
-  the lockup ratios above, a 192px sidebar (`md:w-48`, 12px padding) fits at
-  most a 32px mark: `32 + 32/3 + 123 = 166px` of 168px available. Widening to
-  `md:w-56` would allow a compliant 40px mark.
 - **`rounded` and `rounded-md` are both used heavily** for similar controls.
   The table above states the intent; existing call sites were not churned to
   match.

@@ -20,7 +20,11 @@ Status: the September 2026 corrections and refactor are local, not deployed.
 
 `packages/core/src/cv-pdf.ts` is the server renderer used by generation, previews, saved-revision downloads, revision validation and application recording. `cv-pdf-pills.ts` measures and draws both kinds of pills with the same font, width, wrapping, padding and centring rules. The web module only re-exports the shared renderer; it cannot diverge.
 
-The worker measures every materialised model response before marking it ready. An oversized result gets at most two shortening retries after the initial attempt, using the actual page count and previous plan. Retries retain the selected employment and education entry IDs and revalidate source references and structured skills. Failure remains actionable and never becomes an over-limit ready CV. This does not guarantee the quality of model-written wording; review remains necessary.
+The shared fitter allocates a conservative character envelope before writing: a 420-character profile, space reserved for qualifications and skills, and weighted budgets for relevant and recent employment. More blocks reduce the available prose. The existing six-bullet/650-character validation ceilings remain unchanged; the writing budgets are smaller targets. Qualification names and every employment/education entry remain protected.
+
+Each candidate is rendered with the production PDF renderer. Whole lower-priority achievements and optional skills are selected out until it fits; sentences are never sliced and fonts are never shrunk. If the minimum retained content still exceeds two pages, the writer receives per-block overrun feedback and progressively smaller budgets, for at most three attempts. Evidence references and skill labels are validated before selection. Impossible layouts remain an explicit failure rather than an over-limit ready CV.
+
+The editor’s **Fit to two pages** action submits current unsaved wording and appearance to the same fitter as fresh generation. It queues a new revision and preserves the original and frozen applications. Fitting notes explain automatic selection for review.
 
 Diagnostic previews may exceed two pages so the user can inspect and edit the complete content. Saving a revised CV, downloading a CV and recording an application enforce the limit. Already recorded application downloads return their frozen bytes. Previews use the same renderer, hide stale results after edits, and never call the model or persist temporary edits.
 

@@ -510,3 +510,18 @@ it("carries library styling through generation, revision, matching preview/downl
   const stored = await downloadApplication(new Request("http://localhost/api/applications/pdf"), { params: Promise.resolve({ id: frozen!.id }) });
   expect(Buffer.from(await stored.arrayBuffer()).toString("base64")).toBe(frozen!.pdfBase64);
 });
+
+it("queues fitting from unsaved draft edits without overwriting the source or requiring it to fit first", async () => {
+  const library = { name: "Example", contact: "London", profile: "Leader", entries: [{ id: "one", kind: "experience" as const, heading: "Director", details: "Led a team", confirmedResponsibilities: ["Led a team"] }] };
+  const content = { name: "Example", contact: "London", summary: "Original profile", sections: [{ entryId: "one", kind: "experience" as const, heading: "Director", bullets: ["Led a team"] }], gaps: [] };
+  const [draft] = await database.insert(schema.cvDrafts).values({ jobTitle: "Director", companyName: "Example", jobDescription: "Finance operations", libraryVersion: 1, librarySnapshot: library, model: "test", status: "ready", revision: 4, content }).returning();
+  const edits = new FormData(); edits.set("intent", "fit"); edits.set("summary", "Current unsaved profile"); edits.set("section-0", "Led a team and reporting"); edits.set("theme", JSON.stringify({ ...DEFAULT_CV_THEME, primary: "#285447" }));
+  await expect(saveCvDraft(draft!.id, { ok: true }, edits)).rejects.toThrow("redirect:/cv/");
+  const [source] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft!.id));
+  expect(source!.content).toEqual(content);
+  const [fitting] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, draft!.id));
+  expect(fitting).toMatchObject({ revision: 5, status: "queued", content: null });
+  expect(fitting!.librarySnapshot.theme!.primary).toBe("#285447");
+  const [task] = await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"));
+  expect(task!.payload).toMatchObject({ draftId: fitting!.id, sourcePlan: { summary: "Current unsaved profile", sections: [{ entryId: "one", bullets: ["Led a team and reporting"] }] } });
+});

@@ -41,3 +41,10 @@ Tests ran against an isolated disposable PostgreSQL database. The complete-flow 
 ## Practical limits
 
 A local test does not confirm the version currently deployed to web and worker. No paid/live model generation or deployment was performed. A final release check should deploy both services and generate one fresh CV; wording quality and factual selection still require review. An over-limit diagnostic preview is intentional, while saving/downloading a revised CV and recording a new application enforce the two-page maximum.
+
+
+## Content budgeting follow-up
+
+The original page-count retry was insufficient: it asked the writer to shorten without assigning space to individual blocks. Fresh generation and editor refitting now share character allocations, relevance/recency weighting, protected qualifications/employment and repeated PDF measurement. The editor can refit current unsaved wording into a new revision. No text clipping or font reduction is used.
+
+Regression coverage includes an oversized CV reduced to two pages while retaining six roles and its qualification, specific retry budgets, bounded failure, missing-entry rejection, and refitting unsaved edits without overwriting the source. Local checks use a stubbed model with the real renderer and database; live model quality and deployed behaviour are not asserted.

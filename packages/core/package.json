@@ -15,6 +15,10 @@
     "./role-workflow": {
       "types": "./src/role-workflow.ts",
       "default": "./src/role-workflow.ts"
+    },
+    "./cv-pdf": {
+      "types": "./src/cv-pdf.ts",
+      "default": "./src/cv-pdf.ts"
     }
   },
   "scripts": {
@@ -26,11 +30,13 @@
   "dependencies": {
     "cheerio": "latest",
     "fast-xml-parser": "latest",
-    "zod": "latest"
+    "zod": "latest",
+    "pdfkit": "^0.20.2"
   },
   "devDependencies": {
     "@types/node": "latest",
     "typescript": "~5.9.0",
-    "vitest": "latest"
+    "vitest": "latest",
+    "@types/pdfkit": "^0.17.6"
   }
 }

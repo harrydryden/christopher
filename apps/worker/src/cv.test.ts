@@ -77,3 +77,28 @@ it("combines employment evidence and freezes central role metadata without rewri
   expect(saved!.content!.sections[0]!.industryDescriptions).toEqual(["SaaS"]);
   expect(saved!.librarySnapshot).toEqual(snapshot);
 });
+
+it("measures generated content and retries an oversized CV before marking it ready", async () => {
+  const short = { summary: "Operations leader", sections: ["one", "two", "three"].map(entryId => ({ entryId, bullets: ["Led a team"] })), gaps: [] };
+  const long = { ...short, summary: "Operations leader with experience planning and reporting. ".repeat(29), sections: ["one", "two", "three"].map(entryId => ({ entryId, bullets: Array.from({ length: 6 }, () => "Managed operational planning and reporting. ".repeat(14)) })) };
+  const build = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValueOnce(long).mockResolvedValueOnce(short);
+  const { task, deps, draft } = await setup();
+  await client.db.update(schema.cvDrafts).set({ librarySnapshot: { ...library, entries: ["one", "two", "three"].map(id => ({ ...library.entries[0]!, id, heading: `Director ${id}` })) } }).where(eq(schema.cvDrafts.id, draft.id));
+  await handleGenerateCv(task, deps);
+  expect(build).toHaveBeenCalledTimes(2);
+  expect(build.mock.calls[1]![0].layoutFeedback?.pageCount).toBeGreaterThan(2);
+  const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  expect(saved!.status).toBe("ready");
+  expect(saved!.content!.summary).toBe(short.summary);
+});
+it("fails after three oversized attempts instead of returning an over-limit CV", async () => {
+  const build = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations leader with experience planning and reporting. ".repeat(29), sections: ["one", "two", "three"].map(entryId => ({ entryId, bullets: Array.from({ length: 6 }, () => "Managed operational planning and reporting. ".repeat(14)) })), gaps: [] });
+  const { task, deps, draft } = await setup();
+  await client.db.update(schema.cvDrafts).set({ librarySnapshot: { ...library, entries: ["one", "two", "three"].map(id => ({ ...library.entries[0]!, id, heading: `Director ${id}` })) } }).where(eq(schema.cvDrafts.id, draft.id));
+  await handleGenerateCv(task, deps);
+  expect(build).toHaveBeenCalledTimes(3);
+  const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  expect(saved!.status).toBe("failed");
+  expect(saved!.error).toContain("the maximum is 2");
+  expect(saved!.content).toBeNull();
+});

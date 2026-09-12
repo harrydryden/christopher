@@ -20,6 +20,7 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["pdfkit","pg", "playwright", "playwright-core", "@anthropic-ai/sdk"],
   outputFileTracingIncludes: {
     "/api/cv/[id]/pdf": PDFKIT_STANDARD_FONTS,
+    "/api/cv/preview": PDFKIT_STANDARD_FONTS,
     "/cv/[id]": PDFKIT_STANDARD_FONTS,
   },
 };

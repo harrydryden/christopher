@@ -445,3 +445,68 @@ describe("scan reporting", () => {
     expect((await scanRunSummary(database, run!.id)).companies_ok).toBe(0);
   });
 });
+
+it("blocks oversized saved revisions, downloads and new application PDFs", async () => {
+  const { GET: downloadCv } = await import("@/app/api/cv/[id]/pdf/route");
+  const library = { name: "Example", contact: "London", profile: "Leader", entries: [{ id: "one", kind: "experience" as const, heading: "Director", details: "Led a team" }] };
+  const content = { name: "Example", contact: "London", summary: "Leader", sections: Array.from({ length: 5 }, (_, i) => ({ entryId: String(i), kind: "experience" as const, heading: `Director ${i}`, bullets: Array.from({ length: 6 }, () => "Managed operational planning and reporting. ".repeat(14)) })), gaps: [] };
+  const [draft] = await database.insert(schema.cvDrafts).values({ jobTitle: "Director", companyName: "Example", jobDescription: "Operations", libraryVersion: 1, librarySnapshot: library, model: "test", status: "ready", revision: 1, content }).returning();
+  const edit = new FormData(); edit.set("summary", "Leader");
+  expect(await saveCvDraft(draft!.id, { ok: true }, edit)).toMatchObject({ ok: false, error: expect.stringContaining("the maximum is 2") });
+  expect(await database.select().from(schema.cvDrafts)).toHaveLength(1);
+  const response = await downloadCv(new Request("http://localhost/api/cv/pdf"), { params: Promise.resolve({ id: draft!.id }) });
+  expect(response.status).toBe(422);
+  const application = new FormData(); application.set("appliedOn", "2026-09-11");
+  expect(await recordApplication(draft!.id, { ok: true }, application)).toMatchObject({ ok: false, error: expect.stringContaining("the maximum is 2") });
+  expect(await database.select().from(schema.applications)).toHaveLength(0);
+});
+
+it("carries library styling through generation, revision, matching preview/download and immutable application bytes", async () => {
+  const { AiEngine } = await import("../../../../packages/ai/src/index");
+  const { handleGenerateCv } = await import("../../../worker/src/handlers/cv");
+  const { GET: downloadCv } = await import("@/app/api/cv/[id]/pdf/route");
+  const { POST: previewCv } = await import("@/app/api/cv/preview/route");
+  const { inflateSync } = await import("node:zlib");
+  const streams = (pdf: Buffer) => [...pdf.toString("latin1").matchAll(/stream\n([\s\S]*?)\nendstream/g)].map(match => {
+    try { return inflateSync(Buffer.from(match[1]!, "latin1")).toString("hex"); } catch { return match[1]; }
+  });
+  const { job } = await fixture();
+  const library = { name: "Example Candidate", contact: "London · example@example.test", linkedinUrl: "https://www.linkedin.com/in/example", profile: "Operations leader", theme: DEFAULT_CV_THEME,
+    employment: [{ id: "role", company: "Example Company", industryDescriptions: "Healthcare, Software & SaaS", jobTitle: "Director", startDate: "2020", endDate: "", current: true }], entries: [
+      { id: "role", employmentId: "role", kind: "experience", heading: "Director", details: "Led a team", confirmedResponsibilities: ["Led a team"] },
+      { id: "skills", kind: "skill", heading: "Tools", details: "SQL and reporting", skillItems: ["SQL", "Financial planning"] },
+      { id: "degree", kind: "education", heading: "BSc Economics · Example University", details: "BSc Economics, Example University." },
+    ] };
+  const save = new FormData(); save.set("library", JSON.stringify(library)); save.set("version", "0");
+  expect(await saveCvLibrary({ ok: true }, save)).toEqual({ ok: true });
+  const generate = new FormData(); generate.set("jobId", job.id); generate.set("description", "Lead operations, financial planning and reporting across the organisation. " .repeat(5));
+  await expect(requestCv({ ok: true }, generate)).rejects.toThrow("redirect:/cv/");
+  const [draft] = await database.select().from(schema.cvDrafts);
+  const [task] = await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"));
+  const model = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations leader with experience in planning and reporting.", sections: [
+    { entryId: "role", industryDescriptions: ["Healthcare", "Software & SaaS"], bullets: ["Led a team."] },
+    { entryId: "skills", bullets: ["SQL and reporting"], skillItems: ["SQL", "Financial planning"] },
+    { entryId: "degree", bullets: ["BSc Economics, Example University."] },
+  ], gaps: ["Review-only evidence gap"] });
+  try {
+    await handleGenerateCv(task!, { db: database, env: { anthropicApiKey: "fixture-key" }, settings: async () => ({ monthlyAiBudgetUsd: 100 }), now: () => new Date() } as unknown as import("../../../worker/src/context").WorkerDeps);
+  } finally { model.mockRestore(); }
+  const [ready] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft!.id));
+  expect(ready!.status).toBe("ready");
+  expect(ready!.content!.theme).toEqual(DEFAULT_CV_THEME);
+  const edit = new FormData(); edit.set("summary", ready!.content!.summary); edit.set("theme", JSON.stringify({ ...DEFAULT_CV_THEME, primary: "#285447" }));
+  await expect(saveCvDraft(ready!.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
+  const [revised] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, ready!.id));
+  const preview = await previewCv(new Request("http://localhost/api/cv/preview", { method: "POST", body: JSON.stringify(revised!.content) }));
+  const download = await downloadCv(new Request("http://localhost/api/cv/pdf"), { params: Promise.resolve({ id: revised!.id }) });
+  expect(preview.status).toBe(200); expect(download.status).toBe(200);
+  expect(Number(preview.headers.get("x-cv-page-count"))).toBeLessThanOrEqual(2);
+  expect(streams(Buffer.from(await preview.arrayBuffer()))).toEqual(streams(Buffer.from(await download.arrayBuffer())));
+  const application = new FormData(); application.set("appliedOn", "2026-09-11");
+  expect(await recordApplication(revised!.id, { ok: true }, application)).toEqual({ ok: true });
+  const [frozen] = await database.select().from(schema.applications);
+  edit.set("summary", "Updated wording for a future application.");
+  await expect(saveCvDraft(revised!.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
+  const stored = await downloadApplication(new Request("http://localhost/api/applications/pdf"), { params: Promise.resolve({ id: frozen!.id }) });
+  expect(Buffer.from(await stored.arrayBuffer()).toString("base64")).toBe(frozen!.pdfBase64);
+});

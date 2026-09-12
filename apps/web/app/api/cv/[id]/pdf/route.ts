@@ -4,7 +4,7 @@ import { CvContentSchema } from "@christopher/core";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth";
 import { zUuid } from "@/lib/validation";
-import { renderCvPdf } from "@/lib/cv-pdf";
+import { renderCvPdf, CvLayoutError } from "@/lib/cv-pdf";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -14,7 +14,12 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const [draft] = await db().select().from(cvDrafts).where(eq(cvDrafts.id, id));
   if (!draft) return new Response("Not found", { status: 404 });
   if (draft.status !== "ready" || !draft.content) return new Response("CV is not ready", { status: 409 });
-  const pdf = await renderCvPdf(CvContentSchema.parse(draft.content));
+  let pdf: Buffer;
+  try { pdf = await renderCvPdf(CvContentSchema.parse(draft.content)); }
+  catch (error) {
+    if (error instanceof CvLayoutError) return new Response(error.message, { status: 422 });
+    throw error;
+  }
   const filename = `${draft.content.name}-${draft.companyName}-CV`.replace(/[^a-zA-Z0-9-]/g, "-").slice(0, 100);
   return new Response(new Uint8Array(pdf), { headers: { "content-type": "application/pdf", "content-disposition": `${new URL(_request.url).searchParams.get("preview") === "1" ? "inline" : "attachment"}; filename="${filename}.pdf"`, "cache-control": "private, no-store" } });
 }

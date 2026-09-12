@@ -1,3 +1,5 @@
+import { CV_LIMITS, CV_SECTION_ORDER } from "./cv-format";
+export * from "./cv-format";
 import { z } from "zod";
 
 import { CvThemeSchema, DEFAULT_CV_THEME } from "./cv-theme";
@@ -110,16 +112,16 @@ export const CvLibrarySchema = z.object({
 }).refine(l => new Set(l.entries.map(e => e.id)).size === l.entries.length, "Library entry IDs must be unique");
 export type CvLibrary = z.infer<typeof CvLibrarySchema>;
 export const CvPlanSchema = z.object({
-  summary: z.string().min(1).max(1800),
-  sections: z.array(z.object({ entryId: z.string(), skillItems: SkillItemsSchema.optional(), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(650)).min(1).max(6) })).min(1).max(20),
+  summary: z.string().min(1).max(CV_LIMITS.summaryCharacters),
+  sections: z.array(z.object({ entryId: z.string(), skillItems: SkillItemsSchema.optional(), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(CV_LIMITS.bulletCharacters)).min(1).max(CV_LIMITS.bulletsPerSection) })).min(1).max(20),
   gaps: z.array(z.string().max(500)).max(12),
 });
 export type CvPlan = z.infer<typeof CvPlanSchema>;
 export const CvContentSchema = z.object({
   theme: CvThemeSchema.optional(),
   linkedinUrl: LinkedInSchema,
-  name: z.string().min(1).max(120), contact: z.string().max(500), summary: z.string().min(1).max(1800),
-  sections: z.array(z.object({ entryId: z.string(), kind: CvEntrySchema.shape.kind, skillItems: SkillItemsSchema.optional(), heading: z.string().min(1).max(250), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(650)).min(1).max(6) })).min(1).max(20),
+  name: z.string().min(1).max(120), contact: z.string().max(500), summary: z.string().min(1).max(CV_LIMITS.summaryCharacters),
+  sections: z.array(z.object({ entryId: z.string(), kind: CvEntrySchema.shape.kind, skillItems: SkillItemsSchema.optional(), heading: z.string().min(1).max(250), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(CV_LIMITS.bulletCharacters)).min(1).max(CV_LIMITS.bulletsPerSection) }).refine(section => !section.skillItems || section.kind === "skill", "Individual skills belong to skill sections only")).min(1).max(20),
   gaps: z.array(z.string().max(500)).max(12),
 });
 export type CvContent = z.infer<typeof CvContentSchema>;
@@ -311,7 +313,7 @@ export function retainArchivedEvidence(previous: CvLibrary | undefined, next: Cv
 
 /** A shared display order keeps editing and PDF output aligned without changing stored IDs. */
 export function cvDisplaySections(content: CvContent) {
-  const order = { experience: 0, skill: 1, education: 2, interest: 3 };
+  const order = CV_SECTION_ORDER;
   return content.sections.map((section, index) => ({ section, index }))
     .sort((a, b) => order[a.section.kind] - order[b.section.kind]);
 }

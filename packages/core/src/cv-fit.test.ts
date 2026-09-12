@@ -39,3 +39,15 @@ it('gives the writer budgets before its first attempt and avoids unnecessary mod
 it('never silently drops employment or education to satisfy the page count',async()=>{
  await expect(buildFittedCv(library,'Finance',async()=>({...plan,sections:plan.sections.filter(s=>s.entryId!=='e')}))).rejects.toThrow('omitted employment or education');
 });
+it('ranks structured skill labels including AI and R, and enforces their allocated count', async () => {
+ const source: CvLibrary = {name:'Example',contact:'',profile:'Analyst',entries:[
+  {id:'s1',kind:'skill',heading:'Tools',details:'General skills',skillItems:['Excel']},
+  {id:'s2',kind:'skill',heading:'Tools',details:'General skills',skillItems:['PowerPoint']},
+  {id:'s3',kind:'skill',heading:'Tools',details:'General skills',skillItems:['Excel','PowerPoint','Word','Visio','Jira','AI','R']},
+ ]};
+ const budget=createCvWritingBudget(source,'AI and R');
+ expect(budget.blocks[0]!.entryId).toBe('s3');
+ const fitted=await selectCvToFit(source,{summary:'Analyst',sections:[{entryId:'s3',bullets:['Tools'],skillItems:source.entries[2]!.skillItems}],gaps:[]},'AI and R',budget);
+ expect(fitted.content.sections[0]!.skillItems).toHaveLength(budget.blocks[0]!.maxSkills);
+ expect(fitted.content.sections[0]!.skillItems).toEqual(expect.arrayContaining(['AI','R']));
+});

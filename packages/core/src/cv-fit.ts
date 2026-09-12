@@ -19,6 +19,12 @@ export async function selectCvToFit(library: CvLibrary, source: CvPlan, target: 
   // Keep chronological sections, but use relevance to select their strongest bullets.
   for (const section of plan.sections) {
     const block = budget.blocks.find(block => block.entryId === section.entryId);
+    if (block?.kind === 'skill' && section.skillItems && section.skillItems.length > block.maxSkills) {
+      const ranked = section.skillItems.map((text, index) => ({ index, score: cvRelevance(text, target) + 1 / (index + 1) }));
+      const selected = new Set(ranked.sort((a, b) => b.score - a.score).slice(0, block.maxSkills).map(item => item.index));
+      section.skillItems = section.skillItems.filter((_, index) => selected.has(index));
+      changes.push(`${library.entries.find(entry => entry.id === section.entryId)!.heading}: prioritised ${section.skillItems.length} relevant skills.`);
+    }
     if (block?.kind === 'experience' && section.bullets.length > block.maxBullets) {
       const ranked = section.bullets.map((text, index) => ({ text, index, score: cvRelevance(text, target) + 1 / (index + 1) }));
       const selected = new Set(ranked.sort((a, b) => b.score - a.score).slice(0, block.maxBullets).map(item => item.index));

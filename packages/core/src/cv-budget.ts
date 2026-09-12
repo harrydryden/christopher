@@ -2,9 +2,9 @@ import type { CvLibrary, CvPlan } from "./cv";
 
 export type CvBlockBudget = { entryId: string; kind: string; priority: number; maxBullets: number; maxCharacters: number; maxBulletCharacters: number; maxSkills: number };
 export type CvWritingBudget = { summaryCharacters: number; totalCharacters: number; blocks: CvBlockBudget[] };
-const stop = new Set('with from that this your have will role team work company experience skills across their into and the for are our you'.split(' '));
+const stop = new Set('a an of to in on at as is it be by or we with from that this your have will role team work company experience skills across their into and the for are our you'.split(' '));
 export function cvRelevance(value: string, target: string): number {
-  const words = (text: string) => [...new Set(text.toLowerCase().match(/[a-z][a-z0-9+#&-]{2,}/g) ?? [])].filter(word => !stop.has(word));
+  const words = (text: string) => [...new Set(text.toLowerCase().match(/[a-z][a-z0-9+#&-]*/g) ?? [])].filter(word => !stop.has(word));
   const requested = new Set(words(target));
   return words(value).filter(word => requested.has(word)).length;
 }
@@ -21,7 +21,7 @@ export function createCvWritingBudget(library: CvLibrary, target: string, scale 
   const education = library.entries.filter(entry => entry.kind === 'education');
   if (roles.length + education.length > 20) throw new Error('Select at most 20 employment and education blocks for this CV. The full library is retained.');
   const skills = library.entries.filter(entry => entry.kind === 'skill')
-    .sort((a, b) => cvRelevance(b.details, target) - cvRelevance(a.details, target)).slice(0, Math.min(2, 20 - roles.length - education.length));
+    .sort((a, b) => cvRelevance([b.heading, b.details, ...(b.skillItems ?? [])].join(' '), target) - cvRelevance([a.heading, a.details, ...(a.skillItems ?? [])].join(' '), target)).slice(0, Math.min(2, 20 - roles.length - education.length));
   // Headings, callouts, masthead and subsection spacing all consume space, even
   // before achievements are written. More roles therefore mean less prose each.
   const totalCharacters = Math.round(Math.max(2200, 4900 - roles.length * 110 - education.length * 45) * scale);

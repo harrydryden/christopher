@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { CvContentSchema, cvDisplaySections, type CvContent } from "@christopher/core/cv";
+import { DEFAULT_CV_THEME, CV_LIMITS, CvContentSchema, cvDisplaySections, type CvContent } from "@christopher/core/cv";
 import { saveCvDraft } from "@/app/actions/cv";
 import { CvAppearance } from "./CvAppearance";
 import { SettingsForm } from "./SettingsForm";
@@ -8,7 +8,7 @@ import { SettingsForm } from "./SettingsForm";
 const input = "mt-1 block w-full rounded border border-slate-300 p-2";
 export function CvDraftEditor({ id, content }: { id: string; content: CvContent }) {
   const [summary, setSummary] = useState(content.summary);
-  const [theme, setTheme] = useState(content.theme);
+  const [theme, setTheme] = useState(content.theme ?? DEFAULT_CV_THEME);
   const [rows, setRows] = useState(content.sections.map(section => (section.skillItems ?? section.bullets).join("\n")));
   const [preview, setPreview] = useState<{ url: string; fingerprint: string; pages: number }>();
   const [error, setError] = useState("");
@@ -16,7 +16,7 @@ export function CvDraftEditor({ id, content }: { id: string; content: CvContent 
   const controller = useRef<AbortController | null>(null);
   const candidate = { ...content, theme, summary, sections: content.sections.map((section, i) => ({ ...section, [section.skillItems ? "skillItems" : "bullets"]: rows[i]!.split("\n").map(row => row.trim()).filter(Boolean) })) };
   const fingerprint = JSON.stringify(candidate);
-  const dirty = fingerprint !== JSON.stringify(content);
+  const dirty = fingerprint !== JSON.stringify({ ...content, theme: content.theme ?? DEFAULT_CV_THEME });
   const currentPreview = preview?.fingerprint === fingerprint;
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
   useEffect(() => () => controller.current?.abort(), []);
@@ -38,20 +38,20 @@ export function CvDraftEditor({ id, content }: { id: string; content: CvContent 
     <div className="rounded border border-slate-200 p-3 text-sm" role="status">{dirty ? "Unsaved changes. Preview these edits, then save a new revision to update the downloadable CV." : "Editing the saved revision. Appearance and wording are saved together."}</div>
     <section className="rounded-lg border border-slate-200 p-4"><h3 className="font-semibold">Appearance</h3>
       <div className="mt-3"><CvAppearance value={theme} onChange={setTheme} /></div>
-      {!content.theme && <p className="mt-2 text-sm">This older CV keeps its original plain layout until you select a palette or change a layout control.</p>}
+      {!content.theme && <p className="mt-2 text-sm">This older CV now uses the default Navy appearance. Saved application PDFs retain their original appearance.</p>}
     </section>
     {theme && <input type="hidden" name="theme" value={JSON.stringify(theme)} />}
     <section className="space-y-3 rounded-lg border border-slate-200 p-4">
       <h2 className="font-semibold">Content</h2>
       <p className="text-sm">{content.name} · {content.contact}{content.linkedinUrl && <> · <a className="underline" href={content.linkedinUrl} target="_blank" rel="noopener noreferrer">LinkedIn</a></>}</p>
       <p className="text-xs text-slate-500">Identity and job headings come from the evidence snapshot. Edit the library and generate a new CV to change them.</p>
-      <label className="block text-sm">Profile<textarea name="summary" maxLength={1800} value={summary} onChange={event => setSummary(event.target.value)} rows={5} className={input} /></label>
+      <label className="block text-sm">Profile<textarea name="summary" maxLength={CV_LIMITS.summaryCharacters} value={summary} onChange={event => setSummary(event.target.value)} rows={5} className={input} /></label>
       {cvDisplaySections(content).map(({ section, index }) => <label key={section.entryId} className="block text-sm">
         <span className="font-semibold">{section.kind === "skill" ? "Skill" : section.heading}</span>
         {section.kind === "skill" && <span className="ml-2 text-xs text-slate-500">{section.heading}</span>}
         {!!section.industryDescriptions?.length && <span className="block text-xs text-slate-500">{section.industryDescriptions.join(" · ")}</span>}
         <textarea name={section.skillItems ? `skills-${index}` : `section-${index}`} value={rows[index]} onChange={event => setRows(previous => previous.map((row, i) => i === index ? event.target.value : row))} rows={section.skillItems ? 4 : Math.max(3, section.bullets.length * 2)} className={input} />
-        <span className="text-xs text-slate-500">{section.skillItems ? "One skill per line, up to 20, with 80 characters per skill. Review any new claims." : section.kind === "skill" ? "Legacy skill prose. Add individual skills in the evidence library and generate a new CV to use pills." : "One bullet per line, up to six. Keep each under 650 characters."}</span>
+        <span className="text-xs text-slate-500">{section.skillItems ? "One skill per line, up to 20, with 80 characters per skill. Review any new claims." : section.kind === "skill" ? "One skill or skill description per line. These use pills when enabled; individual labels produce more compact pills." : `One bullet per line, up to ${CV_LIMITS.bulletsPerSection}. Keep each at most ${CV_LIMITS.bulletCharacters} characters.`}</span>
       </label>)}
     </section>
     <section className="space-y-3 rounded-lg border border-slate-200 p-4">
@@ -61,7 +61,7 @@ export function CvDraftEditor({ id, content }: { id: string; content: CvContent 
       {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
       {preview && !currentPreview && <p role="status" className="text-sm">The content or appearance has changed. Refresh the preview to see these edits.</p>}
       {preview && currentPreview && <>
-        <p className="text-sm" role="status">{preview.pages} {preview.pages === 1 ? "page" : "pages"}{preview.pages > 2 ? " — exceeds the two-page target. Shorten the content if needed; nothing has been clipped." : ""}. {dirty ? "Unsaved preview." : "Current revision preview."}</p>
+        <p className="text-sm" role="status">{preview.pages} {preview.pages === 1 ? "page" : "pages"}{preview.pages > CV_LIMITS.pages ? " — exceeds the two-page maximum. Shorten the content before saving or downloading; nothing has been clipped." : ""}. {dirty ? "Unsaved preview." : "Current revision preview."}</p>
         <a className="text-sm underline" href={preview.url} target="_blank" rel="noopener noreferrer">Open current preview</a>
         <iframe title="Current CV PDF preview" src={preview.url} className="h-[650px] w-full rounded border" />
       </>}

@@ -1,4 +1,5 @@
 "use server";
+import { renderCvPdf } from "@/lib/cv-pdf";
 import { z } from "zod";
 import { desc, eq, sql } from "drizzle-orm";
 import { cvLibraries, cvDrafts, jobs, companies, enqueueTask } from "@christopher/db";
@@ -99,7 +100,7 @@ export async function saveCvDraft(id: string, _prev: ActionResult, form: FormDat
     content.summary = String(form.get("summary") ?? "").trim();
     content.sections = content.sections.map((section, i) => ({ ...section, bullets: String(form.get(`section-${i}`) ?? section.bullets.join("\n")).split("\n").map(t => t.trim()).filter(Boolean) }));
     content.sections = content.sections.map((section, i) => section.kind === "skill" && section.skillItems ? { ...section, skillItems: String(form.get(`skills-${i}`) ?? section.skillItems.join("\n")).split("\n").map(t => t.trim()).filter(Boolean) } : section);
-    CvContentSchema.parse(content);
+    await renderCvPdf(CvContentSchema.parse(content));
     const { id: _id, createdAt: _created, ...original } = draft;
     savedId = await db().transaction(async tx => {
       const [saved] = await tx.insert(cvDrafts).values({ ...original, content, parentId: id, revision: draft.revision + 1 }).returning();

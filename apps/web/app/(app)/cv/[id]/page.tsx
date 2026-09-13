@@ -1,4 +1,5 @@
-import { CvWorkspace } from "@/components/CvWorkspace";
+import { CvDisclosure } from "@/components/CvDisclosure";
+import { CvWorkspace, CvWorkspacePanel } from "@/components/CvWorkspace";
 import { CvBuildProgress } from "@/components/CvBuildProgress";
 import { CvAppearance } from "@/components/CvAppearance";
 import { CvAssessmentPanel } from "@/components/CvAssessmentPanel";
@@ -40,7 +41,7 @@ export default async function CvDraftPage({
     .where(eq(applications.cvId, id))
     .limit(1);
   return (
-    <div className="max-w-7xl space-y-5">
+    <div className="w-full space-y-5">
       <nav aria-label="CV navigation">
         <Link
           href={draft.jobId ? `/cv?job=${draft.jobId}` : "/cv"}
@@ -79,42 +80,57 @@ export default async function CvDraftPage({
       <CvWorkspace
         description={
           <>
-            <p className="text-xs text-slate-500">The saved company advert used to write and assess this CV.</p>
-            <p className="whitespace-pre-wrap text-sm leading-relaxed">{draft.jobDescription}</p>
-            <details className="border-t border-slate-200 pt-3">
-              <summary className="cursor-pointer text-xs font-medium">Source and evidence details</summary>
-            <p className="my-2 text-sm">
-              <a className="underline" href="/cv/library">
-                Open evidence library
-              </a>{" "}
-              · This description is the exact snapshot used for writing and
-              scoring.{" "}
-              {(!draft.jobSource || draft.jobSource.method === "unknown") &&
-                "Extraction provenance was not recorded for this older description; compare it with the full company advert before relying on the score."}{" "}
-              {draft.jobSource?.kind === "user_supplied"
-                ? "It was supplied by you; verify it matches the company’s full advert."
-                : "It was saved from the company role record."}{" "}
-              {draft.jobSource?.url && (
-                <a
-                  className="underline"
-                  href={draft.jobSource.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Open original role
-                </a>
-              )}
+            <p className="text-xs text-slate-500">
+              The saved company advert used to write and assess this CV.
             </p>
-            </details>
+            <p className="whitespace-pre-wrap text-sm leading-relaxed">
+              {draft.jobDescription}
+            </p>
+            <CvDisclosure label="source and evidence details">
+              <p className="my-2 text-sm">
+                <a className="underline" href="/cv/library">
+                  Open evidence library
+                </a>{" "}
+                · This description is the exact snapshot used for writing and
+                scoring.{" "}
+                {(!draft.jobSource || draft.jobSource.method === "unknown") &&
+                  "Extraction provenance was not recorded for this older description; compare it with the full company advert before relying on the score."}{" "}
+                {draft.jobSource?.kind === "user_supplied"
+                  ? "It was supplied by you; verify it matches the company’s full advert."
+                  : "It was saved from the company role record."}{" "}
+                {draft.jobSource?.url && (
+                  <a
+                    className="underline"
+                    href={draft.jobSource.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Open original role
+                  </a>
+                )}
+              </p>
+            </CvDisclosure>
           </>
         }
       >
-        {busy && <AutoRefresh cvId={id} initialVersion={`${draft.status}:${draft.buildStage ?? ""}`} message={null} />}
+        {draft.status === "failed" && (
+          <p
+            role="alert"
+            className="rounded bg-red-50 p-4 text-sm text-red-700"
+          >
+            {draft.error}
+          </p>
+        )}
+        {busy && (
+          <AutoRefresh
+            cvId={id}
+            initialVersion={`${draft.status}:${draft.buildStage ?? ""}`}
+            message={null}
+          />
+        )}
         {(!content || busy) && (
-          <details className="rounded-lg border border-slate-200 p-4">
-            <summary className="cursor-pointer font-semibold">
-              Appearance and CV settings
-            </summary>
+          <CvWorkspacePanel tab="appearance">
+            <h2 className="font-semibold">Appearance and CV settings</h2>
             <div className="mt-4 space-y-3">
               <fieldset disabled>
                 <CvAppearance
@@ -136,27 +152,69 @@ export default async function CvDraftPage({
                 Open evidence library
               </Link>
             </div>
-          </details>
+          </CvWorkspacePanel>
         )}
-        {busy && (
-          <CvBuildProgress
-            stage={draft.buildStage}
-            queued={draft.status === "queued"}
-          />
-        )}
-        {draft.status === "failed" && (
-          <p
-            role="alert"
-            className="rounded bg-red-50 p-4 text-sm text-red-700"
-          >
-            {draft.error}
-          </p>
+        {(!content || busy) && (
+          <CvWorkspacePanel tab="content">
+            {busy && (
+              <CvBuildProgress
+                stage={draft.buildStage}
+                queued={draft.status === "queued"}
+              />
+            )}
+          </CvWorkspacePanel>
         )}
         {content && !busy ? (
           <CvDraftEditor
             key={id}
             id={id}
             content={content}
+            tracking={
+              <>
+                <section className="rounded border p-4 space-y-3">
+                  <CvDisclosure label="application tracking">
+                    {application ? (
+                      <Link href="/applications" className="underline">
+                        Application recorded — view status and frozen PDF
+                      </Link>
+                    ) : !draft.finalisedAt ? (
+                      <p className="text-sm">
+                        Finalise the assessed CV before recording an
+                        application.
+                      </p>
+                    ) : (
+                      <SettingsForm
+                        action={recordApplication.bind(null, id)}
+                        submitLabel="Record application with this saved CV"
+                      >
+                        <p className="text-sm">
+                          Use this after submitting this CV revision. This
+                          records your application; it does not send anything to
+                          the employer.
+                        </p>
+                        <label>
+                          Application date
+                          <input
+                            type="date"
+                            name="appliedOn"
+                            required
+                            className="ml-2 rounded border p-2"
+                          />
+                        </label>
+                        <label>
+                          Notes
+                          <textarea
+                            name="notes"
+                            maxLength={4000}
+                            className="block w-full rounded border p-2"
+                          />
+                        </label>
+                      </SettingsForm>
+                    )}
+                  </CvDisclosure>
+                </section>
+              </>
+            }
             assessment={
               <CvAssessmentPanel
                 id={id}
@@ -169,69 +227,18 @@ export default async function CvDraftPage({
               />
             }
           />
-        ) : !busy ? (
-          <CvAssessmentPanel
-            id={id}
-            assessment={draft.assessment}
-            current={current}
-            finalised={!!draft.finalisedAt}
-            busy={busy}
-            hasContent={!!content}
-            content={content}
-          />
-        ) : null}
-        {content && !busy && (
-          <>
-            {!!content.gaps.length && (
-              <aside className="rounded border border-amber-300 p-4 text-sm">
-                <strong>Evidence gaps (excluded from the PDF)</strong>
-                <ul className="mt-2 list-disc pl-5">
-                  {content.gaps.map((gap, i) => (
-                    <li key={i}>{gap}</li>
-                  ))}
-                </ul>
-              </aside>
-            )}
-            <section className="rounded border p-4 space-y-3">
-              <h2 className="font-semibold">Application tracking</h2>
-              {application ? (
-                <Link href="/applications" className="underline">
-                  Application recorded — view status and frozen PDF
-                </Link>
-              ) : !draft.finalisedAt ? (
-                <p className="text-sm">
-                  Finalise the assessed CV before recording an application.
-                </p>
-              ) : (
-                <SettingsForm
-                  action={recordApplication.bind(null, id)}
-                  submitLabel="Record application with this saved CV"
-                >
-                  <p className="text-sm">
-                    Use this after submitting this CV revision. This records
-                    your application; it does not send anything to the employer.
-                  </p>
-                  <label>
-                    Application date
-                    <input
-                      type="date"
-                      name="appliedOn"
-                      required
-                      className="ml-2 rounded border p-2"
-                    />
-                  </label>
-                  <label>
-                    Notes
-                    <textarea
-                      name="notes"
-                      maxLength={4000}
-                      className="block w-full rounded border p-2"
-                    />
-                  </label>
-                </SettingsForm>
-              )}
-            </section>
-          </>
+        ) : (
+          <CvWorkspacePanel tab="evaluation">
+            <CvAssessmentPanel
+              id={id}
+              assessment={draft.assessment}
+              current={current}
+              finalised={!!draft.finalisedAt}
+              busy={busy}
+              hasContent={!!content}
+              content={content}
+            />
+          </CvWorkspacePanel>
         )}
       </CvWorkspace>
     </div>

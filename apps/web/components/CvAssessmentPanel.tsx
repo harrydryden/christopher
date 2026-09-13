@@ -1,20 +1,11 @@
 import type { CvContent } from "@christopher/core/cv";
-import { cvClaimItems } from "@christopher/core/cv-assessment";
-import Link from "next/link";
 import type { CvAssessment } from "@christopher/core/cv-assessment";
-import {
-  cvImprovementOwner,
-  cvRequirementWeight,
-} from "@christopher/core/cv-assessment";
 import { assessCvDraft, finaliseCvDraft } from "@/app/actions/cv";
+import { cvEvaluationRows } from "@/lib/cv-evaluation";
+import { CvEvaluationTable } from "./CvEvaluationTable";
+import { CvDisclosure } from "./CvDisclosure";
 import { SettingsForm } from "./SettingsForm";
 
-const labels = {
-  demonstrated: "Demonstrated",
-  partial: "Partly demonstrated",
-  missing: "Not evidenced",
-  unknown: "Needs clarification",
-};
 export function CvAssessmentPanel({
   id,
   assessment,
@@ -59,35 +50,10 @@ export function CvAssessmentPanel({
   const flagged = assessment.review.claims.filter(
     (claim) => claim.status !== "supported",
   );
-  const systems = assessment.review.matches.filter(
-    (match) => cvImprovementOwner(match) === "system",
-  );
-  const user = assessment.review.matches.filter(
-    (match) => cvImprovementOwner(match) === "user",
-  );
-  const essentialGaps = assessment.rubric.requirements.filter(
-    (requirement) =>
-      requirement.importance === "essential" &&
-      assessment.review.matches.find(
-        (match) => match.requirementId === requirement.id,
-      )?.status !== "demonstrated",
-  );
-  const actions = (items: typeof systems) => (
-    <ul className="space-y-2 text-sm">
-      {items.map((match) => (
-        <li key={match.requirementId}>
-          <strong>
-            {
-              assessment.rubric.requirements.find(
-                (item) => item.id === match.requirementId,
-              )?.label
-            }
-          </strong>
-          <p>{match.improvement || match.reason}</p>
-        </li>
-      ))}
-    </ul>
-  );
+  const rows = cvEvaluationRows(assessment, content);
+  const essentialGaps = rows.filter(
+    (row) => row.importance === "essential" && row.experience !== "Green",
+  ).length;
   return (
     <section
       className="space-y-4 rounded-lg border border-slate-200 p-4"
@@ -96,7 +62,7 @@ export function CvAssessmentPanel({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 id="cv-match-title" className="font-semibold">
-            CV match against the company’s job description
+            CV evaluation
           </h2>
           <p className="text-sm text-slate-600">
             Assessment of this saved revision · {assessment.pageCount}{" "}
@@ -105,181 +71,94 @@ export function CvAssessmentPanel({
         </div>
         <div className="rounded bg-accent px-4 py-3 text-white">
           <strong className="text-2xl">{assessment.score}/100</strong>
-          <p className="text-xs">Evidence-backed coverage</p>
+          <p className="text-xs">CV match score</p>
         </div>
       </div>
-      <p className="text-sm">
-        Essential requirements carry twice the weight. Full evidence earns full
-        credit; partial evidence earns half. Missing or unknown evidence earns
-        no credit. This is our assessment of the published description;
-        employers may use different criteria. It is not a hiring probability.
+      <p className="text-sm text-slate-600">
+        Library evidence:{" "}
+        <strong>{assessment.availableEvidenceScore}/100</strong>
+        {" · "}
+        {essentialGaps} essential requirements to review
+        {" · "}
+        {flagged.length} factual {flagged.length === 1 ? "concern" : "concerns"}
+        . Our assessment, not an employer’s score or hiring probability.
       </p>
-      <p className="text-sm">
-        The saved evidence library covers{" "}
-        <strong>{assessment.availableEvidenceScore}/100</strong> on the same
-        criteria. This is an evidence reference, not a promised score after
-        rewriting.
-      </p>
-      {essentialGaps.length > 0 && (
-        <p className="rounded border border-amber-300 p-3 text-sm">
-          {essentialGaps.length} essential{" "}
-          {essentialGaps.length === 1
-            ? "requirement needs"
-            : "requirements need"}{" "}
-          stronger evidence or clarification. A high overall score does not
-          remove these gaps.
-        </p>
-      )}
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="space-y-2">
-          <h3 className="font-semibold">The system can improve</h3>
-          {systems.length ? (
-            actions(systems)
-          ) : (
-            <p className="text-sm">
-              No stronger omitted evidence was identified in this snapshot.
-            </p>
-          )}
-          <p className="text-xs text-slate-600">
-            Use Improve with latest evidence at the top of the page to author and assess a new
-            revision. Every suggestion remains subject to factual and two-page
-            checks.
-          </p>
-        </div>
-        <div className="space-y-2">
-          <h3 className="font-semibold">Evidence you need to provide</h3>
-          {user.length ? (
-            actions(user)
-          ) : (
-            <p className="text-sm">
-              No additional evidence questions were identified.
-            </p>
-          )}
-          <Link className="text-sm underline" href="/cv/library">
-            Add and confirm evidence in your library
-          </Link>
-        </div>
+      <CvEvaluationTable rows={rows} />
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        <a className="font-medium text-accent underline" href="/cv/library">
+          Add evidence to your library
+        </a>
+        <span className="text-xs text-slate-500">
+          Use Improve with latest evidence for system suggestions. Edit wording
+          in Content.
+        </span>
       </div>
-      <details>
-        <summary className="cursor-pointer font-medium">
-          Requirement-by-requirement evidence (
-          {assessment.rubric.requirements.length})
-        </summary>
-        <ol className="mt-3 space-y-4">
-          {assessment.rubric.requirements.map((requirement) => {
-            const match = assessment.review.matches.find(
-              (item) => item.requirementId === requirement.id,
-            )!;
-            return (
-              <li
-                key={requirement.id}
-                className="rounded border border-slate-200 p-3 text-sm"
-              >
-                <div className="flex flex-wrap justify-between gap-2">
-                  <strong>{requirement.label}</strong>
-                  <span>
-                    {labels[match.status]} · weight{" "}
-                    {cvRequirementWeight(requirement)}
-                  </span>
-                </div>
-                <p className="mt-1 text-xs text-slate-600">
-                  {requirement.importance} · {requirement.category}
-                </p>
-                <blockquote className="my-2 border-l-2 border-accent pl-3">
-                  {requirement.quote}
-                </blockquote>
-                <p>{match.reason}</p>
-                {match.cvEvidence.map((ref, index) => (
-                  <p key={index} className="mt-2">
-                    <strong>CV:</strong> “{ref.quote}”
-                  </p>
-                ))}
-                {match.libraryEvidence.map((ref, index) => (
-                  <p key={index} className="mt-2">
-                    <strong>Confirmed evidence:</strong> “{ref.quote}”
-                  </p>
-                ))}
-              </li>
-            );
-          })}
-        </ol>
-      </details>
-      <section className="space-y-2">
-        <h3 className="font-semibold">Factual review</h3>
-        {flagged.length ? (
-          <>
-            <p className="text-sm">
-              Resolve these claims before finalising. Edit the wording or
-              provide supporting evidence, then reassess.
-            </p>
-            <ul className="space-y-2 text-sm">
-              {flagged.map((claim) => (
-                <li
-                  key={claim.claimId}
-                  className="rounded border border-amber-300 p-3"
-                >
-                  <strong>
-                    {claim.status === "unsupported"
-                      ? "Unsupported"
-                      : "Uncertain"}{" "}
-                    claim
-                  </strong>
-                  <blockquote className="my-2 border-l-2 border-amber-400 pl-3">
-                    {content &&
-                      cvClaimItems(content).find(
-                        (item) => item.id === claim.claimId,
-                      )?.text}
-                  </blockquote>
-                  <p>{claim.reason}</p>
-                </li>
-              ))}
-            </ul>
-          </>
-        ) : (
-          <p className="text-sm">
-            Every printed claim was reviewed against the evidence snapshot. Read
-            the CV yourself to confirm factual accuracy.
+      <CvDisclosure label="assessment guide and method">
+        <div className="space-y-2 text-xs leading-relaxed text-slate-600">
+          <p>
+            <strong>Change:</strong> None = no action; Fact = unsupported
+            wording; Gap = additional evidence needed; Improvement = the system
+            can use stronger saved evidence; Uncertain = clarification needed.
+            Factual concerns must be resolved before finalising.
           </p>
-        )}
-      </section>
-      {!!assessment.rubric.caveats.length && (
-        <ul className="list-disc pl-5 text-sm">
+          <p>
+            <strong>Evidence:</strong> support in the saved library. None = no
+            cited evidence; Weak = unclear support; Good = partial support;
+            Strong = demonstrated. For standalone factual concerns, cited
+            evidence remains Weak until the wording is confirmed.
+          </p>
+          <p>
+            <strong>Experience:</strong> how well this CV meets the requirement.
+            Green = demonstrated with supported wording; Amber = partial or
+            uncertain; Red = missing or unsupported. Available library evidence
+            can be Strong even when the CV needs improvement.
+          </p>
+          <p>
+            Italic text is from the saved CV. Essential requirements carry twice
+            the weight. Grounded full evidence earns full credit and partial
+            evidence earns half; missing, unknown or unsupported wording earns
+            none. Library coverage is a reference, not a promised score after
+            rewriting.
+          </p>
           {assessment.rubric.caveats.map((item, index) => (
-            <li key={index}>{item}</li>
+            <p key={index}>{item}</p>
           ))}
-        </ul>
+          <p>
+            Assessed {new Date(assessment.assessedAt).toLocaleString("en-GB")}{" "}
+            using {assessment.model}. Method {assessment.version}. Source
+            extracts are checked against saved inputs; semantic judgements are
+            model estimates. Repeated keywords earn no extra points. Identity
+            and decorative industry pills are excluded.
+          </p>
+          <p>
+            Approach informed by{" "}
+            <a
+              className="underline"
+              href="https://support.greenhouse.io/hc/en-us/articles/41131886674075-Talent-Matching-FAQ"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Greenhouse Talent Matching
+            </a>{" "}
+            and{" "}
+            <a
+              className="underline"
+              href="https://help.workable.com/hc/en-us/articles/38381544828695-Using-the-Workable-Agent"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Workable’s screening criteria
+            </a>
+            . No CV is sent to those providers.
+          </p>
+        </div>
+      </CvDisclosure>
+      {flagged.length > 0 && !finalised && (
+        <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          Resolve the Fact and Uncertain claims in the table, then save and
+          reassess before finalising.
+        </p>
       )}
-      <details className="text-xs text-slate-600">
-        <summary>Assessment method and provenance</summary>
-        <p className="mt-2">
-          Assessed {new Date(assessment.assessedAt).toLocaleString("en-GB")}{" "}
-          using {assessment.model}. Method {assessment.version}. Quotes are
-          checked against the saved inputs; semantic judgements are model
-          estimates. Repeated keywords earn no extra points. Name, contact
-          details and decorative industry pills are excluded from scoring.
-        </p>
-        <p className="mt-2">
-          Approach informed by{" "}
-          <a
-            className="underline"
-            href="https://support.greenhouse.io/hc/en-us/articles/41131886674075-Talent-Matching-FAQ"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Greenhouse Talent Matching
-          </a>{" "}
-          and{" "}
-          <a
-            className="underline"
-            href="https://help.workable.com/hc/en-us/articles/38381544828695-Using-the-Workable-Agent"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Workable’s screening criteria
-          </a>
-          . No CV is sent to those providers.
-        </p>
-      </details>
       {finalised ? (
         <p className="rounded border border-emerald-300 p-3 text-sm">
           Finalised. Download this saved revision or create a new revision to

@@ -95,7 +95,7 @@ export function CvWorkspace({
           </button>
         </div>
         <div
-          className={`grid items-start gap-5 ${open ? "lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.4fr)]" : "grid-cols-1"}`}
+          className={`grid items-start gap-5 ${open ? "lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.35fr)]" : "grid-cols-1"}`}
         >
           <div data-cv-main className="min-w-0 space-y-4">
             {children}

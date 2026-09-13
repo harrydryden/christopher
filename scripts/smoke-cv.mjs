@@ -108,6 +108,11 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto(`${baseUrl}/cv/${readyId}`);
+    // Reserve scrollbar space even on macOS, whose overlay scrollbars can hide width regressions.
+    await page.addStyleTag({
+      content:
+        'html { scrollbar-gutter: stable; } [aria-label="CV evaluation table"] { scrollbar-gutter: stable; }',
+    });
     await page
       .locator("textarea[name=summary]")
       .waitFor({ timeout: 10000 })

@@ -27,4 +27,6 @@ COPY packages ./packages
 COPY apps/worker ./apps/worker
 
 EXPOSE 8080
-CMD ["pnpm", "--filter", "@christopher/worker", "start"]
+# Run Node directly as PID 1 so deployment signals reach the shutdown handler.
+WORKDIR /app/apps/worker
+CMD ["node", "--import", "tsx", "src/index.ts"]

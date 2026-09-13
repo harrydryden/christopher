@@ -1,5 +1,6 @@
-import { CvRubricSchema, CvReviewPlanSchema, type CvRubric, type CvReviewPlan, type CvTextItem } from "@christopher/core/cv-assessment";
+import { CvRubricSchema, CvReviewPlanSchema, type CvRubric, type CvReviewPlan, type CvTextItem, type CvClaimItem } from "@christopher/core/cv-assessment";
 import { CV_RUBRIC_PROMPT, CV_REVIEW_PROMPT, CV_AUTHOR_PROMPT } from "./cv-prompts";
+import { reviewBatchIssues, markUnverifiedFindings } from "./cv-review-batch";
 import { CvPlanSchema, type CvWritingBudget, type CvPlan, type CvLibrary } from "@christopher/core";
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
@@ -198,7 +199,7 @@ export class AiEngine {
     input: {
       rubric: CvRubric;
       cv: CvTextItem[];
-      claims: CvTextItem[];
+      claims: CvClaimItem[];
       evidence: CvTextItem[];
     },
     ref: Ref = {},
@@ -215,15 +216,27 @@ export class AiEngine {
     for (let offset = 0; offset < count; offset += batchSize) {
       const requirements = input.rubric.requirements.slice(offset, offset + batchSize);
       const claims = input.claims.slice(offset, offset + batchSize);
-      const batch = await this.run<CvReviewPlan>("CV", {
-        system: CV_REVIEW_PROMPT + "\nThis is one batch of a larger audit. Assess only the supplied rubric requirements and claims, using the complete CV and evidence as context. Return an empty array when that batch has no requirements or no claims. Use the shortest sufficient verbatim quotes; usually one or two sources per finding suffice. Keep reasons and improvements concise.",
-        user: JSON.stringify({ ...input, rubric: { ...input.rubric, requirements }, claims }),
+      const batchInput = { ...input, rubric: { ...input.rubric, requirements }, claims,
+        claimSources: input.evidence.filter(source => claims.some(claim => claim.requiredEvidenceId === source.id)),
+      };
+      const runBatch = (corrections?: string[]) => this.run<CvReviewPlan>("CV", {
+        system: CV_REVIEW_PROMPT + "\nThis is one batch of a larger audit. Assess only the supplied rubric requirements and claims, using the complete CV and evidence as context. Return an empty array when that batch has no requirements or no claims. Use the shortest sufficient verbatim quotes; usually one or two sources per finding suffice. Keep reasons and improvements concise. Every claim with requiredEvidenceId must cite a verbatim quote from that exact source to be supported, including skills. claimSources supplies the relevant source explicitly. Evidence from a different role, profile or skill block cannot substitute for it. If that source does not support the complete claim, mark it uncertain or unsupported; never copy in unrelated evidence merely to satisfy this rule.",
+        user: JSON.stringify({ ...batchInput, ...(corrections ? { corrections } : {}) }),
         schema,
         effort: "high",
-        maxTokens: 12000,
-        timeoutMs: 180_000,
+        maxTokens: 16000,
+        timeoutMs: 240_000,
       }, ref);
+      let batch = await runBatch();
       if (!batch) return null;
+      const corrections = reviewBatchIssues(batch, batchInput).map(issue => issue.correction);
+      if (corrections.length) {
+        batch = await runBatch(corrections);
+        if (!batch) return null;
+        // A repeated attribution mistake earns no credit and remains visible for review.
+        // The final strict source validator still checks all accepted evidence quotes.
+        batch = markUnverifiedFindings(batch, reviewBatchIssues(batch, batchInput));
+      }
       const complete = (expected: string[], actual: string[]) =>
         expected.length === actual.length && new Set(actual).size === actual.length &&
         expected.every(id => actual.includes(id));

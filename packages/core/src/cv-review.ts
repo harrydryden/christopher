@@ -26,6 +26,7 @@ const normalise = (value: string) =>
 function anchored(value: string, full: string) {
   return normalise(full).includes(normalise(value));
 }
+export { anchored as cvQuoteIsAnchored };
 export function validateCvRubric(
   description: string,
   value: unknown,

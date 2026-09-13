@@ -31,13 +31,14 @@ async function main() {
       await setInternal(deps.db, "workerHeartbeat", {
         at: new Date().toISOString(), workerId: env.workerId,
         aiConfigured: deps.ai.enabled, browserAvailable: !!deps.browser,
+        commit: process.env.RENDER_GIT_COMMIT ?? null,
       });
     } catch (err) { log.error("worker heartbeat failed", err); }
   };
   await reportHeartbeat();
   const heartbeatTimer = setInterval(() => void reportHeartbeat(), 30_000);
   const scheduler = startScheduler(deps);
-  const server = startHealthServer(deps, env.port, () => ({ active: queue.activeCount }));
+  const server = startHealthServer(deps, env.port, () => ({ active: queue.activeCount, commit: process.env.RENDER_GIT_COMMIT ?? null }));
 
   let shuttingDown = false;
   const shutdown = async (signal: string) => {

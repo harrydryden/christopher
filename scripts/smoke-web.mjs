@@ -5,6 +5,7 @@
  *   node scripts/smoke-web.mjs            (build then test)
  *   node scripts/smoke-web.mjs --no-build  (test an already built app)
  */
+import { verifyCvWorkspace } from "./smoke-cv.mjs";
 import { createRequire } from "node:module";
 import { once } from "node:events";
 import { spawn } from "node:child_process";
@@ -148,6 +149,9 @@ async function main() {
     }
     console.log(`  ${res.status}  ${path}  (${body.length} bytes)`);
   }
+
+  try { await verifyCvWorkspace(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL); }
+  catch (error) { failures.push(`CV browser flow: ${error.message}`); }
 
   const exited = once(server, "exit");
   server.kill("SIGTERM");

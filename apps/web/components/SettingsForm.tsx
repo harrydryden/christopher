@@ -13,16 +13,18 @@ const INITIAL: ActionResult = { ok: true };
  */
 export function SettingsForm({
   action,
+  id,
   children,
   submitLabel = "Save",
 }: {
+  id?: string;
   action: (prevState: ActionResult, formData: FormData) => Promise<ActionResult>;
   children: ReactNode;
   submitLabel?: string;
 }) {
   const [state, formAction, isPending] = useActionState(action, INITIAL);
   return (
-    <form action={formAction} className="flex flex-col gap-3">
+    <form id={id} action={formAction} className="flex flex-col gap-3">
       {children}
       {!state.ok && <p className="text-sm text-red-600">{state.error}</p>}
       <div>

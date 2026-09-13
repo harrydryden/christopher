@@ -1,7 +1,13 @@
 "use client";
 import { useFormStatus } from "react-dom";
-import { useEffect, useRef, useState } from "react";
-import { DEFAULT_CV_THEME, CV_LIMITS, CvContentSchema, cvDisplaySections, type CvContent } from "@christopher/core/cv";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  DEFAULT_CV_THEME,
+  CV_LIMITS,
+  CvContentSchema,
+  cvDisplaySections,
+  type CvContent,
+} from "@christopher/core/cv";
 import { saveCvDraft } from "@/app/actions/cv";
 import { CvAppearance } from "./CvAppearance";
 import { SettingsForm } from "./SettingsForm";
@@ -9,79 +15,231 @@ import { SettingsForm } from "./SettingsForm";
 function FitButton() {
   const { pending } = useFormStatus();
   return (
-    <button type="submit" name="intent" value="fit" disabled={pending} className="rounded bg-accent px-3 py-2 text-sm text-white disabled:opacity-50">{pending ? "Working…" : "Fit to two pages"}</button>
+    <button
+      type="submit"
+      name="intent"
+      value="fit"
+      disabled={pending}
+      className="rounded bg-accent px-3 py-2 text-sm text-white disabled:opacity-50"
+    >
+      {pending ? "Working…" : "Fit to two pages"}
+    </button>
   );
 }
 
 const input = "mt-1 block w-full rounded border border-slate-300 p-2";
-export function CvDraftEditor({ id, content }: { id: string; content: CvContent;
+export function CvDraftEditor({
+  id,
+  content,
+  assessment,
+}: {
+  id: string;
+  content: CvContent;
+  assessment?: ReactNode;
 }) {
+  const formId = `cv-edit-${id}`;
   const [summary, setSummary] = useState(content.summary);
   const [theme, setTheme] = useState(content.theme ?? DEFAULT_CV_THEME);
-  const [rows, setRows] = useState(content.sections.map((section) => (section.skillItems ?? section.bullets).join("\n")));
-  const [preview, setPreview] = useState<{ url: string; fingerprint: string; pages: number;
+  const [rows, setRows] = useState(
+    content.sections.map((section) =>
+      (section.skillItems ?? section.bullets).join("\n"),
+    ),
+  );
+  const [preview, setPreview] = useState<{
+    url: string;
+    fingerprint: string;
+    pages: number;
   }>();
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const controller = useRef<AbortController | null>(null);
-  const candidate = { ...content, theme, summary, sections: content.sections.map((section, i) => ({ ...section, [section.skillItems ? "skillItems" : "bullets"]: rows[i]!.split("\n").map((row) => row.trim()).filter(Boolean) })) };
+  const candidate = {
+    ...content,
+    theme,
+    summary,
+    sections: content.sections.map((section, i) => ({
+      ...section,
+      [section.skillItems ? "skillItems" : "bullets"]: rows[i]!.split("\n")
+        .map((row) => row.trim())
+        .filter(Boolean),
+    })),
+  };
   const fingerprint = JSON.stringify(candidate);
-  const dirty = fingerprint !== JSON.stringify({ ...content, theme: content.theme ?? DEFAULT_CV_THEME });
+  const dirty =
+    fingerprint !==
+    JSON.stringify({ ...content, theme: content.theme ?? DEFAULT_CV_THEME });
   const currentPreview = preview?.fingerprint === fingerprint;
-  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
+  useEffect(
+    () => () => {
+      if (preview) URL.revokeObjectURL(preview.url);
+    },
+    [preview],
+  );
   useEffect(() => () => controller.current?.abort(), []);
   async function updatePreview() {
     const parsed = CvContentSchema.safeParse(candidate);
-    if (!parsed.success) { setError(parsed.error.issues.map((issue) => issue.message).join(" ")); return; }
-    controller.current?.abort(); const request = new AbortController(); controller.current = request;
-    setPending(true); setError("");
+    if (!parsed.success) {
+      setError(parsed.error.issues.map((issue) => issue.message).join(" "));
+      return;
+    }
+    controller.current?.abort();
+    const request = new AbortController();
+    controller.current = request;
+    setPending(true);
+    setError("");
     try {
-      const response = await fetch("/api/cv/preview", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(parsed.data), signal: request.signal });
+      const response = await fetch("/api/cv/preview", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(parsed.data),
+        signal: request.signal,
+      });
       if (!response.ok) throw new Error(await response.text());
       const url = URL.createObjectURL(await response.blob());
-      if (request.signal.aborted) { URL.revokeObjectURL(url); return; }
-      setPreview({ url, fingerprint, pages: Number(response.headers.get("x-cv-page-count")) });
-    } catch (failure) { if (!request.signal.aborted) setError(failure instanceof Error ? failure.message : "Could not render the PDF."); }
-    finally { if (!request.signal.aborted) setPending(false); }
+      if (request.signal.aborted) {
+        URL.revokeObjectURL(url);
+        return;
+      }
+      setPreview({
+        url,
+        fingerprint,
+        pages: Number(response.headers.get("x-cv-page-count")),
+      });
+    } catch (failure) {
+      if (!request.signal.aborted)
+        setError(
+          failure instanceof Error
+            ? failure.message
+            : "Could not render the PDF.",
+        );
+    } finally {
+      if (!request.signal.aborted) setPending(false);
+    }
   }
   return (
-    <SettingsForm action={saveCvDraft.bind(null, id)} submitLabel="Save and assess new revision"
-    >
-    <div className="rounded border border-slate-200 p-3 text-sm" role="status">{dirty ? "Unsaved changes. The score above applies to the saved revision. Save these edits to obtain a fresh assessment before finalising."
-          : "Editing the saved revision. Appearance and wording are saved together."}</div>
-    {!!content.fitNotes?.length && (
-        <aside className="rounded border border-slate-200 p-3 text-sm"><strong>Fitting changes</strong><ul className="mt-2 list-disc pl-5">{content.fitNotes.map((note, index) => (
-              <li key={index}>{note}</li>))}</ul></aside>
-      )}
-    <section className="rounded-lg border border-slate-200 p-4"><h3 className="font-semibold">Appearance</h3>
-      <div className="mt-3"><CvAppearance value={theme} onChange={setTheme} /></div>
-      {!content.theme && (
-          <p className="mt-2 text-sm">This older CV now uses the default Navy appearance. Saved application PDFs retain their original appearance.</p>
+    <>
+      <SettingsForm
+        id={formId}
+        action={saveCvDraft.bind(null, id)}
+        submitLabel="Save, fit and assess new revision"
+      >
+        <details className="rounded-lg border border-slate-200 p-4">
+          <summary className="cursor-pointer font-semibold">
+            Appearance and CV settings
+          </summary>
+          <div className="mt-4 space-y-4">
+            <CvAppearance value={theme} onChange={setTheme} />
+            <p className="text-sm text-slate-600">
+              Two pages maximum · Up to {CV_LIMITS.bulletsPerSection} bullets
+              per section · {CV_LIMITS.bulletCharacters} characters per bullet.
+              Saving automatically fits any overflow before assessment.
+            </p>
+            <label className="block text-sm">
+              <input type="checkbox" name="rememberWording" defaultChecked />{" "}
+              Remember wording corrections for future CVs.
+            </label>
+            <p className="text-xs text-slate-500">
+              Appearance applies to this revision. Change your library to set a
+              default for future CVs.
+            </p>
+          </div>
+        </details>
+        <div className="flex flex-wrap items-center gap-2">
+          <FitButton />
+          <button
+            type="submit"
+            name="intent"
+            value="improve"
+            className="rounded border border-accent px-3 py-2 text-sm"
+          >
+            Improve with latest evidence
+          </button>
+          <a href="/cv/library" className="px-2 text-sm underline">
+            Evidence library
+          </a>
+        </div>
+        <p className="text-xs text-slate-500">
+          Improve uses your latest confirmed evidence. All actions include your
+          current edits and create a new revision for review.
+        </p>
+        <div
+          className="rounded border border-slate-200 p-3 text-sm"
+          role="status"
+        >
+          {dirty
+            ? "Unsaved changes. The score below applies to the saved revision. Save these edits for a fresh assessment before finalising."
+            : "Editing the saved revision. Appearance and wording are saved together."}
+        </div>
+        {theme && (
+          <input type="hidden" name="theme" value={JSON.stringify(theme)} />
         )}
-    </section>
-    {theme && (
-        <input type="hidden" name="theme" value={JSON.stringify(theme)} />
+      </SettingsForm>
+      {assessment}
+      {!!content.fitNotes?.length && (
+        <details className="rounded border border-slate-200 p-3 text-sm">
+          <summary className="cursor-pointer font-medium">
+            Fitting changes ({content.fitNotes.length})
+          </summary>
+          <ul className="mt-2 list-disc pl-5">
+            {content.fitNotes.map((note, index) => (
+              <li key={index}>{note}</li>
+            ))}
+          </ul>
+        </details>
       )}
-    <section className="space-y-3 rounded-lg border border-slate-200 p-4">
-      <h2 className="font-semibold">Content</h2>
-      <p className="text-sm">{content.name} · {content.contact}{content.linkedinUrl && (
+      <section className="space-y-3 rounded-lg border border-slate-200 p-4">
+        <h2 className="font-semibold">Content</h2>
+        <p className="text-sm">
+          {content.name} · {content.contact}
+          {content.linkedinUrl && (
             <>
               {" "}
               ·{" "}
-              <a className="underline" href={content.linkedinUrl} target="_blank" rel="noopener noreferrer">LinkedIn</a></>
-          )}</p>
-      <p className="text-xs text-slate-500">Identity and job headings come from the evidence snapshot. Edit the library and generate a new CV to change them.</p>
-      <label className="block text-sm">Profile<textarea name="summary" maxLength={CV_LIMITS.summaryCharacters} value={summary} onChange={(event) => setSummary(event.target.value)} rows={5} className={input} /></label>
-      {cvDisplaySections(content).map(({ section, index }) => (
+              <a
+                className="underline"
+                href={content.linkedinUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                LinkedIn
+              </a>
+            </>
+          )}
+        </p>
+        <p className="text-xs text-slate-500">
+          Identity and job headings come from the evidence snapshot. Edit the
+          library and generate a new CV to change them.
+        </p>
+        <label className="block text-sm">
+          Profile
+          <textarea
+            form={formId}
+            name="summary"
+            maxLength={CV_LIMITS.summaryCharacters}
+            value={summary}
+            onChange={(event) => setSummary(event.target.value)}
+            rows={5}
+            className={input}
+          />
+        </label>
+        {cvDisplaySections(content).map(({ section, index }) => (
           <label key={section.entryId} className="block text-sm">
-        <span className="font-semibold">{section.kind === "skill" ? "Skill" : section.heading}</span>
-        {section.kind === "skill" && (
-              <span className="ml-2 text-xs text-slate-500">{section.heading}</span>
+            <span className="font-semibold">
+              {section.kind === "skill" ? "Skill" : section.heading}
+            </span>
+            {section.kind === "skill" && (
+              <span className="ml-2 text-xs text-slate-500">
+                {section.heading}
+              </span>
             )}
-        {!!section.industryDescriptions?.length && (
-              <span className="block text-xs text-slate-500">{section.industryDescriptions.join(" · ")}</span>
+            {!!section.industryDescriptions?.length && (
+              <span className="block text-xs text-slate-500">
+                {section.industryDescriptions.join(" · ")}
+              </span>
             )}
-        <textarea name={section.skillItems ? `skills-${index}` : `section-${index}`}
+            <textarea
+              form={formId}
+              name={section.skillItems ? `skills-${index}` : `section-${index}`}
               value={rows[index]}
               onChange={(event) =>
                 setRows((previous) =>
@@ -99,7 +257,7 @@ export function CvDraftEditor({ id, content }: { id: string; content: CvContent;
               {section.skillItems
                 ? "One skill per line, up to 20, with 80 characters per skill. Review any new claims."
                 : section.kind === "skill"
-                  ? "One skill or skill description per line. These use pills when enabled; individual labels produce more compact pills."
+                  ? "One skill or skill description per line. These always use centred pills; individual labels produce more compact pills."
                   : `One bullet per line, up to ${CV_LIMITS.bulletsPerSection}. Keep each at most ${CV_LIMITS.bulletCharacters} characters.`}
             </span>
           </label>
@@ -135,7 +293,7 @@ export function CvDraftEditor({ id, content }: { id: string; content: CvContent;
             <p className="text-sm" role="status">
               {preview.pages} {preview.pages === 1 ? "page" : "pages"}
               {preview.pages > CV_LIMITS.pages
-                ? " — use Fit to two pages to prioritise and shorten this draft."
+                ? " — saving will automatically fit this wording into two pages before assessment."
                 : ""}
               . {dirty ? "Unsaved preview." : "Current revision preview."}
             </p>
@@ -155,36 +313,6 @@ export function CvDraftEditor({ id, content }: { id: string; content: CvContent;
           </>
         )}
       </section>
-      <section className="space-y-2 rounded-lg border border-slate-200 p-4">
-        <h2 className="font-semibold">Fit to two pages</h2>
-        <p className="text-sm">
-          Prioritise relevant achievements and shorten the profile and bullets
-          using the writing model. Includes your current edits and appearance.
-          Creates a new revision for review; the original and submitted PDFs are
-          preserved.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <FitButton />
-          <button
-            type="submit"
-            name="intent"
-            value="improve"
-            className="rounded border border-accent px-3 py-2 text-sm"
-          >
-            Improve with latest evidence
-          </button>
-        </div>
-        <p className="text-xs text-slate-500">
-          Improve uses your latest saved evidence library and the assessment’s
-          supported suggestions. Add and confirm missing evidence in the library
-          first. Each new revision is assessed again before finalisation.
-        </p>
-      </section>
-      <label className="text-sm">
-        <input type="checkbox" name="rememberWording" defaultChecked /> Remember
-        wording corrections for future CVs. Palette changes apply only to this
-        revision; change the library’s Appearance settings to set your default.
-      </label>
-    </SettingsForm>
+    </>
   );
 }

@@ -107,7 +107,7 @@ export async function listRecentScanRuns(limit = 10) {
 export async function getWorkerHeartbeat() {
   const [row] = await db().select({ value: settings.value }).from(settings)
     .where(eq(settings.key, "internal:workerHeartbeat")).limit(1);
-  const value = row?.value as { at?: unknown; aiConfigured?: unknown; browserAvailable?: unknown } | undefined;
+  const value = row?.value as { at?: unknown; aiConfigured?: unknown; browserAvailable?: unknown; commit?: unknown } | undefined;
   if (!value || typeof value.at !== "string" || !Number.isFinite(Date.parse(value.at))) return null;
-  return { at: new Date(value.at), aiConfigured: value.aiConfigured === true, browserAvailable: value.browserAvailable === true };
+  return { commit: typeof value.commit === "string" && /^[a-f0-9]{40}$/.test(value.commit) ? value.commit : null, at: new Date(value.at), aiConfigured: value.aiConfigured === true, browserAvailable: value.browserAvailable === true };
 }

@@ -1,0 +1,1 @@
+ALTER TABLE "cv_drafts" ADD COLUMN "build_stage" text;

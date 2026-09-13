@@ -15,7 +15,7 @@ export function CvAppearance({ value, onChange, name }: { value?: CvTheme; onCha
     {name && (
         <input type="hidden" name={name} value={JSON.stringify(theme)} />
       )}
-    <p className="text-sm">Navy is the default. Text automatically switches to white on dark colours and black on light colours. Appearance changes do not regenerate or rewrite your wording.</p>
+    <p className="text-sm">Navy is the default. Text automatically switches to white on dark colours and black on light colours. Colour changes preserve your wording. If a layout change causes overflow, saving fits the CV before assessment.</p>
     <div className="flex flex-wrap gap-2">{Object.entries(CV_THEMES).map(([label, preset]) => (
           <button type="button" key={label} aria-pressed={selected === label} onClick={() => change({ ...preset, introPanel: theme.introPanel, skillPills: true,
               })} className="rounded border px-3 py-2 text-sm" style={{ borderColor: preset.primary, background: selected === label ? preset.primary : undefined, color: selected === label ? cvForeground(preset.primary) : undefined }}>{label}</button>))}</div>

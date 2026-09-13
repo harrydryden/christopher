@@ -411,6 +411,7 @@ export const cvDrafts = pgTable("cv_drafts", {
   librarySnapshot: jsonb("library_snapshot").$type<CvLibrary>().notNull(),
   model: text("model").notNull(),
   status: text("status", { enum: ["queued", "generating", "ready", "failed"] }).notNull().default("queued"),
+  buildStage: text("build_stage", { enum: ["analysing", "writing", "fitting", "assessing"] }),
   content: jsonb("content").$type<CvContent>(),
   error: text("error"),
   revision: integer("revision").notNull().default(0),

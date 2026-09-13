@@ -40,3 +40,21 @@ jobs:
           CHRISTOPHER_DISABLE_BROWSER: "0"
       - run: pnpm db:migrate
       - run: pnpm smoke:web
+
+  worker-release:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    concurrency:
+      group: worker-release
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify the running worker includes this merge
+        run: node scripts/verify-worker-release.mjs
+        env:
+          WORKER_HEALTH_URL: https://christopher-worker.onrender.com/healthz

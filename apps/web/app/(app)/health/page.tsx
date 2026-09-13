@@ -60,7 +60,7 @@ export default async function HealthPage() {
             : "No recent worker report. Check that the background worker is deployed, running and connected to this database; queued scans and CVs may be waiting."}
         </p>
         {heartbeat && <p className="mt-2 text-sm text-slate-500">
-          Last reported configuration: Anthropic key {heartbeat.aiConfigured ? "configured" : "missing"}; browser {heartbeat.browserAvailable ? "available" : "unavailable"}. A configured key still needs a successful model call to confirm access.
+          Last reported configuration: Anthropic key {heartbeat.aiConfigured ? "configured" : "missing"}; browser {heartbeat.browserAvailable ? "available" : "unavailable"}. A configured key still needs a successful model call to confirm access. {heartbeat.commit && <>Worker release: <code>{heartbeat.commit.slice(0, 7)}</code>.</>}
         </p>}
       </Card>
 

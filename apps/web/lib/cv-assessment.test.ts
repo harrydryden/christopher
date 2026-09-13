@@ -22,5 +22,5 @@ it('shows evidence questions and actual unsupported wording, with no finalisatio
 });
 it('never displays a stale score as a current assessment', () => {
   const html = renderToStaticMarkup(createElement(CvAssessmentPanel, { id: 'test', assessment: null, current: false, finalised: false, busy: false, hasContent: true, content }));
-  expect(html).toContain('Assess saved revision'); expect(html).not.toContain('/100');
+  expect(html).toContain('Fit and assess saved revision'); expect(html).not.toContain('/100');
 });

@@ -38,14 +38,14 @@ export function CvAssessmentPanel({
         <h2 className="font-semibold">Job match assessment</h2>
         <p className="text-sm">
           {busy
-            ? "The worker is preparing an assessment of this revision."
+            ? "Your fitted CV will be checked and scored before it is ready for review."
             : "This revision needs an assessment before it can be finalised and downloaded."}
         </p>
         {!busy && !finalised && (
           <SettingsForm
             action={assessCvDraft.bind(null, id)}
             submitLabel={
-              hasContent ? "Assess saved revision" : "Retry generation"
+              hasContent ? "Fit and assess saved revision" : "Retry generation"
             }
           >
             <p className="text-xs text-slate-500">
@@ -141,7 +141,7 @@ export function CvAssessmentPanel({
             </p>
           )}
           <p className="text-xs text-slate-600">
-            Use Improve with latest evidence below to author and assess a new
+            Use Improve with latest evidence at the top of the page to author and assess a new
             revision. Every suggestion remains subject to factual and two-page
             checks.
           </p>

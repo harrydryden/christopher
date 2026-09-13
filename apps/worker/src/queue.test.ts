@@ -238,6 +238,22 @@ it("renews a live task lease and isolates queue lanes", async () => {
   expect(await requeueStale(db)).toBe(0);
 });
 
+it("recovers a stopped worker after five missed minutes while retaining a fresh long-running task", async () => {
+  await enqueueTask(db, "generate_cv", { draftId: "stopped" });
+  await enqueueTask(db, "generate_cv", { draftId: "live" });
+  const stopped = (await claimTask(db, "retiring-worker"))!;
+  const live = (await claimTask(db, "current-worker"))!;
+  await db.update(schema.tasks).set({ lockedAt: new Date(Date.now() - 6 * 60_000) }).where(eq(schema.tasks.id, stopped.id));
+  await db.update(schema.tasks).set({ startedAt: new Date(Date.now() - 30 * 60_000), lockedAt: new Date(Date.now() - 60_000) }).where(eq(schema.tasks.id, live.id));
+  expect(await requeueStale(db)).toBe(1);
+  const recovered = (await claimTask(db, "current-worker"))!;
+  expect(recovered.id).toBe(stopped.id);
+  expect(recovered.attempts).toBe(stopped.attempts + 1);
+  expect(await renewTask(db, stopped)).toBe(false);
+  expect(await renewTask(db, live)).toBe(true);
+  await expect(assertTaskOwnership(db, stopped)).rejects.toThrow("lease lost");
+});
+
 it("does not repeat a manual daily fan-out after a crash between commit and completion", async () => {
   const { handleRunDaily } = await import("./handlers/daily");
   await db.insert(schema.companies).values({ name: "Test", domain: "test.example", homepageUrl: "https://test.example" });

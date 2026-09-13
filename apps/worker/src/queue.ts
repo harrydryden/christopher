@@ -7,6 +7,8 @@ import { log } from "./log";
 
 export type TaskHandler = (task: Task, deps: WorkerDeps) => Promise<unknown>;
 export type HandlerMap = Partial<Record<Task["type"], TaskHandler>>;
+// Ten missed 30-second renewals; aligned with the resource lease expiry.
+export const TASK_STALE_AFTER_MS = 5 * 60_000;
 
 export interface QueueOptions {
   concurrency: number;
@@ -83,7 +85,7 @@ export async function failTask(db: Db, task: Task, err: unknown): Promise<"retry
 }
 
 /** Tasks left "running" by a crashed worker go back to the queue. */
-export async function requeueStale(db: Db, staleAfterMs = 20 * 60_000): Promise<number> {
+export async function requeueStale(db: Db, staleAfterMs = TASK_STALE_AFTER_MS): Promise<number> {
   const cutoff = new Date(Date.now() - staleAfterMs);
   const rows = await db
     .update(schema.tasks)
@@ -164,11 +166,11 @@ export class TaskQueue {
       if (renewing) return;
       renewing = true;
       void renewTask(this.deps.db, task).catch(err => log.warn("task heartbeat failed", err)).finally(() => { renewing = false; });
-    }, this.opts.heartbeatMs ?? Math.max(100, Math.min(30_000, (this.opts.staleAfterMs ?? 1_200_000) / 3)));
+    }, this.opts.heartbeatMs ?? Math.max(100, Math.min(30_000, (this.opts.staleAfterMs ?? TASK_STALE_AFTER_MS) / 3)));
     heartbeat.unref();
     try {
       if (!handler) throw new Error(`no handler for task type ${task.type}`);
-      log.info("task start", { id: task.id, type: task.type, attempt: task.attempts, queueWaitMs: Math.max(0, Date.now() - task.createdAt.getTime()) });
+      log.info("task start", { id: task.id, type: task.type, attempt: task.attempts, workerId: this.opts.workerId, commit: process.env.RENDER_GIT_COMMIT ?? null, queueWaitMs: Math.max(0, Date.now() - task.createdAt.getTime()) });
       const result = await handler(task, { ...this.deps, assertOwnership: db => assertTaskOwnership(db, task) });
       if (!await completeTask(this.deps.db, task, result)) { log.warn("task completion discarded: lease lost", { id: task.id }); return; }
       if (task.type === "scan_company" || task.type === "run_daily") await finaliseScanRuns(this.deps);

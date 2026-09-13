@@ -74,6 +74,7 @@ export type CvJobSource = {
   method?: "direct" | "unknown" | "pasted";
 };
 export type CvTextItem = { id: string; text: string };
+export type CvClaimItem = CvTextItem & { requiredEvidenceId?: string };
 
 /** Only prose actually printed in the PDF contributes to the CV score. */
 export function cvTextItems(content: CvContent): CvTextItem[] {
@@ -95,8 +96,13 @@ export function cvTextItems(content: CvContent): CvTextItem[] {
     ]),
   ];
 }
-export function cvClaimItems(content: CvContent): CvTextItem[] {
-  return cvTextItems(content).filter((item) => !item.id.endsWith(":heading"));
+export function cvClaimItems(content: CvContent): CvClaimItem[] {
+  return cvTextItems(content).filter((item) => !item.id.endsWith(":heading")).map(item => ({
+    ...item,
+    ...(item.id.startsWith("section:") ? {
+      requiredEvidenceId: `entry:${item.id.slice("section:".length, item.id.lastIndexOf(":"))}`,
+    } : {}),
+  }));
 }
 /** Caller supplies the grouped, confirmed library. Writing preferences are not evidence. */
 export function cvEvidenceItems(library: CvLibrary): CvTextItem[] {

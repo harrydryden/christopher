@@ -409,4 +409,31 @@ describe("bounded CV assessment", () => {
     const engine = createAiEngine({ getModel: () => "claude-fable-5-1", client });
     await expect(engine.assessCv(input)).rejects.toThrow("exactly once");
   });
+
+  it.each([true, false])("corrects foreign source attribution once, then preserves uncertainty if unresolved (repair succeeds: %s)", async succeeds => {
+    const base = inputFor(2, 2);
+    const input = { ...base, claims: base.claims.map(claim => ({ ...claim, requiredEvidenceId: "entry:role:1" })),
+      evidence: [...base.evidence, { id: "entry:role:1", text: "Operations leader" }],
+    };
+    const calls: Array<Record<string, unknown>> = [];
+    const usage: AiUsageRecord[] = [];
+    const engine = createAiEngine({ getModel: () => "claude-fable-5-1", onUsage: record => { usage.push(record); }, client: { messages: { create: async params => {
+      const supplied = JSON.parse((params.messages as Array<{ content: string }>)[0]!.content);
+      calls.push(supplied);
+      const response = responseFor(supplied);
+      if (succeeds && calls.length === 2)
+        for (const claim of response.claims) claim.evidence = [{ id: "entry:role:1", quote: "Operations leader" }];
+      return { parsed_output: response };
+    } } } });
+    const result = await engine.assessCv(input);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.claimSources).toEqual([{ id: "entry:role:1", text: "Operations leader" }]);
+    expect(calls[1]!.corrections).toEqual(expect.arrayContaining([expect.stringContaining("entry:role:1")]));
+    expect(usage).toHaveLength(2);
+    expect(result!.claims.every(claim => claim.status === (succeeds ? "supported" : "uncertain"))).toBe(true);
+    if (!succeeds) for (const claim of result!.claims) {
+      expect(claim.evidence).toEqual([]);
+      expect(claim.reason).toContain("automated review could not link");
+    }
+  });
 });

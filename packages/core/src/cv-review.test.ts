@@ -264,6 +264,20 @@ it("prevents transferring achievements from a different role", () => {
     "own evidence block",
   );
 });
+it("links section claims to their exact source block, including IDs containing colons", () => {
+  const linked = cvClaimItems({ ...content, sections: [{ ...content.sections[0]!, entryId: "role:finance:1" }] });
+  expect(linked[0]).not.toHaveProperty("requiredEvidenceId");
+  expect(linked[1]).toMatchObject({ id: "section:role:finance:1:0", requiredEvidenceId: "entry:role:finance:1" });
+});
+it("awards no CV points for evidence-attribution uncertainty while keeping available-evidence coverage separate", () => {
+  const value = review();
+  value.claims[1]!.status = "uncertain";
+  value.claims[1]!.evidence = [];
+  value.claims[1]!.reason = "The automated review could not link this claim to its own saved evidence block.";
+  for (const match of value.matches) match.cvEvidence = [{ id: value.claims[1]!.claimId, quote: "Led operations" }];
+  expect(assess(value).score).toBe(0);
+  expect(assess(value).availableEvidenceScore).toBe(100);
+});
 it("accepts exact one- and two-character technical skill citations", () => {
   const shortLibrary: CvLibrary = {
     name: "Example",

@@ -352,3 +352,61 @@ it("uses isolated, metered CV calls for rubric extraction and factual assessment
     ok: true,
   });
 });
+
+describe("bounded CV assessment", () => {
+  const inputFor = (requirements: number, claims: number) => ({
+    rubric: { requirements: Array.from({ length: requirements }, (_, i) => ({ id: `r${i}`, label: "Operations", quote: "Lead operations", importance: "essential" as const, category: "experience" as const })), caveats: [] },
+    cv: [{ id: "profile", text: "Operations leader" }],
+    claims: Array.from({ length: claims }, (_, i) => ({ id: `claim${i}`, text: "Operations leader" })),
+    evidence: [{ id: "source:profile", text: "Operations leader" }],
+  });
+  const responseFor = (input: ReturnType<typeof inputFor>) => ({
+    matches: input.rubric.requirements.map(item => ({ requirementId: item.id, status: "demonstrated", libraryStatus: "demonstrated", cvEvidence: [{ id: "profile", quote: "Operations leader" }], libraryEvidence: [{ id: "source:profile", quote: "Operations leader" }], reason: "Supported", improvement: "" })),
+    claims: input.claims.map(item => ({ claimId: item.id, status: "supported", evidence: [{ id: "source:profile", quote: "Operations leader" }], reason: "Supported" })),
+  });
+
+  it.each([[17, 3], [3, 17], [16, 16]])("covers %i requirements and %i claims once, retaining full context and metering every batch", async (requirements, claims) => {
+    const input = inputFor(requirements, claims);
+    const batches: ReturnType<typeof inputFor>[] = [];
+    const usage: AiUsageRecord[] = [];
+    const engine = createAiEngine({
+      getModel: () => "claude-fable-5-1",
+      onUsage: record => { usage.push(record); },
+      client: { messages: { create: async params => {
+        const batch = JSON.parse((params.messages as Array<{ content: string }>)[0]!.content);
+        batches.push(batch);
+        return { parsed_output: responseFor(batch), usage: { input_tokens: 100, output_tokens: 100 } };
+      } } },
+    });
+    expect(await engine.assessCv(input, { refType: "cv-review", refId: "draft" })).toEqual(responseFor(input));
+    expect(batches).toHaveLength(Math.ceil(Math.max(requirements, claims) / 8));
+    for (const batch of batches) {
+      expect(batch.rubric.requirements.length).toBeLessThanOrEqual(8);
+      expect(batch.claims.length).toBeLessThanOrEqual(8);
+      expect(batch.cv).toEqual(input.cv);
+      expect(batch.evidence).toEqual(input.evidence);
+    }
+    expect(usage).toHaveLength(batches.length);
+    expect(usage.every(record => record.ok && record.refId === "draft" && record.costUsd > 0)).toBe(true);
+  });
+
+  it("discards partial assessment after a later batch times out and stops making calls", async () => {
+    let calls = 0;
+    const engine = createAiEngine({ getModel: () => "claude-fable-5-1", client: { messages: { create: async params => {
+      if (++calls === 2) throw new Error("Request timed out.");
+      return { parsed_output: responseFor(JSON.parse((params.messages as Array<{ content: string }>)[0]!.content)) };
+    } } } });
+    expect(await engine.assessCv(inputFor(24, 24))).toBeNull();
+    expect(calls).toBe(2);
+  });
+
+  it.each(["omitted", "duplicate", "foreign"])("rejects a batch with %s claim coverage", async mode => {
+    const input = inputFor(2, 2);
+    const response = responseFor(input);
+    if (mode === "omitted") response.claims.pop();
+    else response.claims[1]!.claimId = mode === "duplicate" ? "claim0" : "other";
+    const { client } = fakeClient(response);
+    const engine = createAiEngine({ getModel: () => "claude-fable-5-1", client });
+    await expect(engine.assessCv(input)).rejects.toThrow("exactly once");
+  });
+});

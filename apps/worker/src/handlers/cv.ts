@@ -87,6 +87,8 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
           throw new Error(
             "The model reached its output limit. Retry or select a more capable CV model.",
           );
+        if (generationError && /timed? out|timeout/i.test(generationError))
+          throw new Error("The model took too long to respond. Your saved CV is preserved; retry its assessment or build.");
         throw new Error(
           "The model did not return a valid result. Check model access and usage in Health, then retry.",
         );

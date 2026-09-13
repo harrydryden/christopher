@@ -3,7 +3,7 @@ import { CV_RUBRIC_PROMPT, CV_REVIEW_PROMPT, CV_AUTHOR_PROMPT } from "./cv-promp
 import { CvPlanSchema, type CvWritingBudget, type CvPlan, type CvLibrary } from "@christopher/core";
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-import type { z } from "zod";
+import { z } from "zod";
 import { estimateCostUsd } from "./pricing";
 import * as P from "./prompts";
 import * as S from "./schemas";
@@ -203,18 +203,39 @@ export class AiEngine {
     },
     ref: Ref = {},
   ): Promise<CvReviewPlan | null> {
-    return this.run<CvReviewPlan>(
-      "CV",
-      {
-        system: CV_REVIEW_PROMPT,
-        user: JSON.stringify(input),
-        schema: CvReviewPlanSchema,
+    // A full CV audit can exceed the provider timeout even below its token limit.
+    // Bound output work per call; every batch still sees the complete CV/evidence.
+    const batchSize = 8;
+    const schema = CvReviewPlanSchema.extend({
+      matches: z.array(CvReviewPlanSchema.shape.matches.element).max(batchSize),
+      claims: z.array(CvReviewPlanSchema.shape.claims.element).max(batchSize),
+    });
+    const review: CvReviewPlan = { matches: [], claims: [] };
+    const count = Math.max(input.rubric.requirements.length, input.claims.length);
+    for (let offset = 0; offset < count; offset += batchSize) {
+      const requirements = input.rubric.requirements.slice(offset, offset + batchSize);
+      const claims = input.claims.slice(offset, offset + batchSize);
+      const batch = await this.run<CvReviewPlan>("CV", {
+        system: CV_REVIEW_PROMPT + "\nThis is one batch of a larger audit. Assess only the supplied rubric requirements and claims, using the complete CV and evidence as context. Return an empty array when that batch has no requirements or no claims. Use the shortest sufficient verbatim quotes; usually one or two sources per finding suffice. Keep reasons and improvements concise.",
+        user: JSON.stringify({ ...input, rubric: { ...input.rubric, requirements }, claims }),
+        schema,
         effort: "high",
-        maxTokens: 20000,
+        maxTokens: 12000,
         timeoutMs: 180_000,
-      },
-      ref,
-    );
+      }, ref);
+      if (!batch) return null;
+      const complete = (expected: string[], actual: string[]) =>
+        expected.length === actual.length && new Set(actual).size === actual.length &&
+        expected.every(id => actual.includes(id));
+      if (!complete(requirements.map(item => item.id), batch.matches.map(item => item.requirementId)) ||
+          !complete(claims.map(item => item.id), batch.claims.map(item => item.claimId))) {
+        throw new Error("The assessment did not cover every requested requirement and claim exactly once. The fitted CV is saved; retry its assessment.");
+      }
+      review.matches.push(...batch.matches);
+      review.claims.push(...batch.claims);
+    }
+    const result = CvReviewPlanSchema.safeParse(review);
+    return result.success ? result.data : null;
   }
 
   async buildCv(

@@ -8,14 +8,29 @@ const CV_CHANGE_TYPES: readonly CvChange[] = [
   "Improvement",
   "Uncertain",
 ];
+import { CvContentBlockLink } from "./CvWorkspace";
 import { CvDisclosure } from "./CvDisclosure";
 
 const colours = {
   Red: "border-red-200 bg-red-50 text-red-800",
   Amber: "border-amber-200 bg-amber-50 text-amber-900",
-  Green: "border-emerald-200 bg-emerald-50 text-emerald-800",
 };
 const strengths = { None: 0, Weak: 1, Good: 2, Strong: 3 };
+function Strength({ value }: { value: keyof typeof strengths }) {
+  return (
+    <div className="whitespace-nowrap text-xs font-semibold">
+      {value}
+      <span aria-hidden="true" className="mt-2 flex gap-1">
+        {[1, 2, 3].map((level) => (
+          <span
+            key={level}
+            className={`h-1.5 w-4 rounded-full ${level <= strengths[value] ? "bg-accent" : "bg-slate-200"}`}
+          />
+        ))}
+      </span>
+    </div>
+  );
+}
 export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
   const [filter, setFilter] = useState<CvChange | "All">("All");
   const [visible, setVisible] = useState(true);
@@ -73,29 +88,29 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
               Current CV wording is italicised.
             </caption>
             <colgroup>
-              <col className="w-[6%]" />
-              <col className="w-[16%]" />
-              <col className="w-[19%]" />
-              <col className="w-[12%]" />
-              <col className="w-[25%]" />
-              <col className="w-[11%]" />
-              <col className="w-[11%]" />
+              <col style={{ width: "2.75rem" }} />
+              <col />
+              <col />
+              <col style={{ width: "6.25rem" }} />
+              <col />
+              <col style={{ width: "4.75rem" }} />
+              <col style={{ width: "5.5rem" }} />
             </colgroup>
             <thead className="sticky top-0 z-10 bg-slate-100 text-xs text-slate-600">
               <tr>
                 {[
-                  "Issue #",
+                  "Item",
                   "Requirement",
                   "Current text",
                   "Change",
-                  "Elaborate on change",
+                  "Guidance",
                   "Evidence",
                   "Experience",
                 ].map((label) => (
                   <th
                     key={label}
                     scope="col"
-                    className="px-2 py-3 font-semibold"
+                    className="whitespace-nowrap px-2 py-3 font-semibold"
                   >
                     {label}
                   </th>
@@ -135,17 +150,21 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
                     >
                       {row.change}
                     </span>
-                    {row.owner !== "—" && (
-                      <span className="mt-2 block text-xs text-slate-500">
-                        {row.owner === "System"
-                          ? "System can improve"
-                          : "Your input needed"}
-                      </span>
-                    )}
                   </td>
                   <td className="space-y-3 break-words px-2 py-4">
                     <p>{row.suggestion}</p>
-                    <CvDisclosure label={`evidence for issue ${row.number}`}>
+                    <div className="space-y-1">
+                      {row.contentLinks.length ? (
+                        row.contentLinks.map((link) => (
+                          <CvContentBlockLink key={link.id} id={link.id}>
+                            Edit {link.label}
+                          </CvContentBlockLink>
+                        ))
+                      ) : (
+                        <CvContentBlockLink>Open Content</CvContentBlockLink>
+                      )}
+                    </div>
+                    <CvDisclosure label={`evidence for item ${row.number}`}>
                       {!row.suggestion.includes(row.reason) && (
                         <p className="text-xs text-slate-600">{row.reason}</p>
                       )}
@@ -163,35 +182,17 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
                     </CvDisclosure>
                   </td>
                   <td className="px-2 py-4">
-                    <span className="text-xs font-semibold">
-                      {row.evidence}
-                    </span>
-                    <span aria-hidden="true" className="mt-2 flex gap-1">
-                      {[1, 2, 3].map((level) => (
-                        <span
-                          key={level}
-                          className={`h-1.5 w-4 rounded-full ${level <= strengths[row.evidence] ? "bg-accent" : "bg-slate-200"}`}
-                        />
-                      ))}
-                    </span>
+                    <Strength value={row.evidence} />
                   </td>
                   <td className="px-2 py-4">
-                    <span
-                      className={`inline-flex items-center justify-center gap-1.5 rounded-full border px-2 py-1 text-center text-xs font-semibold ${colours[row.experience]}`}
-                    >
-                      <span
-                        aria-hidden="true"
-                        className="h-1.5 w-1.5 rounded-full bg-current"
-                      />
-                      {row.experience}
-                    </span>
+                    <Strength value={row.experience} />
                   </td>
                 </tr>
               ))}
               {!shown.length && (
                 <tr>
                   <td colSpan={7} className="p-6 text-center text-slate-500">
-                    No {filter.toLowerCase()} issues in this revision.
+                    No {filter.toLowerCase()} items in this revision.
                   </td>
                 </tr>
               )}

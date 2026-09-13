@@ -52,7 +52,7 @@ export function CvAssessmentPanel({
   );
   const rows = cvEvaluationRows(assessment, content);
   const essentialGaps = rows.filter(
-    (row) => row.importance === "essential" && row.experience !== "Green",
+    (row) => row.importance === "essential" && row.experience !== "Strong",
   ).length;
   return (
     <section
@@ -109,9 +109,9 @@ export function CvAssessmentPanel({
           </p>
           <p>
             <strong>Experience:</strong> how well this CV meets the requirement.
-            Green = demonstrated with supported wording; Amber = partial or
-            uncertain; Red = missing or unsupported. Available library evidence
-            can be Strong even when the CV needs improvement.
+            None = missing or unsupported; Weak = uncertain; Good = partly
+            demonstrated; Strong = demonstrated with supported wording. Guidance
+            links open the relevant Content block.
           </p>
           <p>
             Italic text is from the saved CV. Essential requirements carry twice

@@ -1,3 +1,4 @@
+import { cvContentLinks, type CvContentLink } from "./cv-content-links";
 import type { CvContent } from "@christopher/core/cv";
 import {
   cvClaimItems,
@@ -20,9 +21,9 @@ export type CvEvaluationRow = {
   currentText: string[];
   change: CvChange;
   suggestion: string;
-  owner: "You" | "System" | "—";
+  contentLinks: CvContentLink[];
   evidence: "None" | "Weak" | "Good" | "Strong";
-  experience: "Red" | "Amber" | "Green";
+  experience: "None" | "Weak" | "Good" | "Strong";
   reason: string;
   companyText?: string;
   sources: string[];
@@ -46,7 +47,7 @@ export function cvEvaluationRows(
   const factualClaims = [...claims.values()].filter(
     (claim) => claim.status !== "supported",
   );
-  const factualIssueNumbers = new Map(
+  const factualItemNumbers = new Map(
     factualClaims.map((claim, index) => [
       claim.claimId,
       assessment.rubric.requirements.length + index + 1,
@@ -63,9 +64,9 @@ export function cvEvaluationRows(
           currentText: [],
           change: "Uncertain",
           suggestion: "Reassess this revision to review this requirement.",
-          owner: "System",
+          contentLinks: [],
           evidence: "None",
-          experience: "Amber",
+          experience: "Weak",
           reason: "No requirement assessment is available.",
           companyText: requirement.quote,
           sources: [],
@@ -104,18 +105,16 @@ export function cvEvaluationRows(
         currentText: unique(match.cvEvidence.map((ref) => ref.quote)),
         change,
         suggestion: flags.length
-          ? `Resolve the factual concern in ${flags.length === 1 ? "issue" : "issues"} ${flags.map((claim) => factualIssueNumbers.get(claim.claimId)).join(", ")}. ${match.improvement || "Confirm the evidence or revise the wording, then reassess."}`
+          ? `Resolve the factual concern in ${flags.length === 1 ? "item" : "items"} ${flags.map((claim) => factualItemNumbers.get(claim.claimId)).join(", ")}. ${match.improvement || "Confirm the evidence or revise the wording, then reassess."}`
           : unreviewed
             ? "This wording needs factual review. Reassess the saved revision."
             : change === "None"
               ? "No change needed."
               : match.improvement || match.reason,
-        owner:
-          change === "None"
-            ? "—"
-            : change === "Improvement" || unreviewed
-              ? "System"
-              : "You",
+        contentLinks: cvContentLinks(
+          content,
+          [...match.cvEvidence, ...match.libraryEvidence].map((ref) => ref.id),
+        ),
         evidence: !match.libraryEvidence.length
           ? "None"
           : match.libraryStatus === "demonstrated"
@@ -124,14 +123,14 @@ export function cvEvaluationRows(
               ? "Good"
               : "Weak",
         experience: unsupported
-          ? "Red"
+          ? "None"
           : uncertain
-            ? "Amber"
+            ? "Weak"
             : demonstrated
-              ? "Green"
+              ? "Strong"
               : match.status === "partial"
-                ? "Amber"
-                : "Red",
+                ? "Good"
+                : "None",
         reason: match.reason,
         companyText: requirement.quote,
         sources: unique(match.libraryEvidence.map((ref) => ref.quote)),
@@ -146,9 +145,9 @@ export function cvEvaluationRows(
       currentText: [texts.get(claim.claimId) ?? "Saved claim text unavailable"],
       change: claim.status === "unsupported" ? "Fact" : "Uncertain",
       suggestion: `${claim.reason} Confirm supporting evidence or revise the wording, then reassess.`,
-      owner: "You",
+      contentLinks: cvContentLinks(content, [claim.claimId]),
       evidence: claim.evidence.length ? "Weak" : "None",
-      experience: claim.status === "unsupported" ? "Red" : "Amber",
+      experience: claim.status === "unsupported" ? "None" : "Weak",
       reason: claim.reason,
       sources: unique(claim.evidence.map((ref) => ref.quote)),
     });
@@ -163,9 +162,9 @@ export function cvEvaluationRows(
       currentText: [],
       change: "Gap",
       suggestion: gap,
-      owner: "You",
+      contentLinks: [],
       evidence: "None",
-      experience: "Red",
+      experience: "None",
       reason: "Identified during writing and excluded from the PDF.",
       sources: [],
     });

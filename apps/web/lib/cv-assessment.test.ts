@@ -82,9 +82,9 @@ it("shows evidence questions and actual unsupported wording, with no finalisatio
   expect(html).toContain("Owned a £10m budget");
   expect(html).not.toContain("claim: section:");
   expect(html).not.toContain("Finalise this CV");
-  expect(html).toContain("Your input needed");
+  expect(html).not.toContain("Your input needed");
   expect(html).toContain("<em>Owned a £10m budget</em>");
-  expect(html).toContain("Issue #");
+  expect(html).toContain("Item");
   expect(html).not.toContain("<blockquote");
   expect(html).not.toContain("<details");
 });

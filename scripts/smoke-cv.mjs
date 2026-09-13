@@ -147,12 +147,27 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
       "Experience",
     ]);
     assert.equal(await page.locator("table tbody tr").count(), 2);
+    const tableDimensions = await page
+      .getByRole("region", { name: "CV evaluation table", exact: true })
+      .evaluate((element) => ({
+        scroll: element.scrollWidth,
+        client: element.clientWidth,
+        table: element.querySelector("table").getBoundingClientRect().width,
+        main: element.closest("[data-cv-main]").getBoundingClientRect().width,
+        grid: getComputedStyle(element.closest("[data-cv-main]").parentElement)
+          .gridTemplateColumns,
+        viewport: innerWidth,
+        cells: [...element.querySelectorAll("thead th")].map((cell) => ({
+          label: cell.textContent,
+          width: cell.getBoundingClientRect().width,
+          scroll: cell.scrollWidth,
+          client: cell.clientWidth,
+        })),
+      }));
     assert.equal(
-      await page
-        .getByRole("region", { name: "CV evaluation table", exact: true })
-        .evaluate((element) => element.scrollWidth > element.clientWidth),
+      tableDimensions.scroll > tableDimensions.client,
       false,
-      "All evaluation columns should fit beside the description at desktop width",
+      `All evaluation columns should fit beside the description at desktop width: ${JSON.stringify(tableDimensions)}`,
     );
     assert.equal(
       await page.locator("table em").first().textContent(),

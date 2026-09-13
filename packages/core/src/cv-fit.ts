@@ -138,6 +138,7 @@ export async function buildFittedCv(
   onProgress?: (stage: "writing" | "fitting") => Promise<void>,
 ) {
   let feedback: CvFitFeedback | undefined;
+  let invalidSkillFormat = false;
   if (initial) {
     const content = materialiseCv(library, initial);
     const report = await renderCvPdfWithReport(content).catch((error) => {
@@ -174,6 +175,23 @@ export async function buildFittedCv(
       throw new Error(
         "The writer omitted employment or education. No incomplete CV was saved.",
       );
+    // Prose libraries and explicit skill lists have different authoring contracts.
+    // Repair a model representation mistake; never relax the evidence validator.
+    const skillCorrections = plan.sections.flatMap(section => {
+      const entry = library.entries.find(entry => entry.id === section.entryId);
+      if (entry?.kind !== "skill") return [];
+      if (!entry.skillItems && section.skillItems)
+        return [`${entry.id}: the source contains prose, not structured skillItems. Omit skillItems and write concise, supported skill labels in bullets. maxSkills is zero for this block.`];
+      if (entry.skillItems && !section.skillItems)
+        return [`${entry.id}: select exact labels from the source skillItems array. Do not replace them with prose bullets.`];
+      return [];
+    });
+    invalidSkillFormat = skillCorrections.length > 0;
+    if (invalidSkillFormat) {
+      feedback = { pageCount: feedback?.pageCount ?? CV_MAX_PAGES + 1, maxPages: CV_MAX_PAGES,
+        previousPlan: plan, corrections: skillCorrections };
+      continue;
+    }
     // Validate evidence before making any selection.
     materialiseCv(library, plan);
     await onProgress?.("fitting");
@@ -209,6 +227,7 @@ export async function buildFittedCv(
       corrections: cvBudgetViolations(selected.plan, budget),
     };
   }
+  if (invalidSkillFormat) throw new Error("The model repeatedly returned the wrong skill format. Your evidence is unchanged. Retry the build or choose another CV model.");
   throw new Error(
     "The builder could not fit the minimum employment and education content after three budgeted attempts. Reduce the selected evidence blocks or profile detail and try Fit to two pages again.",
   );

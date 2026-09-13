@@ -53,3 +53,22 @@ it('ranks structured skill labels including AI and R, and enforces their allocat
  expect(fitted.content.sections[0]!.skillItems).toHaveLength(budget.blocks[0]!.maxSkills);
  expect(fitted.content.sections[0]!.skillItems).toEqual(expect.arrayContaining(['AI','R']));
 });
+it('repairs a model using structured labels for a legacy prose skill block without relaxing source validation', async () => {
+ const source: CvLibrary = { name:'Example',contact:'',profile:'Analyst',entries:[{id:'legacy',kind:'skill',heading:'Data tools',details:'SQL and Python'}] };
+ const wrong: CvPlan = {summary:'Analyst',sections:[{entryId:'legacy',bullets:['SQL and Python'],skillItems:['SQL','Python']}],gaps:[]};
+ expect(createCvWritingBudget(source,'SQL').blocks[0]!.maxSkills).toBe(0);
+ expect(() => materialiseCv(source,wrong)).toThrow('without structured source evidence');
+ const write=vi.fn().mockResolvedValueOnce(wrong).mockResolvedValueOnce({summary:'Analyst',sections:[{entryId:'legacy',bullets:['SQL','Python']}],gaps:[]});
+ const fitted=await buildFittedCv(source,'SQL and Python',write);
+ expect(write).toHaveBeenCalledTimes(2);
+ expect(write.mock.calls[1]![0].layoutFeedback.corrections[0]).toContain('legacy: the source contains prose');
+ expect(fitted.sections[0]!.skillItems).toBeUndefined();
+ expect(fitted.sections[0]!.bullets).toEqual(['SQL','Python']);
+ expect((await renderCvPdfWithReport(fitted)).pageCount).toBeLessThanOrEqual(2);
+});
+it('bounds retries when the writer repeatedly ignores the legacy skill format', async () => {
+ const source: CvLibrary = { name:'Example',contact:'',profile:'Analyst',entries:[{id:'legacy',kind:'skill',heading:'Tools',details:'SQL'}] };
+ const write=vi.fn().mockResolvedValue({summary:'Analyst',sections:[{entryId:'legacy',bullets:['SQL'],skillItems:['SQL']}],gaps:[]});
+ await expect(buildFittedCv(source,'SQL',write)).rejects.toThrow('wrong skill format');
+ expect(write).toHaveBeenCalledTimes(3);
+});

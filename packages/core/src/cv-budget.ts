@@ -37,7 +37,7 @@ export function createCvWritingBudget(library: CvLibrary, target: string, scale 
       maxBullets: Math.max(1, Math.min(4, Math.floor(maxCharacters / 160))), maxBulletCharacters: Math.min(260, maxCharacters), maxSkills: 0 };
   });
   blocks.push(...education.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 10, maxBullets: 6, maxCharacters: Math.round(150 * scale), maxBulletCharacters: Math.round(150 * scale), maxSkills: 0 })));
-  blocks.push(...skills.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 1, maxBullets: 2, maxCharacters: Math.round(180 * scale), maxBulletCharacters: Math.round(90 * scale), maxSkills: Math.max(2, Math.round(5 * scale)) })));
+  blocks.push(...skills.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 1, maxBullets: 2, maxCharacters: Math.round(180 * scale), maxBulletCharacters: Math.round(90 * scale), maxSkills: entry.skillItems ? Math.max(2, Math.round(5 * scale)) : 0 })));
   return { summaryCharacters, totalCharacters, blocks };
 }
 

@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { z } from "zod";
-import { Pagination } from "@/components/Pagination";
-import { listCvDraftPage } from "@/lib/queries/cv";
+import { listCvDraftPages } from "@/lib/queries/cv";
 import { desc, eq, and, isNull, sql, ne, ilike, or } from "drizzle-orm";
 import { cvLibraries, jobs, companies } from "@christopher/db";
 import { db } from "@/lib/db";
@@ -11,7 +10,7 @@ import { Card } from "@/components/Card";
 import { SettingsForm } from "@/components/SettingsForm";
 import { ModelSelect } from "@/components/ModelSelect";
 import { requestCv, saveCvModel } from "@/app/actions/cv";
-import { CvSavedTable } from "@/components/CvSavedTable";
+import { CvManagement, CvPagination, CvSavedTable } from "@/components/CvSavedTable";
 import { buttonClass } from "@/components/Button";
 export const dynamic = "force-dynamic";
 export default async function CvPage({ searchParams }: { searchParams: Promise<{ job?: string; q?: string; page?: string; archivedPage?: string }> }) {
@@ -19,13 +18,13 @@ export default async function CvPage({ searchParams }: { searchParams: Promise<{
   const job = z.string().uuid().safeParse(requestedJob).success ? requestedJob : undefined;
   const q = (query ?? "").slice(0,200);
   const pattern = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
-  const [libraries, saved, archived, roles, settings] = await Promise.all([
+  const [libraries, pages, roles, settings] = await Promise.all([
     db().select({ version: cvLibraries.version }).from(cvLibraries).orderBy(desc(cvLibraries.version)).limit(1),
-    listCvDraftPage(false, page),
-    listCvDraftPage(true, archivedPage),
+    listCvDraftPages(page, archivedPage),
     db().select({ id: jobs.id, title: jobs.title, company: companies.name }).from(jobs).innerJoin(companies, eq(jobs.companyId, companies.id)).where(and(eq(jobs.inTable, true), isNull(jobs.archivedAt), ne(companies.status, "archived"), q ? or(ilike(jobs.title, pattern), ilike(companies.name, pattern)) : undefined, sql`not exists (select 1 from decisions d where d.job_id = ${jobs.id} and d.superseded = false and d.decision = 'skip')`)).orderBy(desc(jobs.firstSeenAt), jobs.id).limit(50),
     getSettings(),
   ]);
+  const { saved, archived } = pages;
   if (job && !roles.some(r => r.id === job)) {
     const extra = await db().select({ id: jobs.id, title: jobs.title, company: companies.name }).from(jobs).innerJoin(companies, eq(jobs.companyId, companies.id)).where(eq(jobs.id, job)); roles.unshift(...extra);
   }
@@ -45,7 +44,7 @@ export default async function CvPage({ searchParams }: { searchParams: Promise<{
     <Card title="Your evidence library"><p className="text-sm">Saved version: {libraries[0]?.version ?? "none"}. Review and edit your experience, skills and CV preferences in one place.</p><Link href="/cv/library" className="underline">Open evidence library</Link></Card>
     <section><h3 className="text-sm">Advanced model settings</h3><Card title="CV model"><SettingsForm action={saveCvModel}><label className="text-sm">Model<ModelSelect name="cvModel" value={settings.cvModel} className="mt-1 block w-full rounded border p-2" /></label><p className="text-xs text-slate-500">Configured separately from website extraction. Uses the worker’s ANTHROPIC_API_KEY and the monthly AI budget.</p></SettingsForm></Card></section>
     <p className="text-sm text-slate-500">Each company and role keeps one ready CV and one archived predecessor. A completed new version replaces the ready CV; the older archive is deleted. Saved application PDFs are always kept.</p>
-    <Card title="Saved CVs"><CvSavedTable rows={drafts} /><Pagination page={saved.page} total={saved.total} path="/cv" params={{ ...params, archivedPage: String(archived.page) }} label="Saved CV pages" /></Card>
-    <Card title="Archived CVs"><CvSavedTable rows={archivedDrafts} archived /><Pagination page={archived.page} total={archived.total} path="/cv" params={{ ...params, page: String(saved.page) }} pageParam="archivedPage" label="Archived CV pages" /></Card>
+    <CvManagement key={`${saved.page}:${archived.page}`} savedPage={saved.page} archivedPage={archived.page}><Card title="Saved CVs"><CvSavedTable key={`saved-${saved.page}`} rows={drafts} /><CvPagination page={saved.page} total={saved.total} path="/cv" params={{ ...params, archivedPage: String(archived.page) }} label="Saved CV pages" /></Card>
+    <Card title="Archived CVs"><CvSavedTable key={`archived-${archived.page}`} rows={archivedDrafts} archived /><CvPagination archived page={archived.page} total={archived.total} path="/cv" params={{ ...params, page: String(saved.page) }} pageParam="archivedPage" label="Archived CV pages" /></Card></CvManagement>
   </div>;
 }

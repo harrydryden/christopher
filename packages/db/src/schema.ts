@@ -5,6 +5,7 @@
 import type { CvLibrary, CvContent } from "@christopher/core";
 import type { CvAssessment, CvJobSource } from "@christopher/core/cv-assessment";
 import { sql } from "drizzle-orm";
+import { cvRoleKey } from "./cv-role-key";
 import {
   boolean,
   index,
@@ -419,7 +420,7 @@ export const cvDrafts = pgTable("cv_drafts", {
   /** One archived predecessor is retained per company and role. */
   archivedAt: ts("archived_at"),
   createdAt: tsNow("created_at"),
-});
+}, table => [index("cv_drafts_role_key_idx").on(cvRoleKey(table.companyName, table.jobTitle))]);
 
 /** Submitted PDF bytes and company/role snapshots survive deletion of their source CV. */
 export const applications = pgTable("applications", {

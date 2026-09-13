@@ -303,3 +303,28 @@ it("keeps the original scoring criteria when retention has deleted the parent", 
   expect(AiEngine.prototype.analyseCvJob).not.toHaveBeenCalled();
   expect(AiEngine.prototype.buildCv).toHaveBeenCalledWith(expect.objectContaining({ rubric, improvements: ["Clarify team leadership"] }), expect.anything());
 });
+
+it("stops before writing or assessment when the CV is deleted during analysis", async () => {
+  const { task, deps, draft } = await setup();
+  vi.spyOn(AiEngine.prototype, "analyseCvJob").mockImplementation(async description => {
+    await client.db.delete(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+    return rubricFixture(description);
+  });
+  const build = vi.spyOn(AiEngine.prototype, "buildCv");
+  const result = await handleGenerateCv(task, deps);
+  expect(result).toMatchObject({ skipped: true, reason: "deleted" });
+  expect(build).not.toHaveBeenCalled();
+  expect(AiEngine.prototype.assessCv).not.toHaveBeenCalled();
+  expect(await client.db.select().from(schema.cvDrafts)).toHaveLength(0);
+});
+
+it("rejects malformed task inputs before database writes or model calls", async () => {
+  const { task, deps, draft } = await setup();
+  const build = vi.spyOn(AiEngine.prototype, "buildCv");
+  for (const payload of [{ draftId: "bad-id" }, { draftId: draft.id, mode: "delete" }, { draftId: draft.id, sourcePlan: { unknown: true } }, { draftId: draft.id, improvements: [42] }]) {
+    await expect(handleGenerateCv({ ...task, payload }, deps)).rejects.toThrow(/Invalid CV/);
+  }
+  expect(build).not.toHaveBeenCalled();
+  expect(AiEngine.prototype.analyseCvJob).not.toHaveBeenCalled();
+  expect((await client.db.select().from(schema.cvDrafts))[0]!.status).toBe("queued");
+});

@@ -1,27 +1,66 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "./client";
 import { cvDrafts } from "./schema";
+import { cvRoleKey } from "./cv-role-key";
+import {
+  archiveRetention,
+  completionRetention,
+  restoreRetention,
+  type CvRetentionPlan,
+} from "./cv-retention";
 
 type Transaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type Draft = typeof cvDrafts.$inferSelect;
+type CvRole = Pick<Draft, "companyName" | "jobTitle">;
+type CompletionValues = Pick<
+  Partial<typeof cvDrafts.$inferInsert>,
+  "content" | "assessment" | "revision" | "buildStage" | "error"
+> & { status?: "ready" };
 
-/** Serialises short CV state changes, including builds finishing out of order. */
-export async function lockCvLifecycle(tx: Transaction) {
-  await tx.execute(sql`select pg_advisory_xact_lock(hashtext('cv:lifecycle'))`);
-}
-const normalise = (value: unknown) =>
-  sql`lower(btrim(regexp_replace(${value}, '[[:space:]]+', ' ', 'g')))`;
-const sameRole = (draft: Pick<Draft, "companyName" | "jobTitle">) =>
-  and(
-    sql`${normalise(cvDrafts.companyName)} = ${normalise(draft.companyName)}`,
-    sql`${normalise(cvDrafts.jobTitle)} = ${normalise(draft.jobTitle)}`,
+// The same immutable expression is shared by the index, lookup and lock identity.
+const roleKey = (
+  role:
+    | CvRole
+    | {
+        companyName: typeof cvDrafts.companyName;
+        jobTitle: typeof cvDrafts.jobTitle;
+      },
+) => cvRoleKey(role.companyName, role.jobTitle);
+const sameRole = (role: CvRole) => sql`${roleKey(cvDrafts)} = ${roleKey(role)}`;
+const metadata = {
+  id: cvDrafts.id,
+  companyName: cvDrafts.companyName,
+  jobTitle: cvDrafts.jobTitle,
+  status: cvDrafts.status,
+  archivedAt: cvDrafts.archivedAt,
+};
+const newest = [desc(cvDrafts.createdAt), desc(cvDrafts.id)];
+
+/** Unrelated roles can progress independently; the lock lasts only for the transaction. */
+async function lockLegacyLifecycle(tx: Transaction) {
+  // Compatible with an older worker's exclusive lock during a rolling deployment.
+  await tx.execute(
+    sql`select pg_advisory_xact_lock_shared(hashtext('cv:lifecycle'))`,
   );
+}
+export async function lockCvLifecycle(tx: Transaction, role: CvRole) {
+  await lockLegacyLifecycle(tx);
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtextextended(${roleKey(role)}, 0))`,
+  );
+}
 
-export async function nextCvRevision(
-  tx: Transaction,
-  role: Pick<Draft, "companyName" | "jobTitle">,
-) {
-  await lockCvLifecycle(tx);
+/** Lock before taking row locks, consistently with publication and bulk actions. */
+export async function lockCvDraft(tx: Transaction, id: string) {
+  const [row] = await tx
+    .select(metadata)
+    .from(cvDrafts)
+    .where(eq(cvDrafts.id, id));
+  if (row) await lockCvLifecycle(tx, row);
+}
+
+export async function nextCvRevision(tx: Transaction, role: CvRole) {
+  await lockCvLifecycle(tx, role);
   const [row] = await tx
     .select({
       revision: sql<number>`coalesce(max(${cvDrafts.revision}), 0)::int`,
@@ -31,74 +70,46 @@ export async function nextCvRevision(
   return (row?.revision ?? 0) + 1;
 }
 
-/** Keep the explicitly chosen current CV, and only its latest archived predecessor. */
-async function retain(
-  tx: Transaction,
-  role: Draft,
-  currentId?: string,
-  archiveId?: string,
-) {
-  const rows = await tx
-    .select()
-    .from(cvDrafts)
-    .where(sameRole(role))
-    .orderBy(desc(cvDrafts.createdAt), desc(cvDrafts.id));
-  const obsolete = rows.filter(
-    (row) =>
-      (row.archivedAt || row.status === "ready") &&
-      row.id !== currentId &&
-      row.id !== archiveId,
-  );
-  if (obsolete.length)
-    await tx.delete(cvDrafts).where(
-      inArray(
-        cvDrafts.id,
-        obsolete.map((row) => row.id),
-      ),
-    );
-  if (archiveId)
+async function applyRetention(tx: Transaction, plan: CvRetentionPlan) {
+  if (plan.deleteIds.length)
+    await tx.delete(cvDrafts).where(inArray(cvDrafts.id, plan.deleteIds));
+  // Preserve the time of an existing archive when an older build merely completes late.
+  if (plan.archiveId)
     await tx
       .update(cvDrafts)
       .set({ archivedAt: new Date() })
-      .where(eq(cvDrafts.id, archiveId));
-  if (currentId)
+      .where(and(eq(cvDrafts.id, plan.archiveId), isNull(cvDrafts.archivedAt)));
+  if (plan.currentId)
     await tx
       .update(cvDrafts)
       .set({ archivedAt: null })
-      .where(eq(cvDrafts.id, currentId));
+      .where(eq(cvDrafts.id, plan.currentId));
 }
 
-/** Called in the same fenced transaction that saves the finished content and assessment. */
+/** Publication and retention are atomic and run behind the worker's lease fence. */
 export async function completeCv(
   tx: Transaction,
   id: string,
-  values: Partial<typeof cvDrafts.$inferInsert>,
+  values: CompletionValues,
 ) {
-  await lockCvLifecycle(tx);
-  const [draft] = await tx.select().from(cvDrafts).where(eq(cvDrafts.id, id));
-  if (!draft) return false; // A deleted build must never recreate itself.
+  await lockCvDraft(tx, id);
+  const [draft] = await tx
+    .select(metadata)
+    .from(cvDrafts)
+    .where(eq(cvDrafts.id, id));
+  if (!draft) return false;
+  if (draft.status === "ready") return true; // Duplicate delivery must not change a user's archive choice.
   await tx
     .update(cvDrafts)
     .set({ ...values, status: "ready" })
     .where(eq(cvDrafts.id, id));
-  if (draft.archivedAt) return true; // Respect an explicit archive made during generation.
+  if (draft.archivedAt) return true;
   const rows = await tx
-    .select()
+    .select(metadata)
     .from(cvDrafts)
     .where(sameRole(draft))
-    .orderBy(desc(cvDrafts.createdAt), desc(cvDrafts.id));
-  const ready = rows.filter((row) => row.status === "ready" && !row.archivedAt);
-  const current = ready[0]!;
-  // A slow older build cannot displace a newer ready CV or its newer predecessor.
-  const predecessor = ready.find((row) => row.id !== current.id);
-  const archive =
-    current.id === id && predecessor
-      ? predecessor
-      : rows.find(
-          (row) =>
-            row.id !== current.id && (row.status === "ready" || row.archivedAt),
-        );
-  await retain(tx, draft, current.id, archive?.id);
+    .orderBy(...newest);
+  await applyRetention(tx, completionRetention(rows, id));
   return true;
 }
 
@@ -107,61 +118,50 @@ export async function actionCvs(
   ids: string[],
   action: "archive" | "restore" | "delete",
 ) {
+  if (!ids.length) return;
+  const selectedIds = new Set(ids);
   await database.transaction(async (tx) => {
-    await lockCvLifecycle(tx);
-    // Newest first makes multiple selections for the same role deterministic.
-    const selected = await tx
-      .select()
+    await lockLegacyLifecycle(tx);
+    // Lock all affected roles in a stable order, preventing crossed bulk requests deadlocking.
+    const roles = await tx
+      .selectDistinct({ key: roleKey(cvDrafts) })
       .from(cvDrafts)
-      .where(inArray(cvDrafts.id, ids))
-      .orderBy(desc(cvDrafts.createdAt), desc(cvDrafts.id));
+      .where(inArray(cvDrafts.id, [...selectedIds]));
+    for (const { key } of roles.sort((a, b) =>
+      a.key < b.key ? -1 : a.key > b.key ? 1 : 0,
+    )) {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`,
+      );
+    }
     if (action === "delete") {
-      await tx.delete(cvDrafts).where(inArray(cvDrafts.id, ids));
+      await tx.delete(cvDrafts).where(inArray(cvDrafts.id, [...selectedIds]));
       return;
     }
-    const handled = new Set<string>();
-    for (const target of selected) {
-      if (handled.has(target.id)) continue;
-      const [exists] = await tx
-        .select()
-        .from(cvDrafts)
-        .where(eq(cvDrafts.id, target.id));
-      if (!exists || (action === "archive") === Boolean(exists.archivedAt))
-        continue;
-      const rows = await tx
-        .select()
-        .from(cvDrafts)
-        .where(sameRole(exists))
-        .orderBy(desc(cvDrafts.createdAt), desc(cvDrafts.id));
-      rows.forEach((row) => handled.add(row.id));
-      const current = rows.find(
-        (row) =>
-          !row.archivedAt &&
-          row.status === "ready" &&
-          row.id !== exists.id &&
-          (action !== "archive" || !ids.includes(row.id)),
-      );
-      if (action === "archive") {
-        await retain(tx, exists, current?.id, exists.id);
-        // Older selected builds also become obsolete when the same role is archived in bulk.
-        const olderSelected = rows.filter(
-          (row) => ids.includes(row.id) && row.id !== exists.id,
-        );
-        if (olderSelected.length)
-          await tx.delete(cvDrafts).where(
-            inArray(
-              cvDrafts.id,
-              olderSelected.map((row) => row.id),
-            ),
-          );
-      } else {
-        await tx
-          .update(cvDrafts)
-          .set({ archivedAt: null })
-          .where(eq(cvDrafts.id, exists.id));
-        if (exists.status === "ready")
-          await retain(tx, exists, exists.id, current?.id);
-      }
+    if (!roles.length) return;
+    // One metadata query for the entire selection; never load content, evidence or assessments.
+    const rows = await tx
+      .select({ ...metadata, key: roleKey(cvDrafts) })
+      .from(cvDrafts)
+      .where(
+        inArray(
+          roleKey(cvDrafts),
+          roles.map((role) => role.key),
+        ),
+      )
+      .orderBy(...newest);
+    const groups = new Map<string, typeof rows>();
+    for (const row of rows) {
+      const group = groups.get(row.key);
+      if (group) group.push(row);
+      else groups.set(row.key, [row]);
+    }
+    for (const group of groups.values()) {
+      const plan =
+        action === "archive"
+          ? archiveRetention(group, selectedIds)
+          : restoreRetention(group, selectedIds);
+      if (plan) await applyRetention(tx, plan);
     }
   });
 }

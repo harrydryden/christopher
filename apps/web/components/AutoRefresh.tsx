@@ -1,29 +1,64 @@
 "use client";
 import { useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
-export function AutoRefresh({ cvId, initialVersion, message = "Waiting for the worker to generate your CV. Status updates automatically." }: { cvId?: string; initialVersion?: string; message?: string | null }) {
+export function AutoRefresh({
+  cvId,
+  initialVersion,
+  message = "Waiting for the worker to generate your CV. Status updates automatically.",
+}: {
+  cvId?: string;
+  initialVersion?: string;
+  message?: string | null;
+}) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   useEffect(() => {
-    let cancelled = false, version: string | undefined = initialVersion, timer: ReturnType<typeof setTimeout>;
-    const controller = new AbortController();
+    let cancelled = false,
+      version: string | undefined = initialVersion,
+      timer: ReturnType<typeof setTimeout>;
+    let controller: AbortController | undefined;
     async function poll() {
       if (cancelled) return;
       if (document.visibilityState === "visible") {
+        controller = new AbortController();
+        const timeout = setTimeout(() => controller?.abort(), 8000);
         try {
-          const response = await fetch(`/api/work-status${cvId ? `?cv=${cvId}` : ''}`, { cache: 'no-store', signal: controller.signal });
-          if (!response.ok) throw new Error('Status unavailable');
-          const result = await response.json() as { active: boolean; version: string };
+          const response = await fetch(
+            `/api/work-status${cvId ? `?cv=${cvId}` : ""}`,
+            { cache: "no-store", signal: controller.signal },
+          );
+          if (!response.ok) throw new Error("Status unavailable");
+          const result = (await response.json()) as {
+            active: boolean;
+            version: string;
+          };
           if (cancelled) return;
-          if (!result.active || version !== undefined && version !== result.version) startTransition(() => router.refresh());
+          if (
+            !result.active ||
+            (version !== undefined && version !== result.version)
+          )
+            startTransition(() => router.refresh());
           version = result.version;
-          if (!result.active) return;
-        } catch { /* A transient status failure must not repeatedly refresh the page. */ }
+          // Keep retrying until the refreshed page unmounts this component. A failed
+          // terminal refresh must not leave a finished build stuck on its progress screen.
+        } catch {
+          /* Retry transient failures without refreshing an unchanged page. */
+        } finally {
+          clearTimeout(timeout);
+        }
       }
       if (!cancelled) timer = setTimeout(poll, 10000);
     }
     void poll();
-    return () => { cancelled = true; clearTimeout(timer); controller.abort(); };
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      controller?.abort();
+    };
   }, [router, cvId, initialVersion]);
-  return message === null ? null : <p role="status" className="text-sm">{message}</p>;
+  return message === null ? null : (
+    <p role="status" className="text-sm">
+      {message}
+    </p>
+  );
 }

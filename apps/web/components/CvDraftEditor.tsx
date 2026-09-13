@@ -1,4 +1,5 @@
 "use client";
+import { CV_PROFILE_ID, cvSectionBlockId } from "@/lib/cv-content-links";
 import { useFormStatus } from "react-dom";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
@@ -194,6 +195,7 @@ export function CvDraftEditor({
             Profile
             <textarea
               form={formId}
+              id={CV_PROFILE_ID}
               name="summary"
               maxLength={CV_LIMITS.summaryCharacters}
               value={summary}
@@ -219,6 +221,7 @@ export function CvDraftEditor({
               )}
               <textarea
                 form={formId}
+                id={cvSectionBlockId(section.entryId)}
                 name={
                   section.skillItems ? `skills-${index}` : `section-${index}`
                 }

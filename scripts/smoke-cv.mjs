@@ -138,15 +138,37 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
     await page.getByRole("tab", { name: "Evaluation", exact: true }).click();
     await page.getByRole("table").waitFor();
     assert.deepEqual(await page.getByRole("columnheader").allTextContents(), [
-      "Issue #",
+      "Item",
       "Requirement",
       "Current text",
       "Change",
-      "Elaborate on change",
+      "Guidance",
       "Evidence",
       "Experience",
     ]);
     assert.equal(await page.locator("table tbody tr").count(), 2);
+    assert.equal(
+      await page.getByText("Your input needed", { exact: true }).count(),
+      0,
+    );
+    assert.equal(
+      await page
+        .locator("table tbody tr")
+        .first()
+        .locator("td")
+        .last()
+        .textContent(),
+      "Strong",
+    );
+    assert.equal(
+      await page
+        .locator("table tbody tr")
+        .last()
+        .locator("td")
+        .last()
+        .textContent(),
+      "Weak",
+    );
     const tableDimensions = await page
       .getByRole("region", { name: "CV evaluation table", exact: true })
       .evaluate((element) => ({
@@ -188,14 +210,35 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
       "2",
     );
     await page
-      .getByRole("button", { name: "Show evidence for issue 2", exact: true })
+      .getByRole("button", { name: "Show evidence for item 2", exact: true })
       .click();
     assert.equal(
       await page
-        .getByRole("button", { name: "Hide evidence for issue 2", exact: true })
+        .getByRole("button", { name: "Hide evidence for item 2", exact: true })
         .getAttribute("aria-expanded"),
       "true",
     );
+    await page
+      .getByRole("link", { name: "Edit Director · Example", exact: true })
+      .click();
+    assert.equal(
+      await page
+        .getByRole("tab", { name: "Content", exact: true })
+        .getAttribute("aria-selected"),
+      "true",
+    );
+    assert.equal(
+      await page.locator("textarea:focus").getAttribute("id"),
+      "cv-content-section-job",
+    );
+    assert.ok(page.url().endsWith("#cv-content-section-job"));
+    assert.equal(
+      await page
+        .getByRole("textbox", { name: "Profile", exact: true })
+        .inputValue(),
+      "Edited profile retained through panel changes.",
+    );
+    await page.getByRole("tab", { name: "Evaluation", exact: true }).click();
     await page.getByRole("button", { name: "All 2", exact: true }).click();
     await page
       .getByRole("button", { name: "Hide evaluation table", exact: true })
@@ -318,6 +361,14 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
     await page
       .getByRole("heading", { name: "Your CV is queued", exact: true })
       .waitFor();
+    await page.goto(`${baseUrl}/cv/${readyId}#cv-content-section-job`);
+    await page.locator("textarea#cv-content-section-job:focus").waitFor();
+    assert.equal(
+      await page
+        .getByRole("tab", { name: "Content", exact: true })
+        .getAttribute("aria-selected"),
+      "true",
+    );
     await page.goto(`${baseUrl}/cv/${busyId}`);
     await page
       .getByRole("heading", { name: "Write your CV", exact: true })

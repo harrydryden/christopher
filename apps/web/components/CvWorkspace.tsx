@@ -1,5 +1,11 @@
 "use client";
-import { createContext, useContext, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
 
 const tabs = [
   ["content", "Content"],
@@ -7,7 +13,42 @@ const tabs = [
   ["appearance", "Appearance and settings"],
 ] as const;
 type CvTab = (typeof tabs)[number][0];
-const TabContext = createContext<CvTab>("content");
+const TabContext = createContext<{
+  selected: CvTab;
+  openContent?: (id: string) => void;
+}>({ selected: "content" });
+
+export function CvContentBlockLink({
+  id = "cv-panel-content",
+  children,
+}: {
+  id?: string;
+  children: ReactNode;
+}) {
+  const { openContent } = useContext(TabContext);
+  return (
+    <a
+      href={`#${encodeURIComponent(id)}`}
+      onClick={(event) => {
+        if (
+          !openContent ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.shiftKey ||
+          event.altKey ||
+          event.button !== 0
+        )
+          return;
+        event.preventDefault();
+        window.history.pushState(null, "", `#${encodeURIComponent(id)}`);
+        openContent(id);
+      }}
+      className="block text-xs font-medium text-accent underline underline-offset-2"
+    >
+      {children}
+    </a>
+  );
+}
 
 /** Hidden panels remain mounted so edits, previews and review controls survive navigation. */
 export function CvWorkspacePanel({
@@ -17,7 +58,7 @@ export function CvWorkspacePanel({
   tab: CvTab;
   children: ReactNode;
 }) {
-  const selected = useContext(TabContext);
+  const { selected } = useContext(TabContext);
   return (
     <div
       role="tabpanel"
@@ -41,8 +82,39 @@ export function CvWorkspace({
 }) {
   const [open, setOpen] = useState(true);
   const [selected, setSelected] = useState<CvTab>("content");
+  const [focusRequest, setFocusRequest] = useState<{ id: string }>();
+  function openContent(id: string) {
+    setSelected("content");
+    setFocusRequest({ id });
+  }
+  useEffect(() => {
+    function followFragment() {
+      let id: string;
+      try {
+        id = decodeURIComponent(window.location.hash.slice(1));
+      } catch {
+        return;
+      }
+      if (id === "cv-panel-content" || id.startsWith("cv-content-"))
+        openContent(id);
+    }
+    followFragment();
+    window.addEventListener("hashchange", followFragment);
+    window.addEventListener("popstate", followFragment);
+    return () => {
+      window.removeEventListener("hashchange", followFragment);
+      window.removeEventListener("popstate", followFragment);
+    };
+  }, []);
+  useEffect(() => {
+    if (!focusRequest || selected !== "content") return;
+    const target = document.getElementById(focusRequest.id);
+    target?.focus({ preventScroll: true });
+    target?.scrollIntoView({ block: "center", behavior: "instant" });
+    setFocusRequest(undefined);
+  }, [focusRequest, selected]);
   return (
-    <TabContext.Provider value={selected}>
+    <TabContext.Provider value={{ selected, openContent }}>
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
           <div

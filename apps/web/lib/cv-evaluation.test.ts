@@ -51,14 +51,14 @@ function fixture(): CvAssessment {
 }
 describe("unified CV evaluation", () => {
   it.each([
-    ["demonstrated", "demonstrated", "None", "Strong", "Green", "—"],
-    ["partial", "partial", "Gap", "Good", "Amber", "You"],
-    ["missing", "demonstrated", "Improvement", "Strong", "Red", "System"],
-    ["unknown", "unknown", "Uncertain", "Weak", "Amber", "You"],
-    ["unknown", "demonstrated", "Improvement", "Strong", "Amber", "System"],
+    ["demonstrated", "demonstrated", "None", "Strong", "Strong"],
+    ["partial", "partial", "Gap", "Good", "Good"],
+    ["missing", "demonstrated", "Improvement", "Strong", "None"],
+    ["unknown", "unknown", "Uncertain", "Weak", "Weak"],
+    ["unknown", "demonstrated", "Improvement", "Strong", "Weak"],
   ] as const)(
     "maps %s CV / %s library coverage without inventing a score",
-    (status, libraryStatus, change, evidence, experience, owner) => {
+    (status, libraryStatus, change, evidence, experience) => {
       const assessment = fixture();
       Object.assign(assessment.review.matches[0]!, { status, libraryStatus });
       const before = JSON.stringify(assessment);
@@ -66,15 +66,14 @@ describe("unified CV evaluation", () => {
         change,
         evidence,
         experience,
-        owner,
       });
       expect(JSON.stringify(assessment)).toBe(before);
     },
   );
-  it("does not give green to uncertain or unsupported wording, even if the model calls it demonstrated", () => {
+  it("does not give Strong to uncertain or unsupported wording, even if the model calls it demonstrated", () => {
     for (const [status, change, experience] of [
-      ["unsupported", "Fact", "Red"],
-      ["uncertain", "Uncertain", "Amber"],
+      ["unsupported", "Fact", "None"],
+      ["uncertain", "Uncertain", "Weak"],
     ] as const) {
       const assessment = fixture();
       Object.assign(assessment.review.claims[0]!, {
@@ -88,7 +87,7 @@ describe("unified CV evaluation", () => {
         experience,
         currentText: [content.summary],
       });
-      expect(rows[0]!.suggestion).toContain("issue 2");
+      expect(rows[0]!.suggestion).toContain("item 2");
       expect(rows[1]!.suggestion).toContain("Confirm the scope.");
     }
   });
@@ -120,14 +119,13 @@ describe("unified CV evaluation", () => {
     assessment.review.claims = [];
     expect(cvEvaluationRows(assessment, content)[0]).toMatchObject({
       change: "Uncertain",
-      experience: "Amber",
-      owner: "System",
+      experience: "Weak",
     });
     assessment.review.matches = [];
     expect(cvEvaluationRows(assessment, content)[0]).toMatchObject({
       change: "Uncertain",
       evidence: "None",
-      experience: "Amber",
+      experience: "Weak",
     });
   });
   it("does not show library support without cited evidence", () => {

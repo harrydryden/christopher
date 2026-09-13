@@ -2,16 +2,16 @@ import Link from "next/link";
 import { z } from "zod";
 import { Pagination } from "@/components/Pagination";
 import { listCvDraftPage } from "@/lib/queries/cv";
-import { desc, eq, and, isNull, isNotNull, sql, ne, ilike, or } from "drizzle-orm";
-import { cvLibraries, cvDrafts, jobs, companies } from "@christopher/db";
+import { desc, eq, and, isNull, sql, ne, ilike, or } from "drizzle-orm";
+import { cvLibraries, jobs, companies } from "@christopher/db";
 import { db } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { PageHeader } from "@/components/PageHeader";
 import { Card } from "@/components/Card";
 import { SettingsForm } from "@/components/SettingsForm";
 import { ModelSelect } from "@/components/ModelSelect";
-import { requestCv, saveCvModel, setCvArchived } from "@/app/actions/cv";
-import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
+import { requestCv, saveCvModel } from "@/app/actions/cv";
+import { CvSavedTable } from "@/components/CvSavedTable";
 import { buttonClass } from "@/components/Button";
 export const dynamic = "force-dynamic";
 export default async function CvPage({ searchParams }: { searchParams: Promise<{ job?: string; q?: string; page?: string; archivedPage?: string }> }) {
@@ -31,7 +31,7 @@ export default async function CvPage({ searchParams }: { searchParams: Promise<{
   }
   const drafts = saved.rows, archivedDrafts = archived.rows;
   const params = { ...(q ? { q } : {}), ...(job ? { job } : {}) };
-  return <div className="max-w-4xl space-y-6">
+  return <div className="max-w-6xl space-y-6">
     <PageHeader title="CV builder" description="Tailor a CV to each role using your own skills, experience and interests." />
     <ol className="flex flex-wrap gap-4 text-sm text-slate-500"><li>1. Choose a role</li><li>2. Generate a draft</li><li>3. Assess and improve</li><li>4. Finalise and download</li></ol>
     <form method="get" className="flex flex-wrap items-end gap-2"><label className="grid gap-1 text-sm">Find a role or company<input name="q" defaultValue={q} maxLength={200} className="min-h-11 rounded border bg-transparent px-3"/></label><button type="submit" className={buttonClass("secondary", "sm")}>Search roles</button>{q && <a href="/cv" className="underline">Clear search</a>}</form>
@@ -44,16 +44,8 @@ export default async function CvPage({ searchParams }: { searchParams: Promise<{
     </SettingsForm></Card>
     <Card title="Your evidence library"><p className="text-sm">Saved version: {libraries[0]?.version ?? "none"}. Review and edit your experience, skills and CV preferences in one place.</p><Link href="/cv/library" className="underline">Open evidence library</Link></Card>
     <section><h3 className="text-sm">Advanced model settings</h3><Card title="CV model"><SettingsForm action={saveCvModel}><label className="text-sm">Model<ModelSelect name="cvModel" value={settings.cvModel} className="mt-1 block w-full rounded border p-2" /></label><p className="text-xs text-slate-500">Configured separately from website extraction. Uses the worker’s ANTHROPIC_API_KEY and the monthly AI budget.</p></SettingsForm></Card></section>
-    <Card title="Saved CVs"><ul className="space-y-2 text-sm">{drafts.map(d => <li key={d.id} className="flex flex-wrap items-center justify-between gap-2">
-      <span><Link className="underline" href={`/cv/${d.id}`}>{d.company} · {d.jobTitle}</Link> — {d.status}, revision {d.revision}</span>
-      <form action={setCvArchived.bind(null, d.id, true)}><ConfirmSubmitButton confirmMessage={`Archive the ${d.status} CV for ${d.company} · ${d.jobTitle}? It is hidden from this list but kept, and you can restore it.`}>Archive</ConfirmSubmitButton></form>
-    </li>)}</ul>{!drafts.length && <p className="text-sm text-slate-500">No CVs generated yet.</p>}<Pagination page={saved.page} total={saved.total} path="/cv" params={{ ...params, archivedPage: String(archived.page) }} label="Saved CV pages" /></Card>
-    {archivedDrafts.length > 0 && <Card title="Archived CVs"><section><h3 className="text-sm text-slate-500">{archivedDrafts.length} archived</h3>
-      <ul className="mt-2 space-y-2 text-sm">{archivedDrafts.map(d => <li key={d.id} className="flex flex-wrap items-center justify-between gap-2">
-        <span><Link className="underline" href={`/cv/${d.id}`}>{d.company} · {d.jobTitle}</Link> — {d.status}, revision {d.revision}</span>
-        <form action={setCvArchived.bind(null, d.id, false)}><button type="submit" className={buttonClass("secondary", "sm")}>Restore</button></form>
-      </li>)}</ul>
-      <p className="mt-2 text-xs text-slate-500">Archived CVs are kept, not deleted. They stay downloadable by link, and any application recorded against one is unaffected.</p>
-    <Pagination page={archived.page} total={archived.total} path="/cv" params={{ ...params, page: String(saved.page) }} pageParam="archivedPage" label="Archived CV pages" /></section></Card>}
+    <p className="text-sm text-slate-500">Each company and role keeps one ready CV and one archived predecessor. A completed new version replaces the ready CV; the older archive is deleted. Saved application PDFs are always kept.</p>
+    <Card title="Saved CVs"><CvSavedTable rows={drafts} /><Pagination page={saved.page} total={saved.total} path="/cv" params={{ ...params, archivedPage: String(archived.page) }} label="Saved CV pages" /></Card>
+    <Card title="Archived CVs"><CvSavedTable rows={archivedDrafts} archived /><Pagination page={archived.page} total={archived.total} path="/cv" params={{ ...params, page: String(saved.page) }} pageParam="archivedPage" label="Archived CV pages" /></Card>
   </div>;
 }

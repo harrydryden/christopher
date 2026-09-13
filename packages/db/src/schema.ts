@@ -416,16 +416,15 @@ export const cvDrafts = pgTable("cv_drafts", {
   error: text("error"),
   revision: integer("revision").notNull().default(0),
   parentId: uuid("parent_id"),
-  /** Hides the draft from the CV list without destroying it. Applications reference cv_drafts
-   *  with a non-null foreign key, so a CV that has been applied with cannot be deleted. */
+  /** One archived predecessor is retained per company and role. */
   archivedAt: ts("archived_at"),
   createdAt: tsNow("created_at"),
 });
 
-/** PDF bytes and CV identity are immutable after recording an application. */
+/** Submitted PDF bytes and company/role snapshots survive deletion of their source CV. */
 export const applications = pgTable("applications", {
   id: uuid("id").primaryKey().defaultRandom(),
-  cvId: uuid("cv_id").notNull().references(() => cvDrafts.id),
+  cvId: uuid("cv_id").references(() => cvDrafts.id, { onDelete: "set null" }),
   jobTitle: text("job_title").notNull(),
   companyName: text("company_name").notNull(),
   appliedOn: text("applied_on").notNull(),

@@ -656,3 +656,11 @@ Each job has up to 20 individually editable responsibilities and outcomes, with 
 
 ### Evidence block lifecycle
 Each evidence block has Draft, Active or Inactive status. Existing status-less records retain their prior Active behaviour; newly created blocks start Draft. Only Active blocks are sent to CV generation or role qualification, and output validation rejects references to excluded blocks. A library with no active evidence cannot queue a CV. Archive/removal retains the record as Inactive, including omissions during import; selecting Draft or Active restores it. Historical CV snapshots and submitted PDFs remain unchanged.
+
+### Saved CV retention and table actions
+
+Saved and archived CVs are paged tables with company, job role, date/version and actions. Selection applies to the current page (up to 50 CVs); Archive, Restore and Delete work on individual rows or the selection. Delete asks for confirmation in the interface.
+
+For each company and role, matching case-insensitively and ignoring repeated whitespace, keep at most one current ready CV and one archived predecessor. A queued or failed replacement leaves the existing ready CV available. Successful generation, fitting and assessment publish through the shared database lifecycle transaction: the current CV becomes the archive and the previous archive is deleted. Out-of-order completion cannot replace a newer ready CV. Restoring a ready archive swaps it with the current CV; manually archiving replaces the previous archive. Deleting the current CV does not automatically restore another.
+
+CV lifecycle changes and version allocation share a transaction lock. Both fresh builds and edits allocate increasing versions from the retained role history. Queued revisions carry their scoring rubric and improvement context so parent deletion cannot change their assessment criteria. Deleted builds cannot recreate their draft. Application records keep immutable submitted PDFs and company/role snapshots; deleting a CV clears only their optional source link. Migration 0017 applies retention to existing duplicates while preserving the user's current choice and most recently archived CV.

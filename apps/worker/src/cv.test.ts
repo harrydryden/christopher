@@ -278,3 +278,28 @@ it("automatically fits an oversized saved draft before assessment, retaining its
   expect(saved.content!.theme).toEqual(content.theme);
   expect(build).toHaveBeenCalledOnce();
 });
+
+it("publishes through rolling retention only after fitting and assessment succeed", async () => {
+  vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations leader", sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] });
+  const { task, deps, draft } = await setup();
+  const [archive, previous] = await client.db.insert(schema.cvDrafts).values([
+    { ...draft, id: undefined, status: "ready", archivedAt: new Date(2026, 0, 1), createdAt: new Date(2026, 0, 1) },
+    { ...draft, id: undefined, status: "ready", createdAt: new Date(2026, 0, 2) },
+  ]).returning();
+  await handleGenerateCv(task, deps);
+  const rows = await client.db.select().from(schema.cvDrafts);
+  expect(rows.find(row => row.id === archive!.id)).toBeUndefined();
+  expect(rows.find(row => row.id === previous!.id)!.archivedAt).not.toBeNull();
+  expect(rows.find(row => row.id === draft.id)).toMatchObject({ status: "ready", archivedAt: null });
+  expect(rows.find(row => row.id === draft.id)!.assessment).not.toBeNull();
+});
+
+it("keeps the original scoring criteria when retention has deleted the parent", async () => {
+  vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations leader", sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] });
+  const { task, deps } = await setup();
+  const rubric = rubricFixture("Lead a team");
+  task.payload = { ...task.payload, rubric, mode: "improve", improvements: ["Clarify team leadership"] };
+  await handleGenerateCv(task, deps);
+  expect(AiEngine.prototype.analyseCvJob).not.toHaveBeenCalled();
+  expect(AiEngine.prototype.buildCv).toHaveBeenCalledWith(expect.objectContaining({ rubric, improvements: ["Clarify team leadership"] }), expect.anything());
+});

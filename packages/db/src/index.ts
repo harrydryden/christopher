@@ -15,3 +15,5 @@ export { workloadMetrics } from "./scaling";
 export { roleStatusSql } from "./role-workflow";
 
 export { scanRunSummary } from "./scan-summary";
+
+export { actionCvs, completeCv, lockCvLifecycle, nextCvRevision } from "./cv-lifecycle";

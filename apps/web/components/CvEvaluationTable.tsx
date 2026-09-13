@@ -73,13 +73,13 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
               Current CV wording is italicised.
             </caption>
             <colgroup>
-              <col className="w-[5%]" />
-              <col className="w-[18%]" />
-              <col className="w-[20%]" />
+              <col className="w-[6%]" />
+              <col className="w-[16%]" />
+              <col className="w-[19%]" />
+              <col className="w-[12%]" />
+              <col className="w-[25%]" />
               <col className="w-[11%]" />
-              <col className="w-[26%]" />
-              <col className="w-[10%]" />
-              <col className="w-[10%]" />
+              <col className="w-[11%]" />
             </colgroup>
             <thead className="sticky top-0 z-10 bg-slate-100 text-xs text-slate-600">
               <tr>
@@ -131,7 +131,7 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
                   </td>
                   <td className="px-2 py-4">
                     <span
-                      className={`inline-flex items-center justify-center rounded-md border px-2 py-1 text-center text-xs font-medium ${row.change === "Fact" ? colours.Red : row.change === "Uncertain" ? colours.Amber : "border-slate-200 bg-white text-slate-700"}`}
+                      className={`inline-flex items-center justify-center rounded-md border px-1.5 py-1 text-center text-[11px] font-medium ${row.change === "Fact" ? colours.Red : row.change === "Uncertain" ? colours.Amber : "border-slate-200 bg-white text-slate-700"}`}
                     >
                       {row.change}
                     </span>

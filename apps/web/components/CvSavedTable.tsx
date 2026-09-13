@@ -1,36 +1,48 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useTransition } from "react";
-import { manageCvs } from "@/app/actions/cv";
+import {
+  createContext,
+  useContext,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import type { ActionResult } from "@/lib/validation";
+import { Pagination } from "./Pagination";
+import { isCvPage, type CvPages, type CvRow } from "@/lib/cv-table-data";
 import { Button } from "./Button";
 
-type Row = {
-  id: string;
-  company: string;
-  jobTitle: string;
-  status: string;
-  revision: number;
-  createdAt: Date;
-};
+type Operation = "archive" | "restore" | "delete";
+const ManagementContext = createContext<{
+  pending: boolean;
+  pages?: CvPages;
+  run: (
+    operation: Operation,
+    ids: string[],
+    done: (result: ActionResult) => void,
+  ) => void;
+} | null>(null);
 
-export function CvSavedTable({
-  rows,
-  archived = false,
+/** Both tables receive the committed server snapshot through one bounded JSON request. */
+export function CvManagement({
+  children,
+  savedPage,
+  archivedPage,
 }: {
-  rows: Row[];
-  archived?: boolean;
+  children: ReactNode;
+  savedPage: number;
+  archivedPage: number;
 }) {
-  const [selected, setSelected] = useState<string[]>([]);
-  const [error, setError] = useState("");
-  const [pending, startTransition] = useTransition();
-  const selectedIds = selected.filter((id) =>
-    rows.some((row) => row.id === id),
-  );
-  const all = rows.length > 0 && selectedIds.length === rows.length;
-  const action = archived ? "restore" : "archive";
-  const label = archived ? "Restore" : "Archive";
-  const run = (operation: "archive" | "restore" | "delete", ids: string[]) => {
+  const [pending, setPending] = useState(false);
+  const [pages, setPages] = useState<CvPages>();
+  const inFlight = useRef(false);
+  function run(
+    operation: Operation,
+    ids: string[],
+    done: (result: ActionResult) => void,
+  ) {
+    if (inFlight.current || !ids.length) return;
     if (
       operation === "delete" &&
       !confirm(
@@ -38,18 +50,115 @@ export function CvSavedTable({
       )
     )
       return;
-    setError("");
-    startTransition(async () => {
-      const form = new FormData();
-      ids.forEach((id) => form.append("cvId", id));
-      form.set("action", operation);
+    inFlight.current = true;
+    setPending(true);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    void (async () => {
       try {
-        const result = await manageCvs({ ok: true }, form);
-        if (result.ok) setSelected([]);
-        else setError(result.error);
+        const response = await fetch("/api/cv/manage", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            action: operation,
+            ids,
+            savedPage,
+            archivedPage,
+          }),
+          signal: controller.signal,
+        });
+        const result = (await response.json()) as {
+          ok?: boolean;
+          pages?: { saved?: unknown; archived?: unknown };
+          error?: unknown;
+        };
+        const saved = result.pages?.saved,
+          archived = result.pages?.archived;
+        if (
+          response.ok &&
+          result.ok === true &&
+          isCvPage(saved) &&
+          isCvPage(archived)
+        ) {
+          setPages({ saved, archived });
+          done({ ok: true });
+        } else
+          done({
+            ok: false,
+            error:
+              typeof result.error === "string"
+                ? result.error
+                : "Could not update the selected CVs.",
+          });
       } catch {
-        setError("Could not update these CVs. Please try again.");
+        done({
+          ok: false,
+          error:
+            "Could not confirm the update. Reload the CV list before trying again.",
+        });
+      } finally {
+        clearTimeout(timeout);
+        inFlight.current = false;
+        setPending(false);
       }
+    })();
+  }
+  return (
+    <ManagementContext.Provider value={{ pending, pages, run }}>
+      {children}
+    </ManagementContext.Provider>
+  );
+}
+
+export function CvPagination({
+  archived = false,
+  ...props
+}: Parameters<typeof Pagination>[0] & { archived?: boolean }) {
+  const management = useContext(ManagementContext);
+  const current = management?.pages?.[archived ? "archived" : "saved"];
+  const other = management?.pages?.[archived ? "saved" : "archived"];
+  return (
+    <Pagination
+      {...props}
+      page={current?.page ?? props.page}
+      total={current?.total ?? props.total}
+      params={{
+        ...props.params,
+        [archived ? "page" : "archivedPage"]: String(
+          other?.page ??
+            props.params?.[archived ? "page" : "archivedPage"] ??
+            1,
+        ),
+      }}
+    />
+  );
+}
+
+export function CvSavedTable({
+  rows: initialRows,
+  archived = false,
+}: {
+  rows: CvRow[];
+  archived?: boolean;
+}) {
+  const [selected, setSelected] = useState<string[]>([]);
+  const [error, setError] = useState("");
+  const management = useContext(ManagementContext);
+  if (!management) throw new Error("CV tables must be inside CvManagement");
+  const { pending } = management;
+  const rows =
+    management.pages?.[archived ? "archived" : "saved"].rows ?? initialRows;
+  const visibleIds = new Set(rows.map((row) => row.id));
+  const selectedIds = selected.filter((id) => visibleIds.has(id));
+  const selectedSet = new Set(selectedIds);
+  const all = rows.length > 0 && selectedIds.length === rows.length;
+  const action = archived ? "restore" : "archive";
+  const label = archived ? "Restore" : "Archive";
+  const run = (operation: Operation, ids: string[]) => {
+    setError("");
+    management.run(operation, ids, (result) => {
+      if (result.ok) setSelected([]);
+      else setError(result.error);
     });
   };
   if (!rows.length)
@@ -131,25 +240,32 @@ export function CvSavedTable({
             {rows.map((row) => (
               <tr
                 key={row.id}
-                className={selectedIds.includes(row.id) ? "bg-slate-50" : ""}
+                className={selectedSet.has(row.id) ? "bg-slate-50" : ""}
               >
                 <td className="p-3">
                   <input
                     type="checkbox"
                     aria-label={`Select ${row.company} · ${row.jobTitle} · version ${row.revision}`}
-                    checked={selectedIds.includes(row.id)}
+                    checked={selectedSet.has(row.id)}
                     onChange={() =>
-                      setSelected(
-                        selectedIds.includes(row.id)
-                          ? selectedIds.filter((id) => id !== row.id)
-                          : [...selectedIds, row.id],
-                      )
+                      setSelected((previous) => {
+                        const visible = previous.filter((id) =>
+                          visibleIds.has(id),
+                        );
+                        return visible.includes(row.id)
+                          ? visible.filter((id) => id !== row.id)
+                          : [...visible, row.id];
+                      })
                     }
                   />
                 </td>
                 <td className="p-3 align-top font-medium">{row.company}</td>
                 <td className="p-3 align-top">
-                  <Link className="underline" href={`/cv/${row.id}`}>
+                  <Link
+                    prefetch={false}
+                    className="underline"
+                    href={`/cv/${row.id}`}
+                  >
                     {row.jobTitle}
                   </Link>
                   <span className="mt-1 block text-xs capitalize text-slate-500">

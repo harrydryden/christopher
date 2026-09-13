@@ -1,10 +1,11 @@
 "use server";
+import { CvSelectionSchema } from "@/lib/cv-management-input";
 import { cvImprovementOwner } from "@christopher/core/cv-assessment";
 import { assertCvFinalisable } from "@christopher/core/cv-review";
 import { renderCvPdf } from "@/lib/cv-pdf";
 import { z } from "zod";
 import { desc, eq, sql } from "drizzle-orm";
-import { actionCvs, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, enqueueTask } from "@christopher/db";
+import { actionCvs, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, enqueueTask } from "@christopher/db";
 import { DEFAULT_CV_THEME,
   createCvWritingBudget, CvLibrarySchema, consolidateExperience, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel } from "@christopher/core";
 import { requireSession } from "@/lib/auth";
@@ -54,21 +55,24 @@ export async function saveCvModel(_prev: ActionResult, form: FormData): Promise<
 export async function setCvArchived(cvId: string, archived: boolean): Promise<void> {
   await requireSession();
   const id = zUuid().parse(cvId);
-  await actionCvs(db(), [id], archived ? "archive" : "restore");
-  revalidatePath("/cv", "layout");
+  await actionCvs(db(), [id], z.boolean().parse(archived) ? "archive" : "restore");
+  revalidatePath("/cv");
   revalidatePath("/applications");
 }
 
 export async function manageCvs(_prev: ActionResult, form: FormData): Promise<ActionResult> {
   await requireSession();
+  const parsed = CvSelectionSchema
+    .safeParse({ ids: form.getAll("cvId"), action: form.get("action") });
+  if (!parsed.success) return fail("Select between 1 and 50 CVs and choose Archive, Restore or Delete.");
   try {
-    const ids = z.array(zUuid()).min(1, "Select at least one CV.").max(50).parse(form.getAll("cvId"));
-    const action = z.enum(["archive", "restore", "delete"]).parse(form.get("action"));
-    await actionCvs(db(), [...new Set(ids)], action);
+    await actionCvs(db(), [...new Set(parsed.data.ids)], parsed.data.action);
   } catch (error) {
-    return fail(error instanceof Error ? error.message : "Could not update the selected CVs.");
+    // Do not log SQL parameters, CV contents or user evidence from database exceptions.
+    console.error(JSON.stringify({ event: "cv_management_failed", action: parsed.data.action, count: parsed.data.ids.length, errorType: error instanceof Error ? error.name.slice(0, 64) : "unknown" }));
+    return fail("Could not update the selected CVs. Please try again.");
   }
-  revalidatePath("/cv", "layout");
+  revalidatePath("/cv");
   revalidatePath("/applications");
   return ok();
 }
@@ -220,6 +224,8 @@ export async function saveCvDraft(
     } = draft;
     savedId = await db().transaction(async (tx) => {
       const revision = await nextCvRevision(tx, draft);
+      const [source] = await tx.select({ id: cvDrafts.id }).from(cvDrafts).where(eq(cvDrafts.id, id));
+      if (!source) throw new Error("This CV was deleted. Open the latest saved CV before editing.");
       if (fit) {
         const [latest] =
           intent === "improve"
@@ -369,6 +375,7 @@ export async function assessCvDraft(
   try {
     zUuid().parse(id);
     await db().transaction(async (tx) => {
+      await lockCvDraft(tx, id);
       const [draft] = await tx
         .select()
         .from(cvDrafts)

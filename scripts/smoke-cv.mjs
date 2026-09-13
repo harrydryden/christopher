@@ -370,6 +370,12 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
         .getAttribute("aria-selected"),
       "true",
     );
+    let statusAttempts = 0;
+    await page.route(`**/api/work-status?cv=${busyId}`, (route) => {
+      if (statusAttempts++ === 0)
+        return route.fulfill({ status: 503, body: "Temporary status failure" });
+      return route.continue();
+    });
     await page.goto(`${baseUrl}/cv/${busyId}`);
     await page
       .getByRole("heading", { name: "Write your CV", exact: true })
@@ -433,45 +439,48 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
     await savedTable
       .getByRole("checkbox", { name: "Select all saved CVs on this page" })
       .uncheck();
-    for (let n = 1; n <= 2; n++)
-      await savedTable
-        .getByRole("checkbox", {
-          name: `Select CV Table Check · Table role ${n} · version 1`,
-        })
-        .check();
-    await page
-      .getByRole("button", { name: "Archive selected", exact: true })
-      .click();
-    const archivedTable = page.getByRole("table", {
-      name: "Archived CVs",
-      exact: true,
-    });
-    await archivedTable
-      .getByRole("link", { name: "Table role 2", exact: true })
-      .waitFor();
-    assert.equal(
-      (
-        await pool.query(
-          "select count(*)::int n from cv_drafts where id = any($1::uuid[]) and archived_at is not null",
-          [tableIds],
-        )
-      ).rows[0].n,
-      2,
-    );
-    await archivedTable
-      .getByRole("checkbox", { name: "Select all archived CVs on this page" })
-      .check();
-    await page
-      .getByRole("button", { name: "Restore selected", exact: true })
-      .click();
-    await savedTable
-      .getByRole("link", { name: "Table role 2", exact: true })
-      .waitFor()
-      .catch(async (error) => {
-        throw new Error(
-          `${error.message}\nTable state: ${await page.locator("main").innerText()}\nRows: ${JSON.stringify((await pool.query("select id,status,archived_at from cv_drafts where id = any($1::uuid[])", [tableIds])).rows)}`,
-        );
+    // Repeated cross-table actions guard against stale or unfinished route transitions.
+    for (let round = 0; round < 3; round++) {
+      for (let n = 1; n <= 2; n++)
+        await savedTable
+          .getByRole("checkbox", {
+            name: `Select CV Table Check · Table role ${n} · version 1`,
+          })
+          .check();
+      await page
+        .getByRole("button", { name: "Archive selected", exact: true })
+        .click();
+      const archivedTable = page.getByRole("table", {
+        name: "Archived CVs",
+        exact: true,
       });
+      await archivedTable
+        .getByRole("link", { name: "Table role 2", exact: true })
+        .waitFor();
+      assert.equal(
+        (
+          await pool.query(
+            "select count(*)::int n from cv_drafts where id = any($1::uuid[]) and archived_at is not null",
+            [tableIds],
+          )
+        ).rows[0].n,
+        2,
+      );
+      await archivedTable
+        .getByRole("checkbox", { name: "Select all archived CVs on this page" })
+        .check();
+      await page
+        .getByRole("button", { name: "Restore selected", exact: true })
+        .click();
+      await savedTable
+        .getByRole("link", { name: "Table role 2", exact: true })
+        .waitFor()
+        .catch(async (error) => {
+          throw new Error(
+            `${error.message}\nTable state: ${await page.locator("main").innerText()}\nRows: ${JSON.stringify((await pool.query("select id,status,archived_at from cv_drafts where id = any($1::uuid[])", [tableIds])).rows)}`,
+          );
+        });
+    }
     for (let n = 1; n <= 2; n++)
       await savedTable
         .getByRole("checkbox", {
@@ -493,7 +502,11 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
       path: "tmp/cv-review-tabs/saved-cvs-mobile.png",
       fullPage: true,
     });
-    page.once("dialog", (dialog) => dialog.dismiss());
+    const cancelledDeletion = new Promise((resolve, reject) =>
+      page.once("dialog", (dialog) => {
+        dialog.dismiss().then(resolve, reject);
+      }),
+    );
     await page
       .getByRole("button", { name: "Delete selected", exact: true })
       .first()
@@ -507,14 +520,25 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
       ).rows[0].n,
       2,
     );
-    page.once("dialog", (dialog) => dialog.accept());
+    await cancelledDeletion;
+    const confirmedDeletion = new Promise((resolve, reject) =>
+      page.once("dialog", (dialog) => {
+        dialog.accept().then(resolve, reject);
+      }),
+    );
     await page
       .getByRole("button", { name: "Delete selected", exact: true })
       .first()
       .click();
+    await confirmedDeletion;
     await savedTable
       .getByRole("link", { name: "Table role 2", exact: true })
-      .waitFor({ state: "detached" });
+      .waitFor({ state: "detached" })
+      .catch(async (error) => {
+        throw new Error(
+          `${error.message}\nDelete UI: ${await page.locator("main").innerText()}\nErrors: ${JSON.stringify(errors)}\nRows: ${JSON.stringify((await pool.query("select id,status,archived_at from cv_drafts where id = any($1::uuid[])", [tableIds])).rows)}`,
+        );
+      });
     assert.equal(
       (
         await pool.query(

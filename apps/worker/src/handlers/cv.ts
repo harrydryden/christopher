@@ -27,10 +27,24 @@ import {
 import { withResourceLease } from "../lease";
 import { reserveAi } from "../budget";
 import { aiSpendThisMonth, type WorkerDeps } from "../context";
+import { log } from "../log";
+
+class CvDeletedError extends Error {}
+type BuildUpdate = Partial<Pick<typeof schema.cvDrafts.$inferInsert,
+  "status" | "content" | "assessment" | "revision" | "buildStage" | "error" | "finalisedAt">>;
 
 /** All generation and review modes use the same immutable input snapshot and lease. */
 export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
-  const { draftId, sourcePlan, mode, rubric: sourceRubric, improvements: sourceImprovements } = task.payload as {
+  const payload = task.payload;
+  if (!payload || typeof payload !== "object" || typeof payload.draftId !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(payload.draftId) ||
+      (payload.mode !== undefined && payload.mode !== "assess" && payload.mode !== "improve") ||
+      (payload.improvements !== undefined && (!Array.isArray(payload.improvements) || !payload.improvements.every(value => typeof value === "string")))) {
+    throw new Error("Invalid CV generation task.");
+  }
+  if (payload.sourcePlan !== undefined && !CvPlanSchema.safeParse(payload.sourcePlan).success)
+    throw new Error("Invalid CV source plan.");
+  const { draftId, sourcePlan, mode, rubric: sourceRubric, improvements: sourceImprovements } = payload as {
     draftId: string;
     sourcePlan?: unknown;
     rubric?: Parameters<typeof validateCvRubric>[1];
@@ -38,23 +52,24 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
     mode?: "assess" | "improve";
   };
   return withResourceLease(deps, `cv:${draftId}`, async (locked) => {
-    const save = async (values: Partial<typeof schema.cvDrafts.$inferInsert>) =>
-      deps.db.transaction(async (tx) => {
+    const save = async (values: BuildUpdate) => {
+      const exists = await deps.db.transaction(async (tx) => {
         await locked.assertOwnership?.(tx as unknown as Db);
-        if (values.status === "ready") return completeCv(tx, draftId, values);
-        await tx
-          .update(schema.cvDrafts)
-          .set(values)
-          .where(eq(schema.cvDrafts.id, draftId));
+        if (values.status === "ready") return completeCv(tx, draftId, { ...values, status: "ready" });
+        const updated = await tx.update(schema.cvDrafts).set(values)
+          .where(eq(schema.cvDrafts.id, draftId)).returning({ id: schema.cvDrafts.id });
+        return updated.length > 0;
       });
+      if (!exists) throw new CvDeletedError();
+    };
     const [draft] = await deps.db
       .select()
       .from(schema.cvDrafts)
       .where(eq(schema.cvDrafts.id, draftId));
     if (!draft || draft.status === "ready") return { skipped: true };
-    await save({ status: "generating", error: null, finalisedAt: null });
     let phase = "preparing evidence";
     try {
+      await save({ status: "generating", error: null, finalisedAt: null });
       if (!deps.env.anthropicApiKey)
         throw new Error(
           "Add ANTHROPIC_API_KEY to the worker to generate a CV.",
@@ -212,8 +227,17 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
       });
       return { draftId, ready: true };
     } catch (error) {
-      const message = `${phase}: ${error instanceof Error ? error.message : "CV generation failed"}`;
-      await save({ status: "failed", error: message.slice(0, 1000) });
+      if (error instanceof CvDeletedError) return { draftId, skipped: true, reason: "deleted" };
+      const detail = error instanceof Error && !error.message.startsWith("Failed query:")
+        ? error.message : "Could not complete this CV. Please retry.";
+      const message = `${phase}: ${detail}`;
+      log.warn("CV generation failed", { draftId, phase });
+      try {
+        await save({ status: "failed", error: message.slice(0, 1000), buildStage: null });
+      } catch (saveError) {
+        if (saveError instanceof CvDeletedError) return { draftId, skipped: true, reason: "deleted" };
+        throw saveError;
+      }
       return { draftId, failed: true, error: message };
     }
   });

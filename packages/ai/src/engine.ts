@@ -224,8 +224,8 @@ export class AiEngine {
         user: JSON.stringify({ ...batchInput, ...(corrections ? { corrections } : {}) }),
         schema,
         effort: "high",
-        maxTokens: 12000,
-        timeoutMs: 180_000,
+        maxTokens: 16000,
+        timeoutMs: 240_000,
       }, ref);
       let batch = await runBatch();
       if (!batch) return null;

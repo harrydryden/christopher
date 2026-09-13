@@ -239,3 +239,42 @@ it("does not author a CV against a hallucinated requirement", async () => {
   expect(saved!.error).toContain("not quoted");
   expect(saved!.assessment).toBeNull();
 });
+
+it("automatically fits an oversized saved draft before assessment, retaining its edited appearance and reporting stages", async () => {
+  const { materialiseCv, DEFAULT_CV_THEME } = await import("@christopher/core/cv");
+  const { renderCvPdfWithReport } = await import("@christopher/core/cv-pdf");
+  const { task, deps, draft } = await setup();
+  const entries = Array.from({ length: 8 }, (_, i) => ({ ...library.entries[0]!, id: `role-${i}`, heading: `Director ${i}` }));
+  const snapshot = { ...library, entries };
+  const long = { summary: "Operations leader", sections: entries.map(entry => ({ entryId: entry.id, bullets: Array(6).fill("Managed operational planning and reporting. ".repeat(14)) })), gaps: [] };
+  const content = materialiseCv(snapshot, long);
+  content.theme = { ...DEFAULT_CV_THEME, primary: "#285447" };
+  expect((await renderCvPdfWithReport(content)).pageCount).toBeGreaterThan(2);
+  await client.db.update(schema.cvDrafts).set({ librarySnapshot: snapshot, content }).where(eq(schema.cvDrafts.id, draft.id));
+  task.payload = { draftId: draft.id, mode: "assess" };
+  const read = async () => (await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id)))[0]!;
+  vi.mocked(AiEngine.prototype.analyseCvJob).mockImplementation(async description => {
+    expect((await read()).buildStage).toBe("analysing");
+    return rubricFixture(description);
+  });
+  const build = vi.spyOn(AiEngine.prototype, "buildCv").mockImplementation(async input => {
+    expect((await read()).buildStage).toBe("writing");
+    expect(input.library.theme).toEqual(content.theme);
+    expect(input.layoutFeedback?.previousPlan.summary).toBe(long.summary);
+    return { ...long, sections: entries.map(entry => ({ entryId: entry.id, bullets: ["Led a team"] })) };
+  });
+  vi.mocked(AiEngine.prototype.assessCv).mockImplementation(async input => {
+    const saved = await read();
+    expect(saved.buildStage).toBe("assessing");
+    expect((await renderCvPdfWithReport(saved.content!)).pageCount).toBeLessThanOrEqual(2);
+    expect(input.cv.some(item => item.text.includes("Managed operational"))).toBe(false);
+    return reviewFixture(input);
+  });
+  await handleGenerateCv(task, deps);
+  const saved = await read();
+  expect(saved.status).toBe("ready");
+  expect(saved.buildStage).toBeNull();
+  expect(saved.assessment!.pageCount).toBeLessThanOrEqual(2);
+  expect(saved.content!.theme).toEqual(content.theme);
+  expect(build).toHaveBeenCalledOnce();
+});

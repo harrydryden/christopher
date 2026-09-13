@@ -729,7 +729,7 @@ describe("scan reporting", () => {
   });
 });
 
-it("blocks oversized saved revisions, downloads and new application PDFs", async () => {
+it("queues oversized edits for automatic fitting, permits previews and protects final downloads", async () => {
   const { GET: downloadCv } = await import("@/app/api/cv/[id]/pdf/route");
   const library = { name: "Example", contact: "London", profile: "Leader", entries: [{ id: "one", kind: "experience" as const, heading: "Director", details: "Led a team" }] };
   const content = { name: "Example", contact: "London", summary: "Leader", sections: Array.from({ length: 5 }, (_, i) => ({ entryId: String(i), kind: "experience" as const, heading: `Director ${i}`,
@@ -755,11 +755,13 @@ it("blocks oversized saved revisions, downloads and new application PDFs", async
     .returning();
   const edit = new FormData();
   edit.set("summary", "Leader");
-  expect(await saveCvDraft(draft!.id, { ok: true }, edit)).toMatchObject({
-    ok: false,
-    error: expect.stringContaining("the maximum is 2"),
-  });
-  expect(await database.select().from(schema.cvDrafts)).toHaveLength(1);
+  await expect(saveCvDraft(draft!.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
+  const revisions = await database.select().from(schema.cvDrafts);
+  expect(revisions).toHaveLength(2);
+  const child = revisions.find(row => row.parentId === draft!.id)!;
+  expect(child).toMatchObject({ status: "queued", content: { ...content, sections: content.sections.map(section => ({ ...section, bullets: section.bullets.map(bullet => bullet.trim()) })) } });
+  const [task] = await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"));
+  expect(task!.payload).toMatchObject({ draftId: child.id, mode: "assess" });
   const response = await downloadCv(
     new Request("http://localhost/api/cv/pdf"),
     { params: Promise.resolve({ id: draft!.id }) },
@@ -769,7 +771,7 @@ it("blocks oversized saved revisions, downloads and new application PDFs", async
     new Request("http://localhost/api/cv/pdf?preview=1"),
     { params: Promise.resolve({ id: draft!.id }) },
   );
-  expect(preview.status).toBe(422);
+  expect(preview.status).toBe(200);
   const application = new FormData();
   application.set("appliedOn", "2026-09-11");
   expect(
@@ -1329,4 +1331,13 @@ it("does not strand an assessment retry while the previous task is still finishi
   expect((await database.select().from(schema.cvDrafts))[0]!.status).toBe(
     "failed",
   );
+});
+
+
+it("publishes real CV stage changes to the page refresher", async () => {
+  const [draft] = await database.insert(schema.cvDrafts).values({ jobTitle: "Director", companyName: "Example", jobDescription: "Lead a team", libraryVersion: 1, librarySnapshot: { name: "Example", contact: "", profile: "Leader", entries: [] }, model: "test", status: "generating", buildStage: "writing" }).returning();
+  const request = () => new Request(`http://localhost/api/work-status?cv=${draft!.id}`);
+  expect(await (await workStatus(request())).json()).toMatchObject({ active: true, version: "generating:writing" });
+  await database.update(schema.cvDrafts).set({ buildStage: "fitting" }).where(eq(schema.cvDrafts.id, draft!.id));
+  expect(await (await workStatus(request())).json()).toMatchObject({ active: true, version: "generating:fitting" });
 });

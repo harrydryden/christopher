@@ -10,8 +10,8 @@ export async function GET(request: Request) {
   const id = new URL(request.url).searchParams.get('cv');
   if (id) {
     if (!zUuid().safeParse(id).success) return new Response('Invalid ID', { status: 400 });
-    const [row] = await db().select({ status: cvDrafts.status }).from(cvDrafts).where(eq(cvDrafts.id, id));
-    return Response.json({ active: row?.status === 'queued' || row?.status === 'generating', version: row?.status ?? 'missing' }, { headers: { 'cache-control': 'no-store' } });
+    const [row] = await db().select({ status: cvDrafts.status, stage: cvDrafts.buildStage }).from(cvDrafts).where(eq(cvDrafts.id, id));
+    return Response.json({ active: row?.status === 'queued' || row?.status === 'generating', version: row ? `${row.status}:${row.stage ?? ''}` : 'missing' }, { headers: { 'cache-control': 'no-store' } });
   }
   return Response.json(await getCompanyWorkStatus(), { headers: { 'cache-control': 'no-store' } });
 }

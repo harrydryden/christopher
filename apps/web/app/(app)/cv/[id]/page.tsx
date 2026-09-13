@@ -1,3 +1,6 @@
+import { CvWorkspace } from "@/components/CvWorkspace";
+import { CvBuildProgress } from "@/components/CvBuildProgress";
+import { CvAppearance } from "@/components/CvAppearance";
 import { CvAssessmentPanel } from "@/components/CvAssessmentPanel";
 import { cvAssessmentCurrent } from "@christopher/core/cv-review";
 import { CvDraftEditor } from "@/components/CvDraftEditor";
@@ -12,7 +15,10 @@ import { PageHeader } from "@/components/PageHeader";
 import { SettingsForm } from "@/components/SettingsForm";
 import { AutoRefresh } from "@/components/AutoRefresh";
 export const dynamic = "force-dynamic";
-export default async function CvDraftPage({ params }: { params: Promise<{ id: string }>;
+export default async function CvDraftPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
   if (!zUuid().safeParse(id).success) notFound();
@@ -28,11 +34,16 @@ export default async function CvDraftPage({ params }: { params: Promise<{ id: st
       draft.jobDescription,
       draft.librarySnapshot,
     );
-  const [application] = await db().select({ id: applications.id }).from(applications).where(eq(applications.cvId, id)).limit(1);
+  const [application] = await db()
+    .select({ id: applications.id })
+    .from(applications)
+    .where(eq(applications.cvId, id))
+    .limit(1);
   return (
-    <div className="max-w-4xl space-y-5">
-    <nav aria-label="CV navigation">
-      <Link href={draft.jobId ? `/cv?job=${draft.jobId}` : "/cv"}
+    <div className="max-w-7xl space-y-5">
+      <nav aria-label="CV navigation">
+        <Link
+          href={draft.jobId ? `/cv?job=${draft.jobId}` : "/cv"}
           className="text-sm font-medium text-slate-600 hover:text-slate-900 hover:underline"
         >
           ← Back to CV builder
@@ -40,9 +51,10 @@ export default async function CvDraftPage({ params }: { params: Promise<{ id: st
       </nav>
       <PageHeader
         title={`${draft.companyName} · ${draft.jobTitle}`}
-        description={`CV revision ${draft.revision} · library ${draft.libraryVersion} · ${draft.model}`}
+        description={`Tailored CV · ${draft.revision ? `Revision ${draft.revision}` : "First draft"}`}
         actions={
-          content && (
+          content &&
+          !busy && (
             <>
               <a
                 href={`/api/cv/${id}/pdf?preview=1`}
@@ -64,94 +76,18 @@ export default async function CvDraftPage({ params }: { params: Promise<{ id: st
           )
         }
       />
-      {(draft.status === "queued" || draft.status === "generating") && (
-        <AutoRefresh
-          cvId={id}
-          message="The worker is analysing, writing or assessing this CV. Status updates automatically."
-        />
-      )}
-      {draft.status === "failed" && (
-        <p role="alert" className="rounded bg-red-50 p-4 text-sm text-red-700">
-          {draft.error}
-        </p>
-      )}
-      <CvAssessmentPanel
-        id={id}
-        assessment={draft.assessment}
-        current={current}
-        finalised={!!draft.finalisedAt}
-        busy={busy}
-        hasContent={!!content}
-        content={content}
-      />
-      {content && (
-        <>
-          <p className="text-sm text-slate-500">
-            PDF actions use this saved revision. Save your edits as a new
-            revision before downloading. Check factual accuracy, especially
-            rewritten achievements.
-          </p>
-          {content.gaps.length > 0 && (
-            <aside className="rounded border border-amber-300 p-4 text-sm">
-              <strong>Evidence gaps (excluded from the PDF)</strong>
-              <ul className="mt-2 list-disc pl-5">
-                {content.gaps.map((gap, i) => (
-                  <li key={i}>{gap}</li>
-                ))}
-              </ul>
-            </aside>
-          )}
-          {draft.status === "ready" && (
-            <CvDraftEditor key={id} id={id} content={content} />
-          )}
-          <section className="rounded border p-4 space-y-3">
-            <h2 className="font-semibold">Application tracking</h2>
-            {application ? (
-              <Link href="/applications" className="underline">
-                Application recorded — view status and frozen PDF
-              </Link>
-            ) : !draft.finalisedAt ? (
-              <p className="text-sm">
-                Finalise the assessed CV before recording an application.
-              </p>
-            ) : (
-              <SettingsForm
-                action={recordApplication.bind(null, id)}
-                submitLabel="Record application with this saved CV"
-              >
-                <p className="text-sm">
-                  Use this after submitting this CV revision. This records your
-                  application; it does not send anything to the employer.
-                </p>
-                <label>
-                  Application date
-                  <input
-                    type="date"
-                    name="appliedOn"
-                    required
-                    className="ml-2 rounded border p-2"
-                  />
-                </label>
-                <label>
-                  Notes
-                  <textarea
-                    name="notes"
-                    maxLength={4000}
-                    className="block w-full rounded border p-2"
-                  />
-                </label>
-              </SettingsForm>
-            )}
-          </section>
-          <section>
-            <h3 className="text-sm">
-              Source evidence and job description used
-            </h3>
+      <CvWorkspace
+        description={
+          <>
+            <p className="text-xs text-slate-500">The saved company advert used to write and assess this CV.</p>
+            <p className="whitespace-pre-wrap text-sm leading-relaxed">{draft.jobDescription}</p>
+            <details className="border-t border-slate-200 pt-3">
+              <summary className="cursor-pointer text-xs font-medium">Source and evidence details</summary>
             <p className="my-2 text-sm">
               <a className="underline" href="/cv/library">
                 Open evidence library
               </a>{" "}
-              · The description below is the exact snapshot used for writing and
+              · This description is the exact snapshot used for writing and
               scoring.{" "}
               {(!draft.jobSource || draft.jobSource.method === "unknown") &&
                 "Extraction provenance was not recorded for this older description; compare it with the full company advert before relying on the score."}{" "}
@@ -169,12 +105,135 @@ export default async function CvDraftPage({ params }: { params: Promise<{ id: st
                 </a>
               )}
             </p>
-            <p className="mt-4 whitespace-pre-wrap text-xs">
-              {draft.jobDescription}
-            </p>
-          </section>
-        </>
-      )}
+            </details>
+          </>
+        }
+      >
+        {busy && <AutoRefresh cvId={id} initialVersion={`${draft.status}:${draft.buildStage ?? ""}`} message={null} />}
+        {(!content || busy) && (
+          <details className="rounded-lg border border-slate-200 p-4">
+            <summary className="cursor-pointer font-semibold">
+              Appearance and CV settings
+            </summary>
+            <div className="mt-4 space-y-3">
+              <fieldset disabled>
+                <CvAppearance
+                  value={content?.theme ?? draft.librarySnapshot.theme}
+                />
+              </fieldset>
+              <p className="text-sm">
+                Two-page maximum · Up to six bullets per section · 650
+                characters per bullet.
+              </p>
+              <p className="text-sm text-slate-600">
+                Settings are saved for this build. You can change them when it
+                finishes.
+              </p>
+              <p className="text-xs text-slate-500">
+                Evidence version {draft.libraryVersion} · {draft.model}
+              </p>
+              <Link href="/cv/library" className="text-sm underline">
+                Open evidence library
+              </Link>
+            </div>
+          </details>
+        )}
+        {busy && (
+          <CvBuildProgress
+            stage={draft.buildStage}
+            queued={draft.status === "queued"}
+          />
+        )}
+        {draft.status === "failed" && (
+          <p
+            role="alert"
+            className="rounded bg-red-50 p-4 text-sm text-red-700"
+          >
+            {draft.error}
+          </p>
+        )}
+        {content && !busy ? (
+          <CvDraftEditor
+            key={id}
+            id={id}
+            content={content}
+            assessment={
+              <CvAssessmentPanel
+                id={id}
+                assessment={draft.assessment}
+                current={current}
+                finalised={!!draft.finalisedAt}
+                busy={busy}
+                hasContent={!!content}
+                content={content}
+              />
+            }
+          />
+        ) : !busy ? (
+          <CvAssessmentPanel
+            id={id}
+            assessment={draft.assessment}
+            current={current}
+            finalised={!!draft.finalisedAt}
+            busy={busy}
+            hasContent={!!content}
+            content={content}
+          />
+        ) : null}
+        {content && !busy && (
+          <>
+            {!!content.gaps.length && (
+              <aside className="rounded border border-amber-300 p-4 text-sm">
+                <strong>Evidence gaps (excluded from the PDF)</strong>
+                <ul className="mt-2 list-disc pl-5">
+                  {content.gaps.map((gap, i) => (
+                    <li key={i}>{gap}</li>
+                  ))}
+                </ul>
+              </aside>
+            )}
+            <section className="rounded border p-4 space-y-3">
+              <h2 className="font-semibold">Application tracking</h2>
+              {application ? (
+                <Link href="/applications" className="underline">
+                  Application recorded — view status and frozen PDF
+                </Link>
+              ) : !draft.finalisedAt ? (
+                <p className="text-sm">
+                  Finalise the assessed CV before recording an application.
+                </p>
+              ) : (
+                <SettingsForm
+                  action={recordApplication.bind(null, id)}
+                  submitLabel="Record application with this saved CV"
+                >
+                  <p className="text-sm">
+                    Use this after submitting this CV revision. This records
+                    your application; it does not send anything to the employer.
+                  </p>
+                  <label>
+                    Application date
+                    <input
+                      type="date"
+                      name="appliedOn"
+                      required
+                      className="ml-2 rounded border p-2"
+                    />
+                  </label>
+                  <label>
+                    Notes
+                    <textarea
+                      name="notes"
+                      maxLength={4000}
+                      className="block w-full rounded border p-2"
+                    />
+                  </label>
+                </SettingsForm>
+              )}
+            </section>
+          </>
+        )}
+      </CvWorkspace>
     </div>
   );
 }

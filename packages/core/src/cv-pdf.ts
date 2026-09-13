@@ -7,7 +7,7 @@ import { cleanCvText, measurePillRows, drawPillRow, PILL_STYLES } from "./cv-pdf
 export const CV_MAX_PAGES = CV_LIMITS.pages;
 export class CvLayoutError extends Error {}
 export function assertCvPageLimit(pageCount: number): void {
-  if (pageCount > CV_MAX_PAGES) throw new CvLayoutError(`CV is ${pageCount} pages; the maximum is ${CV_MAX_PAGES}. Open the draft and choose Fit to two pages to prioritise and shorten it into a new revision.`,
+  if (pageCount > CV_MAX_PAGES) throw new CvLayoutError(`CV is ${pageCount} pages; the maximum is ${CV_MAX_PAGES}. Save a new revision to fit and assess it automatically.`,
     );
 }
 

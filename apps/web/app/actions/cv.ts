@@ -163,8 +163,8 @@ export async function saveCvDraft(
       .select()
       .from(cvDrafts)
       .where(eq(cvDrafts.id, id));
-    if (!draft || draft.status !== "ready" || !draft.content)
-      return fail("Only completed drafts can be edited.");
+    if (!draft || !["ready", "failed"].includes(draft.status) || !draft.content)
+      return fail("Wait for the current build to finish before editing.");
     const content = structuredClone(draft.content);
     if (form.has("theme"))
       content.theme = JSON.parse(String(form.get("theme")));
@@ -192,12 +192,13 @@ export async function saveCvDraft(
     CvContentSchema.parse(content);
     const intent = form.get("intent");
     const fit = intent === "fit" || intent === "improve";
-    if (!fit) await renderCvPdf(content);
+    // The worker measures saved edits and automatically fits any overflow before assessing.
     const {
       id: _id,
       createdAt: _created,
       assessment: _assessment,
       finalisedAt: _finalised,
+      buildStage: _buildStage,
       ...original
     } = draft;
     savedId = await db().transaction(async (tx) => {
@@ -365,7 +366,7 @@ export async function assessCvDraft(
         );
       await tx
         .update(cvDrafts)
-        .set({ status: "queued", error: null })
+        .set({ status: "queued", error: null, buildStage: null })
         .where(eq(cvDrafts.id, id));
       const queued = await enqueueTask(
         tx,

@@ -5,7 +5,7 @@ import { CvContentSchema } from "@christopher/core";
 import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth";
 import { zUuid } from "@/lib/validation";
-import { renderCvPdf, CvLayoutError } from "@/lib/cv-pdf";
+import { renderCvPdf, renderCvPdfWithReport, CvLayoutError } from "@/lib/cv-pdf";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -14,8 +14,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   if (!zUuid().safeParse(id).success) return new Response("Not found", { status: 404 });
   const [draft] = await db().select().from(cvDrafts).where(eq(cvDrafts.id, id));
   if (!draft) return new Response("Not found", { status: 404 });
-  if (draft.status !== "ready" || !draft.content) return new Response("CV is not ready", { status: 409 });
-  if (new URL(_request.url).searchParams.get("preview") !== "1") {
+  const preview = new URL(_request.url).searchParams.get("preview") === "1";
+  if (!draft.content || (draft.status !== "ready" && !(preview && draft.status === "failed"))) return new Response("CV is not ready", { status: 409 });
+  if (!preview) {
     try {
       if (!draft.finalisedAt)
         throw new Error(
@@ -30,7 +31,12 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     }
   }
   let pdf: Buffer;
-  try { pdf = await renderCvPdf(CvContentSchema.parse(draft.content)); }
+  try {
+    const content = CvContentSchema.parse(draft.content);
+    pdf = preview
+      ? (await renderCvPdfWithReport(content)).pdf
+      : await renderCvPdf(content);
+  }
   catch (error) {
     if (error instanceof CvLayoutError) return new Response(error.message, { status: 422 });
     throw error;
@@ -41,7 +47,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   return new Response(new Uint8Array(pdf), {
     headers: {
       "content-type": "application/pdf",
-      "content-disposition": `${new URL(_request.url).searchParams.get("preview") === "1" ? "inline" : "attachment"}; filename="${filename}.pdf"`,
+      "content-disposition": `${preview ? "inline" : "attachment"}; filename="${filename}.pdf"`,
       "cache-control": "private, no-store",
     },
   });

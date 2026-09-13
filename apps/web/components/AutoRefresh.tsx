@@ -1,11 +1,11 @@
 "use client";
 import { useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
-export function AutoRefresh({ cvId, message = "Waiting for the worker to generate your CV. Status updates automatically." }: { cvId?: string; message?: string }) {
+export function AutoRefresh({ cvId, initialVersion, message = "Waiting for the worker to generate your CV. Status updates automatically." }: { cvId?: string; initialVersion?: string; message?: string | null }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   useEffect(() => {
-    let cancelled = false, version: string | undefined, timer: ReturnType<typeof setTimeout>;
+    let cancelled = false, version: string | undefined = initialVersion, timer: ReturnType<typeof setTimeout>;
     const controller = new AbortController();
     async function poll() {
       if (cancelled) return;
@@ -24,6 +24,6 @@ export function AutoRefresh({ cvId, message = "Waiting for the worker to generat
     }
     void poll();
     return () => { cancelled = true; clearTimeout(timer); controller.abort(); };
-  }, [router, cvId]);
-  return <p role="status" className="text-sm">{message}</p>;
+  }, [router, cvId, initialVersion]);
+  return message === null ? null : <p role="status" className="text-sm">{message}</p>;
 }

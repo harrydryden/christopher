@@ -1,5 +1,10 @@
 import { buildFittedCv } from "@christopher/core/cv-fit";
-import { renderCvPdfWithReport } from "@christopher/core/cv-pdf";
+import {
+  renderCvPdfWithReport,
+  assertCvPageLimit,
+  CvLayoutError,
+  CV_MAX_PAGES,
+} from "@christopher/core/cv-pdf";
 import {
   createCvAssessment,
   validateCvRubric,
@@ -15,14 +20,18 @@ import { schema, type Task, type Db } from "@christopher/db";
 import { createAiEngine, OUTPUT_LIMIT_ERROR } from "@christopher/ai";
 import {
   CvContentSchema,
-  CvPlanSchema, CvLibrarySchema, groupCvLibrary } from "@christopher/core";
+  CvPlanSchema,
+  CvLibrarySchema,
+  groupCvLibrary,
+} from "@christopher/core";
 import { withResourceLease } from "../lease";
 import { reserveAi } from "../budget";
 import { aiSpendThisMonth, type WorkerDeps } from "../context";
 
 /** All generation and review modes use the same immutable input snapshot and lease. */
 export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
-  const { draftId, sourcePlan, mode } = task.payload as { draftId: string;
+  const { draftId, sourcePlan, mode } = task.payload as {
+    draftId: string;
     sourcePlan?: unknown;
     mode?: "assess" | "improve";
   };
@@ -83,6 +92,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
         );
       };
       phase = "analysing the company job description";
+      await save({ buildStage: "analysing" });
       const [parent] = draft.parentId
         ? await deps.db
             .select()
@@ -104,12 +114,29 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
             }),
           ),
       );
-      let content;
-      if (mode === "assess" && draft.content) {
-        content = CvContentSchema.parse(draft.content);
-      } else {
+      let content =
+        mode === "assess" && draft.content
+          ? CvContentSchema.parse(draft.content)
+          : undefined;
+      // Old drafts and manual edits must meet the same measured layout gate as fresh writing.
+      const savedPages = content
+        ? await renderCvPdfWithReport(content)
+            .then((report) => report.pageCount)
+            .catch((error) => {
+              if (error instanceof CvLayoutError) return CV_MAX_PAGES + 1;
+              throw error;
+            })
+        : undefined;
+      if (!content || savedPages! > CV_MAX_PAGES) {
         phase = "writing and fitting the CV";
-        const initial = sourcePlan ? CvPlanSchema.parse(sourcePlan) : undefined;
+        const initial = content
+          ? CvPlanSchema.parse(content)
+          : sourcePlan
+            ? CvPlanSchema.parse(sourcePlan)
+            : undefined;
+        const writingLibrary = content
+          ? { ...library, theme: content.theme ?? library.theme }
+          : library;
         const improvements =
           mode === "improve"
             ? parent?.assessment?.review.matches
@@ -121,13 +148,13 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
           .map((item) => `${item.label} ${item.quote}`)
           .join("\n");
         content = await buildFittedCv(
-          library,
+          writingLibrary,
           target,
           async (input) =>
             requireResult(
               await ai.buildCv(
                 {
-                  library,
+                  library: writingLibrary,
                   jobTitle: draft.jobTitle,
                   company: draft.companyName,
                   description: draft.jobDescription,
@@ -139,12 +166,17 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
               ),
             ),
           initial,
+          async (stage) => {
+            await save({ buildStage: stage });
+          },
         );
         // Retain a recoverable draft if the later assessment call fails.
         await save({ content });
       }
       phase = "assessing the final wording and factual evidence";
+      await save({ buildStage: "assessing" });
       const { pageCount } = await renderCvPdfWithReport(content);
+      assertCvPageLimit(pageCount);
       const review = requireResult(
         await ai.assessCv(
           {
@@ -168,6 +200,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
       });
       await save({
         status: "ready",
+        buildStage: null,
         content,
         assessment,
         revision: Math.max(1, draft.revision),

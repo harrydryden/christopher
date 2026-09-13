@@ -30,7 +30,9 @@ it('fits a long CV through measured achievement selection, preserving every role
 });
 it('gives the writer budgets before its first attempt and avoids unnecessary model retries',async()=>{
  const write=vi.fn().mockResolvedValue(plan);
- const fitted=await buildFittedCv(library,'Financial planning budgets reporting',write);
+ const stages: string[] = [];
+ const fitted=await buildFittedCv(library,'Financial planning budgets reporting',write,undefined,async stage => { stages.push(stage); });
+ expect(stages).toEqual(["writing", "fitting"]);
  expect(write).toHaveBeenCalledTimes(1);
  expect(write.mock.calls[0]![0].writingBudget.blocks).toHaveLength(8);
  expect((await renderCvPdfWithReport(fitted)).pageCount).toBeLessThanOrEqual(2);

@@ -1,9 +1,10 @@
 "use server";
+import { cvImprovementOwner } from "@christopher/core/cv-assessment";
 import { assertCvFinalisable } from "@christopher/core/cv-review";
 import { renderCvPdf } from "@/lib/cv-pdf";
 import { z } from "zod";
 import { desc, eq, sql } from "drizzle-orm";
-import { cvLibraries, cvDrafts, jobs, companies, enqueueTask } from "@christopher/db";
+import { actionCvs, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, enqueueTask } from "@christopher/db";
 import { DEFAULT_CV_THEME,
   createCvWritingBudget, CvLibrarySchema, consolidateExperience, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel } from "@christopher/core";
 import { requireSession } from "@/lib/auth";
@@ -50,17 +51,26 @@ export async function saveCvModel(_prev: ActionResult, form: FormData): Promise<
   revalidatePath("/cv");
   return ok();
 }
-/**
- * Hide a CV from the list, or bring it back. Soft by design: applications reference
- * cv_drafts with a non-null foreign key, so a CV that has been applied with cannot be
- * deleted, and a draft still holds the library snapshot the CV was generated from.
- */
 export async function setCvArchived(cvId: string, archived: boolean): Promise<void> {
   await requireSession();
   const id = zUuid().parse(cvId);
-  await db().update(cvDrafts).set({ archivedAt: archived ? new Date() : null }).where(eq(cvDrafts.id, id));
-  revalidatePath("/cv");
-  revalidatePath(`/cv/${id}`);
+  await actionCvs(db(), [id], archived ? "archive" : "restore");
+  revalidatePath("/cv", "layout");
+  revalidatePath("/applications");
+}
+
+export async function manageCvs(_prev: ActionResult, form: FormData): Promise<ActionResult> {
+  await requireSession();
+  try {
+    const ids = z.array(zUuid()).min(1, "Select at least one CV.").max(50).parse(form.getAll("cvId"));
+    const action = z.enum(["archive", "restore", "delete"]).parse(form.get("action"));
+    await actionCvs(db(), [...new Set(ids)], action);
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : "Could not update the selected CVs.");
+  }
+  revalidatePath("/cv", "layout");
+  revalidatePath("/applications");
+  return ok();
 }
 
 export async function requestCv(
@@ -111,9 +121,11 @@ export async function requestCv(
       return fail("Keep the job description under 60,000 characters.");
     createCvWritingBudget(generationLibrary, `${row.job.title} ${description}`);
     draftId = await db().transaction(async (tx) => {
+      const revision = await nextCvRevision(tx, { companyName: row.company, jobTitle: row.job.title });
       const [draft] = await tx
         .insert(cvDrafts)
         .values({
+          revision,
           jobId: id,
           jobTitle: row.job.title,
           companyName: row.company,
@@ -192,6 +204,11 @@ export async function saveCvDraft(
     CvContentSchema.parse(content);
     const intent = form.get("intent");
     const fit = intent === "fit" || intent === "improve";
+    // The rolling archive can remove a parent before this queued build starts.
+    const reviewContext = draft.assessment ? {
+      rubric: draft.assessment.rubric,
+      improvements: draft.assessment.review.matches.filter(match => cvImprovementOwner(match) === "system").map(match => match.improvement),
+    } : {};
     // The worker measures saved edits and automatically fits any overflow before assessing.
     const {
       id: _id,
@@ -202,6 +219,7 @@ export async function saveCvDraft(
       ...original
     } = draft;
     savedId = await db().transaction(async (tx) => {
+      const revision = await nextCvRevision(tx, draft);
       if (fit) {
         const [latest] =
           intent === "improve"
@@ -229,7 +247,7 @@ export async function saveCvDraft(
             error: null,
             archivedAt: null,
             parentId: id,
-            revision: draft.revision + 1,
+            revision,
           })
           .returning();
         const sourcePlan = {
@@ -249,6 +267,7 @@ export async function saveCvDraft(
           "generate_cv",
           {
             draftId: fitting!.id,
+            ...reviewContext,
             ...(content.sections.every((section) =>
               librarySnapshot.entries.some(
                 (entry) => entry.id === section.entryId,
@@ -271,13 +290,13 @@ export async function saveCvDraft(
           error: null,
           archivedAt: null,
           parentId: id,
-          revision: draft.revision + 1,
+          revision,
         })
         .returning();
       await enqueueTask(
         tx,
         "generate_cv",
-        { draftId: saved!.id, mode: "assess" },
+        { draftId: saved!.id, mode: "assess", ...reviewContext },
         { dedupeKey: `generate_cv:${saved!.id}`, priority: 2 },
       );
       if (form.get("rememberWording") === "on") {

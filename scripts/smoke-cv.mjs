@@ -27,6 +27,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
   const pool = new Pool({ connectionString: databaseUrl, max: 1 });
   const readyId = randomUUID(),
     busyId = randomUUID();
+  const tableIds = [randomUUID(), randomUUID()];
   let browser;
   const content = {
     name: "Example Candidate",
@@ -403,12 +404,135 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
     await page
       .getByRole("textbox", { name: "Profile", exact: true })
       .waitFor({ timeout: 25_000 });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    // Exercise the production server actions through the CV table using disposable rows.
+    for (const [index, id] of tableIds.entries()) {
+      await pool.query(
+        `insert into cv_drafts (id, job_title, company_name, job_description, library_version, library_snapshot, model, status, revision)
+        values ($1, $2, 'CV Table Check', 'Synthetic table test', 1, $3, 'test', 'ready', 1)`,
+        [id, `Table role ${index + 1}`, JSON.stringify(library)],
+      );
+    }
+    await page.goto(`${baseUrl}/cv`);
+    const savedTable = page.getByRole("table", {
+      name: "Saved CVs",
+      exact: true,
+    });
+    await savedTable.waitFor();
+    assert.deepEqual(
+      await savedTable.getByRole("columnheader").allTextContents(),
+      ["Company", "Job role", "Date / version", "Actions"],
+    );
+    await savedTable
+      .getByRole("checkbox", { name: "Select all saved CVs on this page" })
+      .check();
+    assert.equal(
+      await savedTable.locator("tbody input:checked").count(),
+      await savedTable.locator("tbody tr").count(),
+    );
+    await savedTable
+      .getByRole("checkbox", { name: "Select all saved CVs on this page" })
+      .uncheck();
+    for (let n = 1; n <= 2; n++)
+      await savedTable
+        .getByRole("checkbox", {
+          name: `Select CV Table Check · Table role ${n} · version 1`,
+        })
+        .check();
+    await page
+      .getByRole("button", { name: "Archive selected", exact: true })
+      .click();
+    const archivedTable = page.getByRole("table", {
+      name: "Archived CVs",
+      exact: true,
+    });
+    await archivedTable
+      .getByRole("link", { name: "Table role 2", exact: true })
+      .waitFor();
+    assert.equal(
+      (
+        await pool.query(
+          "select count(*)::int n from cv_drafts where id = any($1::uuid[]) and archived_at is not null",
+          [tableIds],
+        )
+      ).rows[0].n,
+      2,
+    );
+    await archivedTable
+      .getByRole("checkbox", { name: "Select all archived CVs on this page" })
+      .check();
+    await page
+      .getByRole("button", { name: "Restore selected", exact: true })
+      .click();
+    await savedTable
+      .getByRole("link", { name: "Table role 2", exact: true })
+      .waitFor()
+      .catch(async (error) => {
+        throw new Error(
+          `${error.message}\nTable state: ${await page.locator("main").innerText()}\nRows: ${JSON.stringify((await pool.query("select id,status,archived_at from cv_drafts where id = any($1::uuid[])", [tableIds])).rows)}`,
+        );
+      });
+    for (let n = 1; n <= 2; n++)
+      await savedTable
+        .getByRole("checkbox", {
+          name: `Select CV Table Check · Table role ${n} · version 1`,
+        })
+        .check();
+    await page.screenshot({
+      path: "tmp/cv-review-tabs/saved-cvs-desktop.png",
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth > window.innerWidth,
+      ),
+      false,
+    );
+    await page.screenshot({
+      path: "tmp/cv-review-tabs/saved-cvs-mobile.png",
+      fullPage: true,
+    });
+    page.once("dialog", (dialog) => dialog.dismiss());
+    await page
+      .getByRole("button", { name: "Delete selected", exact: true })
+      .first()
+      .click();
+    assert.equal(
+      (
+        await pool.query(
+          "select count(*)::int n from cv_drafts where id = any($1::uuid[])",
+          [tableIds],
+        )
+      ).rows[0].n,
+      2,
+    );
+    page.once("dialog", (dialog) => dialog.accept());
+    await page
+      .getByRole("button", { name: "Delete selected", exact: true })
+      .first()
+      .click();
+    await savedTable
+      .getByRole("link", { name: "Table role 2", exact: true })
+      .waitFor({ state: "detached" });
+    assert.equal(
+      (
+        await pool.query(
+          "select count(*)::int n from cv_drafts where id = any($1::uuid[])",
+          [tableIds],
+        )
+      ).rows[0].n,
+      0,
+    );
     assert.deepEqual(errors, []);
     console.log(
-      "  CV browser flow passed: tabs, unified evaluation, keyboard navigation, full sidebar collapse, saved edits, mobile layout and real progress updates",
+      "  CV browser flow passed: tabs, unified evaluation, keyboard navigation, full sidebar collapse, saved edits, mobile layout, real progress updates and bulk CV archive/restore/delete",
     );
   } finally {
     await browser?.close();
+    await pool.query("delete from cv_drafts where id = any($1::uuid[])", [
+      tableIds,
+    ]);
     await pool.query(
       "delete from tasks where payload->>'draftId' in (select id::text from cv_drafts where id in ($1, $2) or parent_id = $1)",
       [readyId, busyId],

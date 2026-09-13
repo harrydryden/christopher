@@ -9,7 +9,7 @@ export async function listCvDraftPage(archived: boolean, requestedPage?: string)
   const [count] = await db().select({ n: sql<number>`count(*)::int` }).from(cvDrafts).where(condition);
   const total = count?.n ?? 0;
   const page = Math.min(pageNumber(requestedPage), Math.max(1, Math.ceil(total / 50)));
-  const rows = await db().select({ id: cvDrafts.id, jobTitle: cvDrafts.jobTitle, company: cvDrafts.companyName, status: cvDrafts.status, revision: cvDrafts.revision })
+  const rows = await db().select({ id: cvDrafts.id, jobTitle: cvDrafts.jobTitle, company: cvDrafts.companyName, status: cvDrafts.status, revision: cvDrafts.revision, createdAt: cvDrafts.createdAt })
     .from(cvDrafts).where(condition).orderBy(desc(cvDrafts.createdAt), desc(cvDrafts.id)).limit(50).offset((page - 1) * 50);
   return { rows, total, page };
 }

@@ -21,7 +21,7 @@ export async function recordApplication(cvId: string, _prev: ActionResult, form:
     await db().transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`application:${cvId}`}))`);
       if ((await tx.select({ id: applications.id }).from(applications).where(eq(applications.cvId, cvId))).length) throw new Error("This CV revision already has an application record.");
-      const [draft] = await tx.select().from(cvDrafts).where(eq(cvDrafts.id, cvId));
+      const [draft] = await tx.select().from(cvDrafts).where(eq(cvDrafts.id, cvId)).for("share");
       if (!draft || draft.status !== "ready" || !draft.content) throw new Error("Choose a completed, saved CV.");
       if (!draft.finalisedAt)
         throw new Error(

@@ -16,7 +16,7 @@ import {
   cvImprovementOwner,
 } from "@christopher/core/cv-assessment";
 import { eq } from "drizzle-orm";
-import { schema, type Task, type Db } from "@christopher/db";
+import { completeCv, schema, type Task, type Db } from "@christopher/db";
 import { createAiEngine, OUTPUT_LIMIT_ERROR } from "@christopher/ai";
 import {
   CvContentSchema,
@@ -30,15 +30,18 @@ import { aiSpendThisMonth, type WorkerDeps } from "../context";
 
 /** All generation and review modes use the same immutable input snapshot and lease. */
 export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
-  const { draftId, sourcePlan, mode } = task.payload as {
+  const { draftId, sourcePlan, mode, rubric: sourceRubric, improvements: sourceImprovements } = task.payload as {
     draftId: string;
     sourcePlan?: unknown;
+    rubric?: Parameters<typeof validateCvRubric>[1];
+    improvements?: string[];
     mode?: "assess" | "improve";
   };
   return withResourceLease(deps, `cv:${draftId}`, async (locked) => {
     const save = async (values: Partial<typeof schema.cvDrafts.$inferInsert>) =>
       deps.db.transaction(async (tx) => {
         await locked.assertOwnership?.(tx as unknown as Db);
+        if (values.status === "ready") return completeCv(tx, draftId, values);
         await tx
           .update(schema.cvDrafts)
           .set(values)
@@ -108,7 +111,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
           : draft.assessment?.rubric;
       const rubric = validateCvRubric(
         draft.jobDescription,
-        reusable ??
+        sourceRubric ?? reusable ??
           requireResult(
             await ai.analyseCvJob(draft.jobDescription, {
               refType: "cv-rubric",
@@ -141,7 +144,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
           : library;
         const improvements =
           mode === "improve"
-            ? parent?.assessment?.review.matches
+            ? sourceImprovements ?? parent?.assessment?.review.matches
                 .filter((match) => cvImprovementOwner(match) === "system")
                 .map((match) => match.improvement)
             : undefined;

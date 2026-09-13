@@ -91,7 +91,7 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
               <col style={{ width: "2.75rem" }} />
               <col />
               <col />
-              <col style={{ width: "5.5rem" }} />
+              <col style={{ width: "6.25rem" }} />
               <col />
               <col style={{ width: "4.75rem" }} />
               <col style={{ width: "5.5rem" }} />

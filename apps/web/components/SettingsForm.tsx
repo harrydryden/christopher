@@ -16,21 +16,27 @@ export function SettingsForm({
   id,
   children,
   submitLabel = "Save",
+  secondaryActions,
 }: {
   id?: string;
-  action: (prevState: ActionResult, formData: FormData) => Promise<ActionResult>;
+  action: (
+    prevState: ActionResult,
+    formData: FormData,
+  ) => Promise<ActionResult>;
   children: ReactNode;
   submitLabel?: string;
+  secondaryActions?: ReactNode;
 }) {
   const [state, formAction, isPending] = useActionState(action, INITIAL);
   return (
     <form id={id} action={formAction} className="flex flex-col gap-3">
       {children}
       {!state.ok && <p className="text-sm text-red-600">{state.error}</p>}
-      <div>
+      <div className="flex flex-wrap items-center gap-2">
         <Button type="submit" variant="primary" size="sm" disabled={isPending}>
           {isPending ? "Saving…" : submitLabel}
         </Button>
+        {secondaryActions}
       </div>
     </form>
   );

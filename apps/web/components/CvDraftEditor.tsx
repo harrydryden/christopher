@@ -9,21 +9,25 @@ import {
   type CvContent,
 } from "@christopher/core/cv";
 import { saveCvDraft } from "@/app/actions/cv";
+import { CvWorkspacePanel } from "./CvWorkspace";
+import { CvDisclosure } from "./CvDisclosure";
+import { Button } from "./Button";
 import { CvAppearance } from "./CvAppearance";
 import { SettingsForm } from "./SettingsForm";
 
-function FitButton() {
+function ImproveButton() {
   const { pending } = useFormStatus();
   return (
-    <button
+    <Button
       type="submit"
       name="intent"
-      value="fit"
+      value="improve"
       disabled={pending}
-      className="rounded bg-accent px-3 py-2 text-sm text-white disabled:opacity-50"
+      variant="secondary"
+      size="sm"
     >
-      {pending ? "Working…" : "Fit to two pages"}
-    </button>
+      Improve with latest evidence
+    </Button>
   );
 }
 
@@ -32,10 +36,12 @@ export function CvDraftEditor({
   id,
   content,
   assessment,
+  tracking,
 }: {
   id: string;
   content: CvContent;
   assessment?: ReactNode;
+  tracking?: ReactNode;
 }) {
   const formId = `cv-edit-${id}`;
   const [summary, setSummary] = useState(content.summary);
@@ -122,11 +128,20 @@ export function CvDraftEditor({
         id={formId}
         action={saveCvDraft.bind(null, id)}
         submitLabel="Save, fit and assess new revision"
+        secondaryActions={<ImproveButton />}
       >
-        <details className="rounded-lg border border-slate-200 p-4">
-          <summary className="cursor-pointer font-semibold">
-            Appearance and CV settings
-          </summary>
+        <div className="text-xs text-slate-600" role="status">
+          {dirty
+            ? "Unsaved changes — Evaluation applies to the saved revision. Save for a fresh assessment."
+            : "Saving fits your edits to two pages and reassesses them. Improve uses your latest confirmed evidence."}
+        </div>
+        {theme && (
+          <input type="hidden" name="theme" value={JSON.stringify(theme)} />
+        )}
+      </SettingsForm>
+      <CvWorkspacePanel tab="appearance">
+        <section className="rounded-lg border border-slate-200 p-4">
+          <h2 className="font-semibold">Appearance and settings</h2>
           <div className="mt-4 space-y-4">
             <CvAppearance value={theme} onChange={setTheme} />
             <p className="text-sm text-slate-600">
@@ -135,7 +150,12 @@ export function CvDraftEditor({
               Saving automatically fits any overflow before assessment.
             </p>
             <label className="block text-sm">
-              <input type="checkbox" name="rememberWording" defaultChecked />{" "}
+              <input
+                form={formId}
+                type="checkbox"
+                name="rememberWording"
+                defaultChecked
+              />{" "}
               Remember wording corrections for future CVs.
             </label>
             <p className="text-xs text-slate-500">
@@ -143,176 +163,142 @@ export function CvDraftEditor({
               default for future CVs.
             </p>
           </div>
-        </details>
-        <div className="flex flex-wrap items-center gap-2">
-          <FitButton />
-          <button
-            type="submit"
-            name="intent"
-            value="improve"
-            className="rounded border border-accent px-3 py-2 text-sm"
-          >
-            Improve with latest evidence
-          </button>
-          <a href="/cv/library" className="px-2 text-sm underline">
-            Evidence library
-          </a>
-        </div>
-        <p className="text-xs text-slate-500">
-          Improve uses your latest confirmed evidence. All actions include your
-          current edits and create a new revision for review.
-        </p>
-        <div
-          className="rounded border border-slate-200 p-3 text-sm"
-          role="status"
-        >
-          {dirty
-            ? "Unsaved changes. The score below applies to the saved revision. Save these edits for a fresh assessment before finalising."
-            : "Editing the saved revision. Appearance and wording are saved together."}
-        </div>
-        {theme && (
-          <input type="hidden" name="theme" value={JSON.stringify(theme)} />
-        )}
-      </SettingsForm>
-      {assessment}
-      {!!content.fitNotes?.length && (
-        <details className="rounded border border-slate-200 p-3 text-sm">
-          <summary className="cursor-pointer font-medium">
-            Fitting changes ({content.fitNotes.length})
-          </summary>
-          <ul className="mt-2 list-disc pl-5">
-            {content.fitNotes.map((note, index) => (
-              <li key={index}>{note}</li>
-            ))}
-          </ul>
-        </details>
-      )}
-      <section className="space-y-3 rounded-lg border border-slate-200 p-4">
-        <h2 className="font-semibold">Content</h2>
-        <p className="text-sm">
-          {content.name} · {content.contact}
-          {content.linkedinUrl && (
-            <>
-              {" "}
-              ·{" "}
-              <a
-                className="underline"
-                href={content.linkedinUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                LinkedIn
-              </a>
-            </>
-          )}
-        </p>
-        <p className="text-xs text-slate-500">
-          Identity and job headings come from the evidence snapshot. Edit the
-          library and generate a new CV to change them.
-        </p>
-        <label className="block text-sm">
-          Profile
-          <textarea
-            form={formId}
-            name="summary"
-            maxLength={CV_LIMITS.summaryCharacters}
-            value={summary}
-            onChange={(event) => setSummary(event.target.value)}
-            rows={5}
-            className={input}
-          />
-        </label>
-        {cvDisplaySections(content).map(({ section, index }) => (
-          <label key={section.entryId} className="block text-sm">
-            <span className="font-semibold">
-              {section.kind === "skill" ? "Skill" : section.heading}
-            </span>
-            {section.kind === "skill" && (
-              <span className="ml-2 text-xs text-slate-500">
-                {section.heading}
-              </span>
+        </section>
+      </CvWorkspacePanel>
+      <CvWorkspacePanel tab="evaluation">{assessment}</CvWorkspacePanel>
+      <CvWorkspacePanel tab="content">
+        <section className="space-y-3 rounded-lg border border-slate-200 p-4">
+          <h2 className="font-semibold">Content</h2>
+          <p className="text-sm">
+            {content.name} · {content.contact}
+            {content.linkedinUrl && (
+              <>
+                {" "}
+                ·{" "}
+                <a
+                  className="underline"
+                  href={content.linkedinUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  LinkedIn
+                </a>
+              </>
             )}
-            {!!section.industryDescriptions?.length && (
-              <span className="block text-xs text-slate-500">
-                {section.industryDescriptions.join(" · ")}
-              </span>
-            )}
+          </p>
+          <p className="text-xs text-slate-500">
+            Identity and job headings come from the evidence snapshot. Edit the
+            library and generate a new CV to change them.
+          </p>
+          <label className="block text-sm">
+            Profile
             <textarea
               form={formId}
-              name={section.skillItems ? `skills-${index}` : `section-${index}`}
-              value={rows[index]}
-              onChange={(event) =>
-                setRows((previous) =>
-                  previous.map((row, i) =>
-                    i === index ? event.target.value : row,
-                  ),
-                )
-              }
-              rows={
-                section.skillItems ? 4 : Math.max(3, section.bullets.length * 2)
-              }
+              name="summary"
+              maxLength={CV_LIMITS.summaryCharacters}
+              value={summary}
+              onChange={(event) => setSummary(event.target.value)}
+              rows={5}
               className={input}
             />
-            <span className="text-xs text-slate-500">
-              {section.skillItems
-                ? "One skill per line, up to 20, with 80 characters per skill. Review any new claims."
-                : section.kind === "skill"
-                  ? "One skill or skill description per line. These always use centred pills; individual labels produce more compact pills."
-                  : `One bullet per line, up to ${CV_LIMITS.bulletsPerSection}. Keep each at most ${CV_LIMITS.bulletCharacters} characters.`}
-            </span>
           </label>
-        ))}
-      </section>
-      <section className="space-y-3 rounded-lg border border-slate-200 p-4">
-        <h2 className="font-semibold">PDF preview</h2>
-        <p className="text-sm">
-          Render the current edits with the download renderer. This does not
-          save a revision or call the writing model.
-        </p>
-        <button
-          type="button"
-          disabled={pending}
-          onClick={updatePreview}
-          className="rounded bg-accent px-3 py-2 text-sm text-white disabled:opacity-50"
-        >
-          {pending ? "Rendering…" : "Preview current edits"}
-        </button>
-        {error && (
-          <p role="alert" className="text-sm text-red-600">
-            {error}
-          </p>
-        )}
-        {preview && !currentPreview && (
-          <p role="status" className="text-sm">
-            The content or appearance has changed. Refresh the preview to see
-            these edits.
-          </p>
-        )}
-        {preview && currentPreview && (
-          <>
-            <p className="text-sm" role="status">
-              {preview.pages} {preview.pages === 1 ? "page" : "pages"}
-              {preview.pages > CV_LIMITS.pages
-                ? " — saving will automatically fit this wording into two pages before assessment."
-                : ""}
-              . {dirty ? "Unsaved preview." : "Current revision preview."}
+          {cvDisplaySections(content).map(({ section, index }) => (
+            <label key={section.entryId} className="block text-sm">
+              <span className="font-semibold">
+                {section.kind === "skill" ? "Skill" : section.heading}
+              </span>
+              {section.kind === "skill" && (
+                <span className="ml-2 text-xs text-slate-500">
+                  {section.heading}
+                </span>
+              )}
+              {!!section.industryDescriptions?.length && (
+                <span className="block text-xs text-slate-500">
+                  {section.industryDescriptions.join(" · ")}
+                </span>
+              )}
+              <textarea
+                form={formId}
+                name={
+                  section.skillItems ? `skills-${index}` : `section-${index}`
+                }
+                value={rows[index]}
+                onChange={(event) =>
+                  setRows((previous) =>
+                    previous.map((row, i) =>
+                      i === index ? event.target.value : row,
+                    ),
+                  )
+                }
+                rows={
+                  section.skillItems
+                    ? 4
+                    : Math.max(3, section.bullets.length * 2)
+                }
+                className={input}
+              />
+              <span className="text-xs text-slate-500">
+                {section.skillItems
+                  ? "One skill per line, up to 20, with 80 characters per skill. Review any new claims."
+                  : section.kind === "skill"
+                    ? "One skill or skill description per line. These always use centred pills; individual labels produce more compact pills."
+                    : `One bullet per line, up to ${CV_LIMITS.bulletsPerSection}. Keep each at most ${CV_LIMITS.bulletCharacters} characters.`}
+              </span>
+            </label>
+          ))}
+        </section>
+        <section className="space-y-3 rounded-lg border border-slate-200 p-4">
+          <CvDisclosure label="PDF preview">
+            <p className="text-sm">
+              See how your current wording and appearance will look in the PDF.
             </p>
-            <a
-              className="text-sm underline"
-              href={preview.url}
-              target="_blank"
-              rel="noopener noreferrer"
+            <button
+              type="button"
+              disabled={pending}
+              onClick={updatePreview}
+              className="rounded bg-accent px-3 py-2 text-sm text-white disabled:opacity-50"
             >
-              Open current preview
-            </a>
-            <iframe
-              title="Current CV PDF preview"
-              src={preview.url}
-              className="h-[650px] w-full rounded border"
-            />
-          </>
-        )}
-      </section>
+              {pending ? "Rendering…" : "Preview current edits"}
+            </button>
+            {error && (
+              <p role="alert" className="text-sm text-red-600">
+                {error}
+              </p>
+            )}
+            {preview && !currentPreview && (
+              <p role="status" className="text-sm">
+                The content or appearance has changed. Refresh the preview to
+                see these edits.
+              </p>
+            )}
+            {preview && currentPreview && (
+              <>
+                <p className="text-sm" role="status">
+                  {preview.pages} {preview.pages === 1 ? "page" : "pages"}
+                  {preview.pages > CV_LIMITS.pages
+                    ? " — saving will automatically fit this wording into two pages before assessment."
+                    : ""}
+                  . {dirty ? "Unsaved preview." : "Current revision preview."}
+                </p>
+                <a
+                  className="text-sm underline"
+                  href={preview.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Open current preview
+                </a>
+                <iframe
+                  title="Current CV PDF preview"
+                  src={preview.url}
+                  className="h-[650px] w-full rounded border"
+                />
+              </>
+            )}
+          </CvDisclosure>
+        </section>
+        {tracking}
+      </CvWorkspacePanel>
     </>
   );
 }

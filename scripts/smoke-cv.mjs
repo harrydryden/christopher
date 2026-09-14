@@ -376,6 +376,16 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
         return route.fulfill({ status: 503, body: "Temporary status failure" });
       return route.continue();
     });
+    // Lose the first stage refresh response as well as the first status request.
+    // The next poll must retry an unchanged-but-not-yet-rendered stage version.
+    let droppedStageRefresh = false;
+    await page.route(`**/cv/${busyId}?*`, (route) => {
+      if (!droppedStageRefresh && route.request().headers()["rsc"] === "1") {
+        droppedStageRefresh = true;
+        return route.abort("failed");
+      }
+      return route.continue();
+    });
     await page.goto(`${baseUrl}/cv/${busyId}`);
     await page
       .getByRole("heading", { name: "Write your CV", exact: true })
@@ -403,6 +413,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
     await page
       .getByRole("heading", { name: "Check and score", exact: true })
       .waitFor({ timeout: 25_000 });
+    assert.equal(droppedStageRefresh, true);
     await pool.query(
       "update cv_drafts set status = 'ready', build_stage = null, content = $2 where id = $1",
       [busyId, JSON.stringify(content)],

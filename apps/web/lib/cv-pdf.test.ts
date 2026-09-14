@@ -169,3 +169,12 @@ it("validates content limits at the shared renderer boundary", async () => {
     }),
   ).rejects.toThrow("Individual skills belong to skill sections only");
 });
+
+it("renders both profile and website links as separate PDF annotations", async () => {
+  const linkedinUrl = "https://www.linkedin.com/in/example";
+  const websiteUrl = "https://example.com/portfolio";
+  const pdf = await renderCvPdf({ name: "Example", contact: "London", linkedinUrl, websiteUrl, summary: "Operations leader", sections: [{ entryId: "s", kind: "skill", heading: "Skills", bullets: ["Operations"] }], gaps: [] });
+  const raw = pdf.toString("latin1");
+  expect(raw).toContain(`/URI (${linkedinUrl})`);
+  expect(raw).toContain(`/URI (${websiteUrl})`);
+});

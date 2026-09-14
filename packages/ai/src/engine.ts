@@ -275,6 +275,7 @@ export class AiEngine {
       name: _name,
       contact: _contact,
       linkedinUrl: _linkedin,
+      websiteUrl: _website,
       ...evidenceLibrary
     } = input.library;
     return this.run<CvPlan>(

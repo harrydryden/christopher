@@ -44,7 +44,7 @@ const PAGES = [
   ["/health", ["Health"]],
   ["/settings", ["Settings"]],
   ["/cv", ["CV builder", "Saved CVs"]],
-  ["/library", ["Library", "Employment history", "Add job", "Preferred CV style"]],
+  ["/library", ["Library", "Intro", "Website", "Experience", "Education, skills and interests"]],
   ["/applications", ["Applications"]],
   ["/?archive=1", ["Roles"], "Archived"],
   ["/?view=auto-matched", ["Roles"], "Auto-matched"],

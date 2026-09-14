@@ -7,15 +7,17 @@ import { EmploymentHistoryTable } from "./EmploymentHistoryTable";
 import { useRouter } from "next/navigation";
 
 const input = "w-full rounded border border-slate-300 p-2 text-sm";
+const libraryTabs = [["intro", "Intro"], ["experience", "Experience"], ["education", "Education, skills and interests"]] as const;
+type LibraryTab = typeof libraryTabs[number][0];
 const empty: CvLibrary = { name: "", contact: "", profile: "", employment: [], structuredExperience: true, entries: [] };
 export function CvLibraryEditor({ library, version }: { library: CvLibrary | null; version: number }) {
   const router = useRouter();
-  const [tab, setTab] = useState<"experience" | "education">("experience");
+  const [tab, setTab] = useState<LibraryTab>("intro");
   const [importError, setImportError] = useState("");
   const [value, setValue] = useState(() => library ? consolidateExperience(library) : empty);
   const [state, action, pending] = useActionState(saveCvLibrary, { ok: true } as Awaited<ReturnType<typeof saveCvLibrary>>);
   useEffect(() => { if (state.ok) router.refresh(); }, [state, router]);
-  function revealInvalidField(event: FormEvent<HTMLDivElement>, panel: "experience" | "education") {
+  function revealInvalidField(event: FormEvent<HTMLDivElement>, panel: LibraryTab) {
     event.preventDefault();
     flushSync(() => setTab(panel));
     (event.target as HTMLElement).focus();
@@ -30,7 +32,7 @@ export function CvLibraryEditor({ library, version }: { library: CvLibrary | nul
       {status === "inactive" && <span>Archived. Select Draft or Active to restore this block.</span>}
     </div>;
   }
-  function field(key: "name" | "contact" | "profile" | "stylePreferences" | "preferredWording", label: string, rows = 1) {
+  function field(key: "name" | "contact" | "profile", label: string, rows = 1) {
     return <label className="block space-y-1 text-sm"><span>{label}</span><textarea rows={rows} className={input} value={value[key] ?? ""} onChange={e => setValue({ ...value, [key]: e.target.value })} /></label>;
   }
   return <form action={action} className="space-y-4">
@@ -46,23 +48,26 @@ export function CvLibraryEditor({ library, version }: { library: CvLibrary | nul
     {importError && <p role="alert" className="text-red-600">{importError}</p>}
     <input type="hidden" name="library" value={JSON.stringify(value)} /><input type="hidden" name="version" value={version} />
     <div role="tablist" aria-label="Library sections" className="flex gap-2 border-b border-slate-200">
-      {([['experience', 'Experience'], ['education', 'Education, skills and interests']] as const).map(([id, label]) => <button
+      {libraryTabs.map(([id, label]) => <button
         key={id} type="button" role="tab" id={`library-tab-${id}`} aria-controls={`library-panel-${id}`}
         aria-selected={tab === id} tabIndex={tab === id ? 0 : -1}
         className={`border-b-2 px-4 py-3 text-sm font-medium ${tab === id ? 'border-accent text-accent' : 'border-transparent text-slate-600'}`}
         onClick={() => setTab(id)} onKeyDown={event => {
           if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
           event.preventDefault();
-          const next = event.key === 'Home' ? 'experience' : event.key === 'End' ? 'education' : id === 'experience' ? 'education' : 'experience';
+          const index = libraryTabs.findIndex(([key]) => key === id);
+          const next = libraryTabs[event.key === 'Home' ? 0 : event.key === 'End' ? libraryTabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + libraryTabs.length) % libraryTabs.length]![0];
           setTab(next);
           document.getElementById(`library-tab-${next}`)?.focus();
         }}>{label}</button>)}
     </div>
+    <div role="tabpanel" id="library-panel-intro" aria-labelledby="library-tab-intro" hidden={tab !== 'intro'} className="space-y-4" onInvalidCapture={event => revealInvalidField(event, 'intro')}>
+    {field("name", "Name")}
+    <label className="block space-y-1 text-sm">LinkedIn<input type="url" className={input} value={value.linkedinUrl ?? ""} placeholder="https://www.linkedin.com/in/your-profile" onChange={e => setValue({ ...value, linkedinUrl: e.target.value })} /></label>
+    <label className="block space-y-1 text-sm">Website<input type="url" className={input} value={value.websiteUrl ?? ""} placeholder="https://example.com" onChange={e => setValue({ ...value, websiteUrl: e.target.value })} /></label>
+    {field("contact", "Contact details")}{field("profile", "Career overview", 4)}
+    </div>
     <div role="tabpanel" id="library-panel-experience" aria-labelledby="library-tab-experience" hidden={tab !== 'experience'} className="space-y-4" onInvalidCapture={event => revealInvalidField(event, 'experience')}>
-    {field("name", "Full name")}
-    <label className="block space-y-1 text-sm">LinkedIn profile URL<input type="url" className={input} value={value.linkedinUrl ?? ""} placeholder="https://www.linkedin.com/in/your-profile" onChange={e => setValue({ ...value, linkedinUrl: e.target.value })} /></label>{field("contact", "Contact details")}{field("profile", "Career overview", 4)}
-    {field("stylePreferences", "Preferred CV style", 3)}
-    {field("preferredWording", "Wording preferences", 5)}
     <EmploymentHistoryTable employment={value.employment ?? []} entries={value.entries} onChange={employment => setValue({ ...value, employment })} />
     <h2 className="text-lg font-semibold">Experience</h2>
     {employmentCompanyGroups(value.employment ?? []).map(group => <section key={group.company.toLowerCase()} className="space-y-3">

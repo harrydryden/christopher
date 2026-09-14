@@ -1,6 +1,7 @@
+import { getCvWritingPreferences } from "@/lib/cv-writing-preferences";
 import { CvAppearance } from "@/components/CvAppearance";
 import { getDefaultCvAppearance } from "@/lib/cv-appearance";
-import { saveCvModel, saveCvAppearance } from "@/app/actions/cv";
+import { saveCvModel, saveCvAppearance, saveCvWritingPreferences } from "@/app/actions/cv";
 import { runDailyScanNow, saveAiSettings, saveKeywords, saveLocationFilter, saveMatchFields, saveSchedule, saveTableSettings } from "@/app/actions/settings";
 import { rescoreAllRoles } from "@/app/actions/learning";
 import { Button } from "@/components/Button";
@@ -18,7 +19,7 @@ const labelClass = "flex flex-col gap-1 text-sm";
 const fieldLabelClass = "text-xs font-medium text-slate-500";
 
 export default async function SettingsPage() {
-  const [settings, appearance] = await Promise.all([getSettings(), getDefaultCvAppearance()]);
+  const [settings, appearance, writing] = await Promise.all([getSettings(), getDefaultCvAppearance(), getCvWritingPreferences()]);
 
   return (
     <div className="space-y-6">
@@ -122,6 +123,14 @@ export default async function SettingsPage() {
       <SettingsForm action={saveCvAppearance}>
         <CvAppearance key={JSON.stringify(appearance)} name="theme" value={appearance} />
       </SettingsForm>
+
+      <Card title="Writing preferences">
+        <SettingsForm action={saveCvWritingPreferences} key={JSON.stringify(writing)}>
+          <input type="hidden" name="previousPreferences" value={JSON.stringify(writing)} />
+          <label className={labelClass}>Writing style<textarea name="stylePreferences" rows={4} maxLength={4000} defaultValue={writing.stylePreferences} className={inputClass} /></label>
+          <label className={labelClass}>Saved phrasing<textarea name="preferredWording" rows={5} maxLength={12000} defaultValue={writing.preferredWording} className={inputClass} /></label>
+        </SettingsForm>
+      </Card>
 
       <Card title="CV model">
         <SettingsForm action={saveCvModel}>

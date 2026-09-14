@@ -212,3 +212,12 @@ describe("employment industry descriptions", () => {
     expect(materialiseCv(library, { summary: "Leader", sections: [{ entryId: "recent", bullets: ["Led operations"] }], gaps: [] }).sections[0]!.industryDescriptions).toBeUndefined();
   });
 });
+
+it("validates website links and carries them from the library into CV content", () => {
+  const websiteUrl = "https://example.com/portfolio";
+  const source = CvLibrarySchema.parse({ ...library, websiteUrl });
+  expect(materialiseCv(source, { summary: "Leader", sections: [{ entryId: "recent", bullets: ["Led operations"] }], gaps: [] }).websiteUrl).toBe(websiteUrl);
+  for (const unsafe of ["javascript:alert(1)", "data:text/html,test", "https://user:password@example.com", "not a URL"]) {
+    expect(CvLibrarySchema.safeParse({ ...library, websiteUrl: unsafe }).success).toBe(false);
+  }
+});

@@ -78,6 +78,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
     model: "test",
     pageCount: 2,
   });
+  const originalWriting = (await pool.query("select value from settings where key = 'cvWritingPreferences'")).rows[0];
   const originalCvTheme = (await pool.query("select value from settings where key = 'cvTheme'")).rows[0];
   const originalCvModel = (await pool.query("select value from settings where key = 'cvModel'")).rows[0];
   try {
@@ -121,7 +122,11 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
     assert.equal(await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "CVs", exact: true }).getAttribute("aria-current"), null);
     const experienceTab = page.getByRole("tab", { name: "Experience", exact: true });
     const educationTab = page.getByRole("tab", { name: "Education, skills and interests", exact: true });
-    assert.equal(await experienceTab.getAttribute("aria-selected"), "true");
+    const introTab = page.getByRole("tab", { name: "Intro", exact: true });
+    assert.equal(await introTab.getAttribute("aria-selected"), "true");
+    assert.equal(await page.getByRole("textbox", { name: "Writing style", exact: true }).count(), 0);
+    await page.getByRole("textbox", { name: "Website", exact: true }).fill("https://example.com/portfolio");
+    await experienceTab.click();
     await educationTab.click();
     assert.equal(await page.getByRole("heading", { name: "Employment history", exact: true }).isVisible(), false);
     await page.getByRole("button", { name: "Add education, skill or interest", exact: true }).click();
@@ -132,6 +137,8 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
     await experienceTab.press("ArrowRight");
     assert.equal(await educationTab.getAttribute("aria-selected"), "true");
     assert.equal(await skills.inputValue(), "SQL\nPython");
+    await introTab.click();
+    assert.equal(await page.getByRole("textbox", { name: "Website", exact: true }).inputValue(), "https://example.com/portfolio");
     await experienceTab.click();
     // An incomplete field in the other tab must be revealed when saving.
     await page.getByRole("button", { name: "Save library", exact: true }).click();
@@ -150,6 +157,17 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
     await page.reload();
     await appearance.waitFor();
     assert.equal(await appearance.getByRole("button", { name: "Gold", exact: true }).getAttribute("aria-pressed"), "true");
+    const writingStyle = page.getByRole("textbox", { name: "Writing style", exact: true });
+    await writingStyle.fill("Use concise UK English.");
+    await page.getByRole("textbox", { name: "Saved phrasing", exact: true }).fill("Led the team");
+    await Promise.all([
+      page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/settings"),
+      page.locator("form").filter({ has: writingStyle }).getByRole("button", { name: "Save", exact: true }).click(),
+    ]);
+    await page.reload();
+    await writingStyle.waitFor();
+    assert.equal(await writingStyle.inputValue(), "Use concise UK English.");
+    assert.equal((await pool.query("select value from settings where key = 'cvWritingPreferences'")).rows[0].value.preferredWording, "Led the team");
     const cvModel = page.getByRole("combobox", { name: "CV model", exact: true });
     await cvModel.waitFor();
     const currentModel = await cvModel.inputValue();
@@ -636,6 +654,8 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
     );
     if (originalCvModel) await pool.query("insert into settings (key,value) values ('cvModel',$1) on conflict (key) do update set value=excluded.value", [JSON.stringify(originalCvModel.value)]);
     else await pool.query("delete from settings where key='cvModel'");
+    if (originalWriting) await pool.query("insert into settings (key,value) values ('cvWritingPreferences',$1) on conflict (key) do update set value=excluded.value", [JSON.stringify(originalWriting.value)]);
+    else await pool.query("delete from settings where key = 'cvWritingPreferences'");
     if (originalCvTheme) await pool.query("insert into settings (key,value) values ('cvTheme',$1) on conflict (key) do update set value=excluded.value", [JSON.stringify(originalCvTheme.value)]);
     else await pool.query("delete from settings where key='cvTheme'");
     await pool.end();

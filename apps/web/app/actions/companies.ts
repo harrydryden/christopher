@@ -93,8 +93,9 @@ export async function refreshCompany(companyId: string): Promise<void> {
   await requireSession();
   const id = zUuid().parse(companyId);
   const review = await db().transaction(async tx => {
-    const [company] = await tx.select({ status: companies.status }).from(companies).where(eq(companies.id, id)).for("update");
+    const [company] = await tx.select({ status: companies.status, homepageUrl: companies.homepageUrl }).from(companies).where(eq(companies.id, id)).for("update");
     if (!company || company.status !== "active") return false;
+    await enqueue("discover", { companyId: id, logoOnly: true, homepageUrl: company.homepageUrl }, tx);
     const pending = await tx.select().from(tasks).where(and(inArray(tasks.type, ["scan_company", "discover"]), sql`${tasks.payload}->>'companyId' = ${id}`, sql`coalesce(${tasks.payload}->>'logoOnly', 'false') != 'true'`, inArray(tasks.status, ["queued", "running"])));
     if (pending.length) {
       for (const task of pending) if (task.status === "queued") await tx.update(tasks).set({ runAfter: new Date(), payload: task.type === "scan_company" ? { ...task.payload, trigger: "manual" } : task.payload }).where(and(eq(tasks.id, task.id), eq(tasks.status, "queued")));

@@ -422,6 +422,14 @@ export const cvDrafts = pgTable("cv_drafts", {
   createdAt: tsNow("created_at"),
 }, table => [index("cv_drafts_role_key_idx").on(cvRoleKey(table.companyName, table.jobTitle))]);
 
+/** Version ledger survives retention/deletion; contains identifiers only, no CV content. */
+export const cvVersions = pgTable("cv_versions", {
+  cvId: uuid("cv_id").primaryKey(),
+  roleKey: text("role_key").notNull(),
+  day: text("day").notNull(),
+  version: integer("version").notNull(),
+}, table => [uniqueIndex("cv_versions_role_day_version_idx").on(table.roleKey, table.day, table.version)]);
+
 /** Submitted PDF bytes and company/role snapshots survive deletion of their source CV. */
 export const applications = pgTable("applications", {
   id: uuid("id").primaryKey().defaultRandom(),

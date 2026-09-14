@@ -134,6 +134,13 @@
       "when": 1789320656714,
       "tag": "0018_cv_role_lookup",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1789374796368,
+      "tag": "0019_cv_daily_versions",
+      "breakpoints": true
     }
   ]
 }

@@ -37,7 +37,7 @@ beforeAll(async () => {
 });
 afterAll(() => pool.end());
 beforeEach(async () => {
-  await database.execute(sql`truncate cv_drafts cascade`);
+  await database.execute(sql`truncate cv_drafts, cv_versions cascade`);
   session = await createSessionCookieValue(process.env.SESSION_SECRET!);
 });
 async function draft(
@@ -471,4 +471,29 @@ it("matches the actual request host when the framework URL uses an internal host
     }),
   );
   expect(response.status).toBe(200);
+});
+
+it("allocates daily versions atomically and preserves numbers after deletion", async () => {
+  const createdAt = new Date("2026-09-19T12:00:00Z");
+  const first = await draft(1, { createdAt });
+  const [second, third] = await Promise.all([
+    draft(2, { createdAt, companyName: " EXAMPLE " }),
+    draft(3, { createdAt }),
+  ]);
+  const { dailyCvVersions } = await import("./queries/cv");
+  let versions = await dailyCvVersions(database, [first.id, second.id, third.id]);
+  expect(versions.get(first.id)).toBe(1);
+  expect([versions.get(second.id), versions.get(third.id)].sort()).toEqual([2, 3]);
+  await actionCvs(database, [first.id, second.id, third.id], "delete");
+  const fourth = await draft(4, { createdAt });
+  const nextDay = await draft(5, { createdAt: new Date("2026-09-20T00:00:00Z") });
+  const otherRole = await draft(6, { createdAt, jobTitle: "Other role" });
+  versions = await dailyCvVersions(database, [fourth.id, nextDay.id, otherRole.id]);
+  expect(versions.get(fourth.id)).toBe(4);
+  expect(versions.get(nextDay.id)).toBe(1);
+  expect(versions.get(otherRole.id)).toBe(1);
+  await finish(fourth.id);
+  await actionCvs(database, [fourth.id], "archive");
+  await actionCvs(database, [fourth.id], "restore");
+  expect((await dailyCvVersions(database, [fourth.id])).get(fourth.id)).toBe(4);
 });

@@ -1,5 +1,5 @@
-import { desc, isNull, isNotNull, sql } from "drizzle-orm";
-import { cvDrafts } from "@christopher/db";
+import { desc, inArray, isNull, isNotNull, sql } from "drizzle-orm";
+import { cvDrafts, cvVersions } from "@christopher/db";
 import { db, type Db } from "@/lib/db";
 import { pageNumber } from "@/components/Pagination";
 
@@ -36,7 +36,8 @@ async function readCvDraftPage(
     .orderBy(desc(cvDrafts.createdAt), desc(cvDrafts.id))
     .limit(PAGE_SIZE)
     .offset((page - 1) * PAGE_SIZE);
-  return { rows, total, page };
+  const versions = await dailyCvVersions(tx, rows.map(row => row.id));
+  return { rows: rows.map(row => ({ ...row, dailyVersion: versions.get(row.id) ?? Math.max(1, row.revision) })), total, page };
 }
 
 /** Counts and both tables share a snapshot even when a build completes concurrently. */
@@ -62,4 +63,14 @@ export async function listCvDraftPage(
     (tx) => readCvDraftPage(tx, archived, requestedPage),
     { isolationLevel: "repeatable read", accessMode: "read only" },
   );
+}
+
+/** The deployment may precede the worker's migration; keep existing CVs readable. */
+export async function dailyCvVersions(database: Pick<Db, "execute" | "select">, ids: string[]) {
+  if (!ids.length) return new Map<string, number>();
+  const available = await database.execute<{ present: boolean }>(sql`select to_regclass('public.cv_versions') is not null as present`);
+  if (!available.rows[0]?.present) return new Map<string, number>();
+  const rows = await database.select({ id: cvVersions.cvId, version: cvVersions.version })
+    .from(cvVersions).where(inArray(cvVersions.cvId, ids));
+  return new Map(rows.map(row => [row.id, row.version]));
 }

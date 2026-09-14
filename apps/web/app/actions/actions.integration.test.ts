@@ -153,9 +153,11 @@ describe("authenticated mutations", () => {
   it("refreshes known sources once and brings scheduled scans forward", async () => {
     const { company } = await fixture();
     await Promise.all([refreshCompany(company.id), refreshCompany(company.id)]);
-    const [task] = await database.select().from(schema.tasks);
+    const [task] = await database.select().from(schema.tasks).where(eq(schema.tasks.type, "scan_company"));
     expect(task!.type).toBe("scan_company");
-    expect(await database.select().from(schema.tasks)).toHaveLength(1);
+    const [logo] = await database.select().from(schema.tasks).where(eq(schema.tasks.type, "discover"));
+    expect(logo!.payload).toMatchObject({ logoOnly: true, homepageUrl: company.homepageUrl });
+    expect(await database.select().from(schema.tasks)).toHaveLength(2);
     await database
       .update(schema.tasks)
       .set({
@@ -169,13 +171,13 @@ describe("authenticated mutations", () => {
       })
       .where(eq(schema.tasks.id, task!.id));
     await refreshCompany(company.id);
-    const [updated] = await database.select().from(schema.tasks);
+    const [updated] = await database.select().from(schema.tasks).where(eq(schema.tasks.type, "scan_company"));
     expect(updated!.runAfter.getTime()).toBeLessThanOrEqual(Date.now());
     expect(updated!.payload).toMatchObject({
       trigger: "manual",
       scanRunId: "preserved-run",
     });
-    expect(await database.select().from(schema.tasks)).toHaveLength(1);
+    expect(await database.select().from(schema.tasks)).toHaveLength(2);
   });
   it("discovers missing sources but preserves source confirmation and company pauses", async () => {
     const { company, source } = await fixture();
@@ -186,7 +188,7 @@ describe("authenticated mutations", () => {
     await expect(refreshCompany(company.id)).rejects.toThrow(
       `redirect:/companies/${company.id}`,
     );
-    expect(await database.select().from(schema.tasks)).toHaveLength(0);
+    expect((await database.select().from(schema.tasks)).map(task => task.payload.logoOnly)).toEqual([true]);
     await database
       .update(schema.careerSources)
       .set({ status: "disabled" })

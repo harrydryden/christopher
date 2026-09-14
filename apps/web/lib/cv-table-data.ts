@@ -4,6 +4,7 @@ export type CvRow = {
   jobTitle: string;
   status: string;
   revision: number;
+  dailyVersion?: number;
   createdAt: Date | string;
 };
 export type CvPage = { rows: CvRow[]; total: number; page: number };
@@ -30,6 +31,7 @@ export function isCvPage(value: unknown): value is CvPage {
         ["queued", "generating", "ready", "failed"].includes(row.status) &&
         Number.isSafeInteger(row.revision) &&
         row.revision >= 0 &&
+        (row.dailyVersion === undefined || (Number.isSafeInteger(row.dailyVersion) && row.dailyVersion > 0)) &&
         (typeof row.createdAt === "string" || row.createdAt instanceof Date) &&
         Number.isFinite(new Date(row.createdAt).getTime()),
     )

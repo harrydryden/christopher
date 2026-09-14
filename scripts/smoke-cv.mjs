@@ -427,7 +427,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
     await savedTable.waitFor();
     assert.deepEqual(
       await savedTable.getByRole("columnheader").allTextContents(),
-      ["Company", "Job role", "Date / version", "Actions"],
+      ["Company", "Job role", "Version", "Actions"],
     );
     await savedTable
       .getByRole("checkbox", { name: "Select all saved CVs on this page" })
@@ -444,7 +444,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
       for (let n = 1; n <= 2; n++)
         await savedTable
           .getByRole("checkbox", {
-            name: `Select CV Table Check · Table role ${n} · version 1`,
+            name: new RegExp(`^Select CV Table Check · Table role ${n} · [0-9]{2}-[A-Z][a-z]{2}-V[0-9]+$`),
           })
           .check();
       await page
@@ -484,7 +484,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
     for (let n = 1; n <= 2; n++)
       await savedTable
         .getByRole("checkbox", {
-          name: `Select CV Table Check · Table role ${n} · version 1`,
+          name: new RegExp(`^Select CV Table Check · Table role ${n} · [0-9]{2}-[A-Z][a-z]{2}-V[0-9]+$`),
         })
         .check();
     await page.screenshot({

@@ -1,3 +1,5 @@
+import { cvVersionLabel } from "@/lib/cv-version";
+import { dailyCvVersions } from "@/lib/queries/cv";
 import { CvDisclosure } from "@/components/CvDisclosure";
 import { CvWorkspace, CvWorkspacePanel } from "@/components/CvWorkspace";
 import { CvBuildProgress } from "@/components/CvBuildProgress";
@@ -25,6 +27,8 @@ export default async function CvDraftPage({
   if (!zUuid().safeParse(id).success) notFound();
   const [draft] = await db().select().from(cvDrafts).where(eq(cvDrafts.id, id));
   if (!draft) notFound();
+  const versions = await dailyCvVersions(db(), [draft.id]);
+  const version = cvVersionLabel(draft.createdAt, versions.get(draft.id) ?? Math.max(1, draft.revision));
   const content = draft.content;
   const busy = draft.status === "queued" || draft.status === "generating";
   const current =
@@ -52,7 +56,7 @@ export default async function CvDraftPage({
       </nav>
       <PageHeader
         title={`${draft.companyName} · ${draft.jobTitle}`}
-        description={`Tailored CV · ${draft.revision ? `Revision ${draft.revision}` : "First draft"}`}
+        description={`Version ${version}`}
         actions={
           content &&
           !busy && (

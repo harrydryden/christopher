@@ -33,3 +33,15 @@ it("keeps logo tasks for different website revisions separate from careers disco
   expect(dedupeKeyFor("discover", payload)).not.toBe(dedupeKeyFor("discover", { companyId: "one" }));
   expect(dedupeKeyFor("discover", payload)).not.toBe(dedupeKeyFor("discover", { ...payload, homepageUrl: "https://new.example/" }));
 });
+
+it("prefers an opaque touch icon over a white-only favicon and tries all declared icons", async () => {
+  const home = response("https://www.anduril.com/", '<link rel="icon" href="white.ico"><link rel="icon" href="adaptive.svg"><link rel="apple-touch-icon" href="touch.png">', "text/html");
+  const fetchText = vi.fn().mockResolvedValueOnce(home).mockResolvedValueOnce(response("https://www.anduril.com/touch.png"));
+  expect(await discoverCompanyLogo(home.url, { fetchText })).toBe("https://www.anduril.com/touch.png");
+  expect(fetchText.mock.calls[1]?.[0]).toBe("https://www.anduril.com/touch.png");
+  fetchText.mockReset().mockResolvedValueOnce(home)
+    .mockResolvedValueOnce(response("https://www.anduril.com/touch.png", "", "text/html", 404))
+    .mockResolvedValueOnce(response("https://www.anduril.com/white.ico", "", "text/html", 404))
+    .mockResolvedValueOnce(response("https://www.anduril.com/adaptive.svg", "", "image/svg+xml"));
+  expect(await discoverCompanyLogo(home.url, { fetchText })).toBe("https://www.anduril.com/adaptive.svg");
+});

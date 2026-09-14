@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { cvVersionLabel } from "@/lib/cv-version";
 import {
   createContext,
   useContext,
@@ -229,7 +230,7 @@ export function CvSavedTable({
                 Job role
               </th>
               <th scope="col" className="whitespace-nowrap p-3">
-                Date / version
+                Version
               </th>
               <th scope="col" className="p-3">
                 Actions
@@ -245,7 +246,7 @@ export function CvSavedTable({
                 <td className="p-3">
                   <input
                     type="checkbox"
-                    aria-label={`Select ${row.company} · ${row.jobTitle} · version ${row.revision}`}
+                    aria-label={`Select ${row.company} · ${row.jobTitle} · ${cvVersionLabel(row.createdAt, row.dailyVersion ?? Math.max(1, row.revision))}`}
                     checked={selectedSet.has(row.id)}
                     onChange={() =>
                       setSelected((previous) => {
@@ -274,16 +275,8 @@ export function CvSavedTable({
                 </td>
                 <td className="whitespace-nowrap p-3 align-top">
                   <time dateTime={new Date(row.createdAt).toISOString()}>
-                    {new Date(row.createdAt).toLocaleDateString("en-GB", {
-                      day: "numeric",
-                      month: "short",
-                      year: "numeric",
-                      timeZone: "UTC",
-                    })}
+                    {cvVersionLabel(row.createdAt, row.dailyVersion ?? Math.max(1, row.revision))}
                   </time>
-                  <span className="mt-1 block text-xs text-slate-500">
-                    Version {row.revision}
-                  </span>
                 </td>
                 <td className="p-3 align-top">
                   <div className="flex flex-wrap gap-2">

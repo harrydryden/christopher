@@ -78,6 +78,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
     model: "test",
     pageCount: 2,
   });
+  const originalCvTheme = (await pool.query("select value from settings where key = 'cvTheme'")).rows[0];
   const originalCvModel = (await pool.query("select value from settings where key = 'cvModel'")).rows[0];
   try {
     for (const [id, status, stage, value] of [
@@ -115,12 +116,40 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
     await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Library", exact: true }).click();
     await page.getByRole("heading", { name: "Library", exact: true }).waitFor();
     assert.equal(new URL(page.url()).pathname, "/library");
+    assert.equal(await page.getByRole("group", { name: "Appearance", exact: true }).count(), 0);
     assert.equal(await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Library", exact: true }).getAttribute("aria-current"), "page");
     assert.equal(await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "CVs", exact: true }).getAttribute("aria-current"), null);
+    const experienceTab = page.getByRole("tab", { name: "Experience", exact: true });
+    const educationTab = page.getByRole("tab", { name: "Education, skills and interests", exact: true });
+    assert.equal(await experienceTab.getAttribute("aria-selected"), "true");
+    await educationTab.click();
+    assert.equal(await page.getByRole("heading", { name: "Employment history", exact: true }).isVisible(), false);
+    await page.getByRole("button", { name: "Add education, skill or interest", exact: true }).click();
+    const skills = page.getByRole("textbox", { name: "Individual skills:", exact: true });
+    await skills.fill("SQL\nPython");
+    await experienceTab.click();
+    assert.equal(await skills.isVisible(), false);
+    await experienceTab.press("ArrowRight");
+    assert.equal(await educationTab.getAttribute("aria-selected"), "true");
+    assert.equal(await skills.inputValue(), "SQL\nPython");
+    await experienceTab.click();
+    // An incomplete field in the other tab must be revealed when saving.
+    await page.getByRole("button", { name: "Save library", exact: true }).click();
+    assert.equal(await educationTab.getAttribute("aria-selected"), "true");
     await page.goto(`${baseUrl}/cv/library`);
     await page.getByRole("heading", { name: "Library", exact: true }).waitFor();
     assert.equal(new URL(page.url()).pathname, "/library");
     await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Settings", exact: true }).click();
+    const appearance = page.getByRole("group", { name: "Appearance", exact: true });
+    await appearance.getByRole("button", { name: "Gold", exact: true }).click();
+    await Promise.all([
+      page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/settings"),
+      page.locator("form").filter({ has: appearance }).getByRole("button", { name: "Save", exact: true }).click(),
+    ]);
+    assert.equal((await pool.query("select value from settings where key = 'cvTheme'")).rows[0].value.primary, "#ffcc00");
+    await page.reload();
+    await appearance.waitFor();
+    assert.equal(await appearance.getByRole("button", { name: "Gold", exact: true }).getAttribute("aria-pressed"), "true");
     const cvModel = page.getByRole("combobox", { name: "CV model", exact: true });
     await cvModel.waitFor();
     const currentModel = await cvModel.inputValue();
@@ -607,6 +636,8 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
     );
     if (originalCvModel) await pool.query("insert into settings (key,value) values ('cvModel',$1) on conflict (key) do update set value=excluded.value", [JSON.stringify(originalCvModel.value)]);
     else await pool.query("delete from settings where key='cvModel'");
+    if (originalCvTheme) await pool.query("insert into settings (key,value) values ('cvTheme',$1) on conflict (key) do update set value=excluded.value", [JSON.stringify(originalCvTheme.value)]);
+    else await pool.query("delete from settings where key='cvTheme'");
     await pool.end();
   }
 }

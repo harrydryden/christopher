@@ -75,3 +75,9 @@ describe("settings helpers", () => {
     expect(localDateParts(new Date("2026-09-05T00:30:00Z"), "America/New_York").ymd).toBe("2026-09-04");
   });
 });
+
+it("validates stored appearance and keeps the legacy fallback when absent", () => {
+  const theme = { version: 1, primary: "#142D46", background: "#ffffff", surface: "#eff4f8", pill: "#e3edf5", introPanel: true, skillPills: false };
+  expect(resolveSettings([{ key: "cvTheme", value: theme }]).cvTheme).toEqual({ ...theme, skillPills: true });
+  expect(resolveSettings([{ key: "cvTheme", value: { ...theme, primary: "bad" } }]).cvTheme).toBeUndefined();
+});

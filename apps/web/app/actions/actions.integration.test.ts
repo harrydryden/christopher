@@ -10,7 +10,7 @@ import {
 } from "../../../../packages/core/test/cv-review-fixture";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDb, schema, type Db } from "@christopher/db";
-import { DEFAULT_CV_THEME } from "@christopher/core/cv";
+import { DEFAULT_CV_THEME, CV_THEMES } from "@christopher/core/cv";
 import { DEFAULT_SETTINGS, modelForCallSite } from "@christopher/core";
 import { runMigrations } from "@christopher/db/migrate";
 import { eq, sql } from "drizzle-orm";
@@ -73,6 +73,7 @@ import { GET as workStatus } from "@/app/api/work-status/route";
 import { GET as downloadApplication } from "@/app/api/applications/[id]/pdf/route";
 import {
   saveCvLibrary,
+  saveCvAppearance,
   requestCv,
   saveCvDraft,
   saveCvModel,
@@ -1342,4 +1343,30 @@ it("publishes real CV stage changes to the page refresher", async () => {
   expect(await (await workStatus(request())).json()).toMatchObject({ active: true, version: "generating:writing" });
   await database.update(schema.cvDrafts).set({ buildStage: "fitting" }).where(eq(schema.cvDrafts.id, draft!.id));
   expect(await (await workStatus(request())).json()).toMatchObject({ active: true, version: "generating:fitting" });
+});
+
+it("saves default appearance independently of library edits and existing CVs", async () => {
+  const { getDefaultCvAppearance } = await import("@/lib/cv-appearance");
+  expect(await getDefaultCvAppearance()).toEqual(DEFAULT_CV_THEME);
+  const { job } = await fixture();
+  const content = { name: "Example", contact: "London", profile: "Operations leader", theme: CV_THEMES.Plum!, entries: [{ id: "skill", kind: "skill" as const, heading: "Skills", details: "Operations leadership", skillItems: ["Operations"] }] };
+  await database.insert(schema.cvLibraries).values({ version: 1, content });
+  expect(await getDefaultCvAppearance()).toEqual(CV_THEMES.Plum);
+  const form = new FormData(); form.set("theme", JSON.stringify(CV_THEMES.Forest));
+  expect(await saveCvAppearance({ ok: true }, form)).toEqual({ ok: true });
+  expect(await getDefaultCvAppearance()).toEqual(CV_THEMES.Forest);
+  expect((await database.select().from(schema.cvLibraries))[0]!.content).toEqual(content);
+  const generate = new FormData(); generate.set("jobId", job.id);
+  generate.set("description", "Lead a business operations team, develop the annual operating plan and work with finance and commercial leaders.");
+  await expect(requestCv({ ok: true }, generate)).rejects.toThrow("redirect:/cv/");
+  const [draft] = await database.select().from(schema.cvDrafts);
+  expect(draft!.librarySnapshot.theme).toEqual(CV_THEMES.Forest);
+  form.set("theme", JSON.stringify(CV_THEMES.Gold));
+  expect(await saveCvAppearance({ ok: true }, form)).toEqual({ ok: true });
+  expect((await database.select().from(schema.cvDrafts))[0]!.librarySnapshot.theme).toEqual(CV_THEMES.Forest);
+  form.set("theme", JSON.stringify({ ...CV_THEMES.Gold, primary: "invalid" }));
+  expect((await saveCvAppearance({ ok: true }, form)).ok).toBe(false);
+  expect(await getDefaultCvAppearance()).toEqual(CV_THEMES.Gold);
+  session = undefined;
+  await expect(saveCvAppearance({ ok: true }, form)).rejects.toThrow("Unauthorised");
 });

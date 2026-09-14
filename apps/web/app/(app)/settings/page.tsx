@@ -1,4 +1,6 @@
-import { saveCvModel } from "@/app/actions/cv";
+import { CvAppearance } from "@/components/CvAppearance";
+import { getDefaultCvAppearance } from "@/lib/cv-appearance";
+import { saveCvModel, saveCvAppearance } from "@/app/actions/cv";
 import { runDailyScanNow, saveAiSettings, saveKeywords, saveLocationFilter, saveMatchFields, saveSchedule, saveTableSettings } from "@/app/actions/settings";
 import { rescoreAllRoles } from "@/app/actions/learning";
 import { Button } from "@/components/Button";
@@ -16,7 +18,7 @@ const labelClass = "flex flex-col gap-1 text-sm";
 const fieldLabelClass = "text-xs font-medium text-slate-500";
 
 export default async function SettingsPage() {
-  const settings = await getSettings();
+  const [settings, appearance] = await Promise.all([getSettings(), getDefaultCvAppearance()]);
 
   return (
     <div className="space-y-6">
@@ -116,6 +118,10 @@ export default async function SettingsPage() {
           </label>
         </SettingsForm>
       </Card>
+
+      <SettingsForm action={saveCvAppearance}>
+        <CvAppearance key={JSON.stringify(appearance)} name="theme" value={appearance} />
+      </SettingsForm>
 
       <Card title="CV model">
         <SettingsForm action={saveCvModel}>

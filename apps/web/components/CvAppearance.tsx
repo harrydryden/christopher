@@ -56,7 +56,6 @@ export function CvAppearance({ value, onChange, name }: { value?: CvTheme; onCha
             />{" "}
             Profile card
           </label>
-          <span>Skills and industries always use centred pills.</span>
         </div>
       </section>
       <div

@@ -37,7 +37,7 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
     }).join(" "));
     return fail(error instanceof Error ? error.message : "Could not save the library.");
   }
-  revalidatePath("/cv/library");
+  revalidatePath("/library");
   revalidatePath("/cv");
   return ok();
 }
@@ -48,7 +48,7 @@ export async function saveCvModel(_prev: ActionResult, form: FormData): Promise<
   if (!isKnownModel(model)) return fail("Choose a supported model for CV generation.");
   if (model === modelForCallSite(settings, "A3")) return fail("Choose a different model from the website extraction model.");
   await setSetting("cvModel", model);
-  revalidatePath("/cv/library");
+  revalidatePath("/settings");
   revalidatePath("/cv");
   return ok();
 }
@@ -95,7 +95,7 @@ export async function requestCv(
       .from(cvLibraries)
       .orderBy(desc(cvLibraries.version))
       .limit(1);
-    if (!library) return fail("Save your evidence library first.");
+    if (!library) return fail("Save your Library first.");
     const generationLibrary = groupCvLibrary(
       CvLibrarySchema.parse(library.content),
     );
@@ -162,7 +162,7 @@ export async function requestCv(
       error instanceof Error ? error.message : "Could not queue the CV.",
     );
   }
-  revalidatePath("/cv/library");
+  revalidatePath("/library");
   revalidatePath("/cv");
   redirect(`/cv/${draftId}`);
 }
@@ -339,7 +339,7 @@ export async function saveCvDraft(
               .join("\n\n");
             if (preferredWording.length > 12000)
               throw new Error(
-                "Remembered wording is full. Edit or remove older examples in your evidence library first.",
+                "Remembered wording is full. Edit or remove older examples in your Library first.",
               );
             await tx
               .insert(cvLibraries)
@@ -360,7 +360,7 @@ export async function saveCvDraft(
       error instanceof Error ? error.message : "Could not save the draft.",
     );
   }
-  revalidatePath("/cv/library");
+  revalidatePath("/library");
   revalidatePath("/cv");
   redirect(`/cv/${savedId}`);
 }

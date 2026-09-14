@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { href: "/", label: "Roles" },
   { href: "/companies", label: "Companies" },
   { href: "/cv", label: "CVs" },
+  { href: "/library", label: "Library" },
   { href: "/applications", label: "Applications" },
   { href: "/settings", label: "Settings" },
 ];

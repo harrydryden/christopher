@@ -33,7 +33,6 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
     <div className="space-y-6">
       <PageHeader
         title="Learning"
-        description="How the tool understands what you want, and what it proposes changing."
         actions={
           <>
             <form action={resynthesizeNow}>

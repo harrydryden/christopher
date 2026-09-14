@@ -8,7 +8,7 @@ export default async function RolesPage({ searchParams }: { searchParams: Promis
   const work = await getCompanyWorkStatus();
   return <div>
     {work.active && <AutoRefresh message="Scans, discovery or filter updates are pending. Results update as work completes." />}
-    <PageHeader title="Roles" description="Review your matches, choose your shortlist and keep your decisions in one place." />
+    <PageHeader title="Roles" />
     <RoleWorkspace searchParams={await searchParams} />
   </div>;
 }

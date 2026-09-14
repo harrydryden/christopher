@@ -32,10 +32,10 @@ export async function RoleWorkspace({ searchParams, companyId }: { searchParams:
     </nav>
     <RolesFilterBar key={query} filters={filters} companyOptions={options}
       exportHref={`/api/export.csv?${query}`} path={path} view={view} companyScoped={!!companyId} />
-    <p className="mb-3 text-xs text-slate-500">Showing {result.total} of {counts[view]} {ROLE_STATUS_LABELS[view].toLowerCase()} {counts[view] === 1 ? "role" : "roles"} · {view === "auto-matched" ? "Awaiting your review" : view === "archived" ? "History retained; restore to reconsider" : "Your decisions are preserved when matching criteria change"}</p>
+    <p className="mb-3 text-xs text-slate-500">Showing {result.total} of {counts[view]} {ROLE_STATUS_LABELS[view].toLowerCase()} {counts[view] === 1 ? "role" : "roles"}</p>
     <RolesTable key={`${query}:${result.page}`} rows={rows} archived={archived} keyboard hideCompany={!!companyId}
       emptyState={<EmptyState title={counts[view] ? "No roles match these filters" : view === "auto-matched" ? "No roles awaiting review" : `No ${ROLE_STATUS_LABELS[view].toLowerCase()} roles`}
-        description={counts[view] ? "Clear the filters to see the other roles in this view." : "New vacancies that do not match your criteria are not stored."} />} />
+        description={counts[view] ? "Clear the filters to see the other roles in this view." : undefined} />} />
     {result.pageCount > 1 && <nav aria-label="Role pages" className="my-4 flex items-center gap-4 text-sm">
       {result.page > 1 && <Link className="underline" href={href(result.page - 1)}>Previous</Link>}
       <span>Page {result.page} of {result.pageCount}</span>

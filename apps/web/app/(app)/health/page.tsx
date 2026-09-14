@@ -46,7 +46,7 @@ export default async function HealthPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Health" description="Everything that needs your attention lives here." />
+      <PageHeader title="Health" />
 
       <Card title="Processing capacity">
         <p className="text-sm">{metrics.ready} tasks ready · {metrics.running} running · oldest ready task waiting {Math.round(metrics.oldest_seconds / 60)} minutes.</p>

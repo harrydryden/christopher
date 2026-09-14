@@ -64,7 +64,7 @@ export default async function SuggestionsPage({ searchParams }: { searchParams: 
   const now = new Date();
   const similarActive = active.some(t => t.type === "suggest_companies");
   return <div className="mx-auto max-w-5xl">
-    <PageHeader title="Discover companies" description="Review relevant employers, see why they were recommended, and choose which to track."/>
+    <PageHeader title="Discover companies"/>
     <nav aria-label="Discovery views" className="mb-5 flex flex-wrap gap-2 border-b border-slate-200 pb-3">
       {[["review", `Review (${reviewCount})`], ["sources", `Sources (${sourceCount[0]?.count ?? 0})`], ["history", "History"]].map(([key, label]) => <a key={key} href={key === "review" ? "/suggestions" : `/suggestions?view=${key}`} aria-current={view === key ? "page" : undefined} className={`rounded px-3 py-2 text-sm ${view === key ? "bg-accent font-semibold text-white" : "text-slate-600 hover:bg-slate-100"}`}>{label}</a>)}
     </nav>

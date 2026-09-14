@@ -6,10 +6,11 @@ import { renderCvPdf } from "@/lib/cv-pdf";
 import { z } from "zod";
 import { desc, eq, sql } from "drizzle-orm";
 import { actionCvs, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, enqueueTask } from "@christopher/db";
-import { DEFAULT_CV_THEME, CvThemeSchema,
+import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvWritingPreferences,
   createCvWritingBudget, CvLibrarySchema, consolidateExperience, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel } from "@christopher/core";
 import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { settings as settingsTable } from "@christopher/db/schema";
 import { getSettings, setSetting } from "@/lib/settings";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -41,6 +42,28 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
   revalidatePath("/cv");
   return ok();
 }
+export async function saveCvWritingPreferences(_prev: ActionResult, form: FormData): Promise<ActionResult> {
+  await requireSession();
+  const parsed = CvWritingPreferencesSchema.safeParse({ stylePreferences: form.get("stylePreferences"), preferredWording: form.get("preferredWording") });
+  if (!parsed.success) return fail("Writing style allows 4,000 characters; saved phrasing allows 12,000.");
+  try {
+    await db().transaction(async tx => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('cv:library'))`);
+      const [stored] = await tx.select().from(settingsTable).where(eq(settingsTable.key, "cvWritingPreferences"));
+      const [latest] = await tx.select().from(cvLibraries).orderBy(desc(cvLibraries.version)).limit(1);
+      const current = resolveCvWritingPreferences(stored?.value, latest?.content);
+      if (JSON.stringify(current) !== String(form.get("previousPreferences"))) throw new Error("Writing preferences changed. Reload Settings before saving.");
+      await tx.insert(settingsTable).values({ key: "cvWritingPreferences", value: parsed.data })
+        .onConflictDoUpdate({ target: settingsTable.key, set: { value: parsed.data, updatedAt: new Date() } });
+    });
+  } catch (error) {
+    return fail(error instanceof Error && error.message.startsWith("Writing preferences changed") ? error.message : "Could not save writing preferences. Try again.");
+  }
+  revalidatePath("/settings");
+  revalidatePath("/cv");
+  return ok();
+}
+
 export async function saveCvAppearance(_prev: ActionResult, form: FormData): Promise<ActionResult> {
   await requireSession();
   try {
@@ -110,7 +133,7 @@ export async function requestCv(
       .limit(1);
     if (!library) return fail("Save your Library first.");
     const generationLibrary = groupCvLibrary(
-      CvLibrarySchema.parse({ ...library.content, theme: settings.cvTheme ?? library.content.theme ?? DEFAULT_CV_THEME }),
+      CvLibrarySchema.parse({ ...library.content, ...(settings.cvWritingPreferences ?? {}), theme: settings.cvTheme ?? library.content.theme ?? DEFAULT_CV_THEME }),
     );
     const [row] = await db()
       .select({ job: jobs, company: companies.name })
@@ -253,6 +276,7 @@ export async function saveCvDraft(
           : draft.librarySnapshot;
         const librarySnapshot = CvLibrarySchema.parse({
           ...evidence,
+          ...(intent === "improve" ? ((await getSettings()).cvWritingPreferences ?? {}) : {}),
           theme: content.theme ?? DEFAULT_CV_THEME,
         });
         const [fitting] = await tx
@@ -344,25 +368,21 @@ export async function saveCvDraft(
               );
           });
           if (changes.length) {
+            const [storedPreferences] = await tx.select().from(settingsTable).where(eq(settingsTable.key, "cvWritingPreferences"));
+            const preferences = resolveCvWritingPreferences(storedPreferences?.value, latest.content);
             const preferredWording = [
-              latest.content.preferredWording,
+              preferences.preferredWording,
               ...changes,
             ]
               .filter(Boolean)
               .join("\n\n");
             if (preferredWording.length > 12000)
               throw new Error(
-                "Remembered wording is full. Edit or remove older examples in your Library first.",
+                "Saved phrasing is full. Edit or remove older examples in Settings first.",
               );
-            await tx
-              .insert(cvLibraries)
-              .values({
-                version: latest.version + 1,
-                content: CvLibrarySchema.parse({
-                  ...latest.content,
-                  preferredWording,
-                }),
-              });
+            const value = { ...preferences, preferredWording };
+            await tx.insert(settingsTable).values({ key: "cvWritingPreferences", value })
+              .onConflictDoUpdate({ target: settingsTable.key, set: { value, updatedAt: new Date() } });
           }
         }
       }
@@ -373,7 +393,7 @@ export async function saveCvDraft(
       error instanceof Error ? error.message : "Could not save the draft.",
     );
   }
-  revalidatePath("/library");
+  revalidatePath("/settings");
   revalidatePath("/cv");
   redirect(`/cv/${savedId}`);
 }

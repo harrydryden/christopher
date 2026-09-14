@@ -74,6 +74,7 @@ import { GET as downloadApplication } from "@/app/api/applications/[id]/pdf/rout
 import {
   saveCvLibrary,
   saveCvAppearance,
+  saveCvWritingPreferences,
   requestCv,
   saveCvDraft,
   saveCvModel,
@@ -568,9 +569,10 @@ describe("priority workflows", () => {
     expect(versions[1]!.parentId).toBe(draft!.id);
     expect(versions[1]!.content?.sections[0]?.industryDescriptions).toEqual(["SaaS"]);
     const libraries = await database.select().from(schema.cvLibraries).orderBy(schema.cvLibraries.version);
-    expect(libraries).toHaveLength(2);
+    expect(libraries).toHaveLength(1);
     expect(libraries[0]!.content.preferredWording).toBeUndefined();
-    expect(libraries[1]!.content.preferredWording).toContain("Led the operations team");
+    const [preferences] = await database.select().from(schema.settings).where(eq(schema.settings.key, "cvWritingPreferences"));
+    expect((preferences!.value as { preferredWording: string }).preferredWording).toContain("Led the operations team");
     const application = new FormData(); application.set("appliedOn", "2026-02-30");
     expect((await recordApplication(versions[1]!.id, { ok: true }, application)).ok).toBe(false);
     application.set("appliedOn", "2026-09-06");
@@ -1369,4 +1371,33 @@ it("saves default appearance independently of library edits and existing CVs", a
   expect(await getDefaultCvAppearance()).toEqual(CV_THEMES.Gold);
   session = undefined;
   await expect(saveCvAppearance({ ok: true }, form)).rejects.toThrow("Unauthorised");
+});
+
+
+it("preserves legacy writing preferences, rejects stale saves, and uses saved preferences in new CVs", async () => {
+  const { getCvWritingPreferences } = await import("@/lib/cv-writing-preferences");
+  const { job } = await fixture();
+  const content = { name: "Example", contact: "London", profile: "Leader", websiteUrl: "https://example.com/portfolio", stylePreferences: "Concise UK English", preferredWording: "Led the team", entries: [{ id: "skill", kind: "skill" as const, heading: "Skills", details: "Operations" }] };
+  await database.insert(schema.cvLibraries).values({ version: 1, content });
+  const before = await getCvWritingPreferences();
+  expect(before).toEqual({ stylePreferences: content.stylePreferences, preferredWording: content.preferredWording });
+  const form = new FormData();
+  form.set("previousPreferences", JSON.stringify(before));
+  form.set("stylePreferences", "Plain, concise UK English");
+  form.set("preferredWording", "Managed the team");
+  expect(await saveCvWritingPreferences({ ok: true }, form)).toEqual({ ok: true });
+  expect((await saveCvWritingPreferences({ ok: true }, form)).ok).toBe(false);
+  const saved = await getCvWritingPreferences();
+  expect(saved.stylePreferences).toBe("Plain, concise UK English");
+  expect((await database.select().from(schema.cvLibraries))).toHaveLength(1);
+  const generate = new FormData(); generate.set("jobId", job.id); generate.set("description", "Lead a business operations team, develop the annual operating plan and work with finance and commercial leaders.");
+  await expect(requestCv({ ok: true }, generate)).rejects.toThrow("redirect:/cv/");
+  const [draft] = await database.select().from(schema.cvDrafts);
+  expect(draft!.librarySnapshot).toMatchObject({ ...saved, websiteUrl: content.websiteUrl });
+  form.set("previousPreferences", JSON.stringify(saved));
+  form.set("stylePreferences", "x".repeat(4001));
+  expect((await saveCvWritingPreferences({ ok: true }, form)).ok).toBe(false);
+  expect(await getCvWritingPreferences()).toEqual(saved);
+  session = undefined;
+  await expect(saveCvWritingPreferences({ ok: true }, form)).rejects.toThrow("Unauthorised");
 });

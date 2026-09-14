@@ -79,17 +79,15 @@ export async function renderCvPdfWithReport(
   const contact = clean(content.contact).replace(/\s+/g, " ").trim();
   const drawContact = (colour: string) => {
     doc.font("Helvetica").fontSize(9).fillColor(colour);
-    if (content.linkedinUrl) {
-      if (contact)
-        doc.text(`${contact} · `, { width, lineGap: 2.5, continued: true });
-      doc.text("LinkedIn", {
-        link: content.linkedinUrl,
-        underline: true,
-        width,
-        lineGap: 2.5,
-        continued: false,
-      });
-    } else if (contact) doc.text(contact, { width, lineGap: 2.5 });
+    const links = [
+      ...(content.linkedinUrl ? [{ label: "LinkedIn", url: content.linkedinUrl }] : []),
+      ...(content.websiteUrl ? [{ label: "Website", url: content.websiteUrl }] : []),
+    ];
+    if (contact) doc.text(contact + (links.length ? " · " : ""), { width, lineGap: 2.5, continued: links.length > 0 });
+    links.forEach((link, index) => {
+      doc.text(link.label, { link: link.url, underline: true, width, lineGap: 2.5, continued: index < links.length - 1 });
+      if (index < links.length - 1) doc.text(" · ", { link: null, underline: false, continued: true });
+    });
   };
   {
     // Measure before painting so the coloured masthead grows with the actual content.
@@ -99,7 +97,7 @@ export async function renderCvPdfWithReport(
       lineGap: 2.5,
     });
     doc.font("Helvetica").fontSize(9);
-    const contactText = [contact, content.linkedinUrl ? "LinkedIn" : ""]
+    const contactText = [contact, content.linkedinUrl ? "LinkedIn" : "", content.websiteUrl ? "Website" : ""]
       .filter(Boolean)
       .join(" · ");
     const contactHeight = contactText

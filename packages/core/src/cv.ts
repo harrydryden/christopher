@@ -1,4 +1,5 @@
 export * from "./cv-budget";
+export * from "./cv-writing-preferences";
 import { CV_LIMITS, CV_SECTION_ORDER } from "./cv-format";
 export * from "./cv-format";
 import { z } from "zod";
@@ -13,6 +14,14 @@ const LinkedInSchema = z.string().max(300).refine(value => {
   if (!value) return true;
   try { const url = new URL(value); return url.protocol === "https:" && (url.hostname === "linkedin.com" || url.hostname === "www.linkedin.com") && url.pathname.startsWith("/in/"); } catch { return false; }
 }, "Enter an https://www.linkedin.com/in/ profile URL").optional();
+
+const WebsiteSchema = z.string().trim().max(500).refine(value => {
+  if (!value) return true;
+  try {
+    const url = new URL(value);
+    return ["https:", "http:"].includes(url.protocol) && !!url.hostname && !url.username && !url.password;
+  } catch { return false; }
+}, "Enter a valid https:// or http:// website URL.").optional();
 
 const CareerDateSchema = z.string().regex(/^(?:|\d{4}(?:-(?:0[1-9]|1[0-2]))?)$/, "Use YYYY-MM, YYYY, or leave unknown dates blank.");
 export function industryDescriptions(value = ""): string[] {
@@ -75,6 +84,7 @@ export const CvLibrarySchema = z.object({
   name: z.string().trim().min(1).max(120),
   contact: z.string().trim().max(500),
   linkedinUrl: LinkedInSchema,
+  websiteUrl: WebsiteSchema,
   profile: z.string().trim().max(5000),
   stylePreferences: z.string().max(4000).optional(),
   preferredWording: z.string().max(12000).optional(),
@@ -122,6 +132,7 @@ export const CvContentSchema = z.object({
   fitNotes: z.array(z.string().max(500)).max(50).optional(),
   theme: CvThemeSchema.optional(),
   linkedinUrl: LinkedInSchema,
+  websiteUrl: WebsiteSchema,
   name: z.string().min(1).max(120), contact: z.string().max(500), summary: z.string().min(1).max(CV_LIMITS.summaryCharacters),
   sections: z.array(z.object({ entryId: z.string(), kind: CvEntrySchema.shape.kind, skillItems: SkillItemsSchema.optional(), heading: z.string().min(1).max(250), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(CV_LIMITS.bulletCharacters)).min(1).max(CV_LIMITS.bulletsPerSection) }).refine(section => !section.skillItems || section.kind === "skill", "Individual skills belong to skill sections only")).min(1).max(20),
   gaps: z.array(z.string().max(500)).max(12),
@@ -154,7 +165,7 @@ export function materialiseCv(library: CvLibrary, plan: CvPlan): CvContent {
     }))];
     return [entry.id, { ...section, ...(selectedSkills ? { skillItems: selectedSkills } : {}), ...(selectedIndustries.length ? { industryDescriptions: selectedIndustries } : {}), kind: entry.kind, heading: evidenceHeading(library, entry) }];
   }));
-  return CvContentSchema.parse({ theme: library.theme ?? DEFAULT_CV_THEME, name: library.name, contact: library.contact, linkedinUrl: library.linkedinUrl, summary: plan.summary,
+  return CvContentSchema.parse({ theme: library.theme ?? DEFAULT_CV_THEME, name: library.name, contact: library.contact, linkedinUrl: library.linkedinUrl, websiteUrl: library.websiteUrl, summary: plan.summary,
     sections: library.entries.flatMap(e => selected.has(e.id) ? [selected.get(e.id)!] : []), gaps: plan.gaps });
 }
 

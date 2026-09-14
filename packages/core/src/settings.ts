@@ -2,6 +2,7 @@
  * Application settings stored as key/value JSON in the `settings` table.
  * Shared by web (edits) and worker (reads). Defaults apply when a key is missing.
  */
+import { CvWritingPreferencesSchema, type CvWritingPreferences } from "./cv-writing-preferences";
 import { CvThemeSchema, type CvTheme } from "./cv-theme";
 import type { GateSettings } from "./gate";
 
@@ -19,6 +20,7 @@ export interface AppSettings {
   defaultModel: string;
   cvModel: string;
   cvTheme?: CvTheme;
+  cvWritingPreferences?: CvWritingPreferences;
   modelOverrides: Record<string, string>;
   /** Days a closed role stays visible in the table by default. */
   showClosedDays: number;
@@ -48,6 +50,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultModel: "claude-sonnet-5",
   cvModel: "claude-fable-5-1",
   cvTheme: undefined,
+  cvWritingPreferences: undefined,
   modelOverrides: {},
   showClosedDays: 30,
   closeAfterMissingScans: 2,
@@ -66,6 +69,11 @@ export function resolveSettings(rows: Array<{ key: string; value: unknown }>): A
   for (const row of rows) {
     const key = row.key as SettingsKey;
     if (!(key in DEFAULT_SETTINGS)) continue;
+    if (key === "cvWritingPreferences") {
+      const parsed = CvWritingPreferencesSchema.safeParse(row.value);
+      if (parsed.success) out.cvWritingPreferences = parsed.data;
+      continue;
+    }
     if (key === "cvTheme") {
       const theme = CvThemeSchema.safeParse(row.value);
       if (theme.success) out.cvTheme = { ...theme.data, skillPills: true };

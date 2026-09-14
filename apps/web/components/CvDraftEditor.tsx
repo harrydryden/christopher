@@ -175,6 +175,7 @@ export function CvDraftEditor({
                 </a>
               </>
             )}
+            {content.websiteUrl && <> · <a className="underline" href={content.websiteUrl} target="_blank" rel="noopener noreferrer">Website</a></>}
           </p>
 
           <label className="block text-sm">

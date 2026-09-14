@@ -6,7 +6,7 @@ import { renderCvPdf } from "@/lib/cv-pdf";
 import { z } from "zod";
 import { desc, eq, sql } from "drizzle-orm";
 import { actionCvs, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, enqueueTask } from "@christopher/db";
-import { DEFAULT_CV_THEME,
+import { DEFAULT_CV_THEME, CvThemeSchema,
   createCvWritingBudget, CvLibrarySchema, consolidateExperience, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel } from "@christopher/core";
 import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -41,6 +41,19 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
   revalidatePath("/cv");
   return ok();
 }
+export async function saveCvAppearance(_prev: ActionResult, form: FormData): Promise<ActionResult> {
+  await requireSession();
+  try {
+    const theme = CvThemeSchema.parse(JSON.parse(String(form.get("theme") ?? "")));
+    await setSetting("cvTheme", { ...theme, skillPills: true });
+  } catch {
+    return fail("Could not save appearance. Check the colours and try again.");
+  }
+  revalidatePath("/settings");
+  revalidatePath("/cv");
+  return ok();
+}
+
 export async function saveCvModel(_prev: ActionResult, form: FormData): Promise<ActionResult> {
   await requireSession();
   const model = String(form.get("cvModel") ?? "").trim();
@@ -97,7 +110,7 @@ export async function requestCv(
       .limit(1);
     if (!library) return fail("Save your Library first.");
     const generationLibrary = groupCvLibrary(
-      CvLibrarySchema.parse(library.content),
+      CvLibrarySchema.parse({ ...library.content, theme: settings.cvTheme ?? library.content.theme ?? DEFAULT_CV_THEME }),
     );
     const [row] = await db()
       .select({ job: jobs, company: companies.name })

@@ -1,8 +1,8 @@
 "use client";
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useState, type FormEvent } from "react";
+import { flushSync } from "react-dom";
 import { CvLibrarySchema, consolidateExperience, employmentCompanyGroups, employmentHeading, responsibilityRows, updateResponsibilityRows, type CvLibrary } from "@christopher/core/cv";
 import { saveCvLibrary } from "@/app/actions/cv";
-import { CvAppearance } from "./CvAppearance";
 import { EmploymentHistoryTable } from "./EmploymentHistoryTable";
 import { useRouter } from "next/navigation";
 
@@ -10,10 +10,16 @@ const input = "w-full rounded border border-slate-300 p-2 text-sm";
 const empty: CvLibrary = { name: "", contact: "", profile: "", employment: [], structuredExperience: true, entries: [] };
 export function CvLibraryEditor({ library, version }: { library: CvLibrary | null; version: number }) {
   const router = useRouter();
+  const [tab, setTab] = useState<"experience" | "education">("experience");
   const [importError, setImportError] = useState("");
   const [value, setValue] = useState(() => library ? consolidateExperience(library) : empty);
   const [state, action, pending] = useActionState(saveCvLibrary, { ok: true } as Awaited<ReturnType<typeof saveCvLibrary>>);
   useEffect(() => { if (state.ok) router.refresh(); }, [state, router]);
+  function revealInvalidField(event: FormEvent<HTMLDivElement>, panel: "experience" | "education") {
+    event.preventDefault();
+    flushSync(() => setTab(panel));
+    (event.target as HTMLElement).focus();
+  }
   function statusControls(entry: CvLibrary["entries"][number]) {
     const status = entry.status ?? "active";
     return <div className="flex flex-wrap items-center gap-3 text-sm">
@@ -39,13 +45,26 @@ export function CvLibraryEditor({ library, version }: { library: CvLibrary | nul
     </div>
     {importError && <p role="alert" className="text-red-600">{importError}</p>}
     <input type="hidden" name="library" value={JSON.stringify(value)} /><input type="hidden" name="version" value={version} />
-    <EmploymentHistoryTable employment={value.employment ?? []} entries={value.entries} onChange={employment => setValue({ ...value, employment })} />
+    <div role="tablist" aria-label="Library sections" className="flex gap-2 border-b border-slate-200">
+      {([['experience', 'Experience'], ['education', 'Education, skills and interests']] as const).map(([id, label]) => <button
+        key={id} type="button" role="tab" id={`library-tab-${id}`} aria-controls={`library-panel-${id}`}
+        aria-selected={tab === id} tabIndex={tab === id ? 0 : -1}
+        className={`border-b-2 px-4 py-3 text-sm font-medium ${tab === id ? 'border-accent text-accent' : 'border-transparent text-slate-600'}`}
+        onClick={() => setTab(id)} onKeyDown={event => {
+          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+          event.preventDefault();
+          const next = event.key === 'Home' ? 'experience' : event.key === 'End' ? 'education' : id === 'experience' ? 'education' : 'experience';
+          setTab(next);
+          document.getElementById(`library-tab-${next}`)?.focus();
+        }}>{label}</button>)}
+    </div>
+    <div role="tabpanel" id="library-panel-experience" aria-labelledby="library-tab-experience" hidden={tab !== 'experience'} className="space-y-4" onInvalidCapture={event => revealInvalidField(event, 'experience')}>
     {field("name", "Full name")}
     <label className="block space-y-1 text-sm">LinkedIn profile URL<input type="url" className={input} value={value.linkedinUrl ?? ""} placeholder="https://www.linkedin.com/in/your-profile" onChange={e => setValue({ ...value, linkedinUrl: e.target.value })} /></label>{field("contact", "Contact details")}{field("profile", "Career overview", 4)}
-    <CvAppearance value={value.theme} onChange={theme => setValue({ ...value, theme })} />
     {field("stylePreferences", "Preferred CV style", 3)}
     {field("preferredWording", "Wording preferences", 5)}
-    <h2 className="text-lg font-semibold">Evidence blocks</h2>
+    <EmploymentHistoryTable employment={value.employment ?? []} entries={value.entries} onChange={employment => setValue({ ...value, employment })} />
+    <h2 className="text-lg font-semibold">Experience</h2>
     {employmentCompanyGroups(value.employment ?? []).map(group => <section key={group.company.toLowerCase()} className="space-y-3">
       <h3 className="text-lg font-semibold">{group.company || "New company"}</h3>
       {group.jobs.map(job => {
@@ -83,7 +102,9 @@ export function CvLibraryEditor({ library, version }: { library: CvLibrary | nul
         </fieldset>;
       })}
     </section>)}
-    <h3 className="text-lg font-semibold">Education, skills and interests</h3>
+    </div>
+    <div role="tabpanel" id="library-panel-education" aria-labelledby="library-tab-education" hidden={tab !== 'education'} className="space-y-4" onInvalidCapture={event => revealInvalidField(event, 'education')}>
+    <h2 className="text-lg font-semibold">Education, skills and interests</h2>
     {value.entries.map((entry, i) => entry.kind === "experience" ? null : <fieldset key={entry.id} className="space-y-2 rounded border border-slate-200 p-3">
       <legend className="text-sm font-medium">Evidence {i + 1}</legend>
       {statusControls(entry)}
@@ -100,6 +121,7 @@ export function CvLibraryEditor({ library, version }: { library: CvLibrary | nul
       </div>
     </fieldset>)}
     <button type="button" className="mr-4 text-sm underline" onClick={() => setValue({ ...value, entries: [...value.entries, { id: crypto.randomUUID(), kind: "skill", status: "draft", heading: "", details: "" }] })}>Add education, skill or interest</button>
+    </div>
     <button disabled={pending} className="rounded bg-accent px-4 py-2 text-sm text-white disabled:opacity-50">{pending ? "Saving…" : "Save library"}</button>
     {!state.ok && <p role="alert" className="text-sm text-red-600">{state.error}</p>}
   </form>;

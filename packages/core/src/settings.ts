@@ -2,6 +2,7 @@
  * Application settings stored as key/value JSON in the `settings` table.
  * Shared by web (edits) and worker (reads). Defaults apply when a key is missing.
  */
+import { CvThemeSchema, type CvTheme } from "./cv-theme";
 import type { GateSettings } from "./gate";
 
 export interface AppSettings {
@@ -17,6 +18,7 @@ export interface AppSettings {
   /** Model id per call site; missing keys fall back to `defaultModel`. */
   defaultModel: string;
   cvModel: string;
+  cvTheme?: CvTheme;
   modelOverrides: Record<string, string>;
   /** Days a closed role stays visible in the table by default. */
   showClosedDays: number;
@@ -45,6 +47,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   monthlyAiBudgetUsd: 25,
   defaultModel: "claude-sonnet-5",
   cvModel: "claude-fable-5-1",
+  cvTheme: undefined,
   modelOverrides: {},
   showClosedDays: 30,
   closeAfterMissingScans: 2,
@@ -63,6 +66,11 @@ export function resolveSettings(rows: Array<{ key: string; value: unknown }>): A
   for (const row of rows) {
     const key = row.key as SettingsKey;
     if (!(key in DEFAULT_SETTINGS)) continue;
+    if (key === "cvTheme") {
+      const theme = CvThemeSchema.safeParse(row.value);
+      if (theme.success) out.cvTheme = { ...theme.data, skillPills: true };
+      continue;
+    }
     const def = DEFAULT_SETTINGS[key];
     const val = row.value;
     if (val === null || val === undefined) continue;

@@ -8,7 +8,7 @@ import { updateApplication } from "@/app/actions/applications";
 export const dynamic = "force-dynamic";
 export default async function ApplicationsPage() {
   const rows = await db().select({ id: applications.id, cvId: applications.cvId, jobTitle: applications.jobTitle, companyName: applications.companyName, appliedOn: applications.appliedOn, status: applications.status, notes: applications.notes, history: applications.history }).from(applications).orderBy(desc(applications.appliedOn));
-  return <div className="max-w-4xl space-y-5"><PageHeader title="Applications" description="Record an application from a saved CV. Its PDF is frozen here; later CV edits do not change it." />
+  return <div className="max-w-4xl space-y-5"><PageHeader title="Applications" />
     <Link href="/cv" className="underline">Open CV builder</Link>
     {!rows.length && <p>No applications recorded yet.</p>}
     {rows.map(row => <section key={row.id} className="space-y-3 rounded border p-4">

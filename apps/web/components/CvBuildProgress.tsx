@@ -54,10 +54,7 @@ export function CvBuildProgress({
             {active?.title ??
               (queued ? "Your CV is queued" : "Preparing your CV")}
           </h2>
-          <p className="mt-1 text-sm text-slate-600">
-            {active?.detail ??
-              "Your saved settings and evidence are ready. The build will start automatically."}
-          </p>
+
         </div>
       </div>
       <ol className="grid gap-3 sm:grid-cols-4" aria-label="Build stages">
@@ -84,11 +81,7 @@ export function CvBuildProgress({
           </li>
         ))}
       </ol>
-      <p className="text-xs text-slate-500">
-        This can take a few minutes. Stages update automatically; fitting may
-        return to writing to tighten the wording. You can leave this page and
-        come back.
-      </p>
+
     </section>
   );
 }

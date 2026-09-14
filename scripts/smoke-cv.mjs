@@ -78,6 +78,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
     model: "test",
     pageCount: 2,
   });
+  const originalCvModel = (await pool.query("select value from settings where key = 'cvModel'")).rows[0];
   try {
     for (const [id, status, stage, value] of [
       [readyId, "ready", null, content],
@@ -108,6 +109,34 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
     const page = await context.newPage();
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
+    await page.goto(`${baseUrl}/cv`);
+    assert.equal(await page.getByRole("heading", { name: "CV model", exact: true }).count(), 0);
+    assert.equal(await page.getByText(/Uses library version/).count(), 0);
+    await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Library", exact: true }).click();
+    await page.getByRole("heading", { name: "Library", exact: true }).waitFor();
+    assert.equal(new URL(page.url()).pathname, "/library");
+    assert.equal(await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Library", exact: true }).getAttribute("aria-current"), "page");
+    assert.equal(await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "CVs", exact: true }).getAttribute("aria-current"), null);
+    await page.goto(`${baseUrl}/cv/library`);
+    await page.getByRole("heading", { name: "Library", exact: true }).waitFor();
+    assert.equal(new URL(page.url()).pathname, "/library");
+    await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Settings", exact: true }).click();
+    const cvModel = page.getByRole("combobox", { name: "CV model", exact: true });
+    await cvModel.waitFor();
+    const currentModel = await cvModel.inputValue();
+    const extractionModel = await page.getByRole("combobox", { name: "Default model", exact: true }).inputValue();
+    const choices = await cvModel.locator("option").evaluateAll(options => options.map(option => option.value));
+    const selectedModel = choices.find(value => value !== currentModel && value !== extractionModel);
+    assert.ok(selectedModel);
+    await cvModel.selectOption(selectedModel);
+    await Promise.all([
+      page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/settings"),
+      page.locator("form").filter({ has: cvModel }).getByRole("button", { name: "Save", exact: true }).click(),
+    ]);
+    assert.equal((await pool.query("select value from settings where key = 'cvModel'")).rows[0].value, selectedModel);
+    await page.reload();
+    await cvModel.waitFor();
+    assert.equal(await cvModel.inputValue(), selectedModel);
     await page.goto(`${baseUrl}/cv/${readyId}`);
     // Reserve scrollbar space even on macOS, whose overlay scrollbars can hide width regressions.
     await page.addStyleTag({
@@ -133,7 +162,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
     await page.getByRole("button", { name: "Gold", exact: true }).click();
     await page
       .getByRole("checkbox", {
-        name: "Remember wording corrections for future CVs.",
+        name: "Remember wording corrections",
       })
       .uncheck();
     await page.getByRole("tab", { name: "Evaluation", exact: true }).click();
@@ -576,6 +605,8 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
       "delete from cv_drafts where id in ($1, $2) or parent_id = $1",
       [readyId, busyId],
     );
+    if (originalCvModel) await pool.query("insert into settings (key,value) values ('cvModel',$1) on conflict (key) do update set value=excluded.value", [JSON.stringify(originalCvModel.value)]);
+    else await pool.query("delete from settings where key='cvModel'");
     await pool.end();
   }
 }

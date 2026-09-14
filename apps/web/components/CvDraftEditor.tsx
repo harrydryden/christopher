@@ -131,11 +131,7 @@ export function CvDraftEditor({
         submitLabel="Save, fit and assess new revision"
         secondaryActions={<ImproveButton />}
       >
-        <div className="text-xs text-slate-600" role="status">
-          {dirty
-            ? "Unsaved changes — Evaluation applies to the saved revision. Save for a fresh assessment."
-            : "Saving fits your edits to two pages and reassesses them. Improve uses your latest confirmed evidence."}
-        </div>
+        {dirty && <p className="text-xs text-slate-600" role="status">Unsaved changes</p>}
         {theme && (
           <input type="hidden" name="theme" value={JSON.stringify(theme)} />
         )}
@@ -145,11 +141,7 @@ export function CvDraftEditor({
           <h2 className="font-semibold">Appearance and settings</h2>
           <div className="mt-4 space-y-4">
             <CvAppearance value={theme} onChange={setTheme} />
-            <p className="text-sm text-slate-600">
-              Two pages maximum · Up to {CV_LIMITS.bulletsPerSection} bullets
-              per section · {CV_LIMITS.bulletCharacters} characters per bullet.
-              Saving automatically fits any overflow before assessment.
-            </p>
+
             <label className="block text-sm">
               <input
                 form={formId}
@@ -157,12 +149,9 @@ export function CvDraftEditor({
                 name="rememberWording"
                 defaultChecked
               />{" "}
-              Remember wording corrections for future CVs.
+              Remember wording corrections
             </label>
-            <p className="text-xs text-slate-500">
-              Appearance applies to this revision. Change your library to set a
-              default for future CVs.
-            </p>
+
           </div>
         </section>
       </CvWorkspacePanel>
@@ -187,10 +176,7 @@ export function CvDraftEditor({
               </>
             )}
           </p>
-          <p className="text-xs text-slate-500">
-            Identity and job headings come from the evidence snapshot. Edit the
-            library and generate a new CV to change them.
-          </p>
+
           <label className="block text-sm">
             Profile
             <textarea
@@ -240,21 +226,13 @@ export function CvDraftEditor({
                 }
                 className={input}
               />
-              <span className="text-xs text-slate-500">
-                {section.skillItems
-                  ? "One skill per line, up to 20, with 80 characters per skill. Review any new claims."
-                  : section.kind === "skill"
-                    ? "One skill or skill description per line. These always use centred pills; individual labels produce more compact pills."
-                    : `One bullet per line, up to ${CV_LIMITS.bulletsPerSection}. Keep each at most ${CV_LIMITS.bulletCharacters} characters.`}
-              </span>
+
             </label>
           ))}
         </section>
         <section className="space-y-3 rounded-lg border border-slate-200 p-4">
           <CvDisclosure label="PDF preview">
-            <p className="text-sm">
-              See how your current wording and appearance will look in the PDF.
-            </p>
+
             <button
               type="button"
               disabled={pending}

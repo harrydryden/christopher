@@ -92,8 +92,8 @@ export default async function CvDraftPage({
             </p>
             <CvDisclosure label="source and evidence details">
               <p className="my-2 text-sm">
-                <a className="underline" href="/cv/library">
-                  Open evidence library
+                <a className="underline" href="/library">
+                  Open Library
                 </a>{" "}
                 · This description is the exact snapshot used for writing and
                 scoring.{" "}
@@ -141,19 +141,11 @@ export default async function CvDraftPage({
                   value={content?.theme ?? draft.librarySnapshot.theme}
                 />
               </fieldset>
-              <p className="text-sm">
-                Two-page maximum · Up to six bullets per section · 650
-                characters per bullet.
-              </p>
-              <p className="text-sm text-slate-600">
-                Settings are saved for this build. You can change them when it
-                finishes.
-              </p>
-              <p className="text-xs text-slate-500">
-                Evidence version {draft.libraryVersion} · {draft.model}
-              </p>
-              <Link href="/cv/library" className="text-sm underline">
-                Open evidence library
+
+
+
+              <Link href="/library" className="text-sm underline">
+                Open Library
               </Link>
             </div>
           </CvWorkspacePanel>

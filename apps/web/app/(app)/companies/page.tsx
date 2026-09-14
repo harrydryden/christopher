@@ -25,7 +25,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
 
   return (
     <div>
-      <PageHeader title="Companies" description="Track companies and refresh their roles. Refresh checks existing careers pages and finds one when needed." />
+      <PageHeader title="Companies" />
 
       {sp.added !== undefined && (
         <div className="mb-4 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800">

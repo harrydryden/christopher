@@ -3,7 +3,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 const groups = [
   [["/companies", "Tracked companies"], ["/suggestions", "Discover companies"]],
-  [["/cv", "Build and review CVs"], ["/cv/library", "Evidence and writing preferences"]],
   [["/settings", "Preferences"], ["/learning", "Learning and feedback"], ["/health", "System health"]],
 ];
 export function WorkspaceNav() {

@@ -1,3 +1,4 @@
+import { saveCvModel } from "@/app/actions/cv";
 import { runDailyScanNow, saveAiSettings, saveKeywords, saveLocationFilter, saveMatchFields, saveSchedule, saveTableSettings } from "@/app/actions/settings";
 import { rescoreAllRoles } from "@/app/actions/learning";
 import { Button } from "@/components/Button";
@@ -11,7 +12,6 @@ export const dynamic = "force-dynamic";
 
 const inputClass =
   "w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-accent focus:ring-1 focus:ring-accent";
-const helpClass = "text-xs text-slate-500";
 const labelClass = "flex flex-col gap-1 text-sm";
 const fieldLabelClass = "text-xs font-medium text-slate-500";
 
@@ -22,7 +22,6 @@ export default async function SettingsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Settings"
-        description="Everything here is editable without a redeploy."
         actions={
           <>
             <form action={runDailyScanNow}>
@@ -43,7 +42,6 @@ export default async function SettingsPage() {
             <span className={fieldLabelClass}>Seniority keywords (title only)</span>
             <textarea name="seniorityKeywords" rows={2} defaultValue={(settings.gate.seniorityKeywords ?? []).join("\n")} placeholder="Head, Director, VP, Chief" className={inputClass} />
           </label>
-          <p className={helpClass}>Roles must match a role keyword AND a seniority keyword. Each list uses OR. Leave seniority blank to allow all levels. Exclusions win. Use strateg* to match strategy and strategic. Saving immediately refilters existing roles.</p>
           <label className={labelClass}>
             <span className={fieldLabelClass}>Include keywords</span>
             <textarea name="includeKeywords" rows={2} defaultValue={settings.gate.includeKeywords.join("\n")} className={inputClass} />
@@ -52,11 +50,6 @@ export default async function SettingsPage() {
             <span className={fieldLabelClass}>Exclude keywords</span>
             <textarea name="excludeKeywords" rows={2} defaultValue={settings.gate.excludeKeywords.join("\n")} className={inputClass} />
           </label>
-          <p className={helpClass}>
-            One term per line (or comma-separated). Matching is whole-word and case-insensitive. Use a trailing <code>*</code> for a prefix match
-            (<code>operat*</code> matches &quot;operations&quot; and &quot;operating&quot;), or wrap a phrase in quotes for an exact match (
-            <code>&quot;chief of staff&quot;</code>). Any exclude match wins over an include match.
-          </p>
         </SettingsForm>
       </Card>
 
@@ -70,7 +63,6 @@ export default async function SettingsPage() {
               </label>
             ))}
           </div>
-          <p className={helpClass}>Which fields the keyword filter reads. Description matching needs a detail fetch per posting on HTML sources.</p>
         </SettingsForm>
       </Card>
 
@@ -84,10 +76,6 @@ export default async function SettingsPage() {
             <input type="checkbox" name="includeRemote" value="1" defaultChecked={settings.gate.includeRemote} />
             Include remote roles
           </label>
-          <p className={helpClass}>
-            One term per line. &quot;UK&quot; expands to England, Scotland, Wales, London and other UK cities; country names expand similarly. Leave blank to
-            allow every location. Remote roles pass unless they name another region you have not listed.
-          </p>
         </SettingsForm>
       </Card>
 
@@ -129,6 +117,15 @@ export default async function SettingsPage() {
         </SettingsForm>
       </Card>
 
+      <Card title="CV model">
+        <SettingsForm action={saveCvModel}>
+          <label className={labelClass}>
+            <span className={fieldLabelClass}>CV model</span>
+            <ModelSelect name="cvModel" value={settings.cvModel} className={inputClass} />
+          </label>
+        </SettingsForm>
+      </Card>
+
       <Card title="AI">
         <SettingsForm action={saveAiSettings}>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -145,20 +142,7 @@ export default async function SettingsPage() {
             <input type="checkbox" name="suggestionsEnabled" value="1" defaultChecked={settings.suggestionsEnabled} />
             Enable weekly company suggestions
           </label>
-          <p className={helpClass}>Scoring and suggestions pause when the monthly AI budget is reached.</p>
         </SettingsForm>
-      </Card>
-
-      <Card title="Account">
-        <p className="mb-2 text-sm text-slate-600">
-          Christopher has a single application password, checked against <code>APP_PASSWORD_HASH</code>. This app cannot change environment variables
-          itself — to set a new password, generate a fresh hash and update it on your host:
-        </p>
-        <pre className="overflow-x-auto rounded bg-accent p-3 text-xs text-slate-100">pnpm --filter @christopher/web hash-password &apos;your new password&apos;</pre>
-        <p className="mt-2 text-xs text-slate-500">
-          Set the result as <code>APP_PASSWORD_HASH</code> and redeploy. <code>SESSION_SECRET</code> can be any long random string; changing it signs
-          everyone out.
-        </p>
       </Card>
     </div>
   );

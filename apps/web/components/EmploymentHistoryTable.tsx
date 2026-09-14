@@ -11,8 +11,6 @@ export function EmploymentHistoryTable({ employment, entries, onChange }: {
   }
   return <section aria-labelledby="employment-heading" className="space-y-3 rounded border border-slate-200 p-3">
     <h2 id="employment-heading" className="text-lg font-semibold">Employment history</h2>
-    <p className="text-sm text-slate-500">One row per job. Add comma-separated industry descriptions (for example: Workplace mental health, SaaS). Descriptions are shared across jobs at the same company. The CV builder selects up to two relevant descriptions for each application.</p>
-    <p className="text-xs text-slate-500">Dates: YYYY-MM (for example 2025-08), or YYYY if only the year is known. Leave unknown dates blank. Separate jobs at the same company stay separate.</p>
     <datalist id="employment-companies">{companies.map(company => <option key={company} value={company} />)}</datalist>
     <div className="overflow-x-auto"><table className="w-full text-left text-sm">
       <thead><tr>{["Company", "Industry descriptions", "Job title", "Start date", "End date", "Current", ""].map((label, i) => <th scope="col" className="p-2" key={i}>{label}</th>)}</tr></thead>

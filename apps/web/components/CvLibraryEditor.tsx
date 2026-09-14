@@ -28,7 +28,6 @@ export function CvLibraryEditor({ library, version }: { library: CvLibrary | nul
     return <label className="block space-y-1 text-sm"><span>{label}</span><textarea rows={rows} className={input} value={value[key] ?? ""} onChange={e => setValue({ ...value, [key]: e.target.value })} /></label>;
   }
   return <form action={action} className="space-y-4">
-    <p className="text-sm">{version ? `Stored version ${version}: ${value.entries.length} evidence blocks. Edit any field below, then save a new version.` : "Your library is empty. Import your library JSON or add evidence below, then save."}</p>
     <div className="flex flex-wrap items-center gap-3 text-sm">
       <label>Import library JSON<input type="file" accept="application/json,.json" className="ml-2" onChange={async e => {
         const file = e.target.files?.[0]; if (!file) return;
@@ -42,11 +41,10 @@ export function CvLibraryEditor({ library, version }: { library: CvLibrary | nul
     <input type="hidden" name="library" value={JSON.stringify(value)} /><input type="hidden" name="version" value={version} />
     <EmploymentHistoryTable employment={value.employment ?? []} entries={value.entries} onChange={employment => setValue({ ...value, employment })} />
     {field("name", "Full name")}
-    <label className="block space-y-1 text-sm">LinkedIn profile URL<input type="url" className={input} value={value.linkedinUrl ?? ""} placeholder="https://www.linkedin.com/in/your-profile" onChange={e => setValue({ ...value, linkedinUrl: e.target.value })} /></label>{field("contact", "Contact details (email, phone, location, links)")}{field("profile", "Career overview: facts the model may use", 4)}
+    <label className="block space-y-1 text-sm">LinkedIn profile URL<input type="url" className={input} value={value.linkedinUrl ?? ""} placeholder="https://www.linkedin.com/in/your-profile" onChange={e => setValue({ ...value, linkedinUrl: e.target.value })} /></label>{field("contact", "Contact details")}{field("profile", "Career overview", 4)}
     <CvAppearance value={value.theme} onChange={theme => setValue({ ...value, theme })} />
-    {field("stylePreferences", "Preferred CV style (tone, length and wording to avoid)", 3)}
-    {field("preferredWording", "Remembered wording corrections (review, edit or remove)", 5)}
-    <p className="text-sm text-slate-500">Only Active blocks are used in new CVs. For experience, tick Confirmed beside each responsibility or outcome you can substantiate. Unconfirmed rows are excluded from CVs and role qualification. Editing a row requires confirmation again. New blocks start as Draft; archiving makes them Inactive. Save your library before generating a CV. Existing CVs keep their original evidence snapshot.</p>
+    {field("stylePreferences", "Preferred CV style", 3)}
+    {field("preferredWording", "Wording preferences", 5)}
     <h2 className="text-lg font-semibold">Evidence blocks</h2>
     {employmentCompanyGroups(value.employment ?? []).map(group => <section key={group.company.toLowerCase()} className="space-y-3">
       <h3 className="text-lg font-semibold">{group.company || "New company"}</h3>
@@ -104,6 +102,5 @@ export function CvLibraryEditor({ library, version }: { library: CvLibrary | nul
     <button type="button" className="mr-4 text-sm underline" onClick={() => setValue({ ...value, entries: [...value.entries, { id: crypto.randomUUID(), kind: "skill", status: "draft", heading: "", details: "" }] })}>Add education, skill or interest</button>
     <button disabled={pending} className="rounded bg-accent px-4 py-2 text-sm text-white disabled:opacity-50">{pending ? "Saving…" : "Save library"}</button>
     {!state.ok && <p role="alert" className="text-sm text-red-600">{state.error}</p>}
-    <p className="text-xs text-slate-500">Saved library version: {version || "none"}. Changes to the library do not rewrite existing CVs.</p>
   </form>;
 }

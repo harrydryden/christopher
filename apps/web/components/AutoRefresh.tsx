@@ -38,7 +38,9 @@ export function AutoRefresh({
             (version !== undefined && version !== result.version)
           )
             startTransition(() => router.refresh());
-          version = result.version;
+          // Only the rendered page can acknowledge a changed version. A requested
+          // refresh may fail; keep retrying while its server-provided version is stale.
+          if (version === undefined) version = result.version;
           // Keep retrying until the refreshed page unmounts this component. A failed
           // terminal refresh must not leave a finished build stuck on its progress screen.
         } catch {

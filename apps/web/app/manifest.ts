@@ -7,10 +7,10 @@ export default function manifest(): MetadataRoute.Manifest {
     description: "Careers page monitor",
     start_url: "/",
     display: "standalone",
-    // Brand Slate matches the favicon drum and reads better than the deep navy
-    // accent at icon size, so the installed app and the tab agree.
+    // Follows the black accent so the installed app and the in-app chrome
+    // agree. Paper stays as the splash background behind the mark.
     background_color: "#f4f1ea",
-    theme_color: "#2f5678",
+    theme_color: "#000000",
     icons: [
       { src: "/brand/favicon-192.png", sizes: "192x192", type: "image/png" },
       { src: "/brand/favicon-512.png", sizes: "512x512", type: "image/png" },

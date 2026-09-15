@@ -18,8 +18,8 @@ over a raw palette shade.**
 
 | Role | Token | Value | Use |
 | --- | --- | --- | --- |
-| Accent | `accent` | `#142D46` | App chrome, primary buttons, links, focus rings, `accent-color` |
-| Accent hover | `accent-hover` | `#2f5678` | Hover step on accent-filled controls |
+| Accent | `accent` | `#000000` | App chrome, primary buttons, links, focus rings, `accent-color` |
+| Accent hover | `accent-hover` | `#333333` | Hover step on accent-filled controls |
 | Accent tint | `accent-tint` | `#eef1f6` | Selected rows, highlighted cells, informational badges |
 | Track | `track` | `#e5eaf0` | Progress and meter rails |
 | Neutral | `slate-*` | Tailwind | Text, borders, surfaces — the only neutral ramp |
@@ -33,13 +33,19 @@ adjacent surfaces.
 
 ### Accent, and why there is only one
 
-The accent is the deep navy `#142D46` set in #30. It carries the chrome *and*
-every interactive state. Its hover step is brand Slate `#2f5678`, so the ramp
-stays inside the brand palette rather than drifting to another hue.
+The accent is black `#000000`. It carries the chrome *and* every interactive
+state. Its hover step is `#333333`: the brand palette has no black ramp to
+borrow, so this is a plain lighter step and the one accent value that sits
+outside the brand palette.
 
-Brand Slate also remains the tab and installed-app colour (`app/manifest.ts`,
-`viewport.themeColor`) because it reads better than the deep navy at favicon
-size. That is the one deliberate place where tab and chrome differ.
+The tab and installed-app colour (`app/manifest.ts`, `viewport.themeColor`)
+follows the accent, so chrome and tab agree. The mark keeps its enamel drum
+colours — only the chrome around it is black.
+
+`accent-tint` and `track` keep their slate-leaning values. They are neutrals,
+and swapping them for pure greys would stand a second neutral ramp next to
+`slate-*`, which is exactly the temperature shift the neutral rule below
+forbids.
 
 ### Brand palette
 
@@ -88,7 +94,7 @@ All in `apps/web/components`. Compose these rather than restyling a `<div>`.
 | `Button` | `primary` / `secondary` / `danger` / `ghost`, sizes `sm` / `md`. `buttonClass()` exports the same classes for `<a>` and `<form>` submits. |
 | `Card` | Bordered white panel with optional title and actions. |
 | `Badge` | Status pill. Tones map to the roles above. |
-| `PageHeader` | Navy banner; sets `[data-page-header]`, which restyles its own `h1`, description and buttons. |
+| `PageHeader` | Accent banner; sets `[data-page-header]`, which restyles its own `h1`, description and buttons. |
 | `EmptyState` | Zero-state copy and call to action. |
 | `table.tsx` | Table primitives; highlighted rows use `bg-accent-tint`. |
 | `NavLink` / `WorkspaceNav` | Sidebar and section navigation, with `aria-current`. |
@@ -97,13 +103,14 @@ All in `apps/web/components`. Compose these rather than restyling a `<div>`.
 ### Focus
 
 `globals.css` gives every `input`, `select`, `textarea`, `button` and `a` the
-same 2px accent outline at a 3px offset; inside navy chrome it flips to white.
+same 2px accent outline at a 3px offset; inside the accent chrome it flips to
+white.
 
 **Components must not set their own focus colour.** A Tailwind
 `focus-visible:outline-*` utility has higher specificity than that rule, so a
 component that sets its own silently desynchronises from the rest of the app —
 which is exactly how buttons ended up focusing indigo while every other control
-focused navy.
+focused the accent.
 
 ---
 

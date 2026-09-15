@@ -12,8 +12,8 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  // Brand Slate: it reads better than the deep navy accent at favicon size.
-  themeColor: "#2f5678",
+  // Follows the black accent, so the tab matches the app chrome.
+  themeColor: "#000000",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

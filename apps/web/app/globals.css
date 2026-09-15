@@ -11,12 +11,12 @@
    inline style or passed as a prop, so without this the brand palette would
    compile away and those references would resolve to nothing. */
 @theme static {
-  /* The single interactive accent: chrome, primary buttons, focus, links.
-     Deep navy, deliberately chosen in #30. */
-  --color-accent: #142D46;
-  /* Hover step of the navy ramp. This is brand Slate, so the ramp stays inside
-     the brand palette instead of drifting to a different hue. */
-  --color-accent-hover: #2f5678;
+  /* The single interactive accent: chrome, primary buttons, focus, links. */
+  --color-accent: #000000;
+  /* Hover step of the accent ramp. The brand palette has no black ramp to
+     borrow, so this is a plain lighter step and the one accent value that sits
+     outside the brand palette. */
+  --color-accent-hover: #333333;
   /* Faintest accent wash: selected table rows, highlighted cells. */
   --color-accent-tint: #eef1f6;
 
@@ -38,8 +38,9 @@
 
 :root {
   color-scheme: light;
-  /* Retained so any `var(--app-navy)` left in the tree keeps resolving. New
-     code should use the `accent` utilities instead. */
+  /* Historical name from when the chrome was navy. Retained so any
+     `var(--app-navy)` left in the tree keeps resolving. New code should use the
+     `accent` utilities instead. */
   --app-navy: var(--color-accent);
 }
 
@@ -86,7 +87,7 @@ kbd {
 
 /* Shared app chrome; document palettes remain independent. */
 .app-sidebar, .scan-banner, [data-page-header] {
-  background-color: var(--app-navy);
+  background-color: var(--color-accent);
   color: #ffffff;
 }
 [data-page-header] {

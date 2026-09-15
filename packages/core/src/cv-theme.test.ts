@@ -34,6 +34,8 @@ describe('structured skills and theme snapshots', () => {
 it('uses Navy first and guarantees at least 4.5:1 foreground contrast', async () => {
   const { CV_THEMES } = await import('./cv-theme');
   expect(Object.keys(CV_THEMES)[0]).toBe('Navy');
+  for (const [label, preset] of Object.entries(CV_THEMES)) expect(CvThemeSchema.safeParse(preset).success, label).toBe(true);
+  expect(CV_THEMES.Black?.primary).toBe('#000000');
   expect(cvForeground(DEFAULT_CV_THEME.primary)).toBe('#ffffff');
   for (let shade = 0; shade < 256; shade++) {
     const colour = '#' + shade.toString(16).padStart(2, '0').repeat(3);

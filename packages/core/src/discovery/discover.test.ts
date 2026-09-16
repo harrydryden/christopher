@@ -3,7 +3,7 @@ import { createFakeDiscoveryContext } from "../testing";
 import * as fx from "../fixtures";
 import { discoverCareersSources, probeUrlAsSource } from "./discover";
 import { harvestLinks, scoreLink } from "./links";
-import { companyNameFromTitle, companyNamesMatch, diceCoefficient, looksLikeSoft404 } from "./text";
+import { companyNameFromTitle, companyNamesMatch, diceCoefficient, isPlaceholderName, looksLikeSoft404, nameFromDomain, nameFromSlug } from "./text";
 import { AUTO_ACCEPT_CONFIDENCE } from "./confidence";
 
 const GH_JOBS = "https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true";
@@ -258,6 +258,21 @@ describe("probeUrlAsSource", () => {
     expect(result.best?.count).toBe(6);
   });
 
+  it("names the company from the feed when the board reports one", async () => {
+    const ctx = createFakeDiscoveryContext({ routes: greenhouseRoutes });
+    const result = await probeUrlAsSource("https://boards.greenhouse.io/acme", ctx);
+    expect(result.companyName).toBe("Acme Robotics");
+  });
+
+  it("names the company from the board slug when the feed carries no name", async () => {
+    // Ashby's feed has no organisation name; hims.com was left called "hims.com" for weeks.
+    const ctx = createFakeDiscoveryContext({ routes: {}, verify: { "ashby:hims-and-hers": { ok: true, count: 117, sample: [] } } });
+    const result = await probeUrlAsSource("https://jobs.ashbyhq.com/hims-and-hers", ctx);
+    expect(result.outcome).toBe("resolved");
+    expect(result.best?.method).toBe("pasted_ats");
+    expect(result.companyName).toBe("Hims and Hers");
+  });
+
   it("accepts a pasted listing page", async () => {
     const ctx = createFakeDiscoveryContext({
       routes: { "https://www.acme.example/careers/jobs": { body: fx.LISTING_PAGE_HTML.replace(/job-boards\.greenhouse\.io\/acme\/jobs/g, "www.acme.example/jobs") } },
@@ -298,6 +313,19 @@ describe("link scoring and page metadata", () => {
     expect(companyNameFromTitle("Careers – Acme Robotics", "acme.example")).toBe("Careers");
     expect(companyNameFromTitle(undefined, "acme.example")).toBe("Acme");
     expect(companyNameFromTitle("Home", "acme.example")).toBe("Acme");
+  });
+
+  it("derives placeholder names and recognises them", () => {
+    expect(nameFromDomain("hims.com")).toBe("Hims");
+    expect(nameFromDomain("www.acme.co.uk")).toBe("Acme");
+    expect(nameFromSlug("hims-and-hers")).toBe("Hims and Hers");
+    expect(nameFromSlug("acme_robotics")).toBe("Acme Robotics");
+    expect(nameFromSlug("12345")).toBeUndefined();
+    expect(isPlaceholderName("hims.com", "hims.com")).toBe(true);
+    expect(isPlaceholderName("Hims", "hims.com")).toBe(true);
+    expect(isPlaceholderName("", "hims.com")).toBe(true);
+    expect(isPlaceholderName(null, "hims.com")).toBe(true);
+    expect(isPlaceholderName("Hims & Hers Health", "hims.com")).toBe(false);
   });
 
   it("compares company names tolerantly", () => {

@@ -79,7 +79,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
               <TR key={company.id}>
                 <TD>
                   <a href={`/companies/${company.id}`} className="flex items-center gap-2 no-underline hover:underline">
-                    <CompanyFavicon src={company.faviconUrl} />
+                    <CompanyFavicon src={company.faviconUrl} domain={company.domain} />
                     <span className="font-semibold text-fg">{company.name}</span>
                   </a>
                   <a href={company.homepageUrl} target="_blank" rel="noopener noreferrer" className="block text-12 text-muted no-underline hover:underline">

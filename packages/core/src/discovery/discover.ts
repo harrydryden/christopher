@@ -6,7 +6,7 @@ import { absoluteUrl, ensureHttpUrl, extractDomain, normalizeUrl, sameDomain, st
 import type { RawPosting, SourceSpec } from "../types";
 import { confidenceFor, outcomeFor } from "./confidence";
 import { countAnchors, extractMeta, harvestLinks, scoreLink, WELL_KNOWN_PATHS } from "./links";
-import { companyNameFromTitle, looksLikeSoft404 } from "./text";
+import { companyNameFromTitle, looksLikeSoft404, nameFromSlug } from "./text";
 import type { DiscoveryCandidate, DiscoveryContext, DiscoveryResult, HarvestedLink } from "./types";
 
 const JOB_DETAIL_RE = /\/(jobs?|careers?|positions?|openings?|vacanc(?:y|ies)|opportunit(?:y|ies))\//i;
@@ -553,6 +553,8 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
   result.candidates = finalCandidates.slice(0, 5);
   result.best = result.candidates[0];
   result.outcome = outcomeFor(result.best?.confidence);
+  // A refused homepage leaves no title to name the company by; the verified feed's name will do.
+  if (!result.companyName && result.best?.companyName) result.companyName = result.best.companyName;
   result.fetches = run.fetches;
   result.durationMs = Date.now() - started;
   if (result.candidates.length === 0) run.say("no careers source found");
@@ -585,10 +587,12 @@ export async function probeUrlAsSource(url: string, ctx: DiscoveryContext): Prom
         evidence: [`resolved directly from ${normalized}`],
         sample: verification.sample ?? [],
         count: verification.count,
-        companyName: verification.companyName,
+        // The feed's own name when the adapter reads one; otherwise the board slug, which the
+        // company chose (`hims-and-hers`), beats the domain label the row was created with.
+        companyName: verification.companyName ?? (spec.atsSlug ? nameFromSlug(spec.atsSlug) : undefined),
       };
       run.say(`${normalized} is a ${spec.type} board (${verification.count ?? 0} postings)`);
-      return { homepageUrl: normalized, outcome: "resolved", best: candidate, candidates: [candidate], log: run.log, fetches: run.fetches, durationMs: Date.now() - started };
+      return { homepageUrl: normalized, outcome: "resolved", best: candidate, candidates: [candidate], companyName: candidate.companyName, log: run.log, fetches: run.fetches, durationMs: Date.now() - started };
     }
     run.say(`${normalized} looks like a ${spec.type} board but verification failed: ${verification.error}`);
   }
@@ -615,7 +619,7 @@ export async function probeUrlAsSource(url: string, ctx: DiscoveryContext): Prom
         count: verification.count,
         companyName: verification.companyName,
       };
-      return { homepageUrl: normalized, outcome: outcomeFor(best.confidence), best, candidates: [best], log: run.log, fetches: run.fetches, durationMs: Date.now() - started };
+      return { homepageUrl: normalized, outcome: outcomeFor(best.confidence), best, candidates: [best], companyName: best.companyName, log: run.log, fetches: run.fetches, durationMs: Date.now() - started };
     }
     if (postings.length >= 3) {
       const candidate: DiscoveryCandidate = {

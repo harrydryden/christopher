@@ -63,8 +63,38 @@ export function companyNameFromTitle(title: string | undefined, fallbackDomain: 
       return best.slice(0, 60).trim();
     }
   }
-  const label = fallbackDomain.split(".")[0] ?? fallbackDomain;
+  return nameFromDomain(fallbackDomain);
+}
+
+/** `hims.com` -> `Hims`. The label a company gets before anything better is known. */
+export function nameFromDomain(domain: string): string {
+  const label = domain.toLowerCase().replace(/^www\./, "").split(".")[0] ?? domain;
   return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+const SLUG_SMALL_WORDS = new Set(["and", "of", "the", "for", "at", "in", "on", "by"]);
+
+/**
+ * `hims-and-hers` -> `Hims and Hers`; `acme_robotics` -> `Acme Robotics`. An ATS board slug is
+ * the company's own choice of name, so it beats the domain label when the feed carries no name.
+ */
+export function nameFromSlug(slug: string): string | undefined {
+  const words = slug.toLowerCase().split(/[-_.\s]+/).filter(Boolean);
+  if (words.length === 0 || words.every((w) => /^\d+$/.test(w))) return undefined;
+  return words
+    .map((w, i) => (i > 0 && SLUG_SMALL_WORDS.has(w) ? w : w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(" ");
+}
+
+/**
+ * True when the stored name is only what we could derive from the URL (the raw domain or its
+ * label), so a name learned from the company's site or careers feed should replace it.
+ */
+export function isPlaceholderName(name: string | null | undefined, domain: string): boolean {
+  const n = (name ?? "").trim().toLowerCase();
+  if (!n) return true;
+  const d = domain.toLowerCase().replace(/^www\./, "");
+  return n === d || n === `www.${d}` || n === nameFromDomain(d).toLowerCase();
 }
 
 const SOFT_404_RE = /(page not found|404 not found|couldn'?t find (?:that|this) page|page (?:doesn'?t|does not) exist|no longer available|nothing here)/i;

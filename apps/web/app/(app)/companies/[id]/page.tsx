@@ -18,6 +18,7 @@ import {
   updateCompanyDetails,
   useDiscoveryCandidate,
 } from "@/app/actions/companies";
+import { CompanyFavicon } from "@/components/CompanyFavicon";
 import { Badge, companyStatusTone, discoveryStatusTone, scanStatusTone, sourceStatusTone } from "@/components/Badge";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
@@ -68,12 +69,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
       <PageHeader
         title={
           <span className="flex items-center gap-3">
-            {company.faviconUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={company.faviconUrl} alt="" width={32} height={32} referrerPolicy="no-referrer" className="shrink-0" />
-            ) : (
-              <span className="inline-block h-8 w-8 shrink-0 bg-track" />
-            )}
+            <CompanyFavicon src={company.faviconUrl} domain={company.domain} size={32} />
             {company.name}
             <Badge tone={companyStatusTone(company.status)}>{company.status}</Badge>
           </span>

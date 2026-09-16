@@ -204,6 +204,22 @@ describe("end to end", () => {
     const [afterStale] = await db.select().from(schema.companies).where(eq(schema.companies.id, company!.id));
     expect(afterStale!.faviconUrl).toBe(updated!.faviconUrl);
   });
+  it("names a company from a pasted board when its name is only the domain label", async () => {
+    await setGate({});
+    const [placeholder] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://www.acme.example/" }).returning();
+    const [named] = await db.insert(schema.companies).values({ name: "Acme Robotics Ltd", domain: "acme-named.example", homepageUrl: "https://www.acme-named.example/" }).returning();
+    for (const company of [placeholder!, named!]) {
+      await enqueueTask(db, "discover", { companyId: company.id, reason: "pasted", url: "https://boards.greenhouse.io/acme" }, {
+        dedupeKey: dedupeKeyFor("discover", { companyId: company.id }), priority: priorityFor("discover"),
+      });
+    }
+    await queue.drain();
+    const [renamed] = await db.select().from(schema.companies).where(eq(schema.companies.id, placeholder!.id));
+    expect(renamed!.name).toBe("Acme Robotics");
+    const [kept] = await db.select().from(schema.companies).where(eq(schema.companies.id, named!.id));
+    expect(kept!.name).toBe("Acme Robotics Ltd");
+    expect(await db.select().from(schema.careerSources)).toHaveLength(2);
+  });
   it("discovers the careers source from a homepage URL and scans it", async () => {
     await setGate({});
     const company = await addCompany("https://www.acme.example/", "acme.example");

@@ -14,3 +14,4 @@ export { harvestLinks, scoreLink, CAREERS_VOCABULARY, WELL_KNOWN_PATHS } from ".
 export { confidenceFor, outcomeFor, AUTO_ACCEPT_CONFIDENCE, CONFIRM_CONFIDENCE } from "./confidence";
 
 export { discoverCompanyLogo } from "./logo";
+export { companyNameFromTitle, nameFromDomain, nameFromSlug, isPlaceholderName } from "./text";

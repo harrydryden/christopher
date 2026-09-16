@@ -13,6 +13,7 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { relativeTime } from "@/lib/format";
 import { Pagination, pageNumber } from "@/components/Pagination";
 import { listCompanies, companyCount } from "@/lib/queries/companies";
+import { SearchForm, SearchPending } from "@/components/SearchForm";
 
 export const dynamic = "force-dynamic";
 
@@ -56,7 +57,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
         </form>
       </Card>
 
-      <form method="get" className="mb-4 flex flex-wrap items-end gap-3"><label className="grid gap-1.5"><span className={labelClass}>Search companies</span><input name="q" defaultValue={q} maxLength={200} className={`h-11 w-80 ${inputClass}`} /></label><Button type="submit" className="h-11">Search</Button>{q && <a className="self-center text-13 underline" href="/companies">Clear</a>}</form>
+      <SearchForm action="/companies" className="mb-4 flex flex-wrap items-end gap-3"><label className="grid gap-1.5"><span className={labelClass}>Search companies</span><input name="q" defaultValue={q} maxLength={200} className={`h-11 w-80 ${inputClass}`} /></label><Button type="submit" className="h-11">Search</Button><SearchPending />{q && <a className="self-center text-13 underline" href="/companies">Clear</a>}</SearchForm>
       <Pagination page={page} total={total} path="/companies" params={{ q }}/>
       {work.active && <div className="mb-4"><AutoRefresh message="Company scanning or discovery is pending. Status updates automatically." /></div>}
       {rows.length === 0 ? (

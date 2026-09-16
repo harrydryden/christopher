@@ -14,6 +14,7 @@ import { relativeTime } from "@/lib/format";
 import { listPendingSuggestions, listResolvedSuggestions, suggestionCount, type SuggestionRow } from "@/lib/queries/suggestions";
 import { buttonClass } from "@/components/Button";
 import { inputClass, labelClass } from "@/components/Field";
+import { SearchForm, SearchPending } from "@/components/SearchForm";
 
 export const dynamic = "force-dynamic";
 function SuggestionCard({ row, returnTo = "/suggestions" }: { row: SuggestionRow; returnTo?: string }) {
@@ -70,7 +71,7 @@ export default async function SuggestionsPage({ searchParams }: { searchParams: 
     <nav aria-label="Discovery views" className="mb-5 flex flex-wrap gap-2 border-b border-line-muted pb-3">
       {[["review", `Review (${reviewCount})`], ["sources", `Sources (${sourceCount[0]?.count ?? 0})`], ["history", "History"]].map(([key, label]) => <a key={key} href={key === "review" ? "/suggestions" : `/suggestions?view=${key}`} aria-current={view === key ? "page" : undefined} className={`ds-pixel border-2 px-3 py-2 text-11 no-underline ${view === key ? "border-accent bg-accent text-accent-fg" : "border-transparent text-muted hover:bg-sunken hover:text-fg"}`}>{label}</a>)}
     </nav>
-    {view !== "sources" && <><form method="get" className="flex flex-wrap items-end gap-3"><input type="hidden" name="view" value={view}/><label className="grid gap-1.5"><span className={labelClass}>Search recommendations</span><input name="q" defaultValue={q} maxLength={200} className={`h-11 w-80 ${inputClass}`}/></label><Button type="submit" className="h-11">Search</Button></form><Pagination page={page} total={total} path="/suggestions" params={{ view, q }}/></>}
+    {view !== "sources" && <><SearchForm action="/suggestions" className="flex flex-wrap items-end gap-3"><input type="hidden" name="view" value={view}/><label className="grid gap-1.5"><span className={labelClass}>Search recommendations</span><input name="q" defaultValue={q} maxLength={200} className={`h-11 w-80 ${inputClass}`}/></label><Button type="submit" className="h-11">Search</Button><SearchPending /></SearchForm><Pagination page={page} total={total} path="/suggestions" params={{ view, q }}/></>}
     {params.notice && <p role="status" className="mb-4 border border-line-muted p-3 text-14">{params.notice.slice(0, 300)}</p>}
     {!settings.suggestionsEnabled && <p role="status" className="mb-4 p-3 text-14 text-warn">Discovery is disabled. You can still review recommendations and manage sources. <a href="/settings" className="underline">Enable company suggestions in Settings</a>.</p>}
     {active.length > 0 && <div role="status" className="mb-4 flex flex-wrap items-center justify-between gap-2 border border-line-muted p-3 text-14"><span>{active.filter(t => t.status === "running").length} checks running · {active.filter(t => t.status === "queued").length} queued. New recommendations will appear in Review.</span><a href={view === "review" ? "/suggestions" : `/suggestions?view=${view}`} className="underline">Refresh progress</a></div>}

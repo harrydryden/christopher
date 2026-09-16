@@ -16,3 +16,25 @@ export const MARK_CELLS =
 
 /** The mark is drawn on a 16-cell grid and renders at whole multiples of it. */
 export const MARK_GRID = 16;
+
+/**
+ * The same cells as one SVG path: horizontal runs of filled cells become
+ * rectangles, so the mark is a ~1KB string rather than 150+ elements. That
+ * matters because every mark on a page is serialised into the RSC payload of
+ * every navigation; as elements the three marks in the shell cost ~45KB.
+ */
+export const MARK_PATH = (() => {
+  const grid = Array.from({ length: MARK_GRID }, () => Array<boolean>(MARK_GRID).fill(false));
+  for (const { x, y } of MARK_CELLS) grid[y]![x] = true;
+  const runs: string[] = [];
+  for (let y = 0; y < MARK_GRID; y++) {
+    let x = 0;
+    while (x < MARK_GRID) {
+      if (!grid[y]![x]) { x++; continue; }
+      const start = x;
+      while (x < MARK_GRID && grid[y]![x]) x++;
+      runs.push(`M${start} ${y}h${x - start}v1H${start}z`);
+    }
+  }
+  return runs.join("");
+})();

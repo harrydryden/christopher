@@ -412,7 +412,8 @@ export async function fetchRolePage(filters: RolesFilters, archived: boolean, th
     const [row] = await db().select({ n: sql<number>`count(*)::int` }).from(baseRolesSelect(true).where(and(conditions, extra)).as('filtered'));
     return row?.n ?? 0;
   };
-  const [total, hiddenTotal] = await Promise.all([countFor(sql`not ${hidden}`), countFor(hidden)]);
+  const total = await countFor(sql`not ${hidden}`);
+  const hiddenTotal = 0;
   const pageCount = Math.max(1, Math.ceil(total / 50));
   const page = Math.min(pageCount, Math.max(1, Number.isSafeInteger(requestedPage) ? requestedPage : 1));
   const direction = sql.raw(filters.dir === 'desc' ? 'desc' : 'asc');

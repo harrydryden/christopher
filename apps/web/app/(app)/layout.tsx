@@ -2,7 +2,6 @@ import { WorkspaceShell } from "@/components/WorkspaceShell";
 import { NavigationMetrics } from "@/components/NavigationMetrics";
 import { ScanStatusBanner } from "@/components/ScanStatusBanner";
 import { getScanStatus } from "@/lib/scan-status";
-import { getCompanyWorkStatus } from "@/lib/work-status";
 import { Suspense, type ReactNode } from "react";
 import { logout } from "@/app/login/actions";
 import { WorkspaceNav } from "@/components/WorkspaceNav";
@@ -25,12 +24,6 @@ async function ScanBanner() {
   return <ScanStatusBanner initialText={status.text} />;
 }
 
-/** The wheel turns while the worker has scan or discovery work in flight. */
-async function SidebarMark() {
-  const { active } = await getCompanyWorkStatus();
-  return <Mark size={48} searching={active} />;
-}
-
 export default function AppLayout({ children }: { children: ReactNode }) {
 
   return (
@@ -42,7 +35,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       <div className="flex flex-1 flex-col md:flex-row">
         <aside className="flex w-full shrink-0 flex-col border-b-2 border-line p-3 md:w-48 md:border-b-0 md:border-r-2">
           <Link href="/" className="mb-4 block p-2" aria-label="Christopher home">
-            <Suspense fallback={<Mark size={48} />}><SidebarMark /></Suspense>
+            <Mark size={48} />
           </Link>
           <nav aria-label="Main navigation" className="flex flex-wrap gap-0.5 md:block md:space-y-0.5">
             {NAV_ITEMS.map((item) => (

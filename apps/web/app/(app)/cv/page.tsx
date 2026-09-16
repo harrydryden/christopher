@@ -10,6 +10,7 @@ import { requestCv } from "@/app/actions/cv";
 import { CvManagement, CvPagination, CvSavedTable } from "@/components/CvSavedTable";
 import { buttonClass } from "@/components/Button";
 import { inputClass, labelClass, selectClass } from "@/components/Field";
+import { SearchForm, SearchPending } from "@/components/SearchForm";
 export const dynamic = "force-dynamic";
 export default async function CvPage({ searchParams }: { searchParams: Promise<{ job?: string; q?: string; page?: string; archivedPage?: string }> }) {
   const { job: requestedJob, q: query, page, archivedPage } = await searchParams;
@@ -28,7 +29,7 @@ export default async function CvPage({ searchParams }: { searchParams: Promise<{
   const params = { ...(q ? { q } : {}), ...(job ? { job } : {}) };
   return <div className="max-w-6xl space-y-6">
     <PageHeader title="CV builder" />
-    <form method="get" className="flex flex-wrap items-end gap-3"><label className="grid gap-1.5"><span className={labelClass}>Find a role or company</span><input name="q" defaultValue={q} maxLength={200} className={`h-11 w-80 ${inputClass}`}/></label><button type="submit" className={buttonClass("secondary", "md", "h-11")}>Search roles</button>{q && <a href="/cv" className="self-center text-13 underline">Clear search</a>}</form>
+    <SearchForm action="/cv" className="flex flex-wrap items-end gap-3"><label className="grid gap-1.5"><span className={labelClass}>Find a role or company</span><input name="q" defaultValue={q} maxLength={200} className={`h-11 w-80 ${inputClass}`}/></label><button type="submit" className={buttonClass("secondary", "md", "h-11")}>Search roles</button><SearchPending />{q && <a href="/cv" className="self-center text-13 underline">Clear search</a>}</SearchForm>
     <Card title="Create a role-specific CV"><SettingsForm action={requestCv} submitLabel="Generate CV">
       <label className="grid gap-1.5"><span className={labelClass}>Role</span><select name="jobId" defaultValue={job ?? roles[0]?.id} required className={selectClass}>{roles.map(r => <option key={r.id} value={r.id}>{r.company} · {r.title}</option>)}</select></label>
       {!roles.length && <p className="text-14 text-muted">No matching roles found. Try another search, or add a company and scan its roles.</p>}

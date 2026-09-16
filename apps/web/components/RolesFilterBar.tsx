@@ -1,6 +1,7 @@
 import { SORT_KEYS, STATUS_VALUES, type RolesFilters } from "@/lib/queries/jobs";
 import { buttonClass } from "@/components/Button";
 import { inputClass, labelClass, selectClass } from "@/components/Field";
+import { SearchForm, SearchPending } from "@/components/SearchForm";
 
 const STATUS_LABELS: Record<(typeof STATUS_VALUES)[number], string> = { new: "Newly opened", active: "Open", closed: "Closed" };
 
@@ -26,7 +27,7 @@ export function RolesFilterBar({
   exportHref: string;
 }) {
   return (
-    <form action={path} method="get" className="mb-4 flex flex-wrap items-end gap-3 border-2 border-line-muted p-3">
+    <SearchForm action={path} className="mb-4 flex flex-wrap items-end gap-3 border-2 border-line-muted p-3">
       <input type="hidden" name="view" value={view} />
       {companyScoped && <input type="hidden" name="company" value={filters.company} />}
       {!companyScoped && <label className="flex flex-col gap-1.5">
@@ -48,6 +49,7 @@ export function RolesFilterBar({
         <a href={exportHref} className="text-13 text-muted underline hover:text-fg">
           Export CSV
         </a>
+        <SearchPending />
         <button type="submit" className={buttonClass("primary")}>
           Apply filters
         </button>
@@ -98,6 +100,6 @@ export function RolesFilterBar({
         </div>
       </details>
 
-    </form>
+    </SearchForm>
   );
 }

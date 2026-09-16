@@ -1,4 +1,5 @@
 import { RefreshCompanyButton } from "@/components/RefreshCompanyButton";
+import { CompanyFavicon } from "@/components/CompanyFavicon";
 import { getCompanyWorkStatus } from "@/lib/work-status";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { addCompanies, archiveCompany, pauseCompany, resumeCompany } from "@/app/actions/companies";
@@ -74,16 +75,11 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
             </tr>
           </THead>
           <TBody>
-            {rows.map(({ company, lastScan, reviewRoles, shortlistedRoles, discovering, discoveryState }) => (
+            {rows.map(({ company, lastScan, reviewRoles, shortlistedRoles, discovering, discoveryState, needsSource, lastDiscovery }) => (
               <TR key={company.id}>
                 <TD>
                   <a href={`/companies/${company.id}`} className="flex items-center gap-2 no-underline hover:underline">
-                    {company.faviconUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={company.faviconUrl} alt="" width={16} height={16} referrerPolicy="no-referrer" className="shrink-0" />
-                    ) : (
-                      <span className="inline-block h-4 w-4 shrink-0 bg-track" />
-                    )}
+                    <CompanyFavicon src={company.faviconUrl} />
                     <span className="font-semibold text-fg">{company.name}</span>
                   </a>
                   <a href={company.homepageUrl} target="_blank" rel="noopener noreferrer" className="block text-12 text-muted no-underline hover:underline">
@@ -91,8 +87,18 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                   </a>
                 </TD>
                 <TD>
-                  <Badge tone={companyStatusTone(company.status)}>{company.status}</Badge>
-                  {discovering && <p className="mt-1 text-12 text-info">{discoveryState === "running" ? "Refreshing…" : "Refresh queued"}</p>}
+                  {needsSource && !discovering && company.status === "active" ? (
+                    <>
+                      <Badge tone="amber">no careers source</Badge>
+                      <p className="mt-1 text-12 text-muted">
+                        {lastDiscovery === "not_found" ? "Could not find the careers page." : lastDiscovery === "needs_confirmation" ? "Needs a source confirmed." : "Not discovered yet."}{" "}
+                        <a href={`/companies/${company.id}#careers-url`} className="text-fg underline">Add careers URL</a>
+                      </p>
+                    </>
+                  ) : (
+                    <Badge tone={companyStatusTone(company.status)}>{company.status}</Badge>
+                  )}
+                  {discovering && <p className="mt-1 text-12 text-info">{discoveryState === "running" ? "Discovering…" : "Discovery queued"}</p>}
                 </TD>
                 <TD className="whitespace-nowrap">
                   {lastScan ? (
@@ -101,7 +107,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                       {relativeTime(lastScan.startedAt, now)}
                     </span>
                   ) : (
-                    <span className="text-muted">never</span>
+                    <span className="text-muted">{needsSource ? "waiting for a source" : "never"}</span>
                   )}
                 </TD>
                 <TD>

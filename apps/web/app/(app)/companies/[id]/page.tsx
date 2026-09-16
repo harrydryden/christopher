@@ -137,6 +137,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
         </SettingsForm>
       </Card>
 
+      <div id="careers-url">
       <Card title="Careers URL">
           <form action={pasteDiscoveryUrl.bind(null, company.id)} className="flex flex-wrap items-end gap-3">
             <label className="flex flex-1 flex-col gap-1.5">
@@ -155,6 +156,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
           </form>
         <p className="mt-2 text-12 text-muted">Paste a known careers board at any time, including while homepage discovery is queued.</p>
       </Card>
+      </div>
 
       <Card title="Sources">
         {sources.length === 0 ? (

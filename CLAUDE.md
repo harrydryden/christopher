@@ -39,8 +39,10 @@ The worker suites share one database and truncate between tests, so `fileParalle
   weakens this produces false "closed" rows, which is the failure the user will notice first.
 - **The keyword and location gate is a hard filter the user controls.** The model ranks within it and
   proposes changes; it never removes a role from the table on its own.
-- **Every posting is stored, whether or not it passes the gate.** That is what makes keyword changes
-  retroactive and near-miss surfacing possible.
+- **Only postings that pass the gate are stored** (spec: "Store matching roles only"). Scan
+  completeness and closure detection still use the full observed listing; widening the gate finds
+  newly eligible roles on the next scan, and narrowing it archives stored non-matches unless they
+  carry a decision or a saved CV.
 - **Model output is never trusted directly.** Extracted URLs must exist on the page, tags must come
   from the vocabulary, suggested companies must verify. Scraped content goes in tagged blocks in the
   user turn, never in the system prompt.

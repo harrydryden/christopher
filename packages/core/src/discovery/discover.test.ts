@@ -149,6 +149,50 @@ describe("discovery: other shapes", () => {
     expect(result.best?.confidence).toBe(0.7);
   });
 
+  it("still finds the careers subdomain when the homepage is bot-protected", async () => {
+    const ctx = createFakeDiscoveryContext({
+      routes: {
+        "https://www.acme.example/": { status: 403, body: "Access denied" },
+        "https://www.acme.example/careers": { status: 403, body: "Access denied" },
+        "https://careers.acme.example/": { body: fx.LISTING_PAGE_HTML },
+        ...greenhouseRoutes,
+      },
+    });
+    const result = await discoverCareersSources("https://www.acme.example/", ctx);
+    expect(result.outcome).toBe("resolved");
+    expect(result.best?.spec.type).toBe("greenhouse");
+    expect(result.log.join("\n")).toContain("could not fetch the homepage");
+    expect(result.log.join("\n")).toContain("probing careers paths");
+  });
+
+  it("renders a bot-protected homepage with the browser before probing", async () => {
+    const ctx = createFakeDiscoveryContext({
+      routes: {
+        "https://www.acme.example/": { status: 403, body: "Access denied" },
+        "https://www.acme.example/careers": { body: fx.LANDING_PAGE_HTML },
+        "https://www.acme.example/careers/jobs": { body: fx.LISTING_PAGE_HTML },
+        ...greenhouseRoutes,
+      },
+      renders: { "https://www.acme.example/": { html: fx.HOMEPAGE_WITH_CAREERS_LINK, requests: [] } },
+    });
+    const result = await discoverCareersSources("https://www.acme.example/", ctx);
+    expect(result.outcome).toBe("resolved");
+    expect(result.log.join("\n")).toContain("rendering with the browser");
+    expect(result.companyName).toBe("Acme Robotics");
+  });
+
+  it("falls back to an ATS slug guess when the whole site is bot-protected", async () => {
+    const ctx = createFakeDiscoveryContext({
+      routes: {
+        "https://www.acme.example/": { status: 403, body: "Access denied" },
+        ...greenhouseRoutes,
+      },
+    });
+    const result = await discoverCareersSources("https://www.acme.example/", ctx);
+    expect(result.best?.method).toBe("ats_guess");
+    expect(result.outcome).toBe("needs_confirmation");
+  });
+
   it("reports not_found and explains itself when there is nothing to find", async () => {
     const ctx = createFakeDiscoveryContext({
       routes: {

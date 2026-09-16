@@ -25,6 +25,9 @@ export interface CompanyListRow {
   shortlistedRoles: number;
   discovering: boolean;
   discoveryState: "queued" | "running" | null;
+  /** No active or failing careers source, so scans skip this company until one is added. */
+  needsSource: boolean;
+  lastDiscovery: "resolved" | "needs_confirmation" | "not_found" | "failed" | "running" | null;
 }
 
 export async function companyCount(q = ""): Promise<number> {
@@ -40,7 +43,7 @@ export async function listCompanies(page = 1, q = ""): Promise<CompanyListRow[]>
   const allCompanies = await db().select().from(companies).where(companySearch(q)).orderBy(asc(companies.name), companies.id).limit(50).offset((page - 1) * 50);
   if (!allCompanies.length) return [];
   const ids = allCompanies.map(c => c.id);
-  const [counts, lastScans, discoveringRows] = await Promise.all([
+  const [counts, lastScans, discoveringRows, sourceRows, discoveryRows] = await Promise.all([
     db()
       .select({
         companyId: jobs.companyId,
@@ -65,8 +68,19 @@ export async function listCompanies(page = 1, q = ""): Promise<CompanyListRow[]>
       .select({ payload: tasks.payload, status: tasks.status })
       .from(tasks)
       .where(and(inArray(tasks.type, ["discover", "scan_company"]), sql`coalesce(${tasks.payload}->>'logoOnly', 'false') != 'true'`, inArray(tasks.status, ["queued", "running"]), inArray(sql`${tasks.payload}->>'companyId'`, ids))),
+    db()
+      .select({ companyId: careerSources.companyId })
+      .from(careerSources)
+      .where(and(inArray(careerSources.companyId, ids), inArray(careerSources.status, ["active", "failing"]))),
+    db()
+      .selectDistinctOn([discoveryRuns.companyId], { companyId: discoveryRuns.companyId, status: discoveryRuns.status })
+      .from(discoveryRuns)
+      .where(inArray(discoveryRuns.companyId, ids))
+      .orderBy(discoveryRuns.companyId, desc(discoveryRuns.startedAt)),
   ]);
 
+  const withSource = new Set(sourceRows.map((r) => r.companyId));
+  const lastDiscoveryByCompany = new Map(discoveryRows.map((r) => [r.companyId, r.status]));
   const countsByCompany = new Map(counts.map((c) => [c.companyId, c]));
   const lastScanByCompany = new Map(lastScans.map((s) => [s.companyId, { status: s.status, startedAt: s.startedAt }]));
   const discoveringSet = new Set(
@@ -81,6 +95,8 @@ export async function listCompanies(page = 1, q = ""): Promise<CompanyListRow[]>
     discovering: discoveringSet.has(company.id),
     discoveryState: discoveringRows.some(r => (r.payload as { companyId?: string }).companyId === company.id && r.status === "running") ? "running"
       : discoveringSet.has(company.id) ? "queued" : null,
+    needsSource: !withSource.has(company.id),
+    lastDiscovery: (lastDiscoveryByCompany.get(company.id) as CompanyListRow["lastDiscovery"]) ?? null,
   }));
 }
 

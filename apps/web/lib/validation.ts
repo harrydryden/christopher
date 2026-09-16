@@ -7,7 +7,7 @@ export const zUuid = () => z.string().regex(UUID_RE, "invalid id");
 
 export const zUrlString = () => z.string().trim().min(1).max(2048);
 
-export type ActionResult = { ok: true } | { ok: false; error: string };
+export type ActionResult = { ok: true; message?: string } | { ok: false; error: string };
 
 export function ok(): ActionResult {
   return { ok: true };

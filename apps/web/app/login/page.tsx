@@ -16,6 +16,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   google_state: "The Google sign-in round trip did not complete. Try again.",
   google_failed: "Google sign-in failed. Try again, or use your email and password.",
   google_unverified: "Google has not verified that email address, so it cannot be used to sign in.",
+  closed: "Registration is by invitation on this deployment, so that Google account cannot create one.",
+  unconfirmed: "This account is waiting for its email address to be confirmed. Use the link we sent, or request a new one from the sign-up page.",
   signed_out: "You have been signed out.",
 };
 

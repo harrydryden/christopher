@@ -10,6 +10,8 @@ export default defineConfig({
     include: ["app/**/*.test.ts", "lib/**/*.test.ts"],
     exclude: ["node_modules/**", ".next/**"],
     environment: "node",
+    // Password hashing at production cost would dominate the account tests; the old cost is plenty here.
+    env: { CHRISTOPHER_SCRYPT_N: "16384" },
     testTimeout: 120_000,
     hookTimeout: 120_000,
     fileParallelism: false,

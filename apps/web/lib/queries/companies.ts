@@ -194,3 +194,55 @@ export async function companyFollowerCount(companyId: string): Promise<number> {
     .where(and(eq(companySubscriptions.companyId, companyId), ne(companySubscriptions.status, "archived")));
   return row?.n ?? 0;
 }
+
+/** The whole shared catalogue, for the administrator's section. */
+export interface CatalogueRow {
+  company: Company;
+  followers: number;
+  followedByViewer: boolean;
+  sources: Array<Pick<CareerSource, "id" | "type" | "url" | "status" | "confirmedByUser">>;
+  lastScan: { status: Scan["status"]; startedAt: Date } | null;
+}
+
+export async function catalogueCount(q = ""): Promise<number> {
+  const [row] = await db().select({ n: sql<number>`count(*)::int` }).from(companies).where(companySearch(q));
+  return row?.n ?? 0;
+}
+
+export async function listCatalogue(viewerId: string, page = 1, q = ""): Promise<CatalogueRow[]> {
+  const rows = await db().select().from(companies).where(companySearch(q)).orderBy(asc(companies.name), companies.id).limit(50).offset((page - 1) * 50);
+  if (!rows.length) return [];
+  const ids = rows.map((c) => c.id);
+  const [followerRows, viewerRows, sourceRows, lastScans] = await Promise.all([
+    db()
+      .select({ companyId: companySubscriptions.companyId, n: sql<number>`count(*)::int` })
+      .from(companySubscriptions)
+      .where(and(inArray(companySubscriptions.companyId, ids), ne(companySubscriptions.status, "archived")))
+      .groupBy(companySubscriptions.companyId),
+    db()
+      .select({ companyId: companySubscriptions.companyId })
+      .from(companySubscriptions)
+      .where(and(eq(companySubscriptions.userId, viewerId), inArray(companySubscriptions.companyId, ids))),
+    db()
+      .select({ id: careerSources.id, companyId: careerSources.companyId, type: careerSources.type, url: careerSources.url, status: careerSources.status, confirmedByUser: careerSources.confirmedByUser })
+      .from(careerSources)
+      .where(inArray(careerSources.companyId, ids))
+      .orderBy(asc(careerSources.createdAt)),
+    db()
+      .selectDistinctOn([careerSources.companyId], { companyId: careerSources.companyId, status: scans.status, startedAt: scans.startedAt })
+      .from(scans)
+      .innerJoin(careerSources, eq(scans.sourceId, careerSources.id))
+      .where(inArray(careerSources.companyId, ids))
+      .orderBy(careerSources.companyId, desc(scans.startedAt)),
+  ]);
+  const followers = new Map(followerRows.map((r) => [r.companyId, r.n]));
+  const viewer = new Set(viewerRows.map((r) => r.companyId));
+  const lastScan = new Map(lastScans.map((s) => [s.companyId, { status: s.status, startedAt: s.startedAt }]));
+  return rows.map((company) => ({
+    company,
+    followers: followers.get(company.id) ?? 0,
+    followedByViewer: viewer.has(company.id),
+    sources: sourceRows.filter((s) => s.companyId === company.id).map(({ companyId: _companyId, ...source }) => source),
+    lastScan: lastScan.get(company.id) ?? null,
+  }));
+}

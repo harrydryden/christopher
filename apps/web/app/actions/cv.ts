@@ -8,7 +8,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { actionCvs, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, userJobs, enqueueTask } from "@christopher/db";
 import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvWritingPreferences,
   createCvWritingBudget, CvLibrarySchema, consolidateExperience, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel } from "@christopher/core";
-import { requireUser } from "@/lib/auth";
+import { requireUser, requireVerifiedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { userSettings as userSettingsTable } from "@christopher/db/schema";
 import { getSettings, setUserSetting } from "@/lib/settings";
@@ -128,7 +128,7 @@ export async function requestCv(
   _prev: ActionResult,
   form: FormData,
 ): Promise<ActionResult> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   let draftId: string;
   try {
     const id = zUuid().parse(String(form.get("jobId")));
@@ -217,7 +217,7 @@ export async function saveCvDraft(
   _prev: ActionResult,
   form: FormData,
 ): Promise<ActionResult> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   let savedId: string;
   try {
     zUuid().parse(id);
@@ -401,7 +401,7 @@ export async function assessCvDraft(
   _prev: ActionResult,
   _form: FormData,
 ): Promise<ActionResult> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   try {
     zUuid().parse(id);
     await db().transaction(async (tx) => {

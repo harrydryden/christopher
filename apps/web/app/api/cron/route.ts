@@ -12,6 +12,13 @@ import { getWorkerHeartbeat } from "@/lib/queries/health";
 import { NextResponse } from "next/server";
 import { claimTask, createDeps, handlers, readEnv, schedulerTick, TaskQueue } from "@christopher/worker";
 import { getCurrentUser } from "@/lib/auth";
+import { timingSafeEqual } from "node:crypto";
+
+function bearerMatches(header: string | null, secret: string): boolean {
+  const supplied = Buffer.from(header ?? "");
+  const expected = Buffer.from(`Bearer ${secret}`);
+  return supplied.length === expected.length && timingSafeEqual(supplied, expected);
+}
 
 export const dynamic = "force-dynamic";
 /**
@@ -29,7 +36,7 @@ const RESERVE_MS = 20_000;
  */
 async function authorised(request: Request): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
   const secret = process.env.CRON_SECRET;
-  if (secret && request.headers.get("authorization") === `Bearer ${secret}`) return { ok: true };
+  if (secret && bearerMatches(request.headers.get("authorization"), secret)) return { ok: true };
 
   if (process.env.SESSION_SECRET) {
     const current = await getCurrentUser().catch(() => null);

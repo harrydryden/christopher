@@ -1,7 +1,7 @@
 "use server";
 import { enqueueTask, reevaluateGate, setSubscriptionStatus, subscribeToCompany, syncCompanyStatus } from "@christopher/db";
 
-import { requireAdmin, requireUser } from "@/lib/auth";
+import { requireUser, requireVerifiedUser } from "@/lib/auth";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -35,7 +35,7 @@ async function admitExistingRoles(userId: string, companyId: string, writer: Ret
 }
 
 export async function addCompanies(formData: FormData): Promise<void> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   const raw = String(formData.get("urls") ?? "");
   const lines = [...new Set(raw.split(/[\n,]/).map((s) => s.trim()).filter(Boolean))];
 
@@ -122,7 +122,7 @@ export async function archiveCompany(companyId: string): Promise<void> {
 
 /** Refresh uses existing sources first; discovery is recovery, not a separate routine action. */
 export async function refreshCompany(companyId: string): Promise<void> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   const id = zUuid().parse(companyId);
   await requireFollowed(user.id, id);
   const review = await db().transaction(async tx => {
@@ -146,7 +146,7 @@ export async function refreshCompany(companyId: string): Promise<void> {
 
 /** A scan is shared: the worker serves a rescan from a result made in the last half hour. */
 export async function rescanCompany(companyId: string): Promise<void> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   const id = zUuid().parse(companyId);
   await requireFollowed(user.id, id);
   await enqueue("scan_company", { companyId: id, trigger: "manual" });
@@ -155,7 +155,7 @@ export async function rescanCompany(companyId: string): Promise<void> {
 }
 
 export async function rediscoverCompany(companyId: string): Promise<void> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   const id = zUuid().parse(companyId);
   await requireFollowed(user.id, id);
   await enqueue("discover", { companyId: id, reason: "manual" });
@@ -163,7 +163,7 @@ export async function rediscoverCompany(companyId: string): Promise<void> {
   revalidatePath(`/companies/${id}`);
 }
 
-/** Notes are the follower's own; the name and website are shared and need an administrator. */
+/** Notes are the follower's own. The shared name and website are edited in the administrator's catalogue. */
 export async function updateCompanyDetails(companyId: string, _previous: ActionResult, formData: FormData): Promise<ActionResult> {
   const user = await requireUser();
   const id = zUuid().parse(companyId);
@@ -171,34 +171,6 @@ export async function updateCompanyDetails(companyId: string, _previous: ActionR
   const notes = String(formData.get("notes") ?? "");
   await db().update(companySubscriptions).set({ notes: notes.trim() === "" ? null : notes })
     .where(and(eq(companySubscriptions.userId, user.id), eq(companySubscriptions.companyId, id)));
-
-  const [current] = await db().select({ homepageUrl: companies.homepageUrl, name: companies.name }).from(companies).where(eq(companies.id, id)).limit(1);
-  if (!current) return { ok: false, error: "Company not found." };
-  const name = String(formData.get("name") ?? "").trim();
-  const rawHomepage = String(formData.get("homepageUrl") ?? "").trim();
-  const wantsSharedChange = (name && name !== current.name) || (rawHomepage && rawHomepage !== current.homepageUrl);
-  if (wantsSharedChange) {
-    if (user.role !== "admin") return { ok: false, error: "Notes saved. Only an administrator can change the shared name or website, since every follower sees them." };
-    let homepageUrl: string;
-    try {
-      if (!rawHomepage || rawHomepage.length > 2048 || (/^[a-z][a-z0-9+.-]*:/i.test(rawHomepage) && !/^https?:\/\//i.test(rawHomepage))) throw new Error();
-      homepageUrl = ensureHttpUrl(rawHomepage);
-      const parsed = new URL(homepageUrl);
-      if (parsed.username || parsed.password || !parsed.hostname.includes(".")) throw new Error();
-    } catch { return { ok: false, error: "Enter a valid main website, such as https://anduril.com/." }; }
-    const domain = extractDomain(homepageUrl);
-    const duplicate = await db().select({ id: companies.id }).from(companies).where(eq(companies.domain, domain)).limit(1);
-    if (duplicate[0] && duplicate[0].id !== id) return { ok: false, error: "Another company already uses this domain." };
-    await db().transaction(async tx => {
-      const [locked] = await tx.select({ homepageUrl: companies.homepageUrl }).from(companies).where(eq(companies.id, id)).for("update");
-      if (!locked) return;
-      const changed = locked.homepageUrl !== homepageUrl;
-      await tx.update(companies)
-        .set({ homepageUrl, domain, ...(changed ? { faviconUrl: null } : {}), ...(name ? { name } : {}) })
-        .where(eq(companies.id, id));
-      if (changed) await enqueue("discover", { companyId: id, logoOnly: true, homepageUrl }, tx);
-    });
-  }
   revalidatePath(`/companies/${id}`);
   revalidatePath("/companies");
   return { ok: true };
@@ -239,15 +211,6 @@ export async function markSourceConfirmed(sourceId: string): Promise<void> {
   revalidatePath(`/companies/${companyId}`);
 }
 
-/** Deleting a shared source affects every follower, so it is an administrator's call. */
-export async function deleteSource(sourceId: string): Promise<void> {
-  await requireAdmin();
-  const id = zUuid().parse(sourceId);
-  const companyId = await sourceCompanyId(id);
-  await db().delete(careerSources).where(eq(careerSources.id, id));
-  if (companyId) revalidatePath(`/companies/${companyId}`);
-}
-
 const CandidateSpecSchema = z.object({
   type: z.string().refine((t): t is (typeof SOURCE_TYPES)[number] => (SOURCE_TYPES as readonly string[]).includes(t), "unknown source type"),
   url: z.string(),
@@ -258,7 +221,7 @@ const CandidateSpecSchema = z.object({
 
 /** Accept a discovery candidate from the confirmation panel: create its career_source and resolve the run. */
 export async function useDiscoveryCandidate(runId: string, candidateIndex: number): Promise<void> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   const id = zUuid().parse(runId);
   const companyId = await db().transaction(async (tx) => {
     const [run] = await tx.select().from(discoveryRuns).where(eq(discoveryRuns.id, id)).for("update");
@@ -302,7 +265,7 @@ export async function useDiscoveryCandidate(runId: string, candidateIndex: numbe
 }
 
 export async function pasteDiscoveryUrl(companyId: string, formData: FormData): Promise<void> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   const id = zUuid().parse(companyId);
   await requireFollowed(user.id, id);
   const url = zUrlString().parse(String(formData.get("url") ?? ""));
@@ -311,7 +274,7 @@ export async function pasteDiscoveryUrl(companyId: string, formData: FormData): 
 }
 
 export async function refreshCompanyProfile(companyId: string): Promise<void> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   const id = zUuid().parse(companyId);
   await requireFollowed(user.id, id);
   await enqueue("profile_company", { companyId: id });
@@ -327,17 +290,6 @@ export async function unfollowCompany(companyId: string): Promise<void> {
     await tx.execute(sql`delete from user_jobs uj using jobs j where j.id = uj.job_id and uj.user_id = ${user.id} and j.company_id = ${id}`);
     await syncCompanyStatus(tx, id);
   });
-  revalidatePath("/");
-  revalidatePath("/companies");
-  redirect("/companies");
-}
-
-/** Remove the company for everyone. Followers' decision snapshots survive; their views do not. */
-export async function deleteCompany(companyId: string): Promise<void> {
-  await requireAdmin();
-  const id = zUuid().parse(companyId);
-  // Foreign keys cascade postings, subscriptions and views, and retain denormalised decisions with job_id set to null.
-  await db().delete(companies).where(eq(companies.id, id));
   revalidatePath("/");
   revalidatePath("/companies");
   redirect("/companies");

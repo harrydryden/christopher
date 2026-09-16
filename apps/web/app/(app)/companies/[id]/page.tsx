@@ -4,8 +4,6 @@ import { SettingsForm } from "@/components/SettingsForm";
 import { notFound } from "next/navigation";
 import {
   archiveCompany,
-  deleteSource,
-  deleteCompany,
   disableSource,
   enableSource,
   markSourceConfirmed,
@@ -133,19 +131,12 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
 
       <Card title="Details">
         <SettingsForm action={updateCompanyDetails.bind(null, company.id)}>
-          <label className="flex flex-col gap-1.5 text-14">
-            <span className={labelClass}>Name</span>
-            <input name="name" defaultValue={company.name} readOnly={!admin} className={`max-w-sm ${inputClass}`} />
-          </label>
-          <label className="flex flex-col gap-1.5 text-14">
-            <span className={labelClass}>Main website</span>
-            <input name="homepageUrl" defaultValue={company.homepageUrl} readOnly={!admin} required maxLength={2048} className={inputClass} />
-            <span className="text-12 text-muted">
-              {admin
-                ? "Shared by every follower. Careers sources are managed separately below. Use Re-discover after correcting a domain to find its careers page."
-                : "The name and website are shared by every follower, so only an administrator can change them."}
-            </span>
-          </label>
+          <p className="text-14 text-muted">
+            The name and website are shared by every follower.
+            {admin
+              ? <> Edit them in <a href={`/admin/catalogue?q=${encodeURIComponent(company.domain)}`} className="text-fg underline">Admin › Company catalogue</a>.</>
+              : " An administrator can change them from the catalogue."}
+          </p>
           <label className="flex flex-col gap-1.5 text-14">
             <span className={labelClass}>Your notes</span>
             <textarea name="notes" defaultValue={subscription.notes ?? ""} rows={3} className={`resize-y ${inputClass}`} />
@@ -238,11 +229,6 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
                       <Button type="submit" size="sm">
                         Mark confirmed
                       </Button>
-                    </form>
-                  )}
-                  {admin && (
-                    <form action={deleteSource.bind(null, s.id)}>
-                      <ConfirmSubmitButton confirmMessage="Delete this source for every follower? Its scan history stays, but it will no longer be scanned.">Delete</ConfirmSubmitButton>
                     </form>
                   )}
                 </div>
@@ -398,12 +384,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
           <ConfirmSubmitButton confirmMessage={`Stop following ${company.name}? Its roles leave your table. Your decision snapshots are retained.`}>Stop following</ConfirmSubmitButton>
         </form>
         {admin && (
-          <div className="mt-4 border-t-2 border-line-muted pt-4">
-            <p className="mb-3 text-14 text-muted">Administrator: delete the company for every follower, with its sources and postings. Everyone’s decision snapshots are retained.</p>
-            <form action={deleteCompany.bind(null, company.id)}>
-              <ConfirmSubmitButton variant="danger" confirmMessage={`Delete ${company.name} for all ${followers} ${followers === 1 ? "follower" : "followers"}? This cannot be undone.`}>Delete for everyone</ConfirmSubmitButton>
-            </form>
-          </div>
+          <p className="mt-4 text-12 text-muted">Deleting the company or a source for every follower is done from <a href={`/admin/catalogue?q=${encodeURIComponent(company.domain)}`} className="text-fg underline">Admin › Company catalogue</a>.</p>
         )}
       </Card>
 

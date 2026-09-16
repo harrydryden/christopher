@@ -1,5 +1,5 @@
 "use server";
-import { requireUser } from "@/lib/auth";
+import { requireUser, requireVerifiedUser } from "@/lib/auth";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { reevaluateGate, subscribeToCompany } from "@christopher/db";
@@ -11,7 +11,7 @@ import { zUuid } from "@/lib/validation";
 import type { DiscoveryActionResult } from "@/lib/discovery-ux";
 
 export async function acceptSuggestion(suggestionId: string): Promise<DiscoveryActionResult> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   const id = zUuid().parse(suggestionId);
   const result = await db().transaction(async tx => {
     const [suggestion] = await tx.select().from(companySuggestions).where(and(eq(companySuggestions.id, id), eq(companySuggestions.userId, user.id))).for("update");
@@ -61,7 +61,7 @@ export async function rejectSuggestion(suggestionId: string, formData: FormData)
 }
 
 export async function findMoreSuggestions(): Promise<DiscoveryActionResult> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   if (!(await getSettings()).suggestionsEnabled) return { ok: false, error: "Enable company suggestions in Settings before running discovery." };
   const [tracked] = await db().select({ count: sql<number>`count(*)::int` }).from(companySubscriptions)
     .where(and(eq(companySubscriptions.userId, user.id), inArray(companySubscriptions.status, ["active", "paused"])));

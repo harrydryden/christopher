@@ -29,7 +29,7 @@ export async function GET(request: Request) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     console.error(JSON.stringify({ event: "google_sign_in_failed", error: message.slice(0, 300) }));
-    return fail(/not verified/.test(message) ? "google_unverified" : "google_failed");
+    return fail(/not verified/.test(message) ? "google_unverified" : /Registration is closed/.test(message) ? "closed" : "google_failed");
   }
   return NextResponse.redirect(new URL(sanitizeNextPath(remembered.next), request.url));
 }

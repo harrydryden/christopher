@@ -2,7 +2,7 @@ import { getCvWritingPreferences } from "@/lib/cv-writing-preferences";
 import { CvAppearance } from "@/components/CvAppearance";
 import { getDefaultCvAppearance } from "@/lib/cv-appearance";
 import { saveCvModel, saveCvAppearance, saveCvWritingPreferences } from "@/app/actions/cv";
-import { runDailyScanNow, saveAiSettings, saveKeywords, saveLocationFilter, saveMatchFields, saveSchedule, saveSuggestionSettings, saveTableSettings } from "@/app/actions/settings";
+import { saveKeywords, saveLocationFilter, saveMatchFields, saveSuggestionSettings, saveTableSettings } from "@/app/actions/settings";
 import { rescoreAllRoles } from "@/app/actions/learning";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
@@ -29,20 +29,11 @@ export default async function SettingsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Settings"
-        description="Keywords, locations and CV preferences are yours. The scan schedule, models and budget are shared and set by an administrator."
+        description="Keywords, locations and CV preferences are yours. The scan schedule, models and budget are shared and live in Admin."
         actions={
-          <>
-            {admin && (
-              <form action={runDailyScanNow}>
-                <Button type="submit" variant="primary">
-                  Run daily scan now
-                </Button>
-              </form>
-            )}
-            <form action={rescoreAllRoles}>
-              <Button type="submit">Re-score all</Button>
-            </form>
-          </>
+          <form action={rescoreAllRoles}>
+            <Button type="submit">Re-score all</Button>
+          </form>
         }
       />
 
@@ -115,32 +106,6 @@ export default async function SettingsPage() {
         </SettingsForm>
       </Card>
 
-      {admin && (
-        <Card title="Schedule (shared)">
-          <SettingsForm action={saveSchedule}>
-            <p className="text-12 text-muted">One daily run scans every company anyone follows. These settings apply to every account.</p>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <label className={labelClass}>
-                <span className={fieldLabelClass}>Daily scan time (24h, local)</span>
-                <input name="scanTime" type="text" placeholder="06:00" defaultValue={settings.scanTime} className={fieldClass} />
-              </label>
-              <label className={labelClass}>
-                <span className={fieldLabelClass}>Timezone (IANA name)</span>
-                <input name="timezone" type="text" placeholder="Europe/London" defaultValue={settings.timezone} className={fieldClass} />
-              </label>
-              <label className={labelClass}>
-                <span className={fieldLabelClass}>Close after N missing scans</span>
-                <input name="closeAfterMissingScans" type="number" min={2} max={5} defaultValue={settings.closeAfterMissingScans} className={fieldClass} />
-              </label>
-            </div>
-            <label className={checkboxClass}>
-              <input type="checkbox" name="respectRobotsTxt" value="1" defaultChecked={settings.respectRobotsTxt} className="h-4 w-4" />
-              Respect robots.txt for HTML fetches
-            </label>
-          </SettingsForm>
-        </Card>
-      )}
-
       <SettingsForm action={saveCvAppearance}>
         <CvAppearance key={JSON.stringify(appearance)} name="theme" value={appearance} />
       </SettingsForm>
@@ -162,27 +127,12 @@ export default async function SettingsPage() {
         </SettingsForm>
       </Card>
 
-      {admin ? (
-        <Card title="AI (shared)">
-          <SettingsForm action={saveAiSettings}>
-            <p className="text-12 text-muted">One key, one budget, for every account. Health shows spend per account.</p>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <label className={labelClass}>
-                <span className={fieldLabelClass}>Default model</span>
-                <ModelSelect name="defaultModel" value={settings.defaultModel} className={selectClass} />
-              </label>
-              <label className={labelClass}>
-                <span className={fieldLabelClass}>Monthly AI budget (USD)</span>
-                <input name="monthlyAiBudgetUsd" type="number" min={0} step={1} defaultValue={settings.monthlyAiBudgetUsd} className={fieldClass} />
-              </label>
-            </div>
-          </SettingsForm>
-        </Card>
-      ) : (
-        <Card title="AI (shared)">
-          <p className="text-14 text-muted">Scoring and extraction use the shared default model <code>{settings.defaultModel}</code> with a monthly budget of ${settings.monthlyAiBudgetUsd}. An administrator manages these.</p>
-        </Card>
-      )}
+      <Card title="AI (shared)">
+        <p className="text-14 text-muted">
+          Scoring and extraction use the shared default model <code>{settings.defaultModel}</code> with a monthly budget of ${settings.monthlyAiBudgetUsd}.
+          {admin ? <> Change these in <a href="/admin/settings" className="text-fg underline">Admin › System settings</a>.</> : " An administrator manages these."}
+        </p>
+      </Card>
     </div>
   );
 }

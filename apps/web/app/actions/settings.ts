@@ -74,6 +74,15 @@ export async function saveSuggestionSettings(_prev: ActionResult, formData: Form
   return ok();
 }
 
+/** Who may create an account: administrator addresses always can; everyone else only while this is on. */
+export async function saveRegistrationSettings(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
+  await requireAdmin();
+  await setSystemSetting("registrationOpen", formData.get("registrationOpen") === "1");
+  revalidatePath("/admin");
+  revalidatePath("/signup");
+  return ok();
+}
+
 /** The daily run and closure policy are shared by every account: administrators only. */
 export async function saveSchedule(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   await requireAdmin();
@@ -94,6 +103,7 @@ export async function saveSchedule(_prev: ActionResult, formData: FormData): Pro
   await setSystemSetting("timezone", timezone);
   await setSystemSetting("closeAfterMissingScans", closeAfterMissingScans);
   await setSystemSetting("respectRobotsTxt", respectRobotsTxt);
+  revalidatePath("/admin/settings");
   revalidatePath("/settings");
   revalidatePath("/");
   return ok();
@@ -109,6 +119,7 @@ export async function saveAiSettings(_prev: ActionResult, formData: FormData): P
 
   await setSystemSetting("defaultModel", defaultModel);
   await setSystemSetting("monthlyAiBudgetUsd", monthlyAiBudgetUsd);
+  revalidatePath("/admin/settings");
   revalidatePath("/settings");
   return ok();
 }
@@ -117,6 +128,7 @@ export async function saveAiSettings(_prev: ActionResult, formData: FormData): P
 export async function runDailyScanNow(): Promise<void> {
   await requireAdmin();
   await enqueue("run_daily", { trigger: "manual" });
-  revalidatePath("/settings");
+  revalidatePath("/admin/settings");
+  revalidatePath("/admin/health");
   revalidatePath("/health");
 }

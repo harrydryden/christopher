@@ -2,9 +2,10 @@
 
 import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { headers } from "next/headers";
 import { users, sessions, type UserRole } from "@christopher/db/schema";
-import { changePassword as changeStoredPassword, sendVerificationEmail } from "@/lib/accounts";
+import { isPlaceholderEmail } from "@christopher/db";
+import { changePassword as changeStoredPassword, issueResetLink, sendVerificationEmail } from "@/lib/accounts";
+import { emailLinkOrigin } from "@/lib/origin";
 import { endAllSessions, endOtherSessions, getCurrentUser, requireAdmin, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { fail, ok, zUuid, type ActionResult } from "@/lib/validation";
@@ -35,11 +36,7 @@ export async function signOutEverywhere(): Promise<void> {
 
 export async function resendVerification(): Promise<void> {
   const user = await requireUser();
-  const h = await headers();
-  const configured = process.env.APP_URL?.trim();
-  const proto = h.get("x-forwarded-proto")?.split(",")[0]?.trim() || "https";
-  const host = h.get("x-forwarded-host")?.split(",")[0]?.trim() || h.get("host") || "localhost";
-  await sendVerificationEmail(user, configured ? configured.replace(/\/+$/, "") : `${proto}://${host}`);
+  await sendVerificationEmail(user, await emailLinkOrigin());
   revalidatePath("/account");
 }
 
@@ -62,7 +59,7 @@ export async function setUserRole(userId: string, role: UserRole): Promise<void>
     if (!others?.n) throw new Error("You are the only administrator. Make someone else an administrator first.");
   }
   await db().update(users).set({ role }).where(eq(users.id, id));
-  revalidatePath("/account");
+  revalidatePath("/admin");
 }
 
 /** Administrators: remove another account and everything it owns. Shared companies and postings stay. */
@@ -72,7 +69,18 @@ export async function deleteUser(userId: string): Promise<void> {
   if (id === admin.id) throw new Error("You cannot delete your own account here.");
   await endAllSessions(id);
   await db().delete(users).where(eq(users.id, id));
-  revalidatePath("/account");
+  revalidatePath("/admin");
+}
+
+/** Administrators: a single-use reset link to hand to someone when email delivery is not set up. It also completes a pending confirmation. */
+export async function createResetLink(_prev: ActionResult, form: FormData): Promise<ActionResult> {
+  await requireAdmin();
+  const id = zUuid().parse(String(form.get("userId") ?? ""));
+  const [target] = await db().select({ email: users.email }).from(users).where(eq(users.id, id));
+  if (!target || isPlaceholderEmail(target.email)) return fail("No such account.");
+  const origin = await emailLinkOrigin();
+  if (!origin) return fail("Set APP_URL to this deployment's public origin so links can be built.");
+  return { ok: true, message: await issueResetLink(id, origin) };
 }
 
 export async function listAccounts() {

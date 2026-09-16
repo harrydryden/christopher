@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { ensureHttpUrl, normalizeUrl, sha1, stripHtml } from "@christopher/core";
 import { discoveryDocuments, discoverySources } from "@christopher/db/schema";
-import { requireUser } from "@/lib/auth";
+import { requireUser, requireVerifiedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { getSettings } from "@/lib/settings";
@@ -13,7 +13,7 @@ import type { DiscoveryActionResult } from "@/lib/discovery-ux";
 
 const sourceInput = z.object({ name: z.string().trim().min(1).max(200), kind: z.enum(["website", "email", "linkedin"]), intervalDays: z.coerce.number().int().min(1).max(90) });
 export async function saveDiscoverySource(form: FormData): Promise<DiscoveryActionResult> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   const parsed = sourceInput.safeParse(Object.fromEntries(form));
   if (!parsed.success) return { ok: false, error: "Enter a source name and a check interval between 1 and 90 days." };
   const { name, kind, intervalDays } = parsed.data;
@@ -77,7 +77,7 @@ export async function updateDiscoverySource(id: string, form: FormData): Promise
 }
 
 export async function checkDiscoverySource(id: string): Promise<DiscoveryActionResult> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   if (!(await getSettings()).suggestionsEnabled) return { ok: false, error: "Enable company suggestions in Settings before running a check." };
   const [source] = await db().select().from(discoverySources).where(and(eq(discoverySources.id, zUuid().parse(id)), eq(discoverySources.userId, user.id)));
   if (!source?.enabled) return { ok: false, error: "Enable this source before running a check." };
@@ -87,7 +87,7 @@ export async function checkDiscoverySource(id: string): Promise<DiscoveryActionR
 }
 
 export async function importDiscoveryDocument(id: string, form: FormData): Promise<DiscoveryActionResult> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   const sourceId = zUuid().parse(id);
   const title = z.string().trim().min(1).max(300).safeParse(form.get("title"));
   const raw = z.string().trim().min(100).max(40000).safeParse(form.get("content"));

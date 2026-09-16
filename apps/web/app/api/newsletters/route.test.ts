@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ values: vi.fn(), rows: [] as object[], source: { id: "11111111-1111-1111-1111-111111111111", kind: "email" } as { id: string; kind: string } | undefined }));
 vi.mock("@/lib/db", () => ({ db: () => ({
-  select: () => ({ from: () => ({ where: async () => mocks.source ? [mocks.source] : [] }) }),
+  select: () => { const rows = mocks.source ? [mocks.source] : []; return Object.assign({ from: () => Object.assign(Promise.resolve(rows), { where: async () => rows }) }); },
   insert: () => ({ values: (value: unknown) => { mocks.values(value); return { onConflictDoNothing: () => ({ returning: async () => mocks.rows }) }; } }),
 }) }));
 import { POST } from "./route";
@@ -29,6 +29,20 @@ it("accepts readable text and reports redelivery as a duplicate", async () => {
   expect(mocks.values.mock.calls[0]![0].content).not.toContain("<p>");
   mocks.rows = [];
   expect(await (await POST(request(payload))).json()).toEqual({ received: true, duplicate: true });
+});
+it("routes a delivered edition to the source subscribed at that address", async () => {
+  const { addressTokenFor } = await import("@/lib/newsletter-address");
+  const to = `${addressTokenFor(sourceId, "test-secret")}@inbox.example.com`;
+  mocks.source = { id: sourceId, kind: "linkedin" };
+  const body = { to, subject: "Scaling Europe Daily", text: "Acme Robotics is expanding its London team. ".repeat(5) };
+  const result = await POST(request(body));
+  expect(result.status).toBe(202);
+  expect(mocks.values.mock.calls[0]![0]).toMatchObject({ sourceId, title: "Scaling Europe Daily" });
+
+  // An address nobody is subscribed at is refused rather than filed against a guess.
+  mocks.values.mockClear();
+  expect((await POST(request({ ...body, to: "stranger@inbox.example.com" }))).status).toBe(404);
+  expect(mocks.values).not.toHaveBeenCalled();
 });
 it("caps actual bytes even without a Content-Length header", async () => {
   expect((await POST(request({ content: "a".repeat(500001) }))).status).toBe(413);

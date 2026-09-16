@@ -32,5 +32,5 @@ export function importOnlyReason(url: string | null | undefined, kind?: string):
   let host = "";
   try { host = url ? new URL(url).hostname.replace(/^www\./, "") : ""; } catch { host = ""; }
   const site = kind === "linkedin" || /(^|\.)linkedin\.com$/.test(host) ? "LinkedIn" : host || "This site";
-  return `${site} does not allow automated reading, so nothing is collected on its own. Paste each edition's text under Import text below to have it read.`;
+  return `${site} does not allow automated reading. Subscribe with the delivery address below, or paste each edition's text, and it is read on the next check.`;
 }

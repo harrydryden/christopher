@@ -24,9 +24,9 @@ export function CvAssessmentPanel({
 }) {
   if (!assessment || !current)
     return (
-      <section className="rounded border border-amber-300 p-4 space-y-3">
+      <section className="border border-warn p-4 space-y-3">
         <h2 className="font-semibold">Job match assessment</h2>
-        <p className="text-sm">
+        <p className="text-14">
           {busy
             ? "Assessment pending"
             : "Assessment required"}
@@ -52,7 +52,7 @@ export function CvAssessmentPanel({
   ).length;
   return (
     <section
-      className="space-y-4 rounded-lg border border-slate-200 p-4"
+      className="space-y-4 border border-line-muted p-4"
       aria-labelledby="cv-match-title"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -60,17 +60,17 @@ export function CvAssessmentPanel({
           <h2 id="cv-match-title" className="font-semibold">
             CV evaluation
           </h2>
-          <p className="text-sm text-slate-600">
+          <p className="text-14 text-muted">
             {assessment.pageCount}{" "}
             {assessment.pageCount === 1 ? "page" : "pages"}
           </p>
         </div>
-        <div className="rounded bg-accent px-4 py-3 text-white">
-          <strong className="text-2xl">{assessment.score}/100</strong>
-          <p className="text-xs">CV match score</p>
+        <div className="bg-accent px-4 py-3 text-accent-fg">
+          <strong className="ds-pixel text-24">{assessment.score}/100</strong>
+          <p className="text-12">CV match score</p>
         </div>
       </div>
-      <p className="text-sm text-slate-600">
+      <p className="text-14 text-muted">
         Library evidence:{" "}
         <strong>{assessment.availableEvidenceScore}/100</strong>
         {" · "}
@@ -80,20 +80,20 @@ export function CvAssessmentPanel({
 
       </p>
       <CvEvaluationTable rows={rows} />
-      <div className="flex flex-wrap items-center gap-3 text-sm">
-        <a className="font-medium text-accent underline" href="/library">
+      <div className="flex flex-wrap items-center gap-3 text-14">
+        <a className="font-medium text-fg underline" href="/library">
           Open Library
         </a>
 
       </div>
       {flagged.length > 0 && !finalised && (
-        <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+        <p className="border border-warn p-3 text-14 text-warn">
           Resolve the Fact and Uncertain claims in the table, then save and
           reassess before finalising.
         </p>
       )}
       {finalised ? (
-        <p className="rounded border border-emerald-300 p-3 text-sm">
+        <p className="border border-ok p-3 text-14">
           Finalised. Download this saved revision or create a new revision to
           make changes.
         </p>
@@ -102,7 +102,7 @@ export function CvAssessmentPanel({
           action={finaliseCvDraft.bind(null, id)}
           submitLabel="Finalise this CV"
         >
-          <label className="text-sm">
+          <label className="text-14">
             <input name="reviewed" type="checkbox" required /> I have reviewed
             the wording, score and evidence gaps for this revision.
           </label>

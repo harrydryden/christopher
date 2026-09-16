@@ -46,6 +46,11 @@ The worker suites share one database and truncate between tests, so `fileParalle
   user turn, never in the system prompt.
 - **Near-miss scoring is capped per day.** It is the easiest way to turn a settings change into a
   large bill.
+- **The interface has one design system and it is enforced by the tokens.**
+  [docs/DESIGN-SYSTEM.md](docs/DESIGN-SYSTEM.md) describes it; `apps/web/app/globals.css` clears
+  Tailwind's default colour, radius, shadow and type scales, so `text-slate-500` and `rounded-lg`
+  silently do nothing. Compose the components in `apps/web/components`, or add a token — never an
+  arbitrary value. CV document palettes are deliberately outside it.
 - Prefer an ATS feed over HTML. Adding an adapter is usually better than improving the HTML fallback.
 
 ## Adding an ATS adapter

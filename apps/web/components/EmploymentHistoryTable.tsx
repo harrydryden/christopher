@@ -1,7 +1,8 @@
 "use client";
 import { updateEmploymentIndustries, type CvLibrary, type Employment } from "@christopher/core/cv";
+import { inputClass } from "@/components/Field";
 
-const input = "w-full min-w-28 rounded border border-slate-300 p-2 text-sm";
+const input = `min-w-28 ${inputClass}`;
 export function EmploymentHistoryTable({ employment, entries, onChange }: {
   employment: Employment[]; entries: CvLibrary["entries"]; onChange: (jobs: Employment[]) => void;
 }) {
@@ -9,10 +10,10 @@ export function EmploymentHistoryTable({ employment, entries, onChange }: {
   function update(id: string, patch: Partial<Employment>) {
     onChange(employment.map(job => job.id === id ? { ...job, ...patch } : job));
   }
-  return <section aria-labelledby="employment-heading" className="space-y-3 rounded border border-slate-200 p-3">
-    <h2 id="employment-heading" className="text-lg font-semibold">Employment history</h2>
+  return <section aria-labelledby="employment-heading" className="space-y-3 border border-line-muted p-3">
+    <h2 id="employment-heading" className="text-16 font-semibold">Employment history</h2>
     <datalist id="employment-companies">{companies.map(company => <option key={company} value={company} />)}</datalist>
-    <div className="overflow-x-auto"><table className="w-full text-left text-sm">
+    <div className="overflow-x-auto"><table className="w-full text-left text-14">
       <thead><tr>{["Company", "Industry descriptions", "Job title", "Start date", "End date", "Current", ""].map((label, i) => <th scope="col" className="p-2" key={i}>{label}</th>)}</tr></thead>
       <tbody>{employment.map((job, i) => {
         const hasEvidence = entries.some(entry => entry.employmentId === job.id);
@@ -31,7 +32,7 @@ export function EmploymentHistoryTable({ employment, entries, onChange }: {
         </tr>;
       })}</tbody>
     </table></div>
-    {!employment.length && <p className="text-sm">Add your first job, then add its responsibilities and outcomes below.</p>}
-    <button type="button" className="text-sm underline" onClick={() => onChange([...employment, { id: crypto.randomUUID(), company: "", jobTitle: "", startDate: "", endDate: "", current: false }])}>Add job</button>
+    {!employment.length && <p className="text-14">Add your first job, then add its responsibilities and outcomes below.</p>}
+    <button type="button" className="text-14 underline" onClick={() => onChange([...employment, { id: crypto.randomUUID(), company: "", jobTitle: "", startDate: "", endDate: "", current: false }])}>Add job</button>
   </section>;
 }

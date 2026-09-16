@@ -12,19 +12,19 @@ import { CvContentBlockLink } from "./CvWorkspace";
 import { CvDisclosure } from "./CvDisclosure";
 
 const colours = {
-  Red: "border-red-200 bg-red-50 text-red-800",
-  Amber: "border-amber-200 bg-amber-50 text-amber-900",
+  Red: "border-danger text-danger",
+  Amber: "border-warn text-warn",
 };
 const strengths = { None: 0, Weak: 1, Good: 2, Strong: 3 };
 function Strength({ value }: { value: keyof typeof strengths }) {
   return (
-    <div className="whitespace-nowrap text-xs font-semibold">
+    <div className="whitespace-nowrap text-12 font-semibold">
       {value}
       <span aria-hidden="true" className="mt-2 flex gap-1">
         {[1, 2, 3].map((level) => (
           <span
             key={level}
-            className={`h-1.5 w-4 rounded-full ${level <= strengths[value] ? "bg-accent" : "bg-slate-200"}`}
+            className={`h-1.5 w-4 ${level <= strengths[value] ? "bg-accent" : "bg-track"}`}
           />
         ))}
       </span>
@@ -54,7 +54,7 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
                 setFilter(value);
                 setVisible(true);
               }}
-              className={`rounded-md border px-2.5 py-1.5 text-xs font-medium ${filter === value ? "border-accent bg-accent text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+              className={`ds-pixel border-2 px-2.5 py-1.5 text-10 ${filter === value ? "border-accent bg-accent text-accent-fg" : "border-line-muted bg-raised text-muted hover:bg-sunken"}`}
             >
               {value}{" "}
               <span className="opacity-75">
@@ -70,7 +70,7 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
           aria-expanded={visible}
           aria-controls="cv-evaluation-table"
           onClick={() => setVisible((value) => !value)}
-          className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-accent"
+          className="border border-line-muted px-3 py-1.5 text-12 font-medium text-fg"
         >
           {visible ? "Hide" : "Show"} evaluation table
         </button>
@@ -80,9 +80,9 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
           role="region"
           aria-label="CV evaluation table"
           tabIndex={0}
-          className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200"
+          className="max-h-[70vh] overflow-auto border border-line-muted"
         >
-          <table className="w-full min-w-[800px] table-fixed text-left text-sm">
+          <table className="w-full min-w-[800px] table-fixed text-left text-14">
             <caption className="sr-only">
               Requirements, evidence gaps and factual review for the saved CV.
               Current CV wording is italicised.
@@ -96,7 +96,7 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
               <col style={{ width: "4.75rem" }} />
               <col style={{ width: "5.5rem" }} />
             </colgroup>
-            <thead className="sticky top-0 z-10 bg-slate-100 text-xs text-slate-600">
+            <thead className="sticky top-0 z-10 bg-sunken text-12 text-muted">
               <tr>
                 {[
                   "Item",
@@ -117,21 +117,21 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200">
+            <tbody className="divide-y divide-line-muted">
               {shown.map((row) => (
-                <tr key={row.id} className="align-top even:bg-slate-50/60">
-                  <td className="px-2 py-4 text-xs text-slate-500">
+                <tr key={row.id} className="align-top even:bg-sunken">
+                  <td className="px-2 py-4 text-12 text-muted">
                     {row.number}
                   </td>
                   <th scope="row" className="break-words px-2 py-4 font-medium">
                     {row.requirement}
                     {row.importance && (
-                      <span className="mt-2 block text-xs font-normal capitalize text-slate-500">
+                      <span className="mt-2 block text-12 font-normal capitalize text-muted">
                         {row.importance}
                       </span>
                     )}
                   </th>
-                  <td className="space-y-2 break-words px-2 py-4 text-slate-600">
+                  <td className="space-y-2 break-words px-2 py-4 text-muted">
                     {row.currentText.length ? (
                       row.currentText.map((text, index) => (
                         <p key={index}>
@@ -139,14 +139,14 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
                         </p>
                       ))
                     ) : (
-                      <span className="text-xs text-slate-500">
+                      <span className="text-12 text-muted">
                         No cited CV text
                       </span>
                     )}
                   </td>
                   <td className="px-2 py-4">
                     <span
-                      className={`inline-flex items-center justify-center rounded-md border px-1.5 py-1 text-center text-[11px] font-medium ${row.change === "Fact" ? colours.Red : row.change === "Uncertain" ? colours.Amber : "border-slate-200 bg-white text-slate-700"}`}
+                      className={`inline-flex items-center justify-center border px-1.5 py-1 text-center text-11 font-medium ${row.change === "Fact" ? colours.Red : row.change === "Uncertain" ? colours.Amber : "border-line-muted bg-raised text-fg"}`}
                     >
                       {row.change}
                     </span>
@@ -166,16 +166,16 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
                     </div>
                     <CvDisclosure label={`evidence for item ${row.number}`}>
                       {!row.suggestion.includes(row.reason) && (
-                        <p className="text-xs text-slate-600">{row.reason}</p>
+                        <p className="text-12 text-muted">{row.reason}</p>
                       )}
                       {row.companyText && (
-                        <p className="text-xs text-slate-600">
+                        <p className="text-12 text-muted">
                           <strong>Company requirement:</strong>{" "}
                           {row.companyText}
                         </p>
                       )}
                       {row.sources.map((source, index) => (
-                        <p key={index} className="text-xs text-slate-600">
+                        <p key={index} className="text-12 text-muted">
                           <strong>Saved evidence:</strong> {source}
                         </p>
                       ))}
@@ -191,7 +191,7 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
               ))}
               {!shown.length && (
                 <tr>
-                  <td colSpan={7} className="p-6 text-center text-slate-500">
+                  <td colSpan={7} className="p-6 text-center text-muted">
                     No {filter.toLowerCase()} items in this revision.
                   </td>
                 </tr>

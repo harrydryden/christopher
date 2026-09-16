@@ -17,7 +17,7 @@ export function CvDisclosure({
         aria-expanded={open}
         aria-controls={id}
         onClick={() => setOpen((value) => !value)}
-        className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-accent hover:bg-slate-50"
+        className="border border-line-muted px-3 py-1.5 text-12 font-medium text-fg hover:bg-sunken"
       >
         {open ? "Hide" : "Show"} {label}
       </button>

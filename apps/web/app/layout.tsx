@@ -1,6 +1,24 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { IBM_Plex_Mono, Silkscreen } from "next/font/google";
 import "./globals.css";
+
+// Silkscreen for headings, labels and the numerals beside the mark; Plex Mono
+// for everything else. next/font self-hosts both, so there is no render-blocking
+// request to Google and no flash of the fallback stack.
+const pixel = Silkscreen({
+  weight: ["400", "700"],
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-pixel-family",
+});
+
+const mono = IBM_Plex_Mono({
+  weight: ["400", "500", "600"],
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-mono-family",
+});
 
 export const metadata: Metadata = {
   title: "Christopher",
@@ -12,14 +30,14 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  // Brand Slate: it reads better than the deep navy accent at favicon size.
-  themeColor: "#2f5678",
+  // The ground colour. The mark is white on black at every size.
+  themeColor: "#000000",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
-      <body className="min-h-screen bg-white text-slate-900 antialiased">{children}</body>
+    <html lang="en" className={`${pixel.variable} ${mono.variable}`}>
+      <body className="min-h-screen bg-bg text-fg antialiased">{children}</body>
     </html>
   );
 }

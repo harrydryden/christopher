@@ -3,7 +3,7 @@ import { CompanyFavicon } from "@/components/CompanyFavicon";
 import { getCompanyWorkStatus } from "@/lib/work-status";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { addCompanies, archiveCompany, pauseCompany, resumeCompany } from "@/app/actions/companies";
-import { Badge, companyStatusTone, scanStatusTone } from "@/components/Badge";
+import { Badge, companyStatusTone, scanStatusTone, toneText } from "@/components/Badge";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
@@ -11,7 +11,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { inputClass, labelClass } from "@/components/Field";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
-import { relativeTime } from "@/lib/format";
+import { relativeTime, scanStatusLabel } from "@/lib/format";
 import { Pagination, pageNumber } from "@/components/Pagination";
 import { listCompanies, companyCount } from "@/lib/queries/companies";
 import { SearchForm, SearchPending } from "@/components/SearchForm";
@@ -69,13 +69,12 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
             <tr>
               <TH>Company</TH>
               <TH>Status</TH>
-              <TH>Last scan</TH>
-              <TH>Roles</TH>
+              <TH>Review</TH>
               <TH>Actions</TH>
             </tr>
           </THead>
           <TBody>
-            {rows.map(({ company, lastScan, reviewRoles, shortlistedRoles, discovering, discoveryState, needsSource, lastDiscovery }) => (
+            {rows.map(({ company, lastScan, reviewRoles, discovering, discoveryState, needsSource, lastDiscovery }) => (
               <TR key={company.id}>
                 <TD>
                   <a href={`/companies/${company.id}`} className="flex items-center gap-2 no-underline hover:underline">
@@ -87,6 +86,8 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                   </a>
                 </TD>
                 <TD>
+                  {/* Status leads; the last scan is the sub-line under it, so the health of
+                      the scan is read as a footnote to the company's state, not as a rival. */}
                   {needsSource && !discovering && company.status === "active" ? (
                     <>
                       <Badge tone="amber">no careers source</Badge>
@@ -96,26 +97,28 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                       </p>
                     </>
                   ) : (
-                    <Badge tone={companyStatusTone(company.status)}>{company.status}</Badge>
+                    <>
+                      <Badge tone={companyStatusTone(company.status)}>{company.status}</Badge>
+                      {lastScan ? (
+                        <p
+                          className={`mt-1 text-12 whitespace-nowrap ${lastScan.status === "ok" ? "text-muted" : toneText(scanStatusTone(lastScan.status))}`}
+                          title={lastScan.startedAt.toISOString()}
+                        >
+                          {scanStatusLabel(lastScan.status)} {relativeTime(lastScan.startedAt, now)}
+                        </p>
+                      ) : (
+                        <p className="mt-1 text-12 whitespace-nowrap text-muted">{needsSource ? "Waiting for a source" : "Never scanned"}</p>
+                      )}
+                    </>
                   )}
                   {discovering && <p className="mt-1 text-12 text-info">{discoveryState === "running" ? "Discovering…" : "Discovery queued"}</p>}
                 </TD>
-                <TD className="whitespace-nowrap">
-                  {lastScan ? (
-                    <span className="flex items-center gap-1.5" title={lastScan.startedAt.toISOString()}>
-                      <Badge tone={scanStatusTone(lastScan.status)}>{lastScan.status}</Badge>
-                      {relativeTime(lastScan.startedAt, now)}
-                    </span>
-                  ) : (
-                    <span className="text-muted">{needsSource ? "waiting for a source" : "never"}</span>
-                  )}
-                </TD>
                 <TD>
-                  {reviewRoles || shortlistedRoles ? <div className="flex flex-wrap gap-x-2">
-                    <a className="no-underline hover:underline" href={`/companies/${company.id}?view=auto-matched#roles`}>{reviewRoles} to review</a>
-                    <span>·</span>
-                    <a className="no-underline hover:underline" href={`/companies/${company.id}?view=user-shortlisted#roles`}>{shortlistedRoles} shortlisted</a>
-                  </div> : <span className="text-muted">No roles to review</span>}
+                  {reviewRoles > 0 ? (
+                    <a className="no-underline hover:underline" href={`/companies/${company.id}?view=auto-matched#roles`}>{reviewRoles}</a>
+                  ) : (
+                    <span className="text-muted">0</span>
+                  )}
                 </TD>
                 <TD>
                   <div className="flex flex-wrap gap-2">

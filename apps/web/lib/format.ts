@@ -55,6 +55,18 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   description_fetched: "Description fetched",
 };
 
+const SCAN_STATUS_LABELS: Record<string, string> = {
+  ok: "Scanned",
+  partial: "Partial scan",
+  suspect_empty: "Empty scan",
+  failed: "Scan failed",
+};
+
+/** Prose form of a scan status, for a sentence rather than a badge. */
+export function scanStatusLabel(status: string): string {
+  return SCAN_STATUS_LABELS[status] ?? status;
+}
+
 export function eventTypeLabel(type: string): string {
   return EVENT_TYPE_LABELS[type] ?? type;
 }

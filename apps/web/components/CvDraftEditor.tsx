@@ -16,7 +16,7 @@ import { Button } from "./Button";
 import { CvAppearance } from "./CvAppearance";
 import { SettingsForm } from "./SettingsForm";
 import { buttonClass } from "@/components/Button";
-import { inputClass } from "@/components/Field";
+import { inputClass, labelClass } from "@/components/Field";
 
 function ImproveButton() {
   const { pending } = useFormStatus();
@@ -140,7 +140,7 @@ export function CvDraftEditor({
       </SettingsForm>
       <CvWorkspacePanel tab="appearance">
         <section className="border border-line-muted p-4">
-          <h2 className="font-semibold">Appearance and settings</h2>
+          <h2 className="ds-pixel text-12">Appearance and settings</h2>
           <div className="mt-4 space-y-4">
             <CvAppearance value={theme} onChange={setTheme} />
 
@@ -160,7 +160,7 @@ export function CvDraftEditor({
       <CvWorkspacePanel tab="evaluation">{assessment}</CvWorkspacePanel>
       <CvWorkspacePanel tab="content">
         <section className="space-y-3 border border-line-muted p-4">
-          <h2 className="font-semibold">Content</h2>
+          <h2 className="ds-pixel text-12">Content</h2>
           <p className="text-14">
             {content.name} · {content.contact}
             {content.linkedinUrl && (
@@ -181,7 +181,7 @@ export function CvDraftEditor({
           </p>
 
           <label className="block text-14">
-            Profile
+            <span className={labelClass}>Profile</span>
             <textarea
               form={formId}
               id={CV_PROFILE_ID}

@@ -1,4 +1,4 @@
-import { MARK_CELLS, MARK_GRID } from "./mark-cells";
+import { MARK_GRID, MARK_PATH } from "./mark-cells";
 
 /**
  * The Christopher mark. It is the only graphic in the product — there is no
@@ -13,8 +13,9 @@ export function Mark({
   /** Rendered width and height. Snapped to a whole multiple of 16 so cells
       land on device pixels. */
   size?: number;
-  /** Turn the wheel, for "Christopher is scanning boards". Eight steps per
-      revolution; `prefers-reduced-motion` stops it. */
+  /** Turn the wheel. This is the product's one loading indicator — a page
+      loading, a CV building, a search in flight — and is otherwise still.
+      Eight steps per revolution; `prefers-reduced-motion` stops it. */
   searching?: boolean;
   /** Accessible name. Leave null for decoration sitting beside real text. */
   title?: string | null;
@@ -33,11 +34,7 @@ export function Mark({
       focusable="false"
       className={`block ${searching ? "animate-paddle" : ""} ${className}`}
     >
-      <g fill="currentColor">
-        {MARK_CELLS.map((cell) => (
-          <rect key={`${cell.x},${cell.y}`} x={cell.x} y={cell.y} width={1} height={1} />
-        ))}
-      </g>
+      <path d={MARK_PATH} fill="currentColor" />
     </svg>
   );
 }

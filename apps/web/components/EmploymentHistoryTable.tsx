@@ -1,8 +1,13 @@
 "use client";
 import { updateEmploymentIndustries, type CvLibrary, type Employment } from "@christopher/core/cv";
 import { inputClass } from "@/components/Field";
+import { Table, TBody, TH, THead, TR } from "@/components/table";
 
-const input = `min-w-28 ${inputClass}`;
+// Every control in the grid is the same height, so the rows read as rows
+// rather than a scatter of boxes. Industry descriptions is a long field but
+// one line is enough to see and edit it; it scrolls horizontally.
+const cell = `h-9 py-0 ${inputClass}`;
+const cellPad = "p-1.5 align-middle";
 export function EmploymentHistoryTable({ employment, entries, onChange }: {
   employment: Employment[]; entries: CvLibrary["entries"]; onChange: (jobs: Employment[]) => void;
 }) {
@@ -10,29 +15,37 @@ export function EmploymentHistoryTable({ employment, entries, onChange }: {
   function update(id: string, patch: Partial<Employment>) {
     onChange(employment.map(job => job.id === id ? { ...job, ...patch } : job));
   }
-  return <section aria-labelledby="employment-heading" className="space-y-3 border border-line-muted p-3">
-    <h2 id="employment-heading" className="text-16 font-semibold">Employment history</h2>
+  return <section aria-labelledby="employment-heading" className="space-y-3">
+    <h2 id="employment-heading" className="ds-pixel text-12">Employment history</h2>
     <datalist id="employment-companies">{companies.map(company => <option key={company} value={company} />)}</datalist>
-    <div className="overflow-x-auto"><table className="w-full text-left text-14">
-      <thead><tr>{["Company", "Industry descriptions", "Job title", "Start date", "End date", "Current", ""].map((label, i) => <th scope="col" className="p-2" key={i}>{label}</th>)}</tr></thead>
-      <tbody>{employment.map((job, i) => {
+    {employment.length > 0 && <Table>
+      <THead><tr>
+        <TH className="min-w-40">Company</TH>
+        <TH className="min-w-56">Industry descriptions</TH>
+        <TH className="min-w-56">Job title</TH>
+        <TH className="w-32">Start date</TH>
+        <TH className="w-32">End date</TH>
+        <TH className="w-20 text-center">Current</TH>
+        <TH><span className="sr-only">Remove</span></TH>
+      </tr></THead>
+      <TBody>{employment.map((job, i) => {
         const hasEvidence = entries.some(entry => entry.employmentId === job.id);
-        return <tr key={job.id}>
-          <td className="p-1"><input required maxLength={160} aria-label={`Job ${i + 1} company`} list="employment-companies" className={input} value={job.company} onChange={e => {
+        return <TR key={job.id}>
+          <td className={cellPad}><input required maxLength={160} aria-label={`Job ${i + 1} company`} list="employment-companies" className={cell} value={job.company} onChange={e => {
             const company = e.target.value;
             const existing = employment.find(item => item.id !== job.id && item.company.trim().toLowerCase() === company.trim().toLowerCase());
             update(job.id, { company, ...(existing ? { industryDescriptions: existing.industryDescriptions ?? "" } : {}) });
           }} /></td>
-          <td className="p-1"><textarea rows={2} maxLength={1200} aria-label={`Job ${i + 1} industry descriptions`} placeholder="Workplace mental health, SaaS" className={`${input} min-w-52`} value={job.industryDescriptions ?? ""} onChange={e => onChange(updateEmploymentIndustries(employment, job.id, e.target.value))} /></td>
-          <td className="p-1"><input required maxLength={160} aria-label={`Job ${i + 1} title`} className={`${input} min-w-52`} value={job.jobTitle} onChange={e => update(job.id, { jobTitle: e.target.value })} /></td>
-          <td className="p-1"><input aria-label={`Job ${i + 1} start date`} placeholder="YYYY-MM" pattern="[0-9]{4}(-[0-9]{2})?" className={input} value={job.startDate} onChange={e => update(job.id, { startDate: e.target.value })} /></td>
-          <td className="p-1"><input disabled={job.current} aria-label={`Job ${i + 1} end date`} placeholder={job.current ? "Present" : "YYYY-MM"} pattern="[0-9]{4}(-[0-9]{2})?" className={input} value={job.endDate} onChange={e => update(job.id, { endDate: e.target.value })} /></td>
-          <td className="p-2"><input type="checkbox" aria-label={`Job ${i + 1} current`} checked={job.current} onChange={e => update(job.id, { current: e.target.checked, endDate: e.target.checked ? "" : job.endDate })} /></td>
-          <td className="p-2"><button type="button" disabled={hasEvidence} title={hasEvidence ? "This job has an evidence block. Archive the block to exclude it from CVs." : "Remove job"} aria-label={`Remove job ${i + 1}`} className="underline disabled:opacity-40" onClick={() => onChange(employment.filter(item => item.id !== job.id))}>Remove</button></td>
-        </tr>;
-      })}</tbody>
-    </table></div>
-    {!employment.length && <p className="text-14">Add your first job, then add its responsibilities and outcomes below.</p>}
+          <td className={cellPad}><input maxLength={1200} aria-label={`Job ${i + 1} industry descriptions`} placeholder="Workplace mental health, SaaS" className={cell} value={job.industryDescriptions ?? ""} onChange={e => onChange(updateEmploymentIndustries(employment, job.id, e.target.value))} /></td>
+          <td className={cellPad}><input required maxLength={160} aria-label={`Job ${i + 1} title`} className={cell} value={job.jobTitle} onChange={e => update(job.id, { jobTitle: e.target.value })} /></td>
+          <td className={cellPad}><input aria-label={`Job ${i + 1} start date`} placeholder="YYYY-MM" pattern="[0-9]{4}(-[0-9]{2})?" className={cell} value={job.startDate} onChange={e => update(job.id, { startDate: e.target.value })} /></td>
+          <td className={cellPad}><input disabled={job.current} aria-label={`Job ${i + 1} end date`} placeholder={job.current ? "Present" : "YYYY-MM"} pattern="[0-9]{4}(-[0-9]{2})?" className={`${cell} disabled:opacity-40`} value={job.endDate} onChange={e => update(job.id, { endDate: e.target.value })} /></td>
+          <td className={`${cellPad} text-center`}><input type="checkbox" aria-label={`Job ${i + 1} current`} checked={job.current} onChange={e => update(job.id, { current: e.target.checked, endDate: e.target.checked ? "" : job.endDate })} /></td>
+          <td className={`${cellPad} whitespace-nowrap text-right`}><button type="button" disabled={hasEvidence} title={hasEvidence ? "This job has an evidence block. Archive the block to exclude it from CVs." : "Remove job"} aria-label={`Remove job ${i + 1}`} className="text-12 text-muted underline hover:text-fg disabled:opacity-40" onClick={() => onChange(employment.filter(item => item.id !== job.id))}>Remove</button></td>
+        </TR>;
+      })}</TBody>
+    </Table>}
+    {!employment.length && <p className="text-14 text-muted">Add your first job, then add its responsibilities and outcomes below.</p>}
     <button type="button" className="text-14 underline" onClick={() => onChange([...employment, { id: crypto.randomUUID(), company: "", jobTitle: "", startDate: "", endDate: "", current: false }])}>Add job</button>
   </section>;
 }

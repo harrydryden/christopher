@@ -218,6 +218,16 @@ a {
   accent-color: var(--accent);
 }
 
+/* Every checkbox is the same 16px square, sitting on the text baseline, so
+   inline "[x] label" rows line up without per-instance classes. */
+input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  vertical-align: -3px;
+  flex-shrink: 0;
+}
+
 kbd {
   display: inline-block;
   min-width: 1.2em;

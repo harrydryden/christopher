@@ -202,14 +202,14 @@ export function CvSavedTable({
           {error}
         </p>
       )}
-      <div className="overflow-x-auto border border-line-muted">
+      <div className="overflow-x-auto border-2 border-line">
         <table className="w-full text-left text-14">
           <caption className="sr-only">
             {archived ? "Archived" : "Saved"} CVs
           </caption>
-          <thead className="bg-sunken text-12 text-muted">
+          <thead className="ds-pixel bg-sunken text-9 tracking-th text-muted">
             <tr>
-              <th className="w-10 p-3">
+              <th className="w-10 p-3 align-middle">
                 <input
                   type="checkbox"
                   aria-label={`Select all ${archived ? "archived" : "saved"} CVs on this page`}
@@ -237,15 +237,16 @@ export function CvSavedTable({
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-line-muted">
+          <tbody className="divide-y divide-line-faint">
             {rows.map((row) => (
               <tr
                 key={row.id}
                 className={selectedSet.has(row.id) ? "bg-sunken" : ""}
               >
-                <td className="p-3">
+                <td className="p-3 align-top">
                   <input
                     type="checkbox"
+                    className="mt-[3px]"
                     aria-label={`Select ${row.company} · ${row.jobTitle} · ${cvVersionLabel(row.createdAt, row.dailyVersion ?? Math.max(1, row.revision))}`}
                     checked={selectedSet.has(row.id)}
                     onChange={() =>

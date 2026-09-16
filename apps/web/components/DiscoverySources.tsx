@@ -8,7 +8,7 @@ import { Button } from "./Button";
 import { Badge } from "./Badge";
 import { DiscoverySourceForm } from "./DiscoverySourceForm";
 import { DiscoverySourceFields } from "./DiscoverySourceFields";
-import { inputClass } from "@/components/Field";
+import { inputClass, labelClass } from "@/components/Field";
 
 const input = `min-h-11 ${inputClass}`;
 export async function DiscoverySources() {
@@ -29,7 +29,7 @@ export async function DiscoverySources() {
       {!recentTasks.some(t => t.status === "queued" || t.status === "running") && <a className="text-14 underline" href="/suggestions?view=sources">Refresh status</a>}
     </div>
     <section className="border border-line-muted p-4">
-      <h3 className="font-semibold">Add a source</h3>
+      <h3 className="ds-pixel text-12">Add a source</h3>
       <DiscoverySourceForm action={saveDiscoverySource} className="mt-4 grid max-w-xl gap-4">
         <DiscoverySourceFields/>
         <Button className="min-h-11" type="submit" variant="primary">Add source</Button>
@@ -57,17 +57,17 @@ export async function DiscoverySources() {
         <section><h3 className="text-14 font-medium">Import text</h3>
           <p className="my-2 text-14 text-muted">Paste an emailed edition or a post that requires sign-in. Up to 40,000 characters per import. Duplicate imports are ignored.</p>
           <DiscoverySourceForm action={importDiscoveryDocument.bind(null, source.id)} pendingLabel="Importing…" className="grid gap-3">
-            <label className="grid gap-1 text-14">Edition title or email subject<input name="title" required maxLength={300} className={input}/></label>
-            <label className="grid gap-1 text-14">Newsletter or post text<textarea name="content" required minLength={100} maxLength={40000} rows={5} className={input}/></label>
+            <label className="grid gap-1.5"><span className={labelClass}>Edition title or email subject</span><input name="title" required maxLength={300} className={input}/></label>
+            <label className="grid gap-1.5"><span className={labelClass}>Newsletter or post text</span><textarea name="content" required minLength={100} maxLength={40000} rows={5} className={input}/></label>
             <Button className="min-h-11" type="submit">Import edition</Button>
           </DiscoverySourceForm>
         </section>
         <section><h3 className="text-14 font-medium">Source settings</h3>
           <DiscoverySourceForm action={updateDiscoverySource.bind(null, source.id)} className="mt-3 grid gap-3 sm:flex sm:flex-wrap sm:items-end">
-            <label className="grid gap-1 text-14">Source name<input name="name" required maxLength={200} defaultValue={source.name} className={input}/></label>
-            {source.kind !== "email" && <label className="grid min-w-0 flex-1 gap-1 text-14">Source URL<input name="url" type="url" required maxLength={2048} defaultValue={source.url ?? ""} className={input}/></label>}
-            <label className="text-14"><input type="checkbox" name="enabled" defaultChecked={source.enabled}/> Keep this source enabled</label>
-            <label className="grid gap-1 text-14">Check every (days)<input name="intervalDays" type="number" min={1} max={90} required defaultValue={source.intervalDays} className={`${input} max-w-28`}/></label>
+            <label className="grid gap-1.5"><span className={labelClass}>Source name</span><input name="name" required maxLength={200} defaultValue={source.name} className={input}/></label>
+            {source.kind !== "email" && <label className="grid min-w-0 flex-1 gap-1.5"><span className={labelClass}>Source URL</span><input name="url" type="url" required maxLength={2048} defaultValue={source.url ?? ""} className={input}/></label>}
+            <label className="flex min-h-11 items-center gap-2 text-14"><input type="checkbox" name="enabled" defaultChecked={source.enabled}/> Keep this source enabled</label>
+            <label className="grid gap-1.5"><span className={labelClass}>Check every (days)</span><input name="intervalDays" type="number" min={1} max={90} required defaultValue={source.intervalDays} className={`${input} max-w-28`}/></label>
             <Button className="min-h-11" size="sm" type="submit">Save settings</Button>
           </DiscoverySourceForm>
           <p className="mt-2 text-12 text-muted">Pausing preserves imported content and recommendations. A check already running may finish.</p>

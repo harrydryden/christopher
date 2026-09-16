@@ -16,7 +16,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { MARK_CELLS, MARK_GRID } from "../apps/web/components/brand/mark-cells.ts";
+import { MARK_CELLS, MARK_GRID, MARK_PATH } from "../apps/web/components/brand/mark-cells.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const BLACK: RGB = [0, 0, 0];
@@ -105,12 +105,10 @@ function ico(images: Array<{ size: number; data: Buffer }>): Buffer {
   return Buffer.concat([header, ...entries, ...images.map((i) => i.data)]);
 }
 
-const rects = MARK_CELLS.map((c) => `<rect x="${c.x}" y="${c.y}" width="1" height="1"/>`).join("");
-
 function svg({ ink, ground }: { ink: string; ground?: string }): string {
   const box = `0 0 ${MARK_GRID} ${MARK_GRID}`;
   const back = ground ? `<rect width="${MARK_GRID}" height="${MARK_GRID}" fill="${ground}"/>` : "";
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${box}" shape-rendering="crispEdges" role="img" aria-label="Christopher">${back}<g fill="${ink}">${rects}</g></svg>\n`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${box}" shape-rendering="crispEdges" role="img" aria-label="Christopher">${back}<path d="${MARK_PATH}" fill="${ink}"/></svg>\n`;
 }
 
 const brand = join(root, "apps/web/public/brand");

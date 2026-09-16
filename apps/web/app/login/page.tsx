@@ -32,7 +32,7 @@ export default async function LoginPage({
     <main className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <h1 className="mb-3 flex justify-center" aria-label="Careers page monitor">
-          <Mark size={96} searching />
+          <Mark size={96} />
         </h1>
         <p className="mb-6 text-center text-14 text-muted">Careers page monitor</p>
 

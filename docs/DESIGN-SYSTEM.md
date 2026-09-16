@@ -114,8 +114,8 @@ Spacing runs on the 4px scale in whole multiples. Sidebar 192px, content padding
 ## Motion
 
 Stepped, never eased. `ease-step-2` and `ease-step-4`, at 120/240/480ms.
-`animate-paddle` turns the mark in eight jumps per 1.6s revolution while a scan
-is running. `prefers-reduced-motion` stops every animation.
+`animate-paddle` turns the mark in eight jumps per 1.6s revolution while
+something is loading. `prefers-reduced-motion` stops every animation.
 
 ---
 
@@ -141,7 +141,14 @@ page can never drift.
 
 - Render at whole multiples of 16 only (16, 32, 48, 64, 96, 128). `Mark` snaps
   the size it is given.
-- `searching` turns it; use it where the app is genuinely waiting on the worker.
+- `searching` turns it, and that is the product's **only loading indicator**: a
+  page loading (`loading.tsx`), a CV building (`CvBuildProgress`), a search or
+  filter in flight (`SearchPending` inside a `SearchForm`). Everywhere else —
+  sidebar, login, the status strip — the mark is still. A wheel that is always
+  turning tells the user nothing.
+- It is rendered as one `<path>` (`MARK_PATH`), not one element per cell. Every
+  mark on a page is serialised into the payload of every navigation; as
+  elements the three in the shell cost ~45KB a page.
 - Clear space is half a mark. No wordmark inside the product.
 - Regenerate assets with `pnpm exec tsx scripts/generate-brand-assets.ts`.
 

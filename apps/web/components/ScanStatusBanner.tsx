@@ -16,7 +16,6 @@ export function ScanStatusBanner({ initialText }: { initialText: string }) {
         if (!controller.signal.aborted) { setText(value.text); setStale(false); }
       } catch { if (!controller.signal.aborted) setStale(true); }
     }
-    void refresh();
     const timer = setInterval(() => void refresh(), 30000);
     document.addEventListener("visibilitychange", refresh);
     return () => { controller.abort(); clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };

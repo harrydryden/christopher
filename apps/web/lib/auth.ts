@@ -43,14 +43,21 @@ export async function requireUser(): Promise<User> {
 }
 
 /**
- * Work that scans, discovers or calls a model waits for a confirmed address, so a throwaway
- * sign-up cannot spend the shared budget. Administrators are exempt: the budget the gate protects
- * is theirs to set, and nobody becomes one without an address an administrator vouched for, either
- * by proving their own or by promoting someone from Admin.
+ * Whether work that scans, discovers or calls a model is held back until this account confirms its
+ * address, so a throwaway sign-up cannot spend the shared budget. Administrators are never held
+ * back: the budget the gate protects is theirs to set, and nobody becomes one without an address
+ * an administrator vouched for, either by proving their own or by promoting someone from Admin.
+ *
+ * The one place that decides this. The pages that explain the gate ask here too, so a stale link
+ * cannot tell someone their work is blocked when it is not.
  */
+export function needsEmailConfirmation(user: Pick<User, "role" | "emailVerifiedAt">): boolean {
+  return user.role !== "admin" && !user.emailVerifiedAt;
+}
+
 export async function requireVerifiedUser(): Promise<User> {
   const user = await requireUser();
-  if (user.role !== "admin" && !user.emailVerifiedAt) redirect("/account?verify=required");
+  if (needsEmailConfirmation(user)) redirect("/account?verify=required");
   return user;
 }
 

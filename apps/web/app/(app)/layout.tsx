@@ -2,7 +2,7 @@ import { WorkspaceShell } from "@/components/WorkspaceShell";
 import { NavigationMetrics } from "@/components/NavigationMetrics";
 import { ScanStatusBanner } from "@/components/ScanStatusBanner";
 import { getScanStatus } from "@/lib/scan-status";
-import { getCurrentUser } from "@/lib/auth";
+import { getCurrentUser, needsEmailConfirmation } from "@/lib/auth";
 import { Suspense, type ReactNode } from "react";
 import { logout } from "@/app/login/actions";
 import { resendVerification } from "@/app/actions/account";
@@ -39,7 +39,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         <Mark size={16} />
         <Suspense fallback={<span className="text-muted">Loading scan status…</span>}><ScanBanner userId={user.id} /></Suspense>
       </div>
-      {!user.emailVerifiedAt && user.role !== "admin" && (
+      {needsEmailConfirmation(user) && (
         <div className="flex flex-wrap items-center gap-3 border-b-2 border-line bg-sunken px-4 py-2 text-13" role="status">
           <span>Confirm your email address to add companies, run discovery and build CVs. The link asks for your password.</span>
           <form action={resendVerification}>

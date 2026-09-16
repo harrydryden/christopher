@@ -20,7 +20,7 @@ describe("import-only sources", () => {
   it("names the site in the explanation", () => {
     expect(importOnlyReason("https://www.linkedin.com/newsletters/x")).toMatch(/^LinkedIn does not allow/);
     expect(importOnlyReason(null, "linkedin")).toMatch(/^LinkedIn does not allow/);
-    expect(importOnlyReason("https://news.example.com/feed")).toMatch(/^news.example.com does not allow/);
+    expect(importOnlyReason("https://news.example.com/feed")).toMatch(/^news\.example\.com does not allow/);
     expect(importOnlyReason(null)).toMatch(/^This site does not allow/);
   });
 });

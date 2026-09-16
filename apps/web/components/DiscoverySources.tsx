@@ -1,18 +1,24 @@
+import { headers } from "next/headers";
 import { and, asc, desc, eq, sql, inArray } from "drizzle-orm";
 import { discoveryDocuments, discoverySources, tasks } from "@ava/db/schema";
 import { db } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { discoverySourceHealth, notWorkingSources, SOURCE_KIND_LABELS } from "@/lib/discovery-ux";
-import { importOnlyReason } from "@christopher/core";
+import { importOnlyReason } from "@ava/core";
 import { checkDiscoverySource, importDiscoveryDocument, saveDiscoverySource, updateDiscoverySource } from "@/app/actions/discovery-sources";
 import { Button } from "./Button";
 import { Badge } from "./Badge";
 import { DiscoverySourceForm } from "./DiscoverySourceForm";
 import { DiscoverySourceFields } from "./DiscoverySourceFields";
+import { CopyField } from "./CopyField";
+import { inboundDomain, subscribeAddressFor } from "@/lib/newsletter-address";
 import { inputClass, labelClass } from "@/components/Field";
 
 const input = `min-h-11 ${inputClass}`;
 export async function DiscoverySources({ userId }: { userId: string }) {
+  const requestHeaders = await headers();
+  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
+  const origin = `${requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https")}://${host}`;
   const [sources, counts, recentTasks, settings] = await Promise.all([
     db().select().from(discoverySources).where(eq(discoverySources.userId, userId)).orderBy(asc(discoverySources.createdAt)),
     db().select({ sourceId: discoveryDocuments.sourceId, count: sql<number>`count(*) filter (where processed_at is null)::int` })
@@ -45,6 +51,7 @@ export async function DiscoverySources({ userId }: { userId: string }) {
     </div>
     <section className="border border-line-muted p-4">
       <h3 className="ds-pixel text-12">Add a source</h3>
+      {inboundDomain() && <p className="mt-2 text-14 text-muted">LinkedIn and email newsletters cannot be read from their pages. Each gets its own subscription address once created, so editions arrive by email on their own.</p>}
       <DiscoverySourceForm action={saveDiscoverySource} className="mt-4 grid max-w-xl gap-4">
         <DiscoverySourceFields/>
         <Button className="min-h-11" type="submit" variant="primary">Add source</Button>
@@ -91,7 +98,18 @@ export async function DiscoverySources({ userId }: { userId: string }) {
           </DiscoverySourceForm>
           <p className="mt-2 text-12 text-muted">Pausing preserves imported content and recommendations. A check already running may finish.</p>
         </section>
-        {source.kind === "email" && <section><h3 className="text-14">Automatic email delivery — advanced setup</h3><p className="mt-2 text-14 text-muted">Ask your administrator to connect an email forwarding service to the authenticated newsletter endpoint. Until then, use Import text.</p><p className="mt-2 break-all text-12 text-muted">Source ID: {source.id}</p></section>}
+        {importOnly && <section><h3 className="text-14 font-medium">Subscribe by email</h3>
+          {subscribeAddressFor(source.id)
+            ? <div className="mt-3 grid gap-3">
+                <p className="text-14 text-muted">Use this address when you subscribe to the newsletter. Every edition delivered to it is read on the next check, with nothing to paste.</p>
+                <CopyField label="Delivery address" value={subscribeAddressFor(source.id)!} hint="Unique to this source. Anything sent here is filed against it." />
+              </div>
+            : <div className="mt-3 grid gap-3">
+                <p className="text-14 text-muted">A subscription address appears here once inbound email is connected: set <code className="text-13">NEWSLETTER_INGEST_SECRET</code> and <code className="text-13">NEWSLETTER_INBOUND_DOMAIN</code> on the web deployment, and point that domain&rsquo;s mail at the endpoint below. Until then, use Import text.</p>
+                <CopyField label="Endpoint" value={`${origin}/api/newsletters`} />
+                <CopyField label="Source ID" value={source.id} hint="Post JSON with sourceId, title and content, authorised with the ingest secret." />
+              </div>}
+        </section>}
       </article>;
     })}
   </section>;

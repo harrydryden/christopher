@@ -55,9 +55,10 @@ async function discoverCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
 
   return deps.db.transaction(async tx => {
     await deps.assertOwnership?.(tx as unknown as Db);
-  // Fill in the company's display name and favicon the first time we learn them.
+  // Replace a placeholder name (the raw domain or its label) with the first real one we learn,
+  // from the homepage title or the verified careers feed. A name the site gave us is kept.
   const patch: Partial<typeof schema.companies.$inferInsert> = {};
-  if (result.companyName && (company.name === company.domain || !company.name)) patch.name = result.companyName;
+  if (result.companyName && discovery.isPlaceholderName(company.name, company.domain)) patch.name = result.companyName;
   if (Object.keys(patch).length > 0) await tx.update(schema.companies).set(patch).where(eq(schema.companies.id, company.id));
 
   const candidates = result.candidates.map(serialiseCandidate);

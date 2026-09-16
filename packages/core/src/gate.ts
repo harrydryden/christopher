@@ -53,23 +53,40 @@ function escapeRegex(s: string): string {
 /**
  * Compile a user term into a word-boundary regex.
  *  - `operations`            -> whole word, case-insensitive
- *  - `operat*`               -> prefix match
- *  - `"chief of staff"`      -> exact phrase, flexible whitespace
+ *  - `operat*`               -> prefix: Operations, Operational, Operator
+ *  - `*ops`                  -> suffix: DevOps, RevOps (still ends at a word boundary)
+ *  - `strateg* lead`         -> a wildcard inside a phrase applies to that word
+ *  - `"chief of staff"`      -> exact phrase, flexible whitespace, no wildcards
  *  - `ops`                   -> whole word (does not match "develops")
+ * A bare `*` or a term that is only wildcards compiles to nothing rather than
+ * matching everything.
  */
 export function compileTerm(term: string): RegExp | null {
   let t = term.trim();
   if (!t) return null;
   const quoted = /^".*"$/.test(t) || /^'.*'$/.test(t);
   if (quoted) t = t.slice(1, -1).trim();
-  const prefix = !quoted && t.endsWith("*");
-  if (prefix) t = t.slice(0, -1);
-  if (!t) return null;
-  const parts = t.split(/\s+/).map(escapeRegex);
-  const body = parts.join("\\s+");
-  const lead = /^[\p{L}\p{N}]/u.test(t) ? "(?<![\\p{L}\\p{N}])" : "";
-  const trail = prefix ? "[\\p{L}\\p{N}]*" : /[\p{L}\p{N}]$/u.test(t) ? "(?![\\p{L}\\p{N}])" : "";
-  return new RegExp(`${lead}${body}${trail}`, "iu");
+  if (!t || /^[*\s]+$/.test(t)) return null;
+  const words = t.split(/\s+/).filter(Boolean);
+  const WORD = "[\\p{L}\\p{N}]";
+  const body = words.map((word, index) => {
+    if (quoted) return escapeRegex(word);
+    // `*` at either end of a word widens that word; anywhere else it is literal.
+    const prefix = word.endsWith("*") && word.length > 1;
+    const suffix = word.startsWith("*") && word.length > 1;
+    const core = word.slice(suffix ? 1 : 0, prefix ? -1 : undefined);
+    if (!core) return null;
+    const lead = index === 0 && !suffix && /^[\p{L}\p{N}]/u.test(core) ? `(?<!${WORD})` : suffix ? `${WORD}*` : "";
+    const trail = index === words.length - 1 && !prefix && /[\p{L}\p{N}]$/u.test(core) ? `(?!${WORD})` : prefix ? `${WORD}*` : "";
+    return `${lead}${escapeRegex(core)}${trail}`;
+  });
+  if (body.some((part) => part === null)) return null;
+  if (quoted) {
+    const lead = /^[\p{L}\p{N}]/u.test(t) ? `(?<!${WORD})` : "";
+    const trail = /[\p{L}\p{N}]$/u.test(t) ? `(?!${WORD})` : "";
+    return new RegExp(`${lead}${body.join("\\s+")}${trail}`, "iu");
+  }
+  return new RegExp(body.join("\\s+"), "iu");
 }
 
 function matchTerms(text: string, terms: string[]): string[] {

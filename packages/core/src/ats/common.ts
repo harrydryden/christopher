@@ -117,4 +117,11 @@ export function verifyFromFetch(fetchPostings: () => Promise<RawPosting[]>, comp
   };
 }
 
-export const MAX_POSTINGS = 500;
+/**
+ * The most postings any adapter returns from one source. Greenhouse boards
+ * exist at 2,000+ roles, so 500 silently hid most of a large employer — and a
+ * feed whose order shifted between scans moved roles across the cutoff and
+ * closed them. Every adapter slices to this, and the scan marks itself partial
+ * when a source reaches it, so a capped listing can never close a role.
+ */
+export const MAX_POSTINGS = 10_000;

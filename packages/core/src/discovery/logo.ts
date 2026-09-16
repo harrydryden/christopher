@@ -4,7 +4,25 @@ import { absoluteUrl } from "../normalize";
 
 /** Lightweight website branding lookup, independent of careers discovery and browser rendering. */
 export async function discoverCompanyLogo(homepageUrl: string, ctx: FetchContext): Promise<string | null> {
-  const page = await ctx.fetchText(homepageUrl, { timeoutMs: 10000, maxBodyBytes: 2000000 });
+  let page: { url: string; body: string; status: number };
+  try {
+    page = await ctx.fetchText(homepageUrl, { timeoutMs: 10000, maxBodyBytes: 2000000 });
+  } catch (error) {
+    page = { url: homepageUrl, body: "", status: (error as { status?: number }).status ?? 403 };
+  }
+  if (page.status === 403 || page.status === 429) {
+    // Bot protection. The icon is served to browsers regardless, so the
+    // worker's inability to read the page must not leave the company blank:
+    // render it if a browser is available, otherwise hand the interface the
+    // conventional icon location and let the browser load it.
+    if (ctx.render) {
+      try {
+        const rendered = await ctx.render(homepageUrl);
+        if (rendered.html && (rendered.status === null || rendered.status < 400)) page = { url: rendered.finalUrl, body: rendered.html, status: 200 };
+      } catch { /* fall through to the conventional location */ }
+    }
+    if (page.status !== 200) return new URL("/favicon.ico", homepageUrl).toString();
+  }
   if (page.status < 200 || page.status >= 300) throw new Error(`Logo homepage returned HTTP ${page.status}`);
   const $ = cheerio.load(page.body);
   // Touch icons have a solid background; transparent favicons can be white-only

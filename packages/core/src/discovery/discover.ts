@@ -6,11 +6,13 @@ import { absoluteUrl, ensureHttpUrl, extractDomain, normalizeUrl, sameDomain, st
 import type { RawPosting, SourceSpec } from "../types";
 import { confidenceFor, outcomeFor } from "./confidence";
 import { countAnchors, extractMeta, harvestLinks, scoreLink, WELL_KNOWN_PATHS } from "./links";
-import { companyNameFromTitle, looksLikeSoft404 } from "./text";
+import { companyNameFromTitle, looksLikeSoft404, nameFromSlug } from "./text";
 import type { DiscoveryCandidate, DiscoveryContext, DiscoveryResult, HarvestedLink } from "./types";
 
 const JOB_DETAIL_RE = /\/(jobs?|careers?|positions?|openings?|vacanc(?:y|ies)|opportunit(?:y|ies))\//i;
 const MAX_CANDIDATE_PAGES = 4;
+/** Pages that commonly link onward to Careers when the homepage does not. */
+const HUB_PATHS: readonly string[] = ["/about", "/about-us", "/company", "/team"];
 const MAX_BUNDLES = 8;
 const MAX_BUNDLE_BYTES = 2_000_000;
 
@@ -374,38 +376,22 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
   }
 
   let home = await run.fetch(normalized);
-  if (!home) {
-    run.say(`could not fetch the homepage ${normalized}`);
-    result.fetches = run.fetches;
-    result.durationMs = Date.now() - started;
-    return result;
+  if (!home && ctx.render) {
+    // Bot protection on the homepage is the commonest way step 1 fails for a
+    // large consumer brand. A real browser usually gets through where plain
+    // HTTP is refused, so try that before giving up on the site's own links.
+    run.say("homepage could not be fetched over HTTP; rendering with the browser");
+    const rendered = await renderAndScan(run, ctx, normalized);
+    if (rendered && rendered.status < 400) home = rendered;
   }
-  result.finalHomepageUrl = home.url;
-  const domain = extractDomain(home.url);
-  const meta = extractMeta(home.html, home.url);
-  result.companyName = meta.siteName ?? companyNameFromTitle(meta.title, domain);
-  result.faviconUrl = meta.faviconUrl;
-  run.homepageCompanyName = result.companyName;
-  run.say(`homepage ${home.url} (company "${result.companyName}")`);
+  // Whatever happened to the homepage, the careers page is often on another
+  // host (careers.acme.com, a hosted ATS board) that is not protected at all,
+  // so the probes below run against the site we were given regardless.
+  const baseUrl = home?.url ?? normalized;
+  const domain = extractDomain(baseUrl);
+  let links: HarvestedLink[] = [];
 
-  if (isJsShell(home.html) && ctx.render) {
-    run.say("homepage looks like a JavaScript shell; rendering");
-    const rendered = await renderAndScan(run, ctx, home.url);
-    if (rendered) home = rendered;
-  }
-
-  let links = harvestLinks(home.html, home.url);
-  collectAtsFromPage(run, ctx, home.html, home.url, links);
-  await scanBundles(run, ctx, links, home.url);
-
-  const scored = links
-    .filter((l) => l.kind === "a")
-    .map((link) => ({ link, score: scoreLink(link, home!.url, { resolveSpec: ctx.resolveSpec }) }))
-    .filter((x) => x.score >= 0.4)
-    .sort((a, b) => b.score - a.score);
-  run.say(`${scored.length} careers-like link(s) on the homepage`);
-
-  const visited = new Set<string>([normalizeUrl(home.url)]);
+  const visited = new Set<string>([normalizeUrl(baseUrl)]);
   const visit = async (url: string, via?: string) => {
     const key = normalizeUrl(url);
     if (visited.has(key)) return;
@@ -413,19 +399,74 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
     await inspectPage(run, ctx, url, 1, via);
   };
 
-  for (const { link } of scored.filter((x) => sameDomain(x.link.href, home!.url)).slice(0, MAX_CANDIDATE_PAGES)) {
-    if (!run.budgetLeft()) break;
-    await visit(link.href, "homepage link");
+  if (home) {
+    result.finalHomepageUrl = home.url;
+    const meta = extractMeta(home.html, home.url);
+    result.companyName = meta.siteName ?? companyNameFromTitle(meta.title, domain);
+    result.faviconUrl = meta.faviconUrl;
+    run.homepageCompanyName = result.companyName;
+    run.say(`homepage ${home.url} (company "${result.companyName}")`);
+
+    if (isJsShell(home.html) && ctx.render) {
+      run.say("homepage looks like a JavaScript shell; rendering");
+      const rendered = await renderAndScan(run, ctx, home.url);
+      if (rendered) home = rendered;
+    }
+
+    links = harvestLinks(home.html, home.url);
+    collectAtsFromPage(run, ctx, home.html, home.url, links);
+    await scanBundles(run, ctx, links, home.url);
+
+    const scored = links
+      .filter((l) => l.kind === "a")
+      .map((link) => ({ link, score: scoreLink(link, home!.url, { resolveSpec: ctx.resolveSpec }) }))
+      .filter((x) => x.score >= 0.4)
+      .sort((a, b) => b.score - a.score);
+    run.say(`${scored.length} careers-like link(s) on the homepage`);
+
+    for (const { link } of scored.filter((x) => sameDomain(x.link.href, home!.url)).slice(0, MAX_CANDIDATE_PAGES)) {
+      if (!run.budgetLeft()) break;
+      await visit(link.href, "homepage link");
+    }
+    // Off-domain careers links (a hosted board on a different domain) are worth one visit each.
+    for (const { link } of scored.filter((x) => !sameDomain(x.link.href, home!.url)).slice(0, 2)) {
+      if (!run.budgetLeft()) break;
+      if (ctx.resolveSpec(link.href)) continue;
+      await visit(link.href, "homepage link (off-domain)");
+    }
+  } else {
+    run.say(`could not fetch the homepage ${normalized}; probing careers paths, subdomains, sitemaps and ATS boards directly`);
   }
-  // Off-domain careers links (a hosted board on a different domain) are worth one visit each.
-  for (const { link } of scored.filter((x) => !sameDomain(x.link.href, home!.url)).slice(0, 2)) {
-    if (!run.budgetLeft()) break;
-    if (ctx.resolveSpec(link.href)) continue;
-    await visit(link.href, "homepage link (off-domain)");
+
+  // Sites that keep Careers under About or Company, or only in a rendered
+  // mega-menu, show nothing careers-like on the homepage itself. Those hub
+  // pages are a cheap second harvest — three fetches at most — and come before
+  // the blind path probes and long before a model call.
+  if (home && run.candidates.size === 0) {
+    const origin = new URL(home.url).origin;
+    let harvested = 0;
+    for (const path of HUB_PATHS) {
+      if (!run.budgetLeft() || run.candidates.size > 0 || harvested >= 3) break;
+      const hub = await run.fetch(`${origin}${path}`);
+      if (!hub || looksLikeSoft404(hub.html)) continue;
+      harvested++;
+      const hubLinks = harvestLinks(hub.html, hub.url);
+      collectAtsFromPage(run, ctx, hub.html, hub.url, hubLinks, `hub page ${path}`);
+      const hubScored = hubLinks
+        .filter((l) => l.kind === "a" && sameDomain(l.href, hub.url))
+        .map((link) => ({ link, score: scoreLink(link, hub.url, { resolveSpec: ctx.resolveSpec }) }))
+        .filter((x) => x.score >= 0.4)
+        .sort((a, b) => b.score - a.score);
+      if (hubScored.length) run.say(`${hubScored.length} careers-like link(s) on ${path}`);
+      for (const { link } of hubScored.slice(0, 2)) {
+        if (!run.budgetLeft()) break;
+        await visit(link.href, `hub page ${path}`);
+      }
+    }
   }
 
   if (run.candidates.size === 0) {
-    const origin = new URL(home.url).origin;
+    const origin = new URL(baseUrl).origin;
     for (const path of WELL_KNOWN_PATHS) {
       if (!run.budgetLeft() || run.candidates.size > 0) break;
       await visit(`${origin}${path}`, "probe_path");
@@ -437,16 +478,16 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
   }
 
   if (run.candidates.size === 0 && run.budgetLeft()) {
-    const origin = new URL(home.url).origin;
+    const origin = new URL(baseUrl).origin;
     for (const url of await scanSitemaps(run, ctx, origin)) await visit(url, "sitemap");
   }
 
-  if (run.candidates.size === 0 && ctx.ai?.chooseCareersLinks && run.budgetLeft()) {
+  if (run.candidates.size === 0 && home && ctx.ai?.chooseCareersLinks && run.budgetLeft()) {
     try {
       const suggestions = await ctx.ai.chooseCareersLinks({ companyName: result.companyName ?? domain, homepageUrl: home.url, links: links.slice(0, 300) });
       run.say(`model suggested ${suggestions.length} careers link(s)`);
       for (const suggestion of suggestions.slice(0, 2)) {
-        const abs = absoluteUrl(suggestion.url, home.url);
+        const abs = absoluteUrl(suggestion.url, home!.url);
         if (abs) await visit(abs, "model suggestion");
       }
     } catch (err) {
@@ -512,6 +553,8 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
   result.candidates = finalCandidates.slice(0, 5);
   result.best = result.candidates[0];
   result.outcome = outcomeFor(result.best?.confidence);
+  // A refused homepage leaves no title to name the company by; the verified feed's name will do.
+  if (!result.companyName && result.best?.companyName) result.companyName = result.best.companyName;
   result.fetches = run.fetches;
   result.durationMs = Date.now() - started;
   if (result.candidates.length === 0) run.say("no careers source found");
@@ -544,10 +587,12 @@ export async function probeUrlAsSource(url: string, ctx: DiscoveryContext): Prom
         evidence: [`resolved directly from ${normalized}`],
         sample: verification.sample ?? [],
         count: verification.count,
-        companyName: verification.companyName,
+        // The feed's own name when the adapter reads one; otherwise the board slug, which the
+        // company chose (`hims-and-hers`), beats the domain label the row was created with.
+        companyName: verification.companyName ?? (spec.atsSlug ? nameFromSlug(spec.atsSlug) : undefined),
       };
       run.say(`${normalized} is a ${spec.type} board (${verification.count ?? 0} postings)`);
-      return { homepageUrl: normalized, outcome: "resolved", best: candidate, candidates: [candidate], log: run.log, fetches: run.fetches, durationMs: Date.now() - started };
+      return { homepageUrl: normalized, outcome: "resolved", best: candidate, candidates: [candidate], companyName: candidate.companyName, log: run.log, fetches: run.fetches, durationMs: Date.now() - started };
     }
     run.say(`${normalized} looks like a ${spec.type} board but verification failed: ${verification.error}`);
   }
@@ -574,7 +619,7 @@ export async function probeUrlAsSource(url: string, ctx: DiscoveryContext): Prom
         count: verification.count,
         companyName: verification.companyName,
       };
-      return { homepageUrl: normalized, outcome: outcomeFor(best.confidence), best, candidates: [best], log: run.log, fetches: run.fetches, durationMs: Date.now() - started };
+      return { homepageUrl: normalized, outcome: outcomeFor(best.confidence), best, candidates: [best], companyName: best.companyName, log: run.log, fetches: run.fetches, durationMs: Date.now() - started };
     }
     if (postings.length >= 3) {
       const candidate: DiscoveryCandidate = {

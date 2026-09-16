@@ -1,6 +1,7 @@
 export * from "./types";
 export * from "./normalize";
 export * from "./gate";
+export * from "./suggest-from-scans";
 export * from "./reconcile";
 export * from "./status";
 export * from "./settings";

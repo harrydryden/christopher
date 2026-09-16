@@ -2,7 +2,9 @@
 
 export type SourceType =
   | "greenhouse" | "lever" | "ashby" | "workable" | "smartrecruiters" | "recruitee" | "personio"
-  | "bamboohr" | "workday" | "pinpoint" | "breezy" | "jsonld" | "rss" | "html";
+  | "bamboohr" | "workday" | "pinpoint" | "breezy"
+  | "teamtailor" | "icims" | "jobvite" | "jazzhr" | "rippling" | "successfactors" | "eightfold"
+  | "jsonld" | "rss" | "html";
 
 export interface RawPosting {
   /** Stable identifier from the ATS when it provides one. */

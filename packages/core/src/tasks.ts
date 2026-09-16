@@ -5,7 +5,7 @@ export interface TaskPayloads {
   verify_company: { sourceId?: string; candidateId: string };
   monitor_source: { sourceId: string };
   generate_cv: { draftId: string };
-  discover: { companyId: string; logoOnly?: boolean; homepageUrl?: string; url?: string; reason?: "added" | "manual" | "failing" | "suspect_empty" | "pasted" };
+  discover: { companyId: string; logoOnly?: boolean; homepageUrl?: string; url?: string; reason?: "added" | "manual" | "failing" | "suspect_empty" | "shrunk" | "pasted" };
   scan_company: { companyId: string; scanRunId?: string; trigger?: "schedule" | "manual" };
   run_daily: { trigger: "schedule" | "manual"; runDate?: string };
   fetch_description: { jobId: string };
@@ -13,6 +13,7 @@ export interface TaskPayloads {
   tag_reason: { decisionId: string };
   synthesize_profile: { force?: boolean };
   suggest_filters: Record<string, never>;
+  suggest_from_scans: Record<string, never>;
   profile_company: { companyId: string };
   suggest_companies: { limit?: number };
   rescore_all: { onlyInTable?: boolean };
@@ -44,6 +45,8 @@ export function dedupeKeyFor<T extends TaskType>(type: T, payload: TaskPayloads[
       return "synthesize_profile";
     case "suggest_filters":
       return "suggest_filters";
+    case "suggest_from_scans":
+      return "suggest_from_scans";
     case "profile_company":
       return `profile_company:${(payload as TaskPayloads["profile_company"]).companyId}`;
     case "suggest_companies":
@@ -72,6 +75,7 @@ export function priorityFor(type: TaskType): number {
       return 5;
     case "synthesize_profile":
     case "suggest_filters":
+    case "suggest_from_scans":
     case "profile_company":
     case "rescore_all":
       return 6;

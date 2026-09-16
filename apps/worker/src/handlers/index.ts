@@ -15,6 +15,7 @@ import {
 } from "./learning";
 
 import { handleMonitorSource, handleExtractDocument, handleVerifyCompany } from "./external-sources";
+import { handleSuggestFromScans } from "./suggest-from-scans";
 
 export const handlers: HandlerMap = {
   extract_document: handleExtractDocument,
@@ -29,6 +30,7 @@ export const handlers: HandlerMap = {
   tag_reason: handleTagReason,
   synthesize_profile: handleSynthesizeProfile,
   suggest_filters: handleSuggestFilters,
+  suggest_from_scans: handleSuggestFromScans,
   profile_company: handleProfileCompany,
   suggest_companies: handleSuggestCompanies,
   rescore_all: handleRescoreAll,

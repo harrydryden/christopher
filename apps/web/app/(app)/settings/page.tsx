@@ -45,10 +45,12 @@ export default async function SettingsPage() {
           <label className={labelClass}>
             <span className={fieldLabelClass}>Seniority keywords (title only)</span>
             <textarea name="seniorityKeywords" rows={2} defaultValue={(settings.gate.seniorityKeywords ?? []).join("\n")} placeholder="Head, Director, VP, Chief" className={inputClass} />
+            <span className="text-12 text-muted">One per line or comma-separated. A trailing * matches the start of a word: <code>strateg*</code> matches Strategy and Strategic; <code>*ops</code> matches DevOps. Quote a phrase to match it exactly.</span>
           </label>
           <label className={labelClass}>
             <span className={fieldLabelClass}>Include keywords</span>
-            <textarea name="includeKeywords" rows={2} defaultValue={settings.gate.includeKeywords.join("\n")} className={inputClass} />
+            <textarea name="includeKeywords" rows={2} defaultValue={settings.gate.includeKeywords.join("\n")} placeholder={'Operations, Strateg*, "Chief of Staff"'} className={inputClass} />
+            <span className="text-12 text-muted">Whole words, any field you choose below. <code>strateg*</code> also matches Strategic; Learning suggests such wildcards from recent scans.</span>
           </label>
           <label className={labelClass}>
             <span className={fieldLabelClass}>Exclude keywords</span>

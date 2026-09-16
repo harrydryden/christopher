@@ -3,7 +3,7 @@ import { createFakeDiscoveryContext } from "../testing";
 import * as fx from "../fixtures";
 import { discoverCareersSources, probeUrlAsSource } from "./discover";
 import { harvestLinks, scoreLink } from "./links";
-import { companyNameFromTitle, companyNamesMatch, diceCoefficient, looksLikeSoft404 } from "./text";
+import { companyNameFromTitle, companyNamesMatch, diceCoefficient, isPlaceholderName, looksLikeSoft404, nameFromDomain, nameFromSlug } from "./text";
 import { AUTO_ACCEPT_CONFIDENCE } from "./confidence";
 
 const GH_JOBS = "https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true";
@@ -115,6 +115,23 @@ describe("discovery: other shapes", () => {
     expect(result.best?.spec.atsSlug).toBe("acme");
   });
 
+  it("finds Careers through an About page when the homepage does not link to it", async () => {
+    const ctx = createFakeDiscoveryContext({
+      routes: {
+        "https://www.acme.example/": { body: '<html><head><title>Acme Robotics</title></head><body><nav><a href="/about">About</a><a href="/products">Products</a></nav></body></html>' },
+        "https://www.acme.example/about": { body: '<html><body><h1>About Acme</h1><footer><a href="/company/people/open-roles">Open roles</a></footer></body></html>' },
+        "https://www.acme.example/company/people/open-roles": { body: fx.LISTING_PAGE_HTML },
+        ...greenhouseRoutes,
+      },
+    });
+    const result = await discoverCareersSources("https://www.acme.example/", ctx);
+    expect(result.outcome).toBe("resolved");
+    expect(result.best?.spec.type).toBe("greenhouse");
+    expect(result.log.join("\n")).toContain("careers-like link(s) on /about");
+    // The listing was reached from the hub page, not from a blind path probe.
+    expect(ctx.requestLog.some((r) => r.url === "https://www.acme.example/careers")).toBe(false);
+  });
+
   it("probes well-known paths when the homepage has no careers link", async () => {
     const ctx = createFakeDiscoveryContext({
       routes: {
@@ -147,6 +164,50 @@ describe("discovery: other shapes", () => {
     expect(result.outcome).toBe("needs_confirmation");
     expect(result.best?.method).toBe("ats_guess");
     expect(result.best?.confidence).toBe(0.7);
+  });
+
+  it("still finds the careers subdomain when the homepage is bot-protected", async () => {
+    const ctx = createFakeDiscoveryContext({
+      routes: {
+        "https://www.acme.example/": { status: 403, body: "Access denied" },
+        "https://www.acme.example/careers": { status: 403, body: "Access denied" },
+        "https://careers.acme.example/": { body: fx.LISTING_PAGE_HTML },
+        ...greenhouseRoutes,
+      },
+    });
+    const result = await discoverCareersSources("https://www.acme.example/", ctx);
+    expect(result.outcome).toBe("resolved");
+    expect(result.best?.spec.type).toBe("greenhouse");
+    expect(result.log.join("\n")).toContain("could not fetch the homepage");
+    expect(result.log.join("\n")).toContain("probing careers paths");
+  });
+
+  it("renders a bot-protected homepage with the browser before probing", async () => {
+    const ctx = createFakeDiscoveryContext({
+      routes: {
+        "https://www.acme.example/": { status: 403, body: "Access denied" },
+        "https://www.acme.example/careers": { body: fx.LANDING_PAGE_HTML },
+        "https://www.acme.example/careers/jobs": { body: fx.LISTING_PAGE_HTML },
+        ...greenhouseRoutes,
+      },
+      renders: { "https://www.acme.example/": { html: fx.HOMEPAGE_WITH_CAREERS_LINK, requests: [] } },
+    });
+    const result = await discoverCareersSources("https://www.acme.example/", ctx);
+    expect(result.outcome).toBe("resolved");
+    expect(result.log.join("\n")).toContain("rendering with the browser");
+    expect(result.companyName).toBe("Acme Robotics");
+  });
+
+  it("falls back to an ATS slug guess when the whole site is bot-protected", async () => {
+    const ctx = createFakeDiscoveryContext({
+      routes: {
+        "https://www.acme.example/": { status: 403, body: "Access denied" },
+        ...greenhouseRoutes,
+      },
+    });
+    const result = await discoverCareersSources("https://www.acme.example/", ctx);
+    expect(result.best?.method).toBe("ats_guess");
+    expect(result.outcome).toBe("needs_confirmation");
   });
 
   it("reports not_found and explains itself when there is nothing to find", async () => {
@@ -197,6 +258,21 @@ describe("probeUrlAsSource", () => {
     expect(result.best?.count).toBe(6);
   });
 
+  it("names the company from the feed when the board reports one", async () => {
+    const ctx = createFakeDiscoveryContext({ routes: greenhouseRoutes });
+    const result = await probeUrlAsSource("https://boards.greenhouse.io/acme", ctx);
+    expect(result.companyName).toBe("Acme Robotics");
+  });
+
+  it("names the company from the board slug when the feed carries no name", async () => {
+    // Ashby's feed has no organisation name; hims.com was left called "hims.com" for weeks.
+    const ctx = createFakeDiscoveryContext({ routes: {}, verify: { "ashby:hims-and-hers": { ok: true, count: 117, sample: [] } } });
+    const result = await probeUrlAsSource("https://jobs.ashbyhq.com/hims-and-hers", ctx);
+    expect(result.outcome).toBe("resolved");
+    expect(result.best?.method).toBe("pasted_ats");
+    expect(result.companyName).toBe("Hims and Hers");
+  });
+
   it("accepts a pasted listing page", async () => {
     const ctx = createFakeDiscoveryContext({
       routes: { "https://www.acme.example/careers/jobs": { body: fx.LISTING_PAGE_HTML.replace(/job-boards\.greenhouse\.io\/acme\/jobs/g, "www.acme.example/jobs") } },
@@ -237,6 +313,19 @@ describe("link scoring and page metadata", () => {
     expect(companyNameFromTitle("Careers – Acme Robotics", "acme.example")).toBe("Careers");
     expect(companyNameFromTitle(undefined, "acme.example")).toBe("Acme");
     expect(companyNameFromTitle("Home", "acme.example")).toBe("Acme");
+  });
+
+  it("derives placeholder names and recognises them", () => {
+    expect(nameFromDomain("hims.com")).toBe("Hims");
+    expect(nameFromDomain("www.acme.co.uk")).toBe("Acme");
+    expect(nameFromSlug("hims-and-hers")).toBe("Hims and Hers");
+    expect(nameFromSlug("acme_robotics")).toBe("Acme Robotics");
+    expect(nameFromSlug("12345")).toBeUndefined();
+    expect(isPlaceholderName("hims.com", "hims.com")).toBe(true);
+    expect(isPlaceholderName("Hims", "hims.com")).toBe(true);
+    expect(isPlaceholderName("", "hims.com")).toBe(true);
+    expect(isPlaceholderName(null, "hims.com")).toBe(true);
+    expect(isPlaceholderName("Hims & Hers Health", "hims.com")).toBe(false);
   });
 
   it("compares company names tolerantly", () => {

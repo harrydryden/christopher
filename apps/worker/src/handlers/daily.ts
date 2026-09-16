@@ -99,6 +99,8 @@ async function finalise(deps: WorkerDeps): Promise<number> {
       })
       .where(eq(schema.scanRuns.id, run.id));
     finalised++;
+    // Fresh evidence from every source: mine it for keywords the gate is missing.
+    await enqueueTask(deps.db, "suggest_from_scans", {}, { dedupeKey: dedupeKeyFor("suggest_from_scans", {}), priority: priorityFor("suggest_from_scans") });
     log.info("scan run finalised", { runId: run.id, ok: companiesOk, failed: Math.max(0, run.companiesTotal - companiesOk), newRoles: summary.new_roles });
   }
   return finalised;

@@ -45,3 +45,15 @@ it("prefers an opaque touch icon over a white-only favicon and tries all declare
     .mockResolvedValueOnce(response("https://www.anduril.com/adaptive.svg", "", "image/svg+xml"));
   expect(await discoverCompanyLogo(home.url, { fetchText })).toBe("https://www.anduril.com/adaptive.svg");
 });
+
+it("hands the interface the conventional icon location when the site blocks the worker", async () => {
+  const fetchText = vi.fn().mockResolvedValueOnce(response("https://www.hims.example/", "Access denied", "text/html", 403));
+  expect(await discoverCompanyLogo("https://www.hims.example/", { fetchText })).toBe("https://www.hims.example/favicon.ico");
+});
+it("reads the icon from a browser render when plain HTTP is blocked", async () => {
+  const fetchText = vi.fn()
+    .mockRejectedValueOnce(Object.assign(new Error("blocked (403)"), { status: 403 }))
+    .mockResolvedValueOnce(response("https://www.hims.example/touch.png"));
+  const render = vi.fn().mockResolvedValue({ html: '<link rel="apple-touch-icon" href="/touch.png">', finalUrl: "https://www.hims.example/", requests: [], status: 200 });
+  expect(await discoverCompanyLogo("https://www.hims.example/", { fetchText, render })).toBe("https://www.hims.example/touch.png");
+});

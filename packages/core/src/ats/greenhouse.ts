@@ -1,6 +1,6 @@
 import type { Adapter, FetchContext, RawPosting, SourceSpec } from "../types";
 import { parseDate } from "../normalize";
-import { fetchJson, htmlToText, joinLocation, pathSegments, rec, safeUrl, slugOk, str, verifyFromFetch } from "./common";
+import { fetchJson, htmlToText, joinLocation, pathSegments, rec, safeUrl, slugOk, str, verifyFromFetch, MAX_POSTINGS } from "./common";
 
 const API = "https://boards-api.greenhouse.io/v1/boards";
 
@@ -73,7 +73,7 @@ async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPo
   if (!slug) throw new Error("greenhouse spec missing slug");
   const { data } = await fetchJson<{ jobs?: GhJob[] }>(ctx, `${API}/${slug}/jobs?content=true`, { maxBodyBytes: 60_000_000, timeoutMs: 60_000 });
   if (!Array.isArray(data.jobs)) throw new Error("Greenhouse response is missing its jobs array");
-  if (data.jobs.length > 10_000) throw new Error("Greenhouse board exceeds the 10,000-role processing limit");
+  if (data.jobs.length > MAX_POSTINGS) throw new Error(`Greenhouse board exceeds the ${MAX_POSTINGS}-role processing limit`);
   const postings = data.jobs.map(mapJob).filter((p): p is RawPosting => !!p);
   if (postings.length !== data.jobs.length) throw new Error("Greenhouse response contains invalid roles; refusing an incomplete reconciliation");
   return postings;

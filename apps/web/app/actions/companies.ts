@@ -8,7 +8,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { careerSources, companies, discoveryRuns, tasks, SOURCE_TYPES } from "@christopher/db/schema";
-import { ensureHttpUrl, extractDomain } from "@christopher/core";
+import { discovery, ensureHttpUrl, extractDomain } from "@christopher/core";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { zUrlString, zUuid, type ActionResult } from "@/lib/validation";
@@ -42,7 +42,7 @@ export async function addCompanies(formData: FormData): Promise<void> {
       continue;
     }
     existingDomains.add(domain);
-    candidates.push({ name: domain, homepageUrl: url, domain });
+    candidates.push({ name: discovery.nameFromDomain(domain), homepageUrl: url, domain });
   }
   await db().transaction(async tx => {
     for (let offset = 0; offset < candidates.length; offset += 100) {

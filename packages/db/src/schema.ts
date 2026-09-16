@@ -25,7 +25,9 @@ const tsNow = (name: string) => ts(name).notNull().defaultNow();
 export const COMPANY_STATUSES = ["active", "paused", "archived"] as const;
 export const SOURCE_TYPES = [
   "greenhouse", "lever", "ashby", "workable", "smartrecruiters", "recruitee", "personio",
-  "bamboohr", "workday", "pinpoint", "breezy", "jsonld", "rss", "html",
+  "bamboohr", "workday", "pinpoint", "breezy",
+  "teamtailor", "icims", "jobvite", "jazzhr", "rippling", "successfactors", "eightfold",
+  "jsonld", "rss", "html",
 ] as const;
 export const SOURCE_STATUSES = ["active", "needs_confirmation", "failing", "blocked", "disabled"] as const;
 export const SCAN_STATUSES = ["ok", "partial", "suspect_empty", "failed"] as const;
@@ -34,7 +36,7 @@ export const JOB_STATUSES = ["open", "closed"] as const;
 export const DECISIONS = ["apply", "skip"] as const;
 export const TASK_TYPES = [
   "extract_document", "verify_company", "monitor_source", "discover", "scan_company", "run_daily", "fetch_description", "score_job", "tag_reason",
-  "synthesize_profile", "suggest_filters", "profile_company", "suggest_companies", "rescore_all",
+  "synthesize_profile", "suggest_filters", "suggest_from_scans", "profile_company", "suggest_companies", "rescore_all",
   "reevaluate_gate", "generate_cv",
 ] as const;
 export const TASK_STATUSES = ["queued", "running", "done", "failed"] as const;
@@ -237,7 +239,7 @@ export const preferenceProfiles = pgTable("preference_profiles", {
 
 export const filterSuggestions = pgTable("filter_suggestions", {
   id: uuid("id").primaryKey().defaultRandom(),
-  type: text("type", { enum: ["keyword_include", "keyword_exclude", "location", "pause_company", "hide_threshold"] }).notNull(),
+  type: text("type", { enum: ["keyword_include", "keyword_exclude", "seniority_include", "location", "pause_company", "hide_threshold"] }).notNull(),
   value: jsonb("value").$type<Record<string, unknown>>().notNull(),
   evidence: jsonb("evidence").$type<unknown[]>().notNull().default(sql`'[]'::jsonb`),
   rationale: text("rationale"),

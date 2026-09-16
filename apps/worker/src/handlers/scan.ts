@@ -146,7 +146,14 @@ async function scanSource(
     .limit(1);
   const previousOkCount = previousOk[0]?.postingsFound ?? null;
 
-  if (postings.length > 10_000) { postings = postings.slice(0, 10_000); incomplete = true; }
+  // A source that reaches the adapter cap was not read completely. The scan
+  // is partial, which keeps every stored role open: only a complete listing
+  // is evidence that a role has gone.
+  if (postings.length >= ats.MAX_POSTINGS) {
+    postings = postings.slice(0, ats.MAX_POSTINGS);
+    incomplete = true;
+    error ??= `Listing reached the ${ats.MAX_POSTINGS}-posting cap; roles beyond it are not tracked and this scan cannot close roles`;
+  }
   const savedDescriptions = await deps.db.select({ externalKey: schema.jobs.externalKey, url: schema.jobs.url, text: schema.jobs.descriptionText, at: schema.jobs.descriptionFetchedAt }).from(schema.jobs).where(eq(schema.jobs.sourceId, source.id));
   const reusedDescriptions = new Set<string>();
   const savedByUrl = new Map(savedDescriptions.map(row => [row.url, row]));
@@ -162,6 +169,12 @@ async function scanSource(
     error = `${unresolved.size} descriptions unavailable; admission deferred until the next scan`;
   }
   const classified = classifyScan({ fetchOk, postingsFound: postings.length, previousOkCount, droppedByValidation });
+  // A listing that collapsed against the last ok scan is what an ATS migration
+  // looks like while the old board is still up: it keeps serving, just a
+  // shrinking remainder. classifyScan already makes this partial so nothing
+  // closes; the message lets the persistence check below recognise it.
+  const shrunk = fetchOk && previousOkCount !== null && previousOkCount >= 10 && postings.length > 0 && postings.length < previousOkCount * 0.3;
+  if (shrunk) error ??= `Listing shrank from ${previousOkCount} to ${postings.length} postings against the last ok scan; treated as partial`;
   const status = incomplete && classified === "ok" ? "partial" : classified;
   const mode = modeForScanStatus(status);
 
@@ -358,7 +371,7 @@ async function scanSource(
     closedCount: result.closed.length,
     error,
     durationMs: Date.now() - started,
-    rawSnapshot: gzipSync(JSON.stringify({ version: 1, responses, htmlPages })).toString("base64"),
+    rawSnapshot: gzipSync(JSON.stringify(snapshotFor(postings, responses, htmlPages))).toString("base64"),
   });
 
   // Keep bounded debugging evidence from the three most recent source scans.
@@ -380,8 +393,13 @@ async function scanSource(
     .where(eq(schema.careerSources.id, source.id));
 
   // A source that keeps failing, or that suddenly went empty, is worth re-discovering.
-  if (failures >= 3 || status === "suspect_empty") {
-    await enqueueTask(deps.db, "discover", { companyId: company.id, reason: status === "suspect_empty" ? "suspect_empty" : "failing" }, {
+  // So is one that shrank and stayed shrunk: three consecutive collapsed scans
+  // is a migration in progress, not a quiet week.
+  const persistentlyShrunk = shrunk && (await deps.db.select({ error: schema.scans.error, status: schema.scans.status }).from(schema.scans)
+    .where(eq(schema.scans.sourceId, source.id)).orderBy(desc(schema.scans.startedAt)).limit(3))
+    .filter((scan) => scan.status === "partial" && /shrank/.test(scan.error ?? "")).length >= 3;
+  if (failures >= 3 || status === "suspect_empty" || persistentlyShrunk) {
+    await enqueueTask(deps.db, "discover", { companyId: company.id, reason: status === "suspect_empty" ? "suspect_empty" : persistentlyShrunk ? "shrunk" : "failing" }, {
       dedupeKey: dedupeKeyFor("discover", { companyId: company.id }),
       priority: priorityFor("discover"),
     });
@@ -407,15 +425,36 @@ async function scanSource(
 
 }
 
+/**
+ * Evidence kept for the last three scans of a source. Version 2 stores every
+ * parsed posting (title, url, location, ids) plus a bounded head of each raw
+ * response; version 1 stored raw bodies up to 2MB, which for a large feed was
+ * the first 5% of the listing and nothing anyone could replay.
+ */
+function snapshotFor(postings: RawPosting[], responses: Array<{ url: string; status: number; body: string }>, htmlPages: CachedHtmlPage[]) {
+  return {
+    version: 2,
+    postings: postings.map(p => ({ externalId: p.externalId, title: p.title, url: p.url, location: p.location, locations: p.locations, department: p.department, postedAt: p.postedAt })),
+    responses: responses.map(r => ({ url: r.url, status: r.status, bytes: r.body.length, head: r.body.slice(0, 20_000) })),
+    htmlPages,
+  };
+}
+
 interface CachedHtmlPage {
   url: string;
   contentHash: string;
   postings: RawPosting[];
+  /** Hash of the page as plain HTTP served it, before any browser render. */
+  httpHash?: string;
+  /** When a browser last rendered this page; a reused capture carries it forward. */
+  renderedAt?: string;
 }
 
 interface HtmlScanOutcome {
   postings: RawPosting[];
   method: "http" | "browser";
+  httpHash?: string;
+  renderedAt?: string;
   dropped: number;
   contentHash: string;
   unchanged: boolean;
@@ -439,7 +478,7 @@ async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: Career
   try {
     if (last?.rawSnapshot) {
       const snapshot = JSON.parse(gunzipSync(Buffer.from(last.rawSnapshot, "base64"), { maxOutputLength: 8_000_000 }).toString());
-      if (snapshot.version === 1 && Array.isArray(snapshot.htmlPages)) cached = snapshot.htmlPages.map((page: CachedHtmlPage) => ({ ...page, postings: page.postings.map(posting => ({ ...posting,
+      if ((snapshot.version === 1 || snapshot.version === 2) && Array.isArray(snapshot.htmlPages)) cached = snapshot.htmlPages.map((page: CachedHtmlPage) => ({ ...page, postings: page.postings.map(posting => ({ ...posting,
         postedAt: posting.postedAt ? new Date(posting.postedAt) : undefined,
         updatedAt: posting.updatedAt ? new Date(posting.updatedAt) : undefined,
       })) }));
@@ -463,7 +502,7 @@ async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: Career
       dropped += page.dropped;
       unchanged = unchanged && page.unchanged;
       recipe ??= page.recipe;
-      pages.push({ url, contentHash: page.contentHash, postings: page.postings });
+      pages.push({ url, contentHash: page.contentHash, postings: page.postings, httpHash: page.httpHash, renderedAt: page.renderedAt });
       incomplete ||= page.incomplete ?? false;
       incompleteReason ??= page.incompleteReason;
       url = page.traversed ? null : ats.nextListingPage(page.html ?? "", page.finalUrl ?? url);
@@ -491,8 +530,22 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
   finalUrl = page.url;
 
   let postings = ats.extractPostingsFromHtml(html, finalUrl, spec.recipe);
-  if (!supplied && deps.browser && (postings.length === 0 || (!ats.nextListingPage(html, finalUrl) && /<(?:button|a)[^>]*>\s*(?:next|load more|show more)/i.test(html)))) {
-    const rendered = await deps.browser.render(spec.url, { scrollAndExpand: true });
+  const httpHash = supplied ? undefined : sha1(html.replace(/\s+/g, " "));
+  const wantsRender = !supplied && deps.browser && (postings.length === 0 || (!ats.nextListingPage(html, finalUrl) && /<(?:button|a)[^>]*>\s*(?:next|load more|show more)/i.test(html)));
+  // A server-rendered list with a "load more" control was rendered every scan
+  // to reach the rest of it. When the first page is byte-identical to the one
+  // behind the last render, the rest has not moved either: reuse that capture
+  // and skip the browser, but never for more than a week, and never for a
+  // JavaScript shell (zero postings over HTTP), whose static markup says
+  // nothing about what the board lists today.
+  const RENDER_TTL_MS = 7 * 86_400_000;
+  if (wantsRender && postings.length > 0 && cached?.httpHash && cached.httpHash === httpHash && cached.renderedAt && cached.postings.length >= postings.length
+      && deps.now().getTime() - new Date(cached.renderedAt).getTime() < RENDER_TTL_MS) {
+    log.debug("reusing last render: first page unchanged", { url: spec.url, renderedAt: cached.renderedAt });
+    return { postings: cached.postings, method: "http", dropped: 0, contentHash: cached.contentHash, unchanged: true, html, finalUrl, httpHash, renderedAt: cached.renderedAt };
+  }
+  if (wantsRender) {
+    const rendered = await deps.browser!.render(spec.url, { scrollAndExpand: true });
     if (rendered.status !== null && rendered.status >= 400) {
       throw new SourceFetchError(`Browser returned HTTP ${rendered.status}`, rendered.status === 403 || rendered.status === 429 ? "blocked" : "http", rendered.status);
     }
@@ -504,7 +557,7 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
       catch (error) { if (!outcomes.length) throw error; incomplete = true; }
     }
     return { postings: keyPostings(outcomes.flatMap(p => p.postings)).keyed, method: "browser", dropped: outcomes.reduce((n, p) => n + p.dropped, 0),
-      contentHash: sha1(captures.map(p => p.html).join("|")), unchanged: false, incomplete, incompleteReason: incomplete ? "Browser pagination could not complete; a control was blocked, did not advance, or reached its limit." : undefined, traversed: true };
+      contentHash: sha1(captures.map(p => p.html).join("|")), unchanged: false, httpHash, renderedAt: deps.now().toISOString(), incomplete, incompleteReason: incomplete ? "Browser pagination could not complete; a control was blocked, did not advance, or reached its limit." : undefined, traversed: true };
 
   }
 
@@ -512,7 +565,7 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
   const unchanged = contentHash === cached?.contentHash;
 
   if (postings.length === 0 && unchanged && cached?.postings.length) postings = cached.postings;
-  if (postings.length > 0) return { postings, method, dropped: 0, contentHash, unchanged, html, finalUrl };
+  if (postings.length > 0) return { postings, method, dropped: 0, contentHash, unchanged, html, finalUrl, httpHash };
   if (unchanged || !deps.ai.enabled || (await aiBudgetExceeded(deps))) {
     throw new SourceFetchError("HTML extraction found no verifiable postings; cannot establish a successful empty scan", "parse");
   }

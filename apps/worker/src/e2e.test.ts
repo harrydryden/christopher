@@ -8,7 +8,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {createDb, schema, enqueueTask, reevaluateGate, type Db} from "@christopher/db";
 import { runMigrations } from "@christopher/db/migrate";
-import { dedupeKeyFor, displayStatus, liveFor, priorityFor, sha1 } from "@christopher/core";
+import { ats, dedupeKeyFor, displayStatus, liveFor, priorityFor, sha1 } from "@christopher/core";
 import { desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -148,7 +148,7 @@ beforeEach(async () => {
   setJobs([JOB_OPERATIONS_MANAGER, JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
 });
 
-async function setGate(gate: Partial<{ includeKeywords: string[]; excludeKeywords: string[]; locationTerms: string[]; includeRemote: boolean; matchFields: string[] }>) {
+async function setGate(gate: Partial<{ includeKeywords: string[]; excludeKeywords: string[]; seniorityKeywords: string[]; locationTerms: string[]; includeRemote: boolean; matchFields: string[] }>) {
   const value = {
     includeKeywords: ["operations"],
     excludeKeywords: [],
@@ -203,6 +203,22 @@ describe("end to end", () => {
     await queue.drain();
     const [afterStale] = await db.select().from(schema.companies).where(eq(schema.companies.id, company!.id));
     expect(afterStale!.faviconUrl).toBe(updated!.faviconUrl);
+  });
+  it("names a company from a pasted board when its name is only the domain label", async () => {
+    await setGate({});
+    const [placeholder] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://www.acme.example/" }).returning();
+    const [named] = await db.insert(schema.companies).values({ name: "Acme Robotics Ltd", domain: "acme-named.example", homepageUrl: "https://www.acme-named.example/" }).returning();
+    for (const company of [placeholder!, named!]) {
+      await enqueueTask(db, "discover", { companyId: company.id, reason: "pasted", url: "https://boards.greenhouse.io/acme" }, {
+        dedupeKey: dedupeKeyFor("discover", { companyId: company.id }), priority: priorityFor("discover"),
+      });
+    }
+    await queue.drain();
+    const [renamed] = await db.select().from(schema.companies).where(eq(schema.companies.id, placeholder!.id));
+    expect(renamed!.name).toBe("Acme Robotics");
+    const [kept] = await db.select().from(schema.companies).where(eq(schema.companies.id, named!.id));
+    expect(kept!.name).toBe("Acme Robotics Ltd");
+    expect(await db.select().from(schema.careerSources)).toHaveLength(2);
   });
   it("discovers the careers source from a homepage URL and scans it", async () => {
     await setGate({});
@@ -629,6 +645,112 @@ describe("HTML extraction completion", () => {
     expect(tagReason).not.toHaveBeenCalled();
   });
 });
+
+it("re-discovers a source whose listing collapses and stays collapsed, without closing roles", async () => {
+  await setGate({});
+  const filler = Array.from({ length: 12 }, (_, i) => ({
+    ...JOB_ENGINEER, id: 6_000_000 + i, title: `Engineer ${i}`, absolute_url: `https://job-boards.greenhouse.io/acme/jobs/${6_000_000 + i}`,
+  }));
+  setJobs([JOB_OPERATIONS_MANAGER, ...filler]);
+  const company = await addCompany("https://www.acme.example/", "acme.example");
+  await queue.drain();
+
+  // The old board keeps serving a shrinking remainder after a migration; the
+  // roles we know about are not in it.
+  setJobs(filler.slice(0, 3));
+  const scanAt = async (day: string) => {
+    now = new Date(`${day}T06:00:00Z`);
+    await enqueueTask(db, "scan_company", { companyId: company.id, trigger: "manual" }, { dedupeKey: dedupeKeyFor("scan_company", { companyId: company.id }), priority: 5 });
+    await queue.drain();
+  };
+  await scanAt("2026-09-06");
+  await scanAt("2026-09-07");
+  let discovers = await db.select().from(schema.tasks).where(sql`type = 'discover' and payload->>'reason' = 'shrunk'`);
+  expect(discovers).toHaveLength(0);
+  await scanAt("2026-09-08");
+  discovers = await db.select().from(schema.tasks).where(sql`type = 'discover' and payload->>'reason' = 'shrunk'`);
+  expect(discovers.length).toBeGreaterThanOrEqual(1);
+  const scans = await db.select().from(schema.scans).orderBy(schema.scans.startedAt);
+  expect(scans.slice(-3).every(scan => scan.status === "partial" && /shrank/.test(scan.error ?? ""))).toBe(true);
+  const manager = (await jobsInTable()).find(r => r.title === "Operations Manager")!;
+  expect(manager.status).toBe("open");
+  expect(manager.missingScans).toBe(0);
+}, 120_000);
+
+it("marks a listing that reaches the adapter cap partial and never closes roles from it", async () => {
+  await setGate({});
+  setJobs([JOB_OPERATIONS_MANAGER, JOB_ENGINEER]);
+  const company = await addCompany("https://www.acme.example/", "acme.example");
+  await queue.drain();
+  expect((await jobsInTable()).map(r => r.title)).toContain("Operations Manager");
+
+  // The board grows to the cap and the Operations Manager posting is not in
+  // what we read. A complete listing would close it after two misses; a capped
+  // one is not evidence of anything.
+  const filler = Array.from({ length: ats.MAX_POSTINGS }, (_, i) => ({
+    ...JOB_ENGINEER, id: 5_000_000 + i, title: `Engineer ${i}`, absolute_url: `https://job-boards.greenhouse.io/acme/jobs/${5_000_000 + i}`,
+  }));
+  setJobs(filler);
+  for (const day of ["2026-09-06", "2026-09-07"]) {
+    now = new Date(`${day}T06:00:00Z`);
+    await enqueueTask(db, "scan_company", { companyId: company.id, trigger: "manual" }, { dedupeKey: dedupeKeyFor("scan_company", { companyId: company.id }), priority: 5 });
+    await queue.drain();
+  }
+  const scans = await db.select().from(schema.scans).orderBy(schema.scans.startedAt);
+  expect(scans.at(-1)?.status).toBe("partial");
+  expect(scans.at(-1)?.error).toMatch(/cap/);
+  expect(scans.at(-1)?.postingsFound).toBe(ats.MAX_POSTINGS);
+  const manager = (await jobsInTable()).find(r => r.title === "Operations Manager")!;
+  expect(manager.status).toBe("open");
+  expect(manager.missingScans).toBe(0);
+}, 120_000);
+
+it("files role-type and seniority suggestions from the latest scan evidence", async () => {
+  await setGate({ includeKeywords: ["Operations"], seniorityKeywords: ["Director", "VP"], locationTerms: ["London", "UK"] });
+  const london = (id: number, title: string) => ({ ...JOB_ENGINEER, id, title, absolute_url: `https://job-boards.greenhouse.io/acme/jobs/${id}`, location: { name: "London, UK" } });
+  setJobs([
+    JOB_OPERATIONS_MANAGER,
+    london(7_000_001, "Operations Lead"), london(7_000_002, "Business Operations Lead"), london(7_000_003, "Lead, Operations Enablement"),
+    london(7_000_004, "Director of Partnerships"), london(7_000_005, "VP Partnerships"), london(7_000_006, "Director, Partnership Development"),
+  ]);
+  await addCompany("https://www.acme.example/", "acme.example");
+  await queue.drain();
+  await enqueueTask(db, "suggest_from_scans", {}, { dedupeKey: dedupeKeyFor("suggest_from_scans", {}), priority: 6 });
+  await queue.drain();
+  const rows = await db.select().from(schema.filterSuggestions).where(eq(schema.filterSuggestions.status, "pending"));
+  const byTerm = new Map(rows.map(r => [`${r.type}:${(r.value as { term: string }).term}`, r]));
+  expect(byTerm.has("seniority_include:Lead")).toBe(true);
+  expect(byTerm.get("seniority_include:Lead")!.rationale).toMatch(/3 roles/);
+  expect(byTerm.has("keyword_include:partnership*")).toBe(true);
+  expect((byTerm.get("keyword_include:partnership*")!.evidence as Array<{ title: string }>).map(e => e.title)).toContain("Director of Partnerships");
+  // A second run files nothing new while those are pending.
+  await enqueueTask(db, "suggest_from_scans", {}, { dedupeKey: dedupeKeyFor("suggest_from_scans", {}), priority: 6 });
+  await queue.drain();
+  expect(await db.select().from(schema.filterSuggestions)).toHaveLength(rows.length);
+}, 120_000);
+
+it("reuses the last browser render while a load-more listing's first page is unchanged", async () => {
+  const [company] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://www.acme.example" }).returning();
+  const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://www.acme.example/listing" }).returning();
+  const page = '<a href="/jobs/one">Operations Manager</a><button>Load more</button>';
+  server.setRoutes({ "www.acme.example": { "/robots.txt": { body: "User-agent: *\nAllow: /" }, "/listing": { body: page } } });
+  const render = vi.fn(async () => ({ html: '<a href="/jobs/one">Operations Manager</a><a href="/jobs/two">Operations Lead</a>', finalUrl: "https://www.acme.example/listing", requests: [], status: 200 }));
+  const withBrowser = { ...deps, browser: { render } as unknown as WorkerDeps["browser"] };
+  const scan = async () => _scanSourceForTests(withBrowser, company!, source!, await deps.settings(), null);
+
+  expect((await scan()).postingsFound).toBe(2);
+  expect(render).toHaveBeenCalledTimes(1);
+  now = new Date(now.getTime() + 86_400_000);
+  expect((await scan()).postingsFound).toBe(2);
+  expect(render).toHaveBeenCalledTimes(1); // same first page: capture reused, no render
+  server.setRoutes({ "www.acme.example": { "/robots.txt": { body: "User-agent: *\nAllow: /" }, "/listing": { body: page.replace("Manager", "Manager (Hybrid)") } } });
+  now = new Date(now.getTime() + 86_400_000);
+  await scan();
+  expect(render).toHaveBeenCalledTimes(2); // first page changed: render again
+  now = new Date(now.getTime() + 8 * 86_400_000);
+  await scan();
+  expect(render).toHaveBeenCalledTimes(3); // a week on, refresh regardless
+}, 120_000);
 
 it("discards a late scan when its source has been disabled", async () => {
   await setGate({});

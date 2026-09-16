@@ -13,6 +13,22 @@ describe("compileTerm", () => {
     expect(compileTerm("operat*")!.test("Operations Manager")).toBe(true);
     expect(compileTerm("operat*")!.test("Operational Lead")).toBe(true);
     expect(compileTerm("operat*")!.test("Cooperative")).toBe(false);
+    // A suffix wildcard still ends at a word boundary.
+    expect(compileTerm("*ops")!.test("Head of DevOps")).toBe(true);
+    expect(compileTerm("*ops")!.test("RevOps Lead")).toBe(true);
+    expect(compileTerm("*ops")!.test("Operations")).toBe(false);
+    // A wildcard inside a phrase widens only that word.
+    expect(compileTerm("strateg* lead")!.test("Strategic Lead")).toBe(true);
+    expect(compileTerm("strateg* lead")!.test("Strategy Lead, EMEA")).toBe(true);
+    expect(compileTerm("strateg* lead")!.test("Strategy Leadership")).toBe(false);
+    // The common near-miss: "Strategy" does not match "Strategic", "Strateg*" does.
+    expect(compileTerm("Strategy")!.test("Associate Director, Strategic Execution")).toBe(false);
+    expect(compileTerm("Strateg*")!.test("Associate Director, Strategic Execution")).toBe(true);
+    // Wildcards never match everything, and are literal inside quotes.
+    expect(compileTerm("*")).toBeNull();
+    expect(compileTerm("* *")).toBeNull();
+    expect(compileTerm('"operat*"')!.test("Operations")).toBe(false);
+    expect(compileTerm('"operat*"')!.test("operat* roles")).toBe(true);
   });
   it("supports quoted phrases with flexible whitespace", () => {
     expect(compileTerm('"chief of staff"')!.test("Chief of  Staff to the CEO")).toBe(true);

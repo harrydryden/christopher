@@ -5,7 +5,7 @@ import {
   type CvContent,
   type CvLibrary,
 } from "./cv";
-import { CV_LIMITS } from "./cv-format";
+import { cvMaxPages } from "./cv-theme";
 import {
   CV_REVIEW_VERSION,
   CvRubricSchema,
@@ -256,8 +256,9 @@ export function assertCvFinalisable(input: {
       "Assess this saved revision against the job description before finalising it.",
     );
   const assessment = input.assessment!;
-  if (assessment.pageCount < 1 || assessment.pageCount > CV_LIMITS.pages)
-    throw new Error("Fit this CV to two pages before finalising it.");
+  const maxPages = cvMaxPages(input.content.theme);
+  if (assessment.pageCount < 1 || assessment.pageCount > maxPages)
+    throw new Error(`Fit this CV to ${maxPages} ${maxPages === 1 ? "page" : "pages"} before finalising it.`);
   if (assessment.review.claims.some((claim) => claim.status !== "supported"))
     throw new Error(
       "Resolve the flagged factual claims, then reassess before finalising.",

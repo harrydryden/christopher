@@ -272,7 +272,10 @@ it("routes CV generation separately, validates industry selections and records u
   expect(result?.sections[0]?.entryId).toBe("one");
   expect(result?.sections[0]?.industryDescriptions).toEqual(["SaaS"]);
   expect(calls[0]!.params.model).toBe("claude-sonnet-5");
-  expect(calls[0]!.params.max_tokens).toBe(12000);
+  // Thinking counts towards the ceiling; recorded builds reached 10.9k tokens under the old 12k/120s limits.
+  expect(calls[0]!.params.max_tokens).toBe(16000);
+  expect(calls[0]!.options?.timeout).toBe(300_000);
+  expect(JSON.parse((calls[0]!.params.messages as Array<{ content: string }>)[0]!.content).maxPages).toBe(3);
   expect(usage[0]).toMatchObject({ callSite: "CV", refId: "draft", ok: true });
 });
 
@@ -296,6 +299,11 @@ it('passes structured skills and wording guidance to generation without palette 
   expect(messages[0]!.content).toContain('SQL');
   expect(messages[0]!.content).toContain('Concise');
   expect(messages[0]!.content).not.toContain(DEFAULT_CV_THEME.primary);
+  expect(messages[0]!.content).not.toContain('Christopher');
+  // The page limit reaches the writer as an explicit number, never via the palette object.
+  const explicit = engineWith({ summary: 'Analyst', sections: [{ entryId: 's', bullets: ['Reporting'], skillItems: ['SQL'] }], gaps: [] });
+  await explicit.engine.buildCv({ library: { name: 'Example', contact: '', profile: '', theme: { ...DEFAULT_CV_THEME, maxPages: 2 }, entries: [{ id: 's', kind: 'skill', heading: 'Tools', details: 'Reporting', skillItems: ['SQL'] }] }, jobTitle: 'Analyst', company: 'Example', description: 'Analyse data', maxPages: 2 });
+  expect(JSON.parse((explicit.calls[0]!.params.messages as Array<{ content: string }>)[0]!.content).maxPages).toBe(2);
 });
 
 it("uses isolated, metered CV calls for rubric extraction and factual assessment", async () => {

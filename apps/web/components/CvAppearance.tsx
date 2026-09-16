@@ -1,11 +1,27 @@
 "use client";
 import { useState } from "react";
-import { CV_THEMES, DEFAULT_CV_THEME, cvForeground, type CvTheme } from "@christopher/core/cv";
+import {
+  CV_FONTS,
+  CV_PAGE_CHOICES,
+  CV_THEMES,
+  cvForeground,
+  resolveCvTheme,
+  type CvFont,
+  type CvTheme,
+} from "@christopher/core/cv";
+import { selectClass } from "@/components/Field";
+
+/** Browser stand-ins for the PDF faces: Christopher is Helvetica; Arial is Liberation Sans in the PDF. */
+const SAMPLE_FONT_FAMILY: Record<CvFont, string> = {
+  Christopher: '"Helvetica Neue", Helvetica, "Liberation Sans", Arial, sans-serif',
+  Arial: 'Arial, "Liberation Sans", Helvetica, sans-serif',
+};
 
 export function CvAppearance({ value, onChange, name }: { value?: CvTheme; onChange?: (theme: CvTheme) => void; name?: string;
 }) {
-  const [local, setLocal] = useState(value ?? DEFAULT_CV_THEME);
-  const theme = onChange ? (value ?? DEFAULT_CV_THEME) : local;
+  // A saved theme may predate the font and page limit; resolving fills those in without a save.
+  const [local, setLocal] = useState(() => resolveCvTheme(value));
+  const theme = onChange ? resolveCvTheme(value) : local;
   const selected = Object.entries(CV_THEMES).find(([, preset]) => (["primary", "background", "surface", "pill"] as const).every(
       (key) => preset[key].toLowerCase() === theme[key].toLowerCase()))?.[0];
   function change(next: CvTheme) { setLocal(next); onChange?.(next); }
@@ -16,7 +32,7 @@ export function CvAppearance({ value, onChange, name }: { value?: CvTheme; onCha
         <input type="hidden" name={name} value={JSON.stringify(theme)} />
       )}
     <div className="flex flex-wrap gap-2">{Object.entries(CV_THEMES).map(([label, preset]) => (
-          <button type="button" key={label} aria-pressed={selected === label} onClick={() => change({ ...preset, introPanel: theme.introPanel, skillPills: true,
+          <button type="button" key={label} aria-pressed={selected === label} onClick={() => change({ ...theme, primary: preset.primary, background: preset.background, surface: preset.surface, pill: preset.pill, skillPills: true,
               })} className="border px-3 py-2 text-14" style={{ borderColor: preset.primary, background: selected === label ? preset.primary : undefined, color: selected === label ? cvForeground(preset.primary) : undefined }}>{label}</button>))}</div>
     <p className="sr-only" aria-live="polite">{selected ? `${selected} palette selected` : "Custom palette"}
       </p>
@@ -45,7 +61,47 @@ export function CvAppearance({ value, onChange, name }: { value?: CvTheme; onCha
             </label>
           ))}
         </div>
-        <div className="flex flex-wrap gap-4 text-14">
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <label className="text-14">
+            Font
+            <select
+              aria-label="Font"
+              value={theme.font}
+              onChange={(event) =>
+                change({ ...theme, font: event.target.value as CvFont })
+              }
+              className={`mt-1 ${selectClass}`}
+            >
+              {CV_FONTS.map((font) => (
+                <option key={font} value={font}>
+                  {font}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-14">
+            Maximum pages
+            <select
+              aria-label="Maximum pages"
+              value={theme.maxPages}
+              onChange={(event) =>
+                change({ ...theme, maxPages: Number(event.target.value) })
+              }
+              className={`mt-1 ${selectClass}`}
+            >
+              {CV_PAGE_CHOICES.map((pages) => (
+                <option key={pages} value={pages}>
+                  {pages}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="text-12 text-muted sm:col-span-2 sm:self-end">
+            The builder writes to this length and trims the lowest-priority
+            achievements to fit, keeping every job and qualification.
+          </p>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-4 text-14">
           <label>
             <input
               type="checkbox"
@@ -64,6 +120,7 @@ export function CvAppearance({ value, onChange, name }: { value?: CvTheme; onCha
         style={{
           background: theme.background,
           color: cvForeground(theme.background),
+          fontFamily: SAMPLE_FONT_FAMILY[theme.font],
         }}
       >
         <p className="text-12 uppercase tracking-widest">

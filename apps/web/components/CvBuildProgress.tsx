@@ -11,19 +11,19 @@ const stages = [
     id: "writing",
     title: "Write your CV",
     detail:
-      "Choosing relevant achievements and writing to a two-page content budget.",
+      "Choosing relevant achievements and writing to the content budget for your page limit.",
   },
   {
     id: "fitting",
-    title: "Fit two pages",
+    title: "Optimise",
     detail:
-      "Measuring the actual PDF and prioritising content while keeping your employment and qualifications.",
+      "Measuring the actual PDF and prioritising the strongest content within your page limit, keeping every job and qualification.",
   },
   {
     id: "assessing",
     title: "Check and score",
     detail:
-      "Checking the fitted wording against your evidence and the company’s job description.",
+      "Checking the optimised wording against your evidence and the company’s job description.",
   },
 ];
 

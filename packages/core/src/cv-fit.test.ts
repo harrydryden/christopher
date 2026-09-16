@@ -1,9 +1,10 @@
 import { expect, it, vi } from 'vitest';
 import { createCvWritingBudget, cvBudgetViolations } from './cv-budget';
 import { buildFittedCv, selectCvToFit } from './cv-fit';
-import { materialiseCv, type CvLibrary, type CvPlan } from './cv';
+import { DEFAULT_CV_THEME, materialiseCv, type CvLibrary, type CvPlan } from './cv';
 import { renderCvPdfWithReport } from './cv-pdf';
-const library: CvLibrary = { name:'Example', contact:'London', profile:'Finance leader', entries:[
+// The allocations below were calibrated on two pages; the page limit tests scale from there.
+const library: CvLibrary = { name:'Example', contact:'London', profile:'Finance leader', theme:{ ...DEFAULT_CV_THEME, maxPages: 2 }, entries:[
  ...Array.from({length:6},(_,i)=>({id:`r${i}`,kind:'experience' as const,heading:`Director · Employer ${i} · 202${i}`,details:i===0?'Financial planning budget reporting':'Operations delivery',confirmedResponsibilities:[i===0?'Financial planning budget reporting':'Operations delivery']})),
  {id:'e',kind:'education',heading:'BSc Economics · University',details:'BSc Economics, University.'},
  {id:'s',kind:'skill',heading:'Tools',details:'SQL',skillItems:['SQL']},
@@ -34,6 +35,7 @@ it('gives the writer budgets before its first attempt and avoids unnecessary mod
  const fitted=await buildFittedCv(library,'Financial planning budgets reporting',write,undefined,async stage => { stages.push(stage); });
  expect(stages).toEqual(["writing", "fitting"]);
  expect(write).toHaveBeenCalledTimes(1);
+ expect(write.mock.calls[0]![0].maxPages).toBe(2);
  expect(write.mock.calls[0]![0].writingBudget.blocks).toHaveLength(8);
  expect((await renderCvPdfWithReport(fitted)).pageCount).toBeLessThanOrEqual(2);
  expect(fitted.fitNotes!.length).toBeGreaterThan(0);
@@ -42,7 +44,7 @@ it('never silently drops employment or education to satisfy the page count',asyn
  await expect(buildFittedCv(library,'Finance',async()=>({...plan,sections:plan.sections.filter(s=>s.entryId!=='e')}))).rejects.toThrow('omitted employment or education');
 });
 it('ranks structured skill labels including AI and R, and enforces their allocated count', async () => {
- const source: CvLibrary = {name:'Example',contact:'',profile:'Analyst',entries:[
+ const source: CvLibrary = {name:'Example',contact:'',profile:'Analyst',theme:{ ...DEFAULT_CV_THEME, maxPages: 2 },entries:[
   {id:'s1',kind:'skill',heading:'Tools',details:'General skills',skillItems:['Excel']},
   {id:'s2',kind:'skill',heading:'Tools',details:'General skills',skillItems:['PowerPoint']},
   {id:'s3',kind:'skill',heading:'Tools',details:'General skills',skillItems:['Excel','PowerPoint','Word','Visio','Jira','AI','R']},
@@ -71,4 +73,45 @@ it('bounds retries when the writer repeatedly ignores the legacy skill format', 
  const write=vi.fn().mockResolvedValue({summary:'Analyst',sections:[{entryId:'legacy',bullets:['SQL'],skillItems:['SQL']}],gaps:[]});
  await expect(buildFittedCv(source,'SQL',write)).rejects.toThrow('wrong skill format');
  expect(write).toHaveBeenCalledTimes(3);
+});
+it('scales the writing budget with the page limit held in the library theme', () => {
+ const target='Financial planning budgets reporting';
+ const pages=(maxPages:number)=>({...library,theme:{...DEFAULT_CV_THEME,maxPages}});
+ const one=createCvWritingBudget(pages(1),target), two=createCvWritingBudget(pages(2),target), three=createCvWritingBudget(pages(3),target);
+ expect(three.totalCharacters).toBeGreaterThan(two.totalCharacters);
+ expect(one.totalCharacters).toBeLessThan(two.totalCharacters);
+ // The profile sits in the fixed masthead: it never grows, and shrinks only for one page.
+ expect(three.summaryCharacters).toBe(two.summaryCharacters);
+ expect(one.summaryCharacters).toBeLessThan(two.summaryCharacters);
+ const role=(budget:ReturnType<typeof createCvWritingBudget>)=>budget.blocks.find(b=>b.entryId==='r0')!;
+ expect(role(three).maxBullets).toBeGreaterThan(role(two).maxBullets);
+ expect(role(three).maxBullets).toBeLessThanOrEqual(6);
+ expect(role(one).maxBullets).toBeLessThanOrEqual(2);
+ expect(three.blocks.find(b=>b.entryId==='s')!.maxSkills).toBeGreaterThan(two.blocks.find(b=>b.entryId==='s')!.maxSkills);
+ // Without a theme the default three-page limit applies.
+ const { theme:_theme, ...untitled }=library;
+ expect(createCvWritingBudget(untitled,target).totalCharacters).toBe(three.totalCharacters);
+});
+it('fits to the page limit in the library theme, keeping more achievements when more pages are allowed', async () => {
+ const target='Financial planning budgets reporting';
+ const pages=(maxPages:number)=>({...library,theme:{...DEFAULT_CV_THEME,maxPages}});
+ const bullets=(content:{sections:{bullets:string[]}[]})=>content.sections.reduce((sum,section)=>sum+section.bullets.length,0);
+ const two=await selectCvToFit(pages(2),plan,target,createCvWritingBudget(pages(2),target));
+ const three=await selectCvToFit(pages(3),plan,target,createCvWritingBudget(pages(3),target));
+ expect(two.pageCount).toBeLessThanOrEqual(2);
+ expect(three.pageCount).toBe(3);
+ expect(three.content.theme?.maxPages).toBe(3);
+ expect(bullets(three.content)).toBeGreaterThan(bullets(two.content));
+ expect(three.content.sections.filter(s=>s.kind==='experience')).toHaveLength(6);
+ const fitted=await buildFittedCv(pages(3),target,async()=>plan);
+ expect((await renderCvPdfWithReport(fitted)).pageCount).toBe(3);
+ expect((await renderCvPdfWithReport(fitted)).maxPages).toBe(3);
+});
+it('reports the page limit when the minimum content cannot fit one page', async () => {
+ const minimal: CvPlan={...plan,sections:plan.sections.map(section=>section.entryId.startsWith('r')?{...section,bullets:[plan.sections[1]!.bullets[1]!]}:section)};
+ const write=vi.fn().mockResolvedValue(minimal);
+ await expect(buildFittedCv({...library,theme:{...DEFAULT_CV_THEME,maxPages:1}},'Finance',write)).rejects.toThrow('into 1 page after three budgeted attempts');
+ expect(write).toHaveBeenCalledTimes(3);
+ expect(write.mock.calls[1]![0].layoutFeedback?.maxPages).toBe(1);
+ expect(write.mock.calls[1]![0].layoutFeedback?.pageCount).toBeGreaterThan(1);
 });

@@ -5,7 +5,8 @@ import {
   cvRelevance,
   type CvWritingBudget,
 } from "./cv-budget";
-import { renderCvPdfWithReport, CV_MAX_PAGES, CvLayoutError } from "./cv-pdf";
+import { renderCvPdfWithReport, CvLayoutError } from "./cv-pdf";
+import { cvMaxPages } from "./cv-theme";
 
 export type CvFitFeedback = {
   pageCount: number;
@@ -15,6 +16,7 @@ export type CvFitFeedback = {
 };
 export type CvFitInput = {
   writingBudget: CvWritingBudget;
+  maxPages: number;
   layoutFeedback?: CvFitFeedback;
 };
 
@@ -27,6 +29,7 @@ export async function selectCvToFit(
 ) {
   const plan = structuredClone(source);
   const changes: string[] = [];
+  const maxPages = cvMaxPages(library.theme);
   plan.sections = plan.sections.filter((section) => {
     if (budget.blocks.some((block) => block.entryId === section.entryId))
       return true;
@@ -91,7 +94,7 @@ export async function selectCvToFit(
   for (;;) {
     const content = materialiseCv(library, plan);
     const { pageCount } = await renderCvPdfWithReport(content);
-    if (pageCount <= CV_MAX_PAGES) return { plan, content, pageCount, changes };
+    if (pageCount <= maxPages) return { plan, content, pageCount, changes };
     // Education is protected. Every employment entry retains at least one bullet.
     const candidates = plan.sections
       .flatMap((section, sectionIndex) => {
@@ -137,18 +140,19 @@ export async function buildFittedCv(
   initial?: CvPlan,
   onProgress?: (stage: "writing" | "fitting") => Promise<void>,
 ) {
+  const maxPages = cvMaxPages(library.theme);
   let feedback: CvFitFeedback | undefined;
   let invalidSkillFormat = false;
   if (initial) {
     const content = materialiseCv(library, initial);
     const report = await renderCvPdfWithReport(content).catch((error) => {
       if (error instanceof CvLayoutError)
-        return { pageCount: CV_MAX_PAGES + 1 };
+        return { pageCount: maxPages + 1 };
       throw error;
     });
     feedback = {
       pageCount: report.pageCount,
-      maxPages: CV_MAX_PAGES,
+      maxPages,
       previousPlan: initial,
       corrections: [
         "Refit this saved wording to the supplied block budgets. Preserve qualifications and employment history.",
@@ -164,6 +168,7 @@ export async function buildFittedCv(
     await onProgress?.("writing");
     const plan = await write({
       writingBudget: budget,
+      maxPages,
       ...(feedback ? { layoutFeedback: feedback } : {}),
     });
     const missing = budget.blocks.filter(
@@ -188,7 +193,7 @@ export async function buildFittedCv(
     });
     invalidSkillFormat = skillCorrections.length > 0;
     if (invalidSkillFormat) {
-      feedback = { pageCount: feedback?.pageCount ?? CV_MAX_PAGES + 1, maxPages: CV_MAX_PAGES,
+      feedback = { pageCount: feedback?.pageCount ?? maxPages + 1, maxPages,
         previousPlan: plan, corrections: skillCorrections };
       continue;
     }
@@ -201,19 +206,19 @@ export async function buildFittedCv(
     } catch (error) {
       if (!(error instanceof CvLayoutError)) throw error;
       feedback = {
-        pageCount: CV_MAX_PAGES + 1,
-        maxPages: CV_MAX_PAGES,
+        pageCount: maxPages + 1,
+        maxPages,
         previousPlan: plan,
         corrections: [error.message, ...cvBudgetViolations(plan, budget)],
       };
       continue;
     }
-    if (selected.pageCount <= CV_MAX_PAGES) {
+    if (selected.pageCount <= maxPages) {
       const notes = [...new Set(selected.changes)];
       if (initial && initial.summary !== selected.content.summary)
-        notes.unshift("Profile rewritten within the two-page content budget.");
+        notes.unshift(`Profile rewritten within the ${maxPages}-page content budget.`);
       if (initial && JSON.stringify(initial.sections) !== JSON.stringify(selected.plan.sections))
-        notes.unshift("Achievements and skills adjusted within the two-page content budget. Review the fitted wording.");
+        notes.unshift(`Achievements and skills adjusted within the ${maxPages}-page content budget. Review the fitted wording.`);
       if (attempt)
         notes.unshift(
           "Wording tightened against smaller per-block budgets after measuring the PDF.",
@@ -222,13 +227,13 @@ export async function buildFittedCv(
     }
     feedback = {
       pageCount: selected.pageCount,
-      maxPages: CV_MAX_PAGES,
+      maxPages,
       previousPlan: selected.plan,
       corrections: cvBudgetViolations(selected.plan, budget),
     };
   }
   if (invalidSkillFormat) throw new Error("The model repeatedly returned the wrong skill format. Your evidence is unchanged. Retry the build or choose another CV model.");
   throw new Error(
-    "The builder could not fit the minimum employment and education content after three budgeted attempts. Reduce the selected evidence blocks or profile detail and try Fit to two pages again.",
+    `The builder could not fit the minimum employment and education content into ${maxPages} ${maxPages === 1 ? "page" : "pages"} after three budgeted attempts. Reduce the selected evidence blocks or profile detail, or raise the page limit in Settings, then save again.`,
   );
 }

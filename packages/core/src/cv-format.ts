@@ -1,5 +1,11 @@
 /** Browser-safe CV contract. PDFKit is imported only through the server entry point. */
-export const CV_LIMITS = { pages: 2, bulletsPerSection: 6, bulletCharacters: 650, summaryCharacters: 1800 } as const;
+export const CV_LIMITS = { bulletsPerSection: 6, bulletCharacters: 650, summaryCharacters: 1800 } as const;
+/** The page limit is a user preference captured in each CV's theme; these bound what Settings offers. */
+export const CV_PAGE_LIMITS = { min: 1, max: 5, default: 3 } as const;
+export const CV_PAGE_CHOICES: readonly number[] = Array.from(
+  { length: CV_PAGE_LIMITS.max - CV_PAGE_LIMITS.min + 1 },
+  (_, index) => CV_PAGE_LIMITS.min + index,
+);
 export const CV_SECTION_ORDER = { experience: 0, skill: 1, education: 2, interest: 3 } as const;
 export const CV_GROUPS = [
   { kind: "experience", title: "Work experience" },

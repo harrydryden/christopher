@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb, schema, type Task } from "@christopher/db";
 import { runMigrations } from "@christopher/db/migrate";
 import { AiEngine } from "@christopher/ai";
+import { DEFAULT_CV_THEME } from "@christopher/core/cv";
 import { eq, sql } from "drizzle-orm";
 import { ensureTestUser } from "./test-users";
 import { handleGenerateCv } from "./handlers/cv";
@@ -95,14 +96,17 @@ it("measures generated content and retries an oversized CV before marking it rea
   const long = { ...short, summary: "Operations leader with experience planning and reporting. ".repeat(29), sections: ["one", "two", "three", "four", "five", "six", "seven", "eight"].map((entryId) => ({ entryId, bullets: Array.from({ length: 6 }, () => "Managed operational planning and reporting. ".repeat(14)) })) };
   const build = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValueOnce(long).mockResolvedValueOnce(short);
   const { task, deps, draft } = await setup();
-  await client.db.update(schema.cvDrafts).set({ librarySnapshot: { ...library, entries: ["one", "two", "three", "four", "five", "six", "seven", "eight"].map((id) => ({ ...library.entries[0]!, id, heading: `Director ${id}`,
+  // The snapshot's theme holds the page limit the writer and fitter are held to.
+  await client.db.update(schema.cvDrafts).set({ librarySnapshot: { ...library, theme: { ...DEFAULT_CV_THEME, maxPages: 2 }, entries: ["one", "two", "three", "four", "five", "six", "seven", "eight"].map((id) => ({ ...library.entries[0]!, id, heading: `Director ${id}`,
         })),
       },
     })
     .where(eq(schema.cvDrafts.id, draft.id));
   await handleGenerateCv(task, deps);
   expect(build).toHaveBeenCalledTimes(2);
+  expect(build.mock.calls[0]![0].maxPages).toBe(2);
   expect(build.mock.calls[1]![0].layoutFeedback?.pageCount).toBeGreaterThan(2);
+  expect(build.mock.calls[1]![0].layoutFeedback?.maxPages).toBe(2);
   const [saved] = await client.db
     .select()
     .from(schema.cvDrafts)
@@ -139,6 +143,7 @@ it("fails after three oversized attempts instead of returning an over-limit CV",
     .set({
       librarySnapshot: {
         ...library,
+        theme: { ...DEFAULT_CV_THEME, maxPages: 2 },
         entries: [
           "one",
           "two",
@@ -163,7 +168,7 @@ it("fails after three oversized attempts instead of returning an over-limit CV",
     .from(schema.cvDrafts)
     .where(eq(schema.cvDrafts.id, draft.id));
   expect(saved!.status).toBe("failed");
-  expect(saved!.error).toContain("after three budgeted attempts");
+  expect(saved!.error).toContain("into 2 pages after three budgeted attempts");
   expect(saved!.content).toBeNull();
 });
 
@@ -194,8 +199,25 @@ it("refits the submitted wording and preserves the queued revision number", asyn
   expect(saved!.status).toBe("ready");
   expect(saved!.revision).toBe(5);
   expect(saved!.content!.fitNotes).toContain(
-    "Profile rewritten within the two-page content budget.",
+    "Profile rewritten within the 3-page content budget.",
   );
+});
+
+it("fits a long CV within the default three-page limit without a second model call", async () => {
+  const entries = ["one", "two", "three", "four", "five", "six", "seven", "eight"];
+  const long = { summary: "Operations leader with experience planning and reporting. ".repeat(7), sections: entries.map((entryId) => ({ entryId, bullets: Array.from({ length: 6 }, () => "Managed operational planning and reporting. ".repeat(14)) })), gaps: [] };
+  const build = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue(long);
+  const { task, deps, draft } = await setup();
+  await client.db.update(schema.cvDrafts).set({ librarySnapshot: { ...library, entries: entries.map((id) => ({ ...library.entries[0]!, id, heading: `Director ${id}` })) } })
+    .where(eq(schema.cvDrafts.id, draft.id));
+  await handleGenerateCv(task, deps);
+  expect(build).toHaveBeenCalledTimes(1);
+  expect(build.mock.calls[0]![0].maxPages).toBe(3);
+  const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  expect(saved!.status).toBe("ready");
+  expect(saved!.assessment!.pageCount).toBe(3);
+  expect(saved!.content!.theme).toMatchObject({ font: "Christopher", maxPages: 3 });
+  expect(saved!.content!.sections).toHaveLength(8);
 });
 
 it("retains authored content when assessment fails, then retries assessment without rewriting", async () => {

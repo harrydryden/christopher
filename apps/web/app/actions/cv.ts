@@ -81,7 +81,7 @@ export async function saveCvAppearance(_prev: ActionResult, form: FormData): Pro
     const theme = CvThemeSchema.parse(JSON.parse(String(form.get("theme") ?? "")));
     await setUserSetting(user.id, "cvTheme", { ...theme, skillPills: true });
   } catch {
-    return fail("Could not save appearance. Check the colours and try again.");
+    return fail("Could not save appearance. Check the colours, font and page limit, then try again.");
   }
   revalidatePath("/settings");
   revalidatePath("/cv");

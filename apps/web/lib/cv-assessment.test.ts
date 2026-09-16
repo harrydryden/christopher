@@ -137,5 +137,7 @@ it("retains finalisation for supported current assessments only", () => {
   expect(render(true, false)).toContain("Finalise this CV");
   expect(render(false, false)).not.toContain("Finalise this CV");
   expect(render(true, true)).not.toContain("Finalise this CV");
-  expect(render(true, false, 3)).not.toContain("Finalise this CV");
+  // The default limit is three pages; a CV whose theme allows two is gated at two.
+  expect(render(true, false, 3)).toContain("Finalise this CV");
+  expect(render(true, false, 4)).not.toContain("Finalise this CV");
 });

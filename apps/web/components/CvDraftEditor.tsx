@@ -3,7 +3,7 @@ import { CV_PROFILE_ID, cvSectionBlockId } from "@/lib/cv-content-links";
 import { useFormStatus } from "react-dom";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  DEFAULT_CV_THEME,
+  resolveCvTheme,
   CV_LIMITS,
   CvContentSchema,
   cvDisplaySections,
@@ -48,7 +48,9 @@ export function CvDraftEditor({
 }) {
   const formId = `cv-edit-${id}`;
   const [summary, setSummary] = useState(content.summary);
-  const [theme, setTheme] = useState(content.theme ?? DEFAULT_CV_THEME);
+  // A saved revision may predate the font and page limit; resolving once keeps edits comparable.
+  const [baseTheme] = useState(() => resolveCvTheme(content.theme));
+  const [theme, setTheme] = useState(baseTheme);
   const [rows, setRows] = useState(
     content.sections.map((section) =>
       (section.skillItems ?? section.bullets).join("\n"),
@@ -76,7 +78,7 @@ export function CvDraftEditor({
   const fingerprint = JSON.stringify(candidate);
   const dirty =
     fingerprint !==
-    JSON.stringify({ ...content, theme: content.theme ?? DEFAULT_CV_THEME });
+    JSON.stringify({ ...content, theme: baseTheme });
   const currentPreview = preview?.fingerprint === fingerprint;
   useEffect(
     () => () => {
@@ -259,8 +261,8 @@ export function CvDraftEditor({
               <>
                 <p className="text-14" role="status">
                   {preview.pages} {preview.pages === 1 ? "page" : "pages"}
-                  {preview.pages > CV_LIMITS.pages
-                    ? " — saving will automatically fit this wording into two pages before assessment."
+                  {preview.pages > theme.maxPages
+                    ? ` — saving will automatically fit this wording into ${theme.maxPages} ${theme.maxPages === 1 ? "page" : "pages"} before assessment.`
                     : ""}
                   . {dirty ? "Unsaved preview." : "Current revision preview."}
                 </p>

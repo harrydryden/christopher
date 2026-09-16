@@ -270,6 +270,19 @@ describe("authenticated mutations", () => {
     );
     expect(await database.select().from(schema.decisions)).toHaveLength(0);
   });
+  it("asks an unconfirmed member to confirm before spending the shared budget, but never an administrator", async () => {
+    const form = new FormData();
+    form.set("urls", "https://gate.example");
+    // The budget the gate protects is the administrator's own to set.
+    await database.update(schema.users).set({ emailVerifiedAt: null }).where(eq(schema.users.id, user.id));
+    await expect(addCompanies(form)).rejects.toThrow("redirect:/companies?added=1");
+    await database.update(schema.users).set({ role: "member" }).where(eq(schema.users.id, user.id));
+    form.set("urls", "https://gate-two.example");
+    await expect(addCompanies(form)).rejects.toThrow("redirect:/account?verify=required");
+    expect(await database.select().from(schema.companies)).toHaveLength(1);
+    await database.update(schema.users).set({ emailVerifiedAt: new Date() }).where(eq(schema.users.id, user.id));
+    await expect(addCompanies(form)).rejects.toThrow("redirect:/companies?added=1");
+  });
   it("serialises competing decisions and retains history on undo", async () => {
     const { job } = await fixture();
     const results = await Promise.all([

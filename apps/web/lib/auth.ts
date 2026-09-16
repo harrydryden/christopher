@@ -42,10 +42,15 @@ export async function requireUser(): Promise<User> {
   return current.user;
 }
 
-/** Work that scans, discovers or calls a model waits for a confirmed address, so a throwaway sign-up cannot spend the shared budget. */
+/**
+ * Work that scans, discovers or calls a model waits for a confirmed address, so a throwaway
+ * sign-up cannot spend the shared budget. Administrators are exempt: the budget the gate protects
+ * is theirs to set, and nobody becomes one without an address an administrator vouched for, either
+ * by proving their own or by promoting someone from Admin.
+ */
 export async function requireVerifiedUser(): Promise<User> {
   const user = await requireUser();
-  if (!user.emailVerifiedAt) redirect("/account?verify=required");
+  if (user.role !== "admin" && !user.emailVerifiedAt) redirect("/account?verify=required");
   return user;
 }
 

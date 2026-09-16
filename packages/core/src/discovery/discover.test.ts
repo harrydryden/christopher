@@ -115,6 +115,23 @@ describe("discovery: other shapes", () => {
     expect(result.best?.spec.atsSlug).toBe("acme");
   });
 
+  it("finds Careers through an About page when the homepage does not link to it", async () => {
+    const ctx = createFakeDiscoveryContext({
+      routes: {
+        "https://www.acme.example/": { body: '<html><head><title>Acme Robotics</title></head><body><nav><a href="/about">About</a><a href="/products">Products</a></nav></body></html>' },
+        "https://www.acme.example/about": { body: '<html><body><h1>About Acme</h1><footer><a href="/company/people/open-roles">Open roles</a></footer></body></html>' },
+        "https://www.acme.example/company/people/open-roles": { body: fx.LISTING_PAGE_HTML },
+        ...greenhouseRoutes,
+      },
+    });
+    const result = await discoverCareersSources("https://www.acme.example/", ctx);
+    expect(result.outcome).toBe("resolved");
+    expect(result.best?.spec.type).toBe("greenhouse");
+    expect(result.log.join("\n")).toContain("careers-like link(s) on /about");
+    // The listing was reached from the hub page, not from a blind path probe.
+    expect(ctx.requestLog.some((r) => r.url === "https://www.acme.example/careers")).toBe(false);
+  });
+
   it("probes well-known paths when the homepage has no careers link", async () => {
     const ctx = createFakeDiscoveryContext({
       routes: {

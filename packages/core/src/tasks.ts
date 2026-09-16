@@ -5,7 +5,7 @@ export interface TaskPayloads {
   verify_company: { sourceId?: string; candidateId: string };
   monitor_source: { sourceId: string };
   generate_cv: { draftId: string };
-  discover: { companyId: string; logoOnly?: boolean; homepageUrl?: string; url?: string; reason?: "added" | "manual" | "failing" | "suspect_empty" | "pasted" };
+  discover: { companyId: string; logoOnly?: boolean; homepageUrl?: string; url?: string; reason?: "added" | "manual" | "failing" | "suspect_empty" | "shrunk" | "pasted" };
   scan_company: { companyId: string; scanRunId?: string; trigger?: "schedule" | "manual" };
   run_daily: { trigger: "schedule" | "manual"; runDate?: string };
   fetch_description: { jobId: string };

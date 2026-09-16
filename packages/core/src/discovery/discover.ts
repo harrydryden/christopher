@@ -11,6 +11,8 @@ import type { DiscoveryCandidate, DiscoveryContext, DiscoveryResult, HarvestedLi
 
 const JOB_DETAIL_RE = /\/(jobs?|careers?|positions?|openings?|vacanc(?:y|ies)|opportunit(?:y|ies))\//i;
 const MAX_CANDIDATE_PAGES = 4;
+/** Pages that commonly link onward to Careers when the homepage does not. */
+const HUB_PATHS: readonly string[] = ["/about", "/about-us", "/company", "/team"];
 const MAX_BUNDLES = 8;
 const MAX_BUNDLE_BYTES = 2_000_000;
 
@@ -434,6 +436,33 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
     }
   } else {
     run.say(`could not fetch the homepage ${normalized}; probing careers paths, subdomains, sitemaps and ATS boards directly`);
+  }
+
+  // Sites that keep Careers under About or Company, or only in a rendered
+  // mega-menu, show nothing careers-like on the homepage itself. Those hub
+  // pages are a cheap second harvest — three fetches at most — and come before
+  // the blind path probes and long before a model call.
+  if (home && run.candidates.size === 0) {
+    const origin = new URL(home.url).origin;
+    let harvested = 0;
+    for (const path of HUB_PATHS) {
+      if (!run.budgetLeft() || run.candidates.size > 0 || harvested >= 3) break;
+      const hub = await run.fetch(`${origin}${path}`);
+      if (!hub || looksLikeSoft404(hub.html)) continue;
+      harvested++;
+      const hubLinks = harvestLinks(hub.html, hub.url);
+      collectAtsFromPage(run, ctx, hub.html, hub.url, hubLinks, `hub page ${path}`);
+      const hubScored = hubLinks
+        .filter((l) => l.kind === "a" && sameDomain(l.href, hub.url))
+        .map((link) => ({ link, score: scoreLink(link, hub.url, { resolveSpec: ctx.resolveSpec }) }))
+        .filter((x) => x.score >= 0.4)
+        .sort((a, b) => b.score - a.score);
+      if (hubScored.length) run.say(`${hubScored.length} careers-like link(s) on ${path}`);
+      for (const { link } of hubScored.slice(0, 2)) {
+        if (!run.budgetLeft()) break;
+        await visit(link.href, `hub page ${path}`);
+      }
+    }
   }
 
   if (run.candidates.size === 0) {

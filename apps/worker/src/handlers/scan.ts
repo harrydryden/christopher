@@ -169,6 +169,12 @@ async function scanSource(
     error = `${unresolved.size} descriptions unavailable; admission deferred until the next scan`;
   }
   const classified = classifyScan({ fetchOk, postingsFound: postings.length, previousOkCount, droppedByValidation });
+  // A listing that collapsed against the last ok scan is what an ATS migration
+  // looks like while the old board is still up: it keeps serving, just a
+  // shrinking remainder. classifyScan already makes this partial so nothing
+  // closes; the message lets the persistence check below recognise it.
+  const shrunk = fetchOk && previousOkCount !== null && previousOkCount >= 10 && postings.length > 0 && postings.length < previousOkCount * 0.3;
+  if (shrunk) error ??= `Listing shrank from ${previousOkCount} to ${postings.length} postings against the last ok scan; treated as partial`;
   const status = incomplete && classified === "ok" ? "partial" : classified;
   const mode = modeForScanStatus(status);
 
@@ -387,8 +393,13 @@ async function scanSource(
     .where(eq(schema.careerSources.id, source.id));
 
   // A source that keeps failing, or that suddenly went empty, is worth re-discovering.
-  if (failures >= 3 || status === "suspect_empty") {
-    await enqueueTask(deps.db, "discover", { companyId: company.id, reason: status === "suspect_empty" ? "suspect_empty" : "failing" }, {
+  // So is one that shrank and stayed shrunk: three consecutive collapsed scans
+  // is a migration in progress, not a quiet week.
+  const persistentlyShrunk = shrunk && (await deps.db.select({ error: schema.scans.error, status: schema.scans.status }).from(schema.scans)
+    .where(eq(schema.scans.sourceId, source.id)).orderBy(desc(schema.scans.startedAt)).limit(3))
+    .filter((scan) => scan.status === "partial" && /shrank/.test(scan.error ?? "")).length >= 3;
+  if (failures >= 3 || status === "suspect_empty" || persistentlyShrunk) {
+    await enqueueTask(deps.db, "discover", { companyId: company.id, reason: status === "suspect_empty" ? "suspect_empty" : persistentlyShrunk ? "shrunk" : "failing" }, {
       dedupeKey: dedupeKeyFor("discover", { companyId: company.id }),
       priority: priorityFor("discover"),
     });

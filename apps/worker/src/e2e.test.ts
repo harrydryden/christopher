@@ -630,6 +630,37 @@ describe("HTML extraction completion", () => {
   });
 });
 
+it("re-discovers a source whose listing collapses and stays collapsed, without closing roles", async () => {
+  await setGate({});
+  const filler = Array.from({ length: 12 }, (_, i) => ({
+    ...JOB_ENGINEER, id: 6_000_000 + i, title: `Engineer ${i}`, absolute_url: `https://job-boards.greenhouse.io/acme/jobs/${6_000_000 + i}`,
+  }));
+  setJobs([JOB_OPERATIONS_MANAGER, ...filler]);
+  const company = await addCompany("https://www.acme.example/", "acme.example");
+  await queue.drain();
+
+  // The old board keeps serving a shrinking remainder after a migration; the
+  // roles we know about are not in it.
+  setJobs(filler.slice(0, 3));
+  const scanAt = async (day: string) => {
+    now = new Date(`${day}T06:00:00Z`);
+    await enqueueTask(db, "scan_company", { companyId: company.id, trigger: "manual" }, { dedupeKey: dedupeKeyFor("scan_company", { companyId: company.id }), priority: 5 });
+    await queue.drain();
+  };
+  await scanAt("2026-09-06");
+  await scanAt("2026-09-07");
+  let discovers = await db.select().from(schema.tasks).where(sql`type = 'discover' and payload->>'reason' = 'shrunk'`);
+  expect(discovers).toHaveLength(0);
+  await scanAt("2026-09-08");
+  discovers = await db.select().from(schema.tasks).where(sql`type = 'discover' and payload->>'reason' = 'shrunk'`);
+  expect(discovers.length).toBeGreaterThanOrEqual(1);
+  const scans = await db.select().from(schema.scans).orderBy(schema.scans.startedAt);
+  expect(scans.slice(-3).every(scan => scan.status === "partial" && /shrank/.test(scan.error ?? ""))).toBe(true);
+  const manager = (await jobsInTable()).find(r => r.title === "Operations Manager")!;
+  expect(manager.status).toBe("open");
+  expect(manager.missingScans).toBe(0);
+}, 120_000);
+
 it("marks a listing that reaches the adapter cap partial and never closes roles from it", async () => {
   await setGate({});
   setJobs([JOB_OPERATIONS_MANAGER, JOB_ENGINEER]);

@@ -6,7 +6,7 @@ import { inputClass, labelClass } from "@/components/Field";
 import { PageHeader } from "@/components/PageHeader";
 import { SettingsForm } from "@/components/SettingsForm";
 import { linkedProviders } from "@/lib/accounts";
-import { getCurrentUser } from "@/lib/auth";
+import { getCurrentUser, needsEmailConfirmation } from "@/lib/auth";
 import { emailConfigured } from "@/lib/email";
 import { googleConfigured } from "@/lib/google";
 import { MIN_PASSWORD_LENGTH } from "@christopher/core";
@@ -26,7 +26,10 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
   if (!current) redirect("/login");
   const { user } = current;
   const sp = await searchParams;
-  const notice = sp.reset ? NOTICES.reset : sp.verify ? NOTICES[`verify:${sp.verify}`] : null;
+  // `?verify=required` outlives the redirect that set it, so the notice it names is shown only
+  // while that account really is held back.
+  const key = sp.reset ? "reset" : sp.verify ? `verify:${sp.verify}` : null;
+  const notice = key && (key !== "verify:required" || needsEmailConfirmation(user)) ? NOTICES[key] : null;
   const providers = await linkedProviders(user.id);
   const labelClassName = "flex flex-col gap-1.5 text-14";
 
@@ -51,9 +54,9 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
           <form action={resendVerification} className="mt-3 flex flex-wrap items-center gap-3">
             <Button type="submit" size="sm">Send confirmation email</Button>
             <span className="text-12 text-muted">
-              {user.role === "admin"
-                ? "Nothing is blocked while this is unconfirmed; confirming just proves the address. The link asks for your password."
-                : "The link asks for your password."}
+              {needsEmailConfirmation(user)
+                ? "The link asks for your password."
+                : "Nothing is blocked while this is unconfirmed; confirming just proves the address. The link asks for your password."}
             </span>
             {!emailConfigured() && <span className="text-12 text-warn">Email delivery is not configured on this deployment; the link only reaches the server log.</span>}
           </form>

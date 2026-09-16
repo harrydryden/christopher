@@ -8,17 +8,22 @@ const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postg
 beforeAll(() => runMigrations(db));
 beforeEach(() => db.execute(sql`truncate ai_calls, ai_reservations, ai_spend_periods`));
 afterAll(() => pool.end());
-it("atomically reserves concurrent spend and releases only unused capacity", async () => {
+const recordCall = (costUsd: number, callSite = "A10") => db.insert(schema.aiCalls).values({ callSite, model: "fixture", costUsd });
+
+it("atomically reserves concurrent spend and returns capacity the call never used", async () => {
   const limits = { monthly: 1, daily: 1, discovery: 1 };
   const reservations = await Promise.all(Array.from({ length: 10 }, () => reserveAi(db, "A10", 0.6, limits)));
   expect(reservations.filter(Boolean)).toHaveLength(1);
-  await reservations.find(Boolean)!(0.2);
+  // The engine records the call's real cost before releasing its hold, so only that cost counts.
+  await recordCall(0.2);
+  await reservations.find(Boolean)!();
   const second = await reserveAi(db, "A10", 0.6, limits);
   expect(second).not.toBeNull();
-  await second!(null);
-  expect(await reserveAi(db, "A10", 0.3, limits)).toBeNull();
+  await second!();
+  // The second call recorded nothing, so its capacity comes back rather than being burned.
+  expect(await reserveAi(db, "A10", 0.7, limits)).not.toBeNull();
 });
-it("preserves pre-upgrade spend and protects the discovery allowance", async () => {
+it("counts recorded spend and protects the discovery allowance", async () => {
   await db.insert(schema.aiCalls).values({ callSite: "A10", model: "fixture", costUsd: 0.8 });
   expect(await reserveAi(db, "A10", 0.3, { monthly: 1, daily: 10, discovery: 10 })).toBeNull();
   expect(await reserveAi(db, "A10", 0.1, { monthly: 10, daily: 10, discovery: 0.85 })).toBeNull();
@@ -33,11 +38,23 @@ it("selects bounded, deterministic examples across sectors and document relevanc
   expect(selectExamples([...rows].reverse(), "Robotics expansion in London")).toEqual(examples);
 });
 
-it("conservatively accounts for reservations abandoned by a crashed process", async () => {
+it("holds capacity for a crashed process, then returns what its call never spent", async () => {
   const limits = { monthly: 1, daily: 1, discovery: 1 };
   expect(await reserveAi(db, "A10", 0.8, limits)).not.toBeNull();
-  await db.execute(sql`update ai_reservations set expires_at=now()-interval '1 minute'`);
+  // While the hold stands the same capacity is never lent twice.
   expect(await reserveAi(db, "A10", 0.3, limits)).toBeNull();
+  await db.execute(sql`update ai_reservations set expires_at=now()-interval '1 minute'`);
+  expect(await reserveAi(db, "A10", 0.3, limits)).not.toBeNull();
+});
+
+it("does not charge the budget for a call that failed without spending", async () => {
+  const limits = { monthly: 1, daily: 1, discovery: 1 };
+  // What a timeout leaves behind: a released hold and a recorded call that cost nothing. Charging
+  // the estimate instead used to refuse every later call while Health reported the month unused.
+  const settle = await reserveAi(db, "A10", 0.9, limits);
+  await recordCall(0);
+  await settle!();
+  expect(await reserveAi(db, "A10", 0.9, limits)).not.toBeNull();
 });
 
 it("fences a reclaimed operation without holding a database transaction across external work", async () => {

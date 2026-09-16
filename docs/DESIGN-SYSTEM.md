@@ -173,7 +173,7 @@ the 16-cell grid in `currentColor`.
 | --- | --- |
 | `Button` | Silkscreen uppercase. `primary` inverted ink with a 4px shadow, `secondary` raised with a full-contrast border, `danger` the danger hue, `ghost` muted text that underlines. `buttonClass()` for links and submit buttons that cannot be a `<Button>`. |
 | `Card` | 2px border on `bg-raised`, pixel title bar, `raised` for the 8px shadow. |
-| `Badge` | Outline and text in one tone; the tone helpers map app states to roles. |
+| `Badge` | Outline and text in one tone; the tone helpers map app states to roles. `toneText` gives the same tone as ink alone, for secondary text under a badge. |
 | `PageHeader` | Silkscreen 20px title over a 2px rule. |
 | `EmptyState` | Dashed 2px border, pixel title. |
 | `table.tsx` | `Table`/`THead`/`TBody`/`TR`/`TH`/`TD` plus `FitBar`, the ten stepped cells. `TR highlighted` is the keyboard cursor. |

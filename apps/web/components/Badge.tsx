@@ -13,6 +13,21 @@ const TONE_CLASSES: Record<Tone, string> = {
   neutral: "border-fg text-fg",
 };
 
+/** The same tones as ink only, for secondary text that sits under a badge
+    rather than carrying its own outline. */
+const TONE_TEXT: Record<Tone, string> = {
+  green: "text-ok",
+  blue: "text-info",
+  gray: "text-muted",
+  amber: "text-warn",
+  red: "text-danger",
+  neutral: "text-fg",
+};
+
+export function toneText(tone: Tone): string {
+  return TONE_TEXT[tone];
+}
+
 export function Badge({
   tone = "neutral",
   children,

@@ -148,7 +148,7 @@ beforeEach(async () => {
   setJobs([JOB_OPERATIONS_MANAGER, JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
 });
 
-async function setGate(gate: Partial<{ includeKeywords: string[]; excludeKeywords: string[]; locationTerms: string[]; includeRemote: boolean; matchFields: string[] }>) {
+async function setGate(gate: Partial<{ includeKeywords: string[]; excludeKeywords: string[]; seniorityKeywords: string[]; locationTerms: string[]; includeRemote: boolean; matchFields: string[] }>) {
   const value = {
     includeKeywords: ["operations"],
     excludeKeywords: [],
@@ -687,6 +687,53 @@ it("marks a listing that reaches the adapter cap partial and never closes roles 
   const manager = (await jobsInTable()).find(r => r.title === "Operations Manager")!;
   expect(manager.status).toBe("open");
   expect(manager.missingScans).toBe(0);
+}, 120_000);
+
+it("files role-type and seniority suggestions from the latest scan evidence", async () => {
+  await setGate({ includeKeywords: ["Operations"], seniorityKeywords: ["Director", "VP"], locationTerms: ["London", "UK"] });
+  const london = (id: number, title: string) => ({ ...JOB_ENGINEER, id, title, absolute_url: `https://job-boards.greenhouse.io/acme/jobs/${id}`, location: { name: "London, UK" } });
+  setJobs([
+    JOB_OPERATIONS_MANAGER,
+    london(7_000_001, "Operations Lead"), london(7_000_002, "Business Operations Lead"), london(7_000_003, "Lead, Operations Enablement"),
+    london(7_000_004, "Director of Partnerships"), london(7_000_005, "VP Partnerships"), london(7_000_006, "Director, Partnership Development"),
+  ]);
+  await addCompany("https://www.acme.example/", "acme.example");
+  await queue.drain();
+  await enqueueTask(db, "suggest_from_scans", {}, { dedupeKey: dedupeKeyFor("suggest_from_scans", {}), priority: 6 });
+  await queue.drain();
+  const rows = await db.select().from(schema.filterSuggestions).where(eq(schema.filterSuggestions.status, "pending"));
+  const byTerm = new Map(rows.map(r => [`${r.type}:${(r.value as { term: string }).term}`, r]));
+  expect(byTerm.has("seniority_include:Lead")).toBe(true);
+  expect(byTerm.get("seniority_include:Lead")!.rationale).toMatch(/3 roles/);
+  expect(byTerm.has("keyword_include:partnership*")).toBe(true);
+  expect((byTerm.get("keyword_include:partnership*")!.evidence as Array<{ title: string }>).map(e => e.title)).toContain("Director of Partnerships");
+  // A second run files nothing new while those are pending.
+  await enqueueTask(db, "suggest_from_scans", {}, { dedupeKey: dedupeKeyFor("suggest_from_scans", {}), priority: 6 });
+  await queue.drain();
+  expect(await db.select().from(schema.filterSuggestions)).toHaveLength(rows.length);
+}, 120_000);
+
+it("reuses the last browser render while a load-more listing's first page is unchanged", async () => {
+  const [company] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://www.acme.example" }).returning();
+  const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://www.acme.example/listing" }).returning();
+  const page = '<a href="/jobs/one">Operations Manager</a><button>Load more</button>';
+  server.setRoutes({ "www.acme.example": { "/robots.txt": { body: "User-agent: *\nAllow: /" }, "/listing": { body: page } } });
+  const render = vi.fn(async () => ({ html: '<a href="/jobs/one">Operations Manager</a><a href="/jobs/two">Operations Lead</a>', finalUrl: "https://www.acme.example/listing", requests: [], status: 200 }));
+  const withBrowser = { ...deps, browser: { render } as unknown as WorkerDeps["browser"] };
+  const scan = async () => _scanSourceForTests(withBrowser, company!, source!, await deps.settings(), null);
+
+  expect((await scan()).postingsFound).toBe(2);
+  expect(render).toHaveBeenCalledTimes(1);
+  now = new Date(now.getTime() + 86_400_000);
+  expect((await scan()).postingsFound).toBe(2);
+  expect(render).toHaveBeenCalledTimes(1); // same first page: capture reused, no render
+  server.setRoutes({ "www.acme.example": { "/robots.txt": { body: "User-agent: *\nAllow: /" }, "/listing": { body: page.replace("Manager", "Manager (Hybrid)") } } });
+  now = new Date(now.getTime() + 86_400_000);
+  await scan();
+  expect(render).toHaveBeenCalledTimes(2); // first page changed: render again
+  now = new Date(now.getTime() + 8 * 86_400_000);
+  await scan();
+  expect(render).toHaveBeenCalledTimes(3); // a week on, refresh regardless
 }, 120_000);
 
 it("discards a late scan when its source has been disabled", async () => {

@@ -25,6 +25,7 @@ export function extractSuggestionValue(s: Pick<FilterSuggestion, "type" | "value
   switch (s.type) {
     case "keyword_include":
     case "keyword_exclude":
+    case "seniority_include":
     case "location": {
       const term = firstString(v, ["term", "keyword", "location", "value"]);
       return term ? { kind: "term", term } : { kind: "unknown" };
@@ -69,6 +70,8 @@ export function describeFilterSuggestion(s: Pick<FilterSuggestion, "type" | "val
       return extracted.kind === "term" ? `Add "${extracted.term}" to include keywords` : "Add an include keyword";
     case "keyword_exclude":
       return extracted.kind === "term" ? `Add "${extracted.term}" to exclude keywords` : "Add an exclude keyword";
+    case "seniority_include":
+      return extracted.kind === "term" ? `Add "${extracted.term}" to seniority labels` : "Add a seniority label";
     case "location":
       return extracted.kind === "term" ? `Add "${extracted.term}" to the location filter` : "Add a location filter term";
     case "hide_threshold":

@@ -76,6 +76,8 @@ export async function acceptFilterSuggestion(suggestionId: string): Promise<void
 
   if (suggestion.type === "keyword_include" && extracted.kind === "term") {
     await saveSettingsAndGate({ gate: { ...settings.gate, includeKeywords: [...new Set([...settings.gate.includeKeywords, extracted.term])] } });
+  } else if (suggestion.type === "seniority_include" && extracted.kind === "term") {
+    await saveSettingsAndGate({ gate: { ...settings.gate, seniorityKeywords: [...new Set([...(settings.gate.seniorityKeywords ?? []), extracted.term])] } });
   } else if (suggestion.type === "keyword_exclude" && extracted.kind === "term") {
     await saveSettingsAndGate({ gate: { ...settings.gate, excludeKeywords: [...new Set([...settings.gate.excludeKeywords, extracted.term])] } });
   } else if (suggestion.type === "location" && extracted.kind === "term") {
@@ -91,6 +93,13 @@ export async function acceptFilterSuggestion(suggestionId: string): Promise<void
   revalidatePath("/learning");
   revalidatePath("/settings");
   revalidatePath("/");
+}
+
+/** Mine the latest scan of every source for role types and seniority labels the gate is missing. */
+export async function suggestFromScansNow(): Promise<void> {
+  await requireSession();
+  await enqueue("suggest_from_scans", {});
+  revalidatePath("/learning");
 }
 
 export async function rejectFilterSuggestion(suggestionId: string): Promise<void> {

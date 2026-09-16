@@ -444,11 +444,17 @@ interface CachedHtmlPage {
   url: string;
   contentHash: string;
   postings: RawPosting[];
+  /** Hash of the page as plain HTTP served it, before any browser render. */
+  httpHash?: string;
+  /** When a browser last rendered this page; a reused capture carries it forward. */
+  renderedAt?: string;
 }
 
 interface HtmlScanOutcome {
   postings: RawPosting[];
   method: "http" | "browser";
+  httpHash?: string;
+  renderedAt?: string;
   dropped: number;
   contentHash: string;
   unchanged: boolean;
@@ -496,7 +502,7 @@ async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: Career
       dropped += page.dropped;
       unchanged = unchanged && page.unchanged;
       recipe ??= page.recipe;
-      pages.push({ url, contentHash: page.contentHash, postings: page.postings });
+      pages.push({ url, contentHash: page.contentHash, postings: page.postings, httpHash: page.httpHash, renderedAt: page.renderedAt });
       incomplete ||= page.incomplete ?? false;
       incompleteReason ??= page.incompleteReason;
       url = page.traversed ? null : ats.nextListingPage(page.html ?? "", page.finalUrl ?? url);
@@ -524,8 +530,22 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
   finalUrl = page.url;
 
   let postings = ats.extractPostingsFromHtml(html, finalUrl, spec.recipe);
-  if (!supplied && deps.browser && (postings.length === 0 || (!ats.nextListingPage(html, finalUrl) && /<(?:button|a)[^>]*>\s*(?:next|load more|show more)/i.test(html)))) {
-    const rendered = await deps.browser.render(spec.url, { scrollAndExpand: true });
+  const httpHash = supplied ? undefined : sha1(html.replace(/\s+/g, " "));
+  const wantsRender = !supplied && deps.browser && (postings.length === 0 || (!ats.nextListingPage(html, finalUrl) && /<(?:button|a)[^>]*>\s*(?:next|load more|show more)/i.test(html)));
+  // A server-rendered list with a "load more" control was rendered every scan
+  // to reach the rest of it. When the first page is byte-identical to the one
+  // behind the last render, the rest has not moved either: reuse that capture
+  // and skip the browser, but never for more than a week, and never for a
+  // JavaScript shell (zero postings over HTTP), whose static markup says
+  // nothing about what the board lists today.
+  const RENDER_TTL_MS = 7 * 86_400_000;
+  if (wantsRender && postings.length > 0 && cached?.httpHash && cached.httpHash === httpHash && cached.renderedAt && cached.postings.length >= postings.length
+      && deps.now().getTime() - new Date(cached.renderedAt).getTime() < RENDER_TTL_MS) {
+    log.debug("reusing last render: first page unchanged", { url: spec.url, renderedAt: cached.renderedAt });
+    return { postings: cached.postings, method: "http", dropped: 0, contentHash: cached.contentHash, unchanged: true, html, finalUrl, httpHash, renderedAt: cached.renderedAt };
+  }
+  if (wantsRender) {
+    const rendered = await deps.browser!.render(spec.url, { scrollAndExpand: true });
     if (rendered.status !== null && rendered.status >= 400) {
       throw new SourceFetchError(`Browser returned HTTP ${rendered.status}`, rendered.status === 403 || rendered.status === 429 ? "blocked" : "http", rendered.status);
     }
@@ -537,7 +557,7 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
       catch (error) { if (!outcomes.length) throw error; incomplete = true; }
     }
     return { postings: keyPostings(outcomes.flatMap(p => p.postings)).keyed, method: "browser", dropped: outcomes.reduce((n, p) => n + p.dropped, 0),
-      contentHash: sha1(captures.map(p => p.html).join("|")), unchanged: false, incomplete, incompleteReason: incomplete ? "Browser pagination could not complete; a control was blocked, did not advance, or reached its limit." : undefined, traversed: true };
+      contentHash: sha1(captures.map(p => p.html).join("|")), unchanged: false, httpHash, renderedAt: deps.now().toISOString(), incomplete, incompleteReason: incomplete ? "Browser pagination could not complete; a control was blocked, did not advance, or reached its limit." : undefined, traversed: true };
 
   }
 
@@ -545,7 +565,7 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
   const unchanged = contentHash === cached?.contentHash;
 
   if (postings.length === 0 && unchanged && cached?.postings.length) postings = cached.postings;
-  if (postings.length > 0) return { postings, method, dropped: 0, contentHash, unchanged, html, finalUrl };
+  if (postings.length > 0) return { postings, method, dropped: 0, contentHash, unchanged, html, finalUrl, httpHash };
   if (unchanged || !deps.ai.enabled || (await aiBudgetExceeded(deps))) {
     throw new SourceFetchError("HTML extraction found no verifiable postings; cannot establish a successful empty scan", "parse");
   }

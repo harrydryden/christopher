@@ -1,4 +1,4 @@
-import { answerOpenQuestion, acceptFilterSuggestion, rejectFilterSuggestion, rescoreAllRoles, resynthesizeNow, savePinnedStatements, saveSeedProfile, savePreferenceProfile, acceptReasonTag } from "@/app/actions/learning";
+import { answerOpenQuestion, acceptFilterSuggestion, rejectFilterSuggestion, rescoreAllRoles, resynthesizeNow, savePinnedStatements, saveSeedProfile, savePreferenceProfile, acceptReasonTag, suggestFromScansNow } from "@/app/actions/learning";
 import { saveDecisionTags } from "@/app/actions/decisions";
 import { Badge } from "@/components/Badge";
 import { Button } from "@/components/Button";
@@ -218,15 +218,21 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
         )}
       </Card>
 
-      <Card title="Filter suggestions">
+      <Card title="Filter suggestions" actions={
+        <form action={suggestFromScansNow}>
+          <Button type="submit" size="sm" title="Read the latest scan of every company for role words and seniority labels your filters are turning away">Mine recent scans</Button>
+        </form>
+      }>
+        <p className="mb-3 text-12 text-muted">From your decisions weekly, and from the latest scans after every daily run: role types and seniority labels that would admit roles in your location which the current filters turn away. Accepting adds the term and re-evaluates the table.</p>
         {suggestions.length === 0 ? (
-          <EmptyState title="No pending filter suggestions" description="Reviewed weekly from your decisions and near-miss outcomes." />
+          <EmptyState title="No pending filter suggestions" description="Nothing waiting. Suggestions arrive after the daily run, or press Mine recent scans." />
         ) : (
           <div className="space-y-3">
             {suggestions.map(({ suggestion, companyName }) => (
               <div key={suggestion.id} className="border border-line-muted p-3 text-14">
                 <div className="mb-1 flex flex-wrap items-center gap-2">
-                  <Badge tone="blue">{suggestion.type.replace("_", " ")}</Badge>
+                  <Badge tone={(suggestion.value as { source?: string }).source === "scans" ? "green" : "blue"}>{suggestion.type.replace(/_/g, " ")}</Badge>
+                  {(suggestion.value as { source?: string }).source === "scans" && <span className="text-12 text-muted">from recent scans</span>}
                   <span className="font-medium text-fg">{describeFilterSuggestion(suggestion, companyName ?? undefined)}</span>
                 </div>
                 {suggestion.rationale && <p className="text-muted">{suggestion.rationale}</p>}

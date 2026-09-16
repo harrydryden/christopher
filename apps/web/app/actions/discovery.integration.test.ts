@@ -93,6 +93,13 @@ it("distinguishes paused, disabled, active and empty-email states", () => {
   expect(discoverySourceState({ ...base, enabled: false, activeStatus: "queued" })).toBe("Paused");
   expect(discoverySourceState({ ...base, suggestionsEnabled: false })).toBe("Discovery disabled");
 });
+it("calls a source import only when its site refuses automated reading, not broken", () => {
+  const base = { enabled: true, suggestionsEnabled: true, lastError: null as string | null, waiting: 0, lastCheckedAt: new Date(), kind: "linkedin" };
+  const robots = { ...base, lastError: "robots.txt disallows https://www.linkedin.com/newsletters/scaling-europe-daily" };
+  expect(discoverySourceState(robots)).toBe("Import only");
+  expect(discoverySourceState({ ...robots, waiting: 2 })).toBe("Content ready");
+  expect(discoverySourceState({ ...base, lastError: "HTTP 502: https://example.com" })).toBe("Needs attention");
+});
 it("rolls back acceptance if queuing careers setup fails", async () => {
   const row = await recommendation();
   const queue = await import("@/lib/enqueue");

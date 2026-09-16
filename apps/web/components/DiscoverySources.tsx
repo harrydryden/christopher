@@ -3,6 +3,7 @@ import { discoveryDocuments, discoverySources, tasks } from "@christopher/db/sch
 import { db } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { discoverySourceState, SOURCE_KIND_LABELS } from "@/lib/discovery-ux";
+import { importOnlyReason, isImportOnlySourceError } from "@christopher/core";
 import { checkDiscoverySource, importDiscoveryDocument, saveDiscoverySource, updateDiscoverySource } from "@/app/actions/discovery-sources";
 import { Button } from "./Button";
 import { Badge } from "./Badge";
@@ -41,7 +42,9 @@ export async function DiscoverySources() {
       const active = sourceTasks.find(t => t.status === "running") ?? sourceTasks.find(t => t.status === "queued");
       const lastResult = sourceTasks.find(t => t.status === "done" && t.type === "monitor_source")?.result as { stored?: number; documents?: number; skipped?: string } | undefined;
       const state = discoverySourceState({ ...source, waiting, suggestionsEnabled: settings.suggestionsEnabled, activeStatus: active?.status });
-      const canCheck = source.enabled && settings.suggestionsEnabled && !active && (source.kind !== "email" || waiting > 0);
+      const importOnly = isImportOnlySourceError(source.lastError);
+      // Nothing to fetch, so a check is only useful once an edition has been imported.
+      const canCheck = source.enabled && settings.suggestionsEnabled && !active && (source.kind !== "email" && !importOnly ? true : waiting > 0);
       return <article key={source.id} aria-label={source.name} className="space-y-3 border border-line-muted p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0"><h2 className="font-semibold">{source.name}</h2><p className="text-14 text-muted">{SOURCE_KIND_LABELS[source.kind]} · {source.intervalDays === 7 ? "Weekly" : `Every ${source.intervalDays} days`}</p></div>
@@ -51,9 +54,9 @@ export async function DiscoverySources() {
         <p className="text-14">{waiting} {waiting === 1 ? "edition or page" : "editions or pages"} waiting to be checked</p>
         <p className="text-12 text-muted">Last checked: {source.lastCheckedAt ? date(source.lastCheckedAt) : "Not yet"}. {source.enabled && settings.suggestionsEnabled && !active ? `Next: ${source.nextRunAt <= new Date() ? "due now" : date(source.nextRunAt)}.` : ""} Times shown in {settings.timezone}.</p>
         {!active && typeof lastResult?.stored === "number" && <p className="text-14 text-muted">Last collection: {lastResult.documents ?? 0} new or changed pages queued for evaluation. Verified companies appear in Review.</p>}
-        {source.lastError && <div role="status" className="p-3 text-14 text-warn"><p>{/AI unavailable|budget|extraction failed/i.test(source.lastError) ? <>Company evaluation is unavailable. <a href="/settings" className="underline">Check your AI settings and budget</a>, then try again.</> : "Some content could not be checked. You can import the text below or try again."}</p><section className="mt-1"><h3 className="cursor-pointer">Technical details</h3><p className="mt-1 break-words">{source.lastError}</p></section></div>}
+        {source.lastError && <div role="status" className={`p-3 text-14 ${importOnly ? "text-muted" : "text-warn"}`}><p>{/AI unavailable|budget|extraction failed/i.test(source.lastError) ? <>Company evaluation is unavailable. <a href="/settings" className="underline">Check your AI settings and budget</a>, then try again.</> : importOnly ? importOnlyReason(source.url) : "Some content could not be checked. You can import the text below or try again."}</p><section className="mt-1"><h3 className="cursor-pointer">Technical details</h3><p className="mt-1 break-words">{source.lastError}</p></section></div>}
         <DiscoverySourceForm action={checkDiscoverySource.bind(null, source.id)} pendingLabel="Queuing check…"><Button className="min-h-11" size="sm" type="submit" disabled={!canCheck}>{active?.status === "running" ? "Checking…" : active ? "Check queued" : "Check now"}</Button></DiscoverySourceForm>
-        {source.kind === "email" && waiting === 0 && <p className="text-14 text-muted">Import an edition below to make content available for checking.</p>}
+        {(source.kind === "email" || importOnly) && waiting === 0 && <p className="text-14 text-muted">Import an edition below to make content available for checking.</p>}
         <section><h3 className="text-14 font-medium">Import text</h3>
           <p className="my-2 text-14 text-muted">Paste an emailed edition or a post that requires sign-in. Up to 40,000 characters per import. Duplicate imports are ignored.</p>
           <DiscoverySourceForm action={importDiscoveryDocument.bind(null, source.id)} pendingLabel="Importing…" className="grid gap-3">

@@ -2,6 +2,7 @@ import { RefreshCompanyButton } from "@/components/RefreshCompanyButton";
 import { CompanyFavicon } from "@/components/CompanyFavicon";
 import { getCompanyWorkStatus } from "@/lib/work-status";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { AddCompanyForm } from "@/components/AddCompanyForm";
 import { addCompanies, archiveCompany, pauseCompany, resumeCompany } from "@/app/actions/companies";
 import { Badge, companyStatusTone, scanStatusTone } from "@/components/Badge";
 import { Button } from "@/components/Button";
@@ -37,30 +38,13 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
         </div>
       )}
 
-      <Card title="Add companies" className="mb-6">
-        <form action={addCompanies} className="flex flex-col gap-2">
-          <label htmlFor="urls" className="text-14 text-muted">
-            One homepage URL per line, or comma-separated. Each is discovered independently.
-          </label>
-          <textarea
-            id="urls"
-            name="urls"
-            rows={3}
-            required
-            placeholder={"acme.com\nhttps://example.org"}
-            className={`resize-y ${inputClass}`}
-          />
-          <div>
-            <Button type="submit" variant="primary">
-              Add companies
-            </Button>
-          </div>
-        </form>
+      <Card title="Add a company" className="mb-6">
+        <AddCompanyForm action={addCompanies} focus={sp.added !== undefined} />
       </Card>
 
       <SearchForm action="/companies" className="mb-4 flex flex-wrap items-end gap-3"><label className="grid gap-1.5"><span className={labelClass}>Search companies</span><input name="q" defaultValue={q} maxLength={200} className={`h-11 w-80 ${inputClass}`} /></label><Button type="submit" className="h-11">Search</Button><SearchPending />{q && <a className="self-center text-13 underline" href="/companies">Clear</a>}</SearchForm>
       <Pagination page={page} total={total} path="/companies" params={{ q }}/>
-      {work.active && <div className="mb-4"><AutoRefresh message="Company scanning or discovery is pending. Status updates automatically." /></div>}
+      {work.active && <AutoRefresh message={null} />}
       {rows.length === 0 ? (
         <EmptyState title={q ? "No matching companies" : "No companies yet"} description={q ? "Try another name or domain." : "Add a homepage URL above to start tracking a company’s careers page."} />
       ) : (

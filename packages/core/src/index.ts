@@ -4,6 +4,7 @@ export * from "./gate";
 export * from "./suggest-from-scans";
 export * from "./reconcile";
 export * from "./status";
+export * from "./source-errors";
 export * from "./settings";
 export * from "./models";
 export * from "./tasks";

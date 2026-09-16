@@ -1,3 +1,5 @@
+import { isImportOnlySourceError } from "@christopher/core";
+
 /** Serializable feedback shared by discovery actions and forms. */
 export type DiscoveryActionResult = { ok: true; message: string } | { ok: false; error: string };
 export const SOURCE_KIND_LABELS = { website: "Website", linkedin: "LinkedIn", email: "Email newsletter" } as const;
@@ -10,8 +12,10 @@ export function discoverySourceState(input: {
   if (!input.suggestionsEnabled) return "Discovery disabled";
   if (input.activeStatus === "running") return "Checking";
   if (input.activeStatus === "queued") return "Queued";
-  if (input.lastError) return "Needs attention";
+  const importOnly = isImportOnlySourceError(input.lastError);
+  if (input.lastError && !importOnly) return "Needs attention";
   if (input.waiting) return "Content ready";
+  if (importOnly) return "Import only";
   if (input.kind === "email") return "Waiting for content";
   return input.lastCheckedAt ? "Up to date" : "Ready for first check";
 }

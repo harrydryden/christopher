@@ -52,6 +52,22 @@ it("queues due enabled sources only, once across repeated scheduler ticks", asyn
   const tasks = await client.db.select().from(schema.tasks).where(eq(schema.tasks.type, "monitor_source"));
   expect(tasks).toHaveLength(1); expect(tasks[0]!.payload).toEqual({ sourceId: source.id });
 });
+it("keeps the normal cadence for a source whose site refuses every automated reader", async () => {
+  const [source] = await client.db.insert(schema.discoverySources).values({
+    name: "Scaling Europe", kind: "linkedin", url: "https://www.linkedin.com/newsletters/scaling-europe-daily", nextRunAt: now,
+  }).returning();
+  vi.spyOn(deps.fetcher, "fetchText").mockRejectedValue(new Error("robots.txt disallows https://www.linkedin.com/newsletters/scaling-europe-daily"));
+  await handleMonitorSource(task(source!.id), deps);
+  const [blocked] = await client.db.select().from(schema.discoverySources);
+  expect(blocked!.lastError).toContain("robots.txt disallows");
+  // Weekly, not the daily retry a transient failure earns: tomorrow's answer is the same.
+  expect(blocked!.nextRunAt.toISOString()).toBe("2026-09-18T00:00:00.000Z");
+
+  vi.spyOn(deps.fetcher, "fetchText").mockRejectedValue(new Error("HTTP 502: https://www.linkedin.com/newsletters/scaling-europe-daily"));
+  await handleMonitorSource(task(source!.id), deps);
+  const [transient] = await client.db.select().from(schema.discoverySources);
+  expect(transient!.nextRunAt.toISOString()).toBe("2026-09-12T00:00:00.000Z");
+});
 it("stores verified recommendations with evidence, never adds a company, and does not reprocess", async () => {
   const source = await sourceWithDocument();
   const extract = vi.spyOn(deps.ai, "extractSourceCompanies").mockResolvedValue({ candidates: [

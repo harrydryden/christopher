@@ -20,23 +20,27 @@ export async function addCompanies(formData: FormData): Promise<void> {
   const raw = String(formData.get("urls") ?? "");
   const lines = [...new Set(raw.split(/[\n,]/).map((s) => s.trim()).filter(Boolean))];
 
-  const existingRows = await db().select({ domain: companies.domain }).from(companies);
-  const existingDomains = new Set(existingRows.map((r) => r.domain));
-
   let added = 0;
   const candidates: Array<typeof companies.$inferInsert> = [];
   const skipped: string[] = [];
+  const parsed: Array<{ url: string; domain: string }> = [];
 
   for (const line of lines) {
-    let url: string;
-    let domain: string;
     try {
-      url = ensureHttpUrl(line);
-      domain = extractDomain(url);
+      const url = ensureHttpUrl(line);
+      parsed.push({ url, domain: extractDomain(url) });
     } catch {
       skipped.push(line);
-      continue;
     }
+  }
+  // Ask only about the domains in hand, so adding one company costs the same at ten companies
+  // as at ten thousand.
+  const wanted = [...new Set(parsed.map((p) => p.domain))];
+  const existingDomains = new Set(
+    wanted.length === 0 ? [] : (await db().select({ domain: companies.domain }).from(companies).where(inArray(companies.domain, wanted))).map((r) => r.domain),
+  );
+
+  for (const { url, domain } of parsed) {
     if (existingDomains.has(domain)) {
       skipped.push(domain);
       continue;

@@ -1,5 +1,5 @@
 import { schema, enqueueTask, type Task } from "@christopher/db";
-import { dedupeKeyFor, discovery, extractDomain, normalizeUrl, sha1, stripHtml } from "@christopher/core";
+import { dedupeKeyFor, discovery, extractDomain, isImportOnlySourceError, normalizeUrl, sha1, stripHtml } from "@christopher/core";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { aiBudgetExceeded, makeFetchContext, type WorkerDeps } from "../context";
 import { latestProfile } from "./learning";
@@ -58,8 +58,12 @@ export async function handleMonitorSource(task: Task, deps: WorkerDeps): Promise
       .innerJoin(schema.discoveryDocuments, eq(schema.discoveryCandidates.documentId, schema.discoveryDocuments.id))
       .where(and(eq(schema.discoveryDocuments.sourceId, sourceId), isNull(schema.discoveryCandidates.processedAt))).limit(100);
     for (const candidate of pending) await enqueueTask(deps.db, "verify_company", { sourceId, candidateId: candidate.id }, { dedupeKey: `verify_company:${candidate.id}`, priority: 7 });
+    // A site that refuses every automated reader will refuse again tomorrow. Such a source keeps
+    // its normal cadence rather than retrying daily, and its imported editions still flow.
+    const importOnly = fetchErrors.length > 0 && fetchErrors.every(isImportOnlySourceError);
+    const retrySoon = documents.length === 12 || (fetchErrors.length > 0 && !importOnly);
     await deps.db.update(schema.discoverySources).set({ lastCheckedAt: deps.now(), lastError: fetchErrors.length ? fetchErrors.join("; ").slice(0, 1000) : null,
-      nextRunAt: fetchErrors.length || documents.length === 12 ? new Date(deps.now().getTime() + 86400000) : sql`${deps.now()}::timestamptz + ${schema.discoverySources.intervalDays} * interval '1 day'`,
+      nextRunAt: retrySoon ? new Date(deps.now().getTime() + 86400000) : sql`${deps.now()}::timestamptz + ${schema.discoverySources.intervalDays} * interval '1 day'`,
     }).where(eq(schema.discoverySources.id, sourceId));
     return { documents: documents.length, stored };
   } catch (error) {

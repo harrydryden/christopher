@@ -9,7 +9,7 @@ export function DiscoverySourceFields() {
     <label className="grid gap-1.5"><span className={labelClass}>Source name</span><input name="name" required maxLength={200} placeholder="e.g. Scaling Europe Daily" className={input}/></label>
     {kind !== "email" ? <label className="grid gap-1 text-14">{kind === "linkedin" ? "LinkedIn URL" : "Website URL"}<input name="url" type="url" required maxLength={2048} placeholder="https://…" className={input}/></label>
       : <p className="text-14 text-muted">Create the source, then import newsletter text. Creating a source does not subscribe to emails or connect your inbox.</p>}
-    {kind === "linkedin" && <p className="text-14 text-muted">We read public articles linked from this page. Some editions may require you to import their text; complete newsletter coverage is not guaranteed.</p>}
+    {kind === "linkedin" && <p className="text-14 text-muted">LinkedIn does not allow automated reading, so a LinkedIn source is import only: create it, then paste each edition&rsquo;s text.</p>}
     <label className="grid gap-1.5"><span className={labelClass}>Check every (days)</span><input name="intervalDays" type="number" min={1} max={90} defaultValue={7} required className={input}/><span className="text-12 text-muted">7 days = weekly. The first check is due when you add the source.</span></label>
   </>;
 }

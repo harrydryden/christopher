@@ -53,7 +53,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
             <Mark size={48} />
           </Link>
           <nav aria-label="Main navigation" className="flex flex-wrap gap-0.5 md:block md:space-y-0.5">
-            {NAV_ITEMS.map((item) => (
+            {[...NAV_ITEMS, ...(user.role === "admin" ? [{ href: "/admin", label: "Admin" }] : [])].map((item) => (
               <NavLink key={item.href} href={item.href}>
                 {item.label}
               </NavLink>

@@ -14,6 +14,7 @@ const {
   rubricFixture,
   reviewFixture,
 } = require("../packages/core/test/cv-review-fixture.ts");
+const { modelForCallSite, resolveSystemSettings } = require("../packages/core/src/settings.ts");
 
 const { Pool } = createRequire(
   new URL("../apps/web/package.json", import.meta.url),
@@ -173,7 +174,8 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     const cvModel = page.getByRole("combobox", { name: "CV model", exact: true });
     await cvModel.waitFor();
     const currentModel = await cvModel.inputValue();
-    const extractionModel = await page.getByRole("combobox", { name: "Default model", exact: true }).inputValue();
+    // The shared extraction model is set in Admin, so read it the way the app does rather than from this page.
+    const extractionModel = modelForCallSite(resolveSystemSettings((await pool.query("select key, value from settings where key not like 'internal:%'")).rows), "A3");
     const choices = await cvModel.locator("option").evaluateAll(options => options.map(option => option.value));
     const selectedModel = choices.find(value => value !== currentModel && value !== extractionModel);
     assert.ok(selectedModel);

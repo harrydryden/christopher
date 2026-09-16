@@ -59,6 +59,10 @@ const PAGES = [
   ["/health", ["Health"]],
   ["/settings", ["Settings"]],
   ["/account", ["Account", "Sign-in methods"]],
+  ["/admin", ["Admin", "Registration", "Accounts"]],
+  ["/admin/settings", ["System settings", "Schedule"]],
+  ["/admin/catalogue", ["Company catalogue"]],
+  ["/admin/health", ["Operations", "Background worker"]],
   ["/cv", ["CV builder", "Saved CVs"]],
   ["/library", ["Library", "Intro", "Website", "Experience", "Education, skills and interests"]],
   ["/applications", ["Applications"]],
@@ -105,7 +109,11 @@ async function main() {
   }
 
   console.log(`starting on :${PORT}…`);
-  const server = spawn(process.execPath, [nextBin, "start", "-p", String(PORT)], { cwd: "apps/web", env, stdio: ["ignore", "pipe", "pipe"] });
+  // `next start` forks a `next-server` child that outlives its parent, so the server gets its own
+  // process group and, whatever happens below, the whole group is killed on exit rather than left
+  // on the port for the next run to find.
+  const server = spawn(process.execPath, [nextBin, "start", "-p", String(PORT)], { cwd: "apps/web", env, stdio: ["ignore", "pipe", "pipe"], detached: true });
+  process.on("exit", () => { try { process.kill(-server.pid, "SIGKILL"); } catch { /* already gone */ } });
   let serverLog = "";
   server.stdout.on("data", (d) => (serverLog += d.toString()));
   server.stderr.on("data", (d) => (serverLog += d.toString()));
@@ -140,13 +148,17 @@ async function main() {
 
   for (const [path, expected, selectedStatus] of PAGES) {
     let res;
+    let body;
     try {
-      res = await fetch(`http://127.0.0.1:${PORT}${path}`, { headers: { cookie }, redirect: "manual" });
+      // A page that never finishes streaming shows up here as a body timeout, with the server log below.
+      res = await fetch(`http://127.0.0.1:${PORT}${path}`, { headers: { cookie }, redirect: "manual", signal: AbortSignal.timeout(45_000) });
+      body = await res.text();
     } catch (err) {
-      failures.push(`${path} threw: ${err.message}`);
+      failures.push(`${path} threw: ${err.cause?.message ?? err.message}`);
+      // A server that stops answering will not recover for the next page; stop and report with its log.
+      if (err.name === "TimeoutError" || err.name === "AbortError") break;
       continue;
     }
-    const body = await res.text();
     const text = visibleText(body);
     if (res.status !== 200) {
       failures.push(`${path} returned ${res.status}${res.headers.get("location") ? ` -> ${res.headers.get("location")}` : ""}`);
@@ -180,6 +192,7 @@ async function main() {
     server.kill("SIGKILL");
     await exited;
   }
+  try { process.kill(-server.pid, "SIGKILL"); } catch { /* the group is already gone */ }
 
   if (failures.length) {
     console.error("\nFAILURES:");

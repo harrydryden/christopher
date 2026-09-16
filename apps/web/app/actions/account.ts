@@ -59,7 +59,7 @@ export async function setUserRole(userId: string, role: UserRole): Promise<void>
     if (!others?.n) throw new Error("You are the only administrator. Make someone else an administrator first.");
   }
   await db().update(users).set({ role }).where(eq(users.id, id));
-  revalidatePath("/account");
+  revalidatePath("/admin");
 }
 
 /** Administrators: remove another account and everything it owns. Shared companies and postings stay. */
@@ -69,7 +69,7 @@ export async function deleteUser(userId: string): Promise<void> {
   if (id === admin.id) throw new Error("You cannot delete your own account here.");
   await endAllSessions(id);
   await db().delete(users).where(eq(users.id, id));
-  revalidatePath("/account");
+  revalidatePath("/admin");
 }
 
 /** Administrators: a single-use reset link to hand to someone when email delivery is not set up. It also completes a pending confirmation. */

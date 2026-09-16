@@ -95,10 +95,9 @@ import { saveKeywords } from "./settings";
 import {
   addCompanies,
   useDiscoveryCandidate,
-  deleteCompany,
-  updateCompanyDetails,
   refreshCompany,
 } from "./companies";
+import { removeCatalogueCompany, saveCatalogueCompany } from "./admin";
 
 beforeAll(async () => {
   const client = createDb(
@@ -221,7 +220,7 @@ describe("authenticated mutations", () => {
     const form = new FormData();
     form.set("homepageUrl", "www.corrected.example");
     form.set("name", "Acme");
-    expect(await updateCompanyDetails(company.id, { ok: true }, form)).toEqual({
+    expect(await saveCatalogueCompany(company.id, { ok: true }, form)).toEqual({
       ok: true,
     });
     const [updated] = await database
@@ -237,7 +236,7 @@ describe("authenticated mutations", () => {
       logoOnly: true,
       homepageUrl: "https://www.corrected.example/",
     });
-    await updateCompanyDetails(company.id, { ok: true }, form);
+    await saveCatalogueCompany(company.id, { ok: true }, form);
     expect(await database.select().from(schema.tasks)).toHaveLength(1);
     expect((await database.select().from(schema.careerSources))[0]!.url).toBe(
       source.url,
@@ -245,7 +244,7 @@ describe("authenticated mutations", () => {
     expect((await database.select().from(schema.jobs))[0]!.id).toBe(job.id);
     form.set("homepageUrl", "javascript:alert(1)");
     expect(
-      (await updateCompanyDetails(company.id, { ok: true }, form)).ok,
+      (await saveCatalogueCompany(company.id, { ok: true }, form)).ok,
     ).toBe(false);
     await database
       .insert(schema.companies)
@@ -256,11 +255,11 @@ describe("authenticated mutations", () => {
       });
     form.set("homepageUrl", "other.example");
     expect(
-      (await updateCompanyDetails(company.id, { ok: true }, form)).ok,
+      (await saveCatalogueCompany(company.id, { ok: true }, form)).ok,
     ).toBe(false);
     session = undefined;
     await expect(
-      updateCompanyDetails(company.id, { ok: true }, form),
+      saveCatalogueCompany(company.id, { ok: true }, form),
     ).rejects.toThrow("Unauthorised");
   });
   it("rejects unauthenticated action calls before writing", async () => {
@@ -335,8 +334,8 @@ describe("authenticated mutations", () => {
   it("retains decision snapshots when a company is deleted", async () => {
     const { company, job } = await fixture();
     await decide(job.id, "apply", "Good fit");
-    await expect(deleteCompany(company.id)).rejects.toThrow(
-      "redirect:/companies",
+    await expect(removeCatalogueCompany(company.id)).rejects.toThrow(
+      "redirect:/admin/catalogue",
     );
     expect(await database.select().from(schema.jobs)).toHaveLength(0);
     const decisions = await database

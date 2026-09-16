@@ -50,8 +50,8 @@ the same learning loop.
    administrator addresses (default: `harryddryden@gmail.com`). Once the interface is up, sign up
    with that address, or use "Continue with Google" with it, and confirm the address: the
    confirmation link asks for your password. Only then does the account become an administrator.
-   Nobody else can sign up until you open registration in Settings, and new members become
-   administrators only if you promote them from Account. Optional extras: `GOOGLE_CLIENT_ID` and
+   Nobody else can sign up until you open registration in Admin, and new members become
+   administrators only if you promote them there. Optional extras: `GOOGLE_CLIENT_ID` and
    `GOOGLE_CLIENT_SECRET` (an OAuth 2.0 web client in Google Cloud with the redirect URI
    `https://<your host>/auth/google/callback`) add "Continue with Google"; `RESEND_API_KEY` and
    `EMAIL_FROM` send confirmation and password-reset links, and `APP_URL` must be set alongside
@@ -65,7 +65,7 @@ the same learning loop.
 
    **Without Resend.** Confirmation and reset links are written to the server log (Vercel's
    function logs); copy the link from there. An administrator can also mint a reset link for any
-   account from the Account page; using it confirms the address as well.
+   account from Admin › Accounts; using it confirms the address as well.
 
 ---
 
@@ -186,9 +186,9 @@ optional model calls when it is exceeded.
 |---|---|---|
 | Every page 500s right after deploy | Migrations have not run | `DATABASE_URL='<external url>' pnpm db:migrate` |
 | Sign-in page says it needs setting up | `SESSION_SECRET` is unset | Set it in Vercel and redeploy |
-| Nobody else can sign up | Registration is closed by default | Open it in Settings, or add their address to `ADMIN_EMAILS` |
+| Nobody else can sign up | Registration is closed by default | Open it in Admin, or add their address to `ADMIN_EMAILS` |
 | The administrator sees none of the old data | The address used is not in `ADMIN_EMAILS`, or the confirmation link was never completed | Sign up with the listed address and complete the link with your password, or sign in with Google using it |
-| Confirmation or reset emails never arrive | Resend is not configured | Set `RESEND_API_KEY`, `EMAIL_FROM` and `APP_URL`; until then the links appear in the function log, and an administrator can mint reset links from Account |
+| Confirmation or reset emails never arrive | Resend is not configured | Set `RESEND_API_KEY`, `EMAIL_FROM` and `APP_URL`; until then the links appear in the function log, and an administrator can mint reset links from Admin |
 | Worker restarts repeatedly | `DATABASE_URL` wrong, or the internal URL used from another region | Use the external URL |
 | A company shows no source | Discovery could not find one | Open the company and paste the careers or board URL |
 | A source says "blocked" | Bot protection | Paste the underlying board URL; the tool does not try to evade protection |

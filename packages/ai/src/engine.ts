@@ -59,7 +59,12 @@ export interface ParseResponse {
 }
 
 export interface AiEngineOptions {
-  reserve?: (callSite: string, estimateUsd: number) => Promise<((actualUsd: number | null) => Promise<void>) | null>;
+  /**
+   * Hold capacity for one call, or refuse it. The returned function releases the hold, which the
+   * engine calls once the call's real cost has been written through `onUsage`; an engine given a
+   * `reserve` without an `onUsage` that records cost would never charge the budget at all.
+   */
+  reserve?: (callSite: string, estimateUsd: number) => Promise<(() => Promise<void>) | null>;
   apiKey?: string;
   getModel: (callSite: string) => string;
   onUsage?: (record: AiUsageRecord) => void | Promise<void>;
@@ -121,11 +126,12 @@ export class AiEngine {
     };
     if (params.tools) request.tools = params.tools;
 
-    const estimate = estimateCostUsd(model, { inputTokens: Buffer.byteLength(params.system + params.user) * 1.25,
+    // A generous reading of the prompt: English runs about four bytes per token, so a third of the
+    // byte count leaves roughly 30% of headroom. Output is reserved at the cap the call may reach.
+    const estimate = estimateCostUsd(model, { inputTokens: Buffer.byteLength(params.system + params.user) / 3,
       outputTokens: params.maxTokens ?? 4096, cacheReadTokens: 0, cacheWriteTokens: 0 }) + (params.tools?.length ? 1 : 0);
     const settle = this.options.reserve ? await this.options.reserve(callSite, estimate) : undefined;
     if (settle === null) throw new Error("AI budget reserved or exhausted; retry later");
-    let actual: number | null = null;
     try {
       const response = await this.client.messages.create(request, { timeout: params.timeoutMs ?? 30_000 });
       const usage = response.usage ?? {};
@@ -135,7 +141,6 @@ export class AiEngine {
         cacheReadTokens: usage.cache_read_input_tokens ?? 0,
         cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
       };
-      actual = estimateCostUsd(response.model ?? model, tokens);
       const refused = response.stop_reason === "refusal";
       const truncated = response.stop_reason === "max_tokens";
       const parsed = refused || truncated ? null : (response.parsed_output ?? extractJsonBlock(textOf(response)));
@@ -176,7 +181,7 @@ export class AiEngine {
       this.log(`${callSite} failed`, err);
       return null;
     } finally {
-      await settle?.(actual);
+      await settle?.();
     }
   }
 

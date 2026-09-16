@@ -59,7 +59,7 @@ export function AutoRefresh({
     };
   }, [router, cvId, initialVersion]);
   return message === null ? null : (
-    <p role="status" className="text-sm">
+    <p role="status" className="text-14">
       {message}
     </p>
   );

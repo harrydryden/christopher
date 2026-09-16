@@ -11,10 +11,8 @@ export function NavLink({ href, children }: { href: string; children: ReactNode 
     <Link
       href={href}
       aria-current={active ? "page" : undefined}
-      className={`block rounded-md px-3 py-1.5 text-sm font-medium ${
-        active
-          ? "bg-white/15 text-white ring-1 ring-inset ring-white/40"
-          : "text-white hover:bg-white/10"
+      className={`ds-pixel block border-2 px-3 py-1.5 text-11 no-underline ${
+        active ? "border-fg bg-fg text-bg" : "border-transparent text-fg hover:bg-sunken"
       }`}
     >
       {children}

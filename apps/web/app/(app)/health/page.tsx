@@ -49,40 +49,40 @@ export default async function HealthPage() {
       <PageHeader title="Health" />
 
       <Card title="Processing capacity">
-        <p className="text-sm">{metrics.ready} tasks ready · {metrics.running} running · oldest ready task waiting {Math.round(metrics.oldest_seconds / 60)} minutes.</p>
-        <p className="mt-2 text-sm">95% of completed tasks in the last day took at most {Math.round(metrics.p95_seconds)} seconds. {metrics.overdueCompanies} companies have no successful scan in 24 hours; {metrics.overdueDiscovery} discovery sources are over a day late.</p>
-        <p className="mt-2 text-sm">AI requests currently reserve {formatUsd(metrics.reservedUsd)} against your budget.</p>
+        <p className="text-14">{metrics.ready} tasks ready · {metrics.running} running · oldest ready task waiting {Math.round(metrics.oldest_seconds / 60)} minutes.</p>
+        <p className="mt-2 text-14">95% of completed tasks in the last day took at most {Math.round(metrics.p95_seconds)} seconds. {metrics.overdueCompanies} companies have no successful scan in 24 hours; {metrics.overdueDiscovery} discovery sources are over a day late.</p>
+        <p className="mt-2 text-14">AI requests currently reserve {formatUsd(metrics.reservedUsd)} against your budget.</p>
       </Card>
       <Card title="Background worker">
-        <p className="text-sm">
+        <p className="text-14">
           {heartbeat && now.getTime() - heartbeat.at.getTime() < 120_000
             ? `Worker reported ${relativeTime(heartbeat.at, now)}.`
             : "No recent worker report. Check that the background worker is deployed, running and connected to this database; queued scans and CVs may be waiting."}
         </p>
-        {heartbeat && <p className="mt-2 text-sm text-slate-500">
+        {heartbeat && <p className="mt-2 text-14 text-muted">
           Last reported configuration: Anthropic key {heartbeat.aiConfigured ? "configured" : "missing"}; browser {heartbeat.browserAvailable ? "available" : "unavailable"}. A configured key still needs a successful model call to confirm access. {heartbeat.commit && <>Worker release: <code>{heartbeat.commit.slice(0, 7)}</code>.</>}
         </p>}
       </Card>
 
-      <p className="text-sm text-slate-500">Attention lists show up to 100 items each. Use Companies to browse the full portfolio.</p>
+      <p className="text-14 text-muted">Attention lists show up to 100 items each. Use Companies to browse the full portfolio.</p>
       <Card title={`Sources needing attention (${attentionSources.length + noSourceCompanies.length})`}>
         {attentionSources.length === 0 && noSourceCompanies.length === 0 ? (
           <EmptyState title="Nothing needs attention" description="Every source is active and every company has one." />
         ) : (
-          <ul className="space-y-2 text-sm">
+          <ul className="space-y-2 text-14">
             {attentionSources.map((s) => (
               <li key={s.id} className="flex flex-wrap items-center gap-2">
                 <Badge tone={sourceStatusTone(s.status)}>{s.status === "needs_confirmation" ? "needs confirmation" : s.status}</Badge>
-                <Link href={`/companies/${s.companyId}`} className="font-medium text-slate-800 hover:underline">
+                <Link href={`/companies/${s.companyId}`} className="font-medium text-fg hover:underline">
                   {s.companyName}
                 </Link>
-                <span className="text-xs text-slate-500">{s.type}</span>
+                <span className="text-12 text-muted">{s.type}</span>
               </li>
             ))}
             {noSourceCompanies.map((c) => (
               <li key={c.id} className="flex flex-wrap items-center gap-2">
                 <Badge tone="red">no source</Badge>
-                <Link href={`/companies/${c.id}`} className="font-medium text-slate-800 hover:underline">
+                <Link href={`/companies/${c.id}`} className="font-medium text-fg hover:underline">
                   {c.name}
                 </Link>
               </li>
@@ -120,7 +120,7 @@ export default async function HealthPage() {
                   <TD className="whitespace-nowrap" title={p.scan.startedAt.toISOString()}>
                     {relativeTime(p.scan.startedAt, now)}
                   </TD>
-                  <TD className="max-w-[20rem] truncate text-red-600" title={p.scan.error ?? undefined}>
+                  <TD className="max-w-[20rem] truncate text-danger" title={p.scan.error ?? undefined}>
                     {p.scan.error ?? ""}
                   </TD>
                 </TR>
@@ -150,7 +150,7 @@ export default async function HealthPage() {
                   <TD>
                     <Badge tone="neutral">{t.type}</Badge>
                   </TD>
-                  <TD className="max-w-[24rem] truncate text-red-600" title={t.error ?? undefined}>
+                  <TD className="max-w-[24rem] truncate text-danger" title={t.error ?? undefined}>
                     {t.error ?? ""}
                   </TD>
                   <TD className="whitespace-nowrap">{t.finishedAt ? relativeTime(t.finishedAt, now) : "—"}</TD>
@@ -175,10 +175,10 @@ export default async function HealthPage() {
         ) : (
           <div className="flex flex-wrap gap-2">
             {queueCounts.map((c) => (
-              <div key={`${c.type}-${c.status}`} className="flex items-center gap-1.5 rounded-md border border-slate-200 px-2 py-1 text-xs">
-                <span className="text-slate-500">{c.type}</span>
+              <div key={`${c.type}-${c.status}`} className="flex items-center gap-1.5 border border-line-muted px-2 py-1 text-12">
+                <span className="text-muted">{c.type}</span>
                 <Badge tone={taskStatusTone(c.status)}>{c.status}</Badge>
-                <span className="font-medium text-slate-800">{c.n}</span>
+                <span className="font-medium text-fg">{c.n}</span>
               </div>
             ))}
           </div>
@@ -187,17 +187,17 @@ export default async function HealthPage() {
 
       <Card title="AI spend this month">
         <div className="mb-2 flex items-baseline gap-2">
-          <span className="text-lg font-semibold text-slate-900">{formatUsd(spend)}</span>
-          <span className="text-sm text-slate-500">of {formatUsd(budget)} budget</span>
+          <span className="text-16 font-semibold text-fg">{formatUsd(spend)}</span>
+          <span className="text-14 text-muted">of {formatUsd(budget)} budget</span>
         </div>
-        <div className="mb-3 h-2 w-full overflow-hidden rounded-full bg-track">
-          <div className={`h-full rounded-full ${overBudget ? "bg-red-500" : "bg-emerald-500"}`} style={{ width: `${Math.min(100, Math.max(2, spendFraction * 100))}%` }} />
+        <div className="mb-3 h-2 w-full overflow-hidden bg-track">
+          <div className={`h-full ${overBudget ? "bg-danger" : "bg-ok"}`} style={{ width: `${Math.min(100, Math.max(2, spendFraction * 100))}%` }} />
         </div>
-        {overBudget && <p className="mb-3 text-sm text-red-600">Over budget — non-essential AI calls (near-miss scoring, then suggestions) are being skipped.</p>}
+        {overBudget && <p className="mb-3 text-14 text-danger">Over budget — non-essential AI calls (near-miss scoring, then suggestions) are being skipped.</p>}
         <section>
-          <h3 className="text-sm text-slate-500 hover:text-slate-800">Last {aiCalls.length} calls</h3>
+          <h3 className="text-14 text-muted hover:text-fg">Last {aiCalls.length} calls</h3>
           {aiCalls.length === 0 ? (
-            <p className="mt-2 text-sm text-slate-500">No AI calls recorded yet.</p>
+            <p className="mt-2 text-14 text-muted">No AI calls recorded yet.</p>
           ) : (
             <Table className="mt-2">
               <THead>
@@ -255,9 +255,9 @@ export default async function HealthPage() {
                   </TD>
                   <TD>
                     {r.companiesOk} successful
-                    {r.companiesFailed > 0 && <span className="text-red-600"> · {r.companiesFailed} incomplete or failed</span>} of {r.companiesTotal}
-                    {!r.finishedAt && <span className="block text-xs text-slate-500">In progress</span>}
-                    {r.historicalOnly && <span className="block text-xs text-slate-500">Stored summary; source detail unavailable</span>}
+                    {r.companiesFailed > 0 && <span className="text-danger"> · {r.companiesFailed} incomplete or failed</span>} of {r.companiesTotal}
+                    {!r.finishedAt && <span className="block text-12 text-muted">In progress</span>}
+                    {r.historicalOnly && <span className="block text-12 text-muted">Stored summary; source detail unavailable</span>}
                   </TD>
                   <TD>
                     {r.newRoles} / {r.closedRoles}

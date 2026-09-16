@@ -1,4 +1,4 @@
-import { ChristopherMark } from "./brand/ChristopherMark";
+import { Mark } from "./brand";
 
 const stages = [
   {
@@ -40,17 +40,12 @@ export function CvBuildProgress({
     <section
       aria-label="CV build progress"
       aria-busy="true"
-      className="space-y-6 rounded-xl border border-slate-200 bg-slate-50 p-5 sm:p-6"
+      className="space-y-6 border-2 border-line bg-raised p-5 sm:p-6"
     >
       <div className="flex items-center gap-5">
-        <ChristopherMark
-          size={80}
-          searching
-          id="cv-build-wheels"
-          className="shrink-0"
-        />
+        <Mark size={64} searching className="shrink-0" />
         <div role="status" aria-live="polite" aria-atomic="true">
-          <h2 className="text-lg font-semibold text-accent">
+          <h2 className="ds-pixel text-16 text-fg">
             {active?.title ??
               (queued ? "Your CV is queued" : "Preparing your CV")}
           </h2>
@@ -62,21 +57,16 @@ export function CvBuildProgress({
           <li
             key={item.id}
             aria-current={i === index ? "step" : undefined}
-            className={`rounded-lg border p-3 text-sm ${i === index ? "border-accent bg-white text-accent shadow-sm" : "border-slate-200 text-slate-500"}`}
+            className={`border-2 p-3 text-14 ${i === index ? "border-line bg-sunken text-fg" : "border-line-muted text-muted"}`}
           >
             <span
-              className={`mb-2 inline-flex size-7 items-center justify-center rounded-full text-xs font-semibold ${i <= index ? "bg-accent text-white" : "bg-slate-200 text-slate-600"}`}
-              aria-hidden="true"
-            >
-              {i < index ? "✓" : i + 1}
+              className={`ds-pixel mb-2 inline-flex size-6 items-center justify-center text-10 ${i <= index ? "bg-accent text-accent-fg" : "bg-track text-muted"}`}
+              aria-hidden="true"> {i < index ? "✓" : i + 1}
             </span>
             <p className="font-medium">{item.title}</p>
             <span className="sr-only">
               {i < index
-                ? "Completed"
-                : i === index
-                  ? "In progress"
-                  : "Waiting"}
+                ? "Completed": i === index ? "In progress": "Waiting"}
             </span>
           </li>
         ))}

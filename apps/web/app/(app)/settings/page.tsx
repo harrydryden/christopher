@@ -9,14 +9,15 @@ import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
 import { SettingsForm } from "@/components/SettingsForm";
 import { ModelSelect } from "@/components/ModelSelect";
+import { inputClass as fieldClass, labelClass as fieldLabelClass, selectClass } from "@/components/Field";
 import { getSettings } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
 
-const inputClass =
-  "w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-accent focus:ring-1 focus:ring-accent";
-const labelClass = "flex flex-col gap-1 text-sm";
-const fieldLabelClass = "text-xs font-medium text-slate-500";
+// Textareas and inputs share one shape; see components/Field.tsx.
+const inputClass = `resize-y ${fieldClass}`;
+const labelClass = "flex flex-col gap-1.5 text-14";
+const checkboxClass = "flex items-center gap-2 text-14";
 
 export default async function SettingsPage() {
   const [settings, appearance, writing] = await Promise.all([getSettings(), getDefaultCvAppearance(), getCvWritingPreferences()]);
@@ -58,10 +59,10 @@ export default async function SettingsPage() {
 
       <Card title="Match fields">
         <SettingsForm action={saveMatchFields}>
-          <div className="flex gap-4 text-sm">
+          <div className="flex flex-wrap gap-4">
             {(["title", "department", "description"] as const).map((f) => (
-              <label key={f} className="flex items-center gap-1.5">
-                <input type="checkbox" name="matchFields" value={f} defaultChecked={settings.gate.matchFields.includes(f)} />
+              <label key={f} className={checkboxClass}>
+                <input type="checkbox" name="matchFields" value={f} defaultChecked={settings.gate.matchFields.includes(f)} className="h-4 w-4" />
                 {f}
               </label>
             ))}
@@ -75,8 +76,8 @@ export default async function SettingsPage() {
             <span className={fieldLabelClass}>Allowed locations</span>
             <textarea name="locationTerms" rows={2} defaultValue={settings.gate.locationTerms.join("\n")} placeholder="London, UK" className={inputClass} />
           </label>
-          <label className="flex items-center gap-1.5 text-sm">
-            <input type="checkbox" name="includeRemote" value="1" defaultChecked={settings.gate.includeRemote} />
+          <label className={checkboxClass}>
+            <input type="checkbox" name="includeRemote" value="1" defaultChecked={settings.gate.includeRemote} className="h-4 w-4" />
             Include remote roles
           </label>
         </SettingsForm>
@@ -87,11 +88,11 @@ export default async function SettingsPage() {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className={labelClass}>
               <span className={fieldLabelClass}>Hide threshold (blank = off)</span>
-              <input name="hideThreshold" type="number" min={0} max={100} defaultValue={settings.hideThreshold ?? ""} className={inputClass} />
+              <input name="hideThreshold" type="number" min={0} max={100} defaultValue={settings.hideThreshold ?? ""} className={fieldClass} />
             </label>
             <label className={labelClass}>
               <span className={fieldLabelClass}>Show closed roles for (days)</span>
-              <input name="showClosedDays" type="number" min={0} max={365} defaultValue={settings.showClosedDays} className={inputClass} />
+              <input name="showClosedDays" type="number" min={0} max={365} defaultValue={settings.showClosedDays} className={fieldClass} />
             </label>
           </div>
         </SettingsForm>
@@ -102,19 +103,19 @@ export default async function SettingsPage() {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className={labelClass}>
               <span className={fieldLabelClass}>Daily scan time (24h, local)</span>
-              <input name="scanTime" type="text" placeholder="06:00" defaultValue={settings.scanTime} className={inputClass} />
+              <input name="scanTime" type="text" placeholder="06:00" defaultValue={settings.scanTime} className={fieldClass} />
             </label>
             <label className={labelClass}>
               <span className={fieldLabelClass}>Timezone (IANA name)</span>
-              <input name="timezone" type="text" placeholder="Europe/London" defaultValue={settings.timezone} className={inputClass} />
+              <input name="timezone" type="text" placeholder="Europe/London" defaultValue={settings.timezone} className={fieldClass} />
             </label>
             <label className={labelClass}>
               <span className={fieldLabelClass}>Close after N missing scans</span>
-              <input name="closeAfterMissingScans" type="number" min={2} max={5} defaultValue={settings.closeAfterMissingScans} className={inputClass} />
+              <input name="closeAfterMissingScans" type="number" min={2} max={5} defaultValue={settings.closeAfterMissingScans} className={fieldClass} />
             </label>
           </div>
-          <label className="flex items-center gap-1.5 text-sm">
-            <input type="checkbox" name="respectRobotsTxt" value="1" defaultChecked={settings.respectRobotsTxt} />
+          <label className={checkboxClass}>
+            <input type="checkbox" name="respectRobotsTxt" value="1" defaultChecked={settings.respectRobotsTxt} className="h-4 w-4" />
             Respect robots.txt for HTML fetches
           </label>
         </SettingsForm>
@@ -136,7 +137,7 @@ export default async function SettingsPage() {
         <SettingsForm action={saveCvModel}>
           <label className={labelClass}>
             <span className={fieldLabelClass}>CV model</span>
-            <ModelSelect name="cvModel" value={settings.cvModel} className={inputClass} />
+            <ModelSelect name="cvModel" value={settings.cvModel} className={selectClass} />
           </label>
         </SettingsForm>
       </Card>
@@ -146,15 +147,15 @@ export default async function SettingsPage() {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className={labelClass}>
               <span className={fieldLabelClass}>Default model</span>
-              <ModelSelect name="defaultModel" value={settings.defaultModel} className={inputClass} />
+              <ModelSelect name="defaultModel" value={settings.defaultModel} className={selectClass} />
             </label>
             <label className={labelClass}>
               <span className={fieldLabelClass}>Monthly AI budget (USD)</span>
-              <input name="monthlyAiBudgetUsd" type="number" min={0} step={1} defaultValue={settings.monthlyAiBudgetUsd} className={inputClass} />
+              <input name="monthlyAiBudgetUsd" type="number" min={0} step={1} defaultValue={settings.monthlyAiBudgetUsd} className={fieldClass} />
             </label>
           </div>
-          <label className="flex items-center gap-1.5 text-sm">
-            <input type="checkbox" name="suggestionsEnabled" value="1" defaultChecked={settings.suggestionsEnabled} />
+          <label className={checkboxClass}>
+            <input type="checkbox" name="suggestionsEnabled" value="1" defaultChecked={settings.suggestionsEnabled} className="h-4 w-4" />
             Enable weekly company suggestions
           </label>
         </SettingsForm>

@@ -1,15 +1,16 @@
 export type Tone = "green" | "blue" | "gray" | "amber" | "red" | "neutral";
 
-/** Tones map to the status roles in docs/DESIGN-SYSTEM.md, not to raw hues. */
+/** Tones map to the status roles in docs/DESIGN-SYSTEM.md, not to raw hues.
+    There are no tinted fills in this system: a badge is an outline and text in
+    one colour, so it reads the same on every surface. */
 const TONE_CLASSES: Record<Tone, string> = {
-  green: "bg-emerald-50 text-emerald-800 ring-emerald-600/20",
-  // Informational: the accent, not a fourth blue of its own.
-  blue: "bg-accent-tint text-accent ring-accent/20",
-  // `gray` predates `neutral`; both are the muted tone on the one neutral ramp.
-  gray: "bg-slate-50 text-slate-600 ring-slate-500/20",
-  amber: "bg-amber-50 text-amber-800 ring-amber-600/20",
-  red: "bg-red-50 text-red-700 ring-red-600/20",
-  neutral: "bg-slate-100 text-slate-700 ring-slate-500/20",
+  green: "border-ok text-ok",
+  blue: "border-info text-info",
+  // `gray` predates `neutral`; both are the muted step on the one neutral ramp.
+  gray: "border-muted text-muted",
+  amber: "border-warn text-warn",
+  red: "border-danger text-danger",
+  neutral: "border-fg text-fg",
 };
 
 export function Badge({
@@ -26,7 +27,7 @@ export function Badge({
   return (
     <span
       title={title}
-      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset whitespace-nowrap ${TONE_CLASSES[tone]} ${className}`}
+      className={`ds-pixel inline-flex items-center gap-1 border px-1.5 py-0.5 text-9 tracking-badge whitespace-nowrap ${TONE_CLASSES[tone]} ${className}`}
     >
       {children}
     </span>

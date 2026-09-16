@@ -21,7 +21,7 @@ export function ScanStatusBanner({ initialText }: { initialText: string }) {
     document.addEventListener("visibilitychange", refresh);
     return () => { controller.abort(); clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
   }, []);
-  return <Link href="/health" className="underline decoration-dotted"
+  return <Link href="/health" className="text-13 underline decoration-dotted"
     title="This batch only: newly stored matching vacancies, not your review queue. Individual company refreshes are separate. Open scan history for details.">
     {text}{stale && " · Live update unavailable"}
   </Link>;

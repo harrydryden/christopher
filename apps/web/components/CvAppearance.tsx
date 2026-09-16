@@ -10,18 +10,18 @@ export function CvAppearance({ value, onChange, name }: { value?: CvTheme; onCha
       (key) => preset[key].toLowerCase() === theme[key].toLowerCase()))?.[0];
   function change(next: CvTheme) { setLocal(next); onChange?.(next); }
   return (
-    <fieldset className="space-y-4 rounded-lg border border-slate-300 p-4">
+    <fieldset className="space-y-4 border border-line-muted p-4">
     <legend className="px-1 font-semibold">Appearance</legend>
     {name && (
         <input type="hidden" name={name} value={JSON.stringify(theme)} />
       )}
     <div className="flex flex-wrap gap-2">{Object.entries(CV_THEMES).map(([label, preset]) => (
           <button type="button" key={label} aria-pressed={selected === label} onClick={() => change({ ...preset, introPanel: theme.introPanel, skillPills: true,
-              })} className="rounded border px-3 py-2 text-sm" style={{ borderColor: preset.primary, background: selected === label ? preset.primary : undefined, color: selected === label ? cvForeground(preset.primary) : undefined }}>{label}</button>))}</div>
+              })} className="border px-3 py-2 text-14" style={{ borderColor: preset.primary, background: selected === label ? preset.primary : undefined, color: selected === label ? cvForeground(preset.primary) : undefined }}>{label}</button>))}</div>
     <p className="sr-only" aria-live="polite">{selected ? `${selected} palette selected` : "Custom palette"}
       </p>
-      <section className="rounded border border-slate-200 p-3">
-        <h3 className="text-sm font-medium">Customise colours and layout</h3>
+      <section className="border border-line-muted p-3">
+        <h3 className="text-14 font-medium">Customise colours and layout</h3>
         <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
           {(
             [
@@ -31,7 +31,7 @@ export function CvAppearance({ value, onChange, name }: { value?: CvTheme; onCha
               ["pill", "Skill and industry pill fill"],
             ] as const
           ).map(([key, label]) => (
-            <label key={key} className="text-sm">
+            <label key={key} className="text-14">
               {label}
               <input
                 type="color"
@@ -45,7 +45,7 @@ export function CvAppearance({ value, onChange, name }: { value?: CvTheme; onCha
             </label>
           ))}
         </div>
-        <div className="flex flex-wrap gap-4 text-sm">
+        <div className="flex flex-wrap gap-4 text-14">
           <label>
             <input
               type="checkbox"
@@ -60,13 +60,13 @@ export function CvAppearance({ value, onChange, name }: { value?: CvTheme; onCha
       </section>
       <div
         aria-label="Palette sample"
-        className="space-y-3 rounded p-4"
+        className="space-y-3 p-4"
         style={{
           background: theme.background,
           color: cvForeground(theme.background),
         }}
       >
-        <p className="text-xs uppercase tracking-widest">
+        <p className="text-12 uppercase tracking-widest">
           Palette sample · illustrative content
         </p>
         <div
@@ -76,10 +76,10 @@ export function CvAppearance({ value, onChange, name }: { value?: CvTheme; onCha
             color: cvForeground(theme.primary),
           }}
         >
-          <strong className="text-lg">Your name</strong>
-          <p className="text-xs">Contact details · LinkedIn</p>
+          <strong className="text-16">Your name</strong>
+          <p className="text-12">Contact details · LinkedIn</p>
           <div
-            className="rounded-xl p-3"
+            className="p-3"
             style={{
               background: theme.introPanel ? theme.surface : theme.primary,
               color: cvForeground(
@@ -88,12 +88,12 @@ export function CvAppearance({ value, onChange, name }: { value?: CvTheme; onCha
             }}
           >
             <strong>Profile</strong>
-            <p className="mt-1 text-sm">
+            <p className="mt-1 text-14">
               A concise introduction to your experience and strengths.
             </p>
           </div>
         </div>
-        <p className="text-sm font-semibold">
+        <p className="text-14 font-semibold">
           <span
             className="block pb-1"
             style={{ borderBottom: `3px solid ${theme.primary}` }}
@@ -101,14 +101,14 @@ export function CvAppearance({ value, onChange, name }: { value?: CvTheme; onCha
             WORK EXPERIENCE
           </span>
         </p>
-        <p className="text-sm font-semibold">
+        <p className="text-14 font-semibold">
           Operations Director · Example Company
         </p>
         <div className="flex flex-wrap gap-2">
           {["Healthcare", "Software & SaaS"].map((industry) => (
             <span
               key={industry}
-              className="inline-flex items-center justify-center rounded-full px-3 py-1 text-center text-xs"
+              className="inline-flex items-center justify-center px-3 py-1 text-center text-12"
               style={{
                 background: theme.pill,
                 color: cvForeground(theme.pill),
@@ -118,21 +118,21 @@ export function CvAppearance({ value, onChange, name }: { value?: CvTheme; onCha
             </span>
           ))}
         </div>
-        <p className="text-sm">
+        <p className="text-14">
           Led planning, reporting and delivery across teams.
         </p>
         <p
-          className="border-b-[3px] pb-1 text-sm font-semibold"
+          className="border-b-[3px] pb-1 text-14 font-semibold"
           style={{ borderColor: theme.primary }}
         >
           EDUCATION AND SKILLS
         </p>
-        <h4 className="text-sm font-semibold">Skills</h4>
+        <h4 className="text-14 font-semibold">Skills</h4>
         <div className="flex flex-wrap gap-2">
           {["Financial planning", "Team leadership", "SQL"].map((skill) => (
             <span
               key={skill}
-              className="inline-flex items-center justify-center rounded-full px-3 py-1 text-center text-sm"
+              className="inline-flex items-center justify-center px-3 py-1 text-center text-14"
               style={{
                 background: theme.pill,
                 color: cvForeground(theme.pill),
@@ -142,8 +142,8 @@ export function CvAppearance({ value, onChange, name }: { value?: CvTheme; onCha
             </span>
           ))}
         </div>
-        <h4 className="text-sm font-semibold">Education</h4>
-        <p className="text-sm">• Degree · Example University</p>
+        <h4 className="text-14 font-semibold">Education</h4>
+        <p className="text-14">• Degree · Example University</p>
       </div>
     </fieldset>
   );

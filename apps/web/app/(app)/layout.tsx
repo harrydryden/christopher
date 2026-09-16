@@ -2,11 +2,12 @@ import { WorkspaceShell } from "@/components/WorkspaceShell";
 import { NavigationMetrics } from "@/components/NavigationMetrics";
 import { ScanStatusBanner } from "@/components/ScanStatusBanner";
 import { getScanStatus } from "@/lib/scan-status";
+import { getCompanyWorkStatus } from "@/lib/work-status";
 import { Suspense, type ReactNode } from "react";
 import { logout } from "@/app/login/actions";
 import { WorkspaceNav } from "@/components/WorkspaceNav";
 import { NavLink } from "@/components/NavLink";
-import { ChristopherMark } from "@/components/brand";
+import { Mark } from "@/components/brand";
 import Link from "next/link";
 export const dynamic = "force-dynamic";
 
@@ -23,27 +24,35 @@ async function ScanBanner() {
   const status = await getScanStatus();
   return <ScanStatusBanner initialText={status.text} />;
 }
+
+/** The wheel turns while the worker has scan or discovery work in flight. */
+async function SidebarMark() {
+  const { active } = await getCompanyWorkStatus();
+  return <Mark size={48} searching={active} />;
+}
+
 export default function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <WorkspaceShell><NavigationMetrics />
-      <div className="scan-banner border-b border-white/20 px-4 py-2 text-sm">
-        <Suspense fallback={<span>Loading scan status…</span>}><ScanBanner /></Suspense>
+      <div className="flex items-center gap-3 border-b-2 border-line bg-raised px-4 py-2 text-13">
+        <Mark size={16} />
+        <Suspense fallback={<span className="text-muted">Loading scan status…</span>}><ScanBanner /></Suspense>
       </div>
       <div className="flex flex-1 flex-col md:flex-row">
-        <aside className="app-sidebar w-full shrink-0 border-b border-white/20 p-3 md:w-48 md:border-b-0 md:border-r">
-          <Link href="/" className="mb-4 block px-2" aria-label="Christopher home">
-            <ChristopherMark size={48} searching tone="paper" id="sidebar-mark" />
+        <aside className="flex w-full shrink-0 flex-col border-b-2 border-line p-3 md:w-48 md:border-b-0 md:border-r-2">
+          <Link href="/" className="mb-4 block p-2" aria-label="Christopher home">
+            <Suspense fallback={<Mark size={48} />}><SidebarMark /></Suspense>
           </Link>
-          <nav aria-label="Main navigation" className="flex flex-wrap gap-1 md:block md:space-y-0.5">
+          <nav aria-label="Main navigation" className="flex flex-wrap gap-0.5 md:block md:space-y-0.5">
             {NAV_ITEMS.map((item) => (
               <NavLink key={item.href} href={item.href}>
                 {item.label}
               </NavLink>
             ))}
           </nav>
-          <form action={logout} className="mt-4 px-2">
-            <button type="submit" className="text-sm text-white hover:underline">
+          <form action={logout} className="mt-auto px-2 pt-4">
+            <button type="submit" className="text-13 underline">
               Logout
             </button>
           </form>

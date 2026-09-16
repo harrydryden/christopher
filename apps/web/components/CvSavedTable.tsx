@@ -164,7 +164,7 @@ export function CvSavedTable({
   };
   if (!rows.length)
     return (
-      <p className="text-sm text-slate-500">
+      <p className="text-14 text-muted">
         No {archived ? "archived" : "saved"} CVs.
       </p>
     );
@@ -178,7 +178,7 @@ export function CvSavedTable({
         {archived ? "Archived" : "Saved"} CV actions
       </legend>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="mr-auto text-sm text-slate-500" role="status">
+        <span className="mr-auto text-14 text-muted" role="status">
           {pending ? "Updating CVs…" : `${selectedIds.length} selected`}
         </span>
         <Button
@@ -198,16 +198,16 @@ export function CvSavedTable({
         </Button>
       </div>
       {error && (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-14 text-danger">
           {error}
         </p>
       )}
-      <div className="overflow-x-auto rounded-lg border border-slate-200">
-        <table className="w-full text-left text-sm">
+      <div className="overflow-x-auto border border-line-muted">
+        <table className="w-full text-left text-14">
           <caption className="sr-only">
             {archived ? "Archived" : "Saved"} CVs
           </caption>
-          <thead className="bg-slate-50 text-xs text-slate-600">
+          <thead className="bg-sunken text-12 text-muted">
             <tr>
               <th className="w-10 p-3">
                 <input
@@ -237,11 +237,11 @@ export function CvSavedTable({
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-200">
+          <tbody className="divide-y divide-line-muted">
             {rows.map((row) => (
               <tr
                 key={row.id}
-                className={selectedSet.has(row.id) ? "bg-slate-50" : ""}
+                className={selectedSet.has(row.id) ? "bg-sunken" : ""}
               >
                 <td className="p-3">
                   <input
@@ -269,7 +269,7 @@ export function CvSavedTable({
                   >
                     {row.jobTitle}
                   </Link>
-                  <span className="mt-1 block text-xs capitalize text-slate-500">
+                  <span className="mt-1 block text-12 capitalize text-muted">
                     {archived ? `Archived · ${row.status}` : row.status}
                   </span>
                 </td>

@@ -1,6 +1,9 @@
 import { login } from "./actions";
 import { readPasswordConfig } from "@/lib/password";
-import { ChristopherMark } from "@/components/brand";
+import { Mark } from "@/components/brand";
+import { Button } from "@/components/Button";
+import { Card } from "@/components/Card";
+import { Field, Input } from "@/components/Field";
 
 export const dynamic = "force-dynamic";
 
@@ -29,43 +32,39 @@ export default async function LoginPage({
     <main className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <h1 className="mb-3 flex justify-center" aria-label="Careers page monitor">
-          <ChristopherMark size={96} searching id="login-mark" />
+          <Mark size={96} searching />
         </h1>
-        <p className="mb-6 text-center text-sm text-slate-500">Careers page monitor</p>
+        <p className="mb-6 text-center text-14 text-muted">Careers page monitor</p>
 
         {hasPassword && hasSecret ? (
-          <form action={login} className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-            <input type="hidden" name="next" value={next} />
-            <label htmlFor="password" className="mb-1 block text-sm font-medium text-slate-700">
-              Password
-            </label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              required
-              autoFocus
-              autoComplete="current-password"
-              className="mb-3 w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-accent focus:ring-1 focus:ring-accent"
-            />
-            {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
-            <button
-              type="submit"
-              className="w-full rounded-md bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent-hover"
-            >
-              Log in
-            </button>
-          </form>
+          <Card raised bodyClassName="p-4">
+            <form action={login}>
+              <input type="hidden" name="next" value={next} />
+              <Field label="Password" htmlFor="password">
+                <Input
+                  id="password"
+                  name="password"
+                  type="password"
+                  required
+                  autoFocus
+                  autoComplete="current-password"
+                />
+              </Field>
+              {error && <p className="mt-3 text-14 text-danger">{error}</p>}
+              <Button type="submit" variant="primary" className="mt-4 w-full">
+                Log in
+              </Button>
+            </form>
+          </Card>
         ) : (
-          <div className="rounded-lg border border-amber-300 bg-amber-50 p-5 text-sm text-amber-900">
-            <p className="mb-2 font-medium">Setup required</p>
+          <Card title="Setup required" className="border-warn" bodyClassName="p-4 text-14">
             {config.kind === "malformed" ? (
               <p className="mb-3">
-                <code className="rounded bg-amber-100 px-1 py-0.5">APP_PASSWORD_HASH</code> is set but is not a
+                <code className="bg-sunken px-1 py-0.5">APP_PASSWORD_HASH</code> is set but is not a
                 hash, so no password can ever be accepted. It must look like{" "}
-                <code className="rounded bg-amber-100 px-1 py-0.5">scrypt$16384$8$1$…</code>. Either replace it
+                <code className="bg-sunken px-1 py-0.5">scrypt$16384$8$1$…</code>. Either replace it
                 using the command below, or delete it and set{" "}
-                <code className="rounded bg-amber-100 px-1 py-0.5">APP_PASSWORD</code> to the password itself.
+                <code className="bg-sunken px-1 py-0.5">APP_PASSWORD</code> to the password itself.
               </p>
             ) : (
               <p className="mb-3">
@@ -75,24 +74,24 @@ export default async function LoginPage({
             <ul className="mb-3 list-disc space-y-1 pl-5">
               {!hasSecret && (
                 <li>
-                  <code className="rounded bg-amber-100 px-1 py-0.5">SESSION_SECRET</code> — any long random string.
+                  <code className="bg-sunken px-1 py-0.5">SESSION_SECRET</code> — any long random string.
                 </li>
               )}
               <li>
-                <code className="rounded bg-amber-100 px-1 py-0.5">APP_PASSWORD</code> — the password itself.
+                <code className="bg-sunken px-1 py-0.5">APP_PASSWORD</code> — the password itself.
                 Simplest, and fine for a private deployment.
               </li>
               <li>
-                Or <code className="rounded bg-amber-100 px-1 py-0.5">APP_PASSWORD_HASH</code> — preferred, since
+                Or <code className="bg-sunken px-1 py-0.5">APP_PASSWORD_HASH</code> — preferred, since
                 the password is then never stored. Generate it with either command below. If both are set, the hash wins.
               </li>
             </ul>
-            <pre className="overflow-x-auto rounded bg-accent p-3 text-xs text-slate-100">
+            <pre className="overflow-x-auto border-2 border-line-muted bg-bg p-3 text-12">
               pnpm --filter @christopher/web hash-password &apos;your password&apos;
             </pre>
             <p className="my-2">or, without the repository checked out:</p>
-            <pre className="overflow-x-auto rounded bg-accent p-3 text-xs text-slate-100">{NODE_HASH_COMMAND}</pre>
-          </div>
+            <pre className="overflow-x-auto border-2 border-line-muted bg-bg p-3 text-12">{NODE_HASH_COMMAND}</pre>
+          </Card>
         )}
       </div>
     </main>

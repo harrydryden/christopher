@@ -14,6 +14,8 @@ import { db } from "@/lib/db";
 import { notFound } from "next/navigation";
 import { zUuid } from "@/lib/validation";
 import { recordApplication } from "@/app/actions/applications";
+import { buttonClass } from "@/components/Button";
+import { inputClass } from "@/components/Field";
 import { PageHeader } from "@/components/PageHeader";
 import { SettingsForm } from "@/components/SettingsForm";
 import { AutoRefresh } from "@/components/AutoRefresh";
@@ -49,7 +51,7 @@ export default async function CvDraftPage({
       <nav aria-label="CV navigation">
         <Link
           href={draft.jobId ? `/cv?job=${draft.jobId}` : "/cv"}
-          className="text-sm font-medium text-slate-600 hover:text-slate-900 hover:underline"
+          className="text-14 font-medium text-muted hover:text-fg hover:underline"
         >
           ← Back to CV builder
         </Link>
@@ -65,14 +67,14 @@ export default async function CvDraftPage({
                 href={`/api/cv/${id}/pdf?preview=1`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center justify-center rounded-md border border-white/60 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-white/10"
+                className={buttonClass("secondary", "md", "no-underline")}
               >
                 Preview PDF
               </a>
               {draft.finalisedAt && (
                 <a
                   href={`/api/cv/${id}/pdf`}
-                  className="inline-flex items-center justify-center rounded-md bg-white px-3 py-1.5 text-sm font-medium text-accent transition-colors hover:bg-slate-100"
+                  className={buttonClass("primary", "md", "no-underline")}
                 >
                   Download PDF
                 </a>
@@ -84,14 +86,14 @@ export default async function CvDraftPage({
       <CvWorkspace
         description={
           <>
-            <p className="text-xs text-slate-500">
+            <p className="text-12 text-muted">
               The saved company advert used to write and assess this CV.
             </p>
-            <p className="whitespace-pre-wrap text-sm leading-relaxed">
+            <p className="whitespace-pre-wrap text-14 leading-relaxed">
               {draft.jobDescription}
             </p>
             <CvDisclosure label="source and evidence details">
-              <p className="my-2 text-sm">
+              <p className="my-2 text-14">
                 <a className="underline" href="/library">
                   Open Library
                 </a>{" "}
@@ -120,7 +122,7 @@ export default async function CvDraftPage({
         {draft.status === "failed" && (
           <p
             role="alert"
-            className="rounded bg-red-50 p-4 text-sm text-red-700"
+            className="p-4 text-14 text-danger"
           >
             {draft.error}
           </p>
@@ -144,7 +146,7 @@ export default async function CvDraftPage({
 
 
 
-              <Link href="/library" className="text-sm underline">
+              <Link href="/library" className="text-14 underline">
                 Open Library
               </Link>
             </div>
@@ -167,14 +169,14 @@ export default async function CvDraftPage({
             content={content}
             tracking={
               <>
-                <section className="rounded border p-4 space-y-3">
+                <section className="space-y-3 border-2 border-line bg-raised p-4">
                   <CvDisclosure label="application tracking">
                     {application ? (
                       <Link href="/applications" className="underline">
                         Application recorded — view status and frozen PDF
                       </Link>
                     ) : !draft.finalisedAt ? (
-                      <p className="text-sm">
+                      <p className="text-14">
                         Finalise the assessed CV before recording an
                         application.
                       </p>
@@ -183,26 +185,27 @@ export default async function CvDraftPage({
                         action={recordApplication.bind(null, id)}
                         submitLabel="Record application with this saved CV"
                       >
-                        <p className="text-sm">
+                        <p className="text-14">
                           Use this after submitting this CV revision. This
                           records your application; it does not send anything to
                           the employer.
                         </p>
-                        <label>
+                        <label className="flex flex-col gap-1.5 text-14">
                           Application date
                           <input
                             type="date"
                             name="appliedOn"
                             required
-                            className="ml-2 rounded border p-2"
+                            className={`max-w-xs ${inputClass}`}
                           />
                         </label>
-                        <label>
+                        <label className="flex flex-col gap-1.5 text-14">
                           Notes
                           <textarea
                             name="notes"
                             maxLength={4000}
-                            className="block w-full rounded border p-2"
+                            rows={3}
+                            className={`resize-y ${inputClass}`}
                           />
                         </label>
                       </SettingsForm>

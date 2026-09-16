@@ -25,7 +25,7 @@ export function CvAssessmentPanel({
   if (!assessment || !current)
     return (
       <section className="border border-warn p-4 space-y-3">
-        <h2 className="font-semibold">Job match assessment</h2>
+        <h2 className="ds-pixel text-12">Job match assessment</h2>
         <p className="text-14">
           {busy
             ? "Assessment pending"
@@ -57,7 +57,7 @@ export function CvAssessmentPanel({
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 id="cv-match-title" className="font-semibold">
+          <h2 id="cv-match-title" className="ds-pixel text-12">
             CV evaluation
           </h2>
           <p className="text-14 text-muted">

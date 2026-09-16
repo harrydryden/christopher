@@ -10,6 +10,7 @@ import { formatPercent, relativeTime } from "@/lib/format";
 import { describeEvidenceItem, describeFilterSuggestion } from "@/lib/filterSuggestions";
 import { getCalibration, getPreferenceProfile, listPendingFilterSuggestionsResolved, listProfileVersions, getReasonTagEditor } from "@/lib/queries/learning";
 import { getSettings } from "@/lib/settings";
+import { selectClass } from "@/components/Field";
 
 export const dynamic = "force-dynamic";
 
@@ -54,7 +55,7 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
         actions={
           versions.length > 1 && (
             <form method="get" className="flex items-center gap-1.5">
-              <select name="v" defaultValue={profile?.version} className="border border-line-muted px-1.5 py-0.5 text-12">
+              <select name="v" defaultValue={profile?.version} className={`w-auto py-1 text-12 ${selectClass}`}>
                 {versions.map((v) => (
                   <option key={v.version} value={v.version}>
                     v{v.version}

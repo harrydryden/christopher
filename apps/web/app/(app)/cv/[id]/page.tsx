@@ -136,7 +136,7 @@ export default async function CvDraftPage({
         )}
         {(!content || busy) && (
           <CvWorkspacePanel tab="appearance">
-            <h2 className="font-semibold">Appearance and CV settings</h2>
+            <h2 className="ds-pixel text-12">Appearance and CV settings</h2>
             <div className="mt-4 space-y-3">
               <fieldset disabled>
                 <CvAppearance

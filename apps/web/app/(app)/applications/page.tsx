@@ -4,7 +4,7 @@ import { desc } from "drizzle-orm";
 import { applications } from "@christopher/db";
 import { db } from "@/lib/db";
 import { SettingsForm } from "@/components/SettingsForm";
-import { inputClass, selectClass } from "@/components/Field";
+import { inputClass, labelClass, selectClass } from "@/components/Field";
 import { updateApplication } from "@/app/actions/applications";
 export const dynamic = "force-dynamic";
 export default async function ApplicationsPage() {
@@ -16,8 +16,8 @@ export default async function ApplicationsPage() {
       <h2 className="ds-pixel text-12">{row.companyName} · {row.jobTitle}</h2><p className="text-14 text-muted">Applied on {row.appliedOn}</p>
       <div className="flex gap-4 text-14"><a className="underline" href={`/api/applications/${row.id}/pdf`}>Download submitted CV</a>{row.cvId && <Link className="underline" href={`/cv/${row.cvId}`}>View submitted revision</Link>}</div>
       <SettingsForm action={updateApplication.bind(null, row.id)} submitLabel="Save application update">
-        <label className="flex flex-col gap-1.5 text-14">Status<select name="status" defaultValue={row.status} className={selectClass}>{["applied", "screening", "interview", "offer", "rejected", "withdrawn", "accepted"].map(s => <option key={s}>{s}</option>)}</select></label>
-        <label className="flex flex-col gap-1.5 text-14">Notes<textarea name="notes" defaultValue={row.notes} maxLength={4000} rows={3} className={`resize-y ${inputClass}`} /></label>
+        <label className="grid gap-1.5"><span className={labelClass}>Status</span><select name="status" defaultValue={row.status} className={selectClass}>{["applied", "screening", "interview", "offer", "rejected", "withdrawn", "accepted"].map(s => <option key={s}>{s}</option>)}</select></label>
+        <label className="grid gap-1.5"><span className={labelClass}>Notes</span><textarea name="notes" defaultValue={row.notes} maxLength={4000} rows={3} className={`resize-y ${inputClass}`} /></label>
       </SettingsForm>
       <section><h3 className="ds-label">Status history</h3><ul className="mt-1 space-y-2 text-14">{row.history.map((h, i) => <li key={i}>{h.at} · {h.status}{h.notes && ` — ${h.notes}`}</li>)}</ul></section>
     </section>)}

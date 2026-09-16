@@ -71,7 +71,7 @@ export function CvLibraryEditor({ library, version }: { library: CvLibrary | nul
     </div>
     <div role="tabpanel" id="library-panel-experience" aria-labelledby="library-tab-experience" hidden={tab !== 'experience'} className="space-y-4" onInvalidCapture={event => revealInvalidField(event, 'experience')}>
     <EmploymentHistoryTable employment={value.employment ?? []} entries={value.entries} onChange={employment => setValue({ ...value, employment })} />
-    <h2 className="text-16 font-semibold">Experience</h2>
+    <h2 className="ds-pixel text-12">Experience</h2>
     {employmentCompanyGroups(value.employment ?? []).map(group => <section key={group.company.toLowerCase()} className="space-y-3">
       <h3 className="text-16 font-semibold">{group.company || "New company"}</h3>
       {group.jobs.map(job => {
@@ -80,48 +80,47 @@ export function CvLibraryEditor({ library, version }: { library: CvLibrary | nul
         function updateRows(next: string[]) {
           setValue({ ...value, entries: entry ? value.entries.map(item => item.id === entry.id ? updateResponsibilityRows(item, next) : item) : [...value.entries, { id: crypto.randomUUID(), kind: "experience", status: "draft", employmentId: job.id, heading: employmentHeading(job) || "New job", details: next.join("\n"), confirmedResponsibilities: [] }] });
         }
-        return <fieldset key={job.id} className="space-y-3 border border-line-muted p-3">
-          <legend className="font-medium">{employmentHeading(job) || "Complete this job in employment history"}</legend>
+        return <fieldset key={job.id} className="space-y-3 border-2 border-line-muted p-4">
+          <legend className="px-1 text-14 font-semibold">{employmentHeading(job) || "Complete this job in employment history"}</legend>
           {entry && statusControls(entry)}
-          <p className="text-14">Responsibilities and outcomes · {rows.length}/20 · {rows.filter(row => entry?.confirmedResponsibilities?.includes(responsibilityRows(row)[0] ?? "")).length} confirmed</p>
+          <p className="text-12 text-muted">Responsibilities and outcomes · {rows.length}/20 · {rows.filter(row => entry?.confirmedResponsibilities?.includes(responsibilityRows(row)[0] ?? "")).length} confirmed</p>
           {rows.length > 20 && <p role="alert" className="text-14 text-warn">All existing wording has been preserved. Combine related rows to reach 20 or fewer before saving.</p>}
-          <div className="overflow-x-auto"><table className="w-full text-left text-14" aria-label={`${job.company} ${job.jobTitle} responsibilities and outcomes`}>
-            <thead><tr className="border-b border-line-muted"><th scope="col" className="w-10 p-2">#</th><th scope="col" className="w-28 p-2 text-center">Confirmed</th><th scope="col" className="p-2">Narrative</th></tr></thead>
-            <tbody>{rows.map((row, index) => <tr key={index} className="border-b border-line-muted align-top">
-              <th scope="row" className="p-2 pt-4 font-normal">{index + 1}</th>
-              <td className="p-2 pt-4 text-center"><input type="checkbox" className="h-4 w-4 accent-emerald-600" aria-label={`Confirm ${job.company} ${job.jobTitle} entry ${index + 1}`} disabled={!row.trim()} checked={entry?.confirmedResponsibilities?.includes(responsibilityRows(row)[0] ?? "") ?? false} onChange={event => {
+          {rows.length > 0 && <div className="overflow-x-auto border-2 border-line"><table className="w-full text-left text-14" aria-label={`${job.company} ${job.jobTitle} responsibilities and outcomes`}>
+            <thead className="ds-pixel bg-sunken text-9 tracking-th text-muted"><tr><th scope="col" className="w-10 border-b-2 border-line px-3 py-2">#</th><th scope="col" className="w-28 border-b-2 border-line px-3 py-2 text-center">Confirmed</th><th scope="col" className="border-b-2 border-line px-3 py-2">Narrative</th></tr></thead>
+            <tbody>{rows.map((row, index) => <tr key={index} className="border-t border-line-faint align-top">
+              <th scope="row" className="px-3 py-2 pt-4 font-normal text-muted">{index + 1}</th>
+              <td className="px-3 py-2 pt-4 text-center"><input type="checkbox" aria-label={`Confirm ${job.company} ${job.jobTitle} entry ${index + 1}`} disabled={!row.trim()} checked={entry?.confirmedResponsibilities?.includes(responsibilityRows(row)[0] ?? "") ?? false} onChange={event => {
                   const text = responsibilityRows(row)[0];
                   if (!entry || !text) return;
                   const confirmed = new Set(entry.confirmedResponsibilities ?? []);
                   if (event.target.checked) confirmed.add(text); else confirmed.delete(text);
                   setValue({ ...value, entries: value.entries.map(item => item.id === entry.id ? { ...item, confirmedResponsibilities: [...confirmed] } : item) });
                 }} /></td>
-              <td className="p-2"><div className="flex items-start gap-2">
-              <textarea required rows={2} className={input} aria-label={`${job.company} ${job.jobTitle} responsibility ${index + 1}`} value={row} onChange={event => updateRows(rows.map((text, position) => position === index ? event.target.value.replace(/\r?\n/g, " ") : text))} />
-            <button type="button" className="mt-2 text-14 underline" aria-label={`Remove ${job.company} ${job.jobTitle} entry ${index + 1}`} onClick={() => {
+              <td className="px-3 py-2"><div className="flex items-start gap-3">
+              <textarea required rows={2} className={`resize-y ${input}`} aria-label={`${job.company} ${job.jobTitle} responsibility ${index + 1}`} value={row} onChange={event => updateRows(rows.map((text, position) => position === index ? event.target.value.replace(/\r?\n/g, " ") : text))} />
+            <button type="button" className="mt-2 text-12 text-muted underline hover:text-fg" aria-label={`Remove ${job.company} ${job.jobTitle} entry ${index + 1}`} onClick={() => {
               if (rows.length === 1 && entry) setValue({ ...value, entries: entry.details.trim() ? value.entries.map(item => item.id === entry.id ? { ...item, status: "inactive" } : item) : value.entries.filter(item => item.id !== entry.id) });
               else updateRows(rows.filter((_, position) => position !== index));
             }}>Remove</button>
               </div></td>
             </tr>)}</tbody>
-          </table></div>
+          </table></div>}
           <button type="button" className="text-14 underline disabled:opacity-40" disabled={rows.length >= 20} onClick={() => updateRows([...rows, ""])}>Add new responsibility or outcome</button>
         </fieldset>;
       })}
     </section>)}
     </div>
     <div role="tabpanel" id="library-panel-education" aria-labelledby="library-tab-education" hidden={tab !== 'education'} className="space-y-4" onInvalidCapture={event => revealInvalidField(event, 'education')}>
-    <h2 className="text-16 font-semibold">Education, skills and interests</h2>
-    {value.entries.map((entry, i) => entry.kind === "experience" ? null : <fieldset key={entry.id} className="space-y-2 border border-line-muted p-3">
-      <legend className="text-14 font-medium">Evidence {i + 1}</legend>
+    <h2 className="ds-pixel text-12">Education, skills and interests</h2>
+    {value.entries.map((entry, i) => entry.kind === "experience" ? null : <fieldset key={entry.id} className="space-y-3 border-2 border-line-muted p-4">
+      <legend className="px-1 text-14 font-semibold">Evidence {i + 1}</legend>
       {statusControls(entry)}
-      <label className="block text-14">Type <select aria-label={`Evidence ${i + 1} type`} className={input} value={entry.kind} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, kind: e.target.value as typeof entry.kind, skillItems: e.target.value === "skill" ? x.skillItems : undefined, employmentId: undefined } : x) })}>{["education", "skill", "interest"].map(kind => <option key={kind}>{kind}</option>)}</select></label>
-      <label className="block text-14">Evidence label (for example: AI governance programme)<input required className={input} value={entry.heading} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, heading: e.target.value } : x) })} /></label>
-      {entry.kind === "skill" && <label className="block space-y-1 text-14">Individual skills — one per line
-        <textarea rows={4} className={input} aria-label={`Individual skills: ${entry.heading}`} onBlur={() => setValue(current => ({ ...current, entries: current.entries.map(item => item.id === entry.id ? { ...item, skillItems: item.skillItems?.map(skill => skill.trim()).filter(Boolean).length ? item.skillItems.map(skill => skill.trim()).filter(Boolean) : undefined } : item) }))} value={entry.skillItems?.join("\n") ?? ""} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, skillItems: e.target.value ? e.target.value.split("\n") : undefined } : x) })} />
+      <label className="grid gap-1.5"><span className={labelClass}>Type</span><select aria-label={`Evidence ${i + 1} type`} className={selectClass} value={entry.kind} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, kind: e.target.value as typeof entry.kind, skillItems: e.target.value === "skill" ? x.skillItems : undefined, employmentId: undefined } : x) })}>{["education", "skill", "interest"].map(kind => <option key={kind}>{kind}</option>)}</select></label>
+      <label className="grid gap-1.5"><span className={labelClass}>Evidence label (for example: AI governance programme)</span><input required className={input} value={entry.heading} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, heading: e.target.value } : x) })} /></label>
+      {entry.kind === "skill" && <label className="grid gap-1.5"><span className={labelClass}>Individual skills — one per line</span><textarea rows={4} className={input} aria-label={`Individual skills: ${entry.heading}`} onBlur={() => setValue(current => ({ ...current, entries: current.entries.map(item => item.id === entry.id ? { ...item, skillItems: item.skillItems?.map(skill => skill.trim()).filter(Boolean).length ? item.skillItems.map(skill => skill.trim()).filter(Boolean) : undefined } : item) }))} value={entry.skillItems?.join("\n") ?? ""} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, skillItems: e.target.value ? e.target.value.split("\n") : undefined } : x) })} />
         <span className="block text-12 text-muted">Up to 20 skills, 80 characters each. Enter labels explicitly; existing prose is not split automatically. Leave blank to retain prose rendering. The supporting details below remain evidence.</span>
       </label>}
-      <label className="block text-14">Details<textarea required rows={5} className={input} value={entry.details} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, details: e.target.value } : x) })} /></label>
+      <label className="grid gap-1.5"><span className={labelClass}>Details</span><textarea required rows={5} className={input} value={entry.details} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, details: e.target.value } : x) })} /></label>
       <div className="flex gap-3">
       <button type="button" disabled={i === 0} className="text-14 underline disabled:opacity-40" onClick={() => { const entries = [...value.entries]; [entries[i - 1], entries[i]] = [entries[i]!, entries[i - 1]!]; setValue({ ...value, entries }); }}>Move up</button>
       <button type="button" disabled={i === value.entries.length - 1} className="text-14 underline disabled:opacity-40" onClick={() => { const entries = [...value.entries]; [entries[i], entries[i + 1]] = [entries[i + 1]!, entries[i]!]; setValue({ ...value, entries }); }}>Move down</button>

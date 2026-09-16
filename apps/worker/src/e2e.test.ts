@@ -8,7 +8,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {createDb, schema, enqueueTask, reevaluateGate, type Db} from "@christopher/db";
 import { runMigrations } from "@christopher/db/migrate";
-import { dedupeKeyFor, displayStatus, liveFor, priorityFor, sha1 } from "@christopher/core";
+import { ats, dedupeKeyFor, displayStatus, liveFor, priorityFor, sha1 } from "@christopher/core";
 import { desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -629,6 +629,34 @@ describe("HTML extraction completion", () => {
     expect(tagReason).not.toHaveBeenCalled();
   });
 });
+
+it("marks a listing that reaches the adapter cap partial and never closes roles from it", async () => {
+  await setGate({});
+  setJobs([JOB_OPERATIONS_MANAGER, JOB_ENGINEER]);
+  const company = await addCompany("https://www.acme.example/", "acme.example");
+  await queue.drain();
+  expect((await jobsInTable()).map(r => r.title)).toContain("Operations Manager");
+
+  // The board grows to the cap and the Operations Manager posting is not in
+  // what we read. A complete listing would close it after two misses; a capped
+  // one is not evidence of anything.
+  const filler = Array.from({ length: ats.MAX_POSTINGS }, (_, i) => ({
+    ...JOB_ENGINEER, id: 5_000_000 + i, title: `Engineer ${i}`, absolute_url: `https://job-boards.greenhouse.io/acme/jobs/${5_000_000 + i}`,
+  }));
+  setJobs(filler);
+  for (const day of ["2026-09-06", "2026-09-07"]) {
+    now = new Date(`${day}T06:00:00Z`);
+    await enqueueTask(db, "scan_company", { companyId: company.id, trigger: "manual" }, { dedupeKey: dedupeKeyFor("scan_company", { companyId: company.id }), priority: 5 });
+    await queue.drain();
+  }
+  const scans = await db.select().from(schema.scans).orderBy(schema.scans.startedAt);
+  expect(scans.at(-1)?.status).toBe("partial");
+  expect(scans.at(-1)?.error).toMatch(/cap/);
+  expect(scans.at(-1)?.postingsFound).toBe(ats.MAX_POSTINGS);
+  const manager = (await jobsInTable()).find(r => r.title === "Operations Manager")!;
+  expect(manager.status).toBe("open");
+  expect(manager.missingScans).toBe(0);
+}, 120_000);
 
 it("discards a late scan when its source has been disabled", async () => {
   await setGate({});

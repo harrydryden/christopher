@@ -22,7 +22,7 @@ export const WELL_KNOWN_PATHS: readonly string[] = [
 
 /** Kept local so discovery has no dependency on the adapter registry. */
 const ATS_HOST_RE =
-  /(?:^|\.)(greenhouse\.io|grnh\.se|lever\.co|ashbyhq\.com|workable\.com|smartrecruiters\.com|recruitee\.com|personio\.(?:de|com)|bamboohr\.com|myworkdayjobs\.com|pinpointhq\.com|breezy\.hr)$/i;
+  /(?:^|\.)(greenhouse\.io|grnh\.se|lever\.co|ashbyhq\.com|workable\.com|smartrecruiters\.com|recruitee\.com|personio\.(?:de|com)|bamboohr\.com|myworkdayjobs\.com|pinpointhq\.com|breezy\.hr|teamtailor\.com|icims\.com|jobvite\.com|applytojob\.com|rippling\.com|successfactors\.(?:com|eu)|eightfold\.ai)$/i;
 
 function isAtsUrl(url: string): boolean {
   try {

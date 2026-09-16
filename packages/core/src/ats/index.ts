@@ -13,4 +13,5 @@ export {
   fetchHtmlPage,
 } from "./registry";
 export { extractJsonLdPostings } from "./jsonld";
+export { MAX_POSTINGS } from "./common";
 export { extractPostingsFromHtml, applyRecipe, validateRecipe, findJobLinks, compactDomForModel, nextListingPage } from "./html";

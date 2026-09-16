@@ -146,7 +146,14 @@ async function scanSource(
     .limit(1);
   const previousOkCount = previousOk[0]?.postingsFound ?? null;
 
-  if (postings.length > 10_000) { postings = postings.slice(0, 10_000); incomplete = true; }
+  // A source that reaches the adapter cap was not read completely. The scan
+  // is partial, which keeps every stored role open: only a complete listing
+  // is evidence that a role has gone.
+  if (postings.length >= ats.MAX_POSTINGS) {
+    postings = postings.slice(0, ats.MAX_POSTINGS);
+    incomplete = true;
+    error ??= `Listing reached the ${ats.MAX_POSTINGS}-posting cap; roles beyond it are not tracked and this scan cannot close roles`;
+  }
   const savedDescriptions = await deps.db.select({ externalKey: schema.jobs.externalKey, url: schema.jobs.url, text: schema.jobs.descriptionText, at: schema.jobs.descriptionFetchedAt }).from(schema.jobs).where(eq(schema.jobs.sourceId, source.id));
   const reusedDescriptions = new Set<string>();
   const savedByUrl = new Map(savedDescriptions.map(row => [row.url, row]));
@@ -358,7 +365,7 @@ async function scanSource(
     closedCount: result.closed.length,
     error,
     durationMs: Date.now() - started,
-    rawSnapshot: gzipSync(JSON.stringify({ version: 1, responses, htmlPages })).toString("base64"),
+    rawSnapshot: gzipSync(JSON.stringify(snapshotFor(postings, responses, htmlPages))).toString("base64"),
   });
 
   // Keep bounded debugging evidence from the three most recent source scans.
@@ -407,6 +414,21 @@ async function scanSource(
 
 }
 
+/**
+ * Evidence kept for the last three scans of a source. Version 2 stores every
+ * parsed posting (title, url, location, ids) plus a bounded head of each raw
+ * response; version 1 stored raw bodies up to 2MB, which for a large feed was
+ * the first 5% of the listing and nothing anyone could replay.
+ */
+function snapshotFor(postings: RawPosting[], responses: Array<{ url: string; status: number; body: string }>, htmlPages: CachedHtmlPage[]) {
+  return {
+    version: 2,
+    postings: postings.map(p => ({ externalId: p.externalId, title: p.title, url: p.url, location: p.location, locations: p.locations, department: p.department, postedAt: p.postedAt })),
+    responses: responses.map(r => ({ url: r.url, status: r.status, bytes: r.body.length, head: r.body.slice(0, 20_000) })),
+    htmlPages,
+  };
+}
+
 interface CachedHtmlPage {
   url: string;
   contentHash: string;
@@ -439,7 +461,7 @@ async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: Career
   try {
     if (last?.rawSnapshot) {
       const snapshot = JSON.parse(gunzipSync(Buffer.from(last.rawSnapshot, "base64"), { maxOutputLength: 8_000_000 }).toString());
-      if (snapshot.version === 1 && Array.isArray(snapshot.htmlPages)) cached = snapshot.htmlPages.map((page: CachedHtmlPage) => ({ ...page, postings: page.postings.map(posting => ({ ...posting,
+      if ((snapshot.version === 1 || snapshot.version === 2) && Array.isArray(snapshot.htmlPages)) cached = snapshot.htmlPages.map((page: CachedHtmlPage) => ({ ...page, postings: page.postings.map(posting => ({ ...posting,
         postedAt: posting.postedAt ? new Date(posting.postedAt) : undefined,
         updatedAt: posting.updatedAt ? new Date(posting.updatedAt) : undefined,
       })) }));

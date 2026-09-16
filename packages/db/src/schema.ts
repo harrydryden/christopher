@@ -25,7 +25,9 @@ const tsNow = (name: string) => ts(name).notNull().defaultNow();
 export const COMPANY_STATUSES = ["active", "paused", "archived"] as const;
 export const SOURCE_TYPES = [
   "greenhouse", "lever", "ashby", "workable", "smartrecruiters", "recruitee", "personio",
-  "bamboohr", "workday", "pinpoint", "breezy", "jsonld", "rss", "html",
+  "bamboohr", "workday", "pinpoint", "breezy",
+  "teamtailor", "icims", "jobvite", "jazzhr", "rippling", "successfactors", "eightfold",
+  "jsonld", "rss", "html",
 ] as const;
 export const SOURCE_STATUSES = ["active", "needs_confirmation", "failing", "blocked", "disabled"] as const;
 export const SCAN_STATUSES = ["ok", "partial", "suspect_empty", "failed"] as const;

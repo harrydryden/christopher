@@ -380,3 +380,58 @@ export const EMBEDDED_GREENHOUSE_HTML = `<!doctype html><html><head><title>Caree
     window.__DATA__ = {"boardToken":"acme","endpoint":"https://boards-api.greenhouse.io\\/v1\\/boards\\/acme\\/jobs"};
   </script>
 </body></html>`;
+
+// --- Tier-2 boards. VERIFY: shapes modelled on observed public sites, not vendor docs. ---
+
+export const EIGHTFOLD_PAGE = {
+  count: 2,
+  positions: [
+    { id: 563100001, name: "Head of Operations, EMEA", location: "London, United Kingdom", locations: ["London, United Kingdom", "Dublin, Ireland"], department: "Operations", canonicalPositionUrl: "https://careers.acme.example/careers/job/563100001", t_create: 1757000000, job_description: "<p>Run EMEA operations.</p>" },
+    { id: 563100002, name: "Staff Engineer", location: "Remote - US", department: "Engineering", canonicalPositionUrl: "https://careers.acme.example/careers/job/563100002", t_create: 1757100000 },
+  ],
+};
+
+export const RIPPLING_BOARD = {
+  items: [
+    { id: "rp-1", name: "Director of Finance", url: "https://ats.rippling.com/acme/jobs/rp-1", workLocation: { label: "London, UK" }, department: { label: "Finance" }, employmentType: { label: "Full-time" }, publishedAt: "2026-09-01T09:00:00Z" },
+    { id: "rp-2", name: "Support Specialist", url: "https://ats.rippling.com/acme/jobs/rp-2", workLocation: { label: "Remote (Global)" }, department: { label: "Support" } },
+  ],
+};
+
+export const TEAMTAILOR_PAGE_1 = `<!doctype html><html><body data-controller="teamtailor">
+<ul id="jobs_list_container">
+<li><a href="/jobs/4410001-operations-manager"><span class="text-block-base-link">Operations Manager</span><div class="mt-1 text-md">Operations · London</div></a></li>
+<li><a href="/jobs/4410002-vp-strategy"><span class="text-block-base-link">VP Strategy</span><div class="mt-1 text-md">Leadership · Remote</div></a></li>
+</ul><a href="/jobs?page=2">Next</a></body></html>`;
+export const TEAMTAILOR_PAGE_2 = `<!doctype html><html><body data-controller="teamtailor">
+<ul id="jobs_list_container">
+<li><a href="/jobs/4410003-finance-lead"><span class="text-block-base-link">Finance Lead</span><div class="mt-1 text-md">Finance · Stockholm</div></a></li>
+</ul></body></html>`;
+export const TEAMTAILOR_PAGE_3 = `<!doctype html><html><body data-controller="teamtailor"><ul id="jobs_list_container"></ul></body></html>`;
+
+export const ICIMS_PAGE_0 = `<!doctype html><html><body><div class="iCIMS_JobsTable">
+<div class="row"><a href="https://careers-acme.icims.com/jobs/9001/head-of-operations/job?in_iframe=1"><h3>Head of Operations</h3></a><span class="header left"><span>UK-London</span></span><dl><dt>Posted Date</dt><dd>2026-09-02</dd></dl></div>
+<div class="row"><a href="https://careers-acme.icims.com/jobs/9002/nurse/job"><h3>Nurse</h3></a><span class="header left"><span>US-CA-Los Angeles</span></span></div>
+</div></body></html>`;
+export const ICIMS_PAGE_1 = `<!doctype html><html><body><div class="iCIMS_JobsTable"></div></body></html>`;
+
+export const SUCCESSFACTORS_PAGE_0 = `<!doctype html><html><body><span class="paginationLabel">Results 1 – 25 of 26</span><table>
+<tr><td><a class="jobTitle-link" href="/job/London-Director-of-Operations-SW1/1234567/">Director of Operations</a></td><td><span class="jobLocation">London, GB</span></td><td><span class="jobDate">Sep 3, 2026</span></td></tr>
+<tr><td><a class="jobTitle-link" href="/job/Munich-Engineer/1234568/">Engineer</a></td><td><span class="jobLocation">Munich, DE</span></td><td><span class="jobDate">Sep 1, 2026</span></td></tr>
+</table></body></html>`;
+export const SUCCESSFACTORS_PAGE_25 = `<!doctype html><html><body><span class="paginationLabel">Results 26 – 26 of 26</span><table>
+<tr><td><a class="jobTitle-link" href="/job/Paris-Chief-of-Staff/1234569/">Chief of Staff</a></td><td><span class="jobLocation">Paris, FR</span></td><td><span class="jobDate">Aug 30, 2026</span></td></tr>
+</table></body></html>`;
+export const SUCCESSFACTORS_PAGE_50 = `<!doctype html><html><body><span class="paginationLabel">Results 51 – 50 of 26</span><table></table></body></html>`;
+
+export const JOBVITE_PAGE = `<!doctype html><html><body><div class="jv-wrapper">
+<h3 class="jv-job-list-category">Operations</h3>
+<table class="jv-job-list"><tr><td class="jv-job-list-name"><a href="/acme/job/oXYZabc">Head of Operations</a></td><td class="jv-job-list-location">London, United Kingdom</td></tr></table>
+<h3 class="jv-job-list-category">Engineering</h3>
+<table class="jv-job-list"><tr><td class="jv-job-list-name"><a href="/acme/job/oDEF123">Backend Engineer</a></td><td class="jv-job-list-location">Remote, US</td></tr></table>
+</div></body></html>`;
+
+export const JAZZHR_PAGE = `<!doctype html><html><body><ul class="list-group">
+<li class="list-group-item"><a href="https://acme.applytojob.com/apply/AbC123xyz/Operations-Director">Operations Director</a><ul class="list-inline"><li>London, UK</li><li>Operations</li><li>Full Time</li></ul></li>
+<li class="list-group-item"><a href="https://acme.applytojob.com/apply/DeF456uvw/Warehouse-Associate">Warehouse Associate</a><ul class="list-inline"><li>Austin, TX</li><li>Logistics</li></ul></li>
+</ul></body></html>`;

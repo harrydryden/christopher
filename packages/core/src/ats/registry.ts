@@ -12,12 +12,14 @@ import { bamboohr } from "./bamboohr";
 import { workday } from "./workday";
 import { pinpoint } from "./pinpoint";
 import { breezy } from "./breezy";
+import { teamtailor, icims, jobvite, jazzhr, rippling, successfactors, eightfold } from "./tier2";
 import { extractPostingsFromHtml } from "./html";
 import { extractJsonLdPostings } from "./jsonld";
 import { sample, slugOk, str } from "./common";
 import type { HtmlRecipe } from "../types";
 
-const structured: Adapter[] = [greenhouse, lever, ashby, workable, smartrecruiters, recruitee, personio, bamboohr, workday, pinpoint, breezy];
+const structured: Adapter[] = [greenhouse, lever, ashby, workable, smartrecruiters, recruitee, personio, bamboohr, workday, pinpoint, breezy,
+  eightfold, rippling, teamtailor, icims, successfactors, jobvite, jazzhr];
 
 async function fetchHtmlPage(spec: SourceSpec, ctx: FetchContext, forceBrowser = false): Promise<{ html: string; url: string; method: "http" | "browser" }> {
   if (!forceBrowser) {
@@ -91,6 +93,7 @@ export function specFromAnyUrl(url: string): SourceSpec | null {
 const ATS_HOST_SUFFIXES = [
   "greenhouse.io", "grnh.se", "lever.co", "ashbyhq.com", "workable.com", "smartrecruiters.com", "recruitee.com",
   "personio.de", "personio.com", "bamboohr.com", "myworkdayjobs.com", "pinpointhq.com", "breezy.hr",
+  "teamtailor.com", "icims.com", "jobvite.com", "applytojob.com", "rippling.com", "successfactors.com", "successfactors.eu", "eightfold.ai",
 ];
 
 export function isAtsHost(hostname: string): boolean {

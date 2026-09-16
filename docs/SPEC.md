@@ -198,7 +198,7 @@ Pipeline, in order. Every step adds candidates with a confidence; the best candi
 - **R-3.6** Anti-hallucination validation of model extraction: every returned URL must be present in the harvested anchor set; every title must appear in page text (fuzzy ≥0.9). Violators are dropped; if more than 20% violate, the scan is marked `partial`.
 - **R-3.7** Job description snapshot. For postings that pass the keyword gate (and near-miss candidates), store the description text (from the feed when the ATS supplies it; otherwise fetch the detail page and extract the main content). Cap 30k characters. Re-fetch when the source's `updated_at` changes or every 14 days. This keeps the description readable after the role closes and the link dies.
 - **R-3.8** Scan outcome: `ok`, `partial` (some postings dropped by validation, or count fell >70% from the previous ok scan), `suspect_empty` (zero postings where the previous ok scan had ≥3), `failed` (fetch error, HTTP ≥400, bot-protection challenge, parser exception). Only `ok` scans may close roles (3.4).
-- **R-3.9** Greenhouse boards must retain all valid roles up to 10,000, with a bounded 60 MB response allowance and no silent truncation. Other adapters retain their existing source-specific caps, which remain a coverage limitation. Generic HTML traversal is bounded to 20 pages / 500 roles; hitting a bound is partial and cannot close roles. Oversized HTTP responses fail explicitly. Store bounded compressed response evidence for the last three scans.
+- **R-3.9** Every adapter retains all valid roles up to 10,000 per source, with a bounded 60 MB response allowance and no silent truncation: a source that reaches the cap is recorded as `partial`, so it can never close roles. Generic HTML traversal is bounded to 20 pages / 500 roles; hitting a bound is partial for the same reason. Oversized HTTP responses fail explicitly. Store compressed evidence for the last three scans of a source: every parsed posting plus a bounded head of each raw response, never the raw body alone (a large feed's body is mostly beyond any sensible cap and could not be replayed).
 - **R-3.10** Manual "Rescan now" per company and "Run daily scan now" globally.
 
 ### 3.4 Change detection, statuses, "live for"
@@ -531,14 +531,14 @@ Fingerprints (hostnames, script tags) are reliable. Feed URL shapes marked *veri
 | Workday | `{tenant}.wd{n}.myworkdayjobs.com/{site}` | `POST https://{tenant}.wd{n}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs` with `{appliedFacets:{}, limit:20, offset:0, searchText:""}` (*verify*) | Paginated; list gives relative "Posted N days ago"; detail at `/wday/cxs/{tenant}/{site}{externalPath}` has a start date |
 | Pinpoint | `{slug}.pinpointhq.com` | `GET https://{slug}.pinpointhq.com/postings.json` (*verify*) | |
 | Breezy | `{slug}.breezy.hr` | `GET https://{slug}.breezy.hr/json` (*verify*) | |
-| Teamtailor | `{slug}.teamtailor.com` or custom domain with Teamtailor markers | HTML `/jobs` (Tier 2) | Job links `/jobs/{id}-{slug}` |
-| iCIMS | `careers-{slug}.icims.com` | HTML search page (Tier 2) | JSON-LD on detail pages |
-| Jobvite | `jobs.jobvite.com/{slug}` | HTML (Tier 2) | |
-| JazzHR | `{slug}.applytojob.com` | HTML (Tier 2) | |
-| Rippling | `ats.rippling.com/{slug}` | HTML (Tier 2) | |
-| SAP SuccessFactors | `career*.successfactors.com`, `jobs.{company}.com` with SF markers | HTML search results (Tier 2) | |
+| Teamtailor | `{slug}.teamtailor.com` or custom domain with Teamtailor markers | HTML `/jobs?page={n}` (*verify*, adapter) | Job links `/jobs/{id}-{slug}`; row subtitle "Department · Location" |
+| iCIMS | `careers-{slug}.icims.com` | HTML `/jobs/search?ss=1&in_iframe=1&pr={page}` (*verify*, adapter) | The iframe view is plain HTML; JSON-LD on detail pages |
+| Jobvite | `jobs.jobvite.com/{slug}` | HTML `/{slug}/jobs`, one page (*verify*, adapter) | `table.jv-job-list` rows; category heading is the department |
+| JazzHR | `{slug}.applytojob.com` | HTML `/apply/`, one page (*verify*, adapter) | `li.list-group-item` rows with location / department / type |
+| Rippling | `ats.rippling.com/{slug}` | `GET https://api.rippling.com/platform/api/ats/v1/board/{slug}/jobs` (*verify*, adapter) | `workLocation.label`, `department.label`, `employmentType.label` |
+| SAP SuccessFactors | `career*.successfactors.com`, `jobs.{company}.com` with SF markers | HTML `/search/?q=&startrow={n}` (*verify*, adapter) | `a.jobTitle-link`, `span.jobLocation`, `span.jobDate`; 25 rows a page. Custom domains are reached by pasting the URL |
 | Oracle Cloud HCM / Taleo | `*.oraclecloud.com/hcmUI/CandidateExperience`, `*.taleo.net` | JSON REST (*verify*), else HTML | Complex; Tier 2 |
-| Eightfold | `*.eightfold.ai/careers` | `GET https://{host}/api/apply/v2/jobs?domain={domain}&start=0&num=100` (*verify*) | |
+| Eightfold | `*.eightfold.ai/careers` | `GET https://{host}/api/apply/v2/jobs?domain={domain}&start=0&num=100` (*verify*, adapter) | Paginated by `start`; `positions[]` with `t_create` epoch seconds |
 | Phenom | Custom domain, `/us/en/search-results` pattern, `phenompeople` markers | HTML via browser (Tier 2) | |
 | Welcome to the Jungle | `welcometothejungle.com/{lang}/companies/{slug}/jobs` | HTML (Tier 2) | |
 | Generic | `<script type="application/ld+json">` with `@type: JobPosting`; RSS/Atom `<link rel="alternate">` | Parse directly (Tier 1) | Many custom pages embed JSON-LD |

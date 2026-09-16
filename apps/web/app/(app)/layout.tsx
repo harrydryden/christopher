@@ -39,7 +39,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         <Mark size={16} />
         <Suspense fallback={<span className="text-muted">Loading scan status…</span>}><ScanBanner userId={user.id} /></Suspense>
       </div>
-      {!user.emailVerifiedAt && (
+      {!user.emailVerifiedAt && user.role !== "admin" && (
         <div className="flex flex-wrap items-center gap-3 border-b-2 border-line bg-sunken px-4 py-2 text-13" role="status">
           <span>Confirm your email address to add companies, run discovery and build CVs. The link asks for your password.</span>
           <form action={resendVerification}>

@@ -50,7 +50,11 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
         {!user.emailVerifiedAt && (
           <form action={resendVerification} className="mt-3 flex flex-wrap items-center gap-3">
             <Button type="submit" size="sm">Send confirmation email</Button>
-            <span className="text-12 text-muted">The link asks for your password.</span>
+            <span className="text-12 text-muted">
+              {user.role === "admin"
+                ? "Nothing is blocked while this is unconfirmed; confirming just proves the address. The link asks for your password."
+                : "The link asks for your password."}
+            </span>
             {!emailConfigured() && <span className="text-12 text-warn">Email delivery is not configured on this deployment; the link only reaches the server log.</span>}
           </form>
         )}

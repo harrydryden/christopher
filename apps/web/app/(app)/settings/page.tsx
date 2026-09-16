@@ -2,7 +2,8 @@ import { getCvWritingPreferences } from "@/lib/cv-writing-preferences";
 import { CvAppearance } from "@/components/CvAppearance";
 import { getDefaultCvAppearance } from "@/lib/cv-appearance";
 import { saveCvModel, saveCvAppearance, saveCvWritingPreferences } from "@/app/actions/cv";
-import { runDailyScanNow, saveAiSettings, saveKeywords, saveLocationFilter, saveMatchFields, saveSchedule, saveSuggestionSettings, saveTableSettings } from "@/app/actions/settings";
+import { runDailyScanNow, saveAiSettings, saveKeywords, saveLocationFilter, saveMatchFields, saveRegistrationSettings, saveSchedule, saveSuggestionSettings, saveTableSettings } from "@/app/actions/settings";
+import { adminEmails } from "@/lib/accounts";
 import { rescoreAllRoles } from "@/app/actions/learning";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
@@ -114,6 +115,20 @@ export default async function SettingsPage() {
           </label>
         </SettingsForm>
       </Card>
+
+      {admin && (
+        <Card title="Accounts (shared)">
+          <SettingsForm action={saveRegistrationSettings}>
+            <p className="text-12 text-muted">
+              Administrator addresses come from <code>ADMIN_EMAILS</code>: {adminEmails().join(", ")}. They can always create an account and become administrators once their address is confirmed. Everyone else can only sign up while registration is open, and joins as a member.
+            </p>
+            <label className={checkboxClass}>
+              <input type="checkbox" name="registrationOpen" value="1" defaultChecked={settings.registrationOpen} className="h-4 w-4" />
+              Open registration to anyone who has this deployment&apos;s address
+            </label>
+          </SettingsForm>
+        </Card>
+      )}
 
       {admin && (
         <Card title="Schedule (shared)">

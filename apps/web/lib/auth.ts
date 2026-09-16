@@ -4,6 +4,7 @@
  */
 import { cache } from "react";
 import { cookies, headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { and, eq, gt, ne } from "drizzle-orm";
 import { sessions, users, type User } from "@christopher/db/schema";
 import { db } from "./db";
@@ -39,6 +40,13 @@ export async function requireUser(): Promise<User> {
   const current = await getCurrentUser();
   if (!current) throw new Error("Unauthorised");
   return current.user;
+}
+
+/** Work that scans, discovers or calls a model waits for a confirmed address, so a throwaway sign-up cannot spend the shared budget. */
+export async function requireVerifiedUser(): Promise<User> {
+  const user = await requireUser();
+  if (!user.emailVerifiedAt) redirect("/account?verify=required");
+  return user;
 }
 
 export async function requireAdmin(): Promise<User> {

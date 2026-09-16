@@ -74,6 +74,15 @@ export async function saveSuggestionSettings(_prev: ActionResult, formData: Form
   return ok();
 }
 
+/** Who may create an account: administrator addresses always can; everyone else only while this is on. */
+export async function saveRegistrationSettings(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
+  await requireAdmin();
+  await setSystemSetting("registrationOpen", formData.get("registrationOpen") === "1");
+  revalidatePath("/settings");
+  revalidatePath("/signup");
+  return ok();
+}
+
 /** The daily run and closure policy are shared by every account: administrators only. */
 export async function saveSchedule(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   await requireAdmin();

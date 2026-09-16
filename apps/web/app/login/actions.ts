@@ -1,28 +1,16 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { headers } from "next/headers";
 import { normaliseEmail } from "@christopher/db";
-import { authenticateWithPassword, emailProblem, registerWithPassword, requestPasswordReset, resetPasswordWithToken, sendVerificationEmail } from "@/lib/accounts";
+import { authenticateWithPassword, emailProblem, registerWithPassword, registrationAllowed, requestPasswordReset, resetPasswordWithToken, sendVerificationEmail } from "@/lib/accounts";
 import { clientAddress, endSession, startSession } from "@/lib/auth";
+import { db } from "@/lib/db";
+import { emailLinkOrigin, withParams } from "@/lib/origin";
 import { clearAttempts, isRateLimited, LIMITS, recordAttempt } from "@/lib/rate-limit";
 import { sanitizeNextPath } from "@/lib/session";
 import { passwordProblem } from "@christopher/core";
-
-function withParams(path: string, params: Record<string, string | undefined>): string {
-  const url = new URL(path, "http://internal");
-  for (const [key, value] of Object.entries(params)) if (value) url.searchParams.set(key, value);
-  return `${url.pathname}${url.search}`;
-}
-
-async function originFromHeaders(): Promise<string> {
-  const configured = process.env.APP_URL?.trim();
-  if (configured) return configured.replace(/\/+$/, "");
-  const h = await headers();
-  const proto = h.get("x-forwarded-proto")?.split(",")[0]?.trim() || "https";
-  const host = h.get("x-forwarded-host")?.split(",")[0]?.trim() || h.get("host") || "localhost";
-  return `${proto}://${host}`;
-}
+import { users } from "@christopher/db/schema";
+import { eq } from "drizzle-orm";
 
 export async function login(formData: FormData): Promise<void> {
   const email = normaliseEmail(String(formData.get("email") ?? ""));
@@ -35,15 +23,15 @@ export async function login(formData: FormData): Promise<void> {
   const address = await clientAddress();
   if (await isRateLimited(`login:email:${email}`, LIMITS.loginEmail) || await isRateLimited(`login:ip:${address}`, LIMITS.loginAddress)) back("rate_limited");
 
-  const user = await authenticateWithPassword(email, password);
-  if (!user) {
+  const result = await authenticateWithPassword(email, password);
+  if (result.status !== "ok") {
     await recordAttempt(`login:email:${email}`);
     await recordAttempt(`login:ip:${address}`);
-    back("invalid");
+    back(result.status === "unconfirmed" ? "unconfirmed" : "invalid");
     return;
   }
   await clearAttempts(`login:email:${email}`);
-  await startSession(user.id);
+  await startSession(result.user.id);
   redirect(next);
 }
 
@@ -55,24 +43,44 @@ export async function signup(formData: FormData): Promise<void> {
   const back = (error: string) => redirect(withParams("/signup", { error, next: next !== "/" ? next : undefined, email, name }));
 
   if (!process.env.SESSION_SECRET) back("not_configured");
-  if (process.env.SIGNUPS_DISABLED === "1") back("closed");
   if (emailProblem(email)) back("invalid_email");
+  if (!(await registrationAllowed(email))) back("closed");
   if (passwordProblem(password)) back("weak_password");
   const address = await clientAddress();
   if (await isRateLimited(`signup:ip:${address}`, LIMITS.signupAddress)) back("rate_limited");
   await recordAttempt(`signup:ip:${address}`);
 
   let userId: string;
+  let pending: boolean;
   try {
-    const { user } = await registerWithPassword({ email, name, password });
-    userId = user.id;
-    await sendVerificationEmail(user, await originFromHeaders());
+    const result = await registerWithPassword({ email, name, password });
+    userId = result.user.id;
+    pending = result.pending;
+    await sendVerificationEmail(result.user, await emailLinkOrigin());
   } catch (error) {
     if (error instanceof Error && /already exists/.test(error.message)) back("exists");
     throw error;
   }
+  // An administrator address signs in only once its confirmation link has been completed.
+  if (pending!) redirect(withParams("/signup", { pending: "1", email }));
   await startSession(userId!);
   redirect(next);
+}
+
+/** Send a fresh confirmation link to an address whose registration is waiting on one. */
+export async function resendConfirmation(formData: FormData): Promise<void> {
+  const email = normaliseEmail(String(formData.get("email") ?? ""));
+  if (emailProblem(email)) redirect(withParams("/signup", { error: "invalid_email" }));
+  const address = await clientAddress();
+  if (await isRateLimited(`reset:email:${email}`, LIMITS.resetEmail) || await isRateLimited(`reset:ip:${address}`, LIMITS.resetAddress)) {
+    redirect(withParams("/signup", { pending: "1", email, error: "rate_limited" }));
+  }
+  await recordAttempt(`reset:email:${email}`);
+  await recordAttempt(`reset:ip:${address}`);
+  const [user] = await db().select().from(users).where(eq(users.email, email)).limit(1);
+  // Silent about whether the address is known, like the reset form.
+  if (user && !user.emailVerifiedAt) await sendVerificationEmail(user, await emailLinkOrigin());
+  redirect(withParams("/signup", { pending: "1", email, sent: "1" }));
 }
 
 export async function logout(): Promise<void> {
@@ -89,7 +97,7 @@ export async function requestReset(formData: FormData): Promise<void> {
   }
   await recordAttempt(`reset:email:${email}`);
   await recordAttempt(`reset:ip:${address}`);
-  await requestPasswordReset(email, await originFromHeaders());
+  await requestPasswordReset(email, await emailLinkOrigin());
   redirect(withParams("/forgot-password", { sent: "1" }));
 }
 

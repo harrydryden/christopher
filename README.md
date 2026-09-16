@@ -51,7 +51,7 @@ cp .env.example .env                          # then edit it
 export DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/christopher_dev
 pnpm db:migrate
 
-# Interface: http://localhost:3000 — open /signup to create the first account; it becomes the administrator
+# Interface: http://localhost:3000 — sign up with the administrator address (ADMIN_EMAILS, default harryddryden@gmail.com) and confirm it
 export SESSION_SECRET=$(openssl rand -hex 32)
 pnpm dev:web
 
@@ -98,9 +98,8 @@ Full instructions, including what to set where and what to do when something is 
 | `SESSION_SECRET` | web | signs the session cookie; changing it signs everyone out |
 | `APP_URL` | web | the public origin, used in emailed links and the Google redirect (defaults to the request's host) |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | web | optional; enables "Continue with Google". Redirect URI: `<APP_URL>/auth/google/callback` |
-| `ADMIN_EMAILS` | web | optional comma-separated addresses that become administrators on sign-up and may claim data migrated from a single-user deployment |
-| `SIGNUPS_DISABLED` | web | set to `1` to close registration once everyone has an account |
-| `RESEND_API_KEY`, `EMAIL_FROM` | web | optional; sends confirmation and password-reset emails through Resend. Without them the links are written to the server log outside production, or with `AUTH_EMAIL_LOG=1` |
+| `ADMIN_EMAILS` | web | comma-separated administrator addresses; defaults to `harryddryden@gmail.com`. They may always sign up, become administrators once their address is confirmed, and the first of them to confirm inherits the data migrated from a single-user deployment. Everyone else can only sign up while an administrator has opened registration in Settings |
+| `RESEND_API_KEY`, `EMAIL_FROM` | web | optional; sends confirmation and password-reset emails through Resend (set `APP_URL` with them). Without a provider the links are written to the server log, `AUTH_EMAIL_LOG=0` keeps them out, and an administrator can mint reset links from Account |
 | `CHRISTOPHER_CLI_USER` | worker | email of the account the CLI acts for; default is the earliest administrator |
 | `ANTHROPIC_API_KEY` | worker | optional; without it scanning still works and scoring is skipped |
 | `SCRAPER_CONTACT_EMAIL` | worker | included in the user agent so site owners can reach you |

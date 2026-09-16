@@ -1,6 +1,6 @@
 "use server";
 
-import { requireUser } from "@/lib/auth";
+import { requireUser, requireVerifiedUser } from "@/lib/auth";
 
 import { appendProfile, latestProfileFor, setSubscriptionStatus } from "@christopher/db";
 import { and, eq } from "drizzle-orm";
@@ -92,7 +92,7 @@ export async function acceptFilterSuggestion(suggestionId: string): Promise<void
 
 /** Mine the latest scan of every source for role types and seniority labels the gate is missing. */
 export async function suggestFromScansNow(): Promise<void> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   await enqueue("suggest_from_scans", { userId: user.id });
   revalidatePath("/learning");
 }
@@ -105,13 +105,13 @@ export async function rejectFilterSuggestion(suggestionId: string): Promise<void
 }
 
 export async function resynthesizeNow(): Promise<void> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   await enqueue("synthesize_profile", { userId: user.id, force: true });
   revalidatePath("/learning");
 }
 
 export async function rescoreAllRoles(): Promise<void> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   await enqueue("rescore_all", { userId: user.id, onlyInTable: true });
   revalidatePath("/learning");
   revalidatePath("/settings");

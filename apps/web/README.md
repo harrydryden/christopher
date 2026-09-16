@@ -15,9 +15,8 @@ worker (`apps/worker`) picks those up and does the scraping, scanning and AI cal
 | `SESSION_SECRET` | yes | Any long random string. Signs the session cookie (HMAC-SHA256), which names a row in `sessions`. Changing it signs everyone out. |
 | `APP_URL` | no | Public origin for emailed links and the Google redirect URI. Defaults to the request's forwarded host. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | no | Enables "Continue with Google" (OAuth 2.0 code flow with PKCE; redirect URI `<APP_URL>/auth/google/callback`). |
-| `ADMIN_EMAILS` | no | Comma-separated addresses that become administrators on sign-up and may claim data migrated from a single-user deployment. Otherwise the first account is the administrator. |
-| `SIGNUPS_DISABLED` | no | `1` closes registration. |
-| `RESEND_API_KEY`, `EMAIL_FROM` | no | Sends confirmation and password-reset emails through Resend. Without them the links are logged outside production (or with `AUTH_EMAIL_LOG=1`). |
+| `ADMIN_EMAILS` | no | Comma-separated administrator addresses; defaults to `harryddryden@gmail.com`. They may always sign up, become administrators once their address is confirmed, and inherit data migrated from a single-user deployment. Everyone else signs up only while registration is open (Settings) and joins as a member. |
+| `RESEND_API_KEY`, `EMAIL_FROM` | no | Sends confirmation and password-reset emails through Resend; set `APP_URL` with them. Without a provider the links are written to the server log (`AUTH_EMAIL_LOG=0` keeps them out) and administrators can mint reset links from Account. |
 | `DATABASE_SSL` | no | `disable` \| `require` \| `verify`. Auto-detected from the host (`localhost`/`127.0.0.1`/`*.internal` → disabled, otherwise `require`) when unset. |
 
 No Anthropic API key is used here — all AI calls happen in the worker.
@@ -36,8 +35,9 @@ SESSION_SECRET=some-long-random-string \
 pnpm --filter @christopher/web dev
 ```
 
-Then open http://localhost:3000/signup, create the first account (it becomes the administrator),
-and add a company by homepage URL from the Companies page. Discovery, scanning, scoring and every other AI-driven
+Then open http://localhost:3000/signup, sign up with the administrator address (`ADMIN_EMAILS`,
+default `harryddryden@gmail.com`), complete the confirmation link from the server log with your
+password, and add a company by homepage URL from the Companies page. Discovery, scanning, scoring and every other AI-driven
 step happen in `apps/worker`, which must be running (with `ANTHROPIC_API_KEY` set) against the
 same `DATABASE_URL` for anything beyond viewing/editing to actually happen.
 

@@ -91,7 +91,7 @@ async function main() {
   await runMigrations(db);
   await db.execute(sql`truncate users, companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, company_profiles, company_suggestions, filter_suggestions, preference_profiles, tasks, ai_calls, settings restart identity cascade`);
 
-  const { user: demo } = await createUser(db, { email: "demo@christopher.local", name: "Demo", passwordHash: await hashPassword("demo-password"), emailVerified: true });
+  const { user: demo } = await createUser(db, { email: "demo@christopher.local", name: "Demo", passwordHash: await hashPassword("demo-password"), emailVerified: true, role: "admin" });
   const { user: second } = await createUser(db, { email: "engineer@christopher.local", name: "Engineer", passwordHash: await hashPassword("demo-password"), emailVerified: true, role: "member" });
 
   await db.insert(schema.settings).values([{ key: "timezone", value: "Europe/London" }]).onConflictDoUpdate({ target: schema.settings.key, set: { value: sql`excluded.value` } });

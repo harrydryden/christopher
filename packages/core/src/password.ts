@@ -1,21 +1,31 @@
 /**
  * Password hashing for account sign-in. Node-only (uses node:crypto scrypt).
- * Stored format: `scrypt$N$r$p$<saltBase64>$<hashBase64>`.
+ * Stored format: `scrypt$N$r$p$<saltBase64>$<hashBase64>`, so the parameters travel with the hash
+ * and can be raised later: old hashes still verify and are rehashed on the next successful sign-in.
  */
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
 
-const SCRYPT_N = 16384;
+/** OWASP's recommended scrypt cost: N = 2^17, r = 8, p = 1 (128 MiB, a few hundred milliseconds). */
+const DEFAULT_SCRYPT_N = 1 << 17;
 const SCRYPT_R = 8;
 const SCRYPT_P = 1;
 const KEY_LENGTH = 64;
-const MAX_MEM = 128 * SCRYPT_N * SCRYPT_R * 2;
+/** The lowest cost ever used in production; the test-only override cannot go below it. */
+const MIN_SCRYPT_N = 1 << 14;
 
 export const MIN_PASSWORD_LENGTH = 10;
 export const MAX_PASSWORD_LENGTH = 256;
 
+/** CHRISTOPHER_SCRYPT_N lets test suites hash cheaply; production ignores anything weaker than the old cost. */
+function currentN(): number {
+  const raw = Number(process.env.CHRISTOPHER_SCRYPT_N);
+  if (Number.isInteger(raw) && raw >= MIN_SCRYPT_N && (raw & (raw - 1)) === 0) return raw;
+  return DEFAULT_SCRYPT_N;
+}
+
 function scryptAsync(password: string, salt: Buffer, keylen: number, params: { N: number; r: number; p: number }): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const maxmem = Math.max(MAX_MEM, 128 * params.N * params.r * 2);
+    const maxmem = 128 * params.N * params.r * 2;
     scryptCallback(password, salt, keylen, { N: params.N, r: params.r, p: params.p, maxmem }, (err, derivedKey) => {
       if (err) reject(err);
       else resolve(derivedKey);
@@ -23,33 +33,41 @@ function scryptAsync(password: string, salt: Buffer, keylen: number, params: { N
   });
 }
 
-export async function hashPassword(password: string): Promise<string> {
-  const salt = randomBytes(16);
-  const derived = await scryptAsync(password.normalize("NFKC"), salt, KEY_LENGTH, { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P });
-  return `scrypt$${SCRYPT_N}$${SCRYPT_R}$${SCRYPT_P}$${salt.toString("base64")}$${derived.toString("base64")}`;
-}
-
-export async function verifyPassword(password: string, stored: string): Promise<boolean> {
+function parseStored(stored: string): { N: number; r: number; p: number; salt: Buffer; expected: Buffer } | null {
   const parts = stored.split("$");
-  if (parts.length !== 6 || parts[0] !== "scrypt") return false;
+  if (parts.length !== 6 || parts[0] !== "scrypt") return null;
   const [, nRaw, rRaw, pRaw, saltB64, hashB64] = parts;
   const N = Number(nRaw);
   const r = Number(rRaw);
   const p = Number(pRaw);
-  if (!Number.isFinite(N) || !Number.isFinite(r) || !Number.isFinite(p)) return false;
-  if (!saltB64 || !hashB64) return false;
-  let salt: Buffer;
-  let expected: Buffer;
-  try {
-    salt = Buffer.from(saltB64, "base64");
-    expected = Buffer.from(hashB64, "base64");
-  } catch {
-    return false;
-  }
-  if (expected.length === 0) return false;
-  const derived = await scryptAsync(password.normalize("NFKC"), salt, expected.length, { N, r, p });
-  if (derived.length !== expected.length) return false;
-  return timingSafeEqual(derived, expected);
+  if (!Number.isInteger(N) || !Number.isInteger(r) || !Number.isInteger(p) || N < 2 || r < 1 || p < 1) return null;
+  if (!saltB64 || !hashB64) return null;
+  const salt = Buffer.from(saltB64, "base64");
+  const expected = Buffer.from(hashB64, "base64");
+  if (salt.length === 0 || expected.length === 0) return null;
+  return { N, r, p, salt, expected };
+}
+
+export async function hashPassword(password: string): Promise<string> {
+  const salt = randomBytes(16);
+  const N = currentN();
+  const derived = await scryptAsync(password.normalize("NFKC"), salt, KEY_LENGTH, { N, r: SCRYPT_R, p: SCRYPT_P });
+  return `scrypt$${N}$${SCRYPT_R}$${SCRYPT_P}$${salt.toString("base64")}$${derived.toString("base64")}`;
+}
+
+export async function verifyPassword(password: string, stored: string): Promise<boolean> {
+  const parsed = parseStored(stored);
+  if (!parsed) return false;
+  const derived = await scryptAsync(password.normalize("NFKC"), parsed.salt, parsed.expected.length, parsed);
+  if (derived.length !== parsed.expected.length) return false;
+  return timingSafeEqual(derived, parsed.expected);
+}
+
+/** True when a stored hash was made with weaker parameters than we use now, so it should be replaced after a successful check. */
+export function needsRehash(stored: string): boolean {
+  const parsed = parseStored(stored);
+  if (!parsed) return false;
+  return parsed.N < currentN() || parsed.r !== SCRYPT_R || parsed.p !== SCRYPT_P;
 }
 
 /** Does this look like the `scrypt$N$r$p$salt$hash` format hashPassword produces? */

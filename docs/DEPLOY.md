@@ -46,18 +46,26 @@ the same learning loop.
    openssl rand -hex 32                                        # SESSION_SECRET
    ```
 
-   Accounts live in the database, not in environment variables. Once the interface is up, open
-   `/signup` and create the first account; it becomes the administrator. Optional extras:
-   `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (an OAuth 2.0 web client in Google Cloud with the
-   redirect URI `https://<your host>/auth/google/callback`) add "Continue with Google";
-   `RESEND_API_KEY` and `EMAIL_FROM` send confirmation and password-reset links; `ADMIN_EMAILS`
-   names the addresses that become administrators; `SIGNUPS_DISABLED=1` closes registration once
-   everyone is in.
+   Accounts live in the database, not in environment variables. `ADMIN_EMAILS` names the
+   administrator addresses (default: `harryddryden@gmail.com`). Once the interface is up, sign up
+   with that address, or use "Continue with Google" with it, and confirm the address: the
+   confirmation link asks for your password. Only then does the account become an administrator.
+   Nobody else can sign up until you open registration in Settings, and new members become
+   administrators only if you promote them from Account. Optional extras: `GOOGLE_CLIENT_ID` and
+   `GOOGLE_CLIENT_SECRET` (an OAuth 2.0 web client in Google Cloud with the redirect URI
+   `https://<your host>/auth/google/callback`) add "Continue with Google"; `RESEND_API_KEY` and
+   `EMAIL_FROM` send confirmation and password-reset links, and `APP_URL` must be set alongside
+   them so the links carry your real address.
 
-   **Upgrading a single-user deployment.** The migration keeps your companies, decisions, profile,
-   CVs and settings under a placeholder owner. The first account to sign up (or the first address
-   listed in `ADMIN_EMAILS`) claims it and sees everything as before. `APP_PASSWORD_HASH` and
-   `APP_PASSWORD` are no longer read and can be removed.
+   **Upgrading a single-user deployment.** The migration keeps your companies, roles, decisions,
+   profile, library, CVs and settings under a placeholder owner. The administrator address takes
+   that owner over, with everything in it, the moment it is confirmed or signs in with Google.
+   Any other address gets an empty workspace. `APP_PASSWORD_HASH` and `APP_PASSWORD` are no
+   longer read and can be removed.
+
+   **Without Resend.** Confirmation and reset links are written to the server log (Vercel's
+   function logs); copy the link from there. An administrator can also mint a reset link for any
+   account from the Account page; using it confirms the address as well.
 
 ---
 
@@ -106,7 +114,7 @@ repository root.
 | `APP_URL` | `https://<your vercel host>`; used in emailed links and the Google redirect |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | optional, for Google sign-in |
 | `RESEND_API_KEY`, `EMAIL_FROM` | optional, for confirmation and password-reset emails |
-| `ADMIN_EMAILS`, `SIGNUPS_DISABLED` | optional, see step 4 above |
+| `ADMIN_EMAILS` | optional, see step 4 above; defaults to the owner's address |
 
 Vercel's egress addresses vary, so the database is protected by TLS and a strong password rather
 than an IP allowlist. Leave `CRON_SECRET` unset and the daily cron in `apps/web/vercel.json` is
@@ -178,8 +186,9 @@ optional model calls when it is exceeded.
 |---|---|---|
 | Every page 500s right after deploy | Migrations have not run | `DATABASE_URL='<external url>' pnpm db:migrate` |
 | Sign-in page says it needs setting up | `SESSION_SECRET` is unset | Set it in Vercel and redeploy |
-| Nobody can sign up, or the first account sees none of the old data | `SIGNUPS_DISABLED=1`, or the migrated owner was claimed by another address | Unset it; sign up with an `ADMIN_EMAILS` address to claim the migrated owner, or have an administrator manage accounts from Account |
-| Confirmation or reset emails never arrive | Resend is not configured | Set `RESEND_API_KEY` and `EMAIL_FROM`; until then the links appear in the function log when `AUTH_EMAIL_LOG=1` |
+| Nobody else can sign up | Registration is closed by default | Open it in Settings, or add their address to `ADMIN_EMAILS` |
+| The administrator sees none of the old data | The address used is not in `ADMIN_EMAILS`, or the confirmation link was never completed | Sign up with the listed address and complete the link with your password, or sign in with Google using it |
+| Confirmation or reset emails never arrive | Resend is not configured | Set `RESEND_API_KEY`, `EMAIL_FROM` and `APP_URL`; until then the links appear in the function log, and an administrator can mint reset links from Account |
 | Worker restarts repeatedly | `DATABASE_URL` wrong, or the internal URL used from another region | Use the external URL |
 | A company shows no source | Discovery could not find one | Open the company and paste the careers or board URL |
 | A source says "blocked" | Bot protection | Paste the underlying board URL; the tool does not try to evade protection |

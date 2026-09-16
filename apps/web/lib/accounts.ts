@@ -1,27 +1,42 @@
 /**
- * Account lifecycle: registration, password sign-in, Google sign-in and linking, password
- * changes and resets, email verification. Pure database work; sessions and cookies are lib/auth.
+ * Account lifecycle: registration, password sign-in, Google sign-in and linking, email
+ * confirmation, password changes and resets. Pure database work; sessions and cookies are lib/auth.
+ *
+ * Two things are sensitive and wait for proof that the person owns the address: the administrator
+ * role and taking over the migrated owner's data. Proof is a Google sign-in Google has verified, the
+ * confirmation link completed with the account's password, or a reset link used to set a password.
  */
 import { and, eq } from "drizzle-orm";
-import { createUser, normaliseEmail } from "@christopher/db";
+import { adminEmailsFrom, completeAccountClaim, createUser, isEntitledEmail, isPlaceholderEmail, normaliseEmail, promoteIfEntitled, type CreateUserResult } from "@christopher/db";
 import { authAccounts, sessions, users, type User } from "@christopher/db/schema";
-import { hashPassword, passwordProblem, verifyPassword } from "@christopher/core";
-import { consumeAuthToken, issueAuthToken } from "./auth-tokens";
+import { hashPassword, needsRehash, passwordProblem, verifyPassword } from "@christopher/core";
+import { consumeAuthToken, issueAuthToken, peekAuthToken } from "./auth-tokens";
 import { db } from "./db";
 import { sendEmail } from "./email";
 import type { GoogleProfile } from "./google";
+import { getSystemSettings } from "./settings";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/** Addresses that become administrators on sign-up, and the only ones that may claim migrated data. */
+/** Addresses that become administrators once proven, and the only ones that may take over migrated data. */
 export function adminEmails(): string[] {
-  return (process.env.ADMIN_EMAILS ?? "").split(",").map((e) => normaliseEmail(e)).filter(Boolean);
+  return adminEmailsFrom(process.env);
+}
+
+export function isAdminEmail(email: string): boolean {
+  return isEntitledEmail(email, adminEmails());
 }
 
 export function emailProblem(email: string): string | null {
   const value = normaliseEmail(email);
-  if (!value || value.length > 254 || !EMAIL_RE.test(value)) return "Enter a valid email address.";
+  if (!value || value.length > 254 || !EMAIL_RE.test(value) || value.endsWith(".invalid") || isPlaceholderEmail(value)) return "Enter a valid email address.";
   return null;
+}
+
+/** Administrator addresses may always register; everyone else only while an administrator has opened registration. */
+export async function registrationAllowed(email: string): Promise<boolean> {
+  if (isAdminEmail(email)) return true;
+  return (await getSystemSettings()).registrationOpen;
 }
 
 /** A hash to verify against when no account matches, so a wrong email costs the same time as a wrong password. */
@@ -31,7 +46,7 @@ function decoy(): Promise<string> {
   return decoyHash;
 }
 
-export async function registerWithPassword(input: { email: string; password: string; name?: string }): Promise<{ user: User; claimedBootstrap: boolean }> {
+export async function registerWithPassword(input: { email: string; password: string; name?: string }): Promise<CreateUserResult> {
   const emailError = emailProblem(input.email);
   if (emailError) throw new Error(emailError);
   const passwordError = passwordProblem(input.password);
@@ -40,19 +55,29 @@ export async function registerWithPassword(input: { email: string; password: str
   return createUser(db(), { email: input.email, name: input.name?.trim().slice(0, 200) || null, passwordHash }, { adminEmails: adminEmails() });
 }
 
-export async function authenticateWithPassword(email: string, password: string): Promise<User | null> {
+export type PasswordSignIn = { status: "ok"; user: User } | { status: "unconfirmed" } | { status: "invalid" };
+
+/** Check a password. An unclaimed row (an administrator address that has not confirmed yet) cannot sign in even with the right password. */
+export async function authenticateWithPassword(email: string, password: string): Promise<PasswordSignIn> {
   const [user] = await db().select().from(users).where(eq(users.email, normaliseEmail(email))).limit(1);
   const hash = user?.passwordHash ?? (await decoy());
   const ok = await verifyPassword(password, hash);
-  if (!user || !user.passwordHash || !user.claimedAt || !ok) return null;
-  return user;
+  if (!user || !user.passwordHash || !ok) return { status: "invalid" };
+  if (!user.claimedAt) return { status: "unconfirmed" };
+  let current = user;
+  if (needsRehash(user.passwordHash)) {
+    const [rehashed] = await db().update(users).set({ passwordHash: await hashPassword(password) }).where(eq(users.id, user.id)).returning();
+    current = rehashed ?? current;
+  }
+  return { status: "ok", user: await promoteIfEntitled(db(), current, adminEmails()) };
 }
 
 /**
- * Sign in with a Google identity. A known Google account signs in; a verified Google email that
- * matches an existing account links to it; anything else creates an account (or claims the
- * migrated owner). A password account whose email was never verified is taken over by the
- * proven Google owner: its password and sessions are dropped, since nobody proved that address.
+ * Sign in with a Google identity. A known Google account signs in. Otherwise Google must have
+ * verified the address; then a row waiting for confirmation is completed (its unproven password
+ * dropped), an existing account is linked (an unverified password account is taken over the same
+ * way, since nobody proved that address before), and anything else creates an account, subject to
+ * the registration policy.
  */
 export async function signInWithGoogle(profile: GoogleProfile): Promise<{ user: User; created: boolean }> {
   const email = normaliseEmail(profile.email);
@@ -62,20 +87,25 @@ export async function signInWithGoogle(profile: GoogleProfile): Promise<{ user: 
     .innerJoin(users, eq(users.id, authAccounts.userId))
     .where(and(eq(authAccounts.provider, "google"), eq(authAccounts.providerAccountId, profile.sub)))
     .limit(1);
-  if (linked) return { user: linked.user, created: false };
+  if (linked) return { user: await promoteIfEntitled(db(), linked.user, adminEmails()), created: false };
   if (!profile.emailVerified) throw new Error("Google has not verified this email address, so it cannot be used to sign in.");
+  if (emailProblem(email)) throw new Error("Google returned an unusable email address.");
 
   const [existing] = await db().select().from(users).where(eq(users.email, email)).limit(1);
-  if (existing && existing.claimedAt) {
+  if (existing) {
+    const unproven = !existing.emailVerifiedAt && !!existing.passwordHash;
     await db().transaction(async (tx) => {
-      if (!existing.emailVerifiedAt) {
-        await tx.update(users).set({ emailVerifiedAt: new Date(), ...(existing.passwordHash ? { passwordHash: null } : {}) }).where(eq(users.id, existing.id));
-        if (existing.passwordHash) await tx.delete(sessions).where(eq(sessions.userId, existing.id));
+      if (unproven) {
+        await tx.update(users).set({ passwordHash: null }).where(eq(users.id, existing.id));
+        await tx.delete(sessions).where(eq(sessions.userId, existing.id));
       }
       await tx.insert(authAccounts).values({ userId: existing.id, provider: "google", providerAccountId: profile.sub, email, name: profile.name ?? null }).onConflictDoNothing();
     });
-    return { user: { ...existing, emailVerifiedAt: existing.emailVerifiedAt ?? new Date() }, created: false };
+    const user = await completeAccountClaim(db(), existing.id, { adminEmails: adminEmails() });
+    if (!user) throw new Error("This account cannot sign in.");
+    return { user, created: false };
   }
+  if (!(await registrationAllowed(email))) throw new Error("Registration is closed on this deployment.");
   const { user } = await createUser(db(), { email, name: profile.name ?? null, emailVerified: true }, { adminEmails: adminEmails() });
   await db().insert(authAccounts).values({ userId: user.id, provider: "google", providerAccountId: profile.sub, email, name: profile.name ?? null }).onConflictDoNothing();
   return { user, created: true };
@@ -95,10 +125,10 @@ export async function changePassword(user: User, currentPassword: string, nextPa
   await db().update(users).set({ passwordHash: await hashPassword(nextPassword) }).where(eq(users.id, user.id));
 }
 
-/** Always quiet about whether an address is registered. */
-export async function requestPasswordReset(email: string, origin: string): Promise<void> {
+/** Always quiet about whether an address is registered. A row waiting for confirmation may reset too: the link proves the address. */
+export async function requestPasswordReset(email: string, origin: string | null): Promise<void> {
   const [user] = await db().select().from(users).where(eq(users.email, normaliseEmail(email))).limit(1);
-  if (!user || !user.claimedAt) return;
+  if (!user || isPlaceholderEmail(user.email) || !origin) return;
   const token = await issueAuthToken(user.id, "password_reset");
   await sendEmail({
     to: user.email,
@@ -107,32 +137,71 @@ export async function requestPasswordReset(email: string, origin: string): Promi
   });
 }
 
+/** The link proves the address, so this also completes a pending confirmation and whatever it entitles. */
 export async function resetPasswordWithToken(token: string, password: string): Promise<User | null> {
   const problem = passwordProblem(password);
   if (problem) throw new Error(problem);
   const consumed = await consumeAuthToken(token, "password_reset");
   if (!consumed) return null;
-  const passwordHash = await hashPassword(password);
-  const [user] = await db().update(users).set({ passwordHash, emailVerifiedAt: new Date() }).where(eq(users.id, consumed.userId)).returning();
+  await db().update(users).set({ passwordHash: await hashPassword(password) }).where(eq(users.id, consumed.userId));
+  const user = await completeAccountClaim(db(), consumed.userId, { adminEmails: adminEmails() });
   if (!user) return null;
   // Whoever held the old password is signed out everywhere.
   await db().delete(sessions).where(eq(sessions.userId, user.id));
   return user;
 }
 
-export async function sendVerificationEmail(user: User, origin: string): Promise<{ delivered: boolean }> {
-  if (user.emailVerifiedAt) return { delivered: false };
+export async function sendVerificationEmail(user: User, origin: string | null): Promise<{ delivered: boolean }> {
+  if (user.emailVerifiedAt || !origin) return { delivered: false };
   const token = await issueAuthToken(user.id, "email_verification");
   return sendEmail({
     to: user.email,
     subject: "Confirm your email for Christopher",
-    text: `Confirm this address for your Christopher account (the link works once, for a day):\n${origin}/auth/verify?token=${token}\n\nIf you did not create an account, ignore this message.`,
+    text: `Confirm this address for your Christopher account (the link works once, for a day, and asks for your password):\n${origin}/auth/verify?token=${token}\n\nIf you did not create an account, ignore this message.`,
   });
 }
 
-export async function verifyEmailWithToken(token: string): Promise<User | null> {
+export interface VerificationPreview {
+  userId: string;
+  email: string;
+  hasPassword: boolean;
+  /** The account cannot sign in until this confirmation completes. */
+  pending: boolean;
+}
+
+/** What a confirmation link refers to, without spending it. */
+export async function previewVerification(token: string): Promise<VerificationPreview | null> {
+  const found = await peekAuthToken(token, "email_verification");
+  if (!found) return null;
+  const [user] = await db().select().from(users).where(eq(users.id, found.userId)).limit(1);
+  if (!user || isPlaceholderEmail(user.email)) return null;
+  return { userId: user.id, email: user.email, hasPassword: !!user.passwordHash, pending: !user.claimedAt };
+}
+
+export type EmailConfirmation = { status: "done"; user: User } | { status: "invalid" } | { status: "password" };
+
+/**
+ * Complete a confirmation link. The mailbox alone is not enough: the person confirming must be the
+ * one who set the password, so either a session for that account or the password is required. That
+ * is what stops a stranger registering your address and having you confirm it for them.
+ */
+export async function confirmEmailWithToken(token: string, proof: { sessionUserId?: string | null; password?: string }): Promise<EmailConfirmation> {
+  const preview = await previewVerification(token);
+  if (!preview) return { status: "invalid" };
+  if (proof.sessionUserId !== preview.userId) {
+    const [user] = await db().select().from(users).where(eq(users.id, preview.userId)).limit(1);
+    const hash = user?.passwordHash ?? (await decoy());
+    const ok = await verifyPassword(proof.password ?? "", hash);
+    if (!user?.passwordHash || !ok) return { status: "password" };
+  }
   const consumed = await consumeAuthToken(token, "email_verification");
-  if (!consumed) return null;
-  const [user] = await db().update(users).set({ emailVerifiedAt: new Date() }).where(eq(users.id, consumed.userId)).returning();
-  return user ?? null;
+  if (!consumed || consumed.userId !== preview.userId) return { status: "invalid" };
+  const user = await completeAccountClaim(db(), consumed.userId, { adminEmails: adminEmails() });
+  return user ? { status: "done", user } : { status: "invalid" };
+}
+
+/** A reset link an administrator can hand to someone when email delivery is not set up. Works once, for an hour. */
+export async function issueResetLink(userId: string, origin: string): Promise<string> {
+  const token = await issueAuthToken(userId, "password_reset");
+  return `${origin}/reset-password?token=${token}`;
 }

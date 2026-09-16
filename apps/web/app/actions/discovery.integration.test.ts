@@ -8,7 +8,7 @@ import { ensureTestUser } from "@/test/auth";
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 let user: User;
-const auth = vi.hoisted(() => ({ requireUser: vi.fn(), requireSession: vi.fn() }));
+const auth = vi.hoisted(() => ({ requireUser: vi.fn(), requireSession: vi.fn(), requireVerifiedUser: vi.fn() }));
 vi.mock("@/lib/auth", () => auth);
 vi.mock("@/lib/db", () => ({ db: () => database }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -20,6 +20,7 @@ afterAll(async () => { if (database) await database.execute(sql`truncate discove
 beforeEach(async () => {
   auth.requireUser.mockReset(); auth.requireUser.mockImplementation(async () => user);
   auth.requireSession.mockReset(); auth.requireSession.mockImplementation(async () => user);
+  auth.requireVerifiedUser.mockReset(); auth.requireVerifiedUser.mockImplementation(async () => auth.requireUser());
   await database.execute(sql`truncate discovery_sources, company_suggestions, companies, tasks, settings, user_settings restart identity cascade`);
 });
 async function source() {
@@ -118,6 +119,8 @@ it("requires a reason and retains a dismissal once reviewed", async () => {
 it("authenticates before attempting a mutation", async () => {
   auth.requireUser.mockRejectedValueOnce(new Error("Unauthorised"));
   await expect(saveDiscoverySource(form({}))).rejects.toThrow("Unauthorised");
+  auth.requireVerifiedUser.mockRejectedValueOnce(new Error("Confirm your email"));
+  await expect(checkDiscoverySource((await source()).id)).rejects.toThrow("Confirm your email");
 });
 it("distinguishes paused, disabled, active and empty-email states", () => {
   const base = { enabled: true, suggestionsEnabled: true, lastError: null, waiting: 0, lastCheckedAt: null, kind: "email" };

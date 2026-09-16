@@ -5,6 +5,7 @@ import { getScanStatus } from "@/lib/scan-status";
 import { getCurrentUser } from "@/lib/auth";
 import { Suspense, type ReactNode } from "react";
 import { logout } from "@/app/login/actions";
+import { resendVerification } from "@/app/actions/account";
 import { WorkspaceNav } from "@/components/WorkspaceNav";
 import { NavLink } from "@/components/NavLink";
 import { Mark } from "@/components/brand";
@@ -38,6 +39,14 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         <Mark size={16} />
         <Suspense fallback={<span className="text-muted">Loading scan status…</span>}><ScanBanner userId={user.id} /></Suspense>
       </div>
+      {!user.emailVerifiedAt && (
+        <div className="flex flex-wrap items-center gap-3 border-b-2 border-line bg-sunken px-4 py-2 text-13" role="status">
+          <span>Confirm your email address to add companies, run discovery and build CVs. The link asks for your password.</span>
+          <form action={resendVerification}>
+            <button type="submit" className="underline">Send the link again</button>
+          </form>
+        </div>
+      )}
       <div className="flex flex-1 flex-col md:flex-row">
         <aside className="flex w-full shrink-0 flex-col border-b-2 border-line p-3 md:w-48 md:border-b-0 md:border-r-2">
           <Link href="/" className="mb-4 block p-2" aria-label="Christopher home">

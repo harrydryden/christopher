@@ -3,7 +3,7 @@
  * so the worker CLI and the interface agree on the format; this checks the re-export.
  */
 import { describe, expect, it } from "vitest";
-import { hashPassword, looksLikeScryptHash, passwordProblem, verifyPassword } from "./password";
+import { hashPassword, looksLikeScryptHash, needsRehash, passwordProblem, verifyPassword } from "./password";
 
 describe("hashing", () => {
   it("accepts the right password and rejects the wrong one", async () => {
@@ -28,6 +28,17 @@ describe("hashing", () => {
   it("rejects a malformed stored hash instead of throwing", async () => {
     expect(await verifyPassword("anything", "48291057384610293847561029384756")).toBe(false);
     expect(await verifyPassword("anything", "")).toBe(false);
+  });
+});
+
+describe("needsRehash", () => {
+  it("flags hashes made with a weaker cost than the current one, and nothing else", async () => {
+    const current = await hashPassword("x");
+    expect(needsRehash(current)).toBe(false);
+    const [, n, r, p, salt, hash] = current.split("$");
+    expect(needsRehash(`scrypt$${Number(n) / 2}$${r}$${p}$${salt}$${hash}`)).toBe(true);
+    expect(needsRehash(`scrypt$${n}$4$${p}$${salt}$${hash}`)).toBe(true);
+    expect(needsRehash("not a hash")).toBe(false);
   });
 });
 

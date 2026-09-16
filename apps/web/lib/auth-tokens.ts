@@ -25,6 +25,17 @@ export async function issueAuthToken(userId: string, purpose: TokenPurpose, now:
   return raw;
 }
 
+/** The account a live token belongs to, without spending it. */
+export async function peekAuthToken(raw: string, purpose: TokenPurpose, now: Date = new Date()): Promise<{ userId: string } | null> {
+  if (!raw || raw.length > 200) return null;
+  const [row] = await db()
+    .select({ userId: authTokens.userId })
+    .from(authTokens)
+    .where(and(eq(authTokens.tokenHash, hashToken(raw)), eq(authTokens.purpose, purpose), isNull(authTokens.usedAt), gt(authTokens.expiresAt, now)))
+    .limit(1);
+  return row ?? null;
+}
+
 /** Mark the token used and return its account, or null when it is unknown, spent or expired. */
 export async function consumeAuthToken(raw: string, purpose: TokenPurpose, now: Date = new Date()): Promise<{ userId: string } | null> {
   if (!raw || raw.length > 200) return null;

@@ -1,7 +1,7 @@
 /**
- * Outbound email for verification and password-reset links. Uses Resend's HTTP API when
- * RESEND_API_KEY and EMAIL_FROM are set; otherwise nothing is sent. Outside production, or when
- * AUTH_EMAIL_LOG=1, an unsent message is written to the server log so the link can be used.
+ * Outbound email for confirmation and password-reset links. Uses Resend's HTTP API when
+ * RESEND_API_KEY and EMAIL_FROM are set. Without a provider the server log is the only place a
+ * link can go, so the full message is logged there unless AUTH_EMAIL_LOG=0.
  */
 export interface OutboundEmail {
   to: string;
@@ -15,11 +15,8 @@ export function emailConfigured(): boolean {
 
 export async function sendEmail(mail: OutboundEmail): Promise<{ delivered: boolean }> {
   if (!emailConfigured()) {
-    if (process.env.NODE_ENV !== "production" || process.env.AUTH_EMAIL_LOG === "1") {
-      console.info(JSON.stringify({ event: "email_not_configured", to: mail.to, subject: mail.subject, text: mail.text }));
-    } else {
-      console.info(JSON.stringify({ event: "email_not_configured", to: mail.to, subject: mail.subject }));
-    }
+    const includeText = process.env.AUTH_EMAIL_LOG !== "0";
+    console.info(JSON.stringify({ event: "email_not_configured", to: mail.to, subject: mail.subject, ...(includeText ? { text: mail.text } : {}) }));
     return { delivered: false };
   }
   try {

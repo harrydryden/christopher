@@ -1,4 +1,8 @@
-import { changePassword, deleteUser, listAccounts, resendVerification, setUserRole, signOutEverywhere, updateProfile } from "@/app/actions/account";
+import { changePassword, createResetLink, deleteUser, listAccounts, resendVerification, setUserRole, signOutEverywhere, updateProfile } from "@/app/actions/account";
+import { ResetLinkButton } from "@/components/ResetLinkButton";
+import { adminEmails } from "@/lib/accounts";
+import { isPlaceholderEmail } from "@christopher/db";
+import { getSystemSettings } from "@/lib/settings";
 import { Badge } from "@/components/Badge";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
@@ -21,6 +25,7 @@ const NOTICES: Record<string, string> = {
   reset: "Your password has been reset and every other browser has been signed out.",
   "verify:done": "Your email address is confirmed.",
   "verify:invalid": "That confirmation link is no longer valid. Send a new one below.",
+  "verify:required": "Confirm your email address before adding companies, running discovery or building CVs. The link asks for your password.",
 };
 
 export default async function AccountPage({ searchParams }: { searchParams: Promise<{ reset?: string; verify?: string }> }) {
@@ -30,7 +35,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
   const sp = await searchParams;
   const notice = sp.reset ? NOTICES.reset : sp.verify ? NOTICES[`verify:${sp.verify}`] : null;
   const providers = await linkedProviders(user.id);
-  const accounts = user.role === "admin" ? await listAccounts() : [];
+  const [accounts, system] = user.role === "admin" ? await Promise.all([listAccounts(), getSystemSettings()]) : [[], null];
   const now = new Date();
   const labelClassName = "flex flex-col gap-1.5 text-14";
 
@@ -54,6 +59,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
         {!user.emailVerifiedAt && (
           <form action={resendVerification} className="mt-3 flex flex-wrap items-center gap-3">
             <Button type="submit" size="sm">Send confirmation email</Button>
+            <span className="text-12 text-muted">The link asks for your password.</span>
             {!emailConfigured() && <span className="text-12 text-warn">Email delivery is not configured on this deployment; the link only reaches the server log.</span>}
           </form>
         )}
@@ -104,6 +110,9 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
       {user.role === "admin" && (
         <Card title="Accounts (administrator)">
           <p className="mb-3 text-14 text-muted">Everyone with an account. Administrators manage the shared schedule, models, budget and company catalogue. Deleting an account removes everything it owns; shared companies and postings stay.</p>
+          <p className="mb-3 text-14 text-muted">
+            Administrator addresses (<code>ADMIN_EMAILS</code>): {adminEmails().join(", ")}. Registration for everyone else is {system?.registrationOpen ? "open" : "closed"}; change that in <a href="/settings" className="text-fg underline">Settings</a>. A reset link lets you onboard or unblock someone when email delivery is not set up: it works once, for an hour, and confirms their address.
+          </p>
           <Table>
             <THead>
               <tr>
@@ -121,7 +130,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
                   <TD>
                     <span className="text-fg">{account.email}</span>
                     {account.name && <span className="block text-12 text-muted">{account.name}</span>}
-                    {!account.claimedAt && <span className="block text-12 text-warn">Migrated owner data, not yet claimed</span>}
+                    {!account.claimedAt && <span className="block text-12 text-warn">{isPlaceholderEmail(account.email) ? "Migrated owner data, not yet claimed" : "Awaiting email confirmation"}</span>}
                     {account.claimedAt && !account.emailVerifiedAt && <span className="block text-12 text-muted">email unverified</span>}
                   </TD>
                   <TD><Badge tone={account.role === "admin" ? "blue" : "neutral"}>{account.role}</Badge></TD>
@@ -129,11 +138,14 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
                   <TD className="whitespace-nowrap">{account.lastLoginAt ? relativeTime(account.lastLoginAt, now) : "never"}</TD>
                   <TD>{account.sessions}</TD>
                   <TD>
-                    {account.claimedAt && (
+                    {!isPlaceholderEmail(account.email) && (
                       <div className="flex flex-wrap gap-2">
-                        <form action={setUserRole.bind(null, account.id, account.role === "admin" ? "member" : "admin")}>
-                          <Button type="submit" size="sm">{account.role === "admin" ? "Make member" : "Make admin"}</Button>
-                        </form>
+                        {account.claimedAt && (
+                          <form action={setUserRole.bind(null, account.id, account.role === "admin" ? "member" : "admin")}>
+                            <Button type="submit" size="sm">{account.role === "admin" ? "Make member" : "Make admin"}</Button>
+                          </form>
+                        )}
+                        {account.id !== user.id && <ResetLinkButton userId={account.id} action={createResetLink} />}
                         {account.id !== user.id && (
                           <form action={deleteUser.bind(null, account.id)}>
                             <ConfirmSubmitButton variant="danger" confirmMessage={`Delete ${account.email} and everything it owns? This cannot be undone.`}>Delete</ConfirmSubmitButton>

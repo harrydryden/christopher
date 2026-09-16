@@ -24,6 +24,8 @@ export interface SystemSettings {
   respectRobotsTxt: boolean;
   /** Day of week (0 = Sunday) for weekly jobs: suggestions, filter proposals, profile synthesis fallback. */
   weeklyDay: number;
+  /** Whether anyone may create an account. Addresses listed in ADMIN_EMAILS always may. */
+  registrationOpen: boolean;
 }
 
 export interface UserSettings {
@@ -53,6 +55,7 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   closeAfterMissingScans: 2,
   respectRobotsTxt: true,
   weeklyDay: 0,
+  registrationOpen: false,
 };
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {

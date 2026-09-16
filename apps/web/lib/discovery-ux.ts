@@ -1,3 +1,5 @@
+import { isImportOnlySourceError } from "@ava/core";
+
 /**
  * Discovery's forms always have something to say on success, so they name their own result type —
  * but it is the one `ActionResult`, so a discovery action can be used wherever an action is.
@@ -13,8 +15,10 @@ export function discoverySourceState(input: {
   if (!input.suggestionsEnabled) return "Discovery disabled";
   if (input.activeStatus === "running") return "Checking";
   if (input.activeStatus === "queued") return "Queued";
-  if (input.lastError) return "Needs attention";
+  const importOnly = isImportOnlySourceError(input.lastError);
+  if (input.lastError && !importOnly) return "Needs attention";
   if (input.waiting) return "Content ready";
+  if (importOnly) return "Import only";
   if (input.kind === "email") return "Waiting for content";
   return input.lastCheckedAt ? "Up to date" : "Ready for first check";
 }

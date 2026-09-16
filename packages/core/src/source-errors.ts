@@ -11,10 +11,26 @@ export function isImportOnlySourceError(message: string | null | undefined): boo
   return !!message && IMPORT_ONLY_RE.test(message);
 }
 
-/** A plain sentence for the interface, given the source's URL. */
-export function importOnlyReason(url: string | null | undefined): string {
+/**
+ * Kinds that are fed by hand by definition. LinkedIn disallows automated reading on every path,
+ * so a LinkedIn source is never fetched at all: each edition is pasted in. An email source has an
+ * inbound endpoint, but nothing to fetch either.
+ */
+const IMPORT_ONLY_KINDS = new Set(["email", "linkedin"]);
+
+export function isImportOnlyKind(kind: string): boolean {
+  return IMPORT_ONLY_KINDS.has(kind);
+}
+
+/** True when nothing about this source can be collected automatically by fetching its URL. */
+export function sourceIsImportOnly(input: { kind: string; lastError?: string | null }): boolean {
+  return isImportOnlyKind(input.kind) || isImportOnlySourceError(input.lastError);
+}
+
+/** A plain sentence for the interface, given the source's URL and kind. */
+export function importOnlyReason(url: string | null | undefined, kind?: string): string {
   let host = "";
   try { host = url ? new URL(url).hostname.replace(/^www\./, "") : ""; } catch { host = ""; }
-  const site = /(^|\.)linkedin\.com$/.test(host) ? "LinkedIn" : host || "This site";
-  return `${site} does not allow automated reading, so this source is import only. Paste each edition's text under Import text below.`;
+  const site = kind === "linkedin" || /(^|\.)linkedin\.com$/.test(host) ? "LinkedIn" : host || "This site";
+  return `${site} does not allow automated reading, so nothing is collected on its own. Paste each edition's text under Import text below to have it read.`;
 }

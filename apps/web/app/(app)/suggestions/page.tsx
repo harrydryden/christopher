@@ -4,6 +4,7 @@ import { discoverySources, tasks } from "@ava/db/schema";
 import { db } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { DiscoverySources } from "@/components/DiscoverySources";
+import { notWorkingSources } from "@/lib/discovery-ux";
 import { DiscoverySourceForm } from "@/components/DiscoverySourceForm";
 import { acceptSuggestion, findMoreSuggestions, rejectSuggestion } from "@/app/actions/suggestions";
 import { Badge } from "@/components/Badge";
@@ -63,7 +64,7 @@ export default async function SuggestionsPage({ searchParams }: { searchParams: 
   const page = Math.min(pageNumber(params.page), Math.max(1, Math.ceil(total / 50)));
   const [pending, resolved, sourceCount, settings, active] = await Promise.all([
     view === "review" ? listPendingSuggestions(user.id, page, q) : Promise.resolve([]), view === "history" ? listResolvedSuggestions(user.id, 50, page, q) : Promise.resolve([]),
-    db().select({ count: sql<number>`count(*)::int` }).from(discoverySources).where(eq(discoverySources.userId, user.id)), getSettings(),
+    db().select().from(discoverySources).where(eq(discoverySources.userId, user.id)), getSettings(),
     db().select({ id: tasks.id, type: tasks.type, status: tasks.status }).from(tasks).where(and(
       inArray(tasks.type, ["monitor_source", "extract_document", "verify_company", "suggest_companies"]), inArray(tasks.status, ["queued", "running"]),
       sql`((${tasks.type} = 'suggest_companies' and ${tasks.payload}->>'userId' = ${user.id})
@@ -73,14 +74,23 @@ export default async function SuggestionsPage({ searchParams }: { searchParams: 
   ]);
   const now = new Date();
   const similarActive = active.some(t => t.type === "suggest_companies");
+  // Surfaced on every view: a source that has stopped working is invisible otherwise, and silence
+  // from discovery looks the same as nothing to report.
+  const broken = view === "sources" ? [] : notWorkingSources(sourceCount.map(source => ({
+    ...source, waiting: 0, suggestionsEnabled: settings.suggestionsEnabled, now,
+  })));
   return <div className="mx-auto max-w-5xl">
     <PageHeader title="Discover companies"/>
     <nav aria-label="Discovery views" className="mb-5 flex flex-wrap gap-2 border-b border-line-muted pb-3">
-      {[["review", `Review (${reviewCount})`], ["sources", `Sources (${sourceCount[0]?.count ?? 0})`], ["history", "History"]].map(([key, label]) => <a key={key} href={key === "review" ? "/suggestions" : `/suggestions?view=${key}`} aria-current={view === key ? "page" : undefined} className={`ds-pixel border-2 px-3 py-2 text-11 no-underline ${view === key ? "border-accent bg-accent text-accent-fg" : "border-transparent text-muted hover:bg-sunken hover:text-fg"}`}>{label}</a>)}
+      {[["review", `Review (${reviewCount})`], ["sources", `Sources (${sourceCount.length})`], ["history", "History"]].map(([key, label]) => <a key={key} href={key === "review" ? "/suggestions" : `/suggestions?view=${key}`} aria-current={view === key ? "page" : undefined} className={`ds-pixel border-2 px-3 py-2 text-11 no-underline ${view === key ? "border-accent bg-accent text-accent-fg" : "border-transparent text-muted hover:bg-sunken hover:text-fg"}`}>{label}</a>)}
     </nav>
     {view !== "sources" && <><SearchForm action="/suggestions" className="flex flex-wrap items-end gap-3"><input type="hidden" name="view" value={view}/><label className="grid gap-1.5"><span className={labelClass}>Search recommendations</span><input name="q" defaultValue={q} maxLength={200} className={`h-11 w-80 ${inputClass}`}/></label><Button type="submit" className="h-11">Search</Button><SearchPending /></SearchForm><Pagination page={page} total={total} path="/suggestions" params={{ view, q }}/></>}
     {params.notice && <p role="status" className="mb-4 border border-line-muted p-3 text-14">{params.notice.slice(0, 300)}</p>}
-    {!settings.suggestionsEnabled && <p role="status" className="mb-4 p-3 text-14 text-warn">Discovery is disabled for your account. You can still review recommendations and manage sources. <a href="/settings" className="underline">Enable company suggestions in Settings</a>.</p>}
+    {broken.length > 0 && <div role="alert" className="mb-4 border-2 border-warn p-3 text-14 text-warn">
+      <p className="font-semibold">{broken.length === 1 ? "1 source is not being checked automatically" : `${broken.length} sources are not being checked automatically`}</p>
+      <p className="mt-1">{broken.map(s => s.name).join(", ")}. <a href="/suggestions?view=sources" className="underline">See what happened</a>.</p>
+    </div>}
+        {!settings.suggestionsEnabled && <p role="status" className="mb-4 p-3 text-14 text-warn">Discovery is disabled for your account. You can still review recommendations and manage sources. <a href="/settings" className="underline">Enable company suggestions in Settings</a>.</p>}
     {active.length > 0 && <div role="status" className="mb-4 flex flex-wrap items-center justify-between gap-2 border border-line-muted p-3 text-14"><span>{active.filter(t => t.status === "running").length} checks running · {active.filter(t => t.status === "queued").length} queued. New recommendations will appear in Review.</span><a href={view === "review" ? "/suggestions" : `/suggestions?view=${view}`} className="underline">Refresh progress</a></div>}
     {view === "sources" ? <DiscoverySources userId={user.id}/> : view === "history" ? <>
       <h2 className="ds-pixel mb-3 text-12">Recently reviewed and expired recommendations</h2>

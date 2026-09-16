@@ -132,12 +132,36 @@ it("distinguishes paused, disabled, active and empty-email states", () => {
   expect(discoverySourceState({ ...base, enabled: false, activeStatus: "queued" })).toBe("Paused");
   expect(discoverySourceState({ ...base, suggestionsEnabled: false })).toBe("Discovery disabled");
 });
+it("flags a source whose automation has stopped, and says why", async () => {
+  const { discoverySourceHealth, notWorkingSources } = await import("@/lib/discovery-ux");
+  const now = new Date("2026-09-16T12:00:00Z");
+  const base = { name: "Scaling Europe Daily", enabled: true, suggestionsEnabled: true, lastError: null as string | null,
+    waiting: 0, lastCheckedAt: now, kind: "website", nextRunAt: now, now };
+
+  expect(discoverySourceHealth(base).working).toBe(true);
+  const failed = discoverySourceHealth({ ...base, lastError: "HTTP 502: https://example.com/" });
+  expect(failed).toMatchObject({ state: "Not working", tone: "amber", working: false });
+  expect(failed.detail).toMatch(/last check failed/i);
+
+  // Nothing is draining the queue: the check is long past due but never ran.
+  const stalled = discoverySourceHealth({ ...base, nextRunAt: new Date("2026-09-14T12:00:00Z") });
+  expect(stalled).toMatchObject({ state: "Not working", working: false });
+  expect(stalled.detail).toMatch(/worker may not be running/i);
+  expect(discoverySourceHealth({ ...base, nextRunAt: new Date("2026-09-14T12:00:00Z"), activeStatus: "queued" }).working).toBe(true);
+  expect(discoverySourceHealth({ ...base, nextRunAt: new Date("2026-09-14T12:00:00Z"), enabled: false }).working).toBe(true);
+
+  // Import-only sources are never counted as broken; they are working as designed.
+  expect(discoverySourceHealth({ ...base, kind: "linkedin", nextRunAt: new Date("2026-09-01T12:00:00Z") })).toMatchObject({ state: "Import only", working: true });
+  expect(notWorkingSources([base, { ...base, name: "Broken", lastError: "HTTP 502: x" }]).map(s => s.name)).toEqual(["Broken"]);
+});
 it("calls a source import only when its site refuses automated reading, not broken", () => {
   const base = { enabled: true, suggestionsEnabled: true, lastError: null as string | null, waiting: 0, lastCheckedAt: new Date(), kind: "linkedin" };
   const robots = { ...base, lastError: "robots.txt disallows https://www.linkedin.com/newsletters/scaling-europe-daily" };
   expect(discoverySourceState(robots)).toBe("Import only");
   expect(discoverySourceState({ ...robots, waiting: 2 })).toBe("Content ready");
-  expect(discoverySourceState({ ...base, lastError: "HTTP 502: https://example.com" })).toBe("Needs attention");
+  // A LinkedIn source is import only by kind, before any check has ever run.
+  expect(discoverySourceState({ ...base, lastCheckedAt: null })).toBe("Import only");
+  expect(discoverySourceState({ ...base, kind: "website", lastError: "HTTP 502: https://example.com" })).toBe("Not working");
 });
 it("rolls back acceptance if queuing careers setup fails", async () => {
   const row = await recommendation();

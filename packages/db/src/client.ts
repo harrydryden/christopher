@@ -35,6 +35,10 @@ export function createDb(connectionString: string, options: CreateDbOptions = {}
     ssl: sslFor(connectionString, options.ssl),
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
+    // A serverless instance reuses its pool between requests; without keepalive
+    // an idle TLS connection is silently dropped and the next query pays the
+    // handshake again.
+    keepAlive: true,
   });
   pool.on("connect", client => {
     const original = client.query.bind(client);

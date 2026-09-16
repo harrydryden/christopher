@@ -1,5 +1,5 @@
 import { schema, enqueueTask, type Task } from "@christopher/db";
-import { dedupeKeyFor, discovery, extractDomain, isImportOnlySourceError, normalizeUrl, sha1, stripHtml } from "@christopher/core";
+import { dedupeKeyFor, discovery, extractDomain, isImportOnlyKind, isImportOnlySourceError, normalizeUrl, sha1, stripHtml } from "@christopher/core";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { aiBudgetExceeded, makeFetchContext, type WorkerDeps } from "../context";
 import { latestProfile } from "./learning";
@@ -7,12 +7,16 @@ import { recommendationContext } from "../recommendation-context";
 import { withResourceLease } from "../lease";
 import { verifyCandidate } from "./companies";
 
-/** One level of articles, bounded so a newsletter cannot turn into an unbounded crawl. */
+/**
+ * One level of articles, bounded so a newsletter cannot turn into an unbounded crawl. LinkedIn
+ * links are never followed: the site disallows automated reading, so each would be a failed
+ * fetch reported back to the user as if something were broken.
+ */
 export function articleLinks(html: string, base: string): string[] {
   const origin = new URL(base);
   return [...new Set(discovery.harvestLinks(html, base).map(l => normalizeUrl(l.href)).filter(url => {
     const u = new URL(url);
-    if ((u.hostname === "linkedin.com" || u.hostname.endsWith(".linkedin.com"))) return /\/(pulse|posts)\//.test(u.pathname);
+    if (u.hostname === "linkedin.com" || u.hostname.endsWith(".linkedin.com")) return false;
     return u.origin === origin.origin && /\/(article|news|blog|post|p)\//i.test(u.pathname);
   }))].slice(0, 10);
 }
@@ -26,18 +30,33 @@ export async function handleMonitorSource(task: Task, deps: WorkerDeps): Promise
   const fetchErrors: string[] = [];
   try {
 
-    if (source.kind !== "email" && source.url) {
+    // A LinkedIn or email source has nothing to fetch: its editions arrive by import.
+    if (!isImportOnlyKind(source.kind) && source.url) {
       const ctx = makeFetchContext(deps);
-      const collect = async (url: string) => {
+      // Newsletter platforms increasingly ship a JavaScript shell over plain HTTP. Rendering is
+      // bounded per check, and only ever follows a fetch robots.txt already allowed.
+      let rendersLeft = 5;
+      const collect = async (url: string): Promise<{ body: string; url: string }> => {
         const response = await ctx.fetchText(url);
         if (response.status >= 400) throw new Error(`HTTP ${response.status}: ${url}`);
         if (/\/authwall|\/login|\/checkpoint/.test(new URL(response.url).pathname)) throw new Error("Sign-in required. Import the newsletter text instead.");
-        const content = stripHtml(response.body).slice(0, 40000);
+        let page = { body: response.body, url: response.url };
+        let content = stripHtml(page.body).slice(0, 40000);
+        if (content.length < 100 && ctx.render && rendersLeft > 0) {
+          rendersLeft--;
+          try {
+            const rendered = await ctx.render(page.url);
+            if (rendered?.html) {
+              page = { body: rendered.html, url: rendered.finalUrl || page.url };
+              content = stripHtml(page.body).slice(0, 40000);
+            }
+          } catch (error) { ctx.log?.("source render failed", { url, error: (error as Error).message }); }
+        }
         if (content.length < 100) throw new Error("No readable content. Import the newsletter text instead.");
-        await deps.db.insert(schema.discoveryDocuments).values({ sourceId, url: response.url, title: stripHtml(response.body.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? source.name).slice(0, 300),
-          content, fingerprint: sha1(`${normalizeUrl(response.url)}\n${content}`),
+        await deps.db.insert(schema.discoveryDocuments).values({ sourceId, url: page.url, title: stripHtml(page.body.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? source.name).slice(0, 300),
+          content, fingerprint: sha1(`${normalizeUrl(page.url)}\n${content}`),
         }).onConflictDoNothing();
-        return response;
+        return page;
       };
       try {
         const page = await collect(source.url);

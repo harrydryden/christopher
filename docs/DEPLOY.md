@@ -40,20 +40,24 @@ the same learning loop.
    Migrations are safe to re-run; they take an advisory lock, so nothing is damaged if the worker
    starts at the same moment.
 
-4. Generate the two secrets the interface needs:
+4. Generate the secret the interface needs:
 
    ```bash
    openssl rand -hex 32                                        # SESSION_SECRET
-   pnpm --filter @christopher/web hash-password 'your password' # APP_PASSWORD_HASH
    ```
 
-   Without the repository checked out, this prints the same hash from any machine with Node:
+   Accounts live in the database, not in environment variables. Once the interface is up, open
+   `/signup` and create the first account; it becomes the administrator. Optional extras:
+   `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (an OAuth 2.0 web client in Google Cloud with the
+   redirect URI `https://<your host>/auth/google/callback`) add "Continue with Google";
+   `RESEND_API_KEY` and `EMAIL_FROM` send confirmation and password-reset links; `ADMIN_EMAILS`
+   names the addresses that become administrators; `SIGNUPS_DISABLED=1` closes registration once
+   everyone is in.
 
-   ```bash
-   node -e 'const{randomBytes,scryptSync}=require("node:crypto");const N=16384,r=8,p=1,s=randomBytes(16);console.log(`scrypt$${N}$${r}$${p}$${s.toString("base64")}$${scryptSync(process.argv[1].normalize("NFKC"),s,64,{N,r,p,maxmem:128*N*r*2}).toString("base64")}`)' 'your password'
-   ```
-
-   Only the hash is stored, so the password itself never leaves your machine.
+   **Upgrading a single-user deployment.** The migration keeps your companies, decisions, profile,
+   CVs and settings under a placeholder owner. The first account to sign up (or the first address
+   listed in `ADMIN_EMAILS`) claims it and sees everything as before. `APP_PASSWORD_HASH` and
+   `APP_PASSWORD` are no longer read and can be removed.
 
 ---
 
@@ -99,7 +103,10 @@ repository root.
 |---|---|
 | `DATABASE_URL` | the **External** database URL |
 | `SESSION_SECRET` | from above |
-| `APP_PASSWORD_HASH` | from above. Or set `APP_PASSWORD` to the password itself if you have no terminal to hand — simpler, but then the password is stored rather than only its hash |
+| `APP_URL` | `https://<your vercel host>`; used in emailed links and the Google redirect |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | optional, for Google sign-in |
+| `RESEND_API_KEY`, `EMAIL_FROM` | optional, for confirmation and password-reset emails |
+| `ADMIN_EMAILS`, `SIGNUPS_DISABLED` | optional, see step 4 above |
 
 Vercel's egress addresses vary, so the database is protected by TLS and a strong password rather
 than an IP allowlist. Leave `CRON_SECRET` unset and the daily cron in `apps/web/vercel.json` is
@@ -170,7 +177,9 @@ optional model calls when it is exceeded.
 | Symptom | Cause | Fix |
 |---|---|---|
 | Every page 500s right after deploy | Migrations have not run | `DATABASE_URL='<external url>' pnpm db:migrate` |
-| Sign-in page says it needs setting up | `APP_PASSWORD_HASH` is unset | Set it in Vercel and redeploy |
+| Sign-in page says it needs setting up | `SESSION_SECRET` is unset | Set it in Vercel and redeploy |
+| Nobody can sign up, or the first account sees none of the old data | `SIGNUPS_DISABLED=1`, or the migrated owner was claimed by another address | Unset it; sign up with an `ADMIN_EMAILS` address to claim the migrated owner, or have an administrator manage accounts from Account |
+| Confirmation or reset emails never arrive | Resend is not configured | Set `RESEND_API_KEY` and `EMAIL_FROM`; until then the links appear in the function log when `AUTH_EMAIL_LOG=1` |
 | Worker restarts repeatedly | `DATABASE_URL` wrong, or the internal URL used from another region | Use the external URL |
 | A company shows no source | Discovery could not find one | Open the company and paste the careers or board URL |
 | A source says "blocked" | Bot protection | Paste the underlying board URL; the tool does not try to evade protection |

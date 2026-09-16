@@ -1,12 +1,22 @@
 # Christopher — Careers Page Monitor
 
-**Specification v0.3 (user-prioritised delivery; live model verification pending)** · 2026-09-06 · Single-user tool
+**Specification v0.4 (accounts and a shared company catalogue)** · 2026-09-16 · Multi-account tool
 
 Christopher watches the careers pages of companies you list, once a day. It records which roles appeared and which disappeared, keeps only roles that match your keywords, and shows them in a table where you decide *apply* or *skip* with a reason. Those reasons train a preference model that ranks future roles and proposes changes to your filters. It also recommends companies similar to the ones you already track.
 
 This document is written to be implemented from directly (by you or by Claude Code). Sections 3 to 7 and the v0.2 clarifications below are normative; section 9 is the acceptance bar. Requirements describe the target, not a claim that every feature has passed acceptance. See [REVIEW-PLAN.md](REVIEW-PLAN.md) for implementation and verification status.
 
 ---
+
+## v0.4 accounts and the shared catalogue
+
+Christopher serves several people from one deployment. What is yours and what is shared:
+
+- **Accounts.** Sign up with an email address and password, or with Google. The first account (or any address in `ADMIN_EMAILS`) is an *administrator*; later sign-ups are *members*. `SIGNUPS_DISABLED=1` closes registration once everyone is in. A session is a row in `sessions`; the cookie names it and is signed, so "sign out everywhere" takes effect immediately. Password resets and email confirmation use single-use links. A Google identity whose email Google has verified may link to the account with the same address.
+- **Per account:** the companies you follow (`company_subscriptions`, with your notes and pause/archive state); your view of each posting (`user_jobs`: gate result, fit score, archive); keyword, location, table and CV settings (`user_settings`); decisions and reason tags; the preference profile; filter and company suggestions; discovery sources; the CV library, drafts and applications. None of it is visible to another account.
+- **Shared:** the company catalogue (`companies`, `career_sources`, discovery runs, company profiles) and every observed posting (`jobs`, with the scan's `job_events`). A company exists once however many people follow it. Adding a homepage that someone already tracks follows the existing company and admits its matching open roles to your table from the last scan, with no new scan. Administrators alone rename a company, change its homepage, delete a source or delete the company for everyone; anyone may stop following.
+- **One scan a day per company.** The daily run scans each company with at least one active follower exactly once and evaluates every follower's gate against what it observes. A manual rescan reuses a scan made in the last 30 minutes. The schedule, models, monthly AI budget and robots policy are system settings an administrator sets; Health shows AI spend per account.
+- **Migration.** Data from the earlier single-user deployment is held by a placeholder owner until the first sign-up (or the first `ADMIN_EMAILS` address) claims it.
 
 ## v0.3 priorities and acceptance
 
@@ -130,10 +140,11 @@ These are the places where the literal request cannot be delivered as stated, or
 - Learn from decisions and reasons: rank roles, suggest filter changes, surface near-misses.
 - Recommend companies very similar to the ones you track, verified to be real and hiring.
 - Be reliable and quiet: no false "closed", no duplicate rows, failures surfaced in one place.
+- Serve several people from one deployment: separate accounts, filters, learning and CVs; one shared company catalogue, scanned once a day.
 
 ### Non-goals (v1)
 
-- Multiple users, sharing, or public access.
+- Sharing one account's data with another, teams, or public access. Accounts are separate; only the company catalogue and observed postings are shared.
 - Applying on your behalf and cover letters. CV tailoring is included in v0.3 below.
 - Aggregator sources (LinkedIn, Indeed, Otta). Company pages only.
 - Email or push notifications (natural v2; the "New" filter is the daily inbox).
@@ -152,7 +163,8 @@ Requirement IDs (R-x.y) are referenced by the test plan.
 - **R-1.2** Company states: `active` (scanned daily), `paused` (kept, not scanned), `archived` (hidden, data retained).
 - **R-1.3** A company can have more than one careers source (e.g. a Greenhouse board plus a separate internships page). Scans union them.
 - **R-1.4** Bulk add by pasting a list of URLs (one per line). Each is discovered independently.
-- **R-1.5** Deleting a company requires confirmation and cascades to its jobs, decisions remain in the learning corpus (anonymised to title/company name).
+- **R-1.5** Deleting a company (administrators only) requires confirmation and cascades to its postings and every follower's views; decisions remain in each learning corpus (anonymised to title/company name). Stopping following removes only your subscription and views.
+- **R-1.6** Companies are shared. Adding a homepage URL already in the catalogue follows the existing company rather than creating a second one, and its matching open roles enter your table immediately from the last scan. The states in R-1.2 are per follower; the shared company is scanned while any follower is active, once a day.
 
 ### 3.2 Careers source discovery (homepage → careers page)
 
@@ -217,7 +229,7 @@ Pipeline, in order. Every step adds candidates with a confidence; the best candi
 
 - **R-5.1** Settings: `include_keywords` (default `["operations"]`), `exclude_keywords` (default empty), `match_fields` (default title; optional department, description), `location_filter` (optional list of allowed location substrings or countries, plus an include-remote flag).
 - **R-5.2** Matching is case-insensitive and word-boundary aware; a quoted phrase matches exactly and treats `*` literally; a trailing `*` matches a prefix (`operat*` → Operations, Operational), a leading `*` a suffix (`*ops` → DevOps, RevOps), and inside a phrase the wildcard widens only its own word (`strateg* lead`). A bare `*` matches nothing. Any exclude match wins. Description matching uses text the feed already supplies; for HTML sources it is title and department only unless enabled per company (it requires a detail fetch per posting).
-- **R-5.3** Every posting from every scan is stored regardless of the gate. Only postings with `in_table = matched AND NOT excluded AND location_ok` appear in the main table. Storing everything is what makes keyword changes retroactive and near-miss surfacing possible.
+- **R-5.3** Every posting from every scan is stored once in the shared `jobs` table regardless of anyone's gate. Each follower's gate is evaluated separately and recorded in `user_jobs`; a view is created when the gate passes, and only views with `in_table = matched AND NOT excluded AND location_ok` appear in that account's table. Storing every posting is what makes keyword changes retroactive without a rescan.
 - **R-5.4** Changing keywords re-evaluates all open roles and roles closed in the last 30 days immediately; the table reflects the new gate without waiting for the next scan.
 - **R-5.5** The matched terms are stored per job and shown in the row (e.g. a chip "operations").
 - **R-5.6** Suggestions from scans. After every daily run (and on demand from Learning), the latest scan evidence of every active source is mined, without a model call, for what the gate turns away in the user's locations: seniority labels from a fixed vocabulary that would admit roles already matching the role keywords ("Lead" admitting nine London roles), and role-type words the include list does not cover, proposed as a wildcard when the word appears in several inflections (`partnership*`). Level words (manager, analyst, senior…) are never proposed as role types. Each suggestion carries the count, the companies and three example titles, and is accepted or rejected like any other filter suggestion; accepting a seniority label adds it to the seniority list.
@@ -312,8 +324,19 @@ Why not an agent framework: the pipeline is a deterministic workflow with classi
 Postgres. Names are indicative; the ORM schema is the source of truth once written.
 
 ```
-companies            id, name, homepage_url, domain (unique), favicon_url, status [active|paused|archived],
-                     notes, added_at, archived_at
+users                id, email (unique), email_verified_at, name, password_hash, role [admin|member],
+                     claimed_at (null for the unclaimed migrated owner), created_at, last_login_at
+auth_accounts        id, user_id, provider [google], provider_account_id (unique per provider), email, name, created_at
+sessions             id, user_id, expires_at, last_seen_at, user_agent, ip_address, created_at
+auth_tokens          id, user_id, purpose [password_reset|email_verification], token_hash (unique), expires_at, used_at
+login_attempts       id, key, at                                  -- sign-in, sign-up and reset throttling
+user_settings        (user_id, key) pk, value jsonb, updated_at   -- gate, hideThreshold, seedProfile, showClosedDays,
+                                                                  -- descriptionMatchCompanyIds, suggestionsEnabled, cv*
+
+companies            id, name, homepage_url, domain (unique), favicon_url, added_at, archived_at,
+                     status [active|paused|archived]  -- derived: active while any follower is active
+company_subscriptions id, user_id, company_id (unique per user), status [active|paused|archived], notes,
+                     added_at, archived_at
 
 career_sources       id, company_id, type [greenhouse|lever|ashby|workable|smartrecruiters|recruitee|
                      personio|bamboohr|workday|pinpoint|breezy|jsonld|rss|html], url, api_url,
@@ -334,34 +357,39 @@ jobs                 id, company_id, source_id, external_key (unique per source)
                      url, location, department, employment_type, remote bool, salary_text,
                      posted_at, first_seen_at, last_seen_at, closed_at, status [open|closed],
                      missing_scans int, seeded bool, reopened_count int, repost_of_job_id,
-                     description_text, description_hash, description_fetched_at,
-                     keyword_matched bool, keyword_terms text[], location_ok bool, in_table bool, near_miss bool,
-                     fit_score int, fit_verdict, fit_rationale, fit_profile_version, fit_scored_at,
-                     created_at, updated_at
+                     description_text, description_hash, description_fetched_at, created_at, updated_at
+                     -- one row per observed posting, shared by every follower
 
-job_events           id, job_id, type [discovered|updated|closed|reopened|scored|decided|hidden|unhidden],
-                     payload jsonb, at
+user_jobs            (user_id, job_id) pk, keyword_matched bool, keyword_terms, excluded bool, location_ok bool,
+                     in_table bool, near_miss bool, fit_score int, fit_verdict, fit_rationale, fit_profile_version,
+                     fit_scored_at, hidden bool, seeded bool, archived_at, created_at, updated_at
+                     -- one account's view of a posting; created when that account's gate passes
 
-decisions            id, job_id, decision [apply|skip], reason, tags text[], superseded bool, created_at
-                     -- exactly one non-superseded row per job
+job_events           id, job_id, user_id (null for scan observations),
+                     type [discovered|updated|closed|reopened|scored|decided|hidden|unhidden], payload jsonb, at
 
-tag_vocabulary       tag (pk), description, created_by [seed|model|user], accepted bool
+decisions            id, user_id, job_id, decision [apply|skip], reason, tags text[], superseded bool, created_at
+                     -- exactly one non-superseded row per (user, job)
 
-preference_profiles  id, version, markdown, pinned_statements text[], open_questions jsonb,
+tag_vocabulary       (user_id, tag) pk, description, created_by [seed|model|user], accepted bool
+
+preference_profiles  id, user_id, version (unique per user), markdown, pinned_statements text[], open_questions jsonb,
                      source_decision_count, generated_at, model
 
-filter_suggestions   id, type [keyword_include|keyword_exclude|location|pause_company|hide_threshold],
+filter_suggestions   id, user_id, type [keyword_include|keyword_exclude|location|pause_company|hide_threshold],
                      value jsonb, evidence jsonb, status [pending|accepted|rejected], created_at, resolved_at
 
 company_profiles     id, company_id (nullable for suggestions), name, domain, one_liner, sector, sub_sector,
                      business_model, customer_type, stage, size_band, hq_country, geographies text[],
                      tags text[], raw jsonb, generated_at
 
-company_suggestions  id, name, homepage_url, domain (unique), profile_id, rationale, similar_to uuid[],
+company_suggestions  id, user_id, name, homepage_url, domain (unique per user), profile_id, rationale, similar_to uuid[],
                      verification jsonb {homepage_ok, careers_source_id, open_roles, matching_roles},
                      rank, status [pending|accepted|rejected|expired], rejection_reason, created_at, resolved_at
 
-settings             key (pk), value jsonb, updated_at
+settings             key (pk), value jsonb, updated_at        -- system only: scanTime, timezone, models, budget, robots
+
+discovery_sources, cv_libraries (version unique per user), cv_drafts, applications: each carries user_id
 
 tasks                id, type [discover|scan_company|fetch_description|score_job|tag_reason|synthesize_profile|
                      suggest_filters|profile_company|suggest_companies|rescore_all],
@@ -369,10 +397,10 @@ tasks                id, type [discover|scan_company|fetch_description|score_job
                      locked_at, locked_by, error, created_at, finished_at
 
 ai_calls             id, call_site, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-                     cost_usd, duration_ms, ok bool, ref_type, ref_id, at
+                     cost_usd, duration_ms, ok bool, ref_type, ref_id, user_id (null for shared work), at
 ```
 
-Indexes worth naming: `jobs(company_id, status)`, `jobs(in_table, status, fit_score)`, `jobs(source_id, external_key)` unique, `tasks(status, run_after)`, `decisions(job_id) where not superseded` unique.
+Indexes worth naming: `jobs(company_id, status)`, `jobs(source_id, external_key)` unique, `user_jobs(user_id, in_table, archived_at)`, `company_subscriptions(user_id, company_id)` unique, `tasks(status, run_after)`, `decisions(user_id, job_id) where not superseded` unique.
 
 ---
 
@@ -400,11 +428,11 @@ flowchart LR
 
 Why a web service rather than a Render Cron Job: the cron job type is cheaper but can only run on schedule, so on-demand discovery would need a second always-on process anyway, and Render's free web tier spins down when idle, which kills an in-process scheduler.
 
-**Render Postgres.** Basic tier (roughly $6–7/month; the free tier expires after 30 days and must not be used). Enable external connections with TLS for Vercel; Vercel's egress IPs vary, so the safeguard is TLS plus a strong password rather than an IP allowlist. Connection pooling: each Vercel function uses a `pg` pool of at most 3; single-user traffic stays far below the instance connection limit. Enable Render's automated backups.
+**Render Postgres.** Basic tier (roughly $6–7/month; the free tier expires after 30 days and must not be used). Enable external connections with TLS for Vercel; Vercel's egress IPs vary, so the safeguard is TLS plus a strong password rather than an IP allowlist. Connection pooling: each Vercel function uses a `pg` pool of at most 3; a handful of accounts stay far below the instance connection limit. Enable Render's automated backups.
 
-**Authentication.** Single user. A login page takes one password, checked against an Argon2 hash in an environment variable, and sets a signed, HttpOnly, SameSite=Lax cookie valid for 30 days. Next.js middleware protects every route and API. No user table, no OAuth. Rate-limit the login endpoint.
+**Authentication.** Accounts. Email and password (scrypt hashes in `users`) or Google sign-in (OAuth 2.0 authorization code with PKCE; the profile is read from Google's userinfo endpoint over the access token). A session is a row in `sessions`; the `christopher_session` cookie names it and carries an HMAC signature, so middleware turns away anonymous requests without a database round trip while every server component, action and route re-checks the row through `getCurrentUser`. Cookies are HttpOnly, SameSite=Lax, Secure off localhost, valid for 30 days. Sign-in, sign-up and reset requests are throttled in `login_attempts` per address and per email. Password reset and email confirmation are single-use hashed tokens (`auth_tokens`), sent through Resend when configured and otherwise written to the server log outside production. Administrators manage the shared schedule, models, budget, catalogue edits and accounts; members manage their own workspace.
 
-**Environment variables.** Web: `DATABASE_URL`, `SESSION_SECRET`, `APP_PASSWORD_HASH`. Worker: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `TZ`, `SCRAPER_CONTACT_EMAIL`. Everything else is in `settings`.
+**Environment variables.** Web: `DATABASE_URL`, `SESSION_SECRET`; optional `APP_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `ADMIN_EMAILS`, `SIGNUPS_DISABLED`, `RESEND_API_KEY`, `EMAIL_FROM`, `AUTH_EMAIL_LOG`, `CRON_SECRET`. Worker: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `TZ`, `SCRAPER_CONTACT_EMAIL`; optional `CHRISTOPHER_CLI_USER`. System settings are in `settings`; each account's are in `user_settings`.
 
 **Deployment.** Vercel Git integration for the web app (root directory `apps/web`). A `render.yaml` blueprint defines the worker (Docker) and the database. Migrations run from the worker on start (Drizzle migrate), guarded by an advisory lock.
 
@@ -617,7 +645,7 @@ Scale-up stage (Series A to C), remit that includes hiring and process design, r
 | I decide apply or not, with a reason | R-6.1, R-6.2 |
 | Reason informs future inclusion (learning) | R-6.4 to R-6.10 |
 | Recommend very similar companies | 3.8 |
-| Single user | Section 6 (auth), non-goals |
+| Separate accounts, one shared company catalogue | v0.4 section, R-1.6, R-5.3, Section 6 (auth) |
 | Vercel and Render | Section 6 |
 | Sophistication in finding careers pages accurately | 3.2, R-3.5, R-3.6, Appendix A |
 | Sophistication in learning my preferences | 3.6, A5–A8 |
@@ -628,11 +656,11 @@ Scale-up stage (Series A to C), remit that includes hiring and process design, r
 - Health shows the persistent worker's last report and last reported Anthropic/browser configuration. A report older than two minutes is treated as missing recent activity, not proof that a process has stopped. Configuration alone does not prove a model call succeeds.
 - Before declaring the live CV flow complete, verify a successful generation and PDF download against the deployed worker. Daily web cron execution does not replace an always-on worker for long-running generation.
 
-### Store matching roles only
-- Evaluate role, seniority and location gates before inserting new roles. Non-matches are discarded; near-miss storage/scoring is disabled.
-- Scan completeness and closure detection still use the full observed listing, never only matching jobs. Scan counts describe observed postings; company role counts describe stored roles.
-- Re-evaluating filters and scanning remove stored non-matches unless they have any decision, a saved CV or an explicit archive marker. These retained records stay outside the inbox.
-- Widened filters discover newly eligible roles on the next scan.
+### Store matching roles only (per account)
+- Every observed posting is stored once in the shared catalogue. An account's *view* of it (`user_jobs`) is created only when that account's role, seniority and location gates pass; near-miss storage/scoring is disabled.
+- Scan completeness and closure detection still use the full observed listing, never only matching jobs. Scan counts describe observed postings; an account's company role counts describe its stored views.
+- Re-evaluating an account's filters removes its views of non-matches unless they have any decision, a saved CV or an explicit archive marker. These retained records stay outside the inbox. Other followers of the same company are unaffected.
+- Widened filters admit newly eligible postings immediately from the stored catalogue, and further ones on the next scan.
 - Skip requires a non-blank reason for both individual and bulk decisions. Bulk reasons are copied to each affected role. Decision snapshots feed profile synthesis and filter suggestions immediately; accepted suggestions re-evaluate storage and table membership.
 
 ### Evidence visibility, reusable feedback and applications

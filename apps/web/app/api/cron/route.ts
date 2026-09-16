@@ -9,10 +9,9 @@
  * is deduplicated per day, so whichever gets there first does the work.
  */
 import { getWorkerHeartbeat } from "@/lib/queries/health";
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { claimTask, createDeps, handlers, readEnv, schedulerTick, TaskQueue } from "@christopher/worker";
-import { SESSION_COOKIE_NAME, verifySessionCookieValue } from "@/lib/session";
+import { getCurrentUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 /**
@@ -25,17 +24,17 @@ export const maxDuration = 60;
 const RESERVE_MS = 20_000;
 
 /**
- * Two ways in: the bearer token Vercel Cron sends, or a signed-in session, so a run can be
- * started by hand from the browser when there is no worker service to pick the work up.
+ * Two ways in: the bearer token Vercel Cron sends, or an administrator's signed-in session, so a
+ * run can be started by hand from the browser when there is no worker service to pick the work up.
  */
 async function authorised(request: Request): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
   const secret = process.env.CRON_SECRET;
   if (secret && request.headers.get("authorization") === `Bearer ${secret}`) return { ok: true };
 
-  const sessionSecret = process.env.SESSION_SECRET;
-  if (sessionSecret) {
-    const cookie = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
-    if (await verifySessionCookieValue(cookie, sessionSecret)) return { ok: true };
+  if (process.env.SESSION_SECRET) {
+    const current = await getCurrentUser().catch(() => null);
+    if (current?.user.role === "admin") return { ok: true };
+    if (current) return { ok: false, status: 403, error: "administrators only" };
   }
   if (!secret) return { ok: false, status: 503, error: "CRON_SECRET is not set" };
   return { ok: false, status: 401, error: "unauthorised" };

@@ -9,8 +9,7 @@
     "start": "next start",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "lint": "echo 'no lint configured'",
-    "hash-password": "tsx scripts/hash-password.ts"
+    "lint": "echo 'no lint configured'"
   },
   "dependencies": {
     "@christopher/core": "workspace:*",

@@ -2,7 +2,6 @@ import { schema, enqueueTask, type Task } from "@christopher/db";
 import { dedupeKeyFor, discovery, extractDomain, normalizeUrl, sha1, stripHtml } from "@christopher/core";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { aiBudgetExceeded, makeFetchContext, type WorkerDeps } from "../context";
-import { latestProfile } from "./learning";
 import { recommendationContext } from "../recommendation-context";
 import { withResourceLease } from "../lease";
 import { verifyCandidate } from "./companies";
@@ -17,11 +16,20 @@ export function articleLinks(html: string, base: string): string[] {
   }))].slice(0, 10);
 }
 
+/** A company the account already follows, or has already been offered, is never suggested again. */
+async function alreadyKnown(db: WorkerDeps["db"], userId: string, domain: string): Promise<boolean> {
+  const rows = await db.execute(sql`select 1 from companies c join company_subscriptions s on s.company_id = c.id
+    where c.domain = ${domain} and s.user_id = ${userId}
+    union all select 1 from company_suggestions where domain = ${domain} and user_id = ${userId} limit 1`);
+  return rows.rows.length > 0;
+}
+
 export async function handleMonitorSource(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { sourceId } = task.payload as { sourceId: string };
   const [source] = await deps.db.select().from(schema.discoverySources).where(eq(schema.discoverySources.id, sourceId));
-  const settings = await deps.settings();
-  if (!source?.enabled || !settings.suggestionsEnabled) return { skipped: "source or suggestions disabled" };
+  if (!source?.enabled) return { skipped: "source or suggestions disabled" };
+  const settings = await deps.userSettings(source.userId);
+  if (!settings.suggestionsEnabled) return { skipped: "source or suggestions disabled" };
   let stored = 0;
   const fetchErrors: string[] = [];
   try {
@@ -75,13 +83,15 @@ export async function handleExtractDocument(task: Task, deps: WorkerDeps): Promi
   return withResourceLease(deps, `document:${documentId}`, async locked => {
     const [document] = await deps.db.select().from(schema.discoveryDocuments).where(eq(schema.discoveryDocuments.id, documentId));
     const [source] = await deps.db.select().from(schema.discoverySources).where(eq(schema.discoverySources.id, sourceId));
-    const settings = await deps.settings();
-    if (!source?.enabled || !settings.suggestionsEnabled || !document || document.sourceId !== sourceId || document.processedAt) return { skipped: true };
+    if (!source?.enabled || !document || document.sourceId !== sourceId || document.processedAt) return { skipped: true };
+    const settings = await deps.userSettings(source.userId);
+    if (!settings.suggestionsEnabled) return { skipped: true };
+    const userId = source.userId;
     try {
       if (await aiBudgetExceeded(deps)) throw new Error("AI unavailable or monthly budget reached; check again later.");
-      const context = await recommendationContext(deps, document.content);
+      const context = await recommendationContext(deps, userId, document.content);
       const result = await deps.ai.extractSourceCompanies({ content: document.content, portfolio: context.examples,
-        preferences: context.preferences }, { refType: "discovery_source", refId: sourceId });
+        preferences: context.preferences }, { refType: "discovery_source", refId: sourceId, userId });
       if (!result) throw new Error("Company extraction failed; document retained for retry.");
       return await deps.db.transaction(async tx => {
         await locked.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
@@ -90,9 +100,8 @@ export async function handleExtractDocument(task: Task, deps: WorkerDeps): Promi
           if (!candidate.recommended || !candidate.quote.trim() || !document.content.includes(candidate.quote)) continue;
           let domain: string;
           try { const url = new URL(candidate.homepageUrl); if (!/^https?:$/.test(url.protocol)) continue; domain = extractDomain(url.href); } catch { continue; }
-          const excluded = await tx.execute(sql`select domain from companies where domain = ${domain} union all select domain from company_suggestions where domain = ${domain} limit 1`);
-          if (excluded.rows.length) continue;
-          candidates.push({ documentId, domain, name: candidate.name, homepageUrl: candidate.homepageUrl, rationale: candidate.rationale, quote: candidate.quote });
+          if (await alreadyKnown(tx as unknown as WorkerDeps["db"], userId, domain)) continue;
+          candidates.push({ userId, documentId, domain, name: candidate.name, homepageUrl: candidate.homepageUrl, rationale: candidate.rationale, quote: candidate.quote });
         }
         if (candidates.length) {
           const inserted = await tx.insert(schema.discoveryCandidates).values(candidates).onConflictDoNothing().returning({ id: schema.discoveryCandidates.id });
@@ -112,19 +121,20 @@ export async function handleVerifyCompany(task: Task, deps: WorkerDeps): Promise
   const { sourceId, candidateId } = task.payload as { sourceId?: string; candidateId: string };
   const [candidate] = await deps.db.select().from(schema.discoveryCandidates).where(eq(schema.discoveryCandidates.id, candidateId));
   const source = sourceId ? (await deps.db.select().from(schema.discoverySources).where(eq(schema.discoverySources.id, sourceId)))[0] : undefined;
-  if (!candidate || candidate.processedAt || sourceId && !source?.enabled || !(await deps.settings()).suggestionsEnabled) return { skipped: true };
+  if (!candidate || candidate.processedAt || sourceId && !source?.enabled) return { skipped: true };
+  const userId = candidate.userId;
+  if (!(await deps.userSettings(userId)).suggestionsEnabled) return { skipped: true };
   const document = candidate.documentId ? (await deps.db.select().from(schema.discoveryDocuments).where(eq(schema.discoveryDocuments.id, candidate.documentId)))[0] : undefined;
   if (candidate.documentId && (!document || document.sourceId !== sourceId)) return { skipped: true };
-  const excluded = await deps.db.execute(sql`select domain from companies where domain = ${candidate.domain} union all select domain from company_suggestions where domain = ${candidate.domain} limit 1`);
-  const verification = excluded.rows.length ? null : await verifyCandidate(deps, candidate.homepageUrl, true);
+  const verification = (await alreadyKnown(deps.db, userId, candidate.domain)) ? null : await verifyCandidate(deps, userId, candidate.homepageUrl, true);
   if (verification?.error) throw new Error(verification.error);
   return deps.db.transaction(async tx => {
     await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
     let stored = 0;
     if (verification?.homepageOk && verification.careersSource) {
-      // Recheck the portfolio at commit time: another source/user may have added it during verification.
-      const tracked = await tx.select({ id: schema.companies.id }).from(schema.companies).where(eq(schema.companies.domain, candidate.domain));
-      if (!tracked.length) stored = (await tx.insert(schema.companySuggestions).values({ name: candidate.name, homepageUrl: candidate.homepageUrl,
+      // Recheck at commit time: the account may have started following it during verification.
+      const tracked = await tx.execute(sql`select 1 from companies c join company_subscriptions s on s.company_id = c.id where c.domain = ${candidate.domain} and s.user_id = ${userId} limit 1`);
+      if (!tracked.rows.length) stored = (await tx.insert(schema.companySuggestions).values({ userId, name: candidate.name, homepageUrl: candidate.homepageUrl,
         domain: candidate.domain, rationale: candidate.rationale, verification, rank: candidate.rank, similarTo: candidate.similarTo, evidence: source && document ? { sourceName: source.name,
           title: document.title, url: document.url ?? undefined, quote: candidate.quote } : null,
       }).onConflictDoNothing().returning({ id: schema.companySuggestions.id })).length;

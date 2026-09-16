@@ -4,11 +4,12 @@
  * call, then discover a careers source and scan it with no worker process involved.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createDb, enqueueTask, schema, type Db } from "@christopher/db";
+import { createDb, enqueueTask, schema, subscribeToCompany, type Db } from "@christopher/db";
 import { runMigrations } from "@christopher/db/migrate";
 import { dedupeKeyFor, priorityFor } from "@christopher/core";
 import { sql } from "drizzle-orm";
 import { startTestServer, type TestServer } from "../../../../worker/src/test-server";
+import { ensureTestUser } from "../../../../worker/src/test-users";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test";
 const SECRET = "cron-test-secret";
@@ -101,6 +102,8 @@ describe("the cron route", () => {
       .insert(schema.companies)
       .values({ name: "acme.example", homepageUrl: "https://www.acme.example/", domain: "acme.example" })
       .returning();
+    const user = await ensureTestUser(db);
+    await subscribeToCompany(db, user.id, company!.id);
     await enqueueTask(db, "discover", { companyId: company!.id, reason: "added" }, {
       dedupeKey: dedupeKeyFor("discover", { companyId: company!.id }),
       priority: priorityFor("discover"),
@@ -117,10 +120,12 @@ describe("the cron route", () => {
     expect(source!.type).toBe("greenhouse");
     expect(source!.atsSlug).toBe("acme");
 
+    // Every observed posting is stored once in the shared catalogue; only the follower's match gets a view.
     const jobs = await db.select().from(schema.jobs);
-    expect(jobs).toHaveLength(1);
-    expect(jobs.filter((j) => j.inTable).map((j) => j.title)).toEqual(["Operations Manager"]);
+    expect(jobs.map((j) => j.title).sort()).toEqual(["Operations Manager", "Software Engineer"]);
     expect(jobs.find((j) => j.title === "Operations Manager")!.location).toBe("London, UK");
+    const views = await db.select().from(schema.userJobs);
+    expect(views.filter((v) => v.inTable).map((v) => jobs.find((j) => j.id === v.jobId)!.title)).toEqual(["Operations Manager"]);
   }, 120_000);
 
   it("queues the daily run once the local time has passed the configured hour", async () => {

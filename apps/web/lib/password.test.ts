@@ -1,9 +1,9 @@
 /**
- * Login configuration. A malformed APP_PASSWORD_HASH previously rejected every password with no
- * explanation, which is a bad failure to debug from a login screen.
+ * Password hashing and the rules a new password must meet. Hashing lives in @christopher/core
+ * so the worker CLI and the interface agree on the format; this checks the re-export.
  */
 import { describe, expect, it } from "vitest";
-import { checkPassword, hashPassword, looksLikeScryptHash, readPasswordConfig, verifyPassword } from "./password";
+import { hashPassword, looksLikeScryptHash, passwordProblem, verifyPassword } from "./password";
 
 describe("hashing", () => {
   it("accepts the right password and rejects the wrong one", async () => {
@@ -13,16 +13,21 @@ describe("hashing", () => {
   });
 
   it("produces a different hash each time, and both verify", async () => {
-    const a = await hashPassword("same");
-    const b = await hashPassword("same");
+    const a = await hashPassword("same-password");
+    const b = await hashPassword("same-password");
     expect(a).not.toBe(b);
-    expect(await verifyPassword("same", a)).toBe(true);
-    expect(await verifyPassword("same", b)).toBe(true);
+    expect(await verifyPassword("same-password", a)).toBe(true);
+    expect(await verifyPassword("same-password", b)).toBe(true);
   });
 
   it("normalises unicode so an equivalent password still works", async () => {
-    const hash = await hashPassword("café");
-    expect(await verifyPassword("café", hash)).toBe(true);
+    const hash = await hashPassword("café au lait");
+    expect(await verifyPassword("café au lait", hash)).toBe(true);
+  });
+
+  it("rejects a malformed stored hash instead of throwing", async () => {
+    expect(await verifyPassword("anything", "48291057384610293847561029384756")).toBe(false);
+    expect(await verifyPassword("anything", "")).toBe(false);
   });
 });
 
@@ -32,7 +37,6 @@ describe("looksLikeScryptHash", () => {
   });
 
   it("rejects things people paste in by mistake", () => {
-    // The failure this exists to catch: a random number pasted where a hash belongs.
     expect(looksLikeScryptHash("48291057384610293847561029384756")).toBe(false);
     expect(looksLikeScryptHash("my-password")).toBe(false);
     expect(looksLikeScryptHash("scrypt$16384$8$1$onlyfiveparts")).toBe(false);
@@ -42,31 +46,10 @@ describe("looksLikeScryptHash", () => {
   });
 });
 
-describe("readPasswordConfig", () => {
-  it("prefers the hash when both are set", async () => {
-    const hash = await hashPassword("from-hash");
-    const config = readPasswordConfig({ APP_PASSWORD_HASH: hash, APP_PASSWORD: "from-plain" });
-    expect(config.kind).toBe("hash");
-    expect(await checkPassword("from-hash", config)).toBe(true);
-    expect(await checkPassword("from-plain", config)).toBe(false);
-  });
-
-  it("falls back to a plain password", async () => {
-    const config = readPasswordConfig({ APP_PASSWORD: "plain secret" });
-    expect(config.kind).toBe("plain");
-    expect(await checkPassword("plain secret", config)).toBe(true);
-    expect(await checkPassword("plain secre", config)).toBe(false);
-    expect(await checkPassword("", config)).toBe(false);
-  });
-
-  it("reports a malformed hash rather than silently rejecting everything", async () => {
-    const config = readPasswordConfig({ APP_PASSWORD_HASH: "48291057384610293847561029384756" });
-    expect(config.kind).toBe("malformed");
-    expect(await checkPassword("48291057384610293847561029384756", config)).toBe(false);
-  });
-
-  it("ignores blank values and reports nothing configured", () => {
-    expect(readPasswordConfig({}).kind).toBe("missing");
-    expect(readPasswordConfig({ APP_PASSWORD_HASH: "  ", APP_PASSWORD: "  " }).kind).toBe("missing");
+describe("passwordProblem", () => {
+  it("requires a minimum length and caps the maximum", () => {
+    expect(passwordProblem("short")).toMatch(/at least/);
+    expect(passwordProblem("x".repeat(300))).toMatch(/at most/);
+    expect(passwordProblem("a perfectly fine passphrase")).toBeNull();
   });
 });

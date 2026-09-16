@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { requireSession } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
+import type { User } from "@christopher/db/schema";
 import { CvSelectionSchema } from "@/lib/cv-management-input";
 import { listCvDraftPages } from "@/lib/queries/cv";
 import { manageCvs } from "@/app/actions/cv";
@@ -13,8 +14,9 @@ const json = (value: unknown, status = 200) =>
 
 /** Bounded JSON transport avoids coupling a committed mutation to an RSC page transition. */
 export async function POST(request: Request) {
+  let user: User;
   try {
-    await requireSession();
+    user = await requireUser();
   } catch {
     return json({ ok: false, error: "Please sign in again." }, 401);
   }
@@ -67,6 +69,7 @@ export async function POST(request: Request) {
     const result = await manageCvs({ ok: true }, form);
     if (!result.ok) return json(result, 503);
     const pages = await listCvDraftPages(
+      user.id,
       String(input.savedPage),
       String(input.archivedPage),
     );

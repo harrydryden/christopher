@@ -9,12 +9,13 @@ import {
   reviewFixture,
 } from "../../../../packages/core/test/cv-review-fixture";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDb, schema, type Db } from "@christopher/db";
+import { createDb, schema, subscribeToCompany, type Db } from "@christopher/db";
 import { DEFAULT_CV_THEME, CV_THEMES } from "@christopher/core/cv";
 import { DEFAULT_SETTINGS, modelForCallSite } from "@christopher/core";
 import { runMigrations } from "@christopher/db/migrate";
 import { eq, sql } from "drizzle-orm";
-import { createSessionCookieValue } from "@/lib/session";
+import { signInTestUser } from "@/test/auth";
+import type { User } from "@christopher/db/schema";
 
 async function completeAssessment(id: string) {
   const [draft] = await database
@@ -50,6 +51,7 @@ async function completeAssessment(id: string) {
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 let session: string | undefined;
+let user: User;
 vi.mock("@/lib/db", () => ({ db: () => database }));
 vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (session ? { value: session } : undefined),
   }) }));
@@ -113,9 +115,9 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await database.execute(
-    sql`truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary restart identity cascade`,
+    sql`truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users restart identity cascade`,
   );
-  session = await createSessionCookieValue(process.env.SESSION_SECRET!);
+  ({ user, cookie: session } = await signInTestUser(database, process.env.SESSION_SECRET!));
 });
 async function fixture() {
   const [company] = await database
@@ -143,12 +145,16 @@ async function fixture() {
       normalizedTitle: "operations manager",
       externalKey: "one",
       url: "https://acme.example/jobs/one",
-      inTable: true,
-      keywordMatched: true,
-      keywordTerms: ["operations"],
     })
     .returning();
+  await follow(company!.id, job!.id);
   return { company: company!, job: job!, source: source! };
+}
+/** The signed-in account follows the company and sees the given postings in its table. */
+async function follow(companyId: string, ...jobIds: string[]) {
+  await subscribeToCompany(database, user.id, companyId);
+  if (jobIds.length)
+    await database.insert(schema.userJobs).values(jobIds.map((jobId) => ({ userId: user.id, jobId, inTable: true, keywordMatched: true, keywordTerms: ["operations"] }))).onConflictDoNothing();
 }
 
 describe("authenticated mutations", () => {
@@ -293,8 +299,8 @@ describe("authenticated mutations", () => {
     await saveKeywords({ ok: true }, form);
     const [updated] = await database
       .select()
-      .from(schema.jobs)
-      .where(eq(schema.jobs.id, job.id));
+      .from(schema.userJobs)
+      .where(eq(schema.userJobs.jobId, job.id));
     expect(updated!.inTable).toBe(false);
     expect(updated!.archivedAt).not.toBeNull();
   });
@@ -383,19 +389,19 @@ describe("learning controls", () => {
       .where(eq(schema.decisions.jobId, job.id));
     await database
       .insert(schema.tagVocabulary)
-      .values({ tag: "seniority:too_junior", accepted: false });
+      .values({ userId: user.id, tag: "seniority:overqualified", accepted: false });
     const form = new FormData();
-    form.append("tags", "seniority:too_junior");
+    form.append("tags", "seniority:overqualified");
     await expect(saveDecisionTags(decision!.id, form)).rejects.toThrow(
       "accepted",
     );
-    await acceptReasonTag("seniority:too_junior");
+    await acceptReasonTag("seniority:overqualified");
     await saveDecisionTags(decision!.id, form);
     const [updated] = await database
       .select()
       .from(schema.decisions)
       .where(eq(schema.decisions.id, decision!.id));
-    expect(updated!.tags).toEqual(["seniority:too_junior"]);
+    expect(updated!.tags).toEqual(["seniority:overqualified"]);
     expect(updated!.tagsEdited).toBe(true);
   });
 });
@@ -403,28 +409,29 @@ describe("learning controls", () => {
 describe("priority workflows", () => {
   it("archives without deleting evidence, restores and synchronously applies seniority", async () => {
     const { job } = await fixture();
-    expect((await fetchTableJobs()).length).toBe(1);
+    expect((await fetchTableJobs(user.id)).length).toBe(1);
     expect((await archiveRoles([job.id], true)).ok).toBe(true);
-    expect(await fetchTableJobs()).toHaveLength(0);
-    expect(await fetchTableJobs(true)).toHaveLength(1);
+    expect(await fetchTableJobs(user.id)).toHaveLength(0);
+    expect(await fetchTableJobs(user.id, true)).toHaveLength(1);
     const form = new FormData();
     form.set("includeKeywords", "operations");
     form.set("seniorityKeywords", "director");
     await saveKeywords({ ok: true }, form);
-    expect(await fetchTableJobs(true)).toHaveLength(1);
+    expect(await fetchTableJobs(user.id, true)).toHaveLength(1);
     await archiveRoles([job.id], false);
-    expect(await fetchTableJobs()).toHaveLength(0);
+    expect(await fetchTableJobs(user.id)).toHaveLength(0);
     const [stored] = await database
       .select()
-      .from(schema.jobs)
-      .where(eq(schema.jobs.id, job.id));
+      .from(schema.userJobs)
+      .where(eq(schema.userJobs.jobId, job.id));
     expect(stored!.archivedAt).not.toBeNull();
     expect(stored!.inTable).toBe(false);
   });
   it("reports completion without returning full company or CV records", async () => {
+    const { company } = await fixture();
     const [task] = await database
       .insert(schema.tasks)
-      .values({ type: "scan_company", payload: {}, priority: 3 })
+      .values({ type: "scan_company", payload: { companyId: company.id }, priority: 3 })
       .returning();
     const pending = await workStatus(
       new Request("http://localhost/api/work-status"),
@@ -444,7 +451,7 @@ describe("priority workflows", () => {
   });
   it("filters and pages roles in SQL before loading descriptions", async () => {
     const { job, company, source } = await fixture();
-    await database
+    const inserted = await database
       .insert(schema.jobs)
       .values(
         Array.from({ length: 55 }, (_, i) => ({
@@ -454,34 +461,36 @@ describe("priority workflows", () => {
           title: `Role ${String(i).padStart(2, '0')}`,
           normalizedTitle: `role ${i}`,
           url: `https://acme.example/${i}`,
-          inTable: true,
           location: "London",
         })),
-      );
+      )
+      .returning({ id: schema.jobs.id });
+    await follow(company.id, ...inserted.map((row) => row.id));
     const filters = parseRolesFilters({ q: 'Role', location: 'London', sort: 'title' });
-    const first = await fetchRolePage(filters, false, null, 1);
-    const second = await fetchRolePage(filters, false, null, 2);
+    const first = await fetchRolePage(user.id, filters, false, null, 1);
+    const second = await fetchRolePage(user.id, filters, false, null, 2);
     expect(first.total).toBe(55);
     expect(first.visible).toHaveLength(50);
     expect(second.visible).toHaveLength(5);
     expect(first.visible[0]!.job.title).toBe('Role 00');
     await decide(second.visible[0]!.job.id, 'skip', 'Not relevant');
-    expect((await fetchRolePage(filters, false, null, 2)).total).toBe(54);
-    expect((await fetchRolePage({ ...filters, decision: 'skip' }, false, null, 1)).visible).toHaveLength(1);
+    expect((await fetchRolePage(user.id, filters, false, null, 2)).total).toBe(54);
+    expect((await fetchRolePage(user.id, { ...filters, decision: 'skip' }, false, null, 1)).visible).toHaveLength(1);
   });
   it("loads descriptions only for requested role detail IDs", async () => {
     const { job } = await fixture();
     await database.update(schema.jobs).set({ descriptionText: "Stored role description" }).where(eq(schema.jobs.id, job.id));
-    const summaries = await fetchTableJobs(false, true);
+    const summaries = await fetchTableJobs(user.id, false, true);
     expect(summaries.find((row) => row.job.id === job.id)!.job.descriptionText).toBeNull();
-    const details = await fetchRoleDetails([job.id]);
+    const details = await fetchRoleDetails(user.id, [job.id]);
     expect(details).toHaveLength(1);
     expect(details[0]!.job.descriptionText).toBe("Stored role description");
-    expect(await fetchRoleDetails([])).toEqual([]);
+    expect(await fetchRoleDetails(user.id, [])).toEqual([]);
   });
   it("records bulk decisions with optional reasons and retained snapshots", async () => {
     const { job, company, source } = await fixture();
     const [second] = await database.insert(schema.jobs).values({ companyId: company.id, sourceId: source.id, externalKey: "two", title: "Finance Director", normalizedTitle: "finance director", url: "https://acme.example/two" }).returning();
+    await follow(company.id, second!.id);
     const ids = [job.id, second!.id];
     expect((await decideRoles(ids, "skip", "")).ok).toBe(true);
     expect(await database.select().from(schema.decisions)).toHaveLength(2);
@@ -505,7 +514,7 @@ describe("priority workflows", () => {
   });
   it("saves legacy employment as a new library version and rejects dangling job links", async () => {
     const oldContent = { name: "Test Candidate", contact: "London", profile: "Leader", entries: [{ id: "one", kind: "experience" as const, heading: "Director · Acme", details: "Led a team" }] };
-    await database.insert(schema.cvLibraries).values({ version: 1, content: oldContent });
+    await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: oldContent });
     const form = new FormData(); form.set("version", "1"); form.set("library", JSON.stringify(oldContent));
     expect((await saveCvLibrary({ ok: true }, form)).ok).toBe(true);
     const versions = await database.select().from(schema.cvLibraries).orderBy(schema.cvLibraries.version);
@@ -519,7 +528,7 @@ describe("priority workflows", () => {
   });
   it("does not queue a CV from unconfirmed experience", async () => {
     const { job } = await fixture();
-    await database.insert(schema.cvLibraries).values({ version: 1, content: { name: "Test Candidate", contact: "London", profile: "", entries: [{ id: "one", kind: "experience", status: "active", heading: "Director · Acme", details: "An unconfirmed proposal" }] } });
+    await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: { name: "Test Candidate", contact: "London", profile: "", entries: [{ id: "one", kind: "experience", status: "active", heading: "Director · Acme", details: "An unconfirmed proposal" }] } });
     const generate = new FormData(); generate.set("jobId", job.id);
     const result = await requestCv({ ok: true }, generate);
     expect(result.ok).toBe(false);
@@ -533,7 +542,7 @@ describe("priority workflows", () => {
     expect(await saveCvLibrary({ ok: true }, form)).toEqual({ ok: true });
     expect((await database.select().from(schema.cvLibraries))[0]!.content.entries[0]!.skillItems).toEqual(["SQL", "Python"]);
     const content = { theme: DEFAULT_CV_THEME, name: "Example", contact: "London", summary: "Analyst", sections: [{ entryId: "skills", kind: "skill" as const, heading: "Tools", bullets: ["Reporting"], skillItems: ["SQL"] }], gaps: [] };
-    const [draft] = await database.insert(schema.cvDrafts).values({ jobTitle: "Analyst", companyName: "Example", jobDescription: "Analysis", libraryVersion: 1, librarySnapshot: library, model: "test", status: "ready", revision: 1, content }).returning();
+    const [draft] = await database.insert(schema.cvDrafts).values({ userId: user.id, jobTitle: "Analyst", companyName: "Example", jobDescription: "Analysis", libraryVersion: 1, librarySnapshot: library, model: "test", status: "ready", revision: 1, content }).returning();
     const application = new FormData(); application.set("appliedOn", "2026-09-06");
     await completeAssessment(draft!.id);
     expect(await recordApplication(draft!.id, { ok: true }, application)).toEqual({ ok: true });
@@ -571,7 +580,7 @@ describe("priority workflows", () => {
     const libraries = await database.select().from(schema.cvLibraries).orderBy(schema.cvLibraries.version);
     expect(libraries).toHaveLength(1);
     expect(libraries[0]!.content.preferredWording).toBeUndefined();
-    const [preferences] = await database.select().from(schema.settings).where(eq(schema.settings.key, "cvWritingPreferences"));
+    const [preferences] = await database.select().from(schema.userSettings).where(eq(schema.userSettings.key, "cvWritingPreferences"));
     expect((preferences!.value as { preferredWording: string }).preferredWording).toContain("Led the operations team");
     const application = new FormData(); application.set("appliedOn", "2026-02-30");
     expect((await recordApplication(versions[1]!.id, { ok: true }, application)).ok).toBe(false);
@@ -599,7 +608,7 @@ describe("priority workflows", () => {
   });
   it("archives a CV out of the list and restores it", async () => {
     const library = { name: "Test Candidate", contact: "London", profile: "Operations leader", entries: [{ id: "one", kind: "experience" as const, heading: "Director · Acme", details: "Led an operations team" }] };
-    const [draft] = await database.insert(schema.cvDrafts).values({ jobTitle: "VP of AI Transformation", companyName: "Humanoid",
+    const [draft] = await database.insert(schema.cvDrafts).values({ userId: user.id, jobTitle: "VP of AI Transformation", companyName: "Humanoid",
       jobDescription: "Lead the transformation", libraryVersion: 1, librarySnapshot: library, model: DEFAULT_SETTINGS.cvModel, status: "failed" }).returning();
 
     await setCvArchived(draft!.id, true);
@@ -649,7 +658,7 @@ it("returns only the newest requested events per role", async () => {
         at: new Date(1700000000000 + i * 1000),
       })),
     );
-  const events = await fetchRecentEventsFor([job.id], 3);
+  const events = await fetchRecentEventsFor(user.id, [job.id], 3);
   expect(events.get(job.id)!.map((e) => e.payload.i)).toEqual([29, 28, 27]);
 });
 
@@ -673,16 +682,17 @@ describe("four-status role workflow", () => {
     const { fetchRoleCounts, applyRolesFilters, splitHidden } = await import("@/lib/queries/jobs");
     const { listCompanies } = await import("@/lib/queries/companies");
     const { job, company } = await fixture();
-    const read = async (view: string) => fetchRolePage(parseRolesFilters({ view }), view === "archived", 99, 1);
+    const read = async (view: string) => fetchRolePage(user.id, parseRolesFilters({ view }), view === "archived", 99, 1);
     expect((await read("auto-matched")).total).toBe(1);
     expect((await decide(job.id, "apply", "")).ok).toBe(true);
-    await database.update(schema.jobs).set({ inTable: false, fitScore: 1, status: "closed" }).where(eq(schema.jobs.id, job.id));
+    await database.update(schema.jobs).set({ status: "closed" }).where(eq(schema.jobs.id, job.id));
+    await database.update(schema.userJobs).set({ inTable: false, fitScore: 1 }).where(eq(schema.userJobs.jobId, job.id));
     expect((await read("auto-matched")).total).toBe(0);
     expect((await read("user-shortlisted")).total).toBe(1);
-    expect((await fetchRoleCounts(company.id))["user-shortlisted"]).toBe(1);
-    const [summary] = await listCompanies();
+    expect((await fetchRoleCounts(user.id, company.id))["user-shortlisted"]).toBe(1);
+    const [summary] = await listCompanies(user.id);
     expect(summary!.reviewRoles).toBe(0); expect(summary!.shortlistedRoles).toBe(1);
-    const exported = splitHidden(applyRolesFilters(await fetchTableJobs(), parseRolesFilters({ view: "user-shortlisted" })), 99, false).visible;
+    const exported = splitHidden(applyRolesFilters(await fetchTableJobs(user.id), parseRolesFilters({ view: "user-shortlisted" })), 99, false).visible;
     expect(exported.map((row) => row.job.id)).toEqual([job.id]);
     expect((await archiveRoles([job.id], true)).ok).toBe(true);
     expect((await read("archived")).total).toBe(1);
@@ -700,15 +710,15 @@ describe("four-status role workflow", () => {
   it("archives a lost match once, retains history and restores after criteria match again", async () => {
     const { archiveNonMatches } = await import("@christopher/db");
     const { job } = await fixture();
-    await database.update(schema.jobs).set({ inTable: false }).where(eq(schema.jobs.id, job.id));
-    await archiveNonMatches(database);
-    await archiveNonMatches(database);
+    await database.update(schema.userJobs).set({ inTable: false }).where(eq(schema.userJobs.jobId, job.id));
+    await archiveNonMatches(database, { userId: user.id });
+    await archiveNonMatches(database, { userId: user.id });
     const events = await database.select().from(schema.jobEvents).where(eq(schema.jobEvents.jobId, job.id));
     expect(events.filter((event) => event.payload.action === "archived")).toHaveLength(1);
     expect(events[0]!.payload.reason).toBe("No longer matches your criteria");
-    await database.update(schema.jobs).set({ inTable: true }).where(eq(schema.jobs.id, job.id));
+    await database.update(schema.userJobs).set({ inTable: true }).where(eq(schema.userJobs.jobId, job.id));
     expect((await archiveRoles([job.id], false)).ok).toBe(true);
-    expect((await fetchRolePage(parseRolesFilters({}), false, null, 1)).total).toBe(1);
+    expect((await fetchRolePage(user.id, parseRolesFilters({}), false, null, 1)).total).toBe(1);
   });
 });
 
@@ -747,7 +757,7 @@ it("queues oversized edits for automatic fitting, permits previews and protects 
   const [draft] = await database
     .insert(schema.cvDrafts)
     .values({
-      jobTitle: "Director",
+      userId: user.id, jobTitle: "Director",
       companyName: "Example",
       jobDescription: "Operations",
       libraryVersion: 1,
@@ -984,7 +994,7 @@ it("queues fitting from unsaved draft edits without overwriting the source or re
   const [draft] = await database
     .insert(schema.cvDrafts)
     .values({
-      jobTitle: "Director",
+      userId: user.id, jobTitle: "Director",
       companyName: "Example",
       jobDescription: "Finance operations",
       libraryVersion: 1,
@@ -1062,7 +1072,7 @@ it("assesses, improves with current evidence, finalises and exports through the 
   };
   await database
     .insert(schema.cvLibraries)
-    .values({ version: 1, content: library });
+    .values({ userId: user.id, version: 1, content: library });
   const description =
     "Must lead operations. SQL is desirable. The role works with finance teams to improve reliable reporting and planning.";
   const rubric = {
@@ -1165,7 +1175,7 @@ it("assesses, improves with current evidence, finalises and exports through the 
     await database
       .insert(schema.cvLibraries)
       .values({
-        version: 2,
+        userId: user.id, version: 2,
         content: { ...library, profile: "Operations and reporting leader" },
       });
     await database
@@ -1247,7 +1257,7 @@ it("requires the original advert when a stored description was model-rewritten o
   await database
     .insert(schema.cvLibraries)
     .values({
-      version: 1,
+      userId: user.id, version: 1,
       content: {
         name: "Example",
         contact: "",
@@ -1310,7 +1320,7 @@ it("does not strand an assessment retry while the previous task is still finishi
   const [draft] = await database
     .insert(schema.cvDrafts)
     .values({
-      jobTitle: "Analyst",
+      userId: user.id, jobTitle: "Analyst",
       companyName: "Example",
       jobDescription: "Use SQL",
       libraryVersion: 1,
@@ -1340,7 +1350,7 @@ it("does not strand an assessment retry while the previous task is still finishi
 
 
 it("publishes real CV stage changes to the page refresher", async () => {
-  const [draft] = await database.insert(schema.cvDrafts).values({ jobTitle: "Director", companyName: "Example", jobDescription: "Lead a team", libraryVersion: 1, librarySnapshot: { name: "Example", contact: "", profile: "Leader", entries: [] }, model: "test", status: "generating", buildStage: "writing" }).returning();
+  const [draft] = await database.insert(schema.cvDrafts).values({ userId: user.id, jobTitle: "Director", companyName: "Example", jobDescription: "Lead a team", libraryVersion: 1, librarySnapshot: { name: "Example", contact: "", profile: "Leader", entries: [] }, model: "test", status: "generating", buildStage: "writing" }).returning();
   const request = () => new Request(`http://localhost/api/work-status?cv=${draft!.id}`);
   expect(await (await workStatus(request())).json()).toMatchObject({ active: true, version: "generating:writing" });
   await database.update(schema.cvDrafts).set({ buildStage: "fitting" }).where(eq(schema.cvDrafts.id, draft!.id));
@@ -1349,14 +1359,14 @@ it("publishes real CV stage changes to the page refresher", async () => {
 
 it("saves default appearance independently of library edits and existing CVs", async () => {
   const { getDefaultCvAppearance } = await import("@/lib/cv-appearance");
-  expect(await getDefaultCvAppearance()).toEqual(DEFAULT_CV_THEME);
+  expect(await getDefaultCvAppearance(user.id)).toEqual(DEFAULT_CV_THEME);
   const { job } = await fixture();
   const content = { name: "Example", contact: "London", profile: "Operations leader", theme: CV_THEMES.Plum!, entries: [{ id: "skill", kind: "skill" as const, heading: "Skills", details: "Operations leadership", skillItems: ["Operations"] }] };
-  await database.insert(schema.cvLibraries).values({ version: 1, content });
-  expect(await getDefaultCvAppearance()).toEqual(CV_THEMES.Plum);
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content });
+  expect(await getDefaultCvAppearance(user.id)).toEqual(CV_THEMES.Plum);
   const form = new FormData(); form.set("theme", JSON.stringify(CV_THEMES.Forest));
   expect(await saveCvAppearance({ ok: true }, form)).toEqual({ ok: true });
-  expect(await getDefaultCvAppearance()).toEqual(CV_THEMES.Forest);
+  expect(await getDefaultCvAppearance(user.id)).toEqual(CV_THEMES.Forest);
   expect((await database.select().from(schema.cvLibraries))[0]!.content).toEqual(content);
   const generate = new FormData(); generate.set("jobId", job.id);
   generate.set("description", "Lead a business operations team, develop the annual operating plan and work with finance and commercial leaders.");
@@ -1368,7 +1378,7 @@ it("saves default appearance independently of library edits and existing CVs", a
   expect((await database.select().from(schema.cvDrafts))[0]!.librarySnapshot.theme).toEqual(CV_THEMES.Forest);
   form.set("theme", JSON.stringify({ ...CV_THEMES.Gold, primary: "invalid" }));
   expect((await saveCvAppearance({ ok: true }, form)).ok).toBe(false);
-  expect(await getDefaultCvAppearance()).toEqual(CV_THEMES.Gold);
+  expect(await getDefaultCvAppearance(user.id)).toEqual(CV_THEMES.Gold);
   session = undefined;
   await expect(saveCvAppearance({ ok: true }, form)).rejects.toThrow("Unauthorised");
 });
@@ -1378,8 +1388,8 @@ it("preserves legacy writing preferences, rejects stale saves, and uses saved pr
   const { getCvWritingPreferences } = await import("@/lib/cv-writing-preferences");
   const { job } = await fixture();
   const content = { name: "Example", contact: "London", profile: "Leader", websiteUrl: "https://example.com/portfolio", stylePreferences: "Concise UK English", preferredWording: "Led the team", entries: [{ id: "skill", kind: "skill" as const, heading: "Skills", details: "Operations" }] };
-  await database.insert(schema.cvLibraries).values({ version: 1, content });
-  const before = await getCvWritingPreferences();
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content });
+  const before = await getCvWritingPreferences(user.id);
   expect(before).toEqual({ stylePreferences: content.stylePreferences, preferredWording: content.preferredWording });
   const form = new FormData();
   form.set("previousPreferences", JSON.stringify(before));
@@ -1387,7 +1397,7 @@ it("preserves legacy writing preferences, rejects stale saves, and uses saved pr
   form.set("preferredWording", "Managed the team");
   expect(await saveCvWritingPreferences({ ok: true }, form)).toEqual({ ok: true });
   expect((await saveCvWritingPreferences({ ok: true }, form)).ok).toBe(false);
-  const saved = await getCvWritingPreferences();
+  const saved = await getCvWritingPreferences(user.id);
   expect(saved.stylePreferences).toBe("Plain, concise UK English");
   expect((await database.select().from(schema.cvLibraries))).toHaveLength(1);
   const generate = new FormData(); generate.set("jobId", job.id); generate.set("description", "Lead a business operations team, develop the annual operating plan and work with finance and commercial leaders.");
@@ -1397,7 +1407,7 @@ it("preserves legacy writing preferences, rejects stale saves, and uses saved pr
   form.set("previousPreferences", JSON.stringify(saved));
   form.set("stylePreferences", "x".repeat(4001));
   expect((await saveCvWritingPreferences({ ok: true }, form)).ok).toBe(false);
-  expect(await getCvWritingPreferences()).toEqual(saved);
+  expect(await getCvWritingPreferences(user.id)).toEqual(saved);
   session = undefined;
   await expect(saveCvWritingPreferences({ ok: true }, form)).rejects.toThrow("Unauthorised");
 });

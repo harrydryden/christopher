@@ -1,4 +1,4 @@
-import { scanRunSummary, schema, enqueueTask, type Task } from "@christopher/db";
+import { scanRunSummary, schema, enqueueTask, listUserIds, type Task } from "@christopher/db";
 import { dedupeKeyFor, localDateParts, priorityFor } from "@christopher/core";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
@@ -11,6 +11,8 @@ interface DailyPayload {
 
 /**
  * Fan out one scan_company task per active company, then a finaliser that summarises the run.
+ * A company is active while anyone follows it actively, so the run covers every follower's
+ * companies exactly once, however many people follow the same one.
  * Idempotent per (runDate, trigger) so a restart mid-run does not duplicate it.
  */
 export async function handleRunDaily(task: Task, deps: WorkerDeps): Promise<unknown> {
@@ -99,8 +101,11 @@ async function finalise(deps: WorkerDeps): Promise<number> {
       })
       .where(eq(schema.scanRuns.id, run.id));
     finalised++;
-    // Fresh evidence from every source: mine it for keywords the gate is missing.
-    await enqueueTask(deps.db, "suggest_from_scans", {}, { dedupeKey: dedupeKeyFor("suggest_from_scans", {}), priority: priorityFor("suggest_from_scans") });
+    // Fresh evidence from every source: mine it, per account, for keywords each gate is missing.
+    for (const userId of await listUserIds(deps.db)) {
+      const payload = { userId };
+      await enqueueTask(deps.db, "suggest_from_scans", payload, { dedupeKey: dedupeKeyFor("suggest_from_scans", payload), priority: priorityFor("suggest_from_scans") });
+    }
     log.info("scan run finalised", { runId: run.id, ok: companiesOk, failed: Math.max(0, run.companiesTotal - companiesOk), newRoles: summary.new_roles });
   }
   return finalised;

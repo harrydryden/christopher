@@ -1,6 +1,11 @@
 /**
  * The daily scan. For each company: fetch every active source, normalise postings, reconcile them
- * against what is stored, apply the keyword and location gate, and queue scoring for anything new.
+ * against what is stored, then apply every follower's keyword and location gate and queue scoring
+ * for anything new to them.
+ *
+ * The company, its sources and the observed postings are shared: one scan a day serves everyone who
+ * follows the company. What each person sees of the listing lives in `user_jobs`, one row per
+ * follower and posting, created only once the posting passes that follower's gate.
  */
 import { schema, enqueueTask, archiveNonMatches, type Task } from "@christopher/db";
 import {
@@ -9,6 +14,7 @@ import {
   dedupeKeyFor,
   evaluateGate,
   keyPostings,
+  looksRemote,
   modeForScanStatus,
   normalizeTitle,
   priorityFor,
@@ -18,9 +24,11 @@ import {
   type AppSettings,
   type ExistingJob,
   type FetchContext,
+  type GateSettings,
   type HtmlRecipe,
   type RawPosting,
   type SourceSpec,
+  type SystemSettings,
 } from "@christopher/core";
 import { and, desc, eq, inArray, sql, or, isNull } from "drizzle-orm";
 import type { CareerSource } from "@christopher/db";
@@ -32,6 +40,9 @@ import { withResourceLease } from "../lease";
 import { log } from "../log";
 
 type ScanStatus = "ok" | "partial" | "suspect_empty" | "failed";
+
+/** A manual rescan of a company that was scanned this recently is served by the existing result. */
+export const MANUAL_RESCAN_INTERVAL_MS = 30 * 60_000;
 
 export async function handleScanCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
   const payload = task.payload as { companyId: string; scanRunId?: string; trigger?: string };
@@ -45,7 +56,7 @@ async function scanCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
   if (!company) return { skipped: "company not found" };
   if (company.status !== "active") return { skipped: "company is not active" };
 
-  const sources = await deps.db
+  let sources = await deps.db
     .select()
     .from(schema.careerSources)
     .where(and(eq(schema.careerSources.companyId, company.id), inArray(schema.careerSources.status, ["active", "failing"]), payload.trigger === "schedule" ? or(isNull(schema.careerSources.nextScanAt), sql`${schema.careerSources.nextScanAt} <= ${deps.now()}`) : undefined));
@@ -53,6 +64,18 @@ async function scanCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
   if (sources.length === 0) {
     log.warn("company has no active source", { company: company.name });
     return { skipped: "no active source" };
+  }
+
+  // The scan is shared, so one follower's "rescan now" must not fetch a board the system read
+  // minutes ago for someone else. A source with no scan yet (just confirmed) is always read.
+  if (payload.trigger !== "schedule" && !payload.scanRunId) {
+    const cutoff = new Date(deps.now().getTime() - MANUAL_RESCAN_INTERVAL_MS);
+    const recent = await deps.db.select({ sourceId: schema.scans.sourceId }).from(schema.scans)
+      .where(and(inArray(schema.scans.sourceId, sources.map(s => s.id)), sql`${schema.scans.startedAt} >= ${cutoff}`, inArray(schema.scans.status, ["ok", "partial"])));
+    const fresh = new Set(recent.map(r => r.sourceId));
+    const stale = sources.filter(s => !fresh.has(s.id));
+    if (stale.length === 0) return { skipped: "scanned recently", sources: sources.length };
+    sources = stale;
   }
 
   let totalNew = 0;
@@ -75,14 +98,32 @@ interface SourceOutcome {
   postingsFound: number;
 }
 
+interface Follower {
+  userId: string;
+  settings: AppSettings;
+}
+
+/** Description-based matching needs the detail text before the gate can decide anything. */
+function needsDescription(gate: GateSettings): boolean {
+  return gate.matchFields.includes("description") && gate.includeKeywords.length > 0;
+}
+
+async function loadFollowers(deps: WorkerDeps, companyId: string): Promise<Follower[]> {
+  const rows = await deps.db.select({ userId: schema.companySubscriptions.userId }).from(schema.companySubscriptions)
+    .where(and(eq(schema.companySubscriptions.companyId, companyId), inArray(schema.companySubscriptions.status, ["active", "paused"])));
+  return Promise.all(rows.map(async row => ({ userId: row.userId, settings: await deps.userSettings(row.userId) })));
+}
+
 async function scanSource(
   deps: WorkerDeps,
   company: typeof schema.companies.$inferSelect,
   source: CareerSource,
-  settings: AppSettings,
+  settings: SystemSettings,
   scanRunId: string | null,
 ): Promise<SourceOutcome> {
   const started = Date.now();
+  // Recorded on the worker's clock so the manual-rescan guard compares like with like.
+  const startedAt = deps.now();
   const baseCtx = makeFetchContext(deps);
   const responses: Array<{ url: string; status: number; body: string }> = [];
   let snapshotChars = 0;
@@ -161,8 +202,13 @@ async function scanSource(
     const saved = savedByUrl.get(posting.url);
     if (posting.externalId && saved?.externalKey === `id:${posting.externalId}` && !posting.descriptionText && saved?.text && saved.at && deps.now().getTime() - saved.at.getTime() < 7 * 86400000 && (!posting.updatedAt || posting.updatedAt <= saved.at)) { posting.descriptionText = saved.text; reusedDescriptions.add(posting.url); }
   }
+  // Followers decide admission. Only the distinct description-matching gates cost detail fetches;
+  // a posting fetched for one follower is already in hand for the next.
+  const followers = await loadFollowers(deps, company.id);
+  const descriptionGates = [...new Map(followers.filter(f => needsDescription(f.settings.gate)).map(f => [JSON.stringify(f.settings.gate), f.settings.gate])).values()];
   const rejectionCache = await loadAdmissionCache(deps.db, source.id, deps.now());
-  const unresolved = fetchOk ? await prepareForAdmission(postings, spec, ctx, settings.gate, rejectionCache) : new Set<string>();
+  const unresolved = new Set<string>();
+  if (fetchOk) for (const gate of descriptionGates) for (const url of await prepareForAdmission(postings, spec, ctx, gate, rejectionCache)) unresolved.add(url);
   await rejectionCache.save();
   if (unresolved.size) {
     incomplete = true;
@@ -197,6 +243,7 @@ async function scanSource(
       descriptionSource: schema.jobs.descriptionSource,
       descriptionTruncated: schema.jobs.descriptionTruncated,
       descriptionFetchedAt: schema.jobs.descriptionFetchedAt,
+      descriptionHash: schema.jobs.descriptionHash,
       url: schema.jobs.url,
       locations: schema.jobs.locations,
       department: schema.jobs.department,
@@ -204,8 +251,6 @@ async function scanSource(
       remote: schema.jobs.remote,
       salaryText: schema.jobs.salaryText,
       postedAt: schema.jobs.postedAt,
-      fitScore: schema.jobs.fitScore,
-      inTable: schema.jobs.inTable,
       id: schema.jobs.id,
       externalKey: schema.jobs.externalKey,
       status: schema.jobs.status,
@@ -223,25 +268,13 @@ async function scanSource(
   const isFirstScan = existing.length === 0 && previousOkCount === null;
 
   let newCount = 0;
-  const scoreQueue: Array<{ jobId: string; nearMiss: boolean }> = [];
-  const descriptionQueue: string[] = [];
+  const scoreQueue: Array<{ userId: string; jobId: string; nearMiss: boolean }> = [];
+  const descriptionQueue = new Set<string>();
+  const viewInserts: Array<typeof schema.userJobs.$inferInsert> = [];
 
+  // Every observed posting is stored once, for everyone; the gate is applied per follower below.
   const newRows: Array<typeof schema.jobs.$inferInsert> = [];
   for (const insert of result.inserts) {
-    if (unresolved.has(insert.url)) continue;
-    const gate = evaluateGate(
-      {
-        title: insert.title,
-        department: insert.department,
-        description: settings.gate.matchFields.includes("description") ? insert.descriptionText : undefined,
-        location: insert.location,
-        locations: insert.locations,
-        remote: insert.remote,
-      },
-      settings.gate,
-    );
-    if (!gate.inTable) continue;
-    const nearMiss = false;
     newRows.push({
         companyId: company.id,
         sourceId: source.id,
@@ -253,7 +286,7 @@ async function scanSource(
         locations: insert.locations ?? (insert.location ? [insert.location] : []),
         department: insert.department ?? null,
         employmentType: insert.employmentType ?? null,
-        remote: insert.remote ?? gate.remote,
+        remote: insert.remote ?? looksRemote([insert.location, ...(insert.locations ?? [])].filter(Boolean).join(" ")),
         salaryText: insert.salaryText ?? null,
         postedAt: insert.postedAt ?? null,
         firstSeenAt: deps.now(),
@@ -265,22 +298,25 @@ async function scanSource(
         descriptionTruncated: (insert.descriptionText?.length ?? 0) > 30_000,
         descriptionHash: insert.descriptionText ? sha1(insert.descriptionText.slice(0, 30_000)) : null,
         descriptionFetchedAt: insert.descriptionText ? deps.now() : null,
-        keywordMatched: gate.keywordMatched,
-        keywordTerms: gate.keywordTerms,
-        excluded: gate.excluded,
-        locationOk: gate.locationOk,
-        inTable: gate.inTable,
-        nearMiss,
       });
   }
   for (let offset = 0; offset < newRows.length; offset += 100) {
     const created = await deps.db.insert(schema.jobs).values(newRows.slice(offset, offset + 100)).onConflictDoNothing()
-      .returning({ id: schema.jobs.id, descriptionText: schema.jobs.descriptionText });
+      .returning({ id: schema.jobs.id, url: schema.jobs.url, title: schema.jobs.title, department: schema.jobs.department, location: schema.jobs.location, locations: schema.jobs.locations, remote: schema.jobs.remote, descriptionText: schema.jobs.descriptionText });
     newCount += created.length;
     if (created.length) await deps.db.insert(schema.jobEvents).values(created.map(row => ({ jobId: row.id, type: "discovered" as const, payload: { method: fetchMethod, seeded: isFirstScan } })));
     for (const row of created) {
-      scoreQueue.push({ jobId: row.id, nearMiss: false });
-      if (!row.descriptionText) descriptionQueue.push(row.id);
+      let wanted = false;
+      for (const follower of followers) {
+        const gate = follower.settings.gate;
+        if (unresolved.has(row.url) && needsDescription(gate)) continue;
+        const verdict = evaluateGate({ title: row.title, department: row.department, description: gate.matchFields.includes("description") ? row.descriptionText : undefined, location: row.location, locations: row.locations, remote: row.remote }, gate);
+        if (!verdict.inTable) continue;
+        wanted = true;
+        viewInserts.push({ userId: follower.userId, jobId: row.id, keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms, excluded: verdict.excluded, locationOk: verdict.locationOk, inTable: true, nearMiss: false, seeded: isFirstScan, createdAt: deps.now(), updatedAt: deps.now() });
+        scoreQueue.push({ userId: follower.userId, jobId: row.id, nearMiss: false });
+      }
+      if (wanted && !row.descriptionText) descriptionQueue.add(row.id);
     }
   }
 
@@ -292,9 +328,14 @@ async function scanSource(
   const updates: Array<Record<string, unknown>> = [];
   const updateEvents: Array<typeof schema.jobEvents.$inferInsert> = [];
   const seenIds = new Set(result.seen);
-  for (const job of existingRows.filter((j) => seenIds.has(j.id))) {
+  const seenRows = existingRows.filter((j) => seenIds.has(j.id));
+  const views = seenRows.length && followers.length
+    ? await deps.db.select().from(schema.userJobs).where(and(inArray(schema.userJobs.jobId, seenRows.map(j => j.id)), inArray(schema.userJobs.userId, followers.map(f => f.userId))))
+    : [];
+  const viewByKey = new Map(views.map(v => [`${v.userId}:${v.jobId}`, v]));
+  const viewUpdates: Array<Record<string, unknown>> = [];
+  for (const job of seenRows) {
     const posting = observed.get(job.externalKey)!;
-    if (unresolved.has(posting.url)) continue;
     const fields = {
       title: posting.title, url: posting.url,
       location: posting.location ?? job.location,
@@ -310,33 +351,49 @@ async function scanSource(
     };
     const changedFields = Object.keys(fields).filter((key) =>
       JSON.stringify(fields[key as keyof typeof fields]) !== JSON.stringify(job[key as keyof typeof job]));
-    const gate = evaluateGate({ ...fields, description: fields.descriptionText }, settings.gate);
-    const nearMiss = false;
     updates.push({ id: job.id,
       ...fields, normalizedTitle: normalizeTitle(fields.title),
-      keywordMatched: gate.keywordMatched, keywordTerms: gate.keywordTerms,
-      excluded: gate.excluded, locationOk: gate.locationOk, inTable: gate.inTable, nearMiss,
       descriptionHash: fields.descriptionText ? sha1(fields.descriptionText) : null,
       descriptionFetchedAt: posting.descriptionText !== undefined && !reusedDescriptions.has(posting.url) ? deps.now() : job.descriptionFetchedAt,
       updatedAt: deps.now(),
     });
     if (changedFields.length) updateEvents.push({ jobId: job.id, type: "updated", payload: { fields: changedFields } });
-    if ((gate.inTable || nearMiss) && (changedFields.length || !job.inTable && gate.inTable || job.fitScore === null)) scoreQueue.push({ jobId: job.id, nearMiss });
     const descriptionStale = !job.descriptionFetchedAt || deps.now().getTime() - job.descriptionFetchedAt.getTime() >= 14 * 86_400_000;
     const sourceUpdated = posting.updatedAt && (!job.descriptionFetchedAt || posting.updatedAt > job.descriptionFetchedAt);
-    if ((gate.inTable || nearMiss) && posting.descriptionText === undefined && (descriptionStale || sourceUpdated)) descriptionQueue.push(job.id);
+    for (const follower of followers) {
+      const gate = follower.settings.gate;
+      if (unresolved.has(posting.url) && needsDescription(gate)) continue;
+      const verdict = evaluateGate({ ...fields, description: gate.matchFields.includes("description") ? fields.descriptionText : undefined }, gate);
+      const view = viewByKey.get(`${follower.userId}:${job.id}`);
+      if (view) {
+        viewUpdates.push({ userId: follower.userId, jobId: job.id, keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms,
+          excluded: verdict.excluded, locationOk: verdict.locationOk, inTable: verdict.inTable });
+        if (verdict.inTable && (changedFields.length || !view.inTable || view.fitScore === null)) scoreQueue.push({ userId: follower.userId, jobId: job.id, nearMiss: false });
+      } else if (verdict.inTable) {
+        viewInserts.push({ userId: follower.userId, jobId: job.id, keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms, excluded: verdict.excluded, locationOk: verdict.locationOk, inTable: true, nearMiss: false, seeded: false, createdAt: deps.now(), updatedAt: deps.now() });
+        scoreQueue.push({ userId: follower.userId, jobId: job.id, nearMiss: false });
+      } else continue;
+      if (verdict.inTable && posting.descriptionText === undefined && (descriptionStale || sourceUpdated)) descriptionQueue.add(job.id);
+    }
   }
   for (let offset = 0; offset < updates.length; offset += 250) {
     await deps.db.execute(sql`update jobs j set title=v.title, url=v.url, location=v.location, locations=v.locations,
       department=v.department, employment_type=v."employmentType", remote=v.remote, salary_text=v."salaryText", posted_at=v."postedAt",
-      description_text=v."descriptionText", description_source=v."descriptionSource", description_truncated=v."descriptionTruncated", normalized_title=v."normalizedTitle", keyword_matched=v."keywordMatched", keyword_terms=v."keywordTerms",
-      excluded=v.excluded, location_ok=v."locationOk", in_table=v."inTable", near_miss=false,
+      description_text=v."descriptionText", description_source=v."descriptionSource", description_truncated=v."descriptionTruncated", normalized_title=v."normalizedTitle",
       description_hash=v."descriptionHash", description_fetched_at=v."descriptionFetchedAt", updated_at=${deps.now()}
       from jsonb_to_recordset(${JSON.stringify(updates.slice(offset, offset + 250))}::jsonb) as v(id uuid, title text, url text, location text, locations jsonb,
         department text, "employmentType" text, remote boolean, "salaryText" text, "postedAt" timestamptz, "descriptionText" text, "descriptionSource" text, "descriptionTruncated" boolean, "normalizedTitle" text,
-        "keywordMatched" boolean, "keywordTerms" jsonb, excluded boolean, "locationOk" boolean, "inTable" boolean, "descriptionHash" text, "descriptionFetchedAt" timestamptz)
+        "descriptionHash" text, "descriptionFetchedAt" timestamptz)
       where j.id=v.id`);
   }
+  for (let offset = 0; offset < viewUpdates.length; offset += 250) {
+    await deps.db.execute(sql`update user_jobs uj set keyword_matched=v."keywordMatched", keyword_terms=v."keywordTerms",
+      excluded=v.excluded, location_ok=v."locationOk", in_table=v."inTable", near_miss=false, updated_at=${deps.now()}
+      from jsonb_to_recordset(${JSON.stringify(viewUpdates.slice(offset, offset + 250))}::jsonb) as v("userId" uuid, "jobId" uuid,
+        "keywordMatched" boolean, "keywordTerms" jsonb, excluded boolean, "locationOk" boolean, "inTable" boolean)
+      where uj.user_id=v."userId" and uj.job_id=v."jobId"`);
+  }
+  for (let offset = 0; offset < viewInserts.length; offset += 250) await deps.db.insert(schema.userJobs).values(viewInserts.slice(offset, offset + 250)).onConflictDoNothing();
   for (let offset = 0; offset < updateEvents.length; offset += 250) await deps.db.insert(schema.jobEvents).values(updateEvents.slice(offset, offset + 250));
   if (result.reopened.length > 0) {
     await deps.db
@@ -362,7 +419,7 @@ async function scanSource(
   await deps.db.insert(schema.scans).values({
     scanRunId,
     sourceId: source.id,
-    startedAt: new Date(started),
+    startedAt,
     finishedAt: deps.now(),
     status,
     fetchMethod,
@@ -417,11 +474,12 @@ async function scanSource(
     postings: postings.length,
     new: newCount,
     closed: result.closed.length,
+    followers: followers.length,
     ms: Date.now() - started,
   });
-  await archiveNonMatches(deps.db, source.id);
+  await archiveNonMatches(deps.db, { sourceId: source.id });
   return { status, newCount, closedCount: result.closed.length, postingsFound: postings.length };
-}
+  }
 
 }
 

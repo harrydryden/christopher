@@ -5,7 +5,7 @@ your keywords **and** your locations, tracks how long each has been live and whe
 learns which roles to put in front of you from the reasons you give when you apply or skip. It also
 recommends companies similar to the ones you already track.
 
-Single user. Give it a homepage URL and it finds the careers page itself.
+Several people can share one deployment: each has their own account, companies, filters, learning and CVs, while every company is discovered and scanned once for everyone. Give it a homepage URL and it finds the careers page itself.
 
 - **Functional review and remaining release gates:** [docs/REVIEW-PLAN.md](docs/REVIEW-PLAN.md)
 - **Specification:** [docs/SPEC.md](docs/SPEC.md)
@@ -51,9 +51,8 @@ cp .env.example .env                          # then edit it
 export DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/christopher_dev
 pnpm db:migrate
 
-# Interface: http://localhost:3000
+# Interface: http://localhost:3000 — open /signup to create the first account; it becomes the administrator
 export SESSION_SECRET=$(openssl rand -hex 32)
-export APP_PASSWORD_HASH=$(pnpm --filter @christopher/web hash-password 'your password' | tail -1)
 pnpm dev:web
 
 # Worker, in another terminal
@@ -73,7 +72,8 @@ pnpm cli probe https://www.anthropic.com
 
 pnpm cli add https://www.anduril.com https://www.anthropic.com
 pnpm cli drain      # runs queued work now instead of waiting for the scheduler
-pnpm cli list       # companies, the source found for each, role counts
+pnpm cli list       # companies, the source found for each, role and follower counts
+pnpm cli users      # accounts and what each follows (CHRISTOPHER_CLI_USER picks who the CLI acts for)
 pnpm cli table      # the roles table as text
 pnpm cli scan       # queue a full run
 ```
@@ -95,9 +95,13 @@ Full instructions, including what to set where and what to do when something is 
 | Variable | Where | Purpose |
 |---|---|---|
 | `DATABASE_URL` | both | PostgreSQL connection string |
-| `SESSION_SECRET` | web | signs the session cookie |
-| `APP_PASSWORD_HASH` | web | scrypt hash of your password, from `pnpm --filter @christopher/web hash-password` |
-| `APP_PASSWORD` | web | alternative to the hash when you have no terminal: the password itself. The hash wins if both are set |
+| `SESSION_SECRET` | web | signs the session cookie; changing it signs everyone out |
+| `APP_URL` | web | the public origin, used in emailed links and the Google redirect (defaults to the request's host) |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | web | optional; enables "Continue with Google". Redirect URI: `<APP_URL>/auth/google/callback` |
+| `ADMIN_EMAILS` | web | optional comma-separated addresses that become administrators on sign-up and may claim data migrated from a single-user deployment |
+| `SIGNUPS_DISABLED` | web | set to `1` to close registration once everyone has an account |
+| `RESEND_API_KEY`, `EMAIL_FROM` | web | optional; sends confirmation and password-reset emails through Resend. Without them the links are written to the server log outside production, or with `AUTH_EMAIL_LOG=1` |
+| `CHRISTOPHER_CLI_USER` | worker | email of the account the CLI acts for; default is the earliest administrator |
 | `ANTHROPIC_API_KEY` | worker | optional; without it scanning still works and scoring is skipped |
 | `SCRAPER_CONTACT_EMAIL` | worker | included in the user agent so site owners can reach you |
 | `TZ` | worker | the timezone the daily run is scheduled in |

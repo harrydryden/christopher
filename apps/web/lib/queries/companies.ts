@@ -5,14 +5,17 @@ import {
   careerSources,
   companies,
   companyProfiles,
+  companySubscriptions,
   discoveryRuns,
   jobs,
   scanRuns,
   scans,
   tasks,
+  userJobs,
   type CareerSource,
   type Company,
   type CompanyProfile,
+  type CompanySubscription,
   type DiscoveryRun,
   type Scan,
 } from "@christopher/db/schema";
@@ -20,9 +23,13 @@ import { db } from "@/lib/db";
 
 export interface CompanyListRow {
   company: Company;
+  /** This account's relationship with the shared company: its own status and notes. */
+  subscription: CompanySubscription;
   lastScan: { status: Scan["status"]; startedAt: Date } | null;
   reviewRoles: number;
   shortlistedRoles: number;
+  /** How many accounts follow the company: a shared catalogue entry is scanned once for all of them. */
+  followers: number;
   discovering: boolean;
   discoveryState: "queued" | "running" | null;
   /** No active or failing careers source, so scans skip this company until one is added. */
@@ -30,8 +37,10 @@ export interface CompanyListRow {
   lastDiscovery: "resolved" | "needs_confirmation" | "not_found" | "failed" | "running" | null;
 }
 
-export async function companyCount(q = ""): Promise<number> {
-  const [row] = await db().select({ n: sql<number>`count(*)::int` }).from(companies).where(companySearch(q));
+export async function companyCount(userId: string, q = ""): Promise<number> {
+  const [row] = await db().select({ n: sql<number>`count(*)::int` }).from(companySubscriptions)
+    .innerJoin(companies, eq(companies.id, companySubscriptions.companyId))
+    .where(and(eq(companySubscriptions.userId, userId), companySearch(q)));
   return row?.n ?? 0;
 }
 function companySearch(q: string) {
@@ -39,20 +48,24 @@ function companySearch(q: string) {
   return q ? or(ilike(companies.name, `%${escaped}%`), ilike(companies.domain, `%${escaped}%`)) : undefined;
 }
 
-export async function listCompanies(page = 1, q = ""): Promise<CompanyListRow[]> {
-  const allCompanies = await db().select().from(companies).where(companySearch(q)).orderBy(asc(companies.name), companies.id).limit(50).offset((page - 1) * 50);
-  if (!allCompanies.length) return [];
-  const ids = allCompanies.map(c => c.id);
-  const [counts, lastScans, discoveringRows, sourceRows, discoveryRows] = await Promise.all([
+export async function listCompanies(userId: string, page = 1, q = ""): Promise<CompanyListRow[]> {
+  const followed = await db().select({ company: companies, subscription: companySubscriptions }).from(companySubscriptions)
+    .innerJoin(companies, eq(companies.id, companySubscriptions.companyId))
+    .where(and(eq(companySubscriptions.userId, userId), companySearch(q)))
+    .orderBy(asc(companies.name), companies.id).limit(50).offset((page - 1) * 50);
+  if (!followed.length) return [];
+  const ids = followed.map(c => c.company.id);
+  const [counts, lastScans, discoveringRows, sourceRows, discoveryRows, followerRows] = await Promise.all([
     db()
       .select({
         companyId: jobs.companyId,
         reviewRoles: sql<number>`count(*) filter (where ${roleStatusSql} = 'auto-matched')::int`,
         shortlistedRoles: sql<number>`count(*) filter (where ${roleStatusSql} = 'user-shortlisted')::int`,
       })
-      .from(jobs)
-      .leftJoin(decisions, and(eq(decisions.jobId, jobs.id), eq(decisions.superseded, false)))
-      .where(inArray(jobs.companyId, ids))
+      .from(userJobs)
+      .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
+      .leftJoin(decisions, and(eq(decisions.userId, userId), eq(decisions.jobId, jobs.id), eq(decisions.superseded, false)))
+      .where(and(eq(userJobs.userId, userId), inArray(jobs.companyId, ids)))
       .groupBy(jobs.companyId),
     db()
       .selectDistinctOn([careerSources.companyId], {
@@ -77,21 +90,29 @@ export async function listCompanies(page = 1, q = ""): Promise<CompanyListRow[]>
       .from(discoveryRuns)
       .where(inArray(discoveryRuns.companyId, ids))
       .orderBy(discoveryRuns.companyId, desc(discoveryRuns.startedAt)),
+    db()
+      .select({ companyId: companySubscriptions.companyId, n: sql<number>`count(*)::int` })
+      .from(companySubscriptions)
+      .where(and(inArray(companySubscriptions.companyId, ids), ne(companySubscriptions.status, "archived")))
+      .groupBy(companySubscriptions.companyId),
   ]);
 
   const withSource = new Set(sourceRows.map((r) => r.companyId));
   const lastDiscoveryByCompany = new Map(discoveryRows.map((r) => [r.companyId, r.status]));
   const countsByCompany = new Map(counts.map((c) => [c.companyId, c]));
   const lastScanByCompany = new Map(lastScans.map((s) => [s.companyId, { status: s.status, startedAt: s.startedAt }]));
+  const followersByCompany = new Map(followerRows.map((f) => [f.companyId, f.n]));
   const discoveringSet = new Set(
     discoveringRows.map((r) => (r.payload as { companyId?: string }).companyId).filter((id): id is string => !!id),
   );
 
-  return allCompanies.map((company) => ({
+  return followed.map(({ company, subscription }) => ({
     company,
+    subscription,
     lastScan: lastScanByCompany.get(company.id) ?? null,
     reviewRoles: countsByCompany.get(company.id)?.reviewRoles ?? 0,
     shortlistedRoles: countsByCompany.get(company.id)?.shortlistedRoles ?? 0,
+    followers: followersByCompany.get(company.id) ?? 0,
     discovering: discoveringSet.has(company.id),
     discoveryState: discoveringRows.some(r => (r.payload as { companyId?: string }).companyId === company.id && r.status === "running") ? "running"
       : discoveringSet.has(company.id) ? "queued" : null,
@@ -100,23 +121,23 @@ export async function listCompanies(page = 1, q = ""): Promise<CompanyListRow[]>
   }));
 }
 
-export async function listCompanyOptions(): Promise<Array<{ id: string; name: string }>> {
+export async function listCompanyOptions(userId: string): Promise<Array<{ id: string; name: string }>> {
   const rows = await db()
     .select({ id: companies.id, name: companies.name })
-    .from(companies)
-    .where(ne(companies.status, "archived"))
+    .from(companySubscriptions)
+    .innerJoin(companies, eq(companies.id, companySubscriptions.companyId))
+    .where(and(eq(companySubscriptions.userId, userId), ne(companySubscriptions.status, "archived")))
     .orderBy(asc(companies.name));
   return rows;
 }
 
-export async function listActiveDomains(): Promise<Set<string>> {
-  const rows = await db().select({ domain: companies.domain }).from(companies);
-  return new Set(rows.map((r) => r.domain));
-}
-
-export async function getCompany(id: string): Promise<Company | null> {
-  const rows = await db().select().from(companies).where(eq(companies.id, id)).limit(1);
-  return rows[0] ?? null;
+/** A company this account follows, with its subscription; null when it does not follow it. */
+export async function getCompany(userId: string, id: string): Promise<(Company & { subscription: CompanySubscription }) | null> {
+  const rows = await db().select({ company: companies, subscription: companySubscriptions }).from(companySubscriptions)
+    .innerJoin(companies, eq(companies.id, companySubscriptions.companyId))
+    .where(and(eq(companySubscriptions.userId, userId), eq(companySubscriptions.companyId, id))).limit(1);
+  const row = rows[0];
+  return row ? { ...row.company, subscription: row.subscription } : null;
 }
 
 export async function getCompanySources(companyId: string): Promise<CareerSource[]> {
@@ -150,12 +171,6 @@ export async function getCompanyScans(companyId: string, limit = 20): Promise<Co
   return rows.map((r) => ({ ...r.scan, sourceType: r.sourceType, sourceUrl: r.sourceUrl }));
 }
 
-export async function getCompanyRoles(companyId: string, page = 1) {
-  return db().select({ id: jobs.id, title: jobs.title, url: jobs.url, location: jobs.location,
-    postedAt: jobs.postedAt, status: jobs.status, firstSeenAt: jobs.firstSeenAt, closedAt: jobs.closedAt, seeded: jobs.seeded,
-    inTable: jobs.inTable, nearMiss: jobs.nearMiss, fitScore: jobs.fitScore }).from(jobs).where(eq(jobs.companyId, companyId)).orderBy(desc(jobs.firstSeenAt), jobs.id).limit(50).offset((page - 1) * 50);
-}
-
 export async function getCompanyProfile(companyId: string): Promise<CompanyProfile | null> {
   const rows = await db()
     .select()
@@ -173,7 +188,9 @@ export async function getLatestScanRun(): Promise<
   return rows[0] ?? null;
 }
 
-export async function companyRoleCount(companyId: string) {
-  const [row] = await db().select({ n: sql<number>`count(*)::int` }).from(jobs).where(eq(jobs.companyId, companyId));
+/** How many other accounts follow a company: shown before someone edits its shared details. */
+export async function companyFollowerCount(companyId: string): Promise<number> {
+  const [row] = await db().select({ n: sql<number>`count(*)::int` }).from(companySubscriptions)
+    .where(and(eq(companySubscriptions.companyId, companyId), ne(companySubscriptions.status, "archived")));
   return row?.n ?? 0;
 }

@@ -19,11 +19,26 @@ const SECRET = "smoke-test-secret";
 const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_dev";
 const skipBuild = process.argv.includes("--no-build");
 
-// Same shape as apps/web/lib/session.ts: "<expiresEpochSeconds>.<base64url HMAC-SHA256>".
-function sessionCookie() {
-  const expires = String(Math.floor(Date.now() / 1000) + 3600);
-  const sig = createHmac("sha256", SECRET).update(expires).digest("base64url");
-  return `christopher_session=${expires}.${sig}`;
+const { Pool } = createRequire(new URL("../apps/web/package.json", import.meta.url))("pg");
+const SMOKE_EMAIL = "smoke@christopher.invalid";
+
+/**
+ * A disposable administrator account with one session row. Same cookie shape as apps/web/lib/session.ts:
+ * "v2.<sessionId>.<expiresEpochSeconds>.<base64url HMAC-SHA256(sessionId.expires)>".
+ */
+async function signIn(pool) {
+  const { rows: [user] } = await pool.query(
+    `insert into users (email, name, role, claimed_at, email_verified_at) values ($1, 'Smoke test', 'admin', now(), now())
+     on conflict (email) do update set role = 'admin', claimed_at = coalesce(users.claimed_at, now()) returning id`,
+    [SMOKE_EMAIL],
+  );
+  const expires = Math.floor(Date.now() / 1000) + 3600;
+  const { rows: [session] } = await pool.query(
+    "insert into sessions (user_id, expires_at, user_agent) values ($1, to_timestamp($2), 'smoke-web') returning id",
+    [user.id, expires],
+  );
+  const sig = createHmac("sha256", SECRET).update(`${session.id}.${expires}`).digest("base64url");
+  return { userId: user.id, cookie: `christopher_session=v2.${session.id}.${expires}.${sig}` };
 }
 
 function run(cmd, args, opts = {}) {
@@ -43,6 +58,7 @@ const PAGES = [
   ["/learning", ["Learning"]],
   ["/health", ["Health"]],
   ["/settings", ["Settings"]],
+  ["/account", ["Account", "Sign-in methods"]],
   ["/cv", ["CV builder", "Saved CVs"]],
   ["/library", ["Library", "Intro", "Website", "Experience", "Education, skills and interests"]],
   ["/applications", ["Applications"]],
@@ -78,7 +94,6 @@ const env = {
   ...process.env,
   DATABASE_URL,
   SESSION_SECRET: SECRET,
-  APP_PASSWORD_HASH: process.env.APP_PASSWORD_HASH ?? "",
   PORT: String(PORT),
   NODE_ENV: "production",
 };
@@ -114,7 +129,8 @@ async function main() {
     throw new Error("the server never became ready");
   }
 
-  const cookie = sessionCookie();
+  const pool = new Pool({ connectionString: DATABASE_URL, max: 1 });
+  const { cookie, userId } = await signIn(pool);
   const failures = [];
 
   // An unauthenticated request must be turned away.
@@ -150,8 +166,12 @@ async function main() {
     console.log(`  ${res.status}  ${path}  (${body.length} bytes)`);
   }
 
-  try { await verifyCvWorkspace(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL); }
+  try { await verifyCvWorkspace(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL, userId); }
   catch (error) { failures.push(`CV browser flow: ${error.message}`); }
+
+  // The disposable account takes its sessions, settings and drafts with it.
+  await pool.query("delete from users where email = $1", [SMOKE_EMAIL]);
+  await pool.end();
 
   const exited = once(server, "exit");
   server.kill("SIGTERM");

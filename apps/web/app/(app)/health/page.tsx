@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { formatUsd, relativeTime } from "@/lib/format";
 import {
+  getAiSpendByAccount,
   getAiSpendThisMonth,
   getWorkerHeartbeat,
   getQueueCounts,
@@ -20,25 +21,29 @@ import {
   listRecentScanRuns,
   listSourcesNeedingAttention,
 } from "@/lib/queries/health";
-import { getSettings } from "@/lib/settings";
+import { getSystemSettings } from "@/lib/settings";
+import { requireUser } from "@/lib/auth";
+import { users } from "@christopher/db/schema";
 
 export const dynamic = "force-dynamic";
 
 export default async function HealthPage() {
+  const user = await requireUser();
+  const admin = user.role === "admin";
+  const scope = admin ? undefined : user.id;
   const now = new Date();
-  const metrics = await workloadMetrics(db());
-  const [attentionSources, noSourceCompanies, problemScans, failedTasks, queueCounts, spend, aiCalls, scanRuns, settings, heartbeat] = await Promise.all([
-    listSourcesNeedingAttention(),
-    listCompaniesWithNoSource(),
-    listRecentProblemScans(7),
-    listFailedTasks(50),
-    getQueueCounts(),
-    getAiSpendThisMonth(now),
-    listRecentAiCalls(20),
-    listRecentScanRuns(10),
-    getSettings(),
+  const [attentionSources, noSourceCompanies, problemScans, scanRuns, settings, heartbeat] = await Promise.all([
+    listSourcesNeedingAttention(scope),
+    listCompaniesWithNoSource(scope),
+    listRecentProblemScans(scope, 7),
+    listRecentScanRuns(10, scope),
+    getSystemSettings(),
     getWorkerHeartbeat(),
   ]);
+  const [metrics, failedTasks, queueCounts, spend, spendByAccount, aiCalls, accounts] = admin
+    ? await Promise.all([workloadMetrics(db()), listFailedTasks(50), getQueueCounts(), getAiSpendThisMonth(now), getAiSpendByAccount(now), listRecentAiCalls(20), db().select({ id: users.id, email: users.email }).from(users)])
+    : [null, [], [], 0, [], [], []];
+  const emailById = new Map(accounts.map(a => [a.id, a.email]));
 
   const budget = settings.monthlyAiBudgetUsd;
   const spendFraction = budget > 0 ? spend / budget : 0;
@@ -46,13 +51,15 @@ export default async function HealthPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Health" />
+      <PageHeader title="Health" description={admin ? "Everything the shared worker is doing, across every account." : "Sources and scans for the companies you follow. Administrators see the shared queue and AI spend."} />
 
-      <Card title="Processing capacity">
-        <p className="text-14">{metrics.ready} tasks ready · {metrics.running} running · oldest ready task waiting {Math.round(metrics.oldest_seconds / 60)} minutes.</p>
-        <p className="mt-2 text-14">95% of completed tasks in the last day took at most {Math.round(metrics.p95_seconds)} seconds. {metrics.overdueCompanies} companies have no successful scan in 24 hours; {metrics.overdueDiscovery} discovery sources are over a day late.</p>
-        <p className="mt-2 text-14">AI requests currently reserve {formatUsd(metrics.reservedUsd)} against your budget.</p>
-      </Card>
+      {admin && metrics && (
+        <Card title="Processing capacity">
+          <p className="text-14">{metrics.ready} tasks ready · {metrics.running} running · oldest ready task waiting {Math.round(metrics.oldest_seconds / 60)} minutes.</p>
+          <p className="mt-2 text-14">95% of completed tasks in the last day took at most {Math.round(metrics.p95_seconds)} seconds. {metrics.overdueCompanies} companies have no successful scan in 24 hours; {metrics.overdueDiscovery} discovery sources are over a day late.</p>
+          <p className="mt-2 text-14">AI requests currently reserve {formatUsd(metrics.reservedUsd)} against the shared budget.</p>
+        </Card>
+      )}
       <Card title="Background worker">
         <p className="text-14">
           {heartbeat && now.getTime() - heartbeat.at.getTime() < 120_000
@@ -130,118 +137,136 @@ export default async function HealthPage() {
         )}
       </Card>
 
-      <Card title={`Failed tasks (${failedTasks.length})`}>
-        {failedTasks.length === 0 ? (
-          <EmptyState title="No failed tasks" description="Failed background tasks (scans, discovery, AI calls) show up here with a retry button." />
-        ) : (
-          <Table>
-            <THead>
-              <tr>
-                <TH>Type</TH>
-                <TH>Error</TH>
-                <TH>Finished</TH>
-                <TH>Attempts</TH>
-                <TH />
-              </tr>
-            </THead>
-            <TBody>
-              {failedTasks.map((t) => (
-                <TR key={t.id}>
-                  <TD>
-                    <Badge tone="neutral">{t.type}</Badge>
-                  </TD>
-                  <TD className="max-w-[24rem] truncate text-danger" title={t.error ?? undefined}>
-                    {t.error ?? ""}
-                  </TD>
-                  <TD className="whitespace-nowrap">{t.finishedAt ? relativeTime(t.finishedAt, now) : "—"}</TD>
-                  <TD>{t.attempts}</TD>
-                  <TD>
-                    <form action={retryTask.bind(null, t.id)}>
-                      <Button type="submit" size="sm">
-                        Retry
-                      </Button>
-                    </form>
-                  </TD>
-                </TR>
-              ))}
-            </TBody>
-          </Table>
-        )}
-      </Card>
-
-      <Card title="Queue">
-        {queueCounts.length === 0 ? (
-          <EmptyState title="Queue is empty" description="No tasks queued, running, done or failed." />
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {queueCounts.map((c) => (
-              <div key={`${c.type}-${c.status}`} className="flex items-center gap-1.5 border border-line-muted px-2 py-1 text-12">
-                <span className="text-muted">{c.type}</span>
-                <Badge tone={taskStatusTone(c.status)}>{c.status}</Badge>
-                <span className="font-medium text-fg">{c.n}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-
-      <Card title="AI spend this month">
-        <div className="mb-2 flex items-baseline gap-2">
-          <span className="text-16 font-semibold text-fg">{formatUsd(spend)}</span>
-          <span className="text-14 text-muted">of {formatUsd(budget)} budget</span>
-        </div>
-        <div className="mb-3 h-2 w-full overflow-hidden bg-track">
-          <div className={`h-full ${overBudget ? "bg-danger" : "bg-ok"}`} style={{ width: `${Math.min(100, Math.max(2, spendFraction * 100))}%` }} />
-        </div>
-        {overBudget && <p className="mb-3 text-14 text-danger">Over budget — non-essential AI calls (near-miss scoring, then suggestions) are being skipped.</p>}
-        <section>
-          <h3 className="text-14 text-muted hover:text-fg">Last {aiCalls.length} calls</h3>
-          {aiCalls.length === 0 ? (
-            <p className="mt-2 text-14 text-muted">No AI calls recorded yet.</p>
+      {admin && (
+        <Card title={`Failed tasks (${failedTasks.length})`}>
+          {failedTasks.length === 0 ? (
+            <EmptyState title="No failed tasks" description="Failed background tasks (scans, discovery, AI calls) show up here with a retry button." />
           ) : (
-            <Table className="mt-2">
+            <Table>
               <THead>
                 <tr>
-                  <TH>Call site</TH>
-                  <TH>Model</TH>
-                  <TH>Tokens (in/out)</TH>
-                  <TH>Cost</TH>
-                  <TH>When</TH>
-                  <TH>OK</TH>
+                  <TH>Type</TH>
+                  <TH>Error</TH>
+                  <TH>Finished</TH>
+                  <TH>Attempts</TH>
+                  <TH />
                 </tr>
               </THead>
               <TBody>
-                {aiCalls.map((c) => (
-                  <TR key={c.id}>
-                    <TD>{c.callSite}</TD>
-                    <TD>{c.model}</TD>
+                {failedTasks.map((t) => (
+                  <TR key={t.id}>
                     <TD>
-                      {c.inputTokens} / {c.outputTokens}
+                      <Badge tone="neutral">{t.type}</Badge>
                     </TD>
-                    <TD>{formatUsd(c.costUsd)}</TD>
-                    <TD className="whitespace-nowrap" title={c.at.toISOString()}>
-                      {relativeTime(c.at, now)}
+                    <TD className="max-w-[24rem] truncate text-danger" title={t.error ?? undefined}>
+                      {t.error ?? ""}
                     </TD>
-                    <TD>{c.ok ? <Badge tone="green">ok</Badge> : <Badge tone="red" title={c.error ?? undefined}>failed</Badge>}</TD>
+                    <TD className="whitespace-nowrap">{t.finishedAt ? relativeTime(t.finishedAt, now) : "—"}</TD>
+                    <TD>{t.attempts}</TD>
+                    <TD>
+                      <form action={retryTask.bind(null, t.id)}>
+                        <Button type="submit" size="sm">
+                          Retry
+                        </Button>
+                      </form>
+                    </TD>
                   </TR>
                 ))}
               </TBody>
             </Table>
           )}
-        </section>
-      </Card>
+        </Card>
+      )}
+
+      {admin && (
+        <Card title="Queue">
+          {queueCounts.length === 0 ? (
+            <EmptyState title="Queue is empty" description="No tasks queued, running, done or failed." />
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {queueCounts.map((c) => (
+                <div key={`${c.type}-${c.status}`} className="flex items-center gap-1.5 border border-line-muted px-2 py-1 text-12">
+                  <span className="text-muted">{c.type}</span>
+                  <Badge tone={taskStatusTone(c.status)}>{c.status}</Badge>
+                  <span className="font-medium text-fg">{c.n}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
+
+      {admin && (
+        <Card title="AI spend this month (shared)">
+          <div className="mb-2 flex items-baseline gap-2">
+            <span className="text-16 font-semibold text-fg">{formatUsd(spend)}</span>
+            <span className="text-14 text-muted">of {formatUsd(budget)} budget</span>
+          </div>
+          <div className="mb-3 h-2 w-full overflow-hidden bg-track">
+            <div className={`h-full ${overBudget ? "bg-danger" : "bg-ok"}`} style={{ width: `${Math.min(100, Math.max(2, spendFraction * 100))}%` }} />
+          </div>
+          {overBudget && <p className="mb-3 text-14 text-danger">Over budget — non-essential AI calls (near-miss scoring, then suggestions) are being skipped.</p>}
+          {spendByAccount.length > 0 && (
+            <ul className="mb-3 space-y-1 text-14">
+              {spendByAccount.map((row) => (
+                <li key={row.userId ?? "shared"} className="flex justify-between gap-3">
+                  <span className="truncate text-muted">{row.userId ? emailById.get(row.userId) ?? row.userId : "Shared work (extraction, discovery, profiles)"}</span>
+                  <span className="tabular-nums">{formatUsd(row.total)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <section>
+            <h3 className="text-14 text-muted hover:text-fg">Last {aiCalls.length} calls</h3>
+            {aiCalls.length === 0 ? (
+              <p className="mt-2 text-14 text-muted">No AI calls recorded yet.</p>
+            ) : (
+              <Table className="mt-2">
+                <THead>
+                  <tr>
+                    <TH>Call site</TH>
+                    <TH>Account</TH>
+                    <TH>Model</TH>
+                    <TH>Tokens (in/out)</TH>
+                    <TH>Cost</TH>
+                    <TH>When</TH>
+                    <TH>OK</TH>
+                  </tr>
+                </THead>
+                <TBody>
+                  {aiCalls.map((c) => (
+                    <TR key={c.id}>
+                      <TD>{c.callSite}</TD>
+                      <TD className="max-w-[12rem] truncate">{c.userId ? emailById.get(c.userId) ?? "—" : "shared"}</TD>
+                      <TD>{c.model}</TD>
+                      <TD>
+                        {c.inputTokens} / {c.outputTokens}
+                      </TD>
+                      <TD>{formatUsd(c.costUsd)}</TD>
+                      <TD className="whitespace-nowrap" title={c.at.toISOString()}>
+                        {relativeTime(c.at, now)}
+                      </TD>
+                      <TD>{c.ok ? <Badge tone="green">ok</Badge> : <Badge tone="red" title={c.error ?? undefined}>failed</Badge>}</TD>
+                    </TR>
+                  ))}
+                </TBody>
+              </Table>
+            )}
+          </section>
+        </Card>
+      )}
 
       <Card title="Recent scan runs">
         {scanRuns.length === 0 ? (
-          <EmptyState title="No scan runs yet" description="Daily runs appear here once the schedule starts, or after Run daily scan now on Settings." />
+          <EmptyState title="No scan runs yet" description="Daily runs appear here once the schedule starts, or after an administrator presses Run daily scan now on Settings." />
         ) : (
           <Table>
             <THead>
               <tr>
                 <TH>Started</TH>
                 <TH>Trigger</TH>
-                <TH>Companies</TH>
-                <TH>New matches / Closed</TH>
+                <TH>{admin ? "Companies" : "Your companies"}</TH>
+                <TH>New postings / Closed</TH>
               </tr>
             </THead>
             <TBody>

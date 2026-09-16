@@ -1,17 +1,17 @@
 "use server";
 import { assertCvFinalisable } from "@christopher/core/cv-review";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { applications, cvDrafts } from "@christopher/db";
 import { CvContentSchema } from "@christopher/core";
 import { db } from "@/lib/db";
-import { requireSession } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { renderCvPdf } from "@/lib/cv-pdf";
 import { fail, ok, zUuid, type ActionResult } from "@/lib/validation";
 import { revalidatePath } from "next/cache";
 
 const statuses = ["applied", "screening", "interview", "offer", "rejected", "withdrawn", "accepted"];
 export async function recordApplication(cvId: string, _prev: ActionResult, form: FormData): Promise<ActionResult> {
-  await requireSession();
+  const user = await requireUser();
   try {
     zUuid().parse(cvId);
     const appliedOn = String(form.get("appliedOn") ?? "");
@@ -21,7 +21,7 @@ export async function recordApplication(cvId: string, _prev: ActionResult, form:
     await db().transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`application:${cvId}`}))`);
       if ((await tx.select({ id: applications.id }).from(applications).where(eq(applications.cvId, cvId))).length) throw new Error("This CV revision already has an application record.");
-      const [draft] = await tx.select().from(cvDrafts).where(eq(cvDrafts.id, cvId)).for("share");
+      const [draft] = await tx.select().from(cvDrafts).where(and(eq(cvDrafts.id, cvId), eq(cvDrafts.userId, user.id))).for("share");
       if (!draft || draft.status !== "ready" || !draft.content) throw new Error("Choose a completed, saved CV.");
       if (!draft.finalisedAt)
         throw new Error(
@@ -29,7 +29,7 @@ export async function recordApplication(cvId: string, _prev: ActionResult, form:
         );
       assertCvFinalisable({ ...draft, content: draft.content });
       const pdf = await renderCvPdf(CvContentSchema.parse(draft.content));
-      await tx.insert(applications).values({ cvId, jobTitle: draft.jobTitle, companyName: draft.companyName, appliedOn, notes,
+      await tx.insert(applications).values({ userId: user.id, cvId, jobTitle: draft.jobTitle, companyName: draft.companyName, appliedOn, notes,
         pdfBase64: pdf.toString("base64"), status: "applied", history: [{ status: "applied", at: new Date().toISOString(), notes }] });
     });
   } catch (error) { return fail(error instanceof Error ? error.message : "Could not record application."); }
@@ -41,7 +41,7 @@ export async function updateApplication(
   _prev: ActionResult,
   form: FormData,
 ): Promise<ActionResult> {
-  await requireSession();
+  const user = await requireUser();
   try {
     zUuid().parse(id);
     const status = String(form.get("status") ?? "");
@@ -54,7 +54,7 @@ export async function updateApplication(
       const [row] = await tx
         .select()
         .from(applications)
-        .where(eq(applications.id, id))
+        .where(and(eq(applications.id, id), eq(applications.userId, user.id)))
         .for("update");
       if (!row) throw new Error("Application not found.");
       await tx

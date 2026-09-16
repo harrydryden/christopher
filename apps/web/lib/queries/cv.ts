@@ -1,4 +1,4 @@
-import { desc, inArray, isNull, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, isNotNull, sql } from "drizzle-orm";
 import { cvDrafts, cvVersions } from "@christopher/db";
 import { db, type Db } from "@/lib/db";
 import { pageNumber } from "@/components/Pagination";
@@ -7,12 +7,13 @@ type Transaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
 const PAGE_SIZE = 50;
 async function readCvDraftPage(
   tx: Transaction,
+  userId: string,
   archived: boolean,
   requestedPage?: string,
 ) {
-  const condition = archived
+  const condition = and(eq(cvDrafts.userId, userId), archived
     ? isNotNull(cvDrafts.archivedAt)
-    : isNull(cvDrafts.archivedAt);
+    : isNull(cvDrafts.archivedAt));
   const [count] = await tx
     .select({ n: sql<number>`count(*)::int` })
     .from(cvDrafts)
@@ -42,13 +43,14 @@ async function readCvDraftPage(
 
 /** Counts and both tables share a snapshot even when a build completes concurrently. */
 export async function listCvDraftPages(
+  userId: string,
   savedPage?: string,
   archivedPage?: string,
 ) {
   return db().transaction(
     async (tx) => {
-      const saved = await readCvDraftPage(tx, false, savedPage);
-      const archived = await readCvDraftPage(tx, true, archivedPage);
+      const saved = await readCvDraftPage(tx, userId, false, savedPage);
+      const archived = await readCvDraftPage(tx, userId, true, archivedPage);
       return { saved, archived };
     },
     { isolationLevel: "repeatable read", accessMode: "read only" },
@@ -56,11 +58,12 @@ export async function listCvDraftPages(
 }
 
 export async function listCvDraftPage(
+  userId: string,
   archived: boolean,
   requestedPage?: string,
 ) {
   return db().transaction(
-    (tx) => readCvDraftPage(tx, archived, requestedPage),
+    (tx) => readCvDraftPage(tx, userId, archived, requestedPage),
     { isolationLevel: "repeatable read", accessMode: "read only" },
   );
 }
@@ -73,4 +76,10 @@ export async function dailyCvVersions(database: Pick<Db, "execute" | "select">, 
   const rows = await database.select({ id: cvVersions.cvId, version: cvVersions.version })
     .from(cvVersions).where(inArray(cvVersions.cvId, ids));
   return new Map(rows.map(row => [row.id, row.version]));
+}
+
+/** One account's draft by id, or null when it belongs to someone else. */
+export async function getOwnCvDraft(userId: string, id: string) {
+  const [draft] = await db().select().from(cvDrafts).where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, userId))).limit(1);
+  return draft ?? null;
 }

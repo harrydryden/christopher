@@ -1,4 +1,4 @@
-import { asc, desc, eq, sql, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, sql, inArray } from "drizzle-orm";
 import { discoveryDocuments, discoverySources, tasks } from "@christopher/db/schema";
 import { db } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
@@ -11,13 +11,14 @@ import { DiscoverySourceFields } from "./DiscoverySourceFields";
 import { inputClass, labelClass } from "@/components/Field";
 
 const input = `min-h-11 ${inputClass}`;
-export async function DiscoverySources() {
+export async function DiscoverySources({ userId }: { userId: string }) {
   const [sources, counts, recentTasks, settings] = await Promise.all([
-    db().select().from(discoverySources).orderBy(asc(discoverySources.createdAt)),
+    db().select().from(discoverySources).where(eq(discoverySources.userId, userId)).orderBy(asc(discoverySources.createdAt)),
     db().select({ sourceId: discoveryDocuments.sourceId, count: sql<number>`count(*) filter (where processed_at is null)::int` })
-      .from(discoveryDocuments).groupBy(discoveryDocuments.sourceId),
+      .from(discoveryDocuments).innerJoin(discoverySources, and(eq(discoverySources.id, discoveryDocuments.sourceId), eq(discoverySources.userId, userId))).groupBy(discoveryDocuments.sourceId),
     db().selectDistinctOn([sql`${tasks.payload}->>'sourceId'`, tasks.status], { payload: tasks.payload, status: tasks.status, result: tasks.result, type: tasks.type }).from(tasks)
-      .where(inArray(tasks.type, ["monitor_source", "extract_document", "verify_company"]))
+      .where(and(inArray(tasks.type, ["monitor_source", "extract_document", "verify_company"]),
+        sql`exists (select 1 from discovery_sources s where s.user_id = ${userId} and s.id::text = ${tasks.payload}->>'sourceId')`))
       .orderBy(sql`${tasks.payload}->>'sourceId'`, tasks.status, desc(tasks.createdAt)),
     getSettings(),
   ]);

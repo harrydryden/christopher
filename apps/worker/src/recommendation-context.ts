@@ -1,5 +1,5 @@
 import { schema } from "@christopher/db";
-import { desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { sha1 } from "@christopher/core";
 import type { WorkerDeps } from "./context";
 import { latestProfile } from "./handlers/learning";
@@ -24,14 +24,22 @@ export function selectExamples<T extends { name: string; domain: string; sector?
   return selected;
 }
 
-export async function recommendationContext(deps: WorkerDeps, text = "") {
+/** Companies one account follows (active or paused), with their shared profiles. */
+export async function followedCompanies(deps: WorkerDeps, userId: string) {
+  return deps.db.select({ id: schema.companies.id, name: schema.companies.name, domain: schema.companies.domain, sector: schema.companyProfiles.sector, tags: schema.companyProfiles.tags })
+    .from(schema.companySubscriptions)
+    .innerJoin(schema.companies, eq(schema.companies.id, schema.companySubscriptions.companyId))
+    .leftJoin(schema.companyProfiles, eq(schema.companyProfiles.companyId, schema.companies.id))
+    .where(and(eq(schema.companySubscriptions.userId, userId), inArray(schema.companySubscriptions.status, ["active", "paused"])));
+}
+
+export async function recommendationContext(deps: WorkerDeps, userId: string, text = "") {
   const [rows, profile, settings, rejected] = await Promise.all([
-    deps.db.select({ name: schema.companies.name, domain: schema.companies.domain, sector: schema.companyProfiles.sector, tags: schema.companyProfiles.tags })
-      .from(schema.companies).leftJoin(schema.companyProfiles, eq(schema.companyProfiles.companyId, schema.companies.id))
-      .where(inArray(schema.companies.status, ["active", "paused"])),
-    latestProfile(deps), deps.settings(),
+    followedCompanies(deps, userId),
+    latestProfile(deps, userId), deps.userSettings(userId),
     deps.db.select({ name: schema.companySuggestions.name, reason: schema.companySuggestions.rejectionReason })
-      .from(schema.companySuggestions).where(eq(schema.companySuggestions.status, "rejected")).orderBy(desc(schema.companySuggestions.resolvedAt)).limit(20),
+      .from(schema.companySuggestions).where(and(eq(schema.companySuggestions.userId, userId), eq(schema.companySuggestions.status, "rejected")))
+      .orderBy(desc(schema.companySuggestions.resolvedAt)).limit(20),
   ]);
   const sectors: Record<string, number> = {};
   for (const row of rows) sectors[row.sector ?? "Unprofiled"] = (sectors[row.sector ?? "Unprofiled"] ?? 0) + 1;

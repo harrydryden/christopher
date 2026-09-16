@@ -6,7 +6,7 @@ import { RolesFilterBar } from "./RolesFilterBar";
 import { attachEvents, buildRoleRowVM, fetchRecentEventsFor, fetchRolePage, fetchRoleCounts, filtersToQueryString, parseRolesFilters, type RawSearchParams } from "@/lib/queries/jobs";
 import { listCompanyOptions } from "@/lib/queries/companies";
 
-export async function RoleWorkspace({ searchParams, companyId }: { searchParams: RawSearchParams; companyId?: string }) {
+export async function RoleWorkspace({ userId, searchParams, companyId }: { userId: string; searchParams: RawSearchParams; companyId?: string }) {
   const sp = searchParams;
   const legacy = sp.archive === "1" ? "archived" : sp.decision === "apply" ? "user-shortlisted" : sp.decision === "skip" ? "user-dismissed" : "auto-matched";
   const view = (ROLE_STATUSES as readonly unknown[]).includes(sp.view) ? sp.view as RoleStatus : legacy;
@@ -14,11 +14,11 @@ export async function RoleWorkspace({ searchParams, companyId }: { searchParams:
   const filters = parseRolesFilters({ ...sp, view, ...(companyId ? { company: companyId } : {}) });
   const path = companyId ? `/companies/${companyId}` : "/";
   const [result, counts, options] = await Promise.all([
-    fetchRolePage(filters, archived, null, Number(sp.page)),
-    fetchRoleCounts(companyId || filters.company || undefined),
-    companyId ? Promise.resolve([]) : listCompanyOptions(),
+    fetchRolePage(userId, filters, archived, null, Number(sp.page)),
+    fetchRoleCounts(userId, companyId || filters.company || undefined),
+    companyId ? Promise.resolve([]) : listCompanyOptions(userId),
   ]);
-  const events = await fetchRecentEventsFor(result.visible.map(row => row.job.id));
+  const events = await fetchRecentEventsFor(userId, result.visible.map(row => row.job.id));
   const rows = attachEvents(result.visible, events).map(row => buildRoleRowVM(row));
   const query = `${filtersToQueryString(filters)}&view=${view}`;
   const href = (page: number) => `${path}?${query}&page=${page}#roles`;

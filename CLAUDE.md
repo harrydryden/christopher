@@ -27,7 +27,8 @@ pnpm smoke:web               # build the interface, sign in, fetch every page
 cd apps/worker
 pnpm cli probe <url>         # dry run: what would discovery find?
 pnpm cli drain               # run queued tasks now
-pnpm cli table               # the roles table as text
+pnpm cli table               # the roles table as text (CHRISTOPHER_CLI_USER picks the account)
+pnpm cli users               # accounts and what each follows
 ```
 
 The worker suites share one database and truncate between tests, so `fileParallelism` is off. Set
@@ -39,10 +40,19 @@ The worker suites share one database and truncate between tests, so `fileParalle
   weakens this produces false "closed" rows, which is the failure the user will notice first.
 - **The keyword and location gate is a hard filter the user controls.** The model ranks within it and
   proposes changes; it never removes a role from the table on its own.
-- **Only postings that pass the gate are stored** (spec: "Store matching roles only"). Scan
-  completeness and closure detection still use the full observed listing; widening the gate finds
-  newly eligible roles on the next scan, and narrowing it archives stored non-matches unless they
-  carry a decision or a saved CV.
+- **The catalogue is shared; the table is per account.** `companies`, `career_sources` and every
+  observed posting in `jobs` exist once for everyone, and a company is scanned once a day however
+  many accounts follow it. What an account sees is its `user_jobs` view, created only when that
+  account's gate passes (spec: "Store matching roles only", per account). Scan completeness and
+  closure detection use the full observed listing; widening a gate admits stored postings at once,
+  and narrowing it archives that account's non-matching views unless they carry a decision or a
+  saved CV. Every query, action and task payload that touches per-account data carries a `userId`;
+  never read or write `user_jobs`, decisions, settings, profiles, suggestions, CVs or applications
+  without one.
+- **Authentication is a database row, not a cookie.** Middleware checks the cookie signature only;
+  `getCurrentUser()` decides. Server actions and route handlers call `requireUser()`, or
+  `requireAdmin()` for the shared schedule, models, budget, catalogue edits and account
+  management, before any read or write.
 - **Model output is never trusted directly.** Extracted URLs must exist on the page, tags must come
   from the vocabulary, suggested companies must verify. Scraped content goes in tagged blocks in the
   user turn, never in the system prompt.

@@ -11,7 +11,7 @@ import {
 
 type Transaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type Draft = typeof cvDrafts.$inferSelect;
-type CvRole = Pick<Draft, "companyName" | "jobTitle">;
+type CvRole = Pick<Draft, "userId" | "companyName" | "jobTitle">;
 type CompletionValues = Pick<
   Partial<typeof cvDrafts.$inferInsert>,
   "content" | "assessment" | "revision" | "buildStage" | "error"
@@ -22,13 +22,15 @@ const roleKey = (
   role:
     | CvRole
     | {
+        userId: typeof cvDrafts.userId;
         companyName: typeof cvDrafts.companyName;
         jobTitle: typeof cvDrafts.jobTitle;
       },
-) => cvRoleKey(role.companyName, role.jobTitle);
+) => cvRoleKey(role.userId, role.companyName, role.jobTitle);
 const sameRole = (role: CvRole) => sql`${roleKey(cvDrafts)} = ${roleKey(role)}`;
 const metadata = {
   id: cvDrafts.id,
+  userId: cvDrafts.userId,
   companyName: cvDrafts.companyName,
   jobTitle: cvDrafts.jobTitle,
   status: cvDrafts.status,
@@ -113,8 +115,10 @@ export async function completeCv(
   return true;
 }
 
+/** Archive, restore or delete some of one account's CVs. Ids belonging to anyone else are ignored. */
 export async function actionCvs(
   database: Db,
+  userId: string,
   ids: string[],
   action: "archive" | "restore" | "delete",
 ) {
@@ -126,7 +130,7 @@ export async function actionCvs(
     const roles = await tx
       .selectDistinct({ key: roleKey(cvDrafts) })
       .from(cvDrafts)
-      .where(inArray(cvDrafts.id, [...selectedIds]));
+      .where(and(inArray(cvDrafts.id, [...selectedIds]), eq(cvDrafts.userId, userId)));
     for (const { key } of roles.sort((a, b) =>
       a.key < b.key ? -1 : a.key > b.key ? 1 : 0,
     )) {
@@ -135,7 +139,7 @@ export async function actionCvs(
       );
     }
     if (action === "delete") {
-      await tx.delete(cvDrafts).where(inArray(cvDrafts.id, [...selectedIds]));
+      await tx.delete(cvDrafts).where(and(inArray(cvDrafts.id, [...selectedIds]), eq(cvDrafts.userId, userId)));
       return;
     }
     if (!roles.length) return;
@@ -144,9 +148,12 @@ export async function actionCvs(
       .select({ ...metadata, key: roleKey(cvDrafts) })
       .from(cvDrafts)
       .where(
-        inArray(
-          roleKey(cvDrafts),
-          roles.map((role) => role.key),
+        and(
+          eq(cvDrafts.userId, userId),
+          inArray(
+            roleKey(cvDrafts),
+            roles.map((role) => role.key),
+          ),
         ),
       )
       .orderBy(...newest);

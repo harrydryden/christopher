@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { listCvDraftPages } from "@/lib/queries/cv";
 import { desc, eq, and, isNull, sql, ne, ilike, or } from "drizzle-orm";
-import { jobs, companies } from "@christopher/db";
+import { jobs, companies, companySubscriptions, userJobs } from "@christopher/db";
 import { db } from "@/lib/db";
 import { PageHeader } from "@/components/PageHeader";
 import { Card } from "@/components/Card";
@@ -11,19 +11,24 @@ import { CvManagement, CvPagination, CvSavedTable } from "@/components/CvSavedTa
 import { buttonClass } from "@/components/Button";
 import { inputClass, labelClass, selectClass } from "@/components/Field";
 import { SearchForm, SearchPending } from "@/components/SearchForm";
+import { requireUser } from "@/lib/auth";
 export const dynamic = "force-dynamic";
 export default async function CvPage({ searchParams }: { searchParams: Promise<{ job?: string; q?: string; page?: string; archivedPage?: string }> }) {
+  const user = await requireUser();
   const { job: requestedJob, q: query, page, archivedPage } = await searchParams;
   const job = z.string().uuid().safeParse(requestedJob).success ? requestedJob : undefined;
   const q = (query ?? "").slice(0,200);
   const pattern = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
+  const roleSelect = () => db().select({ id: jobs.id, title: jobs.title, company: companies.name }).from(userJobs)
+    .innerJoin(jobs, eq(jobs.id, userJobs.jobId)).innerJoin(companies, eq(jobs.companyId, companies.id))
+    .innerJoin(companySubscriptions, and(eq(companySubscriptions.companyId, companies.id), eq(companySubscriptions.userId, user.id)));
   const [pages, roles] = await Promise.all([
-    listCvDraftPages(page, archivedPage),
-    db().select({ id: jobs.id, title: jobs.title, company: companies.name }).from(jobs).innerJoin(companies, eq(jobs.companyId, companies.id)).where(and(eq(jobs.inTable, true), isNull(jobs.archivedAt), ne(companies.status, "archived"), q ? or(ilike(jobs.title, pattern), ilike(companies.name, pattern)) : undefined, sql`not exists (select 1 from decisions d where d.job_id = ${jobs.id} and d.superseded = false and d.decision = 'skip')`)).orderBy(desc(jobs.firstSeenAt), jobs.id).limit(50),
+    listCvDraftPages(user.id, page, archivedPage),
+    roleSelect().where(and(eq(userJobs.userId, user.id), eq(userJobs.inTable, true), isNull(userJobs.archivedAt), ne(companySubscriptions.status, "archived"), q ? or(ilike(jobs.title, pattern), ilike(companies.name, pattern)) : undefined, sql`not exists (select 1 from decisions d where d.user_id = ${user.id} and d.job_id = ${jobs.id} and d.superseded = false and d.decision = 'skip')`)).orderBy(desc(jobs.firstSeenAt), jobs.id).limit(50),
   ]);
   const { saved, archived } = pages;
   if (job && !roles.some(r => r.id === job)) {
-    const extra = await db().select({ id: jobs.id, title: jobs.title, company: companies.name }).from(jobs).innerJoin(companies, eq(jobs.companyId, companies.id)).where(eq(jobs.id, job)); roles.unshift(...extra);
+    const extra = await roleSelect().where(and(eq(userJobs.userId, user.id), eq(jobs.id, job))); roles.unshift(...extra);
   }
   const drafts = saved.rows, archivedDrafts = archived.rows;
   const params = { ...(q ? { q } : {}), ...(job ? { job } : {}) };

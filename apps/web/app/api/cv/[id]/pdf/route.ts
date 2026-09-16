@@ -1,18 +1,16 @@
 import { assertCvFinalisable } from "@christopher/core/cv-review";
-import { eq } from "drizzle-orm";
-import { cvDrafts } from "@christopher/db";
 import { CvContentSchema } from "@christopher/core";
-import { db } from "@/lib/db";
-import { requireSession } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
+import { getOwnCvDraft } from "@/lib/queries/cv";
 import { zUuid } from "@/lib/validation";
 import { renderCvPdf, renderCvPdfWithReport, CvLayoutError } from "@/lib/cv-pdf";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
-  await requireSession();
+  const user = await requireUser();
   const { id } = await params;
   if (!zUuid().safeParse(id).success) return new Response("Not found", { status: 404 });
-  const [draft] = await db().select().from(cvDrafts).where(eq(cvDrafts.id, id));
+  const draft = await getOwnCvDraft(user.id, id);
   if (!draft) return new Response("Not found", { status: 404 });
   const preview = new URL(_request.url).searchParams.get("preview") === "1";
   if (!draft.content || (draft.status !== "ready" && !(preview && draft.status === "failed"))) return new Response("CV is not ready", { status: 409 });

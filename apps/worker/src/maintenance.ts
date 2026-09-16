@@ -17,5 +17,9 @@ export async function maintainHistory(deps: WorkerDeps) {
     await tx.execute(sql`delete from job_events where id in (select id from job_events where type in ('updated','scored','description_fetched') and at < now() - interval '90 days' limit 1000)`);
     await tx.execute(sql`delete from verification_cache where key in (select key from verification_cache where expires_at < now() limit 1000)`);
     await tx.execute(sql`delete from host_pacing where next_at < now() - interval '7 days'`);
+    // Sign-in bookkeeping: throttling rows, expired sessions and spent links are short-lived.
+    await tx.execute(sql`delete from login_attempts where at < now() - interval '1 day'`);
+    await tx.execute(sql`delete from sessions where expires_at < now()`);
+    await tx.execute(sql`delete from auth_tokens where expires_at < now() - interval '1 day' or used_at < now() - interval '1 day'`);
   });
 }

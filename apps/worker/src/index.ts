@@ -21,7 +21,8 @@ async function main() {
 
   await runMigrations(deps.db);
   await ensureSeedTags(deps);
-  await enqueueTask(deps.db, "reevaluate_gate", {}, { dedupeKey: "reevaluate_gate", priority: 6 });
+  // Gate semantics can change between releases: re-run every account's gate once on boot.
+  await enqueueTask(deps.db, "reevaluate_gate", {}, { dedupeKey: "reevaluate_gate:all", priority: 6 });
 
   const queue = new TaskQueue(deps, handlers, { concurrency: env.concurrency, workerId: env.workerId });
   queue.start();

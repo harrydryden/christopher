@@ -1,4 +1,4 @@
-import { schema, enqueueTask } from "@christopher/db";
+import { schema, enqueueTask, listUserIds } from "@christopher/db";
 import { dedupeKeyFor, localDateParts, priorityFor } from "@christopher/core";
 import { and, eq, lt, sql } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
@@ -20,6 +20,7 @@ export async function schedulerTick(deps: WorkerDeps): Promise<void> {
   const now = deps.now();
   const { ymd, hm, weekday } = localDateParts(now, settings.timezone);
 
+  // One shared daily run: every company anyone follows, scanned once.
   if (hm >= settings.scanTime) {
     const existing = await deps.db
       .select({ id: schema.scanRuns.id })
@@ -33,31 +34,39 @@ export async function schedulerTick(deps: WorkerDeps): Promise<void> {
     }
   }
 
+  // Weekly learning jobs run per account, an hour after the daily run.
   if (weekday === settings.weeklyDay && hm >= addMinutes(settings.scanTime, 60)) {
     await deps.db.transaction(async tx => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext('christopher:weekly-jobs'))`);
     const last = await getInternal<string>(tx as unknown as WorkerDeps["db"], "lastWeeklyYmd");
     if (last !== ymd) {
       await setInternal(tx as unknown as WorkerDeps["db"], "lastWeeklyYmd", ymd);
-      for (const type of ["suggest_filters", "synthesize_profile", "suggest_companies"] as const) {
-        if (type === "suggest_companies" && !settings.suggestionsEnabled) continue;
-        const payload = type === "synthesize_profile" ? { force: false } : {};
-        await enqueueTask(tx as unknown as WorkerDeps["db"], type, payload, { dedupeKey: dedupeKeyFor(type, payload as never), priority: priorityFor(type) });
+      const users = await listUserIds(tx as unknown as WorkerDeps["db"]);
+      for (const userId of users) {
+        const account = await deps.userSettings(userId);
+        const jobs: Array<{ type: "suggest_filters" | "synthesize_profile" | "suggest_companies"; payload: Record<string, unknown> }> = [
+          { type: "suggest_filters", payload: { userId } },
+          { type: "synthesize_profile", payload: { userId, force: false } },
+        ];
+        if (account.suggestionsEnabled) jobs.push({ type: "suggest_companies", payload: { userId } });
+        for (const job of jobs) {
+          await enqueueTask(tx as unknown as WorkerDeps["db"], job.type, job.payload, { dedupeKey: dedupeKeyFor(job.type, job.payload as never), priority: priorityFor(job.type) });
+        }
       }
-      log.info("scheduled weekly jobs", { ymd });
+      log.info("scheduled weekly jobs", { ymd, accounts: users.length });
     }
     });
   }
 
-  if (settings.suggestionsEnabled) {
-    const due = await deps.db.select().from(schema.discoverySources).where(and(
-      eq(schema.discoverySources.enabled, true), sql`${schema.discoverySources.nextRunAt} <= ${now}`,
-    ));
-    for (const source of due) {
-      await enqueueTask(deps.db, "monitor_source", { sourceId: source.id }, {
-        dedupeKey: dedupeKeyFor("monitor_source", { sourceId: source.id }), priority: 7,
-      });
-    }
+  // External discovery sources are checked on their own interval; the handler honours the owner's settings.
+  const due = await deps.db.select().from(schema.discoverySources).where(and(
+    eq(schema.discoverySources.enabled, true), sql`${schema.discoverySources.nextRunAt} <= ${now}`,
+  ));
+  for (const source of due) {
+    if (!(await deps.userSettings(source.userId)).suggestionsEnabled) continue;
+    await enqueueTask(deps.db, "monitor_source", { sourceId: source.id }, {
+      dedupeKey: dedupeKeyFor("monitor_source", { sourceId: source.id }), priority: 7,
+    });
   }
 
   await finaliseScanRuns(deps);

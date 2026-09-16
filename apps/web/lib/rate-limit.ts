@@ -1,26 +1,38 @@
 /**
- * In-memory login rate limiter (single-process; resets on cold start, which is fine for a
- * single-user tool). 5 failures within 15 minutes locks out further attempts.
+ * Sign-in throttling backed by the database, so every instance of the interface shares one view
+ * of the attempts. Keys are `login:email:<address>`, `login:ip:<address>` and so on.
  */
-const WINDOW_MS = 15 * 60 * 1000;
-const MAX_FAILURES = 5;
+import { and, eq, gt, sql } from "drizzle-orm";
+import { loginAttempts } from "@christopher/db/schema";
+import { db } from "./db";
 
-let failureTimestamps: number[] = [];
-
-function prune(now: number): void {
-  failureTimestamps = failureTimestamps.filter((t) => now - t < WINDOW_MS);
+export interface RateLimit {
+  max: number;
+  windowMs: number;
 }
 
-export function isLoginRateLimited(now: number = Date.now()): boolean {
-  prune(now);
-  return failureTimestamps.length >= MAX_FAILURES;
+export const LIMITS = {
+  /** Failed password attempts per email address. */
+  loginEmail: { max: 5, windowMs: 15 * 60 * 1000 },
+  /** Failed password attempts per address, across every account. */
+  loginAddress: { max: 30, windowMs: 15 * 60 * 1000 },
+  signupAddress: { max: 10, windowMs: 60 * 60 * 1000 },
+  resetEmail: { max: 3, windowMs: 60 * 60 * 1000 },
+  resetAddress: { max: 20, windowMs: 60 * 60 * 1000 },
+} as const satisfies Record<string, RateLimit>;
+
+export async function isRateLimited(key: string, limit: RateLimit, now: Date = new Date()): Promise<boolean> {
+  const [row] = await db()
+    .select({ n: sql<number>`count(*)::int` })
+    .from(loginAttempts)
+    .where(and(eq(loginAttempts.key, key), gt(loginAttempts.at, new Date(now.getTime() - limit.windowMs))));
+  return (row?.n ?? 0) >= limit.max;
 }
 
-export function recordLoginFailure(now: number = Date.now()): void {
-  prune(now);
-  failureTimestamps.push(now);
+export async function recordAttempt(key: string, now: Date = new Date()): Promise<void> {
+  await db().insert(loginAttempts).values({ key, at: now });
 }
 
-export function resetLoginFailures(): void {
-  failureTimestamps = [];
+export async function clearAttempts(key: string): Promise<void> {
+  await db().delete(loginAttempts).where(eq(loginAttempts.key, key));
 }

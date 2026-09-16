@@ -1,5 +1,5 @@
 import { createDb, schema, type Db } from "@christopher/db";
-import { ats, discovery, modelForCallSite, type AppSettings, type DiscoveryContext, type FetchContext } from "@christopher/core";
+import { ats, discovery, modelForCallSite, type AppSettings, type DiscoveryContext, type FetchContext, type SystemSettings } from "@christopher/core";
 import { createAiEngine, type AiEngine, type AiUsageRecord } from "@christopher/ai";
 import { sql } from "drizzle-orm";
 import { BrowserRenderer } from "./browser";
@@ -7,7 +7,7 @@ import type { WorkerEnv } from "./env";
 import { PoliteFetcher, userAgentFor } from "./fetcher";
 import { reserveAi } from "./budget";
 import { log } from "./log";
-import { loadSettings } from "./settings";
+import { loadSettings, loadUserSettings } from "./settings";
 
 export interface WorkerDeps {
   db: Db;
@@ -18,8 +18,10 @@ export interface WorkerDeps {
   fetcher: PoliteFetcher;
   browser: BrowserRenderer | null;
   ai: AiEngine;
-  /** Fresh settings from the database; cached for a few seconds to avoid hammering the table. */
-  settings(): Promise<AppSettings>;
+  /** System settings from the database; cached for a few seconds to avoid hammering the table. */
+  settings(): Promise<SystemSettings>;
+  /** One account's settings merged onto the system ones, cached the same way. */
+  userSettings(userId: string): Promise<AppSettings>;
   /** Drop the cached settings so the next read hits the database. */
   invalidateSettings(): void;
   now(): Date;
@@ -35,11 +37,20 @@ export interface DepsOverrides {
 export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}): Promise<WorkerDeps> {
   const { db, pool } = createDb(env.databaseUrl, { max: Math.max(4, env.concurrency + 2) });
   const settingsTtlMs = overrides.settingsTtlMs ?? 5000;
-  let cached: { at: number; value: AppSettings } | null = null;
+  let cached: { at: number; value: SystemSettings } | null = null;
+  const userCache = new Map<string, { at: number; value: AppSettings }>();
   const settings = async () => {
     if (cached && Date.now() - cached.at < settingsTtlMs) return cached.value;
     const value = await loadSettings(db);
     cached = { at: Date.now(), value };
+    return value;
+  };
+  const userSettings = async (userId: string) => {
+    const hit = userCache.get(userId);
+    if (hit && Date.now() - hit.at < settingsTtlMs) return hit.value;
+    const value = await loadUserSettings(db, userId);
+    if (userCache.size > 1000) userCache.clear();
+    userCache.set(userId, { at: Date.now(), value });
     return value;
   };
   const fetcher = new PoliteFetcher({
@@ -63,6 +74,7 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
   const onUsage = async (r: AiUsageRecord) => {
     try {
       await db.insert(schema.aiCalls).values({
+        userId: r.userId ?? null,
         callSite: r.callSite,
         model: r.model,
         inputTokens: r.inputTokens,
@@ -84,7 +96,7 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
     reserve: async (callSite, estimate) => reserveAi(db, callSite, estimate, { monthly: (await settings()).monthlyAiBudgetUsd,
       daily: env.dailyAiBudgetUsd ?? 1000000, discovery: env.discoveryAiBudgetUsd ?? 1000000 }),
     apiKey: env.anthropicApiKey,
-    getModel: (callSite) => modelForCallSite(cached?.value ?? ({ defaultModel: "claude-sonnet-5", modelOverrides: {} } as AppSettings), callSite),
+    getModel: (callSite) => modelForCallSite(cached?.value ?? { defaultModel: "claude-sonnet-5", modelOverrides: {} }, callSite),
     onUsage,
     logger: (msg, data) => log.debug(`ai ${msg}`, data),
   });
@@ -97,8 +109,10 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
     browser,
     ai,
     settings,
+    userSettings,
     invalidateSettings() {
       cached = null;
+      userCache.clear();
     },
     now: overrides.now ?? (() => new Date()),
     async close() {

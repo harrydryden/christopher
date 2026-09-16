@@ -14,5 +14,5 @@ export type { HandlerMap, TaskHandler, QueueOptions } from "./queue";
 export { schedulerTick, startScheduler } from "./scheduler";
 export { handlers } from "./handlers";
 export { ensureSeedTags } from "./handlers/learning";
-export { loadSettings } from "./settings";
+export { loadSettings, loadUserSettings } from "./settings";
 export { log } from "./log";

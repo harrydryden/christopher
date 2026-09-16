@@ -12,21 +12,23 @@ import { getCalibration, getPreferenceProfile, listPendingFilterSuggestionsResol
 import { getSettings } from "@/lib/settings";
 import { selectClass } from "@/components/Field";
 import { SearchForm, SearchPending } from "@/components/SearchForm";
+import { requireUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export default async function LearningPage({ searchParams }: { searchParams: Promise<{ v?: string }> }) {
+  const user = await requireUser();
   const sp = await searchParams;
   const requestedVersion = sp.v ? Number(sp.v) : undefined;
   const now = new Date();
 
   const [profile, versions, calibration, suggestions, settings, tags] = await Promise.all([
-    getPreferenceProfile(Number.isFinite(requestedVersion) ? requestedVersion : undefined),
-    listProfileVersions(),
-    getCalibration(),
-    listPendingFilterSuggestionsResolved(),
+    getPreferenceProfile(user.id, Number.isFinite(requestedVersion) ? requestedVersion : undefined),
+    listProfileVersions(user.id),
+    getCalibration(user.id),
+    listPendingFilterSuggestionsResolved(user.id),
     getSettings(),
-    getReasonTagEditor(),
+    getReasonTagEditor(user.id),
   ]);
 
   const isLatest = versions.length === 0 || (profile && profile.version === versions[0]?.version);

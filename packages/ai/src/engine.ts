@@ -24,11 +24,14 @@ export interface AiUsageRecord {
   error?: string;
   refType?: string;
   refId?: string;
+  /** The account the call was made for; shared work such as extraction carries none. */
+  userId?: string;
 }
 
 export interface Ref {
   refType?: string;
   refId?: string;
+  userId?: string;
 }
 
 /**

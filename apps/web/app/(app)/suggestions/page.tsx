@@ -1,5 +1,5 @@
 import { Pagination, pageNumber } from "@/components/Pagination";
-import { and, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { discoverySources, tasks } from "@christopher/db/schema";
 import { db } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
@@ -15,6 +15,7 @@ import { listPendingSuggestions, listResolvedSuggestions, suggestionCount, type 
 import { buttonClass } from "@/components/Button";
 import { inputClass, labelClass } from "@/components/Field";
 import { SearchForm, SearchPending } from "@/components/SearchForm";
+import { requireUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 function SuggestionCard({ row, returnTo = "/suggestions" }: { row: SuggestionRow; returnTo?: string }) {
@@ -54,15 +55,21 @@ function SuggestionCard({ row, returnTo = "/suggestions" }: { row: SuggestionRow
 }
 
 export default async function SuggestionsPage({ searchParams }: { searchParams: Promise<{ view?: string; notice?: string; page?: string; q?: string }> }) {
+  const user = await requireUser();
   const params = await searchParams;
   const view = params.view === "sources" || params.view === "history" ? params.view : "review";
   const q = (params.q ?? "").slice(0, 200);
-  const [reviewCount, total] = await Promise.all([suggestionCount(), suggestionCount(view === "history", q)]);
+  const [reviewCount, total] = await Promise.all([suggestionCount(user.id), suggestionCount(user.id, view === "history", q)]);
   const page = Math.min(pageNumber(params.page), Math.max(1, Math.ceil(total / 50)));
   const [pending, resolved, sourceCount, settings, active] = await Promise.all([
-    view === "review" ? listPendingSuggestions(page, q) : Promise.resolve([]), view === "history" ? listResolvedSuggestions(50, page, q) : Promise.resolve([]),
-    db().select({ count: sql<number>`count(*)::int` }).from(discoverySources), getSettings(),
-    db().select({ id: tasks.id, type: tasks.type, status: tasks.status }).from(tasks).where(and(inArray(tasks.type, ["monitor_source", "extract_document", "verify_company", "suggest_companies"]), inArray(tasks.status, ["queued", "running"]))),
+    view === "review" ? listPendingSuggestions(user.id, page, q) : Promise.resolve([]), view === "history" ? listResolvedSuggestions(user.id, 50, page, q) : Promise.resolve([]),
+    db().select({ count: sql<number>`count(*)::int` }).from(discoverySources).where(eq(discoverySources.userId, user.id)), getSettings(),
+    db().select({ id: tasks.id, type: tasks.type, status: tasks.status }).from(tasks).where(and(
+      inArray(tasks.type, ["monitor_source", "extract_document", "verify_company", "suggest_companies"]), inArray(tasks.status, ["queued", "running"]),
+      sql`((${tasks.type} = 'suggest_companies' and ${tasks.payload}->>'userId' = ${user.id})
+        or exists (select 1 from discovery_sources s where s.user_id = ${user.id} and s.id::text = ${tasks.payload}->>'sourceId')
+        or exists (select 1 from discovery_candidates c where c.user_id = ${user.id} and c.id::text = ${tasks.payload}->>'candidateId'))`,
+    )),
   ]);
   const now = new Date();
   const similarActive = active.some(t => t.type === "suggest_companies");
@@ -73,17 +80,17 @@ export default async function SuggestionsPage({ searchParams }: { searchParams: 
     </nav>
     {view !== "sources" && <><SearchForm action="/suggestions" className="flex flex-wrap items-end gap-3"><input type="hidden" name="view" value={view}/><label className="grid gap-1.5"><span className={labelClass}>Search recommendations</span><input name="q" defaultValue={q} maxLength={200} className={`h-11 w-80 ${inputClass}`}/></label><Button type="submit" className="h-11">Search</Button><SearchPending /></SearchForm><Pagination page={page} total={total} path="/suggestions" params={{ view, q }}/></>}
     {params.notice && <p role="status" className="mb-4 border border-line-muted p-3 text-14">{params.notice.slice(0, 300)}</p>}
-    {!settings.suggestionsEnabled && <p role="status" className="mb-4 p-3 text-14 text-warn">Discovery is disabled. You can still review recommendations and manage sources. <a href="/settings" className="underline">Enable company suggestions in Settings</a>.</p>}
+    {!settings.suggestionsEnabled && <p role="status" className="mb-4 p-3 text-14 text-warn">Discovery is disabled for your account. You can still review recommendations and manage sources. <a href="/settings" className="underline">Enable company suggestions in Settings</a>.</p>}
     {active.length > 0 && <div role="status" className="mb-4 flex flex-wrap items-center justify-between gap-2 border border-line-muted p-3 text-14"><span>{active.filter(t => t.status === "running").length} checks running · {active.filter(t => t.status === "queued").length} queued. New recommendations will appear in Review.</span><a href={view === "review" ? "/suggestions" : `/suggestions?view=${view}`} className="underline">Refresh progress</a></div>}
-    {view === "sources" ? <DiscoverySources/> : view === "history" ? <>
+    {view === "sources" ? <DiscoverySources userId={user.id}/> : view === "history" ? <>
       <h2 className="ds-pixel mb-3 text-12">Recently reviewed and expired recommendations</h2>
       <p className="mb-4 text-14 text-muted">Browse your review history. Previously suggested companies are not repeated by external sources.</p>
       {resolved.length ? <div className="space-y-4">{resolved.map(row => <div key={row.suggestion.id}><SuggestionCard row={row}/>{row.suggestion.resolvedAt && <p className="mt-1 text-12 text-muted">{row.suggestion.status === "expired" ? "Expired" : "Reviewed"} {relativeTime(row.suggestion.resolvedAt, now)}</p>}</div>)}</div> : <EmptyState title="No review history yet" description="Companies you add or dismiss will appear here."/>}
     </> : <>
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3"><div><h2 className="ds-pixel text-12">Companies to review</h2><p className="text-14 text-muted">Adding a company starts careers setup and job monitoring. Nothing is added automatically.</p></div>
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3"><div><h2 className="ds-pixel text-12">Companies to review</h2><p className="text-14 text-muted">Adding a company starts careers setup and job monitoring, or follows it if someone already tracks it. Nothing is added automatically.</p></div>
         <DiscoverySourceForm action={findMoreSuggestions} returnTo="/suggestions" pendingLabel="Queuing search…"><Button className="min-h-11" type="submit" disabled={!settings.suggestionsEnabled || similarActive}>{similarActive ? "Similar-company search queued" : "Find similar companies"}</Button></DiscoverySourceForm>
       </div>
-      <p className="mb-4 text-14 text-muted">Similar-company searches use employers you already track. To check newsletters and websites, <a href="/suggestions?view=sources" className="underline">manage your sources</a>. <a href="/learning" className="underline">Refine your preference profile</a> to improve relevance.</p>
+      <p className="mb-4 text-14 text-muted">Similar-company searches use employers you already follow. To check newsletters and websites, <a href="/suggestions?view=sources" className="underline">manage your sources</a>. <a href="/learning" className="underline">Refine your preference profile</a> to improve relevance.</p>
       {pending.length ? <div className="space-y-4">{pending.map(row => <SuggestionCard key={row.suggestion.id} row={row} returnTo={`/suggestions?${new URLSearchParams({ page: String(page), q })}`}/>)}</div> : <EmptyState title={q ? "No matching recommendations" : active.length ? "Discovery is in progress" : "No companies waiting for review"} description={q ? "Try another company name or clear your search." : active.length ? "Your checks are queued or running. Refresh progress to see new recommendations." : "Add a source or find similar companies to bring in recommendations. If a check finds nothing new, you can refine your preference profile."}/>}
       {!q && !pending.length && !active.length && <div className="mt-3 text-center"><a href="/suggestions?view=sources" className={buttonClass("primary", "md", "no-underline")}>Add a discovery source</a></div>}
     </>}

@@ -2,16 +2,20 @@ import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE_NAME, verifySessionCookieValue } from "@/lib/session";
 
 /**
- * Everything is behind the session cookie except the login page, the health check, and the cron
- * route, which authenticates itself with CRON_SECRET rather than a browser session.
+ * Everything is behind the session cookie except the sign-in pages, the Google round trip, the
+ * health check, and the cron and newsletter routes, which authenticate themselves with a secret
+ * rather than a browser session.
  *
  * Brand assets are public too: the browser asks for the icons and the manifest before anyone has
- * a session, and the login page itself renders the lockup. Redirecting those to /login leaves the
- * tab with no icon and the manifest unreadable.
+ * a session, and the sign-in pages render the lockup. Redirecting those to /login leaves the tab
+ * with no icon and the manifest unreadable.
+ *
+ * Middleware only checks the cookie's signature and expiry (it cannot reach the database); every
+ * page and action then resolves the session row, so a revoked session is refused there.
  */
 export const config = {
   matcher: [
-    "/((?!login|api/health|api/cron|api/newsletters|_next|favicon\\.ico|icon\\.svg|apple-icon\\.png|manifest\\.webmanifest|brand/).*)",
+    "/((?!login|signup|forgot-password|reset-password|auth/|api/health|api/cron|api/newsletters|_next|favicon\\.ico|icon\\.svg|apple-icon\\.png|manifest\\.webmanifest|brand/).*)",
   ],
 };
 

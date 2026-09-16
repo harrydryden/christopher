@@ -23,7 +23,7 @@ const { chromium } = createRequire(
 )("playwright");
 
 /** Browser → form action → saved revision, plus progress polling. Uses synthetic evidence only. */
-export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
+export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
   const pool = new Pool({ connectionString: databaseUrl, max: 1 });
   const readyId = randomUUID(),
     busyId = randomUUID();
@@ -78,23 +78,25 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
     model: "test",
     pageCount: 2,
   });
-  const originalWriting = (await pool.query("select value from settings where key = 'cvWritingPreferences'")).rows[0];
-  const originalCvTheme = (await pool.query("select value from settings where key = 'cvTheme'")).rows[0];
-  const originalCvModel = (await pool.query("select value from settings where key = 'cvModel'")).rows[0];
+  const setting = async (key) => (await pool.query("select value from user_settings where user_id = $1 and key = $2", [userId, key])).rows[0];
+  const originalWriting = await setting("cvWritingPreferences");
+  const originalCvTheme = await setting("cvTheme");
+  const originalCvModel = await setting("cvModel");
   try {
     for (const [id, status, stage, value] of [
       [readyId, "ready", null, content],
       [busyId, "generating", "writing", null],
     ]) {
       await pool.query(
-        `insert into cv_drafts (id, job_title, company_name, job_description, library_version, library_snapshot, model, status, build_stage, content)
-        values ($1, 'Operations Director', 'Example', 'Lead a team and improve operations.', 1, $2, 'test', $3, $4, $5)`,
+        `insert into cv_drafts (id, user_id, job_title, company_name, job_description, library_version, library_snapshot, model, status, build_stage, content)
+        values ($1, $6, 'Operations Director', 'Example', 'Lead a team and improve operations.', 1, $2, 'test', $3, $4, $5)`,
         [
           id,
           JSON.stringify(library),
           status,
           stage,
           value ? JSON.stringify(value) : null,
+          userId,
         ],
       );
     }
@@ -153,7 +155,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
       page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/settings"),
       page.locator("form").filter({ has: appearance }).getByRole("button", { name: "Save", exact: true }).click(),
     ]);
-    assert.equal((await pool.query("select value from settings where key = 'cvTheme'")).rows[0].value.primary, "#ffcc00");
+    assert.equal((await setting("cvTheme")).value.primary, "#ffcc00");
     await page.reload();
     await appearance.waitFor();
     assert.equal(await appearance.getByRole("button", { name: "Gold", exact: true }).getAttribute("aria-pressed"), "true");
@@ -167,7 +169,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
     await page.reload();
     await writingStyle.waitFor();
     assert.equal(await writingStyle.inputValue(), "Use concise UK English.");
-    assert.equal((await pool.query("select value from settings where key = 'cvWritingPreferences'")).rows[0].value.preferredWording, "Led the team");
+    assert.equal((await setting("cvWritingPreferences")).value.preferredWording, "Led the team");
     const cvModel = page.getByRole("combobox", { name: "CV model", exact: true });
     await cvModel.waitFor();
     const currentModel = await cvModel.inputValue();
@@ -180,7 +182,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
       page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/settings"),
       page.locator("form").filter({ has: cvModel }).getByRole("button", { name: "Save", exact: true }).click(),
     ]);
-    assert.equal((await pool.query("select value from settings where key = 'cvModel'")).rows[0].value, selectedModel);
+    assert.equal((await setting("cvModel")).value, selectedModel);
     await page.reload();
     await cvModel.waitFor();
     assert.equal(await cvModel.inputValue(), selectedModel);
@@ -498,9 +500,9 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
     // Exercise the production server actions through the CV table using disposable rows.
     for (const [index, id] of tableIds.entries()) {
       await pool.query(
-        `insert into cv_drafts (id, job_title, company_name, job_description, library_version, library_snapshot, model, status, revision)
-        values ($1, $2, 'CV Table Check', 'Synthetic table test', 1, $3, 'test', 'ready', 1)`,
-        [id, `Table role ${index + 1}`, JSON.stringify(library)],
+        `insert into cv_drafts (id, user_id, job_title, company_name, job_description, library_version, library_snapshot, model, status, revision)
+        values ($1, $4, $2, 'CV Table Check', 'Synthetic table test', 1, $3, 'test', 'ready', 1)`,
+        [id, `Table role ${index + 1}`, JSON.stringify(library), userId],
       );
     }
     await page.goto(`${baseUrl}/cv`);
@@ -649,12 +651,10 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl) {
       "delete from cv_drafts where id in ($1, $2) or parent_id = $1",
       [readyId, busyId],
     );
-    if (originalCvModel) await pool.query("insert into settings (key,value) values ('cvModel',$1) on conflict (key) do update set value=excluded.value", [JSON.stringify(originalCvModel.value)]);
-    else await pool.query("delete from settings where key='cvModel'");
-    if (originalWriting) await pool.query("insert into settings (key,value) values ('cvWritingPreferences',$1) on conflict (key) do update set value=excluded.value", [JSON.stringify(originalWriting.value)]);
-    else await pool.query("delete from settings where key = 'cvWritingPreferences'");
-    if (originalCvTheme) await pool.query("insert into settings (key,value) values ('cvTheme',$1) on conflict (key) do update set value=excluded.value", [JSON.stringify(originalCvTheme.value)]);
-    else await pool.query("delete from settings where key='cvTheme'");
+    for (const [key, original] of [["cvModel", originalCvModel], ["cvWritingPreferences", originalWriting], ["cvTheme", originalCvTheme]]) {
+      if (original) await pool.query("insert into user_settings (user_id, key, value) values ($1, $2, $3) on conflict (user_id, key) do update set value = excluded.value", [userId, key, JSON.stringify(original.value)]);
+      else await pool.query("delete from user_settings where user_id = $1 and key = $2", [userId, key]);
+    }
     await pool.end();
   }
 }

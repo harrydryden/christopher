@@ -7,6 +7,7 @@ export * from "./status";
 export * from "./settings";
 export * from "./models";
 export * from "./tasks";
+export * from "./password";
 export * as ats from "./ats/index";
 export * as discovery from "./discovery/index";
 export type { DiscoveryContext, DiscoveryCandidate, DiscoveryResult, DiscoveryOutcome, DiscoveryAiHooks, HarvestedLink } from "./discovery/types";

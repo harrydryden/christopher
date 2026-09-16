@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { roleStatus, liveFor } from "@christopher/core";
+import { requireUser } from "@/lib/auth";
 import { toCsv } from "@/lib/csv";
 import {
   applyRolesFilters,
@@ -25,10 +26,11 @@ function rawParamsFrom(sp: URLSearchParams): RawSearchParams {
 const HEADER = ["company", "website", "role", "location", "url", "live_for_days", "availability", "fit", "status", "reason", "first_seen", "posted_at", "closed_at"];
 
 export async function GET(request: NextRequest) {
+  const user = await requireUser();
   const now = new Date();
   const filters = parseRolesFilters(rawParamsFrom(request.nextUrl.searchParams));
   const settings = await getSettings();
-  const rows = await fetchTableJobs((request.nextUrl.searchParams.get("archive") === "1" || request.nextUrl.searchParams.get("view") === "archived"));
+  const rows = await fetchTableJobs(user.id, (request.nextUrl.searchParams.get("archive") === "1" || request.nextUrl.searchParams.get("view") === "archived"));
   const filteredSorted = sortRoleRows(applyRolesFilters(rows, filters, now), filters.sort, filters.dir, now);
   const { visible } = splitHidden(filteredSorted, settings.hideThreshold, filters.showHidden);
 

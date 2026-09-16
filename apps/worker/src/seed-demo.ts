@@ -3,10 +3,13 @@
  * for a real scan. Safe to re-run: it clears its own rows first.
  *
  *   DATABASE_URL=... pnpm --filter @christopher/worker exec tsx src/seed-demo.ts
+ *
+ * Creates the account demo@christopher.local (password: demo-password) that follows three
+ * companies, plus a second account that follows one of them, to show the shared catalogue.
  */
-import {createDb, schema} from "@christopher/db";
+import { createDb, createUser, schema, syncCompanyStatus } from "@christopher/db";
 import { runMigrations } from "@christopher/db/migrate";
-import { evaluateGate, normalizeTitle, DEFAULT_SETTINGS } from "@christopher/core";
+import { evaluateGate, normalizeTitle, DEFAULT_SETTINGS, hashPassword } from "@christopher/core";
 import { sql } from "drizzle-orm";
 
 const url = process.env.DATABASE_URL;
@@ -20,6 +23,7 @@ const now = new Date();
 const daysAgo = (n: number) => new Date(now.getTime() - n * 86_400_000);
 
 const GATE = { ...DEFAULT_SETTINGS.gate, includeKeywords: ["operations", "ops", '"chief of staff"'], excludeKeywords: ["intern"], locationTerms: ["London", "UK"] };
+const ENGINEER_GATE = { ...DEFAULT_SETTINGS.gate, includeKeywords: ["engineer"], excludeKeywords: [], locationTerms: ["London", "UK"] };
 
 interface DemoJob {
   title: string;
@@ -85,13 +89,17 @@ const COMPANIES: Array<{
 
 async function main() {
   await runMigrations(db);
-  await db.execute(sql`truncate companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, company_profiles, company_suggestions, filter_suggestions, preference_profiles, tasks, ai_calls restart identity cascade`);
+  await db.execute(sql`truncate users, companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, company_profiles, company_suggestions, filter_suggestions, preference_profiles, tasks, ai_calls, settings restart identity cascade`);
 
-  await db.insert(schema.settings).values([
-    { key: "gate", value: GATE },
-    { key: "seedProfile", value: "Operations leadership roles, Head of Operations to Senior Operations Manager, in London or UK-remote. Prefer B2B software, climate and healthcare operations at Series A to C. No relocation, no shift work." },
-    { key: "timezone", value: "Europe/London" },
-  ]).onConflictDoUpdate({ target: schema.settings.key, set: { value: sql`excluded.value` } });
+  const { user: demo } = await createUser(db, { email: "demo@christopher.local", name: "Demo", passwordHash: await hashPassword("demo-password"), emailVerified: true });
+  const { user: second } = await createUser(db, { email: "engineer@christopher.local", name: "Engineer", passwordHash: await hashPassword("demo-password"), emailVerified: true, role: "member" });
+
+  await db.insert(schema.settings).values([{ key: "timezone", value: "Europe/London" }]).onConflictDoUpdate({ target: schema.settings.key, set: { value: sql`excluded.value` } });
+  await db.insert(schema.userSettings).values([
+    { userId: demo.id, key: "gate", value: GATE },
+    { userId: demo.id, key: "seedProfile", value: "Operations leadership roles, Head of Operations to Senior Operations Manager, in London or UK-remote. Prefer B2B software, climate and healthcare operations at Series A to C. No relocation, no shift work." },
+    { userId: second.id, key: "gate", value: ENGINEER_GATE },
+  ]);
 
   const [scanRun] = await db
     .insert(schema.scanRuns)
@@ -103,6 +111,9 @@ async function main() {
   for (const spec of COMPANIES) {
     const [company] = await db.insert(schema.companies).values({ name: spec.name, homepageUrl: spec.homepageUrl, domain: spec.domain, addedAt: daysAgo(45) }).returning();
     companyIds[spec.name] = company!.id;
+    await db.insert(schema.companySubscriptions).values({ userId: demo.id, companyId: company!.id, addedAt: daysAgo(45) });
+    if (spec.name === "Northwind Robotics") await db.insert(schema.companySubscriptions).values({ userId: second.id, companyId: company!.id, addedAt: daysAgo(10) });
+    await syncCompanyStatus(db, company!.id);
 
     const [source] = await db
       .insert(schema.careerSources)
@@ -161,7 +172,6 @@ async function main() {
     }
 
     for (const job of spec.jobs) {
-      const gate = evaluateGate({ title: job.title, department: job.department, location: job.location, remote: job.remote }, GATE);
       const slug = job.title.toLowerCase().replace(/[^a-z0-9]+/g, "-");
       const [created] = await db
         .insert(schema.jobs)
@@ -176,7 +186,7 @@ async function main() {
           locations: [job.location],
           department: job.department,
           employmentType: "Full-time",
-          remote: job.remote ?? gate.remote,
+          remote: job.remote ?? /remote/i.test(job.location),
           salaryText: job.salaryText ?? null,
           postedAt: job.postedDaysAgo === null ? null : daysAgo(job.postedDaysAgo),
           firstSeenAt: daysAgo(job.firstSeenDaysAgo),
@@ -184,16 +194,6 @@ async function main() {
           closedAt: job.closedDaysAgo === undefined ? null : daysAgo(job.closedDaysAgo),
           status: job.closedDaysAgo === undefined ? "open" : "closed",
           descriptionText: `${job.title} at ${spec.name}. ${spec.profile?.oneLiner ?? ""}\n\nYou will own day-to-day operations, design the processes the team runs on, and work directly with the leadership team.`,
-          keywordMatched: gate.keywordMatched,
-          keywordTerms: gate.keywordTerms,
-          excluded: gate.excluded,
-          locationOk: gate.locationOk,
-          inTable: gate.inTable,
-          nearMiss: !gate.inTable && !gate.excluded && /operations|ops/i.test(job.department),
-          fitScore: job.fitScore ?? null,
-          fitVerdict: job.fitScore === undefined ? null : job.fitScore >= 70 ? "strong" : job.fitScore >= 30 ? "possible" : "unlikely",
-          fitRationale: job.fitRationale ?? null,
-          fitScoredAt: job.fitScore === undefined ? null : now,
         })
         .returning();
 
@@ -201,26 +201,48 @@ async function main() {
       if (job.closedDaysAgo !== undefined) {
         await db.insert(schema.jobEvents).values({ jobId: created!.id, type: "closed", payload: {}, at: daysAgo(job.closedDaysAgo) });
       }
-      if (job.decision) {
-        await db.insert(schema.decisions).values({
+      // Each follower sees the shared posting through their own gate.
+      const followers = [{ user: demo, gate: GATE, decide: true }, ...(spec.name === "Northwind Robotics" ? [{ user: second, gate: ENGINEER_GATE, decide: false }] : [])];
+      for (const follower of followers) {
+        const gate = evaluateGate({ title: job.title, department: job.department, location: job.location, remote: job.remote }, follower.gate);
+        if (!gate.inTable && !(follower.decide && job.decision)) continue;
+        await db.insert(schema.userJobs).values({
+          userId: follower.user.id,
           jobId: created!.id,
-          decision: job.decision.decision,
-          reason: job.decision.reason,
-          tags: job.decision.tags,
-          jobTitle: job.title,
-          companyName: spec.name,
-          jobLocation: job.location,
-          jobDepartment: job.department,
-          descriptionSnippet: `${job.title} at ${spec.name}.`,
-          fitScoreAtDecision: job.fitScore ?? null,
-          createdAt: daysAgo(Math.max(0, job.firstSeenDaysAgo - 1)),
+          keywordMatched: gate.keywordMatched,
+          keywordTerms: gate.keywordTerms,
+          excluded: gate.excluded,
+          locationOk: gate.locationOk,
+          inTable: gate.inTable,
+          fitScore: follower.decide ? job.fitScore ?? null : null,
+          fitVerdict: !follower.decide || job.fitScore === undefined ? null : job.fitScore >= 70 ? "strong" : job.fitScore >= 30 ? "possible" : "unlikely",
+          fitRationale: follower.decide ? job.fitRationale ?? null : null,
+          fitScoredAt: follower.decide && job.fitScore !== undefined ? now : null,
+          createdAt: daysAgo(job.firstSeenDaysAgo),
         });
-        await db.insert(schema.jobEvents).values({ jobId: created!.id, type: "decided", payload: { decision: job.decision.decision } });
+        if (follower.decide && job.decision) {
+          await db.insert(schema.decisions).values({
+            userId: follower.user.id,
+            jobId: created!.id,
+            decision: job.decision.decision,
+            reason: job.decision.reason,
+            tags: job.decision.tags,
+            jobTitle: job.title,
+            companyName: spec.name,
+            jobLocation: job.location,
+            jobDepartment: job.department,
+            descriptionSnippet: `${job.title} at ${spec.name}.`,
+            fitScoreAtDecision: job.fitScore ?? null,
+            createdAt: daysAgo(Math.max(0, job.firstSeenDaysAgo - 1)),
+          });
+          await db.insert(schema.jobEvents).values({ jobId: created!.id, userId: follower.user.id, type: "decided", payload: { decision: job.decision.decision } });
+        }
       }
     }
   }
 
   await db.insert(schema.preferenceProfiles).values({
+    userId: demo.id,
     version: 3,
     markdown: `## Target roles
 Operations leadership from Head of Operations to Senior Operations Manager. Chief of Staff is in scope at companies under about 300 people. [pinned]
@@ -249,12 +271,13 @@ A remit that includes process design and hiring; reporting to a founder or COO; 
   });
 
   await db.insert(schema.filterSuggestions).values([
-    { type: "keyword_exclude", value: { term: "intern" }, rationale: "Two internship postings matched your keywords and neither is at your level.", evidence: ["Operations Intern at Northwind Robotics"], status: "pending" },
-    { type: "keyword_include", value: { term: "business operations" }, rationale: "You applied to a Business Operations Lead that only matched through the word operations.", evidence: ["apply: Business Operations Lead at Meridian Climate"], status: "pending" },
+    { userId: demo.id, type: "keyword_exclude", value: { term: "intern" }, rationale: "Two internship postings matched your keywords and neither is at your level.", evidence: ["Operations Intern at Northwind Robotics"], status: "pending" },
+    { userId: demo.id, type: "keyword_include", value: { term: "business operations" }, rationale: "You applied to a Business Operations Lead that only matched through the word operations.", evidence: ["apply: Business Operations Lead at Meridian Climate"], status: "pending" },
   ]);
 
   await db.insert(schema.companySuggestions).values([
     {
+      userId: demo.id,
       name: "Verdant Grid",
       homepageUrl: "https://www.verdantgrid.example/",
       domain: "verdantgrid.example",
@@ -265,6 +288,7 @@ A remit that includes process design and hiring; reporting to a founder or COO; 
       status: "pending",
     },
     {
+      userId: demo.id,
       name: "Kestrel Logistics Tech",
       homepageUrl: "https://www.kestrellogistics.example/",
       domain: "kestrellogistics.example",
@@ -278,6 +302,7 @@ A remit that includes process design and hiring; reporting to a founder or COO; 
 
   await db.insert(schema.aiCalls).values(
     ["A5", "A5", "A5", "A6", "A7", "A10"].map((callSite, i) => ({
+      userId: demo.id,
       callSite,
       model: "claude-opus-5",
       inputTokens: 1200 + i * 100,
@@ -291,8 +316,8 @@ A remit that includes process design and hiring; reporting to a founder or COO; 
     })),
   );
 
-  const counts = await db.execute<{ jobs: number; table: number }>(sql`select count(*)::int as jobs, count(*) filter (where in_table)::int as "table" from jobs`);
-  console.log(`seeded ${COMPANIES.length} companies, ${counts.rows[0]?.jobs ?? 0} roles (${counts.rows[0]?.table ?? 0} in the table)`);
+  const counts = await db.execute<{ jobs: number; table: number }>(sql`select (select count(*) from jobs)::int as jobs, (select count(*) from user_jobs where in_table)::int as "table"`);
+  console.log(`seeded ${COMPANIES.length} companies, ${counts.rows[0]?.jobs ?? 0} shared postings (${counts.rows[0]?.table ?? 0} account views in tables). Sign in as demo@christopher.local / demo-password.`);
 }
 
 main()

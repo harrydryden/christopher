@@ -10,10 +10,12 @@ import {
 import { runMigrations } from "@christopher/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { readFile } from "node:fs/promises";
-import { createSessionCookieValue } from "./session";
+import { signInTestUser } from "@/test/auth";
+import type { User } from "@christopher/db/schema";
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 let session: string | undefined;
+let user: User;
 vi.mock("@/lib/db", () => ({ db: () => database }));
 vi.mock("next/headers", () => ({
   cookies: async () => ({
@@ -37,8 +39,8 @@ beforeAll(async () => {
 });
 afterAll(() => pool.end());
 beforeEach(async () => {
-  await database.execute(sql`truncate cv_drafts, cv_versions cascade`);
-  session = await createSessionCookieValue(process.env.SESSION_SECRET!);
+  await database.execute(sql`truncate cv_drafts, cv_versions, applications, sessions cascade`);
+  ({ user, cookie: session } = await signInTestUser(database, process.env.SESSION_SECRET!));
 });
 async function draft(
   n: number,
@@ -47,6 +49,7 @@ async function draft(
   const [row] = await database
     .insert(schema.cvDrafts)
     .values({
+      userId: user.id,
       companyName: "Example",
       jobTitle: "Operations Director",
       jobDescription: "Lead operations",
@@ -120,19 +123,19 @@ it("groups company and role regardless of case or spacing, without touching anot
 it("restores by swapping the current and archived CV; manual archiving replaces the archive", async () => {
   const first = await draft(1, { status: "ready", archivedAt: new Date() });
   const second = await draft(2, { status: "ready" });
-  await actionCvs(database, [first.id], "restore");
+  await actionCvs(database, user.id, [first.id], "restore");
   expect((await rows()).map((row) => Boolean(row.archivedAt))).toEqual([
     false,
     true,
   ]);
-  await actionCvs(database, [first.id], "archive");
+  await actionCvs(database, user.id, [first.id], "archive");
   expect((await rows()).map((row) => row.id)).toEqual([first.id]);
   expect((await rows())[0]!.archivedAt).not.toBeNull();
 });
 it("respects archive during generation and never resurrects a deleted build", async () => {
   const current = await draft(1, { status: "ready" });
   const pending = await draft(2);
-  await actionCvs(database, [pending.id], "archive");
+  await actionCvs(database, user.id, [pending.id], "archive");
   await finish(pending.id);
   expect(
     (await rows()).find((row) => row.id === current.id)!.archivedAt,
@@ -140,13 +143,14 @@ it("respects archive during generation and never resurrects a deleted build", as
   expect(
     (await rows()).find((row) => row.id === pending.id)!.archivedAt,
   ).not.toBeNull();
-  await actionCvs(database, [pending.id], "delete");
+  await actionCvs(database, user.id, [pending.id], "delete");
   expect(await finish(pending.id)).toBe(false);
 });
 it("preserves submitted PDFs and application history when retention or bulk deletion removes a CV", async () => {
   const first = await draft(1, { status: "ready", archivedAt: new Date() });
   const current = await draft(2, { status: "ready" });
   const frozen = {
+    userId: user.id,
     cvId: first.id,
     companyName: "Example",
     jobTitle: "Operations Director",
@@ -159,7 +163,7 @@ it("preserves submitted PDFs and application history when retention or bulk dele
   await finish(newer.id);
   const [application] = await database.select().from(schema.applications);
   expect(application).toMatchObject({ ...frozen, cvId: null });
-  await actionCvs(database, [current.id, newer.id], "delete");
+  await actionCvs(database, user.id, [current.id, newer.id], "delete");
   expect(await rows()).toHaveLength(0);
   expect((await database.select().from(schema.applications))[0]).toEqual(
     application,
@@ -183,14 +187,14 @@ it("validates all bulk IDs before changing anything and requires a session", asy
   session = undefined;
   await expect(manageCvs({ ok: true }, form)).rejects.toThrow();
   expect(await rows()).toHaveLength(2);
-  session = await createSessionCookieValue(process.env.SESSION_SECRET!);
+  ({ cookie: session } = await signInTestUser(database, process.env.SESSION_SECRET!));
   expect(await manageCvs({ ok: true }, form)).toEqual({ ok: true });
   expect(await rows()).toHaveLength(0);
 });
 it("keeps the newest selected archive when a bulk action includes the same role twice", async () => {
   const one = await draft(1),
     two = await draft(2);
-  await actionCvs(database, [one.id, two.id], "archive");
+  await actionCvs(database, user.id, [one.id, two.id], "archive");
   expect(
     (await rows()).filter((row) => row.archivedAt).map((row) => row.id),
   ).toEqual([two.id]);
@@ -201,6 +205,7 @@ it("allocates distinct increasing versions across fresh builds and repeated edit
     [1, 2].map(() =>
       database.transaction(async (tx) => {
         const revision = await nextCvRevision(tx, {
+          userId: user.id,
           companyName: "Example",
           jobTitle: "Operations Director",
         });
@@ -241,7 +246,7 @@ it("backfills legacy duplicates without restoring an intentionally archived newe
 it("bulk archiving a current CV and its pending replacement leaves only the selected newest archive", async () => {
   const current = await draft(1, { status: "ready" }),
     pending = await draft(2);
-  await actionCvs(database, [current.id, pending.id], "archive");
+  await actionCvs(database, user.id, [current.id, pending.id], "archive");
   expect((await rows()).map((row) => row.id)).toEqual([pending.id]);
   expect((await rows())[0]!.archivedAt).not.toBeNull();
 });
@@ -285,13 +290,13 @@ it("serialises crossed bulk requests without deadlocks or extra current CVs", as
   const a = await draft(1, { status: "ready" });
   const b = await draft(2, { status: "ready", companyName: "Different" });
   await Promise.all([
-    actionCvs(database, [a.id, b.id], "archive"),
-    actionCvs(database, [b.id, a.id], "archive"),
+    actionCvs(database, user.id, [a.id, b.id], "archive"),
+    actionCvs(database, user.id, [b.id, a.id], "archive"),
   ]);
   expect((await rows()).every((row) => row.archivedAt)).toBe(true);
   await Promise.all([
-    actionCvs(database, [b.id, a.id], "restore"),
-    actionCvs(database, [a.id, b.id], "restore"),
+    actionCvs(database, user.id, [b.id, a.id], "restore"),
+    actionCvs(database, user.id, [a.id, b.id], "restore"),
   ]);
   expect((await rows()).every((row) => !row.archivedAt)).toBe(true);
 });
@@ -310,13 +315,13 @@ it("allows an unrelated role to complete while another role is locked", async ()
 it("uses collision-free role keys and an indexed lookup", async () => {
   const { cvRoleKey } = await import("@christopher/db");
   const result = await database.execute(
-    sql`select ${cvRoleKey("a:b", "c")} as a, ${cvRoleKey("a", "b:c")} as b`,
+    sql`select ${cvRoleKey(user.id, "a:b", "c")} as a, ${cvRoleKey(user.id, "a", "b:c")} as b`,
   );
   expect(result.rows[0]!.a).not.toBe(result.rows[0]!.b);
   await database.transaction(async (tx) => {
     await tx.execute(sql`set local enable_seqscan = off`);
     const plan = await tx.execute(
-      sql`explain select id from cv_drafts where ${cvRoleKey(schema.cvDrafts.companyName, schema.cvDrafts.jobTitle)} = ${cvRoleKey("Example", "Operations Director")}`,
+      sql`explain select id from cv_drafts where ${cvRoleKey(schema.cvDrafts.userId, schema.cvDrafts.companyName, schema.cvDrafts.jobTitle)} = ${cvRoleKey(user.id, "Example", "Operations Director")}`,
     );
     expect(JSON.stringify(plan.rows)).toContain("cv_drafts_role_key_idx");
   });
@@ -484,7 +489,7 @@ it("allocates daily versions atomically and preserves numbers after deletion", a
   let versions = await dailyCvVersions(database, [first.id, second.id, third.id]);
   expect(versions.get(first.id)).toBe(1);
   expect([versions.get(second.id), versions.get(third.id)].sort()).toEqual([2, 3]);
-  await actionCvs(database, [first.id, second.id, third.id], "delete");
+  await actionCvs(database, user.id, [first.id, second.id, third.id], "delete");
   const fourth = await draft(4, { createdAt });
   const nextDay = await draft(5, { createdAt: new Date("2026-09-20T00:00:00Z") });
   const otherRole = await draft(6, { createdAt, jobTitle: "Other role" });
@@ -493,7 +498,7 @@ it("allocates daily versions atomically and preserves numbers after deletion", a
   expect(versions.get(nextDay.id)).toBe(1);
   expect(versions.get(otherRole.id)).toBe(1);
   await finish(fourth.id);
-  await actionCvs(database, [fourth.id], "archive");
-  await actionCvs(database, [fourth.id], "restore");
+  await actionCvs(database, user.id, [fourth.id], "archive");
+  await actionCvs(database, user.id, [fourth.id], "restore");
   expect((await dailyCvVersions(database, [fourth.id])).get(fourth.id)).toBe(4);
 });

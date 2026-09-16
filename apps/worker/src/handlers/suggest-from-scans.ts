@@ -1,12 +1,12 @@
 /**
- * Mine the latest successful scan of every active source for the role types
- * and seniority labels the gate is turning away, and file them as filter
- * suggestions the user accepts or rejects on the Learning page. Deterministic
- * and free: it reads the parsed postings kept in scan evidence (snapshot v2)
- * and never calls a model. Runs after each daily run finalises and on demand.
+ * Mine the latest successful scan of every source one account follows for the role types and
+ * seniority labels that account's gate is turning away, and file them as filter suggestions the
+ * person accepts or rejects on the Learning page. Deterministic and free: it reads the parsed
+ * postings kept in scan evidence (snapshot v2) and never calls a model. Runs per account after
+ * each daily run finalises and on demand.
  */
 import { schema, type Task } from "@christopher/db";
-import { suggestFromScans, type ScannedTitle, type TermSuggestion } from "@christopher/core";
+import { suggestFromScans, type ScannedTitle, type TaskPayloads, type TermSuggestion } from "@christopher/core";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { gunzipSync } from "node:zlib";
 import type { WorkerDeps } from "../context";
@@ -14,12 +14,13 @@ import { log } from "../log";
 
 type SnapshotPosting = { title?: string; location?: string; locations?: string[] };
 
-export async function loadScannedTitles(deps: WorkerDeps): Promise<ScannedTitle[]> {
+export async function loadScannedTitles(deps: WorkerDeps, userId: string): Promise<ScannedTitle[]> {
   const sources = await deps.db
     .select({ id: schema.careerSources.id, company: schema.companies.name })
     .from(schema.careerSources)
     .innerJoin(schema.companies, eq(schema.companies.id, schema.careerSources.companyId))
-    .where(and(eq(schema.companies.status, "active"), inArray(schema.careerSources.status, ["active", "failing"])));
+    .innerJoin(schema.companySubscriptions, and(eq(schema.companySubscriptions.companyId, schema.companies.id), eq(schema.companySubscriptions.userId, userId)))
+    .where(and(eq(schema.companies.status, "active"), eq(schema.companySubscriptions.status, "active"), inArray(schema.careerSources.status, ["active", "failing"])));
   const titles: ScannedTitle[] = [];
   for (const source of sources) {
     const [scan] = await deps.db.select({ rawSnapshot: schema.scans.rawSnapshot }).from(schema.scans)
@@ -37,22 +38,25 @@ export async function loadScannedTitles(deps: WorkerDeps): Promise<ScannedTitle[
   return titles;
 }
 
-export async function handleSuggestFromScans(_task: Task, deps: WorkerDeps): Promise<unknown> {
-  const settings = await deps.settings();
-  const titles = await loadScannedTitles(deps);
+export async function handleSuggestFromScans(task: Task, deps: WorkerDeps): Promise<unknown> {
+  const { userId } = (task.payload ?? {}) as TaskPayloads["suggest_from_scans"];
+  if (!userId) return { skipped: "no account on task" };
+  const settings = await deps.userSettings(userId);
+  const titles = await loadScannedTitles(deps, userId);
   if (titles.length === 0) return { skipped: "no scan evidence yet" };
   const result = suggestFromScans(titles, settings.gate);
 
   const existing = await deps.db
     .select({ type: schema.filterSuggestions.type, value: schema.filterSuggestions.value, status: schema.filterSuggestions.status })
     .from(schema.filterSuggestions)
-    .where(inArray(schema.filterSuggestions.type, ["keyword_include", "seniority_include"]));
+    .where(and(eq(schema.filterSuggestions.userId, userId), inArray(schema.filterSuggestions.type, ["keyword_include", "seniority_include"])));
   const taken = new Set(existing.filter((e) => e.status === "pending" || e.status === "rejected").map((e) => `${e.type}:${String((e.value as { term?: string }).term ?? "").toLowerCase()}`));
 
   const file = async (type: "keyword_include" | "seniority_include", s: TermSuggestion) => {
     if (taken.has(`${type}:${s.term.toLowerCase()}`)) return 0;
     const what = type === "seniority_include" ? "match your role keywords and location but not your seniority labels" : "are in your location and at your seniority but match none of your role keywords";
     await deps.db.insert(schema.filterSuggestions).values({
+      userId,
       type,
       value: { term: s.term, source: "scans" },
       evidence: s.examples.map((e) => ({ title: e.title, company: e.company })),
@@ -63,6 +67,6 @@ export async function handleSuggestFromScans(_task: Task, deps: WorkerDeps): Pro
   let inserted = 0;
   for (const s of result.seniority) inserted += await file("seniority_include", s);
   for (const s of result.roleTypes) inserted += await file("keyword_include", s);
-  log.info("scan suggestions filed", { titles: titles.length, unmatched: result.unmatched, inserted });
+  log.info("scan suggestions filed", { userId, titles: titles.length, unmatched: result.unmatched, inserted });
   return { titles: titles.length, unmatched: result.unmatched, inserted };
 }

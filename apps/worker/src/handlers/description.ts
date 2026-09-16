@@ -1,6 +1,6 @@
 import { schema, reevaluateGate, type Task } from "@christopher/db";
 import { ats, sha1, stripHtml } from "@christopher/core";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { makeFetchContext, aiBudgetExceeded } from "../context";
 import { log } from "../log";
@@ -14,6 +14,7 @@ const MAX_DESCRIPTION = 30_000;
 /**
  * Fetch and store the job description so it survives the posting being taken down.
  * Feed-supplied descriptions are stored at scan time; this handles sources that need a detail fetch.
+ * The text is shared; every follower's gate is re-run against it afterwards.
  */
 export async function handleFetchDescription(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { jobId } = task.payload as unknown as Payload;
@@ -56,7 +57,9 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
     }
   }
 
-  const settings = await deps.settings();
+  const followers = await deps.db.select({ userId: schema.companySubscriptions.userId }).from(schema.companySubscriptions)
+    .where(and(eq(schema.companySubscriptions.companyId, job.companyId), ne(schema.companySubscriptions.status, "archived")));
+  const followerSettings = await Promise.all(followers.map(async f => ({ userId: f.userId, settings: await deps.userSettings(f.userId) })));
   return deps.db.transaction(async (tx) => {
     await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
   if (!text) {
@@ -64,15 +67,21 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
     return { jobId, stored: false };
   }
   const trimmed = text.slice(0, MAX_DESCRIPTION);
+  const hash = sha1(trimmed);
   await tx
     .update(schema.jobs)
     .set({ ...extra,
         descriptionSource,
-        descriptionTruncated: text.length > MAX_DESCRIPTION, descriptionText: trimmed, descriptionHash: sha1(trimmed), descriptionFetchedAt: deps.now(), fitScore: sha1(trimmed) === job.descriptionHash ? job.fitScore : null })
+        descriptionTruncated: text.length > MAX_DESCRIPTION, descriptionText: trimmed, descriptionHash: hash, descriptionFetchedAt: deps.now() })
     .where(eq(schema.jobs.id, job.id));
+  // A changed description invalidates every follower's score for the role.
+  if (hash !== job.descriptionHash && followers.length) {
+    await tx.update(schema.userJobs).set({ fitScore: null, updatedAt: deps.now() })
+      .where(and(eq(schema.userJobs.jobId, job.id), inArray(schema.userJobs.userId, followers.map(f => f.userId))));
+  }
   await tx.insert(schema.jobEvents).values({ jobId: job.id, type: "description_fetched", payload: { chars: trimmed.length } });
-  await reevaluateGate(tx as unknown as WorkerDeps["db"], settings, deps.now(), jobId);
-  return { jobId, stored: true, chars: trimmed.length };
+  for (const follower of followerSettings) await reevaluateGate(tx as unknown as WorkerDeps["db"], follower.userId, follower.settings, deps.now(), { jobId });
+  return { jobId, stored: true, chars: trimmed.length, followers: followers.length };
   });
 }
 

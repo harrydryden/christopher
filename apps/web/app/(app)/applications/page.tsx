@@ -1,14 +1,17 @@
 import { PageHeader } from "@/components/PageHeader";
 import Link from "next/link";
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { applications } from "@christopher/db";
 import { db } from "@/lib/db";
 import { SettingsForm } from "@/components/SettingsForm";
 import { inputClass, labelClass, selectClass } from "@/components/Field";
 import { updateApplication } from "@/app/actions/applications";
+import { requireUser } from "@/lib/auth";
 export const dynamic = "force-dynamic";
 export default async function ApplicationsPage() {
-  const rows = await db().select({ id: applications.id, cvId: applications.cvId, jobTitle: applications.jobTitle, companyName: applications.companyName, appliedOn: applications.appliedOn, status: applications.status, notes: applications.notes, history: applications.history }).from(applications).orderBy(desc(applications.appliedOn));
+  const user = await requireUser();
+  const rows = await db().select({ id: applications.id, cvId: applications.cvId, jobTitle: applications.jobTitle, companyName: applications.companyName, appliedOn: applications.appliedOn, status: applications.status, notes: applications.notes, history: applications.history })
+    .from(applications).where(eq(applications.userId, user.id)).orderBy(desc(applications.appliedOn));
   return <div className="max-w-4xl space-y-5"><PageHeader title="Applications" />
     <Link href="/cv" className="underline">Open CV builder</Link>
     {!rows.length && <p>No applications recorded yet.</p>}

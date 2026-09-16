@@ -1,5 +1,5 @@
 import { cvVersionLabel } from "@/lib/cv-version";
-import { dailyCvVersions } from "@/lib/queries/cv";
+import { dailyCvVersions, getOwnCvDraft } from "@/lib/queries/cv";
 import { CvDisclosure } from "@/components/CvDisclosure";
 import { CvWorkspace, CvWorkspacePanel } from "@/components/CvWorkspace";
 import { CvBuildProgress } from "@/components/CvBuildProgress";
@@ -8,8 +8,8 @@ import { CvAssessmentPanel } from "@/components/CvAssessmentPanel";
 import { cvAssessmentCurrent } from "@christopher/core/cv-review";
 import { CvDraftEditor } from "@/components/CvDraftEditor";
 import Link from "next/link";
-import { eq } from "drizzle-orm";
-import { cvDrafts, applications } from "@christopher/db";
+import { and, eq } from "drizzle-orm";
+import { applications } from "@christopher/db";
 import { db } from "@/lib/db";
 import { notFound } from "next/navigation";
 import { zUuid } from "@/lib/validation";
@@ -19,15 +19,17 @@ import { inputClass } from "@/components/Field";
 import { PageHeader } from "@/components/PageHeader";
 import { SettingsForm } from "@/components/SettingsForm";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { requireUser } from "@/lib/auth";
 export const dynamic = "force-dynamic";
 export default async function CvDraftPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const user = await requireUser();
   const { id } = await params;
   if (!zUuid().safeParse(id).success) notFound();
-  const [draft] = await db().select().from(cvDrafts).where(eq(cvDrafts.id, id));
+  const draft = await getOwnCvDraft(user.id, id);
   if (!draft) notFound();
   const versions = await dailyCvVersions(db(), [draft.id]);
   const version = cvVersionLabel(draft.createdAt, versions.get(draft.id) ?? Math.max(1, draft.revision));
@@ -44,7 +46,7 @@ export default async function CvDraftPage({
   const [application] = await db()
     .select({ id: applications.id })
     .from(applications)
-    .where(eq(applications.cvId, id))
+    .where(and(eq(applications.cvId, id), eq(applications.userId, user.id)))
     .limit(1);
   return (
     <div className="w-full space-y-5">

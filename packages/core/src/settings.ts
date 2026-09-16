@@ -1,40 +1,61 @@
 /**
- * Application settings stored as key/value JSON in the `settings` table.
- * Shared by web (edits) and worker (reads). Defaults apply when a key is missing.
+ * Application settings stored as key/value JSON.
+ *
+ * Two scopes share one shape. System settings (the daily schedule, models, the AI budget, closure
+ * and robots policy) live in the `settings` table and are edited by an administrator. User
+ * settings (keywords, locations, seed profile, CV preferences) live in `user_settings`, one row
+ * per account and key. `AppSettings` is the two merged, which is what most code wants to read.
+ * Defaults apply when a key is missing.
  */
 import { CvWritingPreferencesSchema, type CvWritingPreferences } from "./cv-writing-preferences";
 import { CvThemeSchema, type CvTheme } from "./cv-theme";
 import type { GateSettings } from "./gate";
 
-export interface AppSettings {
-  gate: GateSettings;
-  /** Daily run time "HH:MM" in `timezone`. */
+export interface SystemSettings {
+  /** Daily run time "HH:MM" in `timezone`. One run for every company anyone follows. */
   scanTime: string;
   timezone: string;
-  /** Fit-score threshold under which in-table roles are collapsed. null = off. */
-  hideThreshold: number | null;
-  /** Free text written by the user at setup; never overwritten by the model. */
-  seedProfile: string;
   monthlyAiBudgetUsd: number;
   /** Model id per call site; missing keys fall back to `defaultModel`. */
   defaultModel: string;
-  cvModel: string;
-  cvTheme?: CvTheme;
-  cvWritingPreferences?: CvWritingPreferences;
   modelOverrides: Record<string, string>;
-  /** Days a closed role stays visible in the table by default. */
-  showClosedDays: number;
   /** Consecutive ok scans a role must be absent from before it closes. */
   closeAfterMissingScans: number;
   respectRobotsTxt: boolean;
-  /** Companies whose HTML sources may match keywords against descriptions (requires detail fetches). */
-  descriptionMatchCompanyIds: string[];
-  suggestionsEnabled: boolean;
   /** Day of week (0 = Sunday) for weekly jobs: suggestions, filter proposals, profile synthesis fallback. */
   weeklyDay: number;
 }
 
-export const DEFAULT_SETTINGS: AppSettings = {
+export interface UserSettings {
+  gate: GateSettings;
+  /** Fit-score threshold under which in-table roles are collapsed. null = off. */
+  hideThreshold: number | null;
+  /** Free text written by the user at setup; never overwritten by the model. */
+  seedProfile: string;
+  cvModel: string;
+  cvTheme?: CvTheme;
+  cvWritingPreferences?: CvWritingPreferences;
+  /** Days a closed role stays visible in the table by default. */
+  showClosedDays: number;
+  /** Companies whose HTML sources may match keywords against descriptions (requires detail fetches). */
+  descriptionMatchCompanyIds: string[];
+  suggestionsEnabled: boolean;
+}
+
+export type AppSettings = SystemSettings & UserSettings;
+
+export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
+  scanTime: "06:00",
+  timezone: "Europe/London",
+  monthlyAiBudgetUsd: 25,
+  defaultModel: "claude-sonnet-5",
+  modelOverrides: {},
+  closeAfterMissingScans: 2,
+  respectRobotsTxt: true,
+  weeklyDay: 0,
+};
+
+export const DEFAULT_USER_SETTINGS: UserSettings = {
   gate: {
     includeKeywords: ["operations"],
     excludeKeywords: [],
@@ -42,30 +63,37 @@ export const DEFAULT_SETTINGS: AppSettings = {
     locationTerms: [],
     includeRemote: true,
   },
-  scanTime: "06:00",
-  timezone: "Europe/London",
   hideThreshold: null,
   seedProfile: "",
-  monthlyAiBudgetUsd: 25,
-  defaultModel: "claude-sonnet-5",
   cvModel: "claude-fable-5-1",
   cvTheme: undefined,
   cvWritingPreferences: undefined,
-  modelOverrides: {},
   showClosedDays: 30,
-  closeAfterMissingScans: 2,
-  respectRobotsTxt: true,
   descriptionMatchCompanyIds: [],
   suggestionsEnabled: true,
-  weeklyDay: 0,
 };
 
+export const DEFAULT_SETTINGS: AppSettings = { ...DEFAULT_SYSTEM_SETTINGS, ...DEFAULT_USER_SETTINGS };
+
+export type SystemSettingsKey = keyof SystemSettings;
+export type UserSettingsKey = keyof UserSettings;
 export type SettingsKey = keyof AppSettings;
+export const SYSTEM_SETTINGS_KEYS = Object.keys(DEFAULT_SYSTEM_SETTINGS) as SystemSettingsKey[];
+export const USER_SETTINGS_KEYS = Object.keys(DEFAULT_USER_SETTINGS) as UserSettingsKey[];
 export const SETTINGS_KEYS = Object.keys(DEFAULT_SETTINGS) as SettingsKey[];
 
-/** Merge stored rows onto defaults, tolerating missing or malformed values. */
-export function resolveSettings(rows: Array<{ key: string; value: unknown }>): AppSettings {
-  const out: AppSettings = structuredClone(DEFAULT_SETTINGS);
+export function isSystemSettingsKey(key: string): key is SystemSettingsKey {
+  return (SYSTEM_SETTINGS_KEYS as string[]).includes(key);
+}
+
+export function isUserSettingsKey(key: string): key is UserSettingsKey {
+  return (USER_SETTINGS_KEYS as string[]).includes(key);
+}
+
+type SettingsRow = { key: string; value: unknown };
+
+/** Apply stored rows onto a defaults object in place, tolerating missing or malformed values. */
+function applyRows(out: AppSettings, rows: SettingsRow[]): void {
   for (const row of rows) {
     const key = row.key as SettingsKey;
     if (!(key in DEFAULT_SETTINGS)) continue;
@@ -93,10 +121,30 @@ export function resolveSettings(rows: Array<{ key: string; value: unknown }>): A
     }
     (out as unknown as Record<string, unknown>)[key] = val;
   }
+}
+
+/**
+ * Merge stored rows onto defaults. `rows` are usually the system table and `userRows` one
+ * account's rows; the two key sets are disjoint, so a single mixed list also works.
+ */
+export function resolveSettings(rows: SettingsRow[], userRows: SettingsRow[] = []): AppSettings {
+  const out: AppSettings = structuredClone(DEFAULT_SETTINGS);
+  applyRows(out, rows);
+  applyRows(out, userRows);
   return out;
 }
 
-export function modelForCallSite(settings: AppSettings, callSite: string): string {
+export function resolveSystemSettings(rows: SettingsRow[]): SystemSettings {
+  const merged = resolveSettings(rows.filter((row) => isSystemSettingsKey(row.key)));
+  return Object.fromEntries(SYSTEM_SETTINGS_KEYS.map((key) => [key, merged[key]])) as unknown as SystemSettings;
+}
+
+export function resolveUserSettings(rows: SettingsRow[]): UserSettings {
+  const merged = resolveSettings(rows.filter((row) => isUserSettingsKey(row.key)));
+  return Object.fromEntries(USER_SETTINGS_KEYS.map((key) => [key, merged[key]])) as unknown as UserSettings;
+}
+
+export function modelForCallSite(settings: Pick<SystemSettings, "defaultModel" | "modelOverrides">, callSite: string): string {
   return settings.modelOverrides[callSite] ?? settings.defaultModel;
 }
 

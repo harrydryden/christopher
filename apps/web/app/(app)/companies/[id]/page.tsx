@@ -15,6 +15,7 @@ import {
   rediscoverCompany,
   rescanCompany,
   resumeCompany,
+  unfollowCompany,
   updateCompanyDetails,
   useDiscoveryCandidate,
 } from "@/app/actions/companies";
@@ -29,12 +30,14 @@ import { inputClass, labelClass } from "@/components/Field";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { relativeTime } from "@/lib/format";
 import {
+  companyFollowerCount,
   getCompany,
   getCompanyProfile,
   getCompanyScans,
   getCompanySources,
   getLatestDiscoveryRun,
 } from "@/lib/queries/companies";
+import { requireUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -49,20 +52,24 @@ interface DiscoveryCandidateView {
 }
 
 export default async function CompanyDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<RawSearchParams> }) {
+  const user = await requireUser();
   const { id } = await params;
-  const company = await getCompany(id);
+  const company = await getCompany(user.id, id);
   if (!company) notFound();
+  const admin = user.role === "admin";
 
-  const [sources, latestRun, scans, profile] = await Promise.all([
+  const [sources, latestRun, scans, profile, followers] = await Promise.all([
     getCompanySources(id),
     getLatestDiscoveryRun(id),
     getCompanyScans(id, 20),
     getCompanyProfile(id),
+    companyFollowerCount(id),
   ]);
 
   const now = new Date();
   const needsConfirmation = latestRun && (latestRun.status === "needs_confirmation" || latestRun.status === "not_found");
   const candidates = (latestRun?.candidates ?? []) as DiscoveryCandidateView[];
+  const subscription = company.subscription;
 
   return (
     <div className="space-y-6">
@@ -71,17 +78,20 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
           <span className="flex items-center gap-3">
             <CompanyFavicon src={company.faviconUrl} domain={company.domain} size={32} />
             {company.name}
-            <Badge tone={companyStatusTone(company.status)}>{company.status}</Badge>
+            <Badge tone={companyStatusTone(subscription.status)}>{subscription.status}</Badge>
           </span>
         }
         description={
-          <a href={company.homepageUrl} target="_blank" rel="noopener noreferrer" className="break-all no-underline hover:underline">
-            {company.homepageUrl}
-          </a>
+          <>
+            <a href={company.homepageUrl} target="_blank" rel="noopener noreferrer" className="break-all no-underline hover:underline">
+              {company.homepageUrl}
+            </a>
+            <span className="block text-12 text-faint">Shared catalogue entry · followed by {followers} {followers === 1 ? "account" : "accounts"} · scanned once a day for all of them</span>
+          </>
         }
         actions={<>
           <form action={rescanCompany.bind(null, company.id)}>
-            <Button type="submit" size="sm">
+            <Button type="submit" size="sm" title="A scan made in the last half hour is reused rather than repeated">
               Rescan
             </Button>
           </form>
@@ -90,45 +100,55 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
               Re-discover
             </Button>
           </form>
-          {company.status === "active" ? (
+          {subscription.status === "active" ? (
             <form action={pauseCompany.bind(null, company.id)}>
               <Button type="submit" size="sm">
                 Pause
               </Button>
             </form>
-          ) : company.status === "paused" ? (
+          ) : subscription.status === "paused" ? (
             <form action={resumeCompany.bind(null, company.id)}>
               <Button type="submit" size="sm">
                 Resume
               </Button>
             </form>
-          ) : null}
-          {company.status !== "archived" && (
+          ) : (
+            <form action={resumeCompany.bind(null, company.id)}>
+              <Button type="submit" size="sm">
+                Follow again
+              </Button>
+            </form>
+          )}
+          {subscription.status !== "archived" && (
             <form action={archiveCompany.bind(null, company.id)}>
-              <ConfirmSubmitButton variant="ghost" confirmMessage={`Archive ${company.name}? It will stop being scanned but its data is kept.`}>Archive</ConfirmSubmitButton>
+              <ConfirmSubmitButton variant="ghost" confirmMessage={`Archive ${company.name}? It leaves your inbox; other followers are unaffected.`}>Archive</ConfirmSubmitButton>
             </form>
           )}
         </>}
       />
 
       <Card title="Roles">
-        <RoleWorkspace searchParams={await searchParams} companyId={id} />
+        <RoleWorkspace userId={user.id} searchParams={await searchParams} companyId={id} />
       </Card>
 
       <Card title="Details">
         <SettingsForm action={updateCompanyDetails.bind(null, company.id)}>
           <label className="flex flex-col gap-1.5 text-14">
             <span className={labelClass}>Name</span>
-            <input name="name" defaultValue={company.name} className={`max-w-sm ${inputClass}`} />
+            <input name="name" defaultValue={company.name} readOnly={!admin} className={`max-w-sm ${inputClass}`} />
           </label>
           <label className="flex flex-col gap-1.5 text-14">
             <span className={labelClass}>Main website</span>
-            <input name="homepageUrl" defaultValue={company.homepageUrl} required maxLength={2048} className={inputClass} />
-            <span className="text-12 text-muted">Careers sources are managed separately below. Use Re-discover after correcting a domain to find its careers page.</span>
+            <input name="homepageUrl" defaultValue={company.homepageUrl} readOnly={!admin} required maxLength={2048} className={inputClass} />
+            <span className="text-12 text-muted">
+              {admin
+                ? "Shared by every follower. Careers sources are managed separately below. Use Re-discover after correcting a domain to find its careers page."
+                : "The name and website are shared by every follower, so only an administrator can change them."}
+            </span>
           </label>
           <label className="flex flex-col gap-1.5 text-14">
-            <span className={labelClass}>Notes</span>
-            <textarea name="notes" defaultValue={company.notes ?? ""} rows={3} className={`resize-y ${inputClass}`} />
+            <span className={labelClass}>Your notes</span>
+            <textarea name="notes" defaultValue={subscription.notes ?? ""} rows={3} className={`resize-y ${inputClass}`} />
           </label>
         </SettingsForm>
       </Card>
@@ -150,7 +170,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
               Try this URL
             </Button>
           </form>
-        <p className="mt-2 text-12 text-muted">Paste a known careers board at any time, including while homepage discovery is queued.</p>
+        <p className="mt-2 text-12 text-muted">Paste a known careers board at any time, including while homepage discovery is queued. A confirmed source serves every follower.</p>
       </Card>
       </div>
 
@@ -165,7 +185,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
                   <Badge tone="neutral">{s.type}</Badge>
                   <Badge tone={sourceStatusTone(s.status)}>{s.status === "needs_confirmation" ? "needs confirmation" : s.status}</Badge>
                   <span className="text-12 text-muted">{Math.round(s.confidence * 100)}% confidence</span>
-                  {s.confirmedByUser && <span className="text-12 text-muted">· confirmed by you</span>}
+                  {s.confirmedByUser && <span className="text-12 text-muted">· confirmed by a follower</span>}
                   {s.discoveryMethod && <span className="text-12 text-muted">· via {s.discoveryMethod}</span>}
                 </div>
                 <a href={s.url} target="_blank" rel="noopener noreferrer" className="block truncate text-fg no-underline hover:underline">
@@ -220,9 +240,11 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
                       </Button>
                     </form>
                   )}
-                  <form action={deleteSource.bind(null, s.id)}>
-                    <ConfirmSubmitButton confirmMessage="Delete this source? Its scan history stays, but it will no longer be scanned.">Delete</ConfirmSubmitButton>
-                  </form>
+                  {admin && (
+                    <form action={deleteSource.bind(null, s.id)}>
+                      <ConfirmSubmitButton confirmMessage="Delete this source for every follower? Its scan history stays, but it will no longer be scanned.">Delete</ConfirmSubmitButton>
+                    </form>
+                  )}
                 </div>
               </div>
             ))}
@@ -370,11 +392,19 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
         )}
       </Card>
 
-      <Card title="Delete company">
-        <p className="mb-3 text-14 text-muted">Remove this company, its sources and roles. Your decision snapshots remain in the learning history.</p>
-        <form action={deleteCompany.bind(null, company.id)}>
-          <ConfirmSubmitButton confirmMessage={`Delete ${company.name} and all its roles? Decision snapshots will be retained.`}>Delete company</ConfirmSubmitButton>
+      <Card title="Stop following">
+        <p className="mb-3 text-14 text-muted">Remove this company from your list. Your decision snapshots stay in your learning history; the company and its scan history remain in the shared catalogue for other followers.</p>
+        <form action={unfollowCompany.bind(null, company.id)}>
+          <ConfirmSubmitButton confirmMessage={`Stop following ${company.name}? Its roles leave your table. Your decision snapshots are retained.`}>Stop following</ConfirmSubmitButton>
         </form>
+        {admin && (
+          <div className="mt-4 border-t-2 border-line-muted pt-4">
+            <p className="mb-3 text-14 text-muted">Administrator: delete the company for every follower, with its sources and postings. Everyone’s decision snapshots are retained.</p>
+            <form action={deleteCompany.bind(null, company.id)}>
+              <ConfirmSubmitButton variant="danger" confirmMessage={`Delete ${company.name} for all ${followers} ${followers === 1 ? "follower" : "followers"}? This cannot be undone.`}>Delete for everyone</ConfirmSubmitButton>
+            </form>
+          </div>
+        )}
       </Card>
 
       {latestRun && Array.isArray(latestRun.log) && latestRun.log.length > 0 && (

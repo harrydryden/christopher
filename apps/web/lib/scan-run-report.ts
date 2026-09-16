@@ -1,15 +1,19 @@
 import { scanRunSummary } from "@christopher/db";
 import type { ScanRun } from "@christopher/db/schema";
 import { db } from "./db";
-export async function scanRunReport(run: ScanRun) {
-  const summary = await scanRunSummary(db(), run.id);
-  const historicalOnly = !summary.sources && !!run.finishedAt && run.companiesTotal > 0;
+
+/** A run is shared; with a `userId` the counts cover only the companies that account follows. */
+export async function scanRunReport(run: ScanRun, userId?: string) {
+  const summary = await scanRunSummary(db(), run.id, userId);
+  const historicalOnly = !summary.sources && !!run.finishedAt && run.companiesTotal > 0 && !userId;
   if (historicalOnly) return { ...run, historicalOnly };
-  const companiesOk = Math.min(run.companiesTotal, summary.companies_ok);
+  const total = userId ? summary.sources + summary.pending : run.companiesTotal;
+  const companiesOk = Math.min(total, summary.companies_ok);
   return {
     ...run, historicalOnly,
+    companiesTotal: total,
     companiesOk,
-    companiesFailed: run.finishedAt ? Math.max(0, run.companiesTotal - companiesOk) : 0,
+    companiesFailed: run.finishedAt ? Math.max(0, total - companiesOk) : 0,
     newRoles: summary.new_roles,
     closedRoles: summary.closed_roles,
   };

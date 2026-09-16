@@ -4,31 +4,43 @@ import { cvImprovementOwner } from "@christopher/core/cv-assessment";
 import { assertCvFinalisable } from "@christopher/core/cv-review";
 import { renderCvPdf } from "@/lib/cv-pdf";
 import { z } from "zod";
-import { desc, eq, sql } from "drizzle-orm";
-import { actionCvs, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, enqueueTask } from "@christopher/db";
+import { and, desc, eq, sql } from "drizzle-orm";
+import { actionCvs, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, userJobs, enqueueTask } from "@christopher/db";
 import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvWritingPreferences,
   createCvWritingBudget, CvLibrarySchema, consolidateExperience, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel } from "@christopher/core";
-import { requireSession } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { settings as settingsTable } from "@christopher/db/schema";
-import { getSettings, setSetting } from "@/lib/settings";
+import { userSettings as userSettingsTable } from "@christopher/db/schema";
+import { getSettings, setUserSetting } from "@/lib/settings";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { fail, ok, zUuid, type ActionResult } from "@/lib/validation";
 
+type Tx = Parameters<Parameters<ReturnType<typeof db>["transaction"]>[0]>[0];
+
+async function latestLibrary(tx: Pick<Tx, "select">, userId: string) {
+  const [latest] = await tx.select().from(cvLibraries).where(eq(cvLibraries.userId, userId)).orderBy(desc(cvLibraries.version)).limit(1);
+  return latest;
+}
+
+async function upsertUserSetting(tx: Pick<Tx, "insert">, userId: string, key: string, value: unknown) {
+  await tx.insert(userSettingsTable).values({ userId, key, value: value as object, updatedAt: new Date() })
+    .onConflictDoUpdate({ target: [userSettingsTable.userId, userSettingsTable.key], set: { value: value as object, updatedAt: new Date() } });
+}
+
 export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promise<ActionResult> {
-  await requireSession();
+  const user = await requireUser();
   try {
     const raw = String(form.get("library") ?? "");
     if (raw.length > 150_000) return fail("Library is too large. Keep it under 150,000 characters.");
     const parsed = CvLibrarySchema.parse(JSON.parse(raw));
     const content = CvLibrarySchema.parse(consolidateExperience({ ...parsed, theme: parsed.theme ?? DEFAULT_CV_THEME }));
     await db().transaction(async (tx) => {
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('cv:library'))`);
-      const [latest] = await tx.select().from(cvLibraries).orderBy(desc(cvLibraries.version)).limit(1);
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`cv:library:${user.id}`}))`);
+      const latest = await latestLibrary(tx, user.id);
       if ((latest?.version ?? 0) !== Number(form.get("version"))) throw new Error("The library changed. Reload before saving.");
-      await tx.insert(cvLibraries).values({ version: (latest?.version ?? 0) + 1, content: CvLibrarySchema.parse(retainArchivedEvidence(latest?.content, content)) });
-      await enqueueTask(tx, "rescore_all", { onlyInTable: true }, { dedupeKey: "rescore_all", priority: 5 });
+      await tx.insert(cvLibraries).values({ userId: user.id, version: (latest?.version ?? 0) + 1, content: CvLibrarySchema.parse(retainArchivedEvidence(latest?.content, content)) });
+      await enqueueTask(tx, "rescore_all", { userId: user.id, onlyInTable: true }, { dedupeKey: `rescore_all:${user.id}`, priority: 5 });
     });
   } catch (error) {
     if (error instanceof z.ZodError) return fail(error.issues.map((issue) => {
@@ -43,18 +55,17 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
   return ok();
 }
 export async function saveCvWritingPreferences(_prev: ActionResult, form: FormData): Promise<ActionResult> {
-  await requireSession();
+  const user = await requireUser();
   const parsed = CvWritingPreferencesSchema.safeParse({ stylePreferences: form.get("stylePreferences"), preferredWording: form.get("preferredWording") });
   if (!parsed.success) return fail("Writing style allows 4,000 characters; saved phrasing allows 12,000.");
   try {
     await db().transaction(async tx => {
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('cv:library'))`);
-      const [stored] = await tx.select().from(settingsTable).where(eq(settingsTable.key, "cvWritingPreferences"));
-      const [latest] = await tx.select().from(cvLibraries).orderBy(desc(cvLibraries.version)).limit(1);
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`cv:library:${user.id}`}))`);
+      const [stored] = await tx.select().from(userSettingsTable).where(and(eq(userSettingsTable.userId, user.id), eq(userSettingsTable.key, "cvWritingPreferences")));
+      const latest = await latestLibrary(tx, user.id);
       const current = resolveCvWritingPreferences(stored?.value, latest?.content);
       if (JSON.stringify(current) !== String(form.get("previousPreferences"))) throw new Error("Writing preferences changed. Reload Settings before saving.");
-      await tx.insert(settingsTable).values({ key: "cvWritingPreferences", value: parsed.data })
-        .onConflictDoUpdate({ target: settingsTable.key, set: { value: parsed.data, updatedAt: new Date() } });
+      await upsertUserSetting(tx, user.id, "cvWritingPreferences", parsed.data);
     });
   } catch (error) {
     return fail(error instanceof Error && error.message.startsWith("Writing preferences changed") ? error.message : "Could not save writing preferences. Try again.");
@@ -65,10 +76,10 @@ export async function saveCvWritingPreferences(_prev: ActionResult, form: FormDa
 }
 
 export async function saveCvAppearance(_prev: ActionResult, form: FormData): Promise<ActionResult> {
-  await requireSession();
+  const user = await requireUser();
   try {
     const theme = CvThemeSchema.parse(JSON.parse(String(form.get("theme") ?? "")));
-    await setSetting("cvTheme", { ...theme, skillPills: true });
+    await setUserSetting(user.id, "cvTheme", { ...theme, skillPills: true });
   } catch {
     return fail("Could not save appearance. Check the colours and try again.");
   }
@@ -78,31 +89,31 @@ export async function saveCvAppearance(_prev: ActionResult, form: FormData): Pro
 }
 
 export async function saveCvModel(_prev: ActionResult, form: FormData): Promise<ActionResult> {
-  await requireSession();
+  const user = await requireUser();
   const model = String(form.get("cvModel") ?? "").trim();
   const settings = await getSettings();
   if (!isKnownModel(model)) return fail("Choose a supported model for CV generation.");
   if (model === modelForCallSite(settings, "A3")) return fail("Choose a different model from the website extraction model.");
-  await setSetting("cvModel", model);
+  await setUserSetting(user.id, "cvModel", model);
   revalidatePath("/settings");
   revalidatePath("/cv");
   return ok();
 }
 export async function setCvArchived(cvId: string, archived: boolean): Promise<void> {
-  await requireSession();
+  const user = await requireUser();
   const id = zUuid().parse(cvId);
-  await actionCvs(db(), [id], z.boolean().parse(archived) ? "archive" : "restore");
+  await actionCvs(db(), user.id, [id], z.boolean().parse(archived) ? "archive" : "restore");
   revalidatePath("/cv");
   revalidatePath("/applications");
 }
 
 export async function manageCvs(_prev: ActionResult, form: FormData): Promise<ActionResult> {
-  await requireSession();
+  const user = await requireUser();
   const parsed = CvSelectionSchema
     .safeParse({ ids: form.getAll("cvId"), action: form.get("action") });
   if (!parsed.success) return fail("Select between 1 and 50 CVs and choose Archive, Restore or Delete.");
   try {
-    await actionCvs(db(), [...new Set(parsed.data.ids)], parsed.data.action);
+    await actionCvs(db(), user.id, [...new Set(parsed.data.ids)], parsed.data.action);
   } catch (error) {
     // Do not log SQL parameters, CV contents or user evidence from database exceptions.
     console.error(JSON.stringify({ event: "cv_management_failed", action: parsed.data.action, count: parsed.data.ids.length, errorType: error instanceof Error ? error.name.slice(0, 64) : "unknown" }));
@@ -117,7 +128,7 @@ export async function requestCv(
   _prev: ActionResult,
   form: FormData,
 ): Promise<ActionResult> {
-  await requireSession();
+  const user = await requireUser();
   let draftId: string;
   try {
     const id = zUuid().parse(String(form.get("jobId")));
@@ -126,20 +137,18 @@ export async function requestCv(
       return fail(
         "Choose a CV model different from website extraction before generating.",
       );
-    const [library] = await db()
-      .select()
-      .from(cvLibraries)
-      .orderBy(desc(cvLibraries.version))
-      .limit(1);
+    const library = await latestLibrary(db(), user.id);
     if (!library) return fail("Save your Library first.");
     const generationLibrary = groupCvLibrary(
       CvLibrarySchema.parse({ ...library.content, ...(settings.cvWritingPreferences ?? {}), theme: settings.cvTheme ?? library.content.theme ?? DEFAULT_CV_THEME }),
     );
+    // The role must be one this account can see.
     const [row] = await db()
       .select({ job: jobs, company: companies.name })
-      .from(jobs)
+      .from(userJobs)
+      .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
       .innerJoin(companies, eq(jobs.companyId, companies.id))
-      .where(eq(jobs.id, id));
+      .where(and(eq(userJobs.userId, user.id), eq(jobs.id, id)));
     if (!row) return fail("Role not found.");
     const supplied = String(form.get("description") ?? "").trim();
     if (
@@ -161,10 +170,11 @@ export async function requestCv(
       return fail("Keep the job description under 60,000 characters.");
     createCvWritingBudget(generationLibrary, `${row.job.title} ${description}`);
     draftId = await db().transaction(async (tx) => {
-      const revision = await nextCvRevision(tx, { companyName: row.company, jobTitle: row.job.title });
+      const revision = await nextCvRevision(tx, { userId: user.id, companyName: row.company, jobTitle: row.job.title });
       const [draft] = await tx
         .insert(cvDrafts)
         .values({
+          userId: user.id,
           revision,
           jobId: id,
           jobTitle: row.job.title,
@@ -207,14 +217,14 @@ export async function saveCvDraft(
   _prev: ActionResult,
   form: FormData,
 ): Promise<ActionResult> {
-  await requireSession();
+  const user = await requireUser();
   let savedId: string;
   try {
     zUuid().parse(id);
     const [draft] = await db()
       .select()
       .from(cvDrafts)
-      .where(eq(cvDrafts.id, id));
+      .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, user.id)));
     if (!draft || !["ready", "failed"].includes(draft.status) || !draft.content)
       return fail("Wait for the current build to finish before editing.");
     const content = structuredClone(draft.content);
@@ -263,14 +273,7 @@ export async function saveCvDraft(
       const [source] = await tx.select({ id: cvDrafts.id }).from(cvDrafts).where(eq(cvDrafts.id, id));
       if (!source) throw new Error("This CV was deleted. Open the latest saved CV before editing.");
       if (fit) {
-        const [latest] =
-          intent === "improve"
-            ? await tx
-                .select()
-                .from(cvLibraries)
-                .orderBy(desc(cvLibraries.version))
-                .limit(1)
-            : [];
+        const latest = intent === "improve" ? await latestLibrary(tx, user.id) : undefined;
         const evidence = latest
           ? groupCvLibrary(CvLibrarySchema.parse(latest.content))
           : draft.librarySnapshot;
@@ -344,13 +347,9 @@ export async function saveCvDraft(
       );
       if (form.get("rememberWording") === "on") {
         await tx.execute(
-          sql`select pg_advisory_xact_lock(hashtext('cv:library'))`,
+          sql`select pg_advisory_xact_lock(hashtext(${`cv:library:${user.id}`}))`,
         );
-        const [latest] = await tx
-          .select()
-          .from(cvLibraries)
-          .orderBy(desc(cvLibraries.version))
-          .limit(1);
+        const latest = await latestLibrary(tx, user.id);
         if (latest) {
           const changes: string[] = [];
           if (content.summary !== draft.content!.summary)
@@ -368,7 +367,7 @@ export async function saveCvDraft(
               );
           });
           if (changes.length) {
-            const [storedPreferences] = await tx.select().from(settingsTable).where(eq(settingsTable.key, "cvWritingPreferences"));
+            const [storedPreferences] = await tx.select().from(userSettingsTable).where(and(eq(userSettingsTable.userId, user.id), eq(userSettingsTable.key, "cvWritingPreferences")));
             const preferences = resolveCvWritingPreferences(storedPreferences?.value, latest.content);
             const preferredWording = [
               preferences.preferredWording,
@@ -380,9 +379,7 @@ export async function saveCvDraft(
               throw new Error(
                 "Saved phrasing is full. Edit or remove older examples in Settings first.",
               );
-            const value = { ...preferences, preferredWording };
-            await tx.insert(settingsTable).values({ key: "cvWritingPreferences", value })
-              .onConflictDoUpdate({ target: settingsTable.key, set: { value, updatedAt: new Date() } });
+            await upsertUserSetting(tx, user.id, "cvWritingPreferences", { ...preferences, preferredWording });
           }
         }
       }
@@ -404,7 +401,7 @@ export async function assessCvDraft(
   _prev: ActionResult,
   _form: FormData,
 ): Promise<ActionResult> {
-  await requireSession();
+  const user = await requireUser();
   try {
     zUuid().parse(id);
     await db().transaction(async (tx) => {
@@ -412,7 +409,7 @@ export async function assessCvDraft(
       const [draft] = await tx
         .select()
         .from(cvDrafts)
-        .where(eq(cvDrafts.id, id))
+        .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, user.id)))
         .for("update");
       if (
         !draft ||
@@ -452,7 +449,7 @@ export async function finaliseCvDraft(
   _prev: ActionResult,
   form: FormData,
 ): Promise<ActionResult> {
-  await requireSession();
+  const user = await requireUser();
   try {
     zUuid().parse(id);
     if (form.get("reviewed") !== "on")
@@ -463,7 +460,7 @@ export async function finaliseCvDraft(
       const [draft] = await tx
         .select()
         .from(cvDrafts)
-        .where(eq(cvDrafts.id, id))
+        .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, user.id)))
         .for("update");
       if (!draft?.content || draft.status !== "ready")
         throw new Error("Wait for this revision’s assessment to finish.");

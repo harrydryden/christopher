@@ -1,15 +1,17 @@
 /**
  * Company profiling and similar-company recommendations.
- * Every suggestion is verified deterministically before the user ever sees it (SPEC R-8.3).
+ * Profiles are shared (one per company); recommendations are made for one account at a time from
+ * the companies that account follows. Every suggestion is verified deterministically before the
+ * user ever sees it (SPEC R-8.3).
  */
 import { schema, enqueueTask, type Task } from "@christopher/db";
-import { dedupeKeyFor, discovery, ensureHttpUrl, extractDomain, priorityFor, stripHtml, type DiscoveryResult } from "@christopher/core";
-import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { dedupeKeyFor, discovery, ensureHttpUrl, extractDomain, priorityFor, stripHtml, type DiscoveryResult, type TaskPayloads } from "@christopher/core";
+import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { aiBudgetExceeded, makeDiscoveryContext, makeFetchContext, type WorkerDeps } from "../context";
 import { serialiseCandidate } from "./discover";
 import { latestProfile } from "./learning";
 import { withResourceLease } from "../lease";
-import { selectExamples, recommendationContext } from "../recommendation-context";
+import { selectExamples, recommendationContext, followedCompanies } from "../recommendation-context";
 import { sha1 } from "@christopher/core";
 import { log } from "../log";
 
@@ -89,7 +91,8 @@ async function gatherCompanyText(deps: WorkerDeps, homepageUrl: string): Promise
 }
 
 export async function handleSuggestCompanies(task: Task, deps: WorkerDeps): Promise<unknown> {
-  const { limit } = (task.payload ?? {}) as { limit?: number };
+  const { userId, limit } = (task.payload ?? {}) as TaskPayloads["suggest_companies"];
+  if (!userId) return { skipped: "no account on task" };
   if (task.id) {
     const checkpoint = await deps.db.select({ id: schema.discoveryCandidates.id, processedAt: schema.discoveryCandidates.processedAt }).from(schema.discoveryCandidates).where(eq(schema.discoveryCandidates.batchKey, task.id));
     if (checkpoint.length) {
@@ -97,11 +100,11 @@ export async function handleSuggestCompanies(task: Task, deps: WorkerDeps): Prom
       return { resumed: checkpoint.length };
     }
   }
-  const settings = await deps.settings();
+  const settings = await deps.userSettings(userId);
   if (!settings.suggestionsEnabled) return { skipped: "suggestions disabled" };
   if (!deps.ai.enabled || (await aiBudgetExceeded(deps))) return { skipped: "ai unavailable" };
 
-  const companies = await deps.db.select().from(schema.companies).where(inArray(schema.companies.status, ["active", "paused"]));
+  const companies = await followedCompanies(deps, userId);
   if (companies.length === 0) return { skipped: "no companies to compare against" };
 
   const profiles = await deps.db.select().from(schema.companyProfiles).where(sql`${schema.companyProfiles.companyId} is not null`);
@@ -121,22 +124,21 @@ export async function handleSuggestCompanies(task: Task, deps: WorkerDeps): Prom
   });
 
   const previous = await deps.db.select({ domain: schema.companySuggestions.domain, status: schema.companySuggestions.status, name: schema.companySuggestions.name,
-    rejectionReason: schema.companySuggestions.rejectionReason, resolvedAt: schema.companySuggestions.resolvedAt }).from(schema.companySuggestions);
-  const allDomains = await deps.db.select({ domain: schema.companies.domain }).from(schema.companies);
-  const excludeDomains = [...allDomains.map(c => c.domain), ...previous.map(s => s.domain)];
+    rejectionReason: schema.companySuggestions.rejectionReason, resolvedAt: schema.companySuggestions.resolvedAt }).from(schema.companySuggestions)
+    .where(eq(schema.companySuggestions.userId, userId));
+  const excludeDomains = [...companies.map(c => c.domain), ...previous.map(s => s.domain)];
   const rejected = previous
     .filter((s) => s.status === "rejected" && s.rejectionReason)
     .slice(0, 40)
     .map((s) => ({ name: s.name, reason: s.rejectionReason! }));
 
-  const profile = await latestProfile(deps);
   const candidates = await deps.ai.suggestCompanies({
     portfolio: selectExamples(portfolio),
-    preferenceProfile: (await recommendationContext(deps)).preferences,
+    preferenceProfile: (await recommendationContext(deps, userId)).preferences,
     excludeDomains,
     rejected,
     limit: limit ?? 15,
-  });
+  }, { refType: "suggestions", refId: userId, userId });
   if (!candidates || candidates.length === 0) return { skipped: "no candidates returned" };
 
   const nameToId = new Map(companies.map((c) => [c.name.toLowerCase(), c.id]));
@@ -147,7 +149,7 @@ export async function handleSuggestCompanies(task: Task, deps: WorkerDeps): Prom
       const domain = extractDomain(candidate.homepageUrl);
       if (excludeDomains.includes(domain)) continue;
       const similarTo = candidate.similarTo.map(name => nameToId.get(name.toLowerCase())).filter((id): id is string => !!id);
-      const rows = await tx.insert(schema.discoveryCandidates).values({ name: candidate.name, domain, homepageUrl: candidate.homepageUrl,
+      const rows = await tx.insert(schema.discoveryCandidates).values({ userId, name: candidate.name, domain, homepageUrl: candidate.homepageUrl,
         rationale: candidate.rationale, quote: "", similarTo, rank, batchKey: task.id ?? "manual",
       }).onConflictDoNothing().returning({ id: schema.discoveryCandidates.id });
       for (const row of rows) {
@@ -167,13 +169,14 @@ interface VerificationResult {
   error?: string;
 }
 
-/** A suggestion is only shown once we have confirmed the company is real and hiring. */
-export async function verifyCandidate(deps: WorkerDeps, homepageUrl: string, countMatching: boolean): Promise<VerificationResult> {
-  const key = sha1(`${extractDomain(homepageUrl)}:${JSON.stringify((await deps.settings()).gate)}:${countMatching}`);
+/** A suggestion is only shown once we have confirmed the company is real and hiring. Matches use the account's gate. */
+export async function verifyCandidate(deps: WorkerDeps, userId: string, homepageUrl: string, countMatching: boolean): Promise<VerificationResult> {
+  const settings = await deps.userSettings(userId);
+  const key = sha1(`${extractDomain(homepageUrl)}:${JSON.stringify(settings.gate)}:${countMatching}`);
   return withResourceLease(deps, `verification:${key}`, async locked => {
     const [cached] = await deps.db.select().from(schema.verificationCache).where(eq(schema.verificationCache.key, key));
     if (cached && cached.expiresAt > deps.now()) return cached.result;
-    const result = await verifyUncached(deps, homepageUrl, countMatching);
+    const result = await verifyUncached(deps, homepageUrl, countMatching, settings.gate);
     if (!result.error) await deps.db.transaction(async tx => {
       await locked.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
       const expiresAt = new Date(deps.now().getTime() + (result.careersSource ? 7 : 1) * 86400000);
@@ -183,7 +186,7 @@ export async function verifyCandidate(deps: WorkerDeps, homepageUrl: string, cou
   });
 }
 
-async function verifyUncached(deps: WorkerDeps, homepageUrl: string, countMatching: boolean): Promise<VerificationResult> {
+async function verifyUncached(deps: WorkerDeps, homepageUrl: string, countMatching: boolean, gate: Awaited<ReturnType<WorkerDeps["userSettings"]>>["gate"]): Promise<VerificationResult> {
   let url: string;
   try {
     url = ensureHttpUrl(homepageUrl);
@@ -208,13 +211,12 @@ async function verifyUncached(deps: WorkerDeps, homepageUrl: string, countMatchi
   }
   if (!result.best) return { homepageOk: true, careersSource: null };
 
-  const settings = await deps.settings();
   const sample = result.best.sample ?? [];
   const openRoles = result.best.count ?? sample.length;
   let matchingRoles: number | undefined;
   if (countMatching && sample.length > 0) {
     const { evaluateGate } = await import("@christopher/core");
-    matchingRoles = sample.filter((p) => evaluateGate({ title: p.title, location: p.location, remote: p.remote }, settings.gate).inTable).length;
+    matchingRoles = sample.filter((p) => evaluateGate({ title: p.title, location: p.location, remote: p.remote }, gate).inTable).length;
   }
   return {
     homepageOk: true,
@@ -244,4 +246,4 @@ export async function queueMissingCompanyProfiles(deps: WorkerDeps): Promise<num
   return queued;
 }
 
-export { serialiseCandidate, gatherCompanyText as _gatherCompanyTextForTests };
+export { serialiseCandidate, gatherCompanyText as _gatherCompanyTextForTests, latestProfile as _latestProfile };

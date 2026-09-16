@@ -96,7 +96,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
         getModel: () => draft.model,
         onUsage: async (usage) => {
           generationError = usage.error;
-          await deps.db.insert(schema.aiCalls).values(usage);
+          await deps.db.insert(schema.aiCalls).values({ ...usage, userId: draft.userId });
         },
       });
       const requireResult = <T>(value: T | null): T => {
@@ -131,6 +131,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
             await ai.analyseCvJob(draft.jobDescription, {
               refType: "cv-rubric",
               refId: draft.id,
+              userId: draft.userId,
             }),
           ),
       );
@@ -182,7 +183,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
                   improvements,
                   ...input,
                 },
-                { refType: "cv-author", refId: draft.id },
+                { refType: "cv-author", refId: draft.id, userId: draft.userId },
               ),
             ),
           initial,
@@ -205,7 +206,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
             claims: cvClaimItems(content),
             evidence: cvEvidenceItems(library),
           },
-          { refType: "cv-review", refId: draft.id },
+          { refType: "cv-review", refId: draft.id, userId: draft.userId },
         ),
       );
       const assessment = createCvAssessment({

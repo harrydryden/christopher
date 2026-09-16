@@ -1,10 +1,20 @@
 import { schema, type Db } from "@christopher/db";
-import { resolveSettings, type AppSettings } from "@christopher/core";
+import { resolveSettings, resolveSystemSettings, type AppSettings, type SystemSettings } from "@christopher/core";
 import { eq } from "drizzle-orm";
 
-export async function loadSettings(db: Db): Promise<AppSettings> {
+/** System settings: the schedule, models, budget and scan policy an administrator controls. */
+export async function loadSettings(db: Db): Promise<SystemSettings> {
   const rows = await db.select({ key: schema.settings.key, value: schema.settings.value }).from(schema.settings);
-  return resolveSettings(rows);
+  return resolveSystemSettings(rows);
+}
+
+/** One account's settings (keywords, locations, profile, CV preferences) merged onto the system ones. */
+export async function loadUserSettings(db: Db, userId: string): Promise<AppSettings> {
+  const [systemRows, userRows] = await Promise.all([
+    db.select({ key: schema.settings.key, value: schema.settings.value }).from(schema.settings),
+    db.select({ key: schema.userSettings.key, value: schema.userSettings.value }).from(schema.userSettings).where(eq(schema.userSettings.userId, userId)),
+  ]);
+  return resolveSettings(systemRows, userRows);
 }
 
 /** Internal bookkeeping values live in the same table under an `internal:` prefix; resolveSettings ignores them. */

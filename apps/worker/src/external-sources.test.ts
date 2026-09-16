@@ -7,9 +7,11 @@ import { readEnv } from "./env";
 import { articleLinks, handleMonitorSource, handleExtractDocument, handleVerifyCompany } from "./handlers/external-sources";
 import { claimTask, completeTask } from "./queue";
 import { schedulerTick } from "./scheduler";
+import { ensureTestUser } from "./test-users";
 vi.mock("./handlers/companies", () => ({ verifyCandidate: vi.fn(async () => ({ homepageOk: true, careersSource: { type: "greenhouse", url: "https://boards.greenhouse.io/acme", confidence: 0.95 }, openRoles: 4, matchingRoles: 1 })) }));
 const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
 let deps: WorkerDeps;
+let userId: string;
 const now = new Date("2026-09-11T00:00:00Z");
 const content = "Acme Robotics raised funding to expand its London operations team. ".repeat(3);
 beforeAll(async () => {
@@ -22,10 +24,11 @@ afterAll(async () => { if (deps) await client.db.execute(sql`truncate discovery_
 beforeEach(async () => {
   vi.restoreAllMocks();
   await client.db.execute(sql`truncate discovery_sources, company_suggestions, companies, tasks, settings, scan_runs, ai_calls restart identity cascade`);
+  userId = (await ensureTestUser(client.db, "sources@example.com")).id;
   Object.defineProperty(deps.ai, "enabled", { value: true, configurable: true });
 });
 async function sourceWithDocument() {
-  const [source] = await client.db.insert(schema.discoverySources).values({ name: "Scaling Europe", kind: "email", nextRunAt: now }).returning();
+  const [source] = await client.db.insert(schema.discoverySources).values({ userId, name: "Scaling Europe", kind: "email", nextRunAt: now }).returning();
   await client.db.insert(schema.discoveryDocuments).values({ sourceId: source!.id, title: "Weekly edition", content, fingerprint: "unique" });
   return source!;
 }
@@ -45,8 +48,8 @@ it("follows LinkedIn editions, excludes navigation and deduplicates tracking lin
 it("queues due enabled sources only, once across repeated scheduler ticks", async () => {
   const source = await sourceWithDocument();
   await client.db.insert(schema.discoverySources).values([
-    { name: "Paused", kind: "email", enabled: false, nextRunAt: now },
-    { name: "Future", kind: "email", nextRunAt: new Date("2026-10-01") },
+    { userId, name: "Paused", kind: "email", enabled: false, nextRunAt: now },
+    { userId, name: "Future", kind: "email", nextRunAt: new Date("2026-10-01") },
   ]);
   await schedulerTick(deps); await schedulerTick(deps);
   const tasks = await client.db.select().from(schema.tasks).where(eq(schema.tasks.type, "monitor_source"));
@@ -95,7 +98,7 @@ it("still processes imported text when a LinkedIn fetch is blocked", async () =>
 });
 
 it("waits for email content without requiring AI or reporting an error", async () => {
-  const [source] = await client.db.insert(schema.discoverySources).values({ name: "Empty inbox", kind: "email", nextRunAt: now }).returning();
+  const [source] = await client.db.insert(schema.discoverySources).values({ userId, name: "Empty inbox", kind: "email", nextRunAt: now }).returning();
   Object.defineProperty(deps.ai, "enabled", { value: false, configurable: true });
   expect(await handleMonitorSource(task(source!.id), deps)).toEqual({ documents: 0, stored: 0 });
   const [updated] = await client.db.select().from(schema.discoverySources);

@@ -1,25 +1,32 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb, schema, type Db } from "@christopher/db";
+import type { User } from "@christopher/db/schema";
 import { runMigrations } from "@christopher/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { discoverySourceState } from "@/lib/discovery-ux";
+import { ensureTestUser } from "@/test/auth";
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
-const auth = vi.hoisted(() => ({ requireSession: vi.fn(async () => {}) }));
+let user: User;
+const auth = vi.hoisted(() => ({ requireUser: vi.fn(), requireSession: vi.fn() }));
 vi.mock("@/lib/auth", () => auth);
 vi.mock("@/lib/db", () => ({ db: () => database }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 import { saveDiscoverySource, updateDiscoverySource, checkDiscoverySource, importDiscoveryDocument } from "./discovery-sources";
 import { acceptSuggestion, rejectSuggestion, findMoreSuggestions } from "./suggestions";
 function form(values: Record<string, string>) { const data = new FormData(); for (const [key, value] of Object.entries(values)) data.set(key, value); return data; }
-beforeAll(async () => { const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test"); database = client.db; pool = client.pool; await runMigrations(database); });
+beforeAll(async () => { const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test"); database = client.db; pool = client.pool; await runMigrations(database); user = await ensureTestUser(database); });
 afterAll(async () => { if (database) await database.execute(sql`truncate discovery_sources cascade`); await pool?.end(); });
-beforeEach(async () => { auth.requireSession.mockReset(); await database.execute(sql`truncate discovery_sources, company_suggestions, companies, tasks, settings restart identity cascade`); });
+beforeEach(async () => {
+  auth.requireUser.mockReset(); auth.requireUser.mockImplementation(async () => user);
+  auth.requireSession.mockReset(); auth.requireSession.mockImplementation(async () => user);
+  await database.execute(sql`truncate discovery_sources, company_suggestions, companies, tasks, settings, user_settings restart identity cascade`);
+});
 async function source() {
-  const [row] = await database.insert(schema.discoverySources).values({ name: "Weekly newsletter", kind: "email", nextRunAt: new Date("2030-01-01") }).returning(); return row!;
+  const [row] = await database.insert(schema.discoverySources).values({ userId: user.id, name: "Weekly newsletter", kind: "email", nextRunAt: new Date("2030-01-01") }).returning(); return row!;
 }
 async function recommendation() {
-  const [row] = await database.insert(schema.companySuggestions).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://acme.example", verification: { homepageOk: true, careersSource: { type: "greenhouse", url: "https://boards.greenhouse.io/acme", confidence: 0.95 } } }).returning(); return row!;
+  const [row] = await database.insert(schema.companySuggestions).values({ userId: user.id, name: "Acme", domain: "acme.example", homepageUrl: "https://acme.example", verification: { homepageOk: true, careersSource: { type: "greenhouse", url: "https://boards.greenhouse.io/acme", confidence: 0.95 } } }).returning(); return row!;
 }
 it("gives useful input errors and prevents equivalent sources across concurrent submissions", async () => {
   expect((await saveDiscoverySource(form({ name: "Weekly", kind: "website", intervalDays: "7" }))).ok).toBe(false);
@@ -27,9 +34,14 @@ it("gives useful input errors and prevents equivalent sources across concurrent 
   expect(outcomes.filter(r => r.ok)).toHaveLength(1);
   expect(await database.select().from(schema.discoverySources)).toHaveLength(1);
 });
-it("recognises canonical duplicates of previously saved sources", async () => {
-  await database.insert(schema.discoverySources).values({ name: "Old source", kind: "website", url: "https://news.example/blog/" });
+it("recognises canonical duplicates of previously saved sources, per account", async () => {
+  await database.insert(schema.discoverySources).values({ userId: user.id, name: "Old source", kind: "website", url: "https://news.example/blog/" });
   expect((await saveDiscoverySource(form({ name: "New", kind: "website", intervalDays: "7", url: "https://news.example/blog" }))).ok).toBe(false);
+  // Another account may follow the same newsletter; sources are private.
+  const other = await ensureTestUser(database, "other@example.com", "member");
+  auth.requireUser.mockImplementation(async () => other);
+  expect((await saveDiscoverySource(form({ name: "Mine", kind: "website", intervalDays: "7", url: "https://news.example/blog" }))).ok).toBe(true);
+  expect(await database.select().from(schema.discoverySources)).toHaveLength(2);
 });
 it("preserves a due date on an unchanged save and makes a resumed source due now", async () => {
   const row = await source();
@@ -49,8 +61,18 @@ it("reports duplicate imports without silently truncating long editions", async 
   expect((await importDiscoveryDocument(row.id, form({ title: "Long", content: "x".repeat(40001) }))).ok).toBe(false);
   expect(await database.select().from(schema.discoveryDocuments)).toHaveLength(1);
 });
-it("blocks checks when discovery is disabled, on both discovery paths", async () => {
-  const row = await source(); await database.insert(schema.settings).values({ key: "suggestionsEnabled", value: false });
+it("refuses to touch another account's source", async () => {
+  const row = await source();
+  const other = await ensureTestUser(database, "other@example.com", "member");
+  auth.requireUser.mockImplementation(async () => other);
+  expect((await updateDiscoverySource(row.id, form({ enabled: "on", intervalDays: "3", name: "Hijacked" }))).ok).toBe(false);
+  expect((await checkDiscoverySource(row.id)).ok).toBe(false);
+  expect((await importDiscoveryDocument(row.id, form({ title: "Edition", content: "Acme expands its London team. ".repeat(10) }))).ok).toBe(false);
+  expect((await database.select().from(schema.discoverySources))[0]!.name).toBe("Weekly newsletter");
+  expect(await database.select().from(schema.discoveryDocuments)).toHaveLength(0);
+});
+it("blocks checks when discovery is disabled for the account, on both discovery paths", async () => {
+  const row = await source(); await database.insert(schema.userSettings).values({ userId: user.id, key: "suggestionsEnabled", value: false });
   expect((await checkDiscoverySource(row.id)).ok).toBe(false); expect((await findMoreSuggestions()).ok).toBe(false);
   expect(await database.select().from(schema.tasks)).toHaveLength(0);
 });
@@ -65,16 +87,27 @@ it("makes accepting a recommendation atomic and safe to repeat", async () => {
   const results = await Promise.all([acceptSuggestion(row.id), acceptSuggestion(row.id)]);
   expect(results.filter(r => r.ok)).toHaveLength(1);
   expect(await database.select().from(schema.companies)).toHaveLength(1);
+  expect(await database.select().from(schema.companySubscriptions)).toMatchObject([{ userId: user.id, status: "active" }]);
   const queued = await database.select().from(schema.tasks);
   expect(queued).toHaveLength(2); expect(queued.find(t => t.type === "discover")!.payload).toMatchObject({ url: "https://boards.greenhouse.io/acme" });
   expect(await database.select().from(schema.careerSources)).toHaveLength(0);
   expect((await rejectSuggestion(row.id, form({ reason: "Changed my mind" }))).ok).toBe(false);
   expect((await database.select().from(schema.companySuggestions))[0]!.status).toBe("accepted");
 });
-it("resolves a company already added elsewhere without duplicate setup", async () => {
-  const row = await recommendation(); await database.insert(schema.companies).values({ name: "Acme", domain: row.domain, homepageUrl: row.homepageUrl });
-  expect((await acceptSuggestion(row.id)).ok).toBe(true);
+it("follows a company already in the shared catalogue without repeating its setup", async () => {
+  const row = await recommendation();
+  const [company] = await database.insert(schema.companies).values({ name: "Acme", domain: row.domain, homepageUrl: row.homepageUrl }).returning();
+  await database.insert(schema.careerSources).values({ companyId: company!.id, type: "greenhouse", url: "https://boards.greenhouse.io/acme", status: "active" });
+  expect(await acceptSuggestion(row.id)).toMatchObject({ ok: true, message: expect.stringContaining("shared catalogue") });
   expect(await database.select().from(schema.companies)).toHaveLength(1); expect(await database.select().from(schema.tasks)).toHaveLength(0);
+  expect(await database.select().from(schema.companySubscriptions)).toMatchObject([{ userId: user.id, companyId: company!.id }]);
+});
+it("re-discovers a catalogue company that has no usable careers source when it is followed", async () => {
+  const row = await recommendation();
+  await database.insert(schema.companies).values({ name: "Acme", domain: row.domain, homepageUrl: row.homepageUrl });
+  expect((await acceptSuggestion(row.id)).ok).toBe(true);
+  const queued = await database.select().from(schema.tasks);
+  expect(queued.map(t => t.type)).toEqual(["discover"]);
 });
 it("requires a reason and retains a dismissal once reviewed", async () => {
   const row = await recommendation();
@@ -83,7 +116,7 @@ it("requires a reason and retains a dismissal once reviewed", async () => {
   expect((await acceptSuggestion(row.id)).ok).toBe(false);
 });
 it("authenticates before attempting a mutation", async () => {
-  auth.requireSession.mockRejectedValueOnce(new Error("Unauthorised"));
+  auth.requireUser.mockRejectedValueOnce(new Error("Unauthorised"));
   await expect(saveDiscoverySource(form({}))).rejects.toThrow("Unauthorised");
 });
 it("distinguishes paused, disabled, active and empty-email states", () => {
@@ -100,6 +133,7 @@ it("rolls back acceptance if queuing careers setup fails", async () => {
   try {
     await expect(acceptSuggestion(row.id)).rejects.toThrow("Queue unavailable");
     expect(await database.select().from(schema.companies)).toHaveLength(0);
+    expect(await database.select().from(schema.companySubscriptions)).toHaveLength(0);
     expect((await database.select().from(schema.companySuggestions))[0]!.status).toBe("pending");
   } finally { failure.mockRestore(); }
 });

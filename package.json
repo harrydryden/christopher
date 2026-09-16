@@ -2,7 +2,7 @@
   "name": "christopher",
   "private": true,
   "version": "0.1.0",
-  "description": "Single-user careers page monitor: daily scans, keyword and location filtered roles, apply/skip learning, similar-company recommendations.",
+  "description": "Careers page monitor for a few accounts: one shared company catalogue scanned daily, per-account keyword and location filtered roles, apply/skip learning, similar-company recommendations.",
   "packageManager": "pnpm@10.33.0",
   "engines": {
     "node": ">=22"

@@ -8,8 +8,8 @@ export * as schema from "./schema";
 export { createDb, getDb, type Db, type CreateDbOptions } from "./client";
 export { enqueueTask, pendingTaskCounts, taskById, activeTaskFor, type EnqueueOptions } from "./tasks";
 
-export { reevaluateGate, archiveNonMatches } from "./gate";
-export { appendProfile } from "./profiles";
+export { reevaluateGate, archiveNonMatches, type GateScope, type ArchiveScope } from "./gate";
+export { appendProfile, latestProfileFor } from "./profiles";
 export { workloadMetrics } from "./scaling";
 
 export { roleStatusSql } from "./role-workflow";
@@ -19,3 +19,6 @@ export { scanRunSummary } from "./scan-summary";
 export { actionCvs, completeCv, lockCvDraft, lockCvLifecycle, nextCvRevision } from "./cv-lifecycle";
 
 export { cvRoleKey } from "./cv-role-key";
+
+export { syncCompanyStatus, subscribeToCompany, setSubscriptionStatus, subscribedCompanyIds } from "./subscriptions";
+export { BOOTSTRAP_USER_ID, BOOTSTRAP_EMAIL, SEED_TAGS, seedTagVocabulary, createUser, listUserIds, normaliseEmail, type CreateUserInput } from "./users";

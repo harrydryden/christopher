@@ -3,7 +3,6 @@ import {
   renderCvPdfWithReport,
   assertCvPageLimit,
   CvLayoutError,
-  CV_MAX_PAGES,
 } from "@christopher/core/cv-pdf";
 import {
   createCvAssessment,
@@ -22,6 +21,7 @@ import {
   CvContentSchema,
   CvPlanSchema,
   CvLibrarySchema,
+  cvMaxPages,
   groupCvLibrary,
 } from "@christopher/core";
 import { withResourceLease } from "../lease";
@@ -143,11 +143,12 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
         ? await renderCvPdfWithReport(content)
             .then((report) => report.pageCount)
             .catch((error) => {
-              if (error instanceof CvLayoutError) return CV_MAX_PAGES + 1;
+              if (error instanceof CvLayoutError) return Number.POSITIVE_INFINITY;
               throw error;
             })
         : undefined;
-      if (!content || savedPages! > CV_MAX_PAGES) {
+      // Each saved revision carries its own page limit in its theme.
+      if (!content || savedPages! > cvMaxPages(content.theme)) {
         phase = "writing and fitting the CV";
         const initial = content
           ? CvPlanSchema.parse(content)
@@ -195,8 +196,8 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
       }
       phase = "assessing the final wording and factual evidence";
       await save({ buildStage: "assessing" });
-      const { pageCount } = await renderCvPdfWithReport(content);
-      assertCvPageLimit(pageCount);
+      const { pageCount, maxPages } = await renderCvPdfWithReport(content);
+      assertCvPageLimit(pageCount, maxPages);
       const review = requireResult(
         await ai.assessCv(
           {

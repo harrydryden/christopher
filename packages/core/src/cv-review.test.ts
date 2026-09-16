@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { materialiseCv, groupCvLibrary, type CvLibrary } from "./cv";
+import { DEFAULT_CV_THEME, materialiseCv, groupCvLibrary, type CvLibrary } from "./cv";
 import {
   createCvAssessment,
   validateCvRubric,
@@ -173,6 +173,7 @@ it("invalidates stale assessments for wording, theme, evidence or description ch
       profile: "Changed",
     }),
   ).toBe(false);
+  // The gate is the CV's own page limit: three pages by default, fewer when its theme says so.
   expect(() =>
     assertCvFinalisable({
       content,
@@ -180,7 +181,27 @@ it("invalidates stale assessments for wording, theme, evidence or description ch
       librarySnapshot: library,
       assessment: { ...assessment, pageCount: 3 },
     }),
-  ).toThrow("two pages");
+  ).not.toThrow();
+  expect(() =>
+    assertCvFinalisable({
+      content,
+      jobDescription: description,
+      librarySnapshot: library,
+      assessment: { ...assessment, pageCount: 4 },
+    }),
+  ).toThrow("3 pages");
+  const twoPage = { ...content, theme: { ...DEFAULT_CV_THEME, maxPages: 2 } };
+  const twoPageAssessment = createCvAssessment({
+    content: twoPage, description, library, rubric, review: review(), model: "test", pageCount: 3,
+  });
+  expect(() =>
+    assertCvFinalisable({
+      content: twoPage,
+      jobDescription: description,
+      librarySnapshot: library,
+      assessment: twoPageAssessment,
+    }),
+  ).toThrow("2 pages");
 });
 it("allows a factually supported low-scoring CV to be reviewed and finalised", () => {
   const value = review();

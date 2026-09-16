@@ -1,26 +1,37 @@
 import { cvSectionHeading, cvSectionTexts } from "./cv-format";
 import PDFDocument from "pdfkit";
-import { DEFAULT_CV_THEME, cvForeground, cvDisplaySections, CvContentSchema, CV_LIMITS, CV_GROUPS, type CvContent } from "./cv";
+import { DEFAULT_CV_THEME, cvForeground, cvDisplaySections, cvMaxPages, CvContentSchema, CV_GROUPS, type CvContent, type CvFont } from "./cv";
+import { LIBERATION_SANS_BOLD, LIBERATION_SANS_REGULAR } from "./fonts/liberation-sans";
 
 import { cleanCvText, measurePillRows, drawPillRow, PILL_STYLES } from "./cv-pdf-pills";
 
-export const CV_MAX_PAGES = CV_LIMITS.pages;
 export class CvLayoutError extends Error {}
-export function assertCvPageLimit(pageCount: number): void {
-  if (pageCount > CV_MAX_PAGES) throw new CvLayoutError(`CV is ${pageCount} pages; the maximum is ${CV_MAX_PAGES}. Save a new revision to fit and assess it automatically.`,
-    );
+export function assertCvPageLimit(pageCount: number, maxPages: number): void {
+  if (pageCount > maxPages) throw new CvLayoutError(`CV is ${pageCount} pages; the maximum is ${maxPages}. Save a new revision to fit and assess it automatically.`);
 }
 
-/** Server-side, selectable-text A4 PDF. No browser, remote fonts or model-authored HTML. */
+const decodeFont = (base64: string) => Buffer.from(base64.replace(/\s+/g, ""), "base64");
+let liberationSans: { regular: Buffer; bold: Buffer } | undefined;
+/** Christopher is pdfkit's built-in Helvetica; Arial embeds the bundled Liberation Sans bytes. */
+function registerCvFont(doc: PDFKit.PDFDocument, font: CvFont): { regular: string; bold: string } {
+  if (font !== "Arial") return { regular: "Helvetica", bold: "Helvetica-Bold" };
+  liberationSans ??= { regular: decodeFont(LIBERATION_SANS_REGULAR), bold: decodeFont(LIBERATION_SANS_BOLD) };
+  doc.registerFont("Arial", liberationSans.regular);
+  doc.registerFont("Arial-Bold", liberationSans.bold);
+  return { regular: "Arial", bold: "Arial-Bold" };
+}
+
+/** Server-side, selectable-text A4 PDF held to the content's own page limit. No browser, remote fonts or model-authored HTML. */
 export async function renderCvPdf(content: CvContent): Promise<Buffer> {
   const result = await renderCvPdfWithReport(content);
-  assertCvPageLimit(result.pageCount);
+  assertCvPageLimit(result.pageCount, result.maxPages);
   return result.pdf;
 }
 
+/** Renders every page so a preview can show an overrun; callers compare pageCount with maxPages. */
 export async function renderCvPdfWithReport(
   content: CvContent,
-): Promise<{ pdf: Buffer; pageCount: number }> {
+): Promise<{ pdf: Buffer; pageCount: number; maxPages: number }> {
   content = CvContentSchema.parse(content);
   const doc = new PDFDocument({
     size: "A4",
@@ -35,6 +46,7 @@ export async function renderCvPdfWithReport(
     doc.on("error", reject);
   });
   const theme = content.theme ?? DEFAULT_CV_THEME;
+  const face = registerCvFont(doc, theme.font);
   const ink = cvForeground(theme.background);
   const accent = theme.primary;
   const paintPage = () => {
@@ -50,7 +62,7 @@ export async function renderCvPdfWithReport(
   const clean = cleanCvText;
   const text = (value: string, bold = false, size = 10) => {
     doc
-      .font(bold ? "Helvetica-Bold" : "Helvetica")
+      .font(bold ? face.bold : face.regular)
       .fontSize(size)
       .fillColor(ink)
       .text(clean(value), { width, lineGap: 2.5 });
@@ -59,7 +71,7 @@ export async function renderCvPdfWithReport(
     if (doc.y + height > doc.page.height - 55) doc.addPage();
   };
   const heading = (value: string, followingHeight: number) => {
-    doc.font("Helvetica-Bold").fontSize(11);
+    doc.font(face.bold).fontSize(11);
     room(
       doc.heightOfString(value.toUpperCase(), { width, lineGap: 0 }) +
         29 +
@@ -68,7 +80,7 @@ export async function renderCvPdfWithReport(
     {
       const top = doc.y + 10;
       const label = value.toUpperCase();
-      doc.font("Helvetica-Bold").fontSize(11);
+      doc.font(face.bold).fontSize(11);
       doc.fillColor(ink).text(label, 44, top, { width, lineGap: 0 });
       const underlineTop = doc.y + 3;
       doc.rect(44, underlineTop, width, 3).fill(accent);
@@ -78,7 +90,7 @@ export async function renderCvPdfWithReport(
   };
   const contact = clean(content.contact).replace(/\s+/g, " ").trim();
   const drawContact = (colour: string) => {
-    doc.font("Helvetica").fontSize(9).fillColor(colour);
+    doc.font(face.regular).fontSize(9).fillColor(colour);
     const links = [
       ...(content.linkedinUrl ? [{ label: "LinkedIn", url: content.linkedinUrl }] : []),
       ...(content.websiteUrl ? [{ label: "Website", url: content.websiteUrl }] : []),
@@ -91,12 +103,12 @@ export async function renderCvPdfWithReport(
   };
   {
     // Measure before painting so the coloured masthead grows with the actual content.
-    doc.font("Helvetica-Bold").fontSize(22);
+    doc.font(face.bold).fontSize(22);
     const nameHeight = doc.heightOfString(clean(content.name), {
       width,
       lineGap: 2.5,
     });
-    doc.font("Helvetica").fontSize(9);
+    doc.font(face.regular).fontSize(9);
     const contactText = [contact, content.linkedinUrl ? "LinkedIn" : "", content.websiteUrl ? "Website" : ""]
       .filter(Boolean)
       .join(" · ");
@@ -106,7 +118,7 @@ export async function renderCvPdfWithReport(
     const contactTop = 34 + nameHeight + 14;
     const profileTop = contactTop + contactHeight + 20;
     const profileWidth = theme.introPanel ? width - 110 : width;
-    doc.font("Helvetica").fontSize(10);
+    doc.font(face.regular).fontSize(10);
     const summaryHeight = doc.heightOfString(clean(content.summary), {
       width: profileWidth,
       lineGap: 2.5,
@@ -120,7 +132,7 @@ export async function renderCvPdfWithReport(
     doc.rect(0, 0, doc.page.width, headerBottom).fill(accent);
     const headerInk = cvForeground(accent);
     doc
-      .font("Helvetica-Bold")
+      .font(face.bold)
       .fontSize(22)
       .fillColor(headerInk)
       .text(clean(content.name), 44, 34, { width, lineGap: 2.5 });
@@ -133,7 +145,7 @@ export async function renderCvPdfWithReport(
         .fill(theme.surface);
       const panelInk = cvForeground(theme.surface);
       doc
-        .font("Helvetica-Bold")
+        .font(face.bold)
         .fontSize(10)
         .fillColor(panelInk)
         .text("Profile", 60, profileTop + 14, { width: 62 });
@@ -144,7 +156,7 @@ export async function renderCvPdfWithReport(
         .strokeColor(panelInk)
         .stroke();
       doc
-        .font("Helvetica")
+        .font(face.regular)
         .fontSize(10)
         .fillColor(panelInk)
         .text(clean(content.summary), 144, profileTop + 14, {
@@ -153,7 +165,7 @@ export async function renderCvPdfWithReport(
         });
     } else {
       doc
-        .font("Helvetica")
+        .font(face.regular)
         .fontSize(10)
         .fillColor(headerInk)
         .text(clean(content.summary), 44, profileTop + 14, {
@@ -172,11 +184,11 @@ export async function renderCvPdfWithReport(
     const showHeading = cvSectionHeading(section) !== null;
     const sectionHeading =
       section.kind === "skill" ? "Skills" : section.heading;
-    doc.font("Helvetica-Bold").fontSize(10);
+    doc.font(face.bold).fontSize(10);
     const headerHeight = showHeading
       ? doc.heightOfString(clean(sectionHeading), { width, lineGap: 2.5 }) + 3
       : 0;
-    doc.font("Helvetica");
+    doc.font(face.regular);
     const bulletHeights = (section.skillItems ?? section.bullets).map(
       (bullet) =>
         doc.heightOfString(clean(bullet), { width: width - 12, lineGap: 2.5 }),
@@ -186,6 +198,7 @@ export async function renderCvPdfWithReport(
       section.industryDescriptions ?? [],
       width,
       PILL_STYLES.industry,
+      face.regular,
     );
     const industryHeight = industryRows.length
       ? industryRows.reduce((sum, row) => sum + row.height, 0) +
@@ -199,6 +212,7 @@ export async function renderCvPdfWithReport(
             cvSectionTexts(section),
             width,
             PILL_STYLES.skill,
+            face.regular,
           )
         : [];
     const firstHeight = skillRows[0]?.height ?? bulletHeights[0] ?? 0;
@@ -255,7 +269,7 @@ export async function renderCvPdfWithReport(
       if (industryRows.length) {
         let top = doc.y;
         for (const row of industryRows) {
-          drawPillRow(doc, row, 44, top, theme.pill, PILL_STYLES.industry);
+          drawPillRow(doc, row, 44, top, theme.pill, PILL_STYLES.industry, face.regular);
           top += row.height + PILL_STYLES.industry.gapY;
         }
         doc.x = 44;
@@ -269,14 +283,14 @@ export async function renderCvPdfWithReport(
             doc.moveDown(0.3);
           }
           const top = doc.y;
-          drawPillRow(doc, row, 44, top, theme.pill, PILL_STYLES.skill);
+          drawPillRow(doc, row, 44, top, theme.pill, PILL_STYLES.skill, face.regular);
           doc.x = 44;
           doc.y = top + row.height + PILL_STYLES.skill.gapY;
         }
         doc.y += 2;
       } else
         for (const bullet of section.skillItems ?? section.bullets) {
-          doc.font("Helvetica").fontSize(10);
+          doc.font(face.regular).fontSize(10);
           const height = doc.heightOfString(clean(bullet), {
             width: width - 12,
             lineGap: 2.5,
@@ -286,7 +300,7 @@ export async function renderCvPdfWithReport(
             text(`${sectionHeading} (continued)`, true);
             doc.moveDown(0.3);
           } else room(height + 5);
-          doc.font("Helvetica").fontSize(10).fillColor(ink);
+          doc.font(face.regular).fontSize(10).fillColor(ink);
           const y = doc.y;
           doc.text("•", 44, y, { width: 10 });
           doc.text(clean(bullet), 56, y, { width: width - 12, lineGap: 2.5 });
@@ -303,7 +317,7 @@ export async function renderCvPdfWithReport(
     const bottom = doc.page.margins.bottom;
     doc.page.margins.bottom = 0;
     doc
-      .font("Helvetica")
+      .font(face.regular)
       .fontSize(8)
       .fillColor(ink)
       .text(`${i + 1} / ${range.count}`, 44, doc.page.height - 30, {
@@ -314,5 +328,5 @@ export async function renderCvPdfWithReport(
     doc.page.margins.bottom = bottom;
   }
   doc.end();
-  return { pdf: await result, pageCount: range.count };
+  return { pdf: await result, pageCount: range.count, maxPages: cvMaxPages(theme) };
 }

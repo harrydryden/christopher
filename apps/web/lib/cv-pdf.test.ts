@@ -19,7 +19,7 @@ const fixture: CvContent = { name: "Example Candidate", contact: "London", summa
   { entryId: "extra", kind: "education", heading: "Project qualification", bullets: ["Completed practical training."] },
 ], gaps: [] };
 afterEach(() => vi.restoreAllMocks());
-it("renders the advertised Navy design for saved content without a theme", async () => {
+it("renders the advertised Black design for saved content without a theme", async () => {
   const fill = vi.spyOn(PDFDocument.prototype, "fill");
   const rounded = vi.spyOn(PDFDocument.prototype, "roundedRect");
   await renderCvPdf(fixture);
@@ -65,15 +65,36 @@ it("groups Education and Skills beneath one parent heading and retains legacy pi
   expect(labels.indexOf("Skills")).toBeLessThan(labels.indexOf("Education"));
   expect(rounded.mock.calls.length).toBeGreaterThan(1);
 });
-it("rejects downloads above two pages while allowing a complete diagnostic preview", async () => {
+it("rejects downloads above the CV's own page limit while allowing a complete diagnostic preview", async () => {
   const long = { ...fixture, sections: Array.from({ length: 12 }, (_, i) => ({ entryId: String(i), kind: "experience" as const, heading: `Director ${i}`,
       bullets: Array.from({ length: 6 }, () =>
         "Managed operational planning and reporting. ".repeat(12),
       ),
     })),
   };
-  expect((await renderCvPdfWithReport(long)).pageCount).toBeGreaterThan(2);
-  await expect(renderCvPdf(long)).rejects.toThrow("the maximum is 2");
+  const report = await renderCvPdfWithReport(long);
+  expect(report.pageCount).toBeGreaterThan(3);
+  expect(report.maxPages).toBe(3);
+  await expect(renderCvPdf(long)).rejects.toThrow("the maximum is 3");
+  const generous = { ...long, theme: { ...DEFAULT_CV_THEME, maxPages: 5 } };
+  expect((await renderCvPdfWithReport(generous)).maxPages).toBe(5);
+  await expect(renderCvPdf(generous)).rejects.toThrow("the maximum is 5");
+  const trimmed = { ...long, sections: long.sections.slice(0, 3) };
+  expect((await renderCvPdfWithReport(trimmed)).pageCount).toBe(3);
+  await expect(renderCvPdf(trimmed)).resolves.toBeInstanceOf(Buffer);
+  await expect(renderCvPdf({ ...trimmed, theme: { ...DEFAULT_CV_THEME, maxPages: 2 } })).rejects.toThrow("the maximum is 2");
+});
+it("embeds Liberation Sans for the Arial font and keeps the built-in face for Christopher", async () => {
+  const christopher = (await renderCvPdf(fixture)).toString("latin1");
+  expect(christopher).toContain("/BaseFont /Helvetica");
+  expect(christopher).not.toContain("LiberationSans");
+  const arial = (await renderCvPdf({ ...fixture, theme: { ...DEFAULT_CV_THEME, font: "Arial" } })).toString("latin1");
+  expect(arial).toContain("LiberationSans");
+  expect(arial).toContain("LiberationSans-Bold");
+  expect(arial).not.toContain("/BaseFont /Helvetica");
+  // Arial is metric-compatible with Helvetica, so the page limit measures the same either way.
+  const long = { ...fixture, sections: [{ entryId: "job", kind: "experience" as const, heading: "Director · Example", bullets: Array.from({ length: 6 }, () => "Managed operational planning and reporting. ".repeat(14)) }] };
+  expect((await renderCvPdfWithReport({ ...long, theme: { ...DEFAULT_CV_THEME, font: "Arial" } })).pageCount).toBe((await renderCvPdfWithReport(long)).pageCount);
 });
 it("renders company industries as separate callout pills even when skill pills are disabled", async () => {
   const draw = vi.spyOn(PDFDocument.prototype, "text");

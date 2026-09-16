@@ -1,4 +1,6 @@
 import type { CvLibrary, CvPlan } from "./cv";
+import { CV_LIMITS } from "./cv-format";
+import { cvMaxPages } from "./cv-theme";
 
 export type CvBlockBudget = { entryId: string; kind: string; priority: number; maxBullets: number; maxCharacters: number; maxBulletCharacters: number; maxSkills: number };
 export type CvWritingBudget = { summaryCharacters: number; totalCharacters: number; blocks: CvBlockBudget[] };
@@ -22,10 +24,14 @@ export function createCvWritingBudget(library: CvLibrary, target: string, scale 
   if (roles.length + education.length > 20) throw new Error('Select at most 20 employment and education blocks for this CV. The full library is retained.');
   const skills = library.entries.filter(entry => entry.kind === 'skill')
     .sort((a, b) => cvRelevance([b.heading, b.details, ...(b.skillItems ?? [])].join(' '), target) - cvRelevance([a.heading, a.details, ...(a.skillItems ?? [])].join(' '), target)).slice(0, Math.min(2, 20 - roles.length - education.length));
+  // The allocations were calibrated on a two-page CV. The user's page limit scales the body;
+  // the profile only shrinks for a one-page CV, because it sits in the fixed masthead.
+  const pages = cvMaxPages(library.theme) / 2;
+  const bulletCap = Math.max(1, Math.min(CV_LIMITS.bulletsPerSection, Math.round(4 * pages)));
   // Headings, callouts, masthead and subsection spacing all consume space, even
   // before achievements are written. More roles therefore mean less prose each.
-  const totalCharacters = Math.round(Math.max(2200, 4900 - roles.length * 110 - education.length * 45) * scale);
-  const summaryCharacters = Math.round(420 * scale);
+  const totalCharacters = Math.round(Math.max(2200, 4900 - roles.length * 110 - education.length * 45) * pages * scale);
+  const summaryCharacters = Math.round(420 * Math.min(1, pages) * scale);
   const qualificationCharacters = education.length * Math.round(150 * scale);
   const skillCharacters = skills.length * Math.round(180 * scale);
   const roleCharacters = Math.max(roles.length * 100, totalCharacters - summaryCharacters - qualificationCharacters - skillCharacters);
@@ -34,10 +40,10 @@ export function createCvWritingBudget(library: CvLibrary, target: string, scale 
   const blocks: CvBlockBudget[] = roles.map((entry, index) => {
     const maxCharacters = Math.floor(roleCharacters * weights[index]! / sum);
     return { entryId: entry.id, kind: entry.kind, priority: weights[index]!, maxCharacters,
-      maxBullets: Math.max(1, Math.min(4, Math.floor(maxCharacters / 160))), maxBulletCharacters: Math.min(260, maxCharacters), maxSkills: 0 };
+      maxBullets: Math.max(1, Math.min(bulletCap, Math.floor(maxCharacters / 160))), maxBulletCharacters: Math.min(260, maxCharacters), maxSkills: 0 };
   });
   blocks.push(...education.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 10, maxBullets: 6, maxCharacters: Math.round(150 * scale), maxBulletCharacters: Math.round(150 * scale), maxSkills: 0 })));
-  blocks.push(...skills.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 1, maxBullets: 2, maxCharacters: Math.round(180 * scale), maxBulletCharacters: Math.round(90 * scale), maxSkills: entry.skillItems ? Math.max(2, Math.round(5 * scale)) : 0 })));
+  blocks.push(...skills.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 1, maxBullets: 2, maxCharacters: Math.round(180 * scale), maxBulletCharacters: Math.round(90 * scale), maxSkills: entry.skillItems ? Math.max(2, Math.round(5 * pages * scale)) : 0 })));
   return { summaryCharacters, totalCharacters, blocks };
 }
 

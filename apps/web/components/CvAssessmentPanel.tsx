@@ -1,4 +1,4 @@
-import type { CvContent } from "@christopher/core/cv";
+import { cvMaxPages, type CvContent } from "@christopher/core/cv";
 import type { CvAssessment } from "@christopher/core/cv-assessment";
 import { assessCvDraft, finaliseCvDraft } from "@/app/actions/cv";
 import { cvEvaluationRows } from "@/lib/cv-evaluation";
@@ -97,7 +97,7 @@ export function CvAssessmentPanel({
           Finalised. Download this saved revision or create a new revision to
           make changes.
         </p>
-      ) : !busy && !flagged.length && assessment.pageCount <= 2 ? (
+      ) : !busy && !flagged.length && assessment.pageCount <= cvMaxPages(content?.theme) ? (
         <SettingsForm
           action={finaliseCvDraft.bind(null, id)}
           submitLabel="Finalise this CV"

@@ -1,7 +1,7 @@
 import { CvRubricSchema, CvReviewPlanSchema, type CvRubric, type CvReviewPlan, type CvTextItem, type CvClaimItem } from "@christopher/core/cv-assessment";
 import { CV_RUBRIC_PROMPT, CV_REVIEW_PROMPT, CV_AUTHOR_PROMPT } from "./cv-prompts";
 import { reviewBatchIssues, markUnverifiedFindings } from "./cv-review-batch";
-import { CvPlanSchema, type CvWritingBudget, type CvPlan, type CvLibrary } from "@christopher/core";
+import { CvPlanSchema, CV_PAGE_LIMITS, type CvWritingBudget, type CvPlan, type CvLibrary } from "@christopher/core";
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
@@ -258,6 +258,7 @@ export class AiEngine {
       company: string;
       description: string;
       writingBudget?: CvWritingBudget;
+      maxPages?: number;
       rubric?: CvRubric;
       improvements?: string[];
       layoutFeedback?: {
@@ -282,11 +283,14 @@ export class AiEngine {
       "CV",
       {
         system: CV_AUTHOR_PROMPT,
-        user: JSON.stringify({ ...input, library: evidenceLibrary }),
+        user: JSON.stringify({ ...input, maxPages: input.maxPages ?? CV_PAGE_LIMITS.default, library: evidenceLibrary }),
         schema: CvPlanSchema,
         effort: "high",
-        maxTokens: 12000,
-        timeoutMs: 120_000,
+        // Thinking counts towards the output ceiling. Recorded two-page builds produced up to
+        // 10.9k output tokens at roughly 95 tokens a second, so 12k tokens under a 120-second
+        // timeout failed on an ordinary day; a three-page plan needs more still.
+        maxTokens: 16000,
+        timeoutMs: 300_000,
       },
       ref,
     );

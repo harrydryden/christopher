@@ -13,12 +13,12 @@ import { cleanCvText } from "./cv-format";
 export { cleanCvText } from "./cv-format";
 
 /** Measurement and drawing share all font, wrapping and alignment options. */
-export function measurePillRows(doc: PDFKit.PDFDocument, labels: string[], width: number, style: PillStyle): PillRow[] {
+export function measurePillRows(doc: PDFKit.PDFDocument, labels: string[], width: number, style: PillStyle, font = "Helvetica"): PillRow[] {
   const rows: PillRow[] = [];
   let x = 0;
   for (const value of labels) {
     const label = cleanCvText(value);
-    doc.font("Helvetica").fontSize(style.fontSize);
+    doc.font(font).fontSize(style.fontSize);
     const pillWidth = Math.min(width, doc.widthOfString(label) + style.paddingX * 2);
     const textHeight = doc.heightOfString(label, { width: pillWidth - style.paddingX * 2, lineGap: 1 });
     const height = textHeight + style.paddingY * 2;
@@ -30,11 +30,11 @@ export function measurePillRows(doc: PDFKit.PDFDocument, labels: string[], width
   }
   return rows;
 }
-export function drawPillRow(doc: PDFKit.PDFDocument, row: PillRow, left: number, top: number, colour: string, style: PillStyle): void {
+export function drawPillRow(doc: PDFKit.PDFDocument, row: PillRow, left: number, top: number, colour: string, style: PillStyle, font = "Helvetica"): void {
   for (const pill of row.pills) {
     doc.roundedRect(left + pill.x, top, pill.width, pill.height, style.radius).fill(colour);
     // Reset the font even after a page break/continuation heading.
-    doc.font("Helvetica").fontSize(style.fontSize).fillColor(cvForeground(colour)).text(pill.label,
+    doc.font(font).fontSize(style.fontSize).fillColor(cvForeground(colour)).text(pill.label,
       left + pill.x + style.paddingX, top + (pill.height - pill.textHeight + pill.lineHeight) / 2,
       { width: pill.width - style.paddingX * 2, lineGap: 1, align: "center", baseline: "middle" });
   }

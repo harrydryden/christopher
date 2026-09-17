@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createAiEngine, decisionDigest, extractJsonBlock, CANCELLED_ERROR, OUTPUT_LIMIT_ERROR, STREAM_CEILING_MS, type AiClientLike, type AiUsageRecord, type DecisionForDigest, type ParseResponse } from "./engine";
-import { estimateCostUsd } from "./pricing";
+import { estimateCostUsd, estimateCvBuildUsd } from "./pricing";
 
 interface Captured {
   params: Record<string, unknown>;
@@ -289,6 +289,13 @@ describe("helpers", () => {
     expect(estimateCostUsd("claude-opus-5", { inputTokens: 0, outputTokens: 0, cacheReadTokens: 1_000_000, cacheWriteTokens: 0 })).toBeCloseTo(0.5, 6);
     expect(estimateCostUsd("claude-opus-5", { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 1_000_000 })).toBeCloseTo(6.25, 6);
     expect(estimateCostUsd("who-knows", { inputTokens: 1_000_000, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 })).toBeCloseTo(5, 6);
+    // A build is admitted at what it is expected to cost, far below the sum of its calls' ceilings.
+    expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 })).toBeCloseTo(3.15, 3);
+    expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 })).toBeLessThan(
+      estimateCostUsd("claude-fable-5-1", { inputTokens: 0, outputTokens: 12_000 + 32_000 + 5 * 24_000, cacheReadTokens: 0, cacheWriteTokens: 0 }));
+    // Fable 5.1 prices cache reads at $0.25/MTok, a quarter of the tenth-of-input rule.
+    expect(estimateCostUsd("claude-fable-5-1", { inputTokens: 0, outputTokens: 0, cacheReadTokens: 1_000_000, cacheWriteTokens: 0 })).toBeCloseTo(0.25, 6);
+    expect(estimateCostUsd("claude-fable-5-1", { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 1_000_000 })).toBeCloseTo(12.5, 6);
   });
 
   it("builds a newest-first decision digest within budget", () => {
@@ -320,7 +327,7 @@ it("routes CV generation separately, validates industry selections and records u
   expect(result?.sections[0]?.industryDescriptions).toEqual(["SaaS"]);
   expect(calls[0]!.params.model).toBe("claude-sonnet-5");
   // Thinking counts towards the ceiling; recorded builds reached 10.9k tokens under the old 12k/120s limits.
-  expect(calls[0]!.params.max_tokens).toBe(16000);
+  expect(calls[0]!.params.max_tokens).toBe(32000);
   expect(calls[0]!.options?.timeout).toBe(300_000);
   expect(JSON.parse((calls[0]!.params.messages as Array<{ content: string }>)[0]!.content).maxPages).toBe(3);
   expect(usage[0]).toMatchObject({ callSite: "CV", refId: "draft", ok: true });

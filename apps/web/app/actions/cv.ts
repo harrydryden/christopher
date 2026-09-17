@@ -341,7 +341,8 @@ export async function saveCvDraft(
           {
             draftId: fitting!.id,
             ...reviewContext,
-            ...(content.sections.every((section) =>
+            // A rebuild is written afresh from the Library; only a refit carries the saved wording.
+            ...(intent === "fit" && content.sections.every((section) =>
               librarySnapshot.entries.some(
                 (entry) => entry.id === section.entryId,
               ),

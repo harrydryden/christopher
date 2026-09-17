@@ -18,7 +18,8 @@ import { SettingsForm } from "./SettingsForm";
 import { buttonClass } from "@/components/Button";
 import { inputClass, labelClass } from "@/components/Field";
 
-function ImproveButton() {
+/** Writes a new revision from the latest Library against the same rubric; direct edits are not carried over. */
+function RebuildButton() {
   const { pending } = useFormStatus();
   return (
     <Button
@@ -29,7 +30,7 @@ function ImproveButton() {
       variant="secondary"
       size="sm"
     >
-      Improve with latest evidence
+      Rebuild from Library
     </Button>
   );
 }
@@ -132,8 +133,8 @@ export function CvDraftEditor({
       <SettingsForm
         id={formId}
         action={saveCvDraft.bind(null, id)}
-        submitLabel="Save, fit and assess new revision"
-        secondaryActions={<ImproveButton />}
+        submitLabel="Save Direct Edits"
+        secondaryActions={<RebuildButton />}
       >
         {dirty && <p className="text-12 text-muted" role="status">Unsaved changes</p>}
         {theme && (

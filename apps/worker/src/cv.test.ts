@@ -352,3 +352,21 @@ it("rejects malformed task inputs before database writes or model calls", async 
   expect(AiEngine.prototype.analyseCvJob).not.toHaveBeenCalled();
   expect((await client.db.select().from(schema.cvDrafts))[0]!.status).toBe("queued");
 });
+
+it("refuses a build the month cannot afford before spending anything, and otherwise holds capacity only while it runs", async () => {
+  const build = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations leader", sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] });
+  const { task, deps, draft } = await setup();
+  deps.settings = (async () => ({ monthlyAiBudgetUsd: 0.01 })) as unknown as WorkerDeps["settings"];
+  await handleGenerateCv(task, deps);
+  const [refused] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  expect(refused!.status).toBe("failed");
+  expect(refused!.error).toContain("monthly budget of $0.01 has $0.01 left");
+  expect(build).not.toHaveBeenCalled();
+  expect(await client.db.select().from(schema.aiCalls)).toHaveLength(0);
+  deps.settings = (async () => ({ monthlyAiBudgetUsd: 100 })) as unknown as WorkerDeps["settings"];
+  await client.db.update(schema.cvDrafts).set({ status: "queued" }).where(eq(schema.cvDrafts.id, draft.id));
+  await handleGenerateCv(task, deps);
+  const [built] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  expect(built!.status).toBe("ready");
+  expect((await client.db.execute<{ n: string }>(sql`select count(*)::text as n from ai_reservations`)).rows[0]!.n).toBe("0");
+});

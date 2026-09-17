@@ -281,7 +281,8 @@ export class AiEngine {
         user: JSON.stringify({ description }),
         schema: CvRubricSchema,
         effort: "high",
-        maxTokens: 8000,
+        // Thinking counts towards the ceiling; recorded rubrics reach 5.2k of the old 8k.
+        maxTokens: 12000,
         timeoutMs: 120_000,
       },
       ref,
@@ -326,7 +327,8 @@ export class AiEngine {
       user: [{ text: shared, cache: true }, { text: JSON.stringify({ ...batch, ...(corrections ? { corrections } : {}) }) }],
       schema,
       effort: "high",
-      maxTokens: 16000,
+      // Recorded batches reach 11.8k of the old 16k ceiling; a truncated batch fails the audit.
+      maxTokens: 24000,
       timeoutMs: 240_000,
       signal: controller.signal,
       onStart,
@@ -417,10 +419,10 @@ export class AiEngine {
         user: JSON.stringify({ ...input, maxPages: input.maxPages ?? CV_PAGE_LIMITS.default, library: evidenceLibrary }),
         schema: CvPlanSchema,
         effort: "high",
-        // Thinking counts towards the output ceiling. Recorded two-page builds produced up to
-        // 10.9k output tokens at roughly 95 tokens a second, so 12k tokens under a 120-second
-        // timeout failed on an ordinary day; a three-page plan needs more still.
-        maxTokens: 16000,
+        // Thinking counts towards the output ceiling, and recorded two-page builds have reached
+        // 15.6k of the old 16k. The answer streams, so the ceiling no longer has to fit a request
+        // timeout; it only has to stay above what a three-page plan can take.
+        maxTokens: 32000,
         timeoutMs: 300_000,
       },
       ref,

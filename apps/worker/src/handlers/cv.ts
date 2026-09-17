@@ -16,7 +16,7 @@ import {
 } from "@christopher/core/cv-assessment";
 import { eq } from "drizzle-orm";
 import { completeCv, schema, type Task, type Db } from "@christopher/db";
-import { createAiEngine, CANCELLED_ERROR, OUTPUT_LIMIT_ERROR } from "@christopher/ai";
+import { createAiEngine, estimateCvBuildUsd, CANCELLED_ERROR, OUTPUT_LIMIT_ERROR } from "@christopher/ai";
 import {
   CvContentSchema,
   CvPlanSchema,
@@ -25,11 +25,21 @@ import {
   groupCvLibrary,
 } from "@christopher/core";
 import { withResourceLease } from "../lease";
-import { reserveAi } from "../budget";
+import { tryReserveAi, type AiBudgetRefusal } from "../budget";
 import { aiSpendThisMonth, type WorkerDeps } from "../context";
 import { log } from "../log";
 
 class CvDeletedError extends Error {}
+
+/** Why a build was not admitted, with the figures behind it, so the reader can tell a cap from a fault. */
+function budgetRefusal(expected: number, refusal: AiBudgetRefusal): string {
+  const name = refusal.limit === "month" ? "monthly" : refusal.limit === "day" ? "daily" : "discovery";
+  const left = Math.max(0, refusal.limitUsd - refusal.spent - refusal.held);
+  const where = refusal.limit === "month" ? "in Admin › System settings" : "in the worker's environment";
+  return `This build needs about $${expected.toFixed(2)} of AI budget; the ${name} budget of $${refusal.limitUsd} has $${left.toFixed(2)} left` +
+    (refusal.held > 0 ? ` after $${refusal.held.toFixed(2)} held by work in flight` : "") +
+    `. An administrator can raise it ${where}; then retry.`;
+}
 type BuildUpdate = Partial<Pick<typeof schema.cvDrafts.$inferInsert,
   "status" | "content" | "assessment" | "revision" | "buildStage" | "error" | "finalisedAt">>;
 
@@ -68,31 +78,41 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
       .where(eq(schema.cvDrafts.id, draftId));
     if (!draft || draft.status === "ready") return { skipped: true };
     let phase = "preparing evidence";
+    let release: (() => Promise<void>) | undefined;
     try {
       await save({ status: "generating", error: null, finalisedAt: null });
       if (!deps.env.anthropicApiKey)
         throw new Error(
           "Add ANTHROPIC_API_KEY to the worker to generate a CV.",
         );
-      if (
-        (await aiSpendThisMonth(deps.db, deps.now())) >=
-        (await deps.settings()).monthlyAiBudgetUsd
-      )
+      const settings = await deps.settings();
+      const spent = await aiSpendThisMonth(deps.db, deps.now());
+      if (spent >= settings.monthlyAiBudgetUsd)
         throw new Error(
-          "Monthly AI budget reached. Update the budget in Settings, then retry.",
+          `Monthly AI budget reached: $${spent.toFixed(2)} of $${settings.monthlyAiBudgetUsd} is spent. An administrator can raise it in Admin › System settings; then retry.`,
         );
       const library = groupCvLibrary(
         CvLibrarySchema.parse(draft.librarySnapshot),
       );
+      // One hold for the whole build, at what it is expected to cost. A build the month can afford
+      // is admitted and never fails part-way over budget accounting; one it cannot afford is refused
+      // here, before it spends anything. Holding each call at its ceiling instead refused builds
+      // the month could plainly afford, and did so after the rubric and CV had already been paid for.
+      const expected = estimateCvBuildUsd(draft.model, {
+        libraryBytes: Buffer.byteLength(JSON.stringify(library)),
+        descriptionBytes: Buffer.byteLength(draft.jobDescription),
+      });
+      const hold = await tryReserveAi(deps.db, "CV", expected, {
+        monthly: settings.monthlyAiBudgetUsd,
+        daily: deps.env.dailyAiBudgetUsd ?? 1000000,
+        discovery: deps.env.discoveryAiBudgetUsd ?? 1000000,
+      }, deps.now(), 30);
+      if ("refused" in hold) throw new Error(budgetRefusal(expected, hold.refused));
+      release = hold.release;
       let generationError: string | undefined;
       const ai = createAiEngine({
-        reserve: async (callSite, amount) =>
-          reserveAi(deps.db, callSite, amount, {
-            monthly: (await deps.settings()).monthlyAiBudgetUsd,
-            daily: deps.env.dailyAiBudgetUsd ?? 1000000,
-            discovery: deps.env.discoveryAiBudgetUsd ?? 1000000,
-          }),
         apiKey: deps.env.anthropicApiKey,
+        client: deps.aiClient,
         getModel: () => draft.model,
         onUsage: async (usage) => {
           // A batch cancelled because a sibling failed must not hide that sibling's error.
@@ -242,6 +262,8 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
         throw saveError;
       }
       return { draftId, failed: true, error: message };
+    } finally {
+      await release?.();
     }
   });
 }

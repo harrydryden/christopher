@@ -5,8 +5,8 @@
  * Nothing here imports Playwright eagerly: the browser is loaded on first use and only when
  * `CHRISTOPHER_DISABLE_BROWSER` is unset, so a serverless deployment never pulls it in.
  */
-export { createDeps, makeFetchContext, makeDiscoveryContext, aiSpendThisMonth, aiBudgetExceeded } from "./context";
-export type { WorkerDeps, DepsOverrides } from "./context";
+export { createDeps, makeFetchContext, makeDiscoveryContext, aiSpendThisMonth, aiBudgetExceeded, aiBudgetStop } from "./context";
+export type { WorkerDeps, DepsOverrides, AiBudgetStop } from "./context";
 export { readEnv } from "./env";
 export type { WorkerEnv } from "./env";
 export { TaskQueue, claimTask, completeTask, failTask, requeueStale, backoffMs } from "./queue";

@@ -148,6 +148,13 @@
       "when": 1789554417069,
       "tag": "0020_multi_user",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1789657520896,
+      "tag": "0021_account_ai_budgets",
+      "breakpoints": true
     }
   ]
 }

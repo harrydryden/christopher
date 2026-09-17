@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SETTINGS, isValidScanTime, isValidTimezone, localDateParts, modelForCallSite, resolveSettings } from "./settings";
+import { DEFAULT_ACCOUNT_AI_BUDGET_USD, DEFAULT_SETTINGS, MAX_ACCOUNT_AI_BUDGET_USD, isValidScanTime, isValidTimezone, localDateParts, modelForCallSite, resolveSettings, resolveSystemSettings, resolveUserSettings } from "./settings";
 
 describe("resolveSettings", () => {
   it("returns the defaults when nothing is stored", () => {
@@ -43,6 +43,31 @@ describe("resolveSettings", () => {
       { key: "nonsense", value: 1 },
     ]);
     expect(settings).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it("starts every account on the default AI budget with no reset behind it", () => {
+    expect(resolveSettings([]).aiBudgetUsd).toBe(DEFAULT_ACCOUNT_AI_BUDGET_USD);
+    expect(resolveSettings([]).aiBudgetResetAt).toBeNull();
+    expect(resolveUserSettings([]).aiBudgetUsd).toBe(DEFAULT_ACCOUNT_AI_BUDGET_USD);
+    expect(resolveSystemSettings([]).aiBudgetResetAt).toBeNull();
+  });
+
+  it("clamps a stored account budget and ignores one that is not a number", () => {
+    expect(resolveUserSettings([{ key: "aiBudgetUsd", value: 60 }]).aiBudgetUsd).toBe(60);
+    expect(resolveUserSettings([{ key: "aiBudgetUsd", value: 0 }]).aiBudgetUsd).toBe(0);
+    expect(resolveUserSettings([{ key: "aiBudgetUsd", value: -5 }]).aiBudgetUsd).toBe(0);
+    expect(resolveUserSettings([{ key: "aiBudgetUsd", value: 1e9 }]).aiBudgetUsd).toBe(MAX_ACCOUNT_AI_BUDGET_USD);
+    expect(resolveUserSettings([{ key: "aiBudgetUsd", value: "lots" }]).aiBudgetUsd).toBe(DEFAULT_ACCOUNT_AI_BUDGET_USD);
+    expect(resolveUserSettings([{ key: "aiBudgetUsd", value: Number.NaN }]).aiBudgetUsd).toBe(DEFAULT_ACCOUNT_AI_BUDGET_USD);
+  });
+
+  it("keeps a reset marker only when it is a usable timestamp, and an account's beats the shared one", () => {
+    expect(resolveSystemSettings([{ key: "aiBudgetResetAt", value: "2026-09-17T09:00:00.000Z" }]).aiBudgetResetAt).toBe("2026-09-17T09:00:00.000Z");
+    expect(resolveUserSettings([{ key: "aiBudgetResetAt", value: "yesterday" }]).aiBudgetResetAt).toBeNull();
+    expect(resolveUserSettings([{ key: "aiBudgetResetAt", value: 1789554417069 }]).aiBudgetResetAt).toBeNull();
+    // Both scopes keep this key; the account's row is applied last, so it wins for that account.
+    const merged = resolveSettings([{ key: "aiBudgetResetAt", value: "2026-09-01T00:00:00.000Z" }], [{ key: "aiBudgetResetAt", value: "2026-09-17T09:00:00.000Z" }]);
+    expect(merged.aiBudgetResetAt).toBe("2026-09-17T09:00:00.000Z");
   });
 
   it("does not mutate the defaults", () => {

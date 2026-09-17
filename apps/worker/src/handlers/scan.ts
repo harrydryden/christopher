@@ -463,7 +463,16 @@ async function scanSource(
   }
 
   const queued: Array<typeof schema.tasks.$inferInsert> = [];
-  if (!(await aiBudgetExceeded(deps))) for (const payload of scoreQueue) queued.push({ type: "score_job", payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") });
+  // Scoring is per account, so the budget is asked per account: one follower with nothing left to
+  // spend has its roles left unscored, while everyone else scans and scores as usual. Queuing them
+  // anyway would only fail and retry each task at the hold. Each distinct account is asked once.
+  const scorable = new Set<string>();
+  if (!(await aiBudgetExceeded(deps))) {
+    for (const userId of new Set(scoreQueue.map((payload) => payload.userId))) {
+      if (!(await aiBudgetExceeded(deps, userId))) scorable.add(userId);
+    }
+  }
+  for (const payload of scoreQueue) if (scorable.has(payload.userId)) queued.push({ type: "score_job", payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") });
   for (const jobId of descriptionQueue) queued.push({ type: "fetch_description", payload: { jobId }, dedupeKey: dedupeKeyFor("fetch_description", { jobId }), priority: priorityFor("fetch_description") });
   for (let offset = 0; offset < queued.length; offset += 250) await deps.db.insert(schema.tasks).values(queued.slice(offset, offset + 250)).onConflictDoNothing();
 

@@ -33,6 +33,16 @@ export function formatPercent(fraction: number, digits = 0): string {
   return `${(fraction * 100).toFixed(digits)}%`;
 }
 
+/** Whole figures with thousands separators: token and call counts, which run to seven digits. */
+export function formatCount(n: number): string {
+  return new Intl.NumberFormat("en-GB").format(Math.round(n));
+}
+
+/** "17 Sep". Read in UTC because a budget month and its reset marker are UTC. */
+export function shortDate(date: Date): string {
+  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }).format(date);
+}
+
 export function truncate(text: string, max: number): string {
   const trimmed = text.trim();
   if (trimmed.length <= max) return trimmed;

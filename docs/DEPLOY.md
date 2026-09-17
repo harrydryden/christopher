@@ -167,6 +167,8 @@ Moving to shape A later is only a Render deploy: add the worker service, unset
    `/api/cron`.
 5. **Health** shows anything that needs you: a company whose careers page could not be found, a
    blocked site, or a source needing confirmation.
+6. **Admin › Accounts** lists everyone sharing the deployment, what each has produced and follows,
+   and what each may spend on AI in a month. New accounts start at $25; raise one there.
 
 ## Costs
 
@@ -177,12 +179,20 @@ Moving to shape A later is only a Render deploy: add the worker service, unset
 | Vercel Hobby | $0 |
 | Anthropic API, 30 companies in steady state | ~$3–10/month |
 
-The Health page tracks month-to-date model spend against the budget set in Admin › System settings,
-and stops optional model calls when it is exceeded. A CV build costs about $3 on Fable 5.1 (a 35 KB
-library against a typical advert); it is admitted against the budget once, up front, at that expected
-cost, and a build the month cannot afford fails before it spends anything, naming the limit and what
-is left. `DAILY_AI_BUDGET_USD` and `DISCOVERY_AI_BUDGET_USD` in the worker's environment add daily
-caps on top; leave them unset unless you want them, because a daily cap refuses builds too.
+Every account has its own monthly AI budget, $25 to start, which an administrator raises in
+**Admin › Accounts**. That page shows what each account has spent of its budget this month, sets a
+new limit, and can start an account's month again with Reset spend; each person also sees their own
+figure on Settings. Over all of them sits one shared ceiling, the monthly AI budget in
+**Admin › System settings**, which also covers work no account asked for (extraction, discovery).
+Both budgets run on the calendar month in UTC and start again on the 1st; a reset moves the window
+the spend is counted in rather than deleting anything, so **Admin › Operations** still reports every
+call made, by account, feature and model, and tracks month-to-date spend against the shared ceiling.
+Optional model calls (near-miss scoring, then suggestions) stop when the ceiling is exceeded. A CV
+build costs about $3 on Fable 5.1 (a 35 KB library against a typical advert); it is admitted against
+the account's budget and then the shared ceiling once, up front, at that expected cost, and a build
+the month cannot afford fails before it spends anything, naming the limit and what is left.
+`DAILY_AI_BUDGET_USD` and `DISCOVERY_AI_BUDGET_USD` in the worker's environment add daily caps on
+top; leave them unset unless you want them, because a daily cap refuses builds too.
 
 ## When something is wrong
 

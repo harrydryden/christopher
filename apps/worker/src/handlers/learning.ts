@@ -4,7 +4,7 @@ import { decisionDigest } from "@christopher/ai";
 import { eligibleCvEvidence, evidenceHeading, sha1, dedupeKeyFor, modelForCallSite, priorityFor, type TaskPayloads } from "@christopher/core";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
-import { aiBudgetExceeded } from "../context";
+import { aiBudgetStop } from "../context";
 import { log } from "../log";
 
 /** Every account carries the seed vocabulary; new accounts get it at creation, this covers older ones. */
@@ -18,7 +18,8 @@ export async function handleTagReason(task: Task, deps: WorkerDeps): Promise<unk
   if (!decision) return { skipped: "decision not found" };
   if (decision.superseded || decision.tagsEdited) return { skipped: "decision superseded or tags edited by user" };
   if (!decision.reason.trim()) return { skipped: "no reason text" };
-  if (await aiBudgetExceeded(deps)) return { skipped: "ai budget exceeded" };
+  const tagStop = await aiBudgetStop(deps, decision.userId);
+  if (tagStop) return { skipped: tagStop };
 
   await seedTagVocabulary(deps.db, decision.userId);
   const vocab = await deps.db.select({ tag: schema.tagVocabulary.tag }).from(schema.tagVocabulary)
@@ -56,7 +57,10 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
   const [choice] = await deps.db.select({ decision: schema.decisions.decision }).from(schema.decisions)
     .where(and(eq(schema.decisions.userId, userId), eq(schema.decisions.jobId, jobId), eq(schema.decisions.superseded, false))).limit(1);
   if (!view.inTable && choice?.decision !== "apply") return { skipped: "role does not match and is not shortlisted" };
-  if (await aiBudgetExceeded(deps)) return { skipped: "ai budget exceeded" };
+  // Asked before any of the scoring evidence is gathered: an account with nothing left to spend
+  // skips this role, and the task finishes done rather than failing at the hold and retrying.
+  const scoreStop = await aiBudgetStop(deps, userId);
+  if (scoreStop) return { skipped: scoreStop };
 
   const [company] = await deps.db.select().from(schema.companies).where(eq(schema.companies.id, job.companyId)).limit(1);
   const profile = await latestProfileFor(deps.db, userId);
@@ -151,7 +155,8 @@ const RESYNTHESIS_THRESHOLD = 5;
 export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { userId, force } = (task.payload ?? {}) as TaskPayloads["synthesize_profile"];
   if (!userId) return { skipped: "no account on task" };
-  if (await aiBudgetExceeded(deps)) return { skipped: "ai budget exceeded" };
+  const profileStop = await aiBudgetStop(deps, userId);
+  if (profileStop) return { skipped: profileStop };
   const settings = await deps.userSettings(userId);
   const current = await latestProfile(deps, userId);
   const decisions = await decisionRows(deps, userId, 500);
@@ -211,7 +216,8 @@ export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Pro
 export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { userId } = (task.payload ?? {}) as TaskPayloads["suggest_filters"];
   if (!userId) return { skipped: "no account on task" };
-  if (await aiBudgetExceeded(deps)) return { skipped: "ai budget exceeded" };
+  const filterStop = await aiBudgetStop(deps, userId);
+  if (filterStop) return { skipped: filterStop };
   const settings = await deps.userSettings(userId);
   const decisions = await decisionRows(deps, userId, 300);
   if (decisions.length === 0) return { skipped: "no decisions" };

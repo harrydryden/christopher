@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
+import { aiBudgetWindowStart } from "@christopher/core";
 import type { Db } from "@christopher/db";
 
 const discoverySites = ["A7", "A8", "A10"];
@@ -24,7 +25,17 @@ export async function reserveAi(db: Db, callSite: string, amount: number, limits
   return "release" in hold ? hold.release : null;
 }
 
-export type AiBudgetLimits = { monthly: number; daily: number; discovery: number };
+export type AiBudgetLimits = {
+  /** The shared ceiling over everything, including work with no account behind it. */
+  monthly: number;
+  daily: number;
+  discovery: number;
+  /**
+   * When the shared counter was last zeroed (ISO). The monthly window starts at the later of this
+   * and the month; the daily and discovery allowances keep their own day, which a reset never moves.
+   */
+  resetAt?: string | null;
+};
 
 /** Which limit refused a hold, and the figures it was measured against. */
 export interface AiBudgetRefusal {
@@ -38,18 +49,21 @@ export interface AiBudgetRefusal {
 
 /** Hold capacity for one call, or say exactly which limit refused it, so the refusal can be explained. */
 export async function tryReserveAi(db: Db, callSite: string, amount: number, limits: AiBudgetLimits, now = new Date(), ttlMinutes = 15): Promise<{ release: () => Promise<void>; renew: () => Promise<void> } | { refused: AiBudgetRefusal }> {
-  const monthStart = new Date(`${now.toISOString().slice(0, 7)}-01T00:00:00Z`);
+  const monthStart = aiBudgetWindowStart(now, limits.resetAt);
   const dayStart = new Date(`${now.toISOString().slice(0, 10)}T00:00:00Z`);
+  // One scan of the rows any of the three limits can see: a reset can put the month's window after
+  // today's midnight, and the day and discovery allowances must still count the whole day.
+  const earliest = monthStart < dayStart ? monthStart : dayStart;
   const id = randomUUID();
   const isDiscovery = discoverySites.includes(callSite);
   const refusal = await db.transaction(async (tx): Promise<AiBudgetRefusal | null> => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('christopher:ai-budget'))`);
     await tx.execute(sql`delete from ai_reservations where expires_at <= now()`);
     const spent = await tx.execute<{ month: number; day: number; discovery: number }>(sql`select
-      coalesce(sum(cost_usd), 0) as month,
+      coalesce(sum(cost_usd) filter (where at >= ${monthStart}), 0) as month,
       coalesce(sum(cost_usd) filter (where at >= ${dayStart}), 0) as day,
       coalesce(sum(cost_usd) filter (where at >= ${dayStart} and call_site in ('A7','A8','A10')), 0) as discovery
-      from ai_calls where at >= ${monthStart}`);
+      from ai_calls where at >= ${earliest}`);
     const held = await tx.execute<{ total: number; discovery: number }>(sql`select coalesce(sum(amount), 0) as total,
       coalesce(sum(amount) filter (where call_site in ('A7','A8','A10')), 0) as discovery from ai_reservations`);
     const month = Number(spent.rows[0]?.month ?? 0);

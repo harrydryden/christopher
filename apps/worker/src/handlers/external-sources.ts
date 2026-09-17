@@ -1,7 +1,7 @@
 import { schema, enqueueTask, type Task } from "@christopher/db";
 import { dedupeKeyFor, discovery, extractDomain, normalizeUrl, sha1, stripHtml } from "@christopher/core";
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { aiBudgetExceeded, makeFetchContext, type WorkerDeps } from "../context";
+import { aiBudgetStop, makeFetchContext, type WorkerDeps } from "../context";
 import { recommendationContext } from "../recommendation-context";
 import { withResourceLease } from "../lease";
 import { verifyCandidate } from "./companies";
@@ -88,7 +88,12 @@ export async function handleExtractDocument(task: Task, deps: WorkerDeps): Promi
     if (!settings.suggestionsEnabled) return { skipped: true };
     const userId = source.userId;
     try {
-      if (await aiBudgetExceeded(deps)) throw new Error("AI unavailable or monthly budget reached; check again later.");
+      const stop = await aiBudgetStop(deps, userId);
+      // Unlike scheduled work this is a document the user asked for, so the reason is recorded on
+      // their source where they can see it rather than skipped quietly.
+      if (stop) throw new Error(stop === "ai unavailable" ? "AI unavailable; check again later." :
+        stop === "account ai budget exceeded" ? "Your monthly AI budget is spent; an administrator can raise it in Admin › Accounts." :
+        "The shared monthly AI budget is spent; an administrator can raise it in Admin › System settings.");
       const context = await recommendationContext(deps, userId, document.content);
       const result = await deps.ai.extractSourceCompanies({ content: document.content, portfolio: context.examples,
         preferences: context.preferences }, { refType: "discovery_source", refId: sourceId, userId });

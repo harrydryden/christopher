@@ -15,7 +15,13 @@ export interface SystemSettings {
   /** Daily run time "HH:MM" in `timezone`. One run for every company anyone follows. */
   scanTime: string;
   timezone: string;
+  /** The ceiling over everything, including work done for no particular account. */
   monthlyAiBudgetUsd: number;
+  /**
+   * When the shared spend counter was last zeroed (ISO), or null for "not since the month began".
+   * Spend recorded before it does not count this month; see `aiBudgetWindowStart`.
+   */
+  aiBudgetResetAt: string | null;
   /** Model id per call site; missing keys fall back to `defaultModel`. */
   defaultModel: string;
   modelOverrides: Record<string, string>;
@@ -30,6 +36,13 @@ export interface SystemSettings {
 
 export interface UserSettings {
   gate: GateSettings;
+  /**
+   * This account's own monthly AI budget, which an administrator may raise. The shared
+   * `monthlyAiBudgetUsd` still caps everything, so an account can never spend past it.
+   */
+  aiBudgetUsd: number;
+  /** When this account's spend counter was last zeroed (ISO), or null. Read by `aiBudgetWindowStart`. */
+  aiBudgetResetAt: string | null;
   /** Fit-score threshold under which in-table roles are collapsed. null = off. */
   hideThreshold: number | null;
   /** Free text written by the user at setup; never overwritten by the model. */
@@ -46,10 +59,16 @@ export interface UserSettings {
 
 export type AppSettings = SystemSettings & UserSettings;
 
+/** What a new account may spend on AI in a month until an administrator raises it. */
+export const DEFAULT_ACCOUNT_AI_BUDGET_USD = 25;
+/** The most an account budget may be set to, so a typed figure cannot become an unbounded bill. */
+export const MAX_ACCOUNT_AI_BUDGET_USD = 10000;
+
 export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   scanTime: "06:00",
   timezone: "Europe/London",
   monthlyAiBudgetUsd: 25,
+  aiBudgetResetAt: null,
   defaultModel: "claude-sonnet-5",
   modelOverrides: {},
   closeAfterMissingScans: 2,
@@ -66,6 +85,8 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
     locationTerms: [],
     includeRemote: true,
   },
+  aiBudgetUsd: DEFAULT_ACCOUNT_AI_BUDGET_USD,
+  aiBudgetResetAt: null,
   hideThreshold: null,
   seedProfile: "",
   cvModel: "claude-fable-5-1",
@@ -118,6 +139,18 @@ function applyRows(out: AppSettings, rows: SettingsRow[]): void {
     // default accepts any primitive; a stored null is already skipped above and keeps the default.
     const compatible = def === null ? typeof val !== "object" : typeof def === typeof val;
     if (!compatible) continue;
+    // Both budget keys are read by money-spending code, so a stored value is checked here rather
+    // than trusted: the budget is clamped to a sane range and the reset marker must be a usable
+    // timestamp. `aiBudgetResetAt` belongs to both scopes — the shared counter in `settings`, an
+    // account's in `user_settings` — and the account row is applied last, so it wins for an account.
+    if (key === "aiBudgetUsd") {
+      if (typeof val === "number" && Number.isFinite(val)) out.aiBudgetUsd = Math.min(MAX_ACCOUNT_AI_BUDGET_USD, Math.max(0, val));
+      continue;
+    }
+    if (key === "aiBudgetResetAt") {
+      if (typeof val === "string" && !Number.isNaN(Date.parse(val))) out.aiBudgetResetAt = val;
+      continue;
+    }
     if (key === "gate" && typeof val === "object") {
       out.gate = { ...DEFAULT_SETTINGS.gate, ...(val as Partial<GateSettings>) };
       continue;
@@ -128,7 +161,9 @@ function applyRows(out: AppSettings, rows: SettingsRow[]): void {
 
 /**
  * Merge stored rows onto defaults. `rows` are usually the system table and `userRows` one
- * account's rows; the two key sets are disjoint, so a single mixed list also works.
+ * account's rows. The key sets are disjoint but for `aiBudgetResetAt`, which both scopes keep:
+ * user rows are applied last, so an account's own reset marker wins over the shared one. A single
+ * mixed list therefore still works, as long as it is ordered system rows first.
  */
 export function resolveSettings(rows: SettingsRow[], userRows: SettingsRow[] = []): AppSettings {
   const out: AppSettings = structuredClone(DEFAULT_SETTINGS);

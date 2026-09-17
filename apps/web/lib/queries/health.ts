@@ -1,7 +1,7 @@
 import { scanRunReport } from "@/lib/scan-run-report";
 import { and, desc, eq, gte, inArray, ne, sql, getTableColumns } from "drizzle-orm";
+import { aiUsageByAccount, sharedAiSpend } from "@christopher/db";
 import {
-  aiCalls,
   settings,
   careerSources,
   companies,
@@ -9,10 +9,10 @@ import {
   scanRuns,
   scans,
   tasks,
-  type AiCall,
   type CareerSource,
   type Task,
 } from "@christopher/db/schema";
+import { groupAiUsage, type AiUsageGroup } from "@/lib/ai-usage";
 import { db } from "@/lib/db";
 
 /** Companies one account follows; with no account, every company (the administrator's view). */
@@ -86,32 +86,18 @@ export async function getQueueCounts(): Promise<QueueCount[]> {
     .orderBy(tasks.type, tasks.status);
 }
 
-function startOfCurrentMonthUtc(now: Date): Date {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+/**
+ * Everything spent since `since`, whoever it was for: what the deployment's shared ceiling counts.
+ * The window starts at the start of the UTC month, or later if the shared counter was reset;
+ * `aiBudgetWindowStart` decides, so this takes the instant rather than working it out again.
+ */
+export async function getSharedAiSpend(since: Date): Promise<number> {
+  return sharedAiSpend(db(), since);
 }
 
-export async function getAiSpendThisMonth(now: Date = new Date()): Promise<number> {
-  const since = startOfCurrentMonthUtc(now);
-  const rows = await db()
-    .select({ total: sql<number>`coalesce(sum(${aiCalls.costUsd}), 0)::float` })
-    .from(aiCalls)
-    .where(gte(aiCalls.at, since));
-  return rows[0]?.total ?? 0;
-}
-
-/** Month-to-date spend per account (shared work such as extraction is unattributed). */
-export async function getAiSpendByAccount(now: Date = new Date()): Promise<Array<{ userId: string | null; total: number }>> {
-  const since = startOfCurrentMonthUtc(now);
-  return db()
-    .select({ userId: aiCalls.userId, total: sql<number>`coalesce(sum(${aiCalls.costUsd}), 0)::float` })
-    .from(aiCalls)
-    .where(gte(aiCalls.at, since))
-    .groupBy(aiCalls.userId)
-    .orderBy(desc(sql`sum(${aiCalls.costUsd})`));
-}
-
-export async function listRecentAiCalls(limit = 20): Promise<AiCall[]> {
-  return db().select().from(aiCalls).orderBy(desc(aiCalls.at)).limit(limit);
+/** The operations report: one line per account, feature and model since `since`, dearest first. */
+export async function getAiUsage(since: Date): Promise<AiUsageGroup[]> {
+  return groupAiUsage(await aiUsageByAccount(db(), since));
 }
 
 export async function listRecentScanRuns(limit = 10, userId?: string) {

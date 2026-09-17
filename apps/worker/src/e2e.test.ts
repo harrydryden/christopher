@@ -10,7 +10,7 @@ import {createDb, schema, enqueueTask, reevaluateGate, subscribeToCompany, type 
 import { ensureTestUser } from "./test-users";
 import { runMigrations } from "@christopher/db/migrate";
 import { ats, dedupeKeyFor, displayStatus, liveFor, priorityFor, sha1 } from "@christopher/core";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { handlers } from "./handlers";
@@ -588,6 +588,55 @@ describe("functional review regressions", () => {
     await handleScoreJob(task, scoringDeps);
     expect(scoreJob).toHaveBeenCalledTimes(2);
   });
+  it("skips an exhausted account's scoring cleanly, and scores again once its budget is raised", async () => {
+    await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [view] = await db.select().from(schema.userJobs).where(eq(schema.userJobs.inTable, true));
+    const scoreJob = vi.fn().mockResolvedValue({ score: 80, verdict: "strong", rationale: "Fixture" });
+    const scoringDeps = { ...deps, ai: { ...deps.ai, enabled: true, scoreJob } } as unknown as WorkerDeps;
+    const task = { payload: { userId: user.id, jobId: view!.jobId } } as never;
+    // This account's $1 is spent; the shared ceiling is untouched, so only this account stops.
+    await db.insert(schema.userSettings).values({ userId: user.id, key: "aiBudgetUsd", value: 1 });
+    await db.insert(schema.aiCalls).values({ userId: user.id, callSite: "A5", model: "fixture", costUsd: 1, at: now });
+    // A skipped result, not a thrown refusal: the task finishes done and never reaches Health's failures.
+    expect(await handleScoreJob(task, scoringDeps)).toEqual({ skipped: "account ai budget exceeded" });
+    expect(scoreJob).not.toHaveBeenCalled();
+    // Nothing was attempted, so nothing more was billed and the role is simply left unscored.
+    expect(await db.select().from(schema.aiCalls)).toHaveLength(1);
+    const [unscored] = await db.select().from(schema.userJobs).where(eq(schema.userJobs.jobId, view!.jobId));
+    expect(unscored!.fitScore).toBeNull();
+
+    // An administrator raises this account's budget: the same role scores, on the same evidence.
+    await db.update(schema.userSettings).set({ value: 50 })
+      .where(and(eq(schema.userSettings.userId, user.id), eq(schema.userSettings.key, "aiBudgetUsd")));
+    expect(await handleScoreJob(task, scoringDeps)).toMatchObject({ score: 80, verdict: "strong" });
+    expect(scoreJob).toHaveBeenCalledTimes(1);
+    const [scored] = await db.select().from(schema.userJobs).where(eq(schema.userJobs.jobId, view!.jobId));
+    expect(scored!.fitScore).toBe(80);
+  }, 60_000);
+
+  it("leaves an exhausted follower's roles unqueued when a scan fans out", async () => {
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources);
+    const aiDeps = { ...deps, ai: { ...deps.ai, enabled: true } } as unknown as WorkerDeps;
+    const scoreTasks = () => db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"));
+    const budget = (value: number) => db.insert(schema.userSettings).values({ userId: user.id, key: "aiBudgetUsd", value })
+      .onConflictDoUpdate({ target: [schema.userSettings.userId, schema.userSettings.key], set: { value } });
+
+    await budget(0);
+    await _scanSourceForTests(aiDeps, company, source!, await deps.settings(), null);
+    // The scan still observes and stores everything; only this account's scoring is held back,
+    // and no task was queued that could only fail at the hold.
+    expect(await scoreTasks()).toHaveLength(0);
+    expect((await db.select().from(schema.userJobs).where(eq(schema.userJobs.inTable, true))).length).toBeGreaterThan(0);
+    expect((await db.select().from(schema.tasks)).filter((row) => row.status === "failed")).toHaveLength(0);
+
+    await budget(25);
+    await _scanSourceForTests(aiDeps, company, source!, await deps.settings(), null);
+    expect((await scoreTasks()).length).toBeGreaterThan(0);
+  }, 60_000);
+
   it("does not score legacy non-matches even when old settings enabled them", async () => {
     await addCompany("https://www.acme.example/", "acme.example");
     await queue.drain();

@@ -1,11 +1,11 @@
-import { createDb, schema, type Db } from "@christopher/db";
-import { ats, discovery, modelForCallSite, type AppSettings, type DiscoveryContext, type FetchContext, type SystemSettings } from "@christopher/core";
-import { createAiEngine, type AiClientLike, type AiEngine, type AiUsageRecord } from "@christopher/ai";
+import { accountAiSpend, createDb, schema, sharedAiSpend, type Db } from "@christopher/db";
+import { aiBudgetWindowStart, aiFeatureLabel, ats, discovery, modelForCallSite, type AppSettings, type DiscoveryContext, type FetchContext, type SystemSettings } from "@christopher/core";
+import { createAiEngine, type AiClientLike, type AiEngine, type AiUsageRecord, type Ref } from "@christopher/ai";
 import { sql } from "drizzle-orm";
 import { BrowserRenderer } from "./browser";
 import type { WorkerEnv } from "./env";
 import { PoliteFetcher, userAgentFor } from "./fetcher";
-import { reserveAi } from "./budget";
+import { tryReserveAi } from "./budget";
 import { log } from "./log";
 import { loadSettings, loadUserSettings } from "./settings";
 
@@ -38,6 +38,7 @@ export interface DepsOverrides {
 
 export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}): Promise<WorkerDeps> {
   const { db, pool } = createDb(env.databaseUrl, { max: Math.max(4, env.concurrency + 2) });
+  const now = overrides.now ?? (() => new Date());
   const settingsTtlMs = overrides.settingsTtlMs ?? 5000;
   let cached: { at: number; value: SystemSettings } | null = null;
   const userCache = new Map<string, { at: number; value: AppSettings }>();
@@ -94,9 +95,39 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
       log.warn("failed to record ai usage", err);
     }
   };
+  /**
+   * Hold capacity for one call against both budgets that can refuse it.
+   *
+   * The account's own budget comes first, so an account that has spent its month cannot eat into
+   * what is left of the shared ceiling; the shared hold then covers everything, including the work
+   * that carries no account at all (extraction, discovery). Either refusal throws rather than
+   * returning null, so the error the task records names the budget that stopped it instead of
+   * leaving an administrator to guess which figure to raise.
+   */
+  const reserve = async (callSite: string, estimate: number, ref: Ref) => {
+    const system = await settings();
+    const at = now();
+    if (ref.userId) {
+      const account = await userSettings(ref.userId);
+      const spent = await accountAiSpend(db, ref.userId, aiBudgetWindowStart(at, account.aiBudgetResetAt));
+      if (spent + estimate > account.aiBudgetUsd)
+        throw new Error(`AI budget reserved or exhausted; retry later: ${aiFeatureLabel(callSite)} needs about $${estimate.toFixed(2)} and this account's monthly budget of $${account.aiBudgetUsd} has $${Math.max(0, account.aiBudgetUsd - spent).toFixed(2)} left. An administrator can raise it in Admin › Accounts.`);
+    }
+    const hold = await tryReserveAi(db, callSite, estimate, {
+      monthly: system.monthlyAiBudgetUsd,
+      daily: env.dailyAiBudgetUsd ?? 1000000,
+      discovery: env.discoveryAiBudgetUsd ?? 1000000,
+      resetAt: system.aiBudgetResetAt,
+    }, at);
+    if ("refused" in hold) {
+      const { limit, limitUsd, spent, held } = hold.refused;
+      const name = limit === "month" ? "shared monthly" : limit === "day" ? "shared daily" : "shared discovery";
+      throw new Error(`AI budget reserved or exhausted; retry later: ${aiFeatureLabel(callSite)} needs about $${estimate.toFixed(2)} and the ${name} budget of $${limitUsd} has $${Math.max(0, limitUsd - spent - held).toFixed(2)} left.`);
+    }
+    return hold.release;
+  };
   const ai = createAiEngine({
-    reserve: async (callSite, estimate) => reserveAi(db, callSite, estimate, { monthly: (await settings()).monthlyAiBudgetUsd,
-      daily: env.dailyAiBudgetUsd ?? 1000000, discovery: env.discoveryAiBudgetUsd ?? 1000000 }),
+    reserve,
     apiKey: env.anthropicApiKey,
     getModel: (callSite) => modelForCallSite(cached?.value ?? { defaultModel: "claude-sonnet-5", modelOverrides: {} }, callSite),
     onUsage,
@@ -116,7 +147,7 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
       cached = null;
       userCache.clear();
     },
-    now: overrides.now ?? (() => new Date()),
+    now,
     async close() {
       await browser?.close();
       await pool.end();
@@ -153,19 +184,42 @@ export function makeDiscoveryContext(deps: WorkerDeps, opts: { maxFetches?: numb
   };
 }
 
-/** Month-to-date AI spend in USD. */
-export async function aiSpendThisMonth(db: Db, now: Date): Promise<number> {
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const rows = await db.execute<{ total: string | null }>(sql`select coalesce(sum(cost_usd), 0)::text as total from ai_calls where at >= ${start}`);
-  const first = rows.rows[0];
-  return Number(first?.total ?? 0);
+/**
+ * Shared AI spend for the current budget window, in USD: every call, whoever it was for.
+ *
+ * "This month" starts at the shared reset marker when there is one later than the month itself, so
+ * zeroing the counter at a deploy (or from Admin) is a window move and leaves the call log intact.
+ */
+export async function aiSpendThisMonth(db: Db, now: Date, resetAt?: string | null): Promise<number> {
+  return sharedAiSpend(db, aiBudgetWindowStart(now, resetAt));
 }
 
-export async function aiBudgetExceeded(deps: WorkerDeps): Promise<boolean> {
+/** Why no model call may be made now. Worded to be returned as a task's `skipped` reason. */
+export type AiBudgetStop = "ai unavailable" | "shared ai budget exceeded" | "account ai budget exceeded";
+
+/**
+ * What stops a model call now, or null when there is room for one.
+ *
+ * `userId` is the account the work is for; shared work such as extraction and discovery passes
+ * none and is measured against the ceiling alone. Handlers ask before they begin, so that an
+ * account which has spent its month skips its queued work and the task finishes done. Leaving it
+ * to the hold instead would refuse the call mid-handler, fail the task and retry it: one exhausted
+ * account's near-miss scoring would fill Health's failed-task list with work nothing can complete.
+ */
+export async function aiBudgetStop(deps: WorkerDeps, userId?: string): Promise<AiBudgetStop | null> {
+  if (!deps.ai.enabled) return "ai unavailable";
   const settings = await deps.settings();
-  if (!deps.ai.enabled) return true;
-  const spend = await aiSpendThisMonth(deps.db, deps.now());
-  return spend >= settings.monthlyAiBudgetUsd;
+  const now = deps.now();
+  if ((await aiSpendThisMonth(deps.db, now, settings.aiBudgetResetAt)) >= settings.monthlyAiBudgetUsd) return "shared ai budget exceeded";
+  if (!userId) return null;
+  const account = await deps.userSettings(userId);
+  const spent = await accountAiSpend(deps.db, userId, aiBudgetWindowStart(now, account.aiBudgetResetAt));
+  return spent >= account.aiBudgetUsd ? "account ai budget exceeded" : null;
+}
+
+/** Whether a model call must not be made: the shared ceiling, and `userId`'s own budget when given. */
+export async function aiBudgetExceeded(deps: WorkerDeps, userId?: string): Promise<boolean> {
+  return (await aiBudgetStop(deps, userId)) !== null;
 }
 
 export { discovery as _discoveryNs };

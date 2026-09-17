@@ -77,8 +77,13 @@ export interface AiEngineOptions {
    * Hold capacity for one call, or refuse it. The returned function releases the hold, which the
    * engine calls once the call's real cost has been written through `onUsage`; an engine given a
    * `reserve` without an `onUsage` that records cost would never charge the budget at all.
+   *
+   * The call's `ref` comes with it, because budgets are per account as well as deployment-wide and
+   * `ref.userId` names the account this call is for (shared work such as extraction has none).
+   * Returning null refuses the call; throwing refuses it too, and is how a caller says which of
+   * its budgets ran out.
    */
-  reserve?: (callSite: string, estimateUsd: number) => Promise<(() => Promise<void>) | null>;
+  reserve?: (callSite: string, estimateUsd: number, ref: Ref) => Promise<(() => Promise<void>) | null>;
   apiKey?: string;
   getModel: (callSite: string) => string;
   onUsage?: (record: AiUsageRecord) => void | Promise<void>;
@@ -209,7 +214,7 @@ export class AiEngine {
     const promptBytes = Buffer.byteLength(params.system + blocks.map(block => block.text).join(""));
     const estimate = estimateCostUsd(model, { inputTokens: promptBytes / 3,
       outputTokens: params.maxTokens ?? 4096, cacheReadTokens: 0, cacheWriteTokens: 0 }) + (params.tools?.length ? 1 : 0);
-    const settle = this.options.reserve ? await this.options.reserve(callSite, estimate) : undefined;
+    const settle = this.options.reserve ? await this.options.reserve(callSite, estimate, ref) : undefined;
     if (settle === null) throw new Error("AI budget reserved or exhausted; retry later");
     try {
       const response = await this.complete(request, params);

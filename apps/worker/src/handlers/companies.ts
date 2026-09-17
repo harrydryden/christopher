@@ -7,7 +7,7 @@
 import { schema, enqueueTask, type Task } from "@christopher/db";
 import { dedupeKeyFor, discovery, ensureHttpUrl, extractDomain, priorityFor, stripHtml, type DiscoveryResult, type TaskPayloads } from "@christopher/core";
 import { and, eq, isNull, or, sql } from "drizzle-orm";
-import { aiBudgetExceeded, makeDiscoveryContext, makeFetchContext, type WorkerDeps } from "../context";
+import { aiBudgetStop, makeDiscoveryContext, makeFetchContext, type WorkerDeps } from "../context";
 import { serialiseCandidate } from "./discover";
 import { latestProfile } from "./learning";
 import { withResourceLease } from "../lease";
@@ -21,7 +21,8 @@ export async function handleProfileCompany(task: Task, deps: WorkerDeps): Promis
   const { companyId } = task.payload as { companyId: string };
   const [company] = await deps.db.select().from(schema.companies).where(eq(schema.companies.id, companyId)).limit(1);
   if (!company) return { skipped: "company not found" };
-  if (!deps.ai.enabled || (await aiBudgetExceeded(deps))) return { skipped: "ai unavailable" };
+  const profileStop = await aiBudgetStop(deps);
+  if (profileStop) return { skipped: profileStop };
 
   const text = await gatherCompanyText(deps, company.homepageUrl);
   if (!text) return { skipped: "no readable homepage text" };
@@ -102,7 +103,8 @@ export async function handleSuggestCompanies(task: Task, deps: WorkerDeps): Prom
   }
   const settings = await deps.userSettings(userId);
   if (!settings.suggestionsEnabled) return { skipped: "suggestions disabled" };
-  if (!deps.ai.enabled || (await aiBudgetExceeded(deps))) return { skipped: "ai unavailable" };
+  const suggestStop = await aiBudgetStop(deps, userId);
+  if (suggestStop) return { skipped: suggestStop };
 
   const companies = await followedCompanies(deps, userId);
   if (companies.length === 0) return { skipped: "no companies to compare against" };

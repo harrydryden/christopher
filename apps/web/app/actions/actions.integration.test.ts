@@ -11,10 +11,10 @@ import {
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDb, schema, subscribeToCompany, type Db } from "@christopher/db";
 import { DEFAULT_CV_THEME, CV_THEMES } from "@christopher/core/cv";
-import { DEFAULT_SETTINGS, modelForCallSite } from "@christopher/core";
+import { DEFAULT_ACCOUNT_AI_BUDGET_USD, DEFAULT_SETTINGS, modelForCallSite } from "@christopher/core";
 import { runMigrations } from "@christopher/db/migrate";
-import { eq, sql } from "drizzle-orm";
-import { signInTestUser } from "@/test/auth";
+import { and, eq, sql } from "drizzle-orm";
+import { ensureTestUser, signInTestUser } from "@/test/auth";
 import type { User } from "@christopher/db/schema";
 
 async function completeAssessment(id: string) {
@@ -98,6 +98,8 @@ import {
   refreshCompany,
 } from "./companies";
 import { removeCatalogueCompany, saveCatalogueCompany } from "./admin";
+import { listAccounts, resetAccountAiSpend, setAccountAiBudget } from "./account";
+import { accountAiBudgets } from "@/lib/queries/accounts";
 
 beforeAll(async () => {
   const client = createDb(
@@ -922,6 +924,7 @@ it("carries library styling through generation, revision, matching preview/downl
       db: database,
       env: { anthropicApiKey: "fixture-key" },
       settings: async () => ({ monthlyAiBudgetUsd: 100 }),
+      userSettings: async () => ({ aiBudgetUsd: 100, aiBudgetResetAt: null }),
       now: () => new Date(),
     } as unknown as import("../../../worker/src/context").WorkerDeps);
   } finally {
@@ -1143,6 +1146,7 @@ it("assesses, improves with current evidence, finalises and exports through the 
     db: database,
     env: { anthropicApiKey: "fixture-key" },
     settings: async () => ({ monthlyAiBudgetUsd: 100 }),
+    userSettings: async () => ({ aiBudgetUsd: 100, aiBudgetResetAt: null }),
     now: () => new Date(),
   } as unknown as import("../../../worker/src/context").WorkerDeps;
   async function run(id: string) {
@@ -1427,4 +1431,84 @@ it("preserves legacy writing preferences, rejects stale saves, and uses saved pr
   expect(await getCvWritingPreferences(user.id)).toEqual(saved);
   session = undefined;
   await expect(saveCvWritingPreferences({ ok: true }, form)).rejects.toThrow("Unauthorised");
+});
+
+
+describe("administering accounts", () => {
+  /** A finished build, an archived finished build, or one that never finished. */
+  const draft = (userId: string, status: "ready" | "failed", archivedAt: Date | null = null) => ({
+    userId, jobTitle: "Operations Manager", companyName: "Acme", jobDescription: "Run operations.",
+    libraryVersion: 1, librarySnapshot: { name: "Example", contact: "", profile: "", entries: [] },
+    model: "test", status, archivedAt,
+  });
+  const budgetForm = (value: string) => {
+    const form = new FormData();
+    form.set("aiBudgetUsd", value);
+    return form;
+  };
+  const stored = async (userId: string, key: string) => {
+    const [row] = await database.select().from(schema.userSettings)
+      .where(and(eq(schema.userSettings.userId, userId), eq(schema.userSettings.key, key)));
+    return row?.value;
+  };
+
+  it("counts each account's finished CVs and followed companies, and what it has spent of its budget", async () => {
+    const member = await ensureTestUser(database, "member@example.com", "member");
+    const { company } = await fixture();
+    const [second] = await database.insert(schema.companies)
+      .values({ name: "Other", domain: "other.example", homepageUrl: "https://other.example" }).returning();
+    // The member follows one board and has stopped following the other.
+    await database.insert(schema.companySubscriptions).values([
+      { userId: member.id, companyId: company.id },
+      { userId: member.id, companyId: second!.id, status: "archived" },
+    ]);
+    // Archiving a CV does not unmake it; a build that never finished was never produced.
+    await database.insert(schema.cvDrafts).values([draft(member.id, "ready"), draft(member.id, "ready", new Date()), draft(member.id, "failed")]);
+    const now = new Date();
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    await database.insert(schema.aiCalls).values([
+      { userId: member.id, callSite: "CV", model: "claude-fable-5-1", costUsd: 4, at: monthStart },
+      // Shared work belongs to no account's budget, and last month is over.
+      { userId: null, callSite: "A3", model: "claude-sonnet-5", costUsd: 7, at: monthStart },
+      { userId: member.id, callSite: "A5", model: "claude-sonnet-5", costUsd: 8, at: new Date(monthStart.getTime() - 1_000) },
+    ]);
+
+    const accounts = await listAccounts();
+    // The signed-in administrator holds the one live session; the member has never signed in.
+    expect(accounts.find((account) => account.id === member.id)).toMatchObject({ cvsProduced: 2, companies: 1, sessions: 0 });
+    expect(accounts.find((account) => account.id === user.id)).toMatchObject({ cvsProduced: 0, companies: 1, sessions: 1 });
+    const budgets = await accountAiBudgets(accounts.map((account) => account.id), now);
+    expect(budgets.get(member.id)).toMatchObject({ limitUsd: DEFAULT_ACCOUNT_AI_BUDGET_USD, spentUsd: 4, countingSince: null });
+    expect(budgets.get(user.id)).toMatchObject({ spentUsd: 0 });
+  });
+
+  it("lets an administrator raise and reset one account's AI budget, and refuses a member", async () => {
+    const member = await ensureTestUser(database, "member@example.com", "member");
+    await setAccountAiBudget(member.id, budgetForm("40"));
+    expect(await stored(member.id, "aiBudgetUsd")).toBe(40);
+    // Blank, negative, over the ceiling or not a number: refused, and the stored budget stands.
+    for (const bad of ["", "-1", "10001", "abc"]) {
+      await expect(setAccountAiBudget(member.id, budgetForm(bad))).rejects.toThrow(/between \$0 and \$10000/);
+    }
+    expect(await stored(member.id, "aiBudgetUsd")).toBe(40);
+
+    await resetAccountAiSpend(member.id);
+    const marker = Date.parse(String(await stored(member.id, "aiBudgetResetAt")));
+    expect(marker).toBeGreaterThan(Date.now() - 60_000);
+    expect(marker).toBeLessThanOrEqual(Date.now());
+    // Spend recorded before the reset stops counting; the calls themselves are untouched.
+    await database.insert(schema.aiCalls).values({ userId: member.id, callSite: "CV", model: "claude-fable-5-1", costUsd: 4, at: new Date(marker - 60_000) });
+    expect((await accountAiBudgets([member.id])).get(member.id)).toMatchObject({ limitUsd: 40, spentUsd: 0 });
+    expect(await database.select().from(schema.aiCalls)).toHaveLength(1);
+
+    // Budgets are an administrator's to set, including one's own.
+    await database.update(schema.users).set({ role: "member" }).where(eq(schema.users.id, user.id));
+    await expect(listAccounts()).rejects.toThrow("Forbidden");
+    await expect(setAccountAiBudget(member.id, budgetForm("60"))).rejects.toThrow("Forbidden");
+    await expect(setAccountAiBudget(user.id, budgetForm("60"))).rejects.toThrow("Forbidden");
+    await expect(resetAccountAiSpend(member.id)).rejects.toThrow("Forbidden");
+    expect(await stored(member.id, "aiBudgetUsd")).toBe(40);
+    session = undefined;
+    await expect(setAccountAiBudget(member.id, budgetForm("60"))).rejects.toThrow("Unauthorised");
+  });
 });

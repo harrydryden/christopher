@@ -11,6 +11,8 @@ import { SettingsForm } from "@/components/SettingsForm";
 import { ModelSelect } from "@/components/ModelSelect";
 import { inputClass as fieldClass, labelClass as fieldLabelClass, selectClass } from "@/components/Field";
 import { getSettings } from "@/lib/settings";
+import { accountAiBudget } from "@/lib/queries/accounts";
+import { formatUsd, shortDate } from "@/lib/format";
 import { requireUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -23,13 +25,13 @@ const checkboxClass = "flex items-center gap-2 text-14";
 export default async function SettingsPage() {
   const user = await requireUser();
   const admin = user.role === "admin";
-  const [settings, appearance, writing] = await Promise.all([getSettings(), getDefaultCvAppearance(user.id), getCvWritingPreferences(user.id)]);
+  const [settings, appearance, writing, budget] = await Promise.all([getSettings(), getDefaultCvAppearance(user.id), getCvWritingPreferences(user.id), accountAiBudget(user.id)]);
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Settings"
-        description="Keywords, locations and CV preferences are yours. The scan schedule, models and budget are shared and live in Admin."
+        description="Keywords, locations and CV preferences are yours, as is your monthly AI budget. The scan schedule and models are shared and live in Admin."
         actions={
           <form action={rescoreAllRoles}>
             <Button type="submit">Re-score all</Button>
@@ -127,10 +129,16 @@ export default async function SettingsPage() {
         </SettingsForm>
       </Card>
 
-      <Card title="AI (shared)">
-        <p className="text-14 text-muted">
-          Scoring and extraction use the shared default model <code>{settings.defaultModel}</code> with a monthly budget of ${settings.monthlyAiBudgetUsd}.
-          {admin ? <> Change these in <a href="/admin/settings" className="text-fg underline">Admin › System settings</a>.</> : " An administrator manages these."}
+      <Card title="AI budget">
+        <p className="text-14">
+          You have used {formatUsd(budget.spentUsd)} of your {formatUsd(budget.limitUsd)} this month; it resets on the 1st.
+          {budget.countingSince && <> Counting since {shortDate(budget.countingSince)}, when an administrator last reset it.</>}
+        </p>
+        <p className="mt-2 text-14 text-muted">
+          Scoring and extraction use the shared default model <code>{settings.defaultModel}</code>.
+          {admin
+            ? <> Raise any account&apos;s budget in <a href="/admin" className="text-fg underline">Admin › Accounts</a>, and change the model or the shared ceiling in <a href="/admin/settings" className="text-fg underline">System settings</a>.</>
+            : " An administrator can raise your budget in Admin › Accounts."}
         </p>
       </Card>
     </div>

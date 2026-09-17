@@ -59,10 +59,18 @@ function cvContentIssues(error: z.ZodError): string {
   }).join(" ");
 }
 
-/** The newest examples that fit the phrasing limit; the oldest go first once it fills up. */
+const REMEMBERED = "Kept from a saved CV — ";
+
+/**
+ * The newest examples that fit the phrasing limit. Once it fills up, the oldest example a save
+ * remembered goes first; what the user typed into Settings goes only when nothing else is left.
+ */
 function newestWithin(examples: string[], limit: number): string {
   const kept = [...new Set(examples.map((example) => example.trim()).filter(Boolean))];
-  while (kept.length && kept.join("\n\n").length > limit) kept.shift();
+  while (kept.length && kept.join("\n\n").length > limit) {
+    const oldest = kept.findIndex((example) => example.startsWith(REMEMBERED));
+    kept.splice(oldest === -1 ? 0 : oldest, 1);
+  }
   return kept.join("\n\n");
 }
 
@@ -71,12 +79,15 @@ async function rememberWording(tx: Tx, userId: string, before: CvContent, after:
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`cv:library:${userId}`}))`);
   const latest = await latestLibrary(tx, userId);
   if (!latest) return undefined;
+  // Only the wording that changed is worth remembering; a whole section for one edited bullet
+  // buried the user's own style guidance in repetition.
   const changes: string[] = [];
-  if (after.summary !== before.summary) changes.push(`Profile phrasing: ${after.summary}`);
+  if (after.summary !== before.summary) changes.push(`${REMEMBERED}profile: ${after.summary}`);
   after.sections.forEach((section, i) => {
     const previous = before.sections[i]!;
-    if (JSON.stringify(section.skillItems ?? section.bullets) !== JSON.stringify(previous.skillItems ?? previous.bullets))
-      changes.push(`${section.heading}: ${(section.skillItems ?? section.bullets).join(" ")}`);
+    const kept = new Set(previous.skillItems ?? previous.bullets);
+    const changed = (section.skillItems ?? section.bullets).filter((item) => !kept.has(item));
+    if (changed.length) changes.push(`${REMEMBERED}${section.heading}: ${changed.join(" ")}`);
   });
   if (!changes.length) return undefined;
   const [storedPreferences] = await tx.select().from(userSettingsTable).where(and(eq(userSettingsTable.userId, userId), eq(userSettingsTable.key, "cvWritingPreferences")));
@@ -289,11 +300,10 @@ export async function saveCvDraft(
       return fail("Wait for the current build to finish before editing.");
     const content = applyCvFormEdits(draft.content, form);
     const rebuild = form.get("intent") === "improve";
-    // The rolling archive can remove a parent before this queued build starts.
-    const reviewContext = draft.assessment ? {
-      rubric: draft.assessment.rubric,
-      improvements: draft.assessment.review.matches.filter(match => cvImprovementOwner(match) === "system").map(match => match.improvement).filter(Boolean),
-    } : {};
+    // The rolling archive can remove a parent before this queued build starts, so the revision
+    // carries what it needs: the rubric, and for a rebuild the improvements the system can act on.
+    const rubric = draft.assessment ? { rubric: draft.assessment.rubric } : {};
+    const improvements = draft.assessment?.review.matches.filter(match => cvImprovementOwner(match) === "system").map(match => match.improvement).filter(Boolean) ?? [];
     // The worker measures saved edits and automatically fits any overflow before assessing.
     const {
       id: _id,
@@ -338,7 +348,7 @@ export async function saveCvDraft(
         await enqueueTask(
           tx,
           "generate_cv",
-          { draftId: fitting!.id, ...reviewContext, mode: "improve" },
+          { draftId: fitting!.id, ...rubric, improvements, mode: "improve" },
           { dedupeKey: `generate_cv:${fitting!.id}`, priority: 2 },
         );
         return fitting!.id;
@@ -358,7 +368,7 @@ export async function saveCvDraft(
       await enqueueTask(
         tx,
         "generate_cv",
-        { draftId: saved!.id, mode: "assess", ...reviewContext },
+        { draftId: saved!.id, mode: "assess", ...rubric },
         { dedupeKey: `generate_cv:${saved!.id}`, priority: 2 },
       );
       return saved!.id;

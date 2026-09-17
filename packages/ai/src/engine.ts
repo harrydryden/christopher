@@ -307,14 +307,17 @@ export class AiEngine {
       claims: z.array(CvReviewPlanSchema.shape.claims.element).max(batchSize),
     });
     const { requirements: _requirements, ...rubricContext } = input.rubric;
-    // First in the user turn and byte-identical in every batch, so the batches after the first read
-    // it from cache: the cache is a prefix match.
-    const shared = JSON.stringify({ cv: input.cv, evidence: input.evidence, rubric: rubricContext });
+    // The shared context is two cached blocks in the order it changes, least often first: the
+    // evidence and rubric outlive a revision, so the re-audit of an edited CV reads them from
+    // cache and writes only the CV; within one audit the batches after the first read both. The
+    // cache is a prefix match, so nothing that varies may come before either.
+    const stable = JSON.stringify({ evidence: input.evidence, rubric: rubricContext });
+    const printed = JSON.stringify({ cv: input.cv });
     const batches = cvReviewBatches(input, batchSize);
     const controller = new AbortController();
     const runBatch = (batch: CvReviewBatch, corrections?: string[], onStart?: () => void) => this.run<CvReviewPlan>("CV", {
-      system: CV_REVIEW_PROMPT + "\nThis is one batch of a larger audit. The user turn has two parts: the shared context (the complete cv and evidence, and the rubric's caveats), then this batch: the rubric requirements and claims to assess now, with claimSources supplying each claim's required source explicitly. Assess only the batch's requirements and claims, using the complete CV and evidence as context. Return an empty array when the batch has no requirements or no claims. Use the shortest sufficient verbatim quotes; usually one or two sources per finding suffice. Keep reasons and improvements concise. Every claim with requiredEvidenceId must cite a verbatim quote from that exact source to be supported, including skills. Evidence from a different role, profile or skill block cannot substitute for it. If that source does not support the complete claim, mark it uncertain or unsupported; never copy in unrelated evidence merely to satisfy this rule.",
-      user: [{ text: shared, cache: true }, { text: JSON.stringify({ ...batch, ...(corrections ? { corrections } : {}) }) }],
+      system: CV_REVIEW_PROMPT + "\nThis is one batch of a larger audit. The user turn has three parts: the complete evidence library with the rubric's caveats, then the complete cv, then this batch: the rubric requirements and claims to assess now, with claimSources supplying each claim's required source explicitly. Assess only the batch's requirements and claims, using the complete CV and evidence as context. Return an empty array when the batch has no requirements or no claims. Use the shortest sufficient verbatim quotes; usually one or two sources per finding suffice. Keep reasons and improvements concise. Every claim with requiredEvidenceId must cite a verbatim quote from that exact source to be supported, including skills. Evidence from a different role, profile or skill block cannot substitute for it. If that source does not support the complete claim, mark it uncertain or unsupported; never copy in unrelated evidence merely to satisfy this rule.",
+      user: [{ text: stable, cache: true }, { text: printed, cache: true }, { text: JSON.stringify({ ...batch, ...(corrections ? { corrections } : {}) }) }],
       schema,
       effort: "high",
       // Recorded batches reach 11.8k of the old 16k ceiling; a truncated batch fails the audit.

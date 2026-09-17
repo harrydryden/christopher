@@ -6,22 +6,25 @@ type Context = { cv: CvTextItem[]; claims: CvClaimItem[]; evidence: CvTextItem[]
 export type CvReviewBatch = { requirements: CvRubric["requirements"]; claims: CvClaimItem[]; claimSources: CvTextItem[] };
 
 /**
- * The batches of an audit: up to `size` requirements and as many claims each, with the sources
- * those claims must cite named explicitly. Every batch is assessed against the complete CV and
- * evidence, which the caller sends once as shared context.
+ * The batches of an audit: as few as keep every batch within `size` requirements and `size`
+ * claims, with the requirements and the claims each spread evenly across them so the batches,
+ * which run together, take about as long as each other. Each names the sources its claims must
+ * cite; every batch is assessed against the complete CV and evidence, sent once as shared context.
  */
 export function cvReviewBatches(input: { rubric: CvRubric; claims: CvClaimItem[]; evidence: CvTextItem[] }, size: number): CvReviewBatch[] {
-  const batches: CvReviewBatch[] = [];
-  const count = Math.max(input.rubric.requirements.length, input.claims.length);
-  for (let offset = 0; offset < count; offset += size) {
-    const claims = input.claims.slice(offset, offset + size);
-    batches.push({
-      requirements: input.rubric.requirements.slice(offset, offset + size),
+  const count = Math.ceil(Math.max(input.rubric.requirements.length, input.claims.length) / size);
+  const share = <T>(items: T[], index: number) => {
+    const each = Math.ceil(items.length / count);
+    return items.slice(index * each, (index + 1) * each);
+  };
+  return Array.from({ length: count }, (_, index) => {
+    const claims = share(input.claims, index);
+    return {
+      requirements: share(input.rubric.requirements, index),
       claims,
       claimSources: input.evidence.filter(source => claims.some(claim => claim.requiredEvidenceId === source.id)),
-    });
-  }
-  return batches;
+    };
+  });
 }
 type Issue = { kind: "cv" | "library" | "claim"; index: number; correction: string };
 

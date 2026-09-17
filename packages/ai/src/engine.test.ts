@@ -501,11 +501,14 @@ describe("bounded CV assessment", () => {
     releaseFirst();
     expect(await review).toEqual(fullResponse(input));
     const blocks = calls.map(call => userBlocks(call.params));
-    expect(blocks.map(content => content.length)).toEqual([2, 2, 2]);
-    expect(blocks.every(content => content[0]!.text === blocks[0]![0]!.text && content[0]!.cache_control)).toBe(true);
-    expect(blocks.every(content => !content[1]!.cache_control)).toBe(true);
-    expect(new Set(blocks.map(content => content[1]!.text)).size).toBe(3);
-    expect(JSON.parse(blocks[0]![0]!.text)).toEqual({ cv: input.cv, evidence: input.evidence, rubric: { caveats: [] } });
+    expect(blocks.map(content => content.length)).toEqual([3, 3, 3]);
+    for (const cached of [0, 1])
+      expect(blocks.every(content => content[cached]!.text === blocks[0]![cached]!.text && content[cached]!.cache_control)).toBe(true);
+    expect(blocks.every(content => !content[2]!.cache_control)).toBe(true);
+    expect(new Set(blocks.map(content => content[2]!.text)).size).toBe(3);
+    // The evidence and rubric come before the CV: they outlive a revision, so its re-audit reads them.
+    expect(JSON.parse(blocks[0]![0]!.text)).toEqual({ evidence: input.evidence, rubric: { caveats: [] } });
+    expect(JSON.parse(blocks[0]![1]!.text)).toEqual({ cv: input.cv });
     expect(usage.map(record => record.cacheReadTokens).sort()).toEqual([0, 5000, 5000]);
   });
 

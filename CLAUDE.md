@@ -8,7 +8,7 @@ Christopher watches company careers pages daily and keeps a filtered, learnable 
 | Path | What lives there |
 |---|---|
 | `packages/core` | Everything that decides accuracy: discovery, ATS adapters, extraction, the keyword and location gate, change detection. Pure: fetchers are injected, so it is all testable without a network. |
-| `packages/ai` | One method per model call site (A1–A10 in the spec). Schema-validated, prompt-cached, post-checked. |
+| `packages/ai` | One method per model call site (A1–A10 in the spec). Streamed, schema-validated, prompt-cached, post-checked. |
 | `packages/db` | Drizzle schema, migrations, task queue helpers. |
 | `apps/worker` | Scheduler, task queue, polite fetcher, headless browser, task handlers, operational CLI. |
 | `apps/web` | Next.js interface. Server components read; server actions write and enqueue tasks. |

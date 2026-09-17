@@ -7,7 +7,8 @@ import { z } from "zod";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { actionCvs, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, userJobs, enqueueTask } from "@christopher/db";
 import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvWritingPreferences,
-  createCvWritingBudget, CvLibrarySchema, consolidateExperience, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel } from "@christopher/core";
+  createCvWritingBudget, CvLibrarySchema, consolidateExperience, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel,
+  type CvContent, type CvWritingPreferences } from "@christopher/core";
 import { requireUser, requireVerifiedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { userSettings as userSettingsTable } from "@christopher/db/schema";
@@ -26,6 +27,29 @@ async function latestLibrary(tx: Pick<Tx, "select">, userId: string) {
 async function upsertUserSetting(tx: Pick<Tx, "insert">, userId: string, key: string, value: unknown) {
   await tx.insert(userSettingsTable).values({ userId, key, value: value as object, updatedAt: new Date() })
     .onConflictDoUpdate({ target: [userSettingsTable.userId, userSettingsTable.key], set: { value: value as object, updatedAt: new Date() } });
+}
+
+/** Append the wording the user changed to their saved phrasing. Returns the preferences when they changed. */
+async function rememberWording(tx: Tx, userId: string, before: CvContent, after: CvContent): Promise<CvWritingPreferences | undefined> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`cv:library:${userId}`}))`);
+  const latest = await latestLibrary(tx, userId);
+  if (!latest) return undefined;
+  const changes: string[] = [];
+  if (after.summary !== before.summary) changes.push(`Profile phrasing: ${after.summary}`);
+  after.sections.forEach((section, i) => {
+    const previous = before.sections[i]!;
+    if (JSON.stringify(section.skillItems ?? section.bullets) !== JSON.stringify(previous.skillItems ?? previous.bullets))
+      changes.push(`${section.heading}: ${(section.skillItems ?? section.bullets).join(" ")}`);
+  });
+  if (!changes.length) return undefined;
+  const [storedPreferences] = await tx.select().from(userSettingsTable).where(and(eq(userSettingsTable.userId, userId), eq(userSettingsTable.key, "cvWritingPreferences")));
+  const preferences = resolveCvWritingPreferences(storedPreferences?.value, latest.content);
+  const preferredWording = [preferences.preferredWording, ...changes].filter(Boolean).join("\n\n");
+  if (preferredWording.length > 12000)
+    throw new Error("Saved phrasing is full. Edit or remove older examples in Settings first.");
+  const updated = { ...preferences, preferredWording };
+  await upsertUserSetting(tx, userId, "cvWritingPreferences", updated);
+  return updated;
 }
 
 export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promise<ActionResult> {
@@ -272,6 +296,9 @@ export async function saveCvDraft(
       const revision = await nextCvRevision(tx, draft);
       const [source] = await tx.select({ id: cvDrafts.id }).from(cvDrafts).where(eq(cvDrafts.id, id));
       if (!source) throw new Error("This CV was deleted. Open the latest saved CV before editing.");
+      // Corrections are remembered whichever build the save requests, and an improved revision
+      // is written with them from the start.
+      const remembered = form.get("rememberWording") === "on" ? await rememberWording(tx, user.id, draft.content!, content) : undefined;
       if (fit) {
         const latest = intent === "improve" ? await latestLibrary(tx, user.id) : undefined;
         const evidence = latest
@@ -279,7 +306,7 @@ export async function saveCvDraft(
           : draft.librarySnapshot;
         const librarySnapshot = CvLibrarySchema.parse({
           ...evidence,
-          ...(intent === "improve" ? ((await getSettings()).cvWritingPreferences ?? {}) : {}),
+          ...(intent === "improve" ? (remembered ?? (await getSettings()).cvWritingPreferences ?? {}) : {}),
           theme: content.theme ?? DEFAULT_CV_THEME,
         });
         const [fitting] = await tx
@@ -345,44 +372,6 @@ export async function saveCvDraft(
         { draftId: saved!.id, mode: "assess", ...reviewContext },
         { dedupeKey: `generate_cv:${saved!.id}`, priority: 2 },
       );
-      if (form.get("rememberWording") === "on") {
-        await tx.execute(
-          sql`select pg_advisory_xact_lock(hashtext(${`cv:library:${user.id}`}))`,
-        );
-        const latest = await latestLibrary(tx, user.id);
-        if (latest) {
-          const changes: string[] = [];
-          if (content.summary !== draft.content!.summary)
-            changes.push(`Profile phrasing: ${content.summary}`);
-          content.sections.forEach((section, i) => {
-            if (
-              JSON.stringify(section.skillItems ?? section.bullets) !==
-              JSON.stringify(
-                draft.content!.sections[i]!.skillItems ??
-                  draft.content!.sections[i]!.bullets,
-              )
-            )
-              changes.push(
-                `${section.heading}: ${(section.skillItems ?? section.bullets).join(" ")}`,
-              );
-          });
-          if (changes.length) {
-            const [storedPreferences] = await tx.select().from(userSettingsTable).where(and(eq(userSettingsTable.userId, user.id), eq(userSettingsTable.key, "cvWritingPreferences")));
-            const preferences = resolveCvWritingPreferences(storedPreferences?.value, latest.content);
-            const preferredWording = [
-              preferences.preferredWording,
-              ...changes,
-            ]
-              .filter(Boolean)
-              .join("\n\n");
-            if (preferredWording.length > 12000)
-              throw new Error(
-                "Saved phrasing is full. Edit or remove older examples in Settings first.",
-              );
-            await upsertUserSetting(tx, user.id, "cvWritingPreferences", { ...preferences, preferredWording });
-          }
-        }
-      }
       return saved!.id;
     });
   } catch (error) {

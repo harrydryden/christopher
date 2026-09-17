@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createAiEngine, decisionDigest, extractJsonBlock, OUTPUT_LIMIT_ERROR, type AiClientLike, type AiUsageRecord, type DecisionForDigest, type ParseResponse } from "./engine";
+import { createAiEngine, decisionDigest, extractJsonBlock, CANCELLED_ERROR, OUTPUT_LIMIT_ERROR, STREAM_CEILING_MS, type AiClientLike, type AiUsageRecord, type DecisionForDigest, type ParseResponse } from "./engine";
 import { estimateCostUsd } from "./pricing";
 
 interface Captured {
@@ -24,6 +24,53 @@ function fakeClient(parsedOutput: unknown, over: Partial<ParseResponse> = {}) {
     },
   };
   return { client, calls };
+}
+
+/** The user turn as the model reads it: one JSON document, or the cached and varying blocks merged. */
+function userPayload(params: Record<string, unknown>) {
+  const content = (params.messages as Array<{ content: string | Array<{ text: string }> }>)[0]!.content;
+  return typeof content === "string" ? JSON.parse(content) : Object.assign({}, ...content.map(block => JSON.parse(block.text)));
+}
+
+function userBlocks(params: Record<string, unknown>) {
+  return (params.messages as Array<{ content: Array<{ text: string; cache_control?: unknown }> }>)[0]!.content;
+}
+
+/**
+ * A client with the SDK's streaming helper. Each response begins on the next tick and ends when
+ * `respond` settles; the ceiling's abort or the caller's signal cuts it off.
+ */
+function streamingClient(respond: (params: Record<string, unknown>, index: number, signal?: AbortSignal) => Promise<ParseResponse>) {
+  const calls: Captured[] = [];
+  const events: string[] = [];
+  const client: AiClientLike = { messages: {
+    create: () => Promise.reject(new Error("a streaming client is never asked to create")),
+    stream(params, options) {
+      const index = calls.length;
+      calls.push({ params, options });
+      const signal = options?.signal as AbortSignal | undefined;
+      const listeners: Array<() => void> = [];
+      let cut = () => {};
+      let done = false;
+      const stream = {
+        currentMessage: undefined as ParseResponse | undefined,
+        on(_event: "streamEvent", listener: () => void) { listeners.push(listener); return stream; },
+        abort() { events.push(`abort:${index}`); cut(); },
+        finalMessage: () => new Promise<ParseResponse>((resolve, reject) => {
+          cut = () => { if (!done) reject(new Error("Request was aborted.")); };
+          signal?.addEventListener("abort", () => { if (done) return; events.push(`cancel:${index}`); cut(); });
+          Promise.resolve().then(() => {
+            events.push(`start:${index}`);
+            stream.currentMessage = { usage: { input_tokens: 400, cache_read_input_tokens: 2000 } };
+            for (const listener of listeners) listener();
+            return respond(params, index, signal);
+          }).then(response => { done = true; events.push(`end:${index}`); resolve(response); }, error => { done = true; reject(error); });
+        }),
+      };
+      return stream;
+    },
+  } };
+  return { client, calls, events };
 }
 
 function engineWith(parsedOutput: unknown, over: Partial<ParseResponse> = {}) {
@@ -361,6 +408,35 @@ it("uses isolated, metered CV calls for rubric extraction and factual assessment
   });
 });
 
+describe("streamed calls", () => {
+  it("streams when the client can, keeping the timeout on the wait for the response to begin", async () => {
+    const { client, calls } = streamingClient(async () => ({ parsed_output: { score: 80, verdict: "strong", rationale: "Fits", flags: [] }, usage: { input_tokens: 10, output_tokens: 5 }, stop_reason: "end_turn" }));
+    const usage: AiUsageRecord[] = [];
+    const engine = createAiEngine({ client, getModel: () => "claude-opus-5", onUsage: record => { usage.push(record); } });
+    expect(await engine.scoreJob({ profileMarkdown: "", decisionDigest: "", job: { title: "t", company: "c" } })).toMatchObject({ score: 80 });
+    expect(calls[0]!.options).toEqual({ timeout: 30_000 });
+    expect(usage[0]).toMatchObject({ ok: true, inputTokens: 10, outputTokens: 5 });
+  });
+
+  it("cuts off a stalled stream at the ceiling and records the prompt it was billed for", async () => {
+    vi.useFakeTimers();
+    try {
+      const { client, events } = streamingClient(() => new Promise(() => {}));
+      const usage: AiUsageRecord[] = [];
+      const engine = createAiEngine({ client, getModel: () => "claude-fable-5-1", onUsage: record => { usage.push(record); } });
+      const rubric = engine.analyseCvJob("Must lead operations");
+      await vi.advanceTimersByTimeAsync(STREAM_CEILING_MS);
+      expect(await rubric).toBeNull();
+      expect(events).toContain("abort:0");
+      expect(usage[0]).toMatchObject({ ok: false, inputTokens: 400, cacheReadTokens: 2000 });
+      expect(usage[0]!.error).toMatch(/timed out/);
+      expect(usage[0]!.costUsd).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("bounded CV assessment", () => {
   const inputFor = (requirements: number, claims: number) => ({
     rubric: { requirements: Array.from({ length: requirements }, (_, i) => ({ id: `r${i}`, label: "Operations", quote: "Lead operations", importance: "essential" as const, category: "experience" as const })), caveats: [] },
@@ -368,49 +444,87 @@ describe("bounded CV assessment", () => {
     claims: Array.from({ length: claims }, (_, i) => ({ id: `claim${i}`, text: "Operations leader" })),
     evidence: [{ id: "source:profile", text: "Operations leader" }],
   });
-  const responseFor = (input: ReturnType<typeof inputFor>) => ({
-    matches: input.rubric.requirements.map(item => ({ requirementId: item.id, status: "demonstrated", libraryStatus: "demonstrated", cvEvidence: [{ id: "profile", quote: "Operations leader" }], libraryEvidence: [{ id: "source:profile", quote: "Operations leader" }], reason: "Supported", improvement: "" })),
-    claims: input.claims.map(item => ({ claimId: item.id, status: "supported", evidence: [{ id: "source:profile", quote: "Operations leader" }], reason: "Supported" })),
+  const responseFor = (batch: { requirements: Array<{ id: string }>; claims: Array<{ id: string }> }) => ({
+    matches: batch.requirements.map(item => ({ requirementId: item.id, status: "demonstrated", libraryStatus: "demonstrated", cvEvidence: [{ id: "profile", quote: "Operations leader" }], libraryEvidence: [{ id: "source:profile", quote: "Operations leader" }], reason: "Supported", improvement: "" })),
+    claims: batch.claims.map(item => ({ claimId: item.id, status: "supported", evidence: [{ id: "source:profile", quote: "Operations leader" }], reason: "Supported" })),
   });
+  const fullResponse = (input: ReturnType<typeof inputFor>) => responseFor({ requirements: input.rubric.requirements, claims: input.claims });
 
   it.each([[17, 3], [3, 17], [16, 16]])("covers %i requirements and %i claims once, retaining full context and metering every batch", async (requirements, claims) => {
     const input = inputFor(requirements, claims);
-    const batches: ReturnType<typeof inputFor>[] = [];
+    const batches: ReturnType<typeof userPayload>[] = [];
     const usage: AiUsageRecord[] = [];
     const engine = createAiEngine({
       getModel: () => "claude-fable-5-1",
       onUsage: record => { usage.push(record); },
       client: { messages: { create: async params => {
-        const batch = JSON.parse((params.messages as Array<{ content: string }>)[0]!.content);
+        const batch = userPayload(params);
         batches.push(batch);
         return { parsed_output: responseFor(batch), usage: { input_tokens: 100, output_tokens: 100 } };
       } } },
     });
-    expect(await engine.assessCv(input, { refType: "cv-review", refId: "draft" })).toEqual(responseFor(input));
+    expect(await engine.assessCv(input, { refType: "cv-review", refId: "draft" })).toEqual(fullResponse(input));
     expect(batches).toHaveLength(Math.ceil(Math.max(requirements, claims) / 8));
     for (const batch of batches) {
-      expect(batch.rubric.requirements.length).toBeLessThanOrEqual(8);
+      expect(batch.requirements.length).toBeLessThanOrEqual(8);
       expect(batch.claims.length).toBeLessThanOrEqual(8);
       expect(batch.cv).toEqual(input.cv);
       expect(batch.evidence).toEqual(input.evidence);
+      expect(batch.rubric).toEqual({ caveats: [] });
     }
     expect(usage).toHaveLength(batches.length);
     expect(usage.every(record => record.ok && record.refId === "draft" && record.costUsd > 0)).toBe(true);
   });
 
-  it("discards partial assessment after a later batch times out and stops making calls", async () => {
-    let calls = 0;
-    const engine = createAiEngine({ getModel: () => "claude-fable-5-1", client: { messages: { create: async params => {
-      if (++calls === 2) throw new Error("Request timed out.");
-      return { parsed_output: responseFor(JSON.parse((params.messages as Array<{ content: string }>)[0]!.content)) };
-    } } } });
-    expect(await engine.assessCv(inputFor(24, 24))).toBeNull();
-    expect(calls).toBe(2);
+  it("caches the shared context as the first block and sends the remaining batches together once the first response has begun", async () => {
+    const input = inputFor(20, 20);
+    let releaseFirst = () => {};
+    const firstHeld = new Promise<void>(resolve => { releaseFirst = resolve; });
+    const { client, calls, events } = streamingClient(async (params, index) => {
+      if (index === 0) await firstHeld;
+      return { parsed_output: responseFor(userPayload(params)), usage: { input_tokens: 100, output_tokens: 100, cache_read_input_tokens: index ? 5000 : 0, cache_creation_input_tokens: index ? 0 : 5000 } };
+    });
+    const usage: AiUsageRecord[] = [];
+    const engine = createAiEngine({ client, getModel: () => "claude-fable-5-1", onUsage: record => { usage.push(record); } });
+    const review = engine.assessCv(input, { refType: "cv-review", refId: "draft" });
+    // The second and third batches go out while the first is still being written, but only once it has begun.
+    await vi.waitFor(() => expect(calls).toHaveLength(3));
+    expect(events[0]).toBe("start:0");
+    expect(events).not.toContain("end:0");
+    releaseFirst();
+    expect(await review).toEqual(fullResponse(input));
+    const blocks = calls.map(call => userBlocks(call.params));
+    expect(blocks.map(content => content.length)).toEqual([2, 2, 2]);
+    expect(blocks.every(content => content[0]!.text === blocks[0]![0]!.text && content[0]!.cache_control)).toBe(true);
+    expect(blocks.every(content => !content[1]!.cache_control)).toBe(true);
+    expect(new Set(blocks.map(content => content[1]!.text)).size).toBe(3);
+    expect(JSON.parse(blocks[0]![0]!.text)).toEqual({ cv: input.cv, evidence: input.evidence, rubric: { caveats: [] } });
+    expect(usage.map(record => record.cacheReadTokens).sort()).toEqual([0, 5000, 5000]);
+  });
+
+  it("discards the assessment when a batch fails, cancels the batches in flight and records what they consumed", async () => {
+    const input = inputFor(40, 40);
+    const { client, calls, events } = streamingClient((params, index, signal) => {
+      if (index === 0) return Promise.resolve({ parsed_output: responseFor(userPayload(params)) });
+      if (index === 1) return Promise.reject(new Error("Request timed out."));
+      return new Promise((_, reject) => signal!.addEventListener("abort", () => reject(new Error("Request was aborted."))));
+    });
+    const usage: AiUsageRecord[] = [];
+    const engine = createAiEngine({ client, getModel: () => "claude-fable-5-1", onUsage: record => { usage.push(record); } });
+    expect(await engine.assessCv(input)).toBeNull();
+    expect(calls).toHaveLength(5);
+    expect(calls.every(call => !("corrections" in userPayload(call.params)))).toBe(true);
+    expect(events.filter(event => event.startsWith("cancel:"))).toHaveLength(3);
+    expect(usage).toHaveLength(5);
+    expect(usage.filter(record => record.error === "Request timed out.")).toHaveLength(1);
+    const cancelled = usage.filter(record => record.error === CANCELLED_ERROR);
+    expect(cancelled).toHaveLength(3);
+    expect(cancelled.every(record => !record.ok && record.inputTokens === 400 && record.cacheReadTokens === 2000 && record.costUsd > 0)).toBe(true);
   });
 
   it.each(["omitted", "duplicate", "foreign"])("rejects a batch with %s claim coverage", async mode => {
     const input = inputFor(2, 2);
-    const response = responseFor(input);
+    const response = fullResponse(input);
     if (mode === "omitted") response.claims.pop();
     else response.claims[1]!.claimId = mode === "duplicate" ? "claim0" : "other";
     const { client } = fakeClient(response);
@@ -426,7 +540,7 @@ describe("bounded CV assessment", () => {
     const calls: Array<Record<string, unknown>> = [];
     const usage: AiUsageRecord[] = [];
     const engine = createAiEngine({ getModel: () => "claude-fable-5-1", onUsage: record => { usage.push(record); }, client: { messages: { create: async params => {
-      const supplied = JSON.parse((params.messages as Array<{ content: string }>)[0]!.content);
+      const supplied = userPayload(params);
       calls.push(supplied);
       const response = responseFor(supplied);
       if (succeeds && calls.length === 2)

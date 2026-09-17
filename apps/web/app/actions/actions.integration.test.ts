@@ -598,6 +598,15 @@ describe("priority workflows", () => {
     expect((await recordApplication(versions[1]!.id, { ok: true }, application)).ok).toBe(false);
     application.set("appliedOn", "2026-09-06");
     await completeAssessment(versions[1]!.id);
+    // Corrections are remembered whichever build the save requests, and the improved revision writes with them.
+    const improve = new FormData(); improve.set("summary", "Edited summary"); improve.set("section-0", "Led the operations team to record output"); improve.set("rememberWording", "on"); improve.set("intent", "improve");
+    await expect(saveCvDraft(versions[1]!.id, { ok: true }, improve)).rejects.toThrow("redirect:/cv/");
+    const [remembered] = await database.select().from(schema.userSettings).where(eq(schema.userSettings.key, "cvWritingPreferences"));
+    expect((remembered!.value as { preferredWording: string }).preferredWording).toContain("Led the operations team to record output");
+    const improving = (await database.select().from(schema.cvDrafts).orderBy(schema.cvDrafts.revision)).at(-1)!;
+    expect(improving.parentId).toBe(versions[1]!.id);
+    expect(improving.status).toBe("queued");
+    expect(improving.librarySnapshot.preferredWording).toContain("Led the operations team to record output");
     expect((await recordApplication(versions[1]!.id, { ok: true }, application)).ok).toBe(true);
     expect((await recordApplication(versions[1]!.id, { ok: true }, application)).ok).toBe(false);
     const [savedApplication] = await database.select().from(schema.applications);

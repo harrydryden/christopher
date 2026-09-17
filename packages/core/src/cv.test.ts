@@ -221,3 +221,12 @@ it("validates website links and carries them from the library into CV content", 
     expect(CvLibrarySchema.safeParse({ ...library, websiteUrl: unsafe }).success).toBe(false);
   }
 });
+
+it("keeps a subsidiary label that heads confirmed wording and drops one that heads none", async () => {
+  const { eligibleCvEvidence } = await import("./cv");
+  const entry: CvLibrary["entries"][number] = { id: "job", kind: "experience", status: "active", heading: "Director · Acme Group", details: "Led core platform\nAcme Labs Ltd:\nRan the research lab\nAcme Ventures:\nProposed a fund", confirmedResponsibilities: ["Led core platform", "Ran the research lab"] };
+  const eligible = eligibleCvEvidence(entry)!;
+  expect(eligible.details).toBe("Led core platform\nAcme Labs Ltd:\nRan the research lab");
+  expect(eligible.confirmedResponsibilities).toEqual(["Led core platform", "Ran the research lab"]);
+  expect(eligibleCvEvidence({ ...entry, confirmedResponsibilities: [] })).toBeUndefined();
+});

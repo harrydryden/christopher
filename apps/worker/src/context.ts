@@ -1,6 +1,6 @@
 import { createDb, schema, type Db } from "@christopher/db";
 import { ats, discovery, modelForCallSite, type AppSettings, type DiscoveryContext, type FetchContext, type SystemSettings } from "@christopher/core";
-import { createAiEngine, type AiEngine, type AiUsageRecord } from "@christopher/ai";
+import { createAiEngine, type AiClientLike, type AiEngine, type AiUsageRecord } from "@christopher/ai";
 import { sql } from "drizzle-orm";
 import { BrowserRenderer } from "./browser";
 import type { WorkerEnv } from "./env";
@@ -18,6 +18,8 @@ export interface WorkerDeps {
   fetcher: PoliteFetcher;
   browser: BrowserRenderer | null;
   ai: AiEngine;
+  /** A stand-in for the Anthropic client, so a test can drive the real CV engine with scripted answers. */
+  aiClient?: AiClientLike;
   /** System settings from the database; cached for a few seconds to avoid hammering the table. */
   settings(): Promise<SystemSettings>;
   /** One account's settings merged onto the system ones, cached the same way. */

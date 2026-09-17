@@ -983,7 +983,7 @@ it("carries library styling through generation, revision, matching preview/downl
   );
 });
 
-it("queues fitting from unsaved draft edits without overwriting the source or requiring it to fit first", async () => {
+it("queues a rebuild from unsaved draft edits without overwriting the source or requiring it to fit first", async () => {
   const library = {
     name: "Example",
     contact: "London",
@@ -1027,7 +1027,7 @@ it("queues fitting from unsaved draft edits without overwriting the source or re
     })
     .returning();
   const edits = new FormData();
-  edits.set("intent", "fit");
+  edits.set("intent", "improve");
   edits.set("summary", "Current unsaved profile");
   edits.set("section-0", "Led a team and reporting");
   edits.set(
@@ -1056,13 +1056,9 @@ it("queues fitting from unsaved draft edits without overwriting the source or re
     .select()
     .from(schema.tasks)
     .where(eq(schema.tasks.type, "generate_cv"));
-  expect(task!.payload).toMatchObject({
-    draftId: fitting!.id,
-    sourcePlan: {
-      summary: "Current unsaved profile",
-      sections: [{ entryId: "one", bullets: ["Led a team and reporting"] }],
-    },
-  });
+  // A rebuild starts from the Library: the unsaved wording is not carried into it.
+  expect(task!.payload).toMatchObject({ draftId: fitting!.id, mode: "improve" });
+  expect(task!.payload).not.toHaveProperty("sourcePlan");
 });
 
 it("assesses, improves with current evidence, finalises and exports through the real revision workflow", async () => {

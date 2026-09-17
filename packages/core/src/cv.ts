@@ -260,8 +260,22 @@ export function eligibleCvEvidence(entry: CvLibrary["entries"][number]): CvLibra
   if (!isActiveEvidence(entry)) return undefined;
   if (entry.kind !== "experience") return entry;
   const confirmed = new Set(entry.confirmedResponsibilities ?? []);
-  const rows = responsibilityRows(entry.details).filter(row => confirmed.has(row));
-  return rows.length ? { ...entry, details: rows.join("\n"), confirmedResponsibilities: [...new Set(rows)] } : undefined;
+  const all = responsibilityRows(entry.details);
+  const isLabel = (row: string) => row.endsWith(":");
+  // A subsidiary label (see consolidateExperience) stays when it heads a confirmed row, so the
+  // writer and the reviewer can tell which entity an achievement belongs to; a bare label cannot
+  // support a claim on its own and goes with its unconfirmed rows.
+  const rows = all.filter((row, index) => {
+    if (confirmed.has(row)) return true;
+    if (!isLabel(row)) return false;
+    for (const following of all.slice(index + 1)) {
+      if (isLabel(following)) return false;
+      if (confirmed.has(following)) return true;
+    }
+    return false;
+  });
+  const evidence = rows.filter(row => !isLabel(row));
+  return evidence.length ? { ...entry, details: rows.join("\n"), confirmedResponsibilities: [...new Set(evidence)] } : undefined;
 }
 
 export function compareEmploymentDates(a: Employment, b: Employment): number {

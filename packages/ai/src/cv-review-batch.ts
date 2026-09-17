@@ -1,7 +1,31 @@
 import { cvQuoteIsAnchored } from "@christopher/core/cv-review";
-import { cvMatchPoints, type CvClaimItem, type CvReviewPlan, type CvTextItem } from "@christopher/core/cv-assessment";
+import { cvMatchPoints, type CvClaimItem, type CvReviewPlan, type CvRubric, type CvTextItem } from "@christopher/core/cv-assessment";
 
 type Context = { cv: CvTextItem[]; claims: CvClaimItem[]; evidence: CvTextItem[] };
+
+export type CvReviewBatch = { requirements: CvRubric["requirements"]; claims: CvClaimItem[]; claimSources: CvTextItem[] };
+
+/**
+ * The batches of an audit: as few as keep every batch within `size` requirements and `size`
+ * claims, with the requirements and the claims each spread evenly across them so the batches,
+ * which run together, take about as long as each other. Each names the sources its claims must
+ * cite; every batch is assessed against the complete CV and evidence, sent once as shared context.
+ */
+export function cvReviewBatches(input: { rubric: CvRubric; claims: CvClaimItem[]; evidence: CvTextItem[] }, size: number): CvReviewBatch[] {
+  const count = Math.ceil(Math.max(input.rubric.requirements.length, input.claims.length) / size);
+  const share = <T>(items: T[], index: number) => {
+    const each = Math.ceil(items.length / count);
+    return items.slice(index * each, (index + 1) * each);
+  };
+  return Array.from({ length: count }, (_, index) => {
+    const claims = share(input.claims, index);
+    return {
+      requirements: share(input.rubric.requirements, index),
+      claims,
+      claimSources: input.evidence.filter(source => claims.some(claim => claim.requiredEvidenceId === source.id)),
+    };
+  });
+}
 type Issue = { kind: "cv" | "library" | "claim"; index: number; correction: string };
 
 /** Same exact-quote contract as the final validator; findings may only lose credit. */

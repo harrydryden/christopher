@@ -19,12 +19,30 @@ const discoverySites = ["A7", "A8", "A10"];
  *
  * Reservations share one short lock across processes; no lock survives a model request.
  */
-export async function reserveAi(db: Db, callSite: string, amount: number, limits: { monthly: number; daily: number; discovery: number }, now = new Date()) {
+export async function reserveAi(db: Db, callSite: string, amount: number, limits: AiBudgetLimits, now = new Date(), ttlMinutes = 15) {
+  const hold = await tryReserveAi(db, callSite, amount, limits, now, ttlMinutes);
+  return "release" in hold ? hold.release : null;
+}
+
+export type AiBudgetLimits = { monthly: number; daily: number; discovery: number };
+
+/** Which limit refused a hold, and the figures it was measured against. */
+export interface AiBudgetRefusal {
+  limit: "month" | "day" | "discovery";
+  limitUsd: number;
+  /** Recorded spend within the limit's window. */
+  spent: number;
+  /** Held by calls in flight. */
+  held: number;
+}
+
+/** Hold capacity for one call, or say exactly which limit refused it, so the refusal can be explained. */
+export async function tryReserveAi(db: Db, callSite: string, amount: number, limits: AiBudgetLimits, now = new Date(), ttlMinutes = 15): Promise<{ release: () => Promise<void>; renew: () => Promise<void> } | { refused: AiBudgetRefusal }> {
   const monthStart = new Date(`${now.toISOString().slice(0, 7)}-01T00:00:00Z`);
   const dayStart = new Date(`${now.toISOString().slice(0, 10)}T00:00:00Z`);
   const id = randomUUID();
   const isDiscovery = discoverySites.includes(callSite);
-  const acquired = await db.transaction(async tx => {
+  const refusal = await db.transaction(async (tx): Promise<AiBudgetRefusal | null> => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('christopher:ai-budget'))`);
     await tx.execute(sql`delete from ai_reservations where expires_at <= now()`);
     const spent = await tx.execute<{ month: number; day: number; discovery: number }>(sql`select
@@ -37,15 +55,19 @@ export async function reserveAi(db: Db, callSite: string, amount: number, limits
     const month = Number(spent.rows[0]?.month ?? 0);
     const day = Number(spent.rows[0]?.day ?? 0);
     const pending = Number(held.rows[0]?.total ?? 0);
-    if (month + pending + amount > limits.monthly ||
-        day + pending + amount > limits.daily ||
-        isDiscovery && Number(spent.rows[0]?.discovery ?? 0) + Number(held.rows[0]?.discovery ?? 0) + amount > limits.discovery) return false;
-    await tx.execute(sql`insert into ai_reservations (id, call_site, amount, expires_at) values (${id}, ${callSite}, ${amount}, now() + interval '15 minutes')`);
-    return true;
+    const discovery = Number(spent.rows[0]?.discovery ?? 0);
+    const discoveryHeld = Number(held.rows[0]?.discovery ?? 0);
+    if (month + pending + amount > limits.monthly) return { limit: "month", limitUsd: limits.monthly, spent: month, held: pending };
+    if (day + pending + amount > limits.daily) return { limit: "day", limitUsd: limits.daily, spent: day, held: pending };
+    if (isDiscovery && discovery + discoveryHeld + amount > limits.discovery) return { limit: "discovery", limitUsd: limits.discovery, spent: discovery, held: discoveryHeld };
+    await tx.execute(sql`insert into ai_reservations (id, call_site, amount, expires_at) values (${id}, ${callSite}, ${amount}, now() + make_interval(mins => ${ttlMinutes}::int))`);
+    return null;
   });
-  if (!acquired) return null;
-  /** Release the hold. The call's real cost is already in `ai_calls`, so nothing is charged here. */
-  return async () => {
-    await db.execute(sql`delete from ai_reservations where id = ${id}`);
+  if (refusal) return { refused: refusal };
+  return {
+    /** Release the hold. The call's real cost is already in `ai_calls`, so nothing is charged here. */
+    release: async () => { await db.execute(sql`delete from ai_reservations where id = ${id}`); },
+    /** Keep a hold alive through a long build; one whose process died still expires on its own. */
+    renew: async () => { await db.execute(sql`update ai_reservations set expires_at = now() + make_interval(mins => ${ttlMinutes}::int) where id = ${id}`); },
   };
 }

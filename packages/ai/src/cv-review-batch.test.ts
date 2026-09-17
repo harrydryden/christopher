@@ -3,7 +3,7 @@ import { materialiseCv, type CvLibrary } from "@christopher/core/cv";
 import { cvClaimItems, cvTextItems, cvEvidenceItems } from "@christopher/core/cv-assessment";
 import { createCvAssessment, validateCvReview } from "@christopher/core/cv-review";
 import { rubricFixture, reviewFixture } from "../../core/test/cv-review-fixture";
-import { reviewBatchIssues, markUnverifiedFindings } from "./cv-review-batch";
+import { cvReviewBatches, reviewBatchIssues, markUnverifiedFindings } from "./cv-review-batch";
 
 const description = "Must lead operations";
 const library: CvLibrary = { name: "Example", contact: "", profile: "Operations leader", entries: [
@@ -45,4 +45,18 @@ it("catches missing positive evidence and shares the final validator's whitespac
   review.matches[0]!.libraryEvidence = [];
   review.claims[0]!.evidence = [];
   expect(reviewBatchIssues(review, context).map(issue => issue.kind)).toEqual(["cv", "library", "claim"]);
+});
+
+it("spreads an audit's requirements and claims evenly over as few batches as the size allows, naming each claim's required source", () => {
+  const requirements = Array.from({ length: 19 }, (_, i) => ({ ...rubric.requirements[0]!, id: `r${i}` }));
+  const claims = Array.from({ length: 5 }, (_, i) => ({ id: `c${i}`, text: "Led operations", requiredEvidenceId: i >= 3 ? "entry:role:1" : undefined }));
+  const evidence = [{ id: "source:profile", text: "Operations leader" }, { id: "entry:role:1", text: "Led operations using SQL" }];
+  const batches = cvReviewBatches({ rubric: { ...rubric, requirements }, claims, evidence }, 8);
+  expect(batches.map(batch => [batch.requirements.length, batch.claims.length])).toEqual([[7, 2], [7, 2], [5, 1]]);
+  expect(batches[0]!.claimSources).toEqual([]);
+  expect(batches[1]!.claimSources).toEqual([evidence[1]]);
+  expect(batches[2]!.claimSources).toEqual([evidence[1]]);
+  expect(cvReviewBatches({ rubric: { ...rubric, requirements: requirements.slice(0, 9) }, claims: Array.from({ length: 22 }, (_, i) => ({ id: `c${i}`, text: "x" })), evidence }, 8)
+    .map(batch => [batch.requirements.length, batch.claims.length])).toEqual([[3, 8], [3, 8], [3, 6]]);
+  expect(cvReviewBatches({ rubric: { ...rubric, requirements: requirements.slice(0, 2) }, claims: Array.from({ length: 17 }, (_, i) => ({ id: `c${i}`, text: "x" })), evidence }, 8)).toHaveLength(3);
 });

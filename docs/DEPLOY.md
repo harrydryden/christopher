@@ -177,8 +177,12 @@ Moving to shape A later is only a Render deploy: add the worker service, unset
 | Vercel Hobby | $0 |
 | Anthropic API, 30 companies in steady state | ~$3–10/month |
 
-The Health page tracks month-to-date model spend against the budget you set in Settings, and stops
-optional model calls when it is exceeded.
+The Health page tracks month-to-date model spend against the budget set in Admin › System settings,
+and stops optional model calls when it is exceeded. A CV build costs about $3 on Fable 5.1 (a 35 KB
+library against a typical advert); it is admitted against the budget once, up front, at that expected
+cost, and a build the month cannot afford fails before it spends anything, naming the limit and what
+is left. `DAILY_AI_BUDGET_USD` and `DISCOVERY_AI_BUDGET_USD` in the worker's environment add daily
+caps on top; leave them unset unless you want them, because a daily cap refuses builds too.
 
 ## When something is wrong
 

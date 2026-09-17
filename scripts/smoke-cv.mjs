@@ -417,7 +417,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     });
     await page
       .getByRole("button", {
-        name: "Save, fit and assess new revision",
+        name: "Save Direct Edits",
         exact: true,
       })
       .click();

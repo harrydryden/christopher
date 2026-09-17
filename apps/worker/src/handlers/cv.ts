@@ -16,7 +16,7 @@ import {
 } from "@christopher/core/cv-assessment";
 import { eq } from "drizzle-orm";
 import { completeCv, schema, type Task, type Db } from "@christopher/db";
-import { createAiEngine, OUTPUT_LIMIT_ERROR } from "@christopher/ai";
+import { createAiEngine, CANCELLED_ERROR, OUTPUT_LIMIT_ERROR } from "@christopher/ai";
 import {
   CvContentSchema,
   CvPlanSchema,
@@ -95,7 +95,8 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
         apiKey: deps.env.anthropicApiKey,
         getModel: () => draft.model,
         onUsage: async (usage) => {
-          generationError = usage.error;
+          // A batch cancelled because a sibling failed must not hide that sibling's error.
+          if (usage.error !== CANCELLED_ERROR) generationError = usage.error;
           await deps.db.insert(schema.aiCalls).values({ ...usage, userId: draft.userId });
         },
       });

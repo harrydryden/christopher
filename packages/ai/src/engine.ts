@@ -46,7 +46,21 @@ export interface Ref {
 export interface AiClientLike {
   messages: {
     create(params: Record<string, unknown>, options?: Record<string, unknown>): Promise<ParseResponse>;
+    /**
+     * The SDK's streaming helper. When present every call streams: the connection stays busy while
+     * the answer is written, so the request timeout bounds only the wait for it to begin and a long
+     * answer can no longer time out part-way through. A fake without it is called with create.
+     */
+    stream?(params: Record<string, unknown>, options?: Record<string, unknown>): AiStreamLike;
   };
+}
+
+export interface AiStreamLike {
+  on(event: "streamEvent", listener: () => void): unknown;
+  finalMessage(): Promise<ParseResponse>;
+  abort(): void;
+  /** What had arrived when the stream was cut off, so the prompt it was billed for is still recorded. */
+  readonly currentMessage?: ParseResponse;
 }
 
 export interface ParseResponse {
@@ -74,17 +88,40 @@ export interface AiEngineOptions {
   logger?: (msg: string, data?: unknown) => void;
 }
 
+/** One block of the user turn. `cache: true` closes a prefix that other calls send byte for byte. */
+export interface UserBlock {
+  text: string;
+  cache?: boolean;
+}
+
 interface RunParams {
   system: string;
-  user: string;
+  user: string | UserBlock[];
   schema: z.ZodType;
   effort: Effort;
   maxTokens?: number;
+  /** How long to wait for the response to begin. A streamed answer is then bounded by STREAM_CEILING_MS. */
   timeoutMs?: number;
   tools?: Array<Record<string, unknown>>;
+  /** Fires once the response has begun, which is when a prefix this call caches becomes readable by others. */
+  onStart?: () => void;
+  /** Cancels the call; whatever it had consumed by then is recorded against CANCELLED_ERROR. */
+  signal?: AbortSignal;
 }
 
 export const OUTPUT_LIMIT_ERROR = "Model output limit reached before the response was complete.";
+export const CANCELLED_ERROR = "Cancelled because another call in the same task failed.";
+/** No answer legitimately takes this long, so a stream still open at the ceiling has stalled. */
+export const STREAM_CEILING_MS = 15 * 60_000;
+
+/** A streamed call cut off before it completed, carrying whatever the stream had received. */
+class CallCutOff extends Error {
+  constructor(message: string, readonly snapshot: ParseResponse | undefined) {
+    super(message);
+  }
+}
+
+class BatchFailed extends Error {}
 
 export class AiEngine {
   readonly enabled: boolean;
@@ -94,7 +131,9 @@ export class AiEngine {
     if (options.client) {
       this.client = options.client;
     } else if (options.apiKey) {
-      this.client = new Anthropic({ apiKey: options.apiKey, maxRetries: 0 }) as unknown as AiClientLike;
+      // The SDK retries only before a response begins (rate limits, overload, connection errors),
+      // so a retried call is never billed twice and a streamed answer is never re-requested part-way.
+      this.client = new Anthropic({ apiKey: options.apiKey, maxRetries: 2 }) as unknown as AiClientLike;
     } else {
       this.client = null;
     }
@@ -113,27 +152,67 @@ export class AiEngine {
     }
   }
 
+  /**
+   * One request. A streaming client keeps the connection busy while the answer is written, so the
+   * request timeout bounds only the wait for it to begin; the ceiling cuts off a stalled stream.
+   */
+  private async complete(request: Record<string, unknown>, params: RunParams): Promise<ParseResponse> {
+    const { messages } = this.client!;
+    const options = { timeout: params.timeoutMs ?? 30_000, ...(params.signal ? { signal: params.signal } : {}) };
+    if (!messages.stream) {
+      const response = await messages.create(request, options);
+      params.onStart?.();
+      return response;
+    }
+    const stream = messages.stream(request, options);
+    let started = false;
+    stream.on("streamEvent", () => {
+      if (started) return;
+      started = true;
+      params.onStart?.();
+    });
+    let stalled = false;
+    const ceiling = setTimeout(() => {
+      stalled = true;
+      stream.abort();
+    }, STREAM_CEILING_MS);
+    try {
+      return await stream.finalMessage();
+    } catch (err) {
+      const reason = stalled
+        ? `Stream timed out: no complete response after ${STREAM_CEILING_MS / 60_000} minutes.`
+        : params.signal?.aborted ? CANCELLED_ERROR : (err as Error).message;
+      throw new CallCutOff(reason, stream.currentMessage);
+    } finally {
+      clearTimeout(ceiling);
+    }
+  }
+
   private async run<T>(callSite: string, params: RunParams, ref: Ref = {}): Promise<T | null> {
-    if (!this.client) return null;
+    if (!this.client || params.signal?.aborted) return null;
     const model = this.options.getModel(callSite);
     const started = Date.now();
+    const blocks = typeof params.user === "string" ? [{ text: params.user }] : params.user;
     const request: Record<string, unknown> = {
       model,
       max_tokens: params.maxTokens ?? 4096,
       system: [{ type: "text", text: params.system, cache_control: { type: "ephemeral" } }],
-      messages: [{ role: "user", content: params.user }],
+      // The cache is a prefix match, so a cached block sits before everything that varies.
+      messages: [{ role: "user", content: typeof params.user === "string" ? params.user
+        : blocks.map(block => ({ type: "text", text: block.text, ...(block.cache ? { cache_control: { type: "ephemeral" } } : {}) })) }],
       output_config: { format: zodOutputFormat(params.schema), effort: params.effort },
     };
     if (params.tools) request.tools = params.tools;
 
     // A generous reading of the prompt: English runs about four bytes per token, so a third of the
     // byte count leaves roughly 30% of headroom. Output is reserved at the cap the call may reach.
-    const estimate = estimateCostUsd(model, { inputTokens: Buffer.byteLength(params.system + params.user) / 3,
+    const promptBytes = Buffer.byteLength(params.system + blocks.map(block => block.text).join(""));
+    const estimate = estimateCostUsd(model, { inputTokens: promptBytes / 3,
       outputTokens: params.maxTokens ?? 4096, cacheReadTokens: 0, cacheWriteTokens: 0 }) + (params.tools?.length ? 1 : 0);
     const settle = this.options.reserve ? await this.options.reserve(callSite, estimate) : undefined;
     if (settle === null) throw new Error("AI budget reserved or exhausted; retry later");
     try {
-      const response = await this.client.messages.create(request, { timeout: params.timeoutMs ?? 30_000 });
+      const response = await this.complete(request, params);
       const usage = response.usage ?? {};
       const tokens = {
         inputTokens: usage.input_tokens ?? 0,
@@ -165,14 +244,20 @@ export class AiEngine {
       if (refused) this.log(`${callSite} refused`, response.stop_details);
       return validated;
     } catch (err) {
+      // A call that failed before it began spent nothing. One cut off part-way was billed for the
+      // prompt it had processed, which is in the snapshot the cut-off carries.
+      const partial: NonNullable<ParseResponse["usage"]> = err instanceof CallCutOff ? err.snapshot?.usage ?? {} : {};
+      const tokens = {
+        inputTokens: partial.input_tokens ?? 0,
+        outputTokens: partial.output_tokens ?? 0,
+        cacheReadTokens: partial.cache_read_input_tokens ?? 0,
+        cacheWriteTokens: partial.cache_creation_input_tokens ?? 0,
+      };
       await this.record({
         callSite,
         model,
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        cacheWriteTokens: 0,
-        costUsd: 0,
+        ...tokens,
+        costUsd: estimateCostUsd(model, tokens),
         durationMs: Date.now() - started,
         ok: false,
         error: (err as Error).message.slice(0, 500),
@@ -212,49 +297,87 @@ export class AiEngine {
     },
     ref: Ref = {},
   ): Promise<CvReviewPlan | null> {
-    // A full CV audit can exceed the provider timeout even below its token limit.
-    // Bound output work per call; every batch still sees the complete CV/evidence.
+    // A full CV audit can exceed what one call may produce, so it is split into batches that each
+    // see the complete CV and evidence. The batches are independent: they run together, and they
+    // share that context through the cache rather than each paying for it again.
     const batchSize = 8;
     const schema = CvReviewPlanSchema.extend({
       matches: z.array(CvReviewPlanSchema.shape.matches.element).max(batchSize),
       claims: z.array(CvReviewPlanSchema.shape.claims.element).max(batchSize),
     });
-    const review: CvReviewPlan = { matches: [], claims: [] };
-    const count = Math.max(input.rubric.requirements.length, input.claims.length);
+    const { requirements, ...rubricContext } = input.rubric;
+    // First in the user turn and byte-identical in every batch, so the batches after the first read
+    // it from cache: the cache is a prefix match.
+    const shared = JSON.stringify({ cv: input.cv, evidence: input.evidence, rubric: rubricContext });
+    type Batch = { requirements: CvRubric["requirements"]; claims: CvClaimItem[]; claimSources: CvTextItem[] };
+    const batches: Batch[] = [];
+    const count = Math.max(requirements.length, input.claims.length);
     for (let offset = 0; offset < count; offset += batchSize) {
-      const requirements = input.rubric.requirements.slice(offset, offset + batchSize);
       const claims = input.claims.slice(offset, offset + batchSize);
-      const batchInput = { ...input, rubric: { ...input.rubric, requirements }, claims,
+      batches.push({
+        requirements: requirements.slice(offset, offset + batchSize),
+        claims,
         claimSources: input.evidence.filter(source => claims.some(claim => claim.requiredEvidenceId === source.id)),
-      };
-      const runBatch = (corrections?: string[]) => this.run<CvReviewPlan>("CV", {
-        system: CV_REVIEW_PROMPT + "\nThis is one batch of a larger audit. Assess only the supplied rubric requirements and claims, using the complete CV and evidence as context. Return an empty array when that batch has no requirements or no claims. Use the shortest sufficient verbatim quotes; usually one or two sources per finding suffice. Keep reasons and improvements concise. Every claim with requiredEvidenceId must cite a verbatim quote from that exact source to be supported, including skills. claimSources supplies the relevant source explicitly. Evidence from a different role, profile or skill block cannot substitute for it. If that source does not support the complete claim, mark it uncertain or unsupported; never copy in unrelated evidence merely to satisfy this rule.",
-        user: JSON.stringify({ ...batchInput, ...(corrections ? { corrections } : {}) }),
-        schema,
-        effort: "high",
-        maxTokens: 16000,
-        timeoutMs: 240_000,
-      }, ref);
-      let batch = await runBatch();
-      if (!batch) return null;
-      const corrections = reviewBatchIssues(batch, batchInput).map(issue => issue.correction);
+      });
+    }
+    const controller = new AbortController();
+    const runBatch = (batch: Batch, corrections?: string[], onStart?: () => void) => this.run<CvReviewPlan>("CV", {
+      system: CV_REVIEW_PROMPT + "\nThis is one batch of a larger audit. The user turn has two parts: the shared context (the complete cv and evidence, and the rubric's caveats), then this batch: the rubric requirements and claims to assess now, with claimSources supplying each claim's required source explicitly. Assess only the batch's requirements and claims, using the complete CV and evidence as context. Return an empty array when the batch has no requirements or no claims. Use the shortest sufficient verbatim quotes; usually one or two sources per finding suffice. Keep reasons and improvements concise. Every claim with requiredEvidenceId must cite a verbatim quote from that exact source to be supported, including skills. Evidence from a different role, profile or skill block cannot substitute for it. If that source does not support the complete claim, mark it uncertain or unsupported; never copy in unrelated evidence merely to satisfy this rule.",
+      user: [{ text: shared, cache: true }, { text: JSON.stringify({ ...batch, ...(corrections ? { corrections } : {}) }) }],
+      schema,
+      effort: "high",
+      maxTokens: 16000,
+      timeoutMs: 240_000,
+      signal: controller.signal,
+      onStart,
+    }, ref);
+    const assess = async (batch: Batch, onStart?: () => void): Promise<CvReviewPlan> => {
+      const context = { cv: input.cv, claims: batch.claims, evidence: input.evidence };
+      let result = await runBatch(batch, undefined, onStart);
+      if (!result) throw new BatchFailed();
+      const corrections = reviewBatchIssues(result, context).map(issue => issue.correction);
       if (corrections.length) {
-        batch = await runBatch(corrections);
-        if (!batch) return null;
+        result = await runBatch(batch, corrections);
+        if (!result) throw new BatchFailed();
         // A repeated attribution mistake earns no credit and remains visible for review.
         // The final strict source validator still checks all accepted evidence quotes.
-        batch = markUnverifiedFindings(batch, reviewBatchIssues(batch, batchInput));
+        result = markUnverifiedFindings(result, reviewBatchIssues(result, context));
       }
       const complete = (expected: string[], actual: string[]) =>
         expected.length === actual.length && new Set(actual).size === actual.length &&
         expected.every(id => actual.includes(id));
-      if (!complete(requirements.map(item => item.id), batch.matches.map(item => item.requirementId)) ||
-          !complete(claims.map(item => item.id), batch.claims.map(item => item.claimId))) {
+      if (!complete(batch.requirements.map(item => item.id), result.matches.map(item => item.requirementId)) ||
+          !complete(batch.claims.map(item => item.id), result.claims.map(item => item.claimId))) {
         throw new Error("The assessment did not cover every requested requirement and claim exactly once. The fitted CV is saved; retry its assessment.");
       }
-      review.matches.push(...batch.matches);
-      review.claims.push(...batch.claims);
+      return result;
+    };
+    const results: CvReviewPlan[] = [];
+    const pending: Promise<void>[] = [];
+    try {
+      if (batches.length) {
+        // The cache entry is readable only once the first response has begun; batches sent before
+        // then would each write their own copy. So the first goes alone until then, the rest together.
+        let begun!: () => void;
+        const firstBegun = new Promise<void>(resolve => { begun = resolve; });
+        let firstFailed = false;
+        const first = assess(batches[0]!, () => begun()).then(result => { results[0] = result; });
+        pending.push(first);
+        await Promise.race([firstBegun, first.then(() => undefined, () => { firstFailed = true; })]);
+        if (firstFailed) await first;
+        batches.slice(1).forEach((batch, index) => {
+          pending.push(assess(batch).then(result => { results[index + 1] = result; }));
+        });
+        await Promise.all(pending);
+      }
+    } catch (err) {
+      // Without every batch the audit is worthless: stop paying for the rest, then let them record.
+      controller.abort();
+      await Promise.allSettled(pending);
+      if (err instanceof BatchFailed) return null;
+      throw err;
     }
+    const review = { matches: results.flatMap(result => result.matches), claims: results.flatMap(result => result.claims) };
     const result = CvReviewPlanSchema.safeParse(review);
     return result.success ? result.data : null;
   }

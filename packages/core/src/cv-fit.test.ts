@@ -115,3 +115,36 @@ it('reports the page limit when the minimum content cannot fit one page', async 
  expect(write.mock.calls[1]![0].layoutFeedback?.maxPages).toBe(1);
  expect(write.mock.calls[1]![0].layoutFeedback?.pageCount).toBeGreaterThan(1);
 });
+
+it('weights relevance by requirement importance, as the assessment weights the score', async () => {
+ const { cvRelevance, cvRelevanceTerms } = await import('./cv-budget');
+ const terms = cvRelevanceTerms([
+  { id: 'a', label: 'Budgets', quote: 'own the annual budget', importance: 'essential', category: 'experience' },
+  { id: 'b', label: 'Reporting', quote: 'monthly reporting', importance: 'desirable', category: 'experience' },
+ ]);
+ expect(cvRelevance('Owned the annual budget and monthly reporting', terms)).toBe(6);
+ expect(cvRelevance('Owned the annual budget and monthly reporting', 'own the annual budget monthly reporting')).toBe(4);
+});
+it('budgets one interest block on a multi-page CV and lets the fitter drop it first under pressure', async () => {
+ const withInterest: CvLibrary = { ...library, entries: [...library.entries, { id: 'i', kind: 'interest', heading: 'Interests', details: 'Marathon running' }] };
+ const budget = createCvWritingBudget(withInterest, 'Finance');
+ expect(budget.blocks.find(block => block.entryId === 'i')).toMatchObject({ kind: 'interest', maxBullets: 2 });
+ expect(createCvWritingBudget({ ...withInterest, theme: { ...DEFAULT_CV_THEME, maxPages: 1 } }, 'Finance').blocks.some(block => block.entryId === 'i')).toBe(false);
+ const short: CvPlan = { summary: 'Finance leader.', sections: [...library.entries.slice(0, 6).map(entry => ({ entryId: entry.id, bullets: ['Owned financial planning.'] })), { entryId: 'e', bullets: ['BSc Economics, University.'] }, { entryId: 'i', bullets: ['Marathon running'] }], gaps: [] };
+ expect(cvBudgetViolations(short, budget).some(violation => violation.startsWith('Retain i'))).toBe(false);
+ const fitted = await selectCvToFit(withInterest, short, 'Finance', budget);
+ expect(fitted.content.sections.some(section => section.entryId === 'i')).toBe(true);
+ const crowded = await selectCvToFit(withInterest, { ...plan, sections: [...plan.sections, { entryId: 'i', bullets: ['Marathon running'] }] }, 'Finance', budget);
+ expect(crowded.content.sections.some(section => section.entryId === 'i')).toBe(false);
+ expect(crowded.content.sections.filter(section => section.kind === 'experience')).toHaveLength(6);
+});
+it('corrects a retry against the budget it will be given, not the one it just missed', async () => {
+ const minimal: CvPlan = { ...plan, sections: plan.sections.map(section => section.entryId.startsWith('r') ? { ...section, bullets: [plan.sections[1]!.bullets[1]!] } : section) };
+ const write = vi.fn().mockResolvedValue(minimal);
+ await expect(buildFittedCv({ ...library, theme: { ...DEFAULT_CV_THEME, maxPages: 1 } }, 'Finance', write)).rejects.toThrow('after three budgeted attempts');
+ const length = minimal.sections[0]!.bullets.reduce((sum, bullet) => sum + bullet.length, 0);
+ const budgetFor = (attempt: number) => write.mock.calls[attempt]![0].writingBudget.blocks.find((block: { entryId: string }) => block.entryId === 'r5')!.maxCharacters;
+ expect(budgetFor(1)).toBeLessThan(budgetFor(0));
+ expect(write.mock.calls[1]![0].layoutFeedback!.corrections).toContain(`r5: ${length} characters; budget ${budgetFor(1)}.`);
+ expect(write.mock.calls[1]![0].layoutFeedback!.corrections).not.toContain(`r5: ${length} characters; budget ${budgetFor(0)}.`);
+});

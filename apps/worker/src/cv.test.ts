@@ -172,25 +172,19 @@ it("fails after three oversized attempts instead of returning an over-limit CV",
   expect(saved!.content).toBeNull();
 });
 
-it("refits the submitted wording and preserves the queued revision number", async () => {
-  const sourcePlan = {
-    summary: "Current edited profile",
-    sections: [{ entryId: "one", bullets: ["Led a team"] }],
-    gaps: [],
-  };
+it("writes a rebuild afresh from the library and preserves the queued revision number", async () => {
   const build = vi
     .spyOn(AiEngine.prototype, "buildCv")
-    .mockResolvedValue({ ...sourcePlan, summary: "Operations leader" });
+    .mockResolvedValue({ summary: "Operations leader", sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] });
   const { task, deps, draft } = await setup();
-  task.payload = { draftId: draft.id, sourcePlan };
+  task.payload = { draftId: draft.id, mode: "improve", improvements: ["Name the team size", ""] };
   await client.db
     .update(schema.cvDrafts)
     .set({ revision: 5 })
     .where(eq(schema.cvDrafts.id, draft.id));
   await handleGenerateCv(task, deps);
-  expect(build.mock.calls[0]![0].layoutFeedback?.previousPlan).toEqual(
-    sourcePlan,
-  );
+  expect(build.mock.calls[0]![0].layoutFeedback).toBeUndefined();
+  expect(build.mock.calls[0]![0].improvements).toEqual(["Name the team size"]);
   expect(build.mock.calls[0]![0].writingBudget?.summaryCharacters).toBe(420);
   const [saved] = await client.db
     .select()
@@ -198,9 +192,19 @@ it("refits the submitted wording and preserves the queued revision number", asyn
     .where(eq(schema.cvDrafts.id, draft.id));
   expect(saved!.status).toBe("ready");
   expect(saved!.revision).toBe(5);
-  expect(saved!.content!.fitNotes).toContain(
-    "Profile rewritten within the 3-page content budget.",
-  );
+});
+
+it("keeps a revision's own rubric when its parent never reached assessment", async () => {
+  vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations leader", sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] });
+  const { task, deps, draft } = await setup();
+  const [parent] = await client.db.insert(schema.cvDrafts).values({ userId, jobTitle: "Operations Director", companyName: "Acme", jobDescription: "Lead a team", libraryVersion: 1, librarySnapshot: library, model: "claude-sonnet-5", status: "failed" }).returning();
+  const rubric = { ...rubricFixture("Lead a team"), caveats: ["Kept from the earlier assessment"] };
+  await client.db.update(schema.cvDrafts).set({ parentId: parent!.id, assessment: { rubric } as never }).where(eq(schema.cvDrafts.id, draft.id));
+  await handleGenerateCv(task, deps);
+  expect(AiEngine.prototype.analyseCvJob).not.toHaveBeenCalled();
+  const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  expect(saved!.status).toBe("ready");
+  expect(saved!.assessment!.rubric.caveats).toEqual(["Kept from the earlier assessment"]);
 });
 
 it("fits a long CV within the default three-page limit without a second model call", async () => {
@@ -345,7 +349,7 @@ it("stops before writing or assessment when the CV is deleted during analysis", 
 it("rejects malformed task inputs before database writes or model calls", async () => {
   const { task, deps, draft } = await setup();
   const build = vi.spyOn(AiEngine.prototype, "buildCv");
-  for (const payload of [{ draftId: "bad-id" }, { draftId: draft.id, mode: "delete" }, { draftId: draft.id, sourcePlan: { unknown: true } }, { draftId: draft.id, improvements: [42] }]) {
+  for (const payload of [{ draftId: "bad-id" }, { draftId: draft.id, mode: "delete" }, { draftId: draft.id, improvements: [42] }]) {
     await expect(handleGenerateCv({ ...task, payload }, deps)).rejects.toThrow(/Invalid CV/);
   }
   expect(build).not.toHaveBeenCalled();

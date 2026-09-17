@@ -1,7 +1,28 @@
 import { cvQuoteIsAnchored } from "@christopher/core/cv-review";
-import { cvMatchPoints, type CvClaimItem, type CvReviewPlan, type CvTextItem } from "@christopher/core/cv-assessment";
+import { cvMatchPoints, type CvClaimItem, type CvReviewPlan, type CvRubric, type CvTextItem } from "@christopher/core/cv-assessment";
 
 type Context = { cv: CvTextItem[]; claims: CvClaimItem[]; evidence: CvTextItem[] };
+
+export type CvReviewBatch = { requirements: CvRubric["requirements"]; claims: CvClaimItem[]; claimSources: CvTextItem[] };
+
+/**
+ * The batches of an audit: up to `size` requirements and as many claims each, with the sources
+ * those claims must cite named explicitly. Every batch is assessed against the complete CV and
+ * evidence, which the caller sends once as shared context.
+ */
+export function cvReviewBatches(input: { rubric: CvRubric; claims: CvClaimItem[]; evidence: CvTextItem[] }, size: number): CvReviewBatch[] {
+  const batches: CvReviewBatch[] = [];
+  const count = Math.max(input.rubric.requirements.length, input.claims.length);
+  for (let offset = 0; offset < count; offset += size) {
+    const claims = input.claims.slice(offset, offset + size);
+    batches.push({
+      requirements: input.rubric.requirements.slice(offset, offset + size),
+      claims,
+      claimSources: input.evidence.filter(source => claims.some(claim => claim.requiredEvidenceId === source.id)),
+    });
+  }
+  return batches;
+}
 type Issue = { kind: "cv" | "library" | "claim"; index: number; correction: string };
 
 /** Same exact-quote contract as the final validator; findings may only lose credit. */

@@ -1,6 +1,6 @@
 import { CvRubricSchema, CvReviewPlanSchema, type CvRubric, type CvReviewPlan, type CvTextItem, type CvClaimItem } from "@christopher/core/cv-assessment";
 import { CV_RUBRIC_PROMPT, CV_REVIEW_PROMPT, CV_AUTHOR_PROMPT } from "./cv-prompts";
-import { reviewBatchIssues, markUnverifiedFindings } from "./cv-review-batch";
+import { cvReviewBatches, reviewBatchIssues, markUnverifiedFindings, type CvReviewBatch } from "./cv-review-batch";
 import { CvPlanSchema, CV_PAGE_LIMITS, type CvWritingBudget, type CvPlan, type CvLibrary } from "@christopher/core";
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
@@ -306,23 +306,13 @@ export class AiEngine {
       matches: z.array(CvReviewPlanSchema.shape.matches.element).max(batchSize),
       claims: z.array(CvReviewPlanSchema.shape.claims.element).max(batchSize),
     });
-    const { requirements, ...rubricContext } = input.rubric;
+    const { requirements: _requirements, ...rubricContext } = input.rubric;
     // First in the user turn and byte-identical in every batch, so the batches after the first read
     // it from cache: the cache is a prefix match.
     const shared = JSON.stringify({ cv: input.cv, evidence: input.evidence, rubric: rubricContext });
-    type Batch = { requirements: CvRubric["requirements"]; claims: CvClaimItem[]; claimSources: CvTextItem[] };
-    const batches: Batch[] = [];
-    const count = Math.max(requirements.length, input.claims.length);
-    for (let offset = 0; offset < count; offset += batchSize) {
-      const claims = input.claims.slice(offset, offset + batchSize);
-      batches.push({
-        requirements: requirements.slice(offset, offset + batchSize),
-        claims,
-        claimSources: input.evidence.filter(source => claims.some(claim => claim.requiredEvidenceId === source.id)),
-      });
-    }
+    const batches = cvReviewBatches(input, batchSize);
     const controller = new AbortController();
-    const runBatch = (batch: Batch, corrections?: string[], onStart?: () => void) => this.run<CvReviewPlan>("CV", {
+    const runBatch = (batch: CvReviewBatch, corrections?: string[], onStart?: () => void) => this.run<CvReviewPlan>("CV", {
       system: CV_REVIEW_PROMPT + "\nThis is one batch of a larger audit. The user turn has two parts: the shared context (the complete cv and evidence, and the rubric's caveats), then this batch: the rubric requirements and claims to assess now, with claimSources supplying each claim's required source explicitly. Assess only the batch's requirements and claims, using the complete CV and evidence as context. Return an empty array when the batch has no requirements or no claims. Use the shortest sufficient verbatim quotes; usually one or two sources per finding suffice. Keep reasons and improvements concise. Every claim with requiredEvidenceId must cite a verbatim quote from that exact source to be supported, including skills. Evidence from a different role, profile or skill block cannot substitute for it. If that source does not support the complete claim, mark it uncertain or unsupported; never copy in unrelated evidence merely to satisfy this rule.",
       user: [{ text: shared, cache: true }, { text: JSON.stringify({ ...batch, ...(corrections ? { corrections } : {}) }) }],
       schema,
@@ -333,7 +323,7 @@ export class AiEngine {
       signal: controller.signal,
       onStart,
     }, ref);
-    const assess = async (batch: Batch, onStart?: () => void): Promise<CvReviewPlan> => {
+    const assess = async (batch: CvReviewBatch, onStart?: () => void): Promise<CvReviewPlan> => {
       const context = { cv: input.cv, claims: batch.claims, evidence: input.evidence };
       let result = await runBatch(batch, undefined, onStart);
       if (!result) throw new BatchFailed();

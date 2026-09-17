@@ -1,5 +1,6 @@
 import { materialiseCv, type CvLibrary, type CvPlan } from "./cv";
 import {
+  type CvRelevanceTarget,
   createCvWritingBudget,
   cvBudgetViolations,
   cvRelevance,
@@ -24,7 +25,7 @@ export type CvFitInput = {
 export async function selectCvToFit(
   library: CvLibrary,
   source: CvPlan,
-  target: string,
+  target: CvRelevanceTarget,
   budget: CvWritingBudget,
 ) {
   const plan = structuredClone(source);
@@ -135,7 +136,7 @@ export async function selectCvToFit(
 /** Bounded writing and measured selection, shared by fresh generation and draft fitting. */
 export async function buildFittedCv(
   library: CvLibrary,
-  target: string,
+  target: CvRelevanceTarget,
   write: (input: CvFitInput) => Promise<CvPlan>,
   initial?: CvPlan,
   onProgress?: (stage: "writing" | "fitting") => Promise<void>,
@@ -165,6 +166,10 @@ export async function buildFittedCv(
       target,
       Math.pow(0.76, attempt),
     );
+    // Corrections describe the budget the next attempt will be given, not the one just missed:
+    // measured against the current one, a block that fitted it drew no correction at all, and the
+    // ones that did quoted figures a quarter larger than the writer's next allocation.
+    const next = () => createCvWritingBudget(library, target, Math.pow(0.76, attempt + 1));
     await onProgress?.("writing");
     const plan = await write({
       writingBudget: budget,
@@ -173,7 +178,7 @@ export async function buildFittedCv(
     });
     const missing = budget.blocks.filter(
       (block) =>
-        block.kind !== "skill" &&
+        (block.kind === "experience" || block.kind === "education") &&
         !plan.sections.some((section) => section.entryId === block.entryId),
     );
     if (missing.length)
@@ -209,7 +214,7 @@ export async function buildFittedCv(
         pageCount: maxPages + 1,
         maxPages,
         previousPlan: plan,
-        corrections: [error.message, ...cvBudgetViolations(plan, budget)],
+        corrections: [error.message, ...cvBudgetViolations(plan, next())],
       };
       continue;
     }
@@ -229,7 +234,7 @@ export async function buildFittedCv(
       pageCount: selected.pageCount,
       maxPages,
       previousPlan: selected.plan,
-      corrections: cvBudgetViolations(selected.plan, budget),
+      corrections: cvBudgetViolations(selected.plan, next()),
     };
   }
   if (invalidSkillFormat) throw new Error("The model repeatedly returned the wrong skill format. Your evidence is unchanged. Retry the build or choose another CV model.");

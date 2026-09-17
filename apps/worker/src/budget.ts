@@ -37,7 +37,7 @@ export interface AiBudgetRefusal {
 }
 
 /** Hold capacity for one call, or say exactly which limit refused it, so the refusal can be explained. */
-export async function tryReserveAi(db: Db, callSite: string, amount: number, limits: AiBudgetLimits, now = new Date(), ttlMinutes = 15): Promise<{ release: () => Promise<void> } | { refused: AiBudgetRefusal }> {
+export async function tryReserveAi(db: Db, callSite: string, amount: number, limits: AiBudgetLimits, now = new Date(), ttlMinutes = 15): Promise<{ release: () => Promise<void>; renew: () => Promise<void> } | { refused: AiBudgetRefusal }> {
   const monthStart = new Date(`${now.toISOString().slice(0, 7)}-01T00:00:00Z`);
   const dayStart = new Date(`${now.toISOString().slice(0, 10)}T00:00:00Z`);
   const id = randomUUID();
@@ -64,6 +64,10 @@ export async function tryReserveAi(db: Db, callSite: string, amount: number, lim
     return null;
   });
   if (refusal) return { refused: refusal };
-  /** Release the hold. The call's real cost is already in `ai_calls`, so nothing is charged here. */
-  return { release: async () => { await db.execute(sql`delete from ai_reservations where id = ${id}`); } };
+  return {
+    /** Release the hold. The call's real cost is already in `ai_calls`, so nothing is charged here. */
+    release: async () => { await db.execute(sql`delete from ai_reservations where id = ${id}`); },
+    /** Keep a hold alive through a long build; one whose process died still expires on its own. */
+    renew: async () => { await db.execute(sql`update ai_reservations set expires_at = now() + make_interval(mins => ${ttlMinutes}::int) where id = ${id}`); },
+  };
 }

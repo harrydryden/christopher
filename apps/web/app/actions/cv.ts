@@ -29,6 +29,43 @@ async function upsertUserSetting(tx: Pick<Tx, "insert">, userId: string, key: st
     .onConflictDoUpdate({ target: [userSettingsTable.userId, userSettingsTable.key], set: { value: value as object, updatedAt: new Date() } });
 }
 
+/** The editor's fields over the saved content. Fit notes describe a build these edits now replace. */
+function applyCvFormEdits(saved: CvContent, form: FormData): CvContent {
+  const content = structuredClone(saved);
+  if (form.has("theme")) content.theme = JSON.parse(String(form.get("theme")));
+  content.summary = String(form.get("summary") ?? "").trim();
+  content.sections = content.sections.map((section, i) => ({
+    ...section,
+    bullets: String(form.get(`section-${i}`) ?? section.bullets.join("\n")).split("\n").map((t) => t.trim()).filter(Boolean),
+  }));
+  content.sections = content.sections.map((section, i) =>
+    section.kind === "skill" && section.skillItems
+      ? { ...section, skillItems: String(form.get(`skills-${i}`) ?? section.skillItems.join("\n")).split("\n").map((t) => t.trim()).filter(Boolean) }
+      : section,
+  );
+  delete content.fitNotes;
+  return CvContentSchema.parse(content);
+}
+
+/** Zod's message is a JSON dump; name the field the way the editor labels it. */
+function cvContentIssues(error: z.ZodError): string {
+  return error.issues.map((issue) => {
+    const [field, index, item, position] = issue.path;
+    const where = field === "summary" ? "Profile"
+      : field === "sections" && typeof index === "number"
+        ? `Section ${index + 1}${typeof position === "number" ? `, ${item === "skillItems" ? "skill" : "bullet"} ${position + 1}` : ""}`
+        : String(field ?? "CV");
+    return `${where}: ${issue.message}`;
+  }).join(" ");
+}
+
+/** The newest examples that fit the phrasing limit; the oldest go first once it fills up. */
+function newestWithin(examples: string[], limit: number): string {
+  const kept = [...new Set(examples.map((example) => example.trim()).filter(Boolean))];
+  while (kept.length && kept.join("\n\n").length > limit) kept.shift();
+  return kept.join("\n\n");
+}
+
 /** Append the wording the user changed to their saved phrasing. Returns the preferences when they changed. */
 async function rememberWording(tx: Tx, userId: string, before: CvContent, after: CvContent): Promise<CvWritingPreferences | undefined> {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`cv:library:${userId}`}))`);
@@ -44,9 +81,8 @@ async function rememberWording(tx: Tx, userId: string, before: CvContent, after:
   if (!changes.length) return undefined;
   const [storedPreferences] = await tx.select().from(userSettingsTable).where(and(eq(userSettingsTable.userId, userId), eq(userSettingsTable.key, "cvWritingPreferences")));
   const preferences = resolveCvWritingPreferences(storedPreferences?.value, latest.content);
-  const preferredWording = [preferences.preferredWording, ...changes].filter(Boolean).join("\n\n");
-  if (preferredWording.length > 12000)
-    throw new Error("Saved phrasing is full. Edit or remove older examples in Settings first.");
+  // The limit is the schema's; a save never fails for it, the oldest examples make room instead.
+  const preferredWording = newestWithin([...preferences.preferredWording.split("\n\n"), ...changes], 12000);
   const updated = { ...preferences, preferredWording };
   await upsertUserSetting(tx, userId, "cvWritingPreferences", updated);
   return updated;
@@ -251,37 +287,12 @@ export async function saveCvDraft(
       .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, user.id)));
     if (!draft || !["ready", "failed"].includes(draft.status) || !draft.content)
       return fail("Wait for the current build to finish before editing.");
-    const content = structuredClone(draft.content);
-    if (form.has("theme"))
-      content.theme = JSON.parse(String(form.get("theme")));
-    content.summary = String(form.get("summary") ?? "").trim();
-    content.sections = content.sections.map((section, i) => ({
-      ...section,
-      bullets: String(form.get(`section-${i}`) ?? section.bullets.join("\n"))
-        .split("\n")
-        .map((t) => t.trim())
-        .filter(Boolean),
-    }));
-    content.sections = content.sections.map((section, i) =>
-      section.kind === "skill" && section.skillItems
-        ? {
-            ...section,
-            skillItems: String(
-              form.get(`skills-${i}`) ?? section.skillItems.join("\n"),
-            )
-              .split("\n")
-              .map((t) => t.trim())
-              .filter(Boolean),
-          }
-        : section,
-    );
-    CvContentSchema.parse(content);
-    const intent = form.get("intent");
-    const fit = intent === "fit" || intent === "improve";
+    const content = applyCvFormEdits(draft.content, form);
+    const rebuild = form.get("intent") === "improve";
     // The rolling archive can remove a parent before this queued build starts.
     const reviewContext = draft.assessment ? {
       rubric: draft.assessment.rubric,
-      improvements: draft.assessment.review.matches.filter(match => cvImprovementOwner(match) === "system").map(match => match.improvement),
+      improvements: draft.assessment.review.matches.filter(match => cvImprovementOwner(match) === "system").map(match => match.improvement).filter(Boolean),
     } : {};
     // The worker measures saved edits and automatically fits any overflow before assessing.
     const {
@@ -299,14 +310,15 @@ export async function saveCvDraft(
       // Corrections are remembered whichever build the save requests, and an improved revision
       // is written with them from the start.
       const remembered = form.get("rememberWording") === "on" ? await rememberWording(tx, user.id, draft.content!, content) : undefined;
-      if (fit) {
-        const latest = intent === "improve" ? await latestLibrary(tx, user.id) : undefined;
+      if (rebuild) {
+        // A rebuild is written afresh from the latest Library and writing preferences.
+        const latest = await latestLibrary(tx, user.id);
         const evidence = latest
           ? groupCvLibrary(CvLibrarySchema.parse(latest.content))
           : draft.librarySnapshot;
         const librarySnapshot = CvLibrarySchema.parse({
           ...evidence,
-          ...(intent === "improve" ? (remembered ?? (await getSettings()).cvWritingPreferences ?? {}) : {}),
+          ...(remembered ?? (await getSettings()).cvWritingPreferences ?? {}),
           theme: content.theme ?? DEFAULT_CV_THEME,
         });
         const [fitting] = await tx
@@ -323,34 +335,10 @@ export async function saveCvDraft(
             revision,
           })
           .returning();
-        const sourcePlan = {
-          summary: content.summary,
-          sections: content.sections.map(
-            ({ entryId, bullets, skillItems, industryDescriptions }) => ({
-              entryId,
-              bullets,
-              skillItems,
-              industryDescriptions,
-            }),
-          ),
-          gaps: content.gaps,
-        };
         await enqueueTask(
           tx,
           "generate_cv",
-          {
-            draftId: fitting!.id,
-            ...reviewContext,
-            // A rebuild is written afresh from the Library; only a refit carries the saved wording.
-            ...(intent === "fit" && content.sections.every((section) =>
-              librarySnapshot.entries.some(
-                (entry) => entry.id === section.entryId,
-              ),
-            )
-              ? { sourcePlan }
-              : {}),
-            ...(intent === "improve" ? { mode: "improve" } : {}),
-          },
+          { draftId: fitting!.id, ...reviewContext, mode: "improve" },
           { dedupeKey: `generate_cv:${fitting!.id}`, priority: 2 },
         );
         return fitting!.id;
@@ -376,6 +364,7 @@ export async function saveCvDraft(
       return saved!.id;
     });
   } catch (error) {
+    if (error instanceof z.ZodError) return fail(cvContentIssues(error));
     return fail(
       error instanceof Error ? error.message : "Could not save the draft.",
     );

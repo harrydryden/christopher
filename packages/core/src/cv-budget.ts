@@ -1,18 +1,36 @@
 import type { CvLibrary, CvPlan } from "./cv";
+import { cvRequirementWeight, type CvRubric } from "./cv-assessment";
 import { CV_LIMITS } from "./cv-format";
 import { cvMaxPages } from "./cv-theme";
 
 export type CvBlockBudget = { entryId: string; kind: string; priority: number; maxBullets: number; maxCharacters: number; maxBulletCharacters: number; maxSkills: number };
 export type CvWritingBudget = { summaryCharacters: number; totalCharacters: number; blocks: CvBlockBudget[] };
+/** What a CV is fitted against: plain text, every word counting once, or words weighted by requirement. */
+export type CvRelevanceTarget = string | ReadonlyMap<string, number>;
 const stop = new Set('a an of to in on at as is it be by or we with from that this your have will role team work company experience skills across their into and the for are our you'.split(' '));
-export function cvRelevance(value: string, target: string): number {
-  const words = (text: string) => [...new Set(text.toLowerCase().match(/[a-z][a-z0-9+#&-]*/g) ?? [])].filter(word => !stop.has(word));
-  const requested = new Set(words(target));
-  return words(value).filter(word => requested.has(word)).length;
+const relevantWords = (text: string) => [...new Set(text.toLowerCase().match(/[a-z][a-z0-9+#&-]*/g) ?? [])].filter(word => !stop.has(word));
+
+/**
+ * The rubric's words, each weighted as the assessment weights the requirement it comes from, so
+ * that under space pressure the fitter keeps what the score rewards most: a bullet covering an
+ * essential requirement outranks a longer one covering a mere responsibility.
+ */
+export function cvRelevanceTerms(requirements: CvRubric["requirements"]): Map<string, number> {
+  const terms = new Map<string, number>();
+  for (const requirement of requirements) {
+    const weight = cvRequirementWeight(requirement);
+    for (const word of relevantWords(`${requirement.label} ${requirement.quote}`)) terms.set(word, Math.max(terms.get(word) ?? 0, weight));
+  }
+  return terms;
+}
+
+export function cvRelevance(value: string, target: CvRelevanceTarget): number {
+  const requested = typeof target === "string" ? new Map(relevantWords(target).map(word => [word, 1] as const)) : target;
+  return relevantWords(value).reduce((sum, word) => sum + (requested.get(word) ?? 0), 0);
 }
 
 /** Allocate a conservative writing envelope; actual PDF measurement remains authoritative. */
-export function createCvWritingBudget(library: CvLibrary, target: string, scale = 1): CvWritingBudget {
+export function createCvWritingBudget(library: CvLibrary, target: CvRelevanceTarget, scale = 1): CvWritingBudget {
   const roles = library.entries.filter(entry => entry.kind === 'experience').sort((a, b) => {
     const date = (entry: typeof a) => {
       const job = library.employment?.find(job => job.id === entry.employmentId);
@@ -22,11 +40,16 @@ export function createCvWritingBudget(library: CvLibrary, target: string, scale 
   });
   const education = library.entries.filter(entry => entry.kind === 'education');
   if (roles.length + education.length > 20) throw new Error('Select at most 20 employment and education blocks for this CV. The full library is retained.');
-  const skills = library.entries.filter(entry => entry.kind === 'skill')
-    .sort((a, b) => cvRelevance([b.heading, b.details, ...(b.skillItems ?? [])].join(' '), target) - cvRelevance([a.heading, a.details, ...(a.skillItems ?? [])].join(' '), target)).slice(0, Math.min(2, 20 - roles.length - education.length));
+  const byRelevance = (a: CvLibrary["entries"][number], b: CvLibrary["entries"][number]) =>
+    cvRelevance([b.heading, b.details, ...(b.skillItems ?? [])].join(' '), target) - cvRelevance([a.heading, a.details, ...(a.skillItems ?? [])].join(' '), target);
+  const skills = library.entries.filter(entry => entry.kind === 'skill').sort(byRelevance).slice(0, Math.min(2, 20 - roles.length - education.length));
   // The allocations were calibrated on a two-page CV. The user's page limit scales the body;
   // the profile only shrinks for a one-page CV, because it sits in the fixed masthead.
   const pages = cvMaxPages(library.theme) / 2;
+  // A one-page CV has no room for interests; a longer one carries one small block, which the
+  // fitter trims before anything else when the pages fill up. Without a block the writer is told
+  // interests have no space and the fitter drops them, so a recorded interest never appears.
+  const interests = pages < 1 ? [] : library.entries.filter(entry => entry.kind === 'interest').sort(byRelevance).slice(0, Math.min(1, 20 - roles.length - education.length - skills.length));
   const bulletCap = Math.max(1, Math.min(CV_LIMITS.bulletsPerSection, Math.round(4 * pages)));
   // Headings, callouts, masthead and subsection spacing all consume space, even
   // before achievements are written. More roles therefore mean less prose each.
@@ -34,7 +57,8 @@ export function createCvWritingBudget(library: CvLibrary, target: string, scale 
   const summaryCharacters = Math.round(420 * Math.min(1, pages) * scale);
   const qualificationCharacters = education.length * Math.round(150 * scale);
   const skillCharacters = skills.length * Math.round(180 * scale);
-  const roleCharacters = Math.max(roles.length * 100, totalCharacters - summaryCharacters - qualificationCharacters - skillCharacters);
+  const interestCharacters = interests.length * Math.round(120 * scale);
+  const roleCharacters = Math.max(roles.length * 100, totalCharacters - summaryCharacters - qualificationCharacters - skillCharacters - interestCharacters);
   const weights = roles.map((entry, index) => 1 + Math.min(2, cvRelevance(entry.heading + ' ' + entry.details, target) / 5) + 2 / (index + 1));
   const sum = weights.reduce((a, b) => a + b, 0) || 1;
   const blocks: CvBlockBudget[] = roles.map((entry, index) => {
@@ -44,6 +68,7 @@ export function createCvWritingBudget(library: CvLibrary, target: string, scale 
   });
   blocks.push(...education.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 10, maxBullets: 6, maxCharacters: Math.round(150 * scale), maxBulletCharacters: Math.round(150 * scale), maxSkills: 0 })));
   blocks.push(...skills.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 1, maxBullets: 2, maxCharacters: Math.round(180 * scale), maxBulletCharacters: Math.round(90 * scale), maxSkills: entry.skillItems ? Math.max(2, Math.round(5 * pages * scale)) : 0 })));
+  blocks.push(...interests.map(entry => ({ entryId: entry.id, kind: entry.kind, priority: 0, maxBullets: 2, maxCharacters: Math.round(120 * scale), maxBulletCharacters: Math.round(90 * scale), maxSkills: 0 })));
   return { summaryCharacters, totalCharacters, blocks };
 }
 
@@ -53,7 +78,7 @@ export function cvBudgetViolations(plan: CvPlan, budget: CvWritingBudget): strin
   if (plan.summary.length > budget.summaryCharacters) violations.push(`Profile: ${plan.summary.length} characters; budget ${budget.summaryCharacters}.`);
   for (const block of budget.blocks) {
     const section = plan.sections.find(section => section.entryId === block.entryId);
-    if (!section) { if (block.kind !== 'skill') violations.push(`Retain ${block.entryId}: ${block.kind} block.`); continue; }
+    if (!section) { if (block.kind === 'experience' || block.kind === 'education') violations.push(`Retain ${block.entryId}: ${block.kind} block.`); continue; }
     const values = section.skillItems ?? section.bullets;
     const length = values.reduce((sum, value) => sum + value.length, 0);
     if (length > block.maxCharacters) violations.push(`${block.entryId}: ${length} characters; budget ${block.maxCharacters}.`);

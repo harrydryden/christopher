@@ -160,7 +160,18 @@ export function CvDraftEditor({
           </div>
         </section>
       </CvWorkspacePanel>
-      <CvWorkspacePanel tab="evaluation">{assessment}</CvWorkspacePanel>
+      <CvWorkspacePanel tab="evaluation">
+        {content.fitNotes?.length ? (
+          <CvDisclosure label={`What the fitter changed (${content.fitNotes.length})`}>
+            <ul className="list-disc space-y-1 pl-5 text-14">
+              {content.fitNotes.map((note, index) => (
+                <li key={index}>{note}</li>
+              ))}
+            </ul>
+          </CvDisclosure>
+        ) : null}
+        {assessment}
+      </CvWorkspacePanel>
       <CvWorkspacePanel tab="content">
         <section className="space-y-3 border border-line-muted p-4">
           <h2 className="ds-pixel text-12">Content</h2>

@@ -38,6 +38,21 @@ async function company(name: string, followed: boolean) {
 
 const at = new Date("2026-09-11T06:00:00Z");
 
+/**
+ * Postings a run's scan stored, and which accounts' gates admitted them. Per account "new" means
+ * new to that account's table, so the summary counts `user_jobs` rows, not the shared insert count.
+ */
+async function postings(sourceId: string, companyId: string, n: number, viewers: string[], prefix = "job") {
+  const rows = await database.insert(schema.jobs).values(Array.from({ length: n }, (_, i) => ({
+    companyId, sourceId, externalKey: `id:${prefix}-${i}`, title: `${prefix} ${i}`, normalizedTitle: `${prefix} ${i}`,
+    url: `https://example.test/${prefix}-${i}`, firstSeenAt: at, lastSeenAt: at,
+  }))).returning({ id: schema.jobs.id });
+  for (const userId of viewers) {
+    await database.insert(schema.userJobs).values(rows.map(row => ({ userId, jobId: row.id, inTable: true })));
+  }
+  return rows.map(row => row.id);
+}
+
 it("counts a company only when every latest source scan succeeded and its scan task is done", async () => {
   const mine = await company("acme", true);
   const [other] = await database.insert(schema.careerSources).values({ companyId: mine.id, type: "html", url: "https://acme.example/other" }).returning();
@@ -71,6 +86,8 @@ it("summarises many runs in one query, per account, and answers for a run with n
     { sourceId: theirs.sourceId, scanRunId: runs[0]!.id, status: "ok", startedAt: at, finishedAt: at, newCount: 7 },
     { sourceId: mine.sourceId, scanRunId: runs[1]!.id, status: "failed", startedAt: at, finishedAt: at, newCount: 0 },
   ]);
+  await postings(mine.sourceId, mine.id, 2, [user.id], "mine");
+  await postings(theirs.sourceId, theirs.id, 7, [], "theirs");
 
   const everyone = await scanRunSummaries(database, runs.map((run) => run.id));
   expect(everyone.size).toBe(2);
@@ -88,11 +105,13 @@ it("holds one account's summary of one run for half a minute, and reports many r
   const mine = await company("acme", true);
   const [run] = await database.insert(schema.scanRuns).values({ runDate: "2026-09-12", trigger: "manual", companiesTotal: 1 }).returning();
   await database.insert(schema.scans).values({ sourceId: mine.sourceId, scanRunId: run!.id, status: "ok", startedAt: at, finishedAt: at, newCount: 2 });
+  await postings(mine.sourceId, mine.id, 2, [user.id], "first");
   expect((await scanRunReport(run!, user.id)).newRoles).toBe(2);
 
   // A second source reports in, but the banner is not recomputed on every render of every tab.
   const [second] = await database.insert(schema.careerSources).values({ companyId: mine.id, type: "html", url: "https://acme.example/more" }).returning();
   await database.insert(schema.scans).values({ sourceId: second!.id, scanRunId: run!.id, status: "ok", startedAt: at, finishedAt: at, newCount: 5 });
+  await postings(second!.id, mine.id, 5, [user.id], "second");
   expect((await scanRunReport(run!, user.id)).newRoles).toBe(2);
   // The whole deployment's view of the same run is a separate entry, so it is read fresh.
   expect((await scanRunReport(run!)).newRoles).toBe(7);
@@ -104,4 +123,50 @@ it("holds one account's summary of one run for half a minute, and reports many r
   // Per account the total counts the sources scanned plus those still queued, as it always has.
   expect(reported).toMatchObject({ newRoles: 7, companiesTotal: 2, companiesOk: 1 });
   expect(await scanRunReports([], user.id)).toEqual([]);
+});
+
+it("counts new roles per gate: two followers of one company never see each other's figures", async () => {
+  // One scan, one shared listing, two accounts whose gates admit different parts of it. The
+  // banner is an alert about that account's table, so its number is that account's, cached or not.
+  const shared = await company("shared", true);
+  const other = await ensureTestUser(database, "other@example.com", "member");
+  await subscribeToCompany(database, other.id, shared.id);
+  const [run] = await database.insert(schema.scanRuns).values({ runDate: "2026-09-13", trigger: "schedule", companiesTotal: 1 }).returning();
+  await database.insert(schema.scans).values({ sourceId: shared.sourceId, scanRunId: run!.id, status: "ok", startedAt: at, finishedAt: at, newCount: 5 });
+  // Five postings stored once: one account's gate admitted four of them, the other's just one.
+  const admitted = await postings(shared.sourceId, shared.id, 4, [user.id], "ops");
+  await postings(shared.sourceId, shared.id, 1, [user.id, other.id], "eng");
+
+  expect((await scanRunSummary(database, run!.id, user.id)).new_roles).toBe(5);
+  expect((await scanRunSummary(database, run!.id, other.id)).new_roles).toBe(1);
+  // The whole deployment's figure is still what the scan observed.
+  expect((await scanRunSummary(database, run!.id)).new_roles).toBe(5);
+
+  // Through the 30-second cache the two accounts stay separate entries.
+  expect((await scanRunReport(run!, user.id)).newRoles).toBe(5);
+  expect((await scanRunReport(run!, other.id)).newRoles).toBe(1);
+  await database.delete(schema.userJobs).where(sql`user_id = ${user.id} and job_id = ${admitted[0]!}`);
+  expect((await scanRunReport(run!, user.id)).newRoles).toBe(5);
+  expect((await scanRunReport(run!, other.id)).newRoles).toBe(1);
+  clearScanSummaryCache();
+  expect((await scanRunReport(run!, user.id)).newRoles).toBe(4);
+  expect((await scanRunReport(run!, other.id)).newRoles).toBe(1);
+});
+
+it("counts a posting stored by an earlier run as new only for the run that stored it", async () => {
+  // A posting the account already had is not news because a later run scanned the same board.
+  const mine = await company("acme", true);
+  const runs = await database.insert(schema.scanRuns).values([
+    { runDate: "2026-09-13", trigger: "schedule", companiesTotal: 1 },
+    { runDate: "2026-09-14", trigger: "schedule", companiesTotal: 1 },
+  ]).returning();
+  const later = new Date(at.getTime() + 86_400_000);
+  await database.insert(schema.scans).values([
+    { sourceId: mine.sourceId, scanRunId: runs[0]!.id, status: "ok", startedAt: at, finishedAt: at, newCount: 2 },
+    { sourceId: mine.sourceId, scanRunId: runs[1]!.id, status: "ok", startedAt: later, finishedAt: later, newCount: 0 },
+  ]);
+  await postings(mine.sourceId, mine.id, 2, [user.id], "day-one");
+
+  expect((await scanRunSummary(database, runs[0]!.id, user.id)).new_roles).toBe(2);
+  expect((await scanRunSummary(database, runs[1]!.id, user.id)).new_roles).toBe(0);
 });

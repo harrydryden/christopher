@@ -467,7 +467,7 @@ describe("functional review regressions", () => {
     expect(truncated!.descriptionHash).toBe(sha1(truncated!.descriptionText!));
   }, 60_000);
 
-  it("archives retained non-matches but preserves active decisions", async () => {
+  it("archives retained non-matches but preserves active decisions and saved CVs", async () => {
     await setGate({});
     await addCompany("https://www.acme.example/", "acme.example");
     await queue.drain();
@@ -481,7 +481,11 @@ describe("functional review regressions", () => {
     expect(result.removed).toBe(0);
     const kept = await db.select().from(schema.userJobs);
     expect(kept).toHaveLength(4);
-    expect(kept.filter(job => job.archivedAt)).toHaveLength(3);
+    // The decided role and the role a CV was written for stay in the table; the already-archived
+    // row keeps its timestamp and the fourth is archived by the narrowed gate.
+    expect(kept.filter(job => job.archivedAt)).toHaveLength(2);
+    expect(kept.find(job => job.jobId === rows[0]!.jobId)!.archivedAt).toBeNull();
+    expect(kept.find(job => job.jobId === rows[2]!.jobId)!.archivedAt).toBeNull();
     expect(kept.every(j => !j.inTable && !j.nearMiss)).toBe(true);
     expect((await db.select().from(schema.decisions))[0]!.reason).toBe("Too junior");
   });
@@ -929,5 +933,81 @@ describe("shared catalogue", () => {
     // The posting was already known to the scan, so it is seeded for this account rather than news.
     expect(rows[0]!.seeded).toBe(true);
     expect(await db.select().from(schema.scans)).toHaveLength(1);
+  }, 60_000);
+
+  it("widens and narrows one account's gate over the stored listing, leaving the other account alone", async () => {
+    // The catalogue is shared and the table is per account: changing one gate must move that
+    // account's rows only, and must never need the company scanned again.
+    await setGate({});
+    const engineer = await ensureTestUser(db, "widen@example.com", "member");
+    const setEngineerGate = async (includeKeywords: string[]) => {
+      const value = { includeKeywords, excludeKeywords: [], matchFields: ["title"], locationTerms: [], includeRemote: true };
+      await db.insert(schema.userSettings).values({ userId: engineer.id, key: "gate", value })
+        .onConflictDoUpdate({ target: [schema.userSettings.userId, schema.userSettings.key], set: { value } });
+      deps.invalidateSettings();
+    };
+    await setEngineerGate(["engineer"]);
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await subscribeToCompany(db, engineer.id, company.id);
+    await queue.drain();
+
+    // One scan, one shared listing, two different tables.
+    expect(await db.select().from(schema.scans)).toHaveLength(1);
+    expect(await db.select().from(schema.jobs)).toHaveLength(5);
+    expect((await jobsInTable()).map(r => r.title)).toEqual(["Head of Business Operations", "Operations Analyst", "Operations Manager", "Senior Operations Associate"]);
+    expect((await jobsInTable(engineer)).map(r => r.title)).toEqual(["Software Engineer, Platform"]);
+
+    // Widening admits postings the scan already stored, with no second scan.
+    await setEngineerGate(["engineer", "operations"]);
+    await reevaluateGate(db, engineer.id, await deps.userSettings(engineer.id), now);
+    expect((await jobsInTable(engineer)).filter(r => r.inTable)).toHaveLength(5);
+    expect(await db.select().from(schema.scans)).toHaveLength(1);
+
+    // Narrowing archives this account's non-matches, except the two it has invested in.
+    const engineerRows = await jobsInTable(engineer);
+    const decided = engineerRows.find(r => r.title === "Operations Manager")!;
+    const withCv = engineerRows.find(r => r.title === "Operations Analyst")!;
+    await db.insert(schema.decisions).values({ userId: engineer.id, jobId: decided.jobId, decision: "apply", jobTitle: decided.title, companyName: "Acme" });
+    await db.insert(schema.cvDrafts).values({ userId: engineer.id, jobId: withCv.jobId, jobTitle: withCv.title, companyName: "Acme", jobDescription: "Role", libraryVersion: 1, librarySnapshot: { name: "Test", contact: "", profile: "", entries: [] }, model: "fixture" });
+    await setEngineerGate(["engineer"]);
+    await reevaluateGate(db, engineer.id, await deps.userSettings(engineer.id), now);
+
+    const views = await db.select().from(schema.userJobs).where(eq(schema.userJobs.userId, engineer.id));
+    const archived = new Set(views.filter(v => v.archivedAt).map(v => v.jobId));
+    expect(archived.has(decided.jobId)).toBe(false);
+    expect(archived.has(withCv.jobId)).toBe(false);
+    expect(archived.size).toBe(2);
+    // The other account is untouched throughout: same rows, none archived.
+    const mine = await db.select().from(schema.userJobs).where(eq(schema.userJobs.userId, user.id));
+    expect(mine).toHaveLength(4);
+    expect(mine.every(v => v.inTable && v.archivedAt === null)).toBe(true);
+    expect(await db.select().from(schema.scans)).toHaveLength(1);
+  }, 120_000);
+
+  it("keeps a description a fetch_description stored while the scan was in flight", async () => {
+    // The scan reads every stored description before it opens its transaction. A description task
+    // that commits in that window must not be written back to null by the scan's refresh.
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources);
+
+    // A feed that stops supplying descriptions, and a posting that has none stored yet.
+    setJobs([{ ...JOB_OPERATIONS_MANAGER, content: undefined }]);
+    const [target] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, "id:4001001"));
+    await db.update(schema.jobs).set({ descriptionText: null, descriptionHash: null, descriptionFetchedAt: null }).where(eq(schema.jobs.id, target!.id));
+
+    // `assertOwnership` runs as the scan's transaction opens, which is exactly the window a
+    // concurrent fetch_description commits in.
+    const text = "Own operations for our London site, written by the description task.";
+    const racing: WorkerDeps = { ...deps, assertOwnership: async () => {
+      await db.update(schema.jobs).set({ descriptionText: text, descriptionHash: sha1(text), descriptionFetchedAt: new Date(now.getTime() + 1000) }).where(eq(schema.jobs.id, target!.id));
+    } };
+    const outcome = await _scanSourceForTests(racing, company, source!, await deps.settings(), null);
+    expect(outcome.status).toBe("ok");
+
+    const [after] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, target!.id));
+    expect(after!.descriptionText).toBe(text);
+    expect(after!.descriptionHash).toBe(sha1(text));
   }, 60_000);
 });

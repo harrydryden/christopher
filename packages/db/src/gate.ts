@@ -32,8 +32,8 @@ interface GateRow extends Record<string, unknown> {
 /**
  * Re-run one account's keyword and location gate over the shared postings of the companies it
  * follows. A posting that passes gets a `user_jobs` row if it had none (store matching roles only,
- * per account); a row that stops passing is archived unless it carries a decision. Shared by
- * synchronous settings saves, new subscriptions and the background `reevaluate_gate` task.
+ * per account); a row that stops passing is archived unless it carries a decision or a saved CV.
+ * Shared by synchronous settings saves, new subscriptions and the background `reevaluate_gate` task.
  */
 export async function reevaluateGate(db: Db, userId: string, settings: AppSettings, now = new Date(), scope: GateScope = {}) {
   // Only a gate that matches on the description needs it, and it is the largest column on `jobs`:
@@ -112,7 +112,9 @@ export interface ArchiveScope {
 
 /**
  * Put away a person's view of a posting that no longer passes their gate, unless they have decided
- * on it. Never deletes: the row keeps its history and shows in the Archive view.
+ * on it or built a CV for it. Never deletes: the row keeps its history and shows in the Archive
+ * view. A saved CV is work the person did on that role; narrowing a filter must not take the role
+ * the CV was written for out of their table behind it.
  */
 export async function archiveNonMatches(db: Db, scope: ArchiveScope = {}): Promise<number> {
   const userId = scope.userId ?? null;
@@ -128,6 +130,7 @@ export async function archiveNonMatches(db: Db, scope: ArchiveScope = {}): Promi
       and (${sourceId}::uuid is null or j.source_id = ${sourceId}::uuid)
       and (${jobId}::uuid is null or uj.job_id = ${jobId}::uuid)
       and (${companyId}::uuid is null or j.company_id = ${companyId}::uuid)
+      and not exists (select 1 from cv_drafts c where c.user_id = uj.user_id and c.job_id = uj.job_id)
       order by uj.user_id, uj.job_id for update of uj`);
     const result = await tx.execute(sql`
     with archived as (
@@ -139,6 +142,7 @@ export async function archiveNonMatches(db: Db, scope: ArchiveScope = {}): Promi
       and (${jobId}::uuid is null or uj.job_id = ${jobId}::uuid)
       and (${companyId}::uuid is null or j.company_id = ${companyId}::uuid)
       and not exists (select 1 from decisions d where d.user_id = uj.user_id and d.job_id = uj.job_id and d.superseded = false)
+      and not exists (select 1 from cv_drafts c where c.user_id = uj.user_id and c.job_id = uj.job_id)
       returning uj.user_id, uj.job_id
     )
     insert into job_events (job_id, user_id, type, payload)

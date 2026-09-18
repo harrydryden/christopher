@@ -7,7 +7,7 @@ import { careerSources, companies, companySubscriptions, companySuggestions, job
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { getSettings, getSettingsFor } from "@/lib/settings";
-import { zUuid } from "@/lib/validation";
+import { UserFacingError, zUuid } from "@/lib/validation";
 import type { DiscoveryActionResult } from "@/lib/discovery-ux";
 
 export async function acceptSuggestion(suggestionId: string): Promise<DiscoveryActionResult> {
@@ -18,7 +18,7 @@ export async function acceptSuggestion(suggestionId: string): Promise<DiscoveryA
     if (!suggestion || suggestion.status !== "pending") return { ok: false as const, error: "This recommendation has already been reviewed. Refresh the page to see its status." };
     const [created] = await tx.insert(companies).values({ name: suggestion.name, homepageUrl: suggestion.homepageUrl, domain: suggestion.domain }).onConflictDoNothing().returning({ id: companies.id });
     const [company] = created ? [created] : await tx.select({ id: companies.id }).from(companies).where(eq(companies.domain, suggestion.domain)).limit(1);
-    if (!company) throw new Error("Could not add the company.");
+    if (!company) throw new UserFacingError("Could not add the company.");
     const subscription = await subscribeToCompany(tx, user.id, company.id);
     if (created) {
       // Resolve a full careers spec (including ATS identifiers), then let discovery queue the scan.

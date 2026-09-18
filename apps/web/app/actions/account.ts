@@ -11,18 +11,18 @@ import { emailLinkOrigin } from "@/lib/origin";
 import { endAllSessions, endOtherSessions, getCurrentUser, requireAdmin, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { setUserSetting } from "@/lib/settings";
-import { fail, ok, zUuid, type ActionResult } from "@/lib/validation";
+import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
 
 export async function changePassword(_prev: ActionResult, form: FormData): Promise<ActionResult> {
   const current = await getCurrentUser();
-  if (!current) throw new Error("Unauthorised");
+  if (!current) throw new UserFacingError("Unauthorised");
   const next = String(form.get("password") ?? "");
   const confirm = String(form.get("confirm") ?? "");
   if (next !== confirm) return fail("The two passwords do not match.");
   try {
     await changeStoredPassword(current.user, String(form.get("currentPassword") ?? ""), next);
   } catch (error) {
-    return fail(error instanceof Error ? error.message : "Could not change the password.");
+    return actionError(error, "Could not change the password. Please try again.");
   }
   // Every other browser signed in with the old password is signed out.
   await endOtherSessions(current.user.id, current.sessionId);
@@ -32,7 +32,7 @@ export async function changePassword(_prev: ActionResult, form: FormData): Promi
 
 export async function signOutEverywhere(): Promise<void> {
   const current = await getCurrentUser();
-  if (!current) throw new Error("Unauthorised");
+  if (!current) throw new UserFacingError("Unauthorised");
   await endOtherSessions(current.user.id, current.sessionId);
   revalidatePath("/account");
 }
@@ -56,10 +56,10 @@ export async function updateProfile(_prev: ActionResult, form: FormData): Promis
 export async function setUserRole(userId: string, role: UserRole): Promise<void> {
   const admin = await requireAdmin();
   const id = zUuid().parse(userId);
-  if (role !== "admin" && role !== "member") throw new Error("Unknown role.");
+  if (role !== "admin" && role !== "member") throw new UserFacingError("Unknown role.");
   if (id === admin.id && role !== "admin") {
     const [others] = await db().select({ n: sql<number>`count(*)::int` }).from(users).where(and(eq(users.role, "admin"), ne(users.id, admin.id), sql`${users.claimedAt} is not null`));
-    if (!others?.n) throw new Error("You are the only administrator. Make someone else an administrator first.");
+    if (!others?.n) throw new UserFacingError("You are the only administrator. Make someone else an administrator first.");
   }
   await db().update(users).set({ role }).where(eq(users.id, id));
   revalidatePath("/admin");
@@ -69,7 +69,7 @@ export async function setUserRole(userId: string, role: UserRole): Promise<void>
 export async function deleteUser(userId: string): Promise<void> {
   const admin = await requireAdmin();
   const id = zUuid().parse(userId);
-  if (id === admin.id) throw new Error("You cannot delete your own account here.");
+  if (id === admin.id) throw new UserFacingError("You cannot delete your own account here.");
   await endAllSessions(id);
   await db().delete(users).where(eq(users.id, id));
   revalidatePath("/admin");
@@ -117,7 +117,7 @@ export async function setAccountAiBudget(userId: string, formData: FormData): Pr
   const id = zUuid().parse(userId);
   const entered = String(formData.get("aiBudgetUsd") ?? "").trim();
   const parsed = entered ? AiBudgetSchema.safeParse(entered) : null;
-  if (!parsed?.success) throw new Error(`A monthly AI budget is a number between $0 and $${MAX_ACCOUNT_AI_BUDGET_USD}.`);
+  if (!parsed?.success) throw new UserFacingError(`A monthly AI budget is a number between $0 and $${MAX_ACCOUNT_AI_BUDGET_USD}.`);
   await setUserSetting(id, "aiBudgetUsd", Math.round(parsed.data * 100) / 100);
   revalidatePath("/admin");
 }

@@ -12,7 +12,7 @@ import { discovery, ensureHttpUrl, extractDomain } from "@christopher/core";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { getSettingsFor } from "@/lib/settings";
-import { zUrlString, zUuid, type ActionResult } from "@/lib/validation";
+import { UserFacingError, zUrlString, zUuid, type ActionResult } from "@/lib/validation";
 
 const CompanyStatusSchema = z.enum(["active", "paused", "archived"]);
 
@@ -20,7 +20,7 @@ const CompanyStatusSchema = z.enum(["active", "paused", "archived"]);
 async function requireFollowed(userId: string, companyId: string): Promise<CompanySubscription> {
   const [subscription] = await db().select().from(companySubscriptions)
     .where(and(eq(companySubscriptions.userId, userId), eq(companySubscriptions.companyId, companyId))).limit(1);
-  if (!subscription) throw new Error("You do not follow this company.");
+  if (!subscription) throw new UserFacingError("You do not follow this company.");
   return subscription;
 }
 
@@ -96,13 +96,14 @@ export async function addCompanies(formData: FormData): Promise<void> {
   redirect(`/companies?${params.toString()}`);
 }
 
-export async function setCompanyStatus(companyId: string, status: "active" | "paused" | "archived"): Promise<void> {
+/** Not exported: a "use server" export is a public endpoint, and nothing calls this one directly. */
+async function setCompanyStatus(companyId: string, status: "active" | "paused" | "archived"): Promise<void> {
   const user = await requireUser();
   const id = zUuid().parse(companyId);
   const nextStatus = CompanyStatusSchema.parse(status);
   await db().transaction(async tx => {
     const changed = await setSubscriptionStatus(tx, user.id, id, nextStatus);
-    if (!changed) throw new Error("You do not follow this company.");
+    if (!changed) throw new UserFacingError("You do not follow this company.");
   });
   revalidatePath("/companies");
   revalidatePath(`/companies/${id}`);
@@ -225,12 +226,12 @@ export async function useDiscoveryCandidate(runId: string, candidateIndex: numbe
   const id = zUuid().parse(runId);
   const companyId = await db().transaction(async (tx) => {
     const [run] = await tx.select().from(discoveryRuns).where(eq(discoveryRuns.id, id)).for("update");
-    if (!run) throw new Error("Discovery run not found.");
+    if (!run) throw new UserFacingError("Discovery run not found.");
     await requireFollowed(user.id, run.companyId);
     if (run.status === "resolved" && run.chosenSourceId) return run.companyId;
     const candidates = run.candidates as Array<{ spec?: unknown }>;
     const raw = candidates[candidateIndex];
-    if (!raw) throw new Error("Candidate not found.");
+    if (!raw) throw new UserFacingError("Candidate not found.");
     const spec = CandidateSpecSchema.parse(raw.spec);
 
     const existing = await tx.select().from(careerSources).where(and(eq(careerSources.companyId, run.companyId), eq(careerSources.type, spec.type)));

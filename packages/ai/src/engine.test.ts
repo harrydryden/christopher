@@ -246,8 +246,8 @@ describe("call-site post-validation", () => {
     expect(result!.openQuestions).toHaveLength(1);
   });
 
-  it("A8 drops suggestions that repeat an existing or rejected filter", async () => {
-    const { engine } = engineWith({
+  it("A8 drops suggestions that repeat an existing or rejected filter, and asks about decisions only", async () => {
+    const { engine, calls } = engineWith({
       suggestions: [
         { type: "keyword_include", value: { term: "operations" }, rationale: "already there", evidence: [] },
         { type: "keyword_exclude", value: { term: "intern" }, rationale: "skipped internships", evidence: ["skip: Operations Intern"] },
@@ -259,11 +259,12 @@ describe("call-site post-validation", () => {
       excludeKeywords: [],
       locationTerms: ["London"],
       decisions: [],
-      nearMissDecisions: [],
       previouslyRejected: [{ type: "location", value: { term: "berlin" } }],
     });
     expect(result).toHaveLength(1);
     expect(result![0]!.value).toEqual({ term: "intern" });
+    // Near-miss scoring is retired: nothing outside the gate is stored, scored or sent.
+    expect(JSON.stringify(calls[0]!.params)).not.toContain("near_miss");
   });
 
   it("A10 asks for web search and filters excluded domains and aggregators", async () => {

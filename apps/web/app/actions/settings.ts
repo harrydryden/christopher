@@ -45,22 +45,15 @@ export async function saveLocationFilter(_prev: ActionResult, formData: FormData
   return ok();
 }
 
+/** Automatic score hiding is retired: a stored `hideThreshold` is left where it is and ignored. */
 export async function saveTableSettings(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const user = await requireUser();
-  const hideThresholdRaw = String(formData.get("hideThreshold") ?? "").trim();
-  let hideThreshold: number | null = null;
-  if (hideThresholdRaw !== "") {
-    const n = Number(hideThresholdRaw);
-    if (!Number.isFinite(n) || n < 0 || n > 100) return fail("Hide threshold must be a number between 0 and 100, or blank to turn it off.");
-    hideThreshold = Math.round(n);
-  }
-
   const showClosedDays = Number(formData.get("showClosedDays"));
   if (!Number.isInteger(showClosedDays) || showClosedDays < 0 || showClosedDays > 365) {
     return fail("Show-closed-days must be a whole number between 0 and 365.");
   }
 
-  await saveSettingsAndGate(user.id, { hideThreshold, showClosedDays });
+  await saveSettingsAndGate(user.id, { showClosedDays });
   revalidatePath("/settings");
   revalidatePath("/");
   return ok();

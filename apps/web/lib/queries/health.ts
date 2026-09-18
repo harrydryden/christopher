@@ -1,4 +1,4 @@
-import { scanRunReport } from "@/lib/scan-run-report";
+import { scanRunReports } from "@/lib/scan-run-report";
 import { and, desc, eq, gte, inArray, ne, sql, getTableColumns } from "drizzle-orm";
 import { aiUsageByAccount, totalAiSpend } from "@christopher/db";
 import {
@@ -100,9 +100,10 @@ export async function getAiUsage(since: Date): Promise<AiUsageGroup[]> {
   return groupAiUsage(await aiUsageByAccount(db(), since));
 }
 
+/** Health's run history: one query for the runs, one for every run's counts. */
 export async function listRecentScanRuns(limit = 10, userId?: string) {
   const runs = await db().select().from(scanRuns).orderBy(desc(scanRuns.startedAt)).limit(limit);
-  return Promise.all(runs.map((run) => scanRunReport(run, userId)));
+  return scanRunReports(runs, userId);
 }
 
 /** Last report from the persistent worker; configuration is not a successful API probe. */

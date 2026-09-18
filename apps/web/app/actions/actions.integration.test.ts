@@ -68,7 +68,6 @@ import {
   decide,
   saveDecisionTags,
   archiveRoles,
-  decideRoles,
 } from "./decisions";
 import { recordApplication, updateApplication } from "./applications";
 import { GET as workStatus } from "@/app/api/work-status/route";
@@ -80,7 +79,6 @@ import {
   requestCv,
   saveCvDraft,
   saveCvModel,
-  setCvArchived,
   finaliseCvDraft,
   assessCvDraft,
 } from "./cv";
@@ -500,31 +498,50 @@ describe("priority workflows", () => {
     expect(details).toHaveLength(1);
     expect(details[0]!.job.descriptionText).toBe("Stored role description");
     expect(await fetchRoleDetails(user.id, [])).toEqual([]);
+    // The page the table renders never carries the description: nothing on it renders one.
+    const page = await fetchRolePage(user.id, parseRolesFilters({}), false, null, 1);
+    expect(page.visible).toHaveLength(1);
+    expect(page.visible[0]!.job.descriptionText).toBeNull();
+    expect(JSON.stringify(page.visible)).not.toContain("Stored role description");
   });
-  it("records bulk decisions with optional reasons and retained snapshots", async () => {
+  it("requires a reason to dismiss a role, keeps one optional to shortlist it, and retains snapshots", async () => {
     const { job, company, source } = await fixture();
     const [second] = await database.insert(schema.jobs).values({ companyId: company.id, sourceId: source.id, externalKey: "two", title: "Finance Director", normalizedTitle: "finance director", url: "https://acme.example/two" }).returning();
     await follow(company.id, second!.id);
-    const ids = [job.id, second!.id];
-    expect((await decideRoles(ids, "skip", "")).ok).toBe(true);
-    expect(await database.select().from(schema.decisions)).toHaveLength(2);
-    expect((await decideRoles(ids, "skip", "Too junior")).ok).toBe(true);
+
+    // Spec R-6.1: a reason is required for skip, and nothing is written without one.
+    const refused = await decide(job.id, "skip", "   ");
+    expect(refused).toEqual({ ok: false, error: expect.stringContaining("reason") });
+    expect(await database.select().from(schema.decisions)).toHaveLength(0);
+
+    expect((await decide(job.id, "apply", "")).ok).toBe(true);
+    for (const id of [job.id, second!.id]) expect((await decide(id, "skip", "Too junior")).ok).toBe(true);
     const decisions = await database.select().from(schema.decisions).where(eq(schema.decisions.superseded, false));
     expect(decisions).toHaveLength(2);
     expect(decisions.every((d) => d.reason === "Too junior")).toBe(true);
+    expect(decisions.every((d) => d.jobTitle && d.companyName === "Acme")).toBe(true);
     expect((await database.select().from(schema.tasks)).some(
         (t) => t.type === "suggest_filters")).toBe(true);
   });
-  it("rolls back a decision when its learning task cannot be persisted", async () => {
+  it("rolls back a decision when its learning task cannot be persisted, and reports no SQL", async () => {
     const { job } = await fixture();
     await database.execute(sql`alter table tasks add constraint audit_reject_tag_task check (type <> 'tag_reason') not valid`);
     try {
-      expect((await decide(job.id, "skip", "Too junior")).ok).toBe(false);
+      const result = await decide(job.id, "skip", "Too junior");
+      expect(result).toEqual({ ok: false, error: "Could not save your decision. Please try again." });
+      // The Postgres error names a constraint, a relation and the row that broke it: none of it is shown.
+      const shown = result.ok ? "" : result.error;
+      for (const leak of ["constraint", "audit_reject_tag_task", "tasks", "tag_reason", "violates"]) expect(shown).not.toContain(leak);
       expect(await database.select().from(schema.decisions)).toHaveLength(0);
       expect(await database.select().from(schema.tasks)).toHaveLength(0);
     } finally {
       await database.execute(sql`alter table tasks drop constraint audit_reject_tag_task`);
     }
+  });
+
+  it("shows a message written for the person verbatim", async () => {
+    // A UserFacingError is the only thing an action repeats back.
+    expect(await decide(crypto.randomUUID(), "apply", "Good fit")).toEqual({ ok: false, error: "Role not found." });
   });
   it("saves legacy employment as a new library version and rejects dangling job links", async () => {
     const oldContent = { name: "Test Candidate", contact: "London", profile: "Leader", entries: [{ id: "one", kind: "experience" as const, heading: "Director · Acme", details: "Led a team" }] };
@@ -629,19 +646,6 @@ describe("priority workflows", () => {
     const form = new FormData(); form.set("cvModel", modelForCallSite(DEFAULT_SETTINGS, "A3"));
     expect((await saveCvModel({ ok: true }, form)).ok).toBe(false);
   });
-  it("archives a CV out of the list and restores it", async () => {
-    const library = { name: "Test Candidate", contact: "London", profile: "Operations leader", entries: [{ id: "one", kind: "experience" as const, heading: "Director · Acme", details: "Led an operations team" }] };
-    const [draft] = await database.insert(schema.cvDrafts).values({ userId: user.id, jobTitle: "VP of AI Transformation", companyName: "Humanoid",
-      jobDescription: "Lead the transformation", libraryVersion: 1, librarySnapshot: library, model: DEFAULT_SETTINGS.cvModel, status: "failed" }).returning();
-
-    await setCvArchived(draft!.id, true);
-    const [archived] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft!.id));
-    expect(archived!.archivedAt).toBeInstanceOf(Date);
-
-    await setCvArchived(draft!.id, false);
-    const [restored] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft!.id));
-    expect(restored!.archivedAt).toBeNull();
-  });
   it("rejects a model ID outside the supported list", async () => {
     // A dotted version passed the old regex, was stored, and then failed on every call.
     const form = new FormData(); form.set("cvModel", "claude-fable-5.1");
@@ -702,7 +706,7 @@ it("atomically adds 1,000 companies and queues setup, with a bounded response fo
 
 describe("four-status role workflow", () => {
   it("keeps counts, filtered pages and export selection aligned across transitions", async () => {
-    const { fetchRoleCounts, applyRolesFilters, splitHidden } = await import("@/lib/queries/jobs");
+    const { fetchRoleCounts, applyRolesFilters } = await import("@/lib/queries/jobs");
     const { listCompanies } = await import("@/lib/queries/companies");
     const { job, company } = await fixture();
     const read = async (view: string) => fetchRolePage(user.id, parseRolesFilters({ view }), view === "archived", 99, 1);
@@ -715,14 +719,14 @@ describe("four-status role workflow", () => {
     expect((await fetchRoleCounts(user.id, company.id))["user-shortlisted"]).toBe(1);
     const [summary] = await listCompanies(user.id);
     expect(summary!.reviewRoles).toBe(0); expect(summary!.shortlistedRoles).toBe(1);
-    const exported = splitHidden(applyRolesFilters(await fetchTableJobs(user.id), parseRolesFilters({ view: "user-shortlisted" })), 99, false).visible;
+    const exported = applyRolesFilters(await fetchTableJobs(user.id, false, true), parseRolesFilters({ view: "user-shortlisted" }));
     expect(exported.map((row) => row.job.id)).toEqual([job.id]);
     expect((await archiveRoles([job.id], true)).ok).toBe(true);
     expect((await read("archived")).total).toBe(1);
     expect((await read("user-shortlisted")).total).toBe(0);
     expect((await archiveRoles([job.id], false)).ok).toBe(true);
     expect((await read("user-shortlisted")).total).toBe(1);
-    expect((await decide(job.id, "skip", "")).ok).toBe(true);
+    expect((await decide(job.id, "skip", "Wrong seniority")).ok).toBe(true);
     expect((await read("user-dismissed")).total).toBe(1);
     expect((await decide(job.id, null, "")).ok).toBe(true);
     expect((await read("archived")).total).toBe(1);
@@ -745,6 +749,93 @@ describe("four-status role workflow", () => {
   });
 });
 
+describe("CSV export", () => {
+  it("streams every filtered role, with no description column and none read", async () => {
+    const { GET: exportCsv } = await import("@/app/api/export.csv/route");
+    const { NextRequest } = await import("next/server");
+    const { company, source, job } = await fixture();
+    await database.update(schema.jobs).set({ descriptionText: "x".repeat(30_000), location: "London" }).where(eq(schema.jobs.id, job.id));
+    const inserted = await database.insert(schema.jobs).values(Array.from({ length: 120 }, (_, i) => ({
+      companyId: company.id, sourceId: source.id, externalKey: `csv-${i}`, title: `Role ${i}`,
+      normalizedTitle: `role ${i}`, url: `https://acme.example/csv/${i}`, descriptionText: "y".repeat(30_000),
+    }))).returning({ id: schema.jobs.id });
+    await follow(company.id, ...inserted.map((row) => row.id));
+
+    const response = await exportCsv(new NextRequest("https://example.test/api/export.csv?decision=all"));
+    expect(response.headers.get("content-type")).toBe("text/csv; charset=utf-8");
+    const csv = await response.text();
+    const lines = csv.trim().split("\r\n");
+    expect(lines[0]).toBe("company,website,role,location,url,live_for_days,availability,fit,status,reason,first_seen,posted_at,closed_at");
+    // Every row, in blocks, and not one character of the stored descriptions.
+    expect(lines).toHaveLength(122);
+    expect(csv).not.toContain("xxxx");
+    expect(csv).not.toContain("yyyy");
+    expect(csv).toContain("Operations Manager");
+  }, 120_000);
+});
+
+describe("retired filter suggestions", () => {
+  it("settles a stored hide-threshold suggestion instead of failing, and applies a keyword one", async () => {
+    const { acceptFilterSuggestion } = await import("./learning");
+    const [legacy] = await database.insert(schema.filterSuggestions)
+      .values({ userId: user.id, type: "hide_threshold", value: { threshold: 40 }, rationale: "from before" }).returning();
+    // Accept on a page opened before automatic score hiding was retired must not throw.
+    await expect(acceptFilterSuggestion(legacy!.id)).resolves.toBeUndefined();
+    const [settled] = await database.select().from(schema.filterSuggestions).where(eq(schema.filterSuggestions.id, legacy!.id));
+    expect(settled!.status).toBe("rejected");
+    expect(settled!.resolvedAt).toBeInstanceOf(Date);
+
+    const [keyword] = await database.insert(schema.filterSuggestions)
+      .values({ userId: user.id, type: "keyword_include", value: { term: "chief of staff" }, rationale: "two applies" }).returning();
+    await acceptFilterSuggestion(keyword!.id);
+    const [applied] = await database.select().from(schema.filterSuggestions).where(eq(schema.filterSuggestions.id, keyword!.id));
+    expect(applied!.status).toBe("accepted");
+    const { getSettingsFor } = await import("@/lib/settings");
+    expect((await getSettingsFor(user.id)).gate.includeKeywords).toContain("chief of staff");
+  });
+
+  it("describes a stored hide-threshold row as retired", async () => {
+    const { describeFilterSuggestion } = await import("@/lib/filterSuggestions");
+    expect(describeFilterSuggestion({ type: "hide_threshold", value: { threshold: 40 } })).toBe("Automatic score hiding (retired)");
+  });
+});
+
+describe("bulk archive", () => {
+  it("archives and restores 500 roles in one set of statements, with the same rows, events and errors", async () => {
+    const { company, source, job } = await fixture();
+    const inserted = await database.insert(schema.jobs).values(Array.from({ length: 499 }, (_, i) => ({
+      companyId: company.id, sourceId: source.id, externalKey: `bulk-${i}`, title: `Bulk ${i}`,
+      normalizedTitle: `bulk ${i}`, url: `https://acme.example/bulk/${i}`,
+    }))).returning({ id: schema.jobs.id });
+    await follow(company.id, ...inserted.map((row) => row.id));
+    const ids = [job.id, ...inserted.map((row) => row.id)];
+    expect(ids).toHaveLength(500);
+
+    expect(await archiveRoles(ids, true)).toEqual({ ok: true });
+    const archived = await database.select().from(schema.userJobs);
+    expect(archived).toHaveLength(500);
+    expect(archived.every((view) => view.archivedAt instanceof Date)).toBe(true);
+    const events = await database.select().from(schema.jobEvents);
+    expect(events).toHaveLength(500);
+    expect(events.every((event) => event.type === "updated" && event.userId === user.id)).toBe(true);
+    expect(events.every((event) => event.payload.action === "archived" && event.payload.actor === "user")).toBe(true);
+    expect(new Set(events.map((event) => event.jobId)).size).toBe(500);
+
+    expect(await archiveRoles(ids, false)).toEqual({ ok: true });
+    expect((await database.select().from(schema.userJobs)).every((view) => view.archivedAt === null)).toBe(true);
+    const restored = (await database.select().from(schema.jobEvents)).filter((event) => event.payload.action === "restored");
+    expect(restored).toHaveLength(500);
+    expect(new Set(restored.map((event) => event.jobId)).size).toBe(500);
+
+    // The error messages are what they always were, and nothing is written when one is returned.
+    expect(await archiveRoles([...ids.slice(0, 3), crypto.randomUUID()], true)).toEqual({ ok: false, error: "A selected role no longer exists." });
+    expect((await database.select().from(schema.userJobs)).every((view) => view.archivedAt === null)).toBe(true);
+    await database.update(schema.userJobs).set({ inTable: false }).where(eq(schema.userJobs.jobId, job.id));
+    expect(await archiveRoles([job.id], false)).toEqual({ ok: false, error: "This role no longer matches your criteria. Review it and shortlist it to bring it back, or update your matching preferences." });
+    expect(await archiveRoles([], true)).toEqual({ ok: false, error: "Select between 1 and 500 roles." });
+  }, 120_000);
+});
+
 describe("scan reporting", () => {
   it("counts a company only when all latest source scans succeed and its task is done", async () => {
     const { scanRunSummary } = await import("@christopher/db");
@@ -765,6 +856,7 @@ describe("scan reporting", () => {
     await database.update(schema.tasks).set({ status: "failed" }).where(eq(schema.tasks.id, task!.id));
     expect((await scanRunSummary(database, run!.id)).companies_ok).toBe(0);
   });
+
 });
 
 it("queues oversized edits for automatic fitting, permits previews and protects final downloads", async () => {

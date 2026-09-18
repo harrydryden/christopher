@@ -2,19 +2,24 @@
 
 import { requireUser } from "@/lib/auth";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { companies, decisions, jobEvents, jobs, tagVocabulary, userJobs } from "@christopher/db/schema";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
-import { fail, ok, zUuid, type ActionResult } from "@/lib/validation";
+import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
 
-const DecideSchema = z.object({
-  jobId: zUuid(),
-  decision: z.enum(["apply", "skip"]).nullable(),
-  reason: z.string().max(4000).optional().default(""),
-});
+/** Spec R-6.1: a reason is required for `skip`, and encouraged (never required) for `apply`. */
+const SKIP_REASON_REQUIRED = "Give a reason when you dismiss a role: it is what the ranking learns from.";
+
+const DecideSchema = z
+  .object({
+    jobId: zUuid(),
+    decision: z.enum(["apply", "skip"]).nullable(),
+    reason: z.string().max(4000).optional().default(""),
+  })
+  .refine((v) => v.decision !== "skip" || v.reason.trim().length > 0, { message: SKIP_REASON_REQUIRED, path: ["reason"] });
 
 /**
  * Record (or edit) a decision on a role, or undo it when `decision` is null.
@@ -24,7 +29,7 @@ const DecideSchema = z.object({
 export async function decide(jobId: string, decision: "apply" | "skip" | null, reason: string): Promise<ActionResult> {
   const user = await requireUser();
   const parsed = DecideSchema.safeParse({ jobId, decision, reason });
-  if (!parsed.success) return fail("Invalid request.");
+  if (!parsed.success) return fail(parsed.error.issues.find((issue) => issue.path[0] === "reason")?.message ?? "Invalid request.");
   const input = parsed.data;
   const trimmedReason = input.reason.trim();
 
@@ -34,7 +39,7 @@ export async function decide(jobId: string, decision: "apply" | "skip" | null, r
     await db().transaction(async (tx) => {
       const [locked] = await tx.select({ jobId: userJobs.jobId, inTable: userJobs.inTable, archivedAt: userJobs.archivedAt }).from(userJobs)
         .where(and(eq(userJobs.userId, user.id), eq(userJobs.jobId, input.jobId))).for("update");
-      if (!locked) throw new Error("Role not found.");
+      if (!locked) throw new UserFacingError("Role not found.");
       const existingRows = await tx
         .select()
         .from(decisions)
@@ -63,7 +68,7 @@ export async function decide(jobId: string, decision: "apply" | "skip" | null, r
         .innerJoin(userJobs, and(eq(userJobs.jobId, jobs.id), eq(userJobs.userId, user.id)))
         .where(eq(jobs.id, input.jobId)).limit(1);
       const row = jobRows[0];
-      if (!row) throw new Error("Role not found.");
+      if (!row) throw new UserFacingError("Role not found.");
       const job = row.job;
       const companyRows = await tx.select({ name: companies.name }).from(companies).where(eq(companies.id, job.companyId)).limit(1);
       const companyName = companyRows[0]?.name ?? "";
@@ -97,7 +102,7 @@ export async function decide(jobId: string, decision: "apply" | "skip" | null, r
       await enqueue("suggest_filters", { userId: user.id }, tx);
     });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Failed to save decision.");
+    return actionError(err, "Could not save your decision. Please try again.");
   }
 
 
@@ -109,13 +114,13 @@ export async function saveDecisionTags(decisionId: string, formData: FormData): 
   const user = await requireUser();
   const id = zUuid().parse(decisionId);
   const tags = [...new Set(formData.getAll("tags").map(String))];
-  if (tags.length > 30) throw new Error("Choose at most 30 tags.");
+  if (tags.length > 30) throw new UserFacingError("Choose at most 30 tags.");
   const accepted = tags.length ? await db().select({ tag: tagVocabulary.tag }).from(tagVocabulary)
     .where(and(eq(tagVocabulary.userId, user.id), inArray(tagVocabulary.tag, tags), eq(tagVocabulary.accepted, true))) : [];
-  if (accepted.length !== tags.length) throw new Error("Choose accepted reason tags from the list.");
+  if (accepted.length !== tags.length) throw new UserFacingError("Choose accepted reason tags from the list.");
   const updated = await db().update(decisions).set({ tags, tagsEdited: true })
     .where(and(eq(decisions.id, id), eq(decisions.userId, user.id), eq(decisions.superseded, false))).returning({ id: decisions.id });
-  if (!updated.length) throw new Error("This decision has changed. Reload before editing its tags.");
+  if (!updated.length) throw new UserFacingError("This decision has changed. Reload before editing its tags.");
   await enqueue("synthesize_profile", { userId: user.id, force: true });
   revalidatePath("/learning");
   revalidatePath("/", "layout");
@@ -129,31 +134,32 @@ export async function archiveRoles(jobIds: string[], archived: boolean): Promise
   try {
     await db().transaction(async tx => {
       const ids = [...new Set(parsed.data)];
-      const rows = await tx.select().from(userJobs).where(and(eq(userJobs.userId, user.id), inArray(userJobs.jobId, ids))).orderBy(userJobs.jobId).for("update");
-      if (rows.length !== ids.length) throw new Error("A selected role no longer exists.");
-      for (const row of rows) {
-        if (!archived && !row.inTable) {
-          const [choice] = await tx.select({ id: decisions.id }).from(decisions).where(and(eq(decisions.userId, user.id), eq(decisions.jobId, row.jobId), eq(decisions.superseded, false))).limit(1);
-          if (!choice) throw new Error("This role no longer matches your criteria. Review it and shortlist it to bring it back, or update your matching preferences.");
-        }
-        await tx.update(userJobs).set({ archivedAt: archived ? new Date() : null, updatedAt: new Date() }).where(and(eq(userJobs.userId, user.id), eq(userJobs.jobId, row.jobId)));
-        await tx.insert(jobEvents).values({ jobId: row.jobId, userId: user.id, type: "updated", payload: { action: archived ? "archived" : "restored", actor: "user" } });
-      }
-    });
-  } catch (error) { return fail(error instanceof Error ? error.message : "Could not update the archive."); }
-  revalidatePath("/", "layout");
-  return ok();
-}
+      const now = new Date();
+      // One locking read, one pre-check, one update and one insert, whatever the size of the selection.
+      const rows = await tx.select({ jobId: userJobs.jobId, inTable: userJobs.inTable }).from(userJobs)
+        .where(and(eq(userJobs.userId, user.id), inArray(userJobs.jobId, ids))).orderBy(userJobs.jobId).for("update");
+      if (rows.length !== ids.length) throw new UserFacingError("A selected role no longer exists.");
 
-export async function decideRoles(jobIds: string[], decision: "apply" | "skip" | null, reason: string): Promise<ActionResult> {
-  await requireUser();
-  const ids = z.array(zUuid()).min(1).max(100).safeParse(jobIds);
-  const input = DecideSchema.omit({ jobId: true }).safeParse({ decision, reason });
-  if (!ids.success || !input.success) return fail("Select between 1 and 100 roles.");
-  // Each decision is independently durable; report a failure without claiming the whole batch succeeded.
-  for (const id of [...new Set(ids.data)].sort()) {
-    const result = await decide(id, decision, reason);
-    if (!result.ok) return fail(`Stopped at a role that could not be saved: ${result.error}. Earlier changes were saved.`);
-  }
+      // Restoring a role the gate no longer admits is only allowed where a decision holds it.
+      const needsDecision = rows.filter(row => !row.inTable).map(row => row.jobId);
+      if (!archived && needsDecision.length) {
+        const held = await tx.select({ jobId: decisions.jobId }).from(decisions)
+          .where(and(eq(decisions.userId, user.id), inArray(decisions.jobId, needsDecision), eq(decisions.superseded, false)));
+        if (new Set(held.map(row => row.jobId)).size !== needsDecision.length) {
+          throw new UserFacingError("This role no longer matches your criteria. Review it and shortlist it to bring it back, or update your matching preferences.");
+        }
+      }
+
+      await tx.update(userJobs).set({ archivedAt: archived ? now : null, updatedAt: now })
+        .where(and(eq(userJobs.userId, user.id), inArray(userJobs.jobId, ids)));
+
+      const payload = JSON.stringify({ action: archived ? "archived" : "restored", actor: "user" });
+      await tx.execute(sql`insert into job_events (job_id, user_id, type, payload)
+        select v.job_id, ${user.id}::uuid, 'updated', ${payload}::jsonb
+        from user_jobs v
+        where v.user_id = ${user.id}::uuid and v.job_id in (${sql.join(ids.map(id => sql`${id}::uuid`), sql`, `)})`);
+    });
+  } catch (error) { return actionError(error, "Could not update the archive."); }
+  revalidatePath("/", "layout");
   return ok();
 }

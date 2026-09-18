@@ -89,12 +89,9 @@ export default async function SettingsPage() {
         <SettingsForm action={saveTableSettings}>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className={labelClass}>
-              <span className={fieldLabelClass}>Hide threshold (blank = off)</span>
-              <input name="hideThreshold" type="number" min={0} max={100} defaultValue={settings.hideThreshold ?? ""} className={fieldClass} />
-            </label>
-            <label className={labelClass}>
               <span className={fieldLabelClass}>Show closed roles for (days)</span>
               <input name="showClosedDays" type="number" min={0} max={365} defaultValue={settings.showClosedDays} className={fieldClass} />
+              <span className="text-12 text-muted">Fit is a filter on Roles, not a second workflow: nothing is hidden from you by score.</span>
             </label>
           </div>
         </SettingsForm>

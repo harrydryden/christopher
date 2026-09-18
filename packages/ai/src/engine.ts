@@ -684,7 +684,8 @@ export class AiEngine {
       excludeKeywords: string[];
       locationTerms: string[];
       decisions: DecisionForDigest[];
-      nearMissDecisions: DecisionForDigest[];
+      /** @deprecated Near-miss scoring is retired; anything passed here is ignored. */
+      nearMissDecisions?: DecisionForDigest[];
       previouslyRejected: Array<{ type: string; value: unknown }>;
     },
     ref: Ref = {},
@@ -694,7 +695,6 @@ export class AiEngine {
       `Current exclude keywords: ${input.excludeKeywords.join(", ") || "(none)"}`,
       `Current location terms: ${input.locationTerms.join(", ") || "(none)"}`,
       P.wrap("decisions", decisionDigest(input.decisions, { maxItems: 200, maxChars: 20_000 })),
-      P.wrap("near_miss_decisions", decisionDigest(input.nearMissDecisions, { maxItems: 100, maxChars: 10_000 })),
       `Previously rejected suggestions: ${JSON.stringify(input.previouslyRejected).slice(0, 4000)}`,
     ].join("\n\n");
     const result = await this.run<S.FilterSuggestionsOutput>(

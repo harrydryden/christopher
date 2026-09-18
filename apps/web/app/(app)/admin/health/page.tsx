@@ -74,7 +74,7 @@ export default async function AdminOperationsPage() {
           <span className="text-14 text-muted">spent since {shortDate(since)}, across every account and the work no account asked for</span>
         </div>
         <p className="mb-3 text-14 text-muted">
-          Spending is bounded per account: each has its own monthly budget, which it sets on Settings and which you can set for anyone in <Link href="/admin" className="text-fg underline">Accounts</Link>, where each account&apos;s own figure and window are shown. An account that has spent its month has its optional calls (near-miss scoring, then suggestions) skipped until the 1st.
+          Spending is bounded per account: each has its own monthly budget, which it sets on Settings and which you can set for anyone in <Link href="/admin" className="text-fg underline">Accounts</Link>, where each account&apos;s own figure and window are shown. An account that has spent its month has its optional calls (company and filter suggestions) skipped until the 1st.
         </p>
         <section>
           <h3 className="text-14 text-muted">Usage by account, feature and model</h3>

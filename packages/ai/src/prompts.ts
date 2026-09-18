@@ -119,8 +119,7 @@ ${UNTRUSTED_RULE}`;
 
 export const A8_SUGGEST_FILTERS = `You propose changes to the keyword and location filters of a job tracker.
 
-Base every suggestion on the recorded decisions and on roles that fell outside the current keywords
-but scored well. Return at most five suggestions, each with:
+Base every suggestion on the recorded decisions. Return at most five suggestions, each with:
 - type: keyword_include (value {"term": "..."}), keyword_exclude ({"term": "..."}),
   location ({"term": "..."}) or pause_company ({"companyName": "..."}).
 Never suggest hiding roles by fit score. Scores inform review; user decisions determine workflow.

@@ -2,11 +2,13 @@
  * Scheduled entry point for a deployment without a separate worker service.
  *
  * Vercel Cron calls this once a day with `Authorization: Bearer $CRON_SECRET`. It runs a
- * scheduler tick (which queues the daily run, and the weekly jobs on their day) and then works
- * through the queue until it runs out of time, leaving anything unfinished for the next call.
+ * scheduler tick, which queues the daily run and the weekly jobs on their day. It also works
+ * through the queue itself, but only where `CHRISTOPHER_SERVERLESS_FALLBACK=1` says that is the
+ * whole of the deployment: the tasks it runs are bounded by `maxDuration` and can never launch a
+ * browser, so it is a fallback rather than a second worker. Anything unfinished stays queued.
  *
- * Harmless to leave enabled alongside a Render worker: task claiming is atomic and the scan run
- * is deduplicated per day, so whichever gets there first does the work.
+ * Safe to leave enabled alongside a Render worker: a worker that reported in the last two minutes
+ * owns both the schedule and the queue, and this route stands down without touching either.
  */
 import { getWorkerHeartbeat } from "@/lib/queries/health";
 import { NextResponse } from "next/server";
@@ -47,20 +49,30 @@ async function authorised(request: Request): Promise<{ ok: true } | { ok: false;
   return { ok: false, status: 401, error: "unauthorised" };
 }
 
+/** A worker that reported this recently owns the schedule and the queue; the route stands down. */
+const HEARTBEAT_FRESH_MS = 120_000;
+
 async function runScheduledWork(budgetMs: number) {
   // A serverless invocation must never launch a browser: there is no Chromium in the runtime.
   process.env.CHRISTOPHER_DISABLE_BROWSER = "1";
-  const deps = await createDeps(readEnv(), { settingsTtlMs: 0 });
-  const queue = new TaskQueue(deps, handlers, { concurrency: 1, workerId: "vercel-cron" });
   const started = Date.now();
   const processed: string[] = [];
   let timedOut = false;
 
+  // Read the heartbeat before anything is queued: beside a healthy worker this route does nothing
+  // at all, rather than racing it to schedule the same day's run.
+  const heartbeat = await getWorkerHeartbeat();
+  if (heartbeat && Date.now() - heartbeat.at.getTime() < HEARTBEAT_FRESH_MS) {
+    return { processed: 0, byType: {} as Record<string, number>, durationMs: Date.now() - started, timedOut, standDown: "worker" as const };
+  }
+
+  const deps = await createDeps(readEnv(), { settingsTtlMs: 0 });
+  const queue = new TaskQueue(deps, handlers, { concurrency: 1, workerId: "vercel-cron" });
+  const drains = process.env.CHRISTOPHER_SERVERLESS_FALLBACK === "1";
+
   try {
     await schedulerTick(deps);
-    const heartbeat = await getWorkerHeartbeat();
-    const persistentWorker = heartbeat && Date.now() - heartbeat.at.getTime() < 120_000;
-    while (process.env.CHRISTOPHER_SERVERLESS_FALLBACK === "1" && !persistentWorker && Date.now() - started < budgetMs) {
+    while (drains && Date.now() - started < budgetMs) {
       const task = await claimTask(deps.db, "vercel-cron");
       if (!task) break;
       await queue.runTask(task);
@@ -76,7 +88,7 @@ async function runScheduledWork(budgetMs: number) {
 
   const counts: Record<string, number> = {};
   for (const type of processed) counts[type] = (counts[type] ?? 0) + 1;
-  return { processed: processed.length, byType: counts, durationMs: Date.now() - started, timedOut };
+  return { processed: processed.length, byType: counts, durationMs: Date.now() - started, timedOut, drained: drains };
 }
 
 export async function GET(request: Request) {

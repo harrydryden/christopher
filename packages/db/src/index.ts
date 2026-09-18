@@ -15,7 +15,7 @@ export { accountAiSpend, totalAiSpend, aiUsageByAccount, type AiAccountUsage } f
 
 export { roleStatusSql } from "./role-workflow";
 
-export { scanRunSummary } from "./scan-summary";
+export { scanRunSummary, scanRunSummaries, type ScanRunSummary } from "./scan-summary";
 
 export { actionCvs, completeCv, lockCvDraft, lockCvLifecycle, nextCvRevision } from "./cv-lifecycle";
 

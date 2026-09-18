@@ -16,7 +16,7 @@ export interface TaskPayloads {
   scan_company: { companyId: string; scanRunId?: string; trigger?: "schedule" | "manual" };
   run_daily: { trigger: "schedule" | "manual"; runDate?: string };
   fetch_description: { jobId: string };
-  score_job: { userId: string; jobId: string; nearMiss?: boolean };
+  score_job: { userId: string; jobId: string };
   tag_reason: { decisionId: string };
   synthesize_profile: { userId: string; force?: boolean };
   suggest_filters: { userId: string };

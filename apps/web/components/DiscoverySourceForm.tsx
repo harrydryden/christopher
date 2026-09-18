@@ -18,7 +18,7 @@ export function DiscoverySourceForm({ action, children, className, returnTo = "/
       const result = await action(data);
       if (!result.ok) { setError(result.error); busy.current = false; setPending(false); return; }
       const url = new URL(returnTo, window.location.origin);
-      url.searchParams.set("notice", result.message);
+      url.searchParams.set("notice", result.message ?? "Saved.");
       window.location.assign(url.pathname + url.search);
     } catch {
       setError("This change could not be completed. Your entries are still here; please try again.");

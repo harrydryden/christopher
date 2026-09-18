@@ -10,7 +10,7 @@ import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { extractSuggestionValue } from "@/lib/filterSuggestions";
 import { getSettings, setUserSetting, saveSettingsAndGate } from "@/lib/settings";
-import { zUuid } from "@/lib/validation";
+import { UserFacingError, zUuid } from "@/lib/validation";
 
 export async function savePinnedStatements(formData: FormData): Promise<void> {
   const user = await requireUser();
@@ -33,12 +33,12 @@ export async function savePinnedStatements(formData: FormData): Promise<void> {
 export async function answerOpenQuestion(questionId: string, formData: FormData): Promise<void> {
   const user = await requireUser();
   const answer = String(formData.get("answer") ?? "").trim();
-  if (!answer) throw new Error("An answer is required.");
+  if (!answer) throw new UserFacingError("An answer is required.");
   const latest = await latestProfileFor(db(), user.id);
-  if (!latest) throw new Error("No preference profile exists yet.");
+  if (!latest) throw new UserFacingError("No preference profile exists yet.");
   const questions = latest.openQuestions ?? [];
   const question = questions.find((q) => q.id === questionId);
-  if (!question) throw new Error("Question not found.");
+  if (!question) throw new UserFacingError("Question not found.");
 
   const updatedQuestions = questions.map((q) => (q.id === questionId ? { ...q, answer } : q));
   const updatedPinned = [...latest.pinnedStatements, `Q: ${question.question} A: ${answer}`];
@@ -77,8 +77,12 @@ export async function acceptFilterSuggestion(suggestionId: string): Promise<void
     await saveSettingsAndGate(user.id, { gate: { ...settings.gate, excludeKeywords: [...new Set([...settings.gate.excludeKeywords, extracted.term])] } });
   } else if (suggestion.type === "location" && extracted.kind === "term") {
     await saveSettingsAndGate(user.id, { gate: { ...settings.gate, locationTerms: [...new Set([...settings.gate.locationTerms, extracted.term])] } });
-  } else if (suggestion.type === "hide_threshold" && extracted.kind === "threshold") {
-    throw new Error("Automatic score hiding has been retired. Use the minimum fit filter on Roles.");
+  } else if (suggestion.type === "hide_threshold") {
+    // Automatic score hiding is retired. A suggestion stored before that is resolved rather than
+    // applied, so Accept on a stale page settles it instead of failing.
+    await db().update(filterSuggestions).set({ status: "rejected", resolvedAt: new Date() }).where(eq(filterSuggestions.id, id));
+    revalidatePath("/learning");
+    return;
   } else if (suggestion.type === "pause_company" && extracted.kind === "company") {
     await setSubscriptionStatus(db(), user.id, extracted.companyId, "paused");
   }
@@ -120,7 +124,7 @@ export async function rescoreAllRoles(): Promise<void> {
 export async function savePreferenceProfile(formData: FormData): Promise<void> {
   const user = await requireUser();
   const markdown = String(formData.get("markdown") ?? "").trim();
-  if (!markdown || markdown.length > 50_000) throw new Error("Enter a profile of between 1 and 50,000 characters.");
+  if (!markdown || markdown.length > 50_000) throw new UserFacingError("Enter a profile of between 1 and 50,000 characters.");
   const expectedVersion = Number(formData.get("profileVersion") ?? 0);
   const latest = await latestProfileFor(db(), user.id);
   await appendProfile(db(), user.id, expectedVersion, {
@@ -133,7 +137,7 @@ export async function savePreferenceProfile(formData: FormData): Promise<void> {
 
 export async function acceptReasonTag(tag: string): Promise<void> {
   const user = await requireUser();
-  if (!tag || tag.length > 100) throw new Error("Invalid reason tag.");
+  if (!tag || tag.length > 100) throw new UserFacingError("Invalid reason tag.");
   await db().update(tagVocabulary).set({ accepted: true }).where(and(eq(tagVocabulary.userId, user.id), eq(tagVocabulary.tag, tag)));
   revalidatePath("/learning");
 }

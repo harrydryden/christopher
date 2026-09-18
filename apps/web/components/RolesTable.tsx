@@ -263,7 +263,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                               if (!boxed.pending) void submitDecision(row.id, boxed.kind, boxed.text);
                             }
                           }}
-                          placeholder="Add a reason (optional)"
+                          placeholder={boxed.kind === "skip" ? "Why is this not for you? (required)" : "Add a reason (optional, but it improves the ranking)"}
                           rows={2}
                           className="w-full resize-y border-2 border-line-muted bg-bg px-2 py-1 font-mono text-12 text-fg placeholder:text-faint focus:border-line focus:outline-none"
                         />

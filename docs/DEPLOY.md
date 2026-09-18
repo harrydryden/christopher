@@ -247,8 +247,8 @@ account, and they refuse any call, a CV build included, so leave them unset unle
 
 ## Observability
 
-Nothing here is a metrics stack. Three ledgers in the database carry what Operations needs to
-answer a question after the fact, and the pages under **Admin › Operations** read them.
+Nothing here is a metrics stack. A handful of ledgers in the database carry what Operations needs
+to answer a question after the fact, and the pages under **Admin › Operations** read them.
 
 | Ledger | What it records | Written by | Retention |
 |---|---|---|---|
@@ -256,6 +256,7 @@ answer a question after the fact, and the pages under **Admin › Operations** r
 | `http_host_daily` | Outbound traffic per host per day, per path (the polite fetcher or the headless browser): requests, bytes, status classes, 304s, rate limits, blocks, robots denials, cap rejections, timeouts, network errors, and a six-bucket latency histogram. Counters, flushed in batches. | The fetcher and the browser | 400 days |
 | `ai_calls` | One row per model call: call site, stage, model, tokens, cache reads and writes, cost, duration, outcome, the account it was for and what it was about. | The AI engine, through every worker handler | 13 months |
 | `scans` | One row per scan: status, fetch method, postings, bytes fetched, requests made and how many came back 304, duration. | The scan handler | 90 days, keeping each source's last three and its last successful one |
+| `cv_build_steps` | One row per motion of a CV build — reading the Library, reserving the budget, the rubric, each writing attempt, each measurement and trim, each assessment batch, scoring, saving — with its attempt, timing, figures, cost, outcome and, when it stopped, the classified failure. The CV page narrates them; Operations aggregates them by motion and by failure kind. | The CV build handler | With the draft (deleted on cascade) |
 | `tasks` | The queue itself: type, payload, attempts, error, timings. | The queue | 30 days after finishing |
 
 Retention is enforced by the worker's hourly `maintainHistory`, each statement bounded so an hour's
@@ -279,7 +280,10 @@ week-on-week column says whether it started recently. A host whose p95 has moved
 slow rather than throttling, which is a different fix.
 
 **"Why did this CV build cost more?"** Operations › Cost per build. Each of the last twenty builds
-is itemised by stage. `review_retry` means the audit's source attribution had to be corrected and
+is itemised by stage. For one build in particular, open its CV and its **build log**: the motions
+it ran, what each produced, how long it took and what it cost, with the total at the top.
+Operations › CV build motions is the same ledger across every build, which is where a motion that
+is dear or failing everywhere shows up. `review_retry` means the audit's source attribution had to be corrected and
 one batch was paid for twice. A large `rubric` and `author` with no retry means a long job
 description and a long library — a dear input, not a fault. Compare the build against the median on
 the same card before treating it as an outlier.

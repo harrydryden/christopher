@@ -1,9 +1,12 @@
 import { cvVersionLabel } from "@/lib/cv-version";
-import { dailyCvVersions, getOwnCvBuildTask, getOwnCvDraft } from "@/lib/queries/cv";
-import { cvBuildState, cvWorkVersion } from "@/lib/cv-build-state";
+import { cvWorkVersionFor, dailyCvVersions, getOwnCvBuildSteps, getOwnCvBuildTask, getOwnCvDraft } from "@/lib/queries/cv";
+import { cvBuildState } from "@/lib/cv-build-state";
 import { CvDisclosure } from "@/components/CvDisclosure";
 import { CvWorkspace, CvWorkspacePanel } from "@/components/CvWorkspace";
 import { CvBuildProgress } from "@/components/CvBuildProgress";
+import { CvBuildLog, CvBuildNarrative } from "@/components/CvBuildNarrative";
+import { CvBuildFailureNotice } from "@/components/CvBuildFailureNotice";
+import { getSystemSettings } from "@/lib/settings";
 import { CvAppearance } from "@/components/CvAppearance";
 import { CvAssessmentPanel } from "@/components/CvAssessmentPanel";
 import { cvAssessmentCurrent } from "@christopher/core/cv-review";
@@ -20,7 +23,7 @@ import { inputClass } from "@/components/Field";
 import { PageHeader } from "@/components/PageHeader";
 import { SettingsForm } from "@/components/SettingsForm";
 import { AutoRefresh } from "@/components/AutoRefresh";
-import { requireUser } from "@/lib/auth";
+import { isAdmin, requireUser } from "@/lib/auth";
 export const dynamic = "force-dynamic";
 export default async function CvDraftPage({
   params,
@@ -36,11 +39,20 @@ export default async function CvDraftPage({
   const version = cvVersionLabel(draft.createdAt, versions.get(draft.id) ?? Math.max(1, draft.revision));
   const content = draft.content;
   const busy = draft.status === "queued" || draft.status === "generating";
+  const failed = draft.status === "failed";
   // A build that has stopped moving is indistinguishable from a slow one without the queue row
   // behind it: which attempt this is, whether anything still holds it, and what the last one left.
   const now = new Date();
-  const buildTask = busy ? await getOwnCvBuildTask(user.id, id) : null;
-  const build = busy ? cvBuildState(draft, buildTask, now) : null;
+  const [buildTask, steps, system, admin] = await Promise.all([
+    busy || failed ? getOwnCvBuildTask(user.id, id) : null,
+    // The ledger of motions: the narrative while it builds, the build log afterwards.
+    getOwnCvBuildSteps(user.id, id),
+    getSystemSettings(),
+    isAdmin(),
+  ]);
+  const build = busy || failed ? cvBuildState(draft, buildTask, now, system.timezone) : null;
+  const narrativeContext = { timeZone: system.timezone, versionLabel: version };
+  const maxAttempts = build?.maxAttempts ?? null;
   const current =
     !!content &&
     cvAssessmentCurrent(
@@ -127,21 +139,21 @@ export default async function CvDraftPage({
           </>
         }
       >
-        {draft.status === "failed" && (
-          <div role="alert" className="space-y-2 p-4 text-14">
-            <p className="text-danger">{draft.error}</p>
-            <p className="text-muted">
-              Retry or edit this attempt now. Only the newest failed attempt for
-              a company and role is kept, so the next revision you start for{" "}
-              {draft.jobTitle} replaces it, and a revision that builds
-              successfully removes it.
-            </p>
-          </div>
+        {failed && build && (
+          // What stopped this build, and the one thing that will make the next attempt different.
+          <CvBuildFailureNotice
+            id={id}
+            build={build}
+            jobId={draft.jobId}
+            admin={admin}
+            canRetry={!draft.finalisedAt}
+            footnote={`Retry or edit this attempt now. Only the newest failed attempt for a company and role is kept, so the next revision you start for ${draft.jobTitle} replaces it, and a revision that builds successfully removes it.`}
+          />
         )}
         {busy && (
           <AutoRefresh
             cvId={id}
-            initialVersion={cvWorkVersion(draft, now)}
+            initialVersion={await cvWorkVersionFor(draft, now)}
             message={null}
           />
         )}
@@ -172,6 +184,14 @@ export default async function CvDraftPage({
                 build={build}
                 startedAt={draft.createdAt}
                 now={now}
+                narrative={
+                  <CvBuildNarrative
+                    steps={steps}
+                    now={now}
+                    maxAttempts={maxAttempts}
+                    context={narrativeContext}
+                  />
+                }
                 action={
                   build.phase === "stopped" ? (
                     <p className="text-14 text-muted">
@@ -183,6 +203,9 @@ export default async function CvDraftPage({
                 }
               />
             )}
+            {!busy && (
+              <CvBuildLog steps={steps} now={now} maxAttempts={maxAttempts} context={narrativeContext} />
+            )}
           </CvWorkspacePanel>
         )}
         {content && !busy ? (
@@ -190,6 +213,9 @@ export default async function CvDraftPage({
             key={id}
             id={id}
             content={content}
+            buildLog={
+              <CvBuildLog steps={steps} now={now} maxAttempts={maxAttempts} context={narrativeContext} />
+            }
             tracking={
               <>
                 <section className="space-y-3 border-2 border-line bg-raised p-4">

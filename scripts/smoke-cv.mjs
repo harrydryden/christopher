@@ -37,7 +37,8 @@ async function fillUntilStable(locator, text, attempts = 6) {
 export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
   const pool = new Pool({ connectionString: databaseUrl, max: 1 });
   const readyId = randomUUID(),
-    busyId = randomUUID();
+    busyId = randomUUID(),
+    failedId = randomUUID();
   const tableIds = [randomUUID(), randomUUID()];
   let browser;
   const content = {
@@ -489,10 +490,53 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       }
       return route.continue();
     });
+    // The build's own account of itself: three motions done, one still open. The page reads these
+    // back as the narrative under the milestone strip, so the figures below are what it must say.
+    const motion = (draftId, seq, stage, motionName, title, status, startedSecondsAgo, ms, detail, failure = null) =>
+      pool.query(
+        `insert into cv_build_steps (draft_id, user_id, attempt, seq, stage, motion, title, status, started_at, finished_at, ms, detail, error, failure)
+         values ($1, $2, 1, $3, $4, $5, $6, $7, now() - make_interval(secs => $8), $9, $10, $11, $12, $13)`,
+        [
+          draftId, userId, seq, stage, motionName, title, status, startedSecondsAgo,
+          ms === null ? null : new Date(Date.now() - (startedSecondsAgo * 1000 - ms)),
+          ms, JSON.stringify(detail),
+          failure ? failure.message : null,
+          failure ? JSON.stringify(failure) : null,
+        ],
+      );
+    await motion(busyId, 1, "preparing", "load_inputs", "Reading your Library and the role", "done", 120, 900, {
+      libraryVersion: 1, roles: 2, qualifications: 1, skillBlocks: 1, descriptionCharacters: 42,
+    });
+    await motion(busyId, 2, "preparing", "admit_budget", "Reserving this build's share of your AI budget", "done", 119, 300, {
+      expectedUsd: 3.06, leftUsd: 18.4, heldUsd: 0,
+    });
+    await motion(busyId, 3, "analysing", "rubric", "Extracting the role's requirements", "done", 118, 52_000, {
+      requirements: 12, essential: 5, desirable: 4, responsibilities: 3, usd: 0.28, tokens: 23_120,
+    });
+    // Open, and started twenty seconds ago: its line must be counting, not frozen.
+    await motion(busyId, 4, "writing", "write", "Writing the CV", "running", 20, null, { attempt: 1, maxPages: 2 });
     await page.goto(`${baseUrl}/cv/${busyId}`);
     await page
       .getByRole("heading", { name: "Write your CV", exact: true })
       .waitFor();
+    const narrative = page.getByRole("list", { name: "Build narrative", exact: true });
+    await narrative
+      .getByText("Extracted 12 requirements (5 essential, 4 desirable, 3 responsibilities)")
+      .waitFor();
+    const narrated = await narrative.innerText();
+    assert.match(narrated, /Read your Library \(version 1: 2 roles, 1 qualification, 1 skill block\) and the role \(42 characters\)/);
+    assert.match(narrated, /Reserved .{0,3}\$3\.06 of your AI budget \(.{0,3}\$18\.40 left this month\)/);
+    assert.match(narrated, /52 s/);
+    // The open motion counts from its own start, not from the build's.
+    const elapsed = /Writing the CV · running (\d+) s/.exec(narrated);
+    assert.ok(elapsed, `the open motion did not render an elapsed figure:\n${narrated}`);
+    assert.ok(Number(elapsed[1]) >= 20, `elapsed figure ${elapsed[1]}s is younger than the step`);
+    // The viewport is a phone here: a narrative line wraps rather than widening the page.
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+      false,
+      "the build narrative must not overflow a phone viewport",
+    );
     await page.emulateMedia({ reducedMotion: "reduce" });
     const progress = page.getByRole("region", {
       name: "CV build progress",
@@ -518,11 +562,66 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       "update cv_drafts set status = 'ready', build_stage = null, content = $2 where id = $1",
       [busyId, JSON.stringify(content)],
     );
+    // A finished build closes its open motion and records the save, as the worker does.
+    await pool.query(
+      "update cv_build_steps set status = 'done', finished_at = now(), ms = 30000 where draft_id = $1 and status = 'running'",
+      [busyId],
+    );
+    await motion(busyId, 5, "publishing", "publish", "Saving the CV", "done", 1, 400, { revision: 1, archivedPrevious: false });
     // The page notices the finished build on its ten-second refresh loop, and the test has just
     // made it drop one status poll and one refresh on purpose, so allow four cycles, not two.
     await page
       .getByRole("textbox", { name: "Profile", exact: true })
       .waitFor({ timeout: 45_000 });
+    // The narrative outlives the build: collapsed on the Content tab, with what it cost.
+    await page.getByRole("button", { name: "Show build log", exact: true }).click();
+    const log = await page.getByRole("list", { name: "Build narrative", exact: true }).innerText();
+    assert.match(log, /Saved as version \d{2}-[A-Z][a-z]{2}-V\d+/);
+    assert.match(log, /Extracted 12 requirements/);
+    assert.match(await page.getByText(/5 motions in /).innerText(), /5 motions in .+costing .{0,3}\$0\.28\./);
+
+    // A build that stopped on something only the person can fix: what it was, and the way forward.
+    const budgetFailure = {
+      kind: "budget_exhausted",
+      resolvedBy: "user",
+      retryable: false,
+      action: "raise_budget",
+      message: "This build needs $3.06 and $1.20 is left of your $50.00 AI budget this month.",
+      motion: "admit_budget",
+      attempt: 1,
+      maxAttempts: 3,
+    };
+    await pool.query(
+      `insert into cv_drafts (id, user_id, job_title, company_name, job_description, library_version, library_snapshot, model, status, error, failure)
+       values ($1, $2, 'Operations Director', 'Example', 'Lead a team and improve operations.', 1, $3, 'test', 'failed', $4, $5)`,
+      [failedId, userId, JSON.stringify(library), budgetFailure.message, JSON.stringify(budgetFailure)],
+    );
+    await motion(failedId, 1, "preparing", "load_inputs", "Reading your Library and the role", "done", 60, 900, {
+      libraryVersion: 1, roles: 2, qualifications: 1, skillBlocks: 1, descriptionCharacters: 42,
+    });
+    await motion(failedId, 2, "preparing", "admit_budget", "Reserving this build's share of your AI budget", "failed", 59, 200, {}, budgetFailure);
+    await page.goto(`${baseUrl}/cv/${failedId}`);
+    await page.getByRole("heading", { name: "Not enough AI budget", exact: true }).waitFor();
+    const failureNotice = page.getByRole("alert").filter({ hasText: "Not enough AI budget" });
+    const noticeText = await failureNotice.innerText();
+    assert.match(noticeText, /\$1\.20 is left of your \$50\.00 AI budget this month/);
+    assert.match(noticeText, /When you have done that, retry generation\./);
+    assert.equal(
+      await failureNotice.getByRole("link", { name: "Raise the AI budget", exact: true }).getAttribute("href"),
+      "/settings",
+    );
+    // The retry is offered because this draft is failed and unfinalised, which is what the action needs.
+    assert.equal(await failureNotice.getByRole("button", { name: "Retry generation", exact: true }).count(), 1);
+    await page.getByRole("button", { name: "Show build log", exact: true }).click();
+    assert.match(
+      await page.getByRole("list", { name: "Build narrative", exact: true }).innerText(),
+      /Could not reserve this build's share of your AI budget/,
+    );
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+      false,
+      "the failed build's way forward must not overflow a phone viewport",
+    );
     await page.setViewportSize({ width: 1440, height: 1000 });
     // Exercise the production server actions through the CV table using disposable rows.
     for (const [index, id] of tableIds.entries()) {
@@ -663,7 +762,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     );
     assert.deepEqual(errors, []);
     console.log(
-      "  CV browser flow passed: tabs, unified evaluation, keyboard navigation, full sidebar collapse, saved edits, mobile layout, real progress updates and bulk CV archive/restore/delete",
+      "  CV browser flow passed: tabs, unified evaluation, keyboard navigation, full sidebar collapse, saved edits, mobile layout, real progress updates, the build narrative and its log, a failed build's way forward, and bulk CV archive/restore/delete",
     );
   } finally {
     await browser?.close();
@@ -671,12 +770,13 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       tableIds,
     ]);
     await pool.query(
-      "delete from tasks where payload->>'draftId' in (select id::text from cv_drafts where id in ($1, $2) or parent_id = $1)",
-      [readyId, busyId],
+      "delete from tasks where payload->>'draftId' in (select id::text from cv_drafts where id in ($1, $2, $3) or parent_id = $1)",
+      [readyId, busyId, failedId],
     );
+    // cv_build_steps rows go with their draft.
     await pool.query(
-      "delete from cv_drafts where id in ($1, $2) or parent_id = $1",
-      [readyId, busyId],
+      "delete from cv_drafts where id in ($1, $2, $3) or parent_id = $1",
+      [readyId, busyId, failedId],
     );
     for (const [key, original] of [["cvModel", originalCvModel], ["cvWritingPreferences", originalWriting], ["cvTheme", originalCvTheme]]) {
       if (original) await pool.query("insert into user_settings (user_id, key, value) values ($1, $2, $3) on conflict (user_id, key) do update set value = excluded.value", [userId, key, JSON.stringify(original.value)]);

@@ -1,5 +1,7 @@
 import { and, desc, eq, inArray, isNull, isNotNull, sql } from "drizzle-orm";
-import { cvDrafts, cvVersions, tasks } from "@christopher/db";
+import { cvBuildStepsSignature, cvDrafts, cvVersions, listCvBuildSteps, tasks } from "@christopher/db";
+import type { CvBuildFailure, CvBuildStepView } from "@christopher/core";
+import { cvWorkVersion } from "@/lib/cv-build-state";
 import { db, type Db } from "@/lib/db";
 import { pageNumber } from "@/components/Pagination";
 
@@ -108,4 +110,38 @@ export async function getOwnCvBuildTask(userId: string, draftId: string) {
     .orderBy(desc(tasks.createdAt))
     .limit(1);
   return row ?? null;
+}
+
+/**
+ * The motions of one account's build, for the narrative under the milestone strip. Read through
+ * the owner: `cv_build_steps` carries a `user_id` and is never read without one.
+ *
+ * The ledger arrives with the worker's migration, and the interface deploys separately, so a
+ * release serving before it reads as "nothing recorded" rather than an error page over a CV.
+ */
+export async function getOwnCvBuildSteps(userId: string, draftId: string): Promise<CvBuildStepView[]> {
+  try {
+    return await listCvBuildSteps(db(), userId, draftId);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The token the CV page's poll compares, assembled in one place so `/api/work-status` and the page
+ * cannot disagree about it: the draft's own state and staleness, the failure it recorded, and the
+ * signature of its ledger — so a motion opening or closing refreshes the page as surely as a stage
+ * change does.
+ */
+export async function cvWorkVersionFor(
+  draft: { id: string; status: string; buildStage: string | null; progressAt: Date | null; createdAt: Date; failure?: CvBuildFailure | null },
+  now: Date = new Date(),
+): Promise<string> {
+  let signature = "";
+  try {
+    signature = await cvBuildStepsSignature(db(), draft.id);
+  } catch {
+    // No ledger yet: the version still moves on the draft's own state and the minute tick.
+  }
+  return cvWorkVersion(draft, now, signature);
 }

@@ -41,11 +41,14 @@ export function CvDraftEditor({
   content,
   assessment,
   tracking,
+  buildLog,
 }: {
   id: string;
   content: CvContent;
   assessment?: ReactNode;
   tracking?: ReactNode;
+  /** The motions this revision was built from, kept at the foot of the Content tab. */
+  buildLog?: ReactNode;
 }) {
   const formId = `cv-edit-${id}`;
   const [summary, setSummary] = useState(content.summary);
@@ -296,6 +299,7 @@ export function CvDraftEditor({
           </CvDisclosure>
         </section>
         {tracking}
+        {buildLog}
       </CvWorkspacePanel>
     </>
   );

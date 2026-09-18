@@ -1,4 +1,4 @@
-import type { Adapter, FetchContext, RawPosting, SourceSpec } from "../types";
+import { IncompleteListingError, type Adapter, type FetchContext, type RawPosting, type SourceSpec } from "../types";
 import { parseDate } from "../normalize";
 import { fetchJson, htmlToText, joinLocation, pathSegments, rec, safeUrl, slugOk, str, verifyFromFetch, MAX_POSTINGS } from "./common";
 
@@ -49,13 +49,17 @@ function mapPosting(p: SrPosting, slug: string): RawPosting | null {
   };
 }
 
+/** Ten pages of 100 is 1,000 roles; boards larger than that exist and must not look complete. */
+const MAX_PAGES = 10;
+
 async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
   const slug = spec.atsSlug;
   if (!slug) throw new Error("smartrecruiters spec missing slug");
   const out: RawPosting[] = [];
   const limit = 100;
   let offset = 0;
-  for (let page = 0; page < 10; page++) {
+  let remaining = 0;
+  for (let page = 0; page < MAX_PAGES; page++) {
     const { data } = await fetchJson<{ content?: SrPosting[]; totalFound?: number; offset?: number; limit?: number }>(
       ctx,
       `${API}/${slug}/postings?limit=${limit}&offset=${offset}`,
@@ -67,9 +71,16 @@ async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPo
     }
     const total = typeof data.totalFound === "number" ? data.totalFound : content.length;
     offset += limit;
-    if (offset >= total || content.length === 0 || out.length >= MAX_POSTINGS) break;
+    remaining = content.length === 0 ? 0 : Math.max(0, total - offset);
+    if (remaining === 0 || content.length === 0 || out.length >= MAX_POSTINGS) break;
   }
-  return out.slice(0, MAX_POSTINGS);
+  const postings = out.slice(0, MAX_POSTINGS);
+  // The page budget ran out with roles still unread. Returning what was read as a complete listing
+  // is what closes roles that are simply on page eleven.
+  if (remaining > 0) {
+    throw new IncompleteListingError(`SmartRecruiters listing stopped after ${MAX_PAGES} pages with ${remaining} roles unread; this scan cannot close roles`, postings);
+  }
+  return postings;
 }
 
 /** SmartRecruiters keeps descriptions behind a per-posting call. */
@@ -93,6 +104,10 @@ async function companyName(spec: SourceSpec, ctx: FetchContext): Promise<string 
 
 export const smartrecruiters: Adapter = {
   type: "smartrecruiters",
+  // The listing carries no description and `fetchSmartRecruitersDescription` serves one role at a
+  // time, so the scan defers description gates and queues the fetches instead of making up to one
+  // 2-second detail request per matching role inside the scan task.
+  descriptionsPerPosting: true,
   specFromUrl(url) {
     const slug = slugFromUrl(url);
     return slug ? smartRecruitersSpec(slug) : null;

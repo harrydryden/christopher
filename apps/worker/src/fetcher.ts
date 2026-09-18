@@ -174,7 +174,10 @@ export class PoliteFetcher {
         log.info("http revalidated", { host: originalHost, durationMs: Date.now() - started, bytes: 0 });
         return usable.response;
       }
-      const max = Math.min(this.opts.maxBodyBytes ?? init.maxBodyBytes ?? 5_000_000, HARD_MAX_BODY_BYTES);
+      // The per-request cap wins: each adapter asks for what its feed needs, and the fetcher-wide
+      // option is only the default for callers that ask for nothing. `HARD_MAX_BODY_BYTES` is the
+      // ceiling neither can raise.
+      const max = Math.min(init.maxBodyBytes ?? this.opts.maxBodyBytes ?? 5_000_000, HARD_MAX_BODY_BYTES);
       let body = "";
       if (init.method !== "HEAD") {
         const reader = res.body?.getReader();

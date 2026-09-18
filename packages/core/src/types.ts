@@ -105,6 +105,23 @@ export interface Adapter {
   verify(spec: SourceSpec, ctx: FetchContext): Promise<VerifyResult>;
 }
 
+/**
+ * The listing was read, but the adapter knows it is short: a paging loop hit its page budget with
+ * more pages to go, or the feed said it holds more roles than it returned. The postings that were
+ * read are carried on the error so the scan can still store them, and the scan records itself as
+ * `partial` — the only status that keeps every stored role open. A truncated listing returned as a
+ * complete one is what closes roles that were never missing.
+ */
+export class IncompleteListingError extends Error {
+  constructor(
+    message: string,
+    public readonly postings: RawPosting[],
+  ) {
+    super(message);
+    this.name = "IncompleteListingError";
+  }
+}
+
 export class SourceFetchError extends Error {
   constructor(
     message: string,

@@ -1,4 +1,4 @@
-import { SourceFetchError, type FetchContext, type FetchResponse, type RawPosting } from "../types";
+import { IncompleteListingError, SourceFetchError, type FetchContext, type FetchResponse, type RawPosting } from "../types";
 import { stripHtml } from "../normalize";
 
 export const SLUG_RE = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
@@ -101,7 +101,12 @@ export function sample(postings: RawPosting[], n = 3): RawPosting[] {
 export function verifyFromFetch(fetchPostings: () => Promise<RawPosting[]>, companyName?: () => Promise<string | undefined>) {
   return async () => {
     try {
-      const postings = await fetchPostings();
+      // A listing too long to read in one pass still proves the board exists and serves roles, so
+      // it verifies on what was read. Only the scan cares that it may not close anything.
+      const postings = await fetchPostings().catch((err: unknown) => {
+        if (err instanceof IncompleteListingError) return err.postings;
+        throw err;
+      });
       let name: string | undefined;
       if (companyName) {
         try {

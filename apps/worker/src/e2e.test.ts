@@ -21,7 +21,7 @@ import { TaskQueue } from "./queue";
 import { startTestServer, type RouteTable, type TestServer } from "./test-server";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test";
-const HOSTS = ["www.acme.example", "acme.example", "boards-api.greenhouse.io", "job-boards.greenhouse.io", "www.orbital.example", "orbital.example"];
+const HOSTS = ["www.acme.example", "acme.example", "boards-api.greenhouse.io", "job-boards.greenhouse.io", "www.orbital.example", "orbital.example", "api.smartrecruiters.com"];
 
 /** An Anthropic-style site: homepage -> careers landing -> listing backed by a Greenhouse board. */
 function acmeRoutes(): RouteTable[string] {
@@ -62,6 +62,25 @@ function greenhouseRoutes(jobs: Array<Record<string, unknown>>): RouteTable[stri
     ...details,
     "/v1/boards/acme/jobs": { body: { jobs: listing, meta: { total: listing.length } } },
     "/v1/boards/acme": { body: { name: "Acme Robotics", content: "About Acme" } },
+  };
+}
+
+/**
+ * A SmartRecruiters board in two sizes. `capped` is larger than the ten pages of 100 the adapter
+ * can read, and the roles the account already follows sit past that cap: a scan that called such a
+ * listing complete would close all three after two runs.
+ */
+function smartRecruitersRoutes(mode: "small" | "capped"): RouteTable[string] {
+  const posting = (id: string, name: string) => ({ id, name, location: { city: "London", country: "UK", fullLocation: "London, UK" }, releasedDate: "2026-09-01T00:00:00Z" });
+  const followed = [posting("ops-1", "Operations Manager"), posting("ops-2", "Operations Analyst"), posting("ops-3", "Operations Lead")];
+  return {
+    "/robots.txt": { body: "User-agent: *\nAllow: /\n", contentType: "text/plain" },
+    "/v1/companies/orbital/postings": (req) => {
+      const offset = Number(new URL(req.url ?? "/", "https://api.smartrecruiters.com").searchParams.get("offset") ?? "0");
+      if (mode === "small") return { body: { offset, limit: 100, totalFound: followed.length, content: offset === 0 ? followed : [] } };
+      const content = Array.from({ length: 100 }, (_, i) => posting(`filler-${offset + i}`, `Systems Technician ${offset + i}`));
+      return { body: { offset, limit: 100, totalFound: 1500, content } };
+    },
   };
 }
 
@@ -484,6 +503,49 @@ describe("functional review regressions", () => {
     expect(truncated!.descriptionText).toContain("Operations planning and reporting.");
     expect(truncated!.descriptionTruncated).toBe(true);
     expect(truncated!.descriptionHash).toBe(sha1(truncated!.descriptionText!));
+  }, 90_000);
+
+  it("never closes a role on a SmartRecruiters listing the adapter could not finish", async () => {
+    await setGate({});
+    server.setRoutes({ "api.smartrecruiters.com": smartRecruitersRoutes("small") });
+    const [company] = await db.insert(schema.companies).values({ name: "Orbital", domain: "orbital.example", homepageUrl: "https://www.orbital.example/" }).returning();
+    await subscribeToCompany(db, user.id, company!.id);
+    const [source] = await db.insert(schema.careerSources).values({
+      companyId: company!.id,
+      type: "smartrecruiters",
+      url: "https://jobs.smartrecruiters.com/orbital",
+      apiUrl: "https://api.smartrecruiters.com/v1/companies/orbital/postings",
+      atsSlug: "orbital",
+      confidence: 0.9,
+      status: "active",
+    }).returning();
+    const settings = await deps.settings();
+
+    const complete = await _scanSourceForTests(deps, company!, source!, settings, null);
+    expect(complete.status).toBe("ok");
+    expect((await jobsInTable()).map((r) => r.title)).toEqual(["Operations Analyst", "Operations Lead", "Operations Manager"]);
+
+    // The board grows past what ten pages can hold and the three followed roles fall off the end.
+    // Two consecutive scans is exactly what closes a role, so if a truncated listing ever counted
+    // as a complete one, this is where the false "closed" rows would appear.
+    server.setRoutes({ "api.smartrecruiters.com": smartRecruitersRoutes("capped") });
+    for (const _ of [1, 2]) {
+      const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+      const outcome = await _scanSourceForTests(deps, company!, current!, settings, null);
+      expect(outcome.status).toBe("partial");
+      expect(outcome.closedCount).toBe(0);
+      expect(outcome.postingsFound).toBe(1000);
+    }
+
+    const rows = await jobsInTable();
+    expect(rows.map((r) => r.title)).toEqual(["Operations Analyst", "Operations Lead", "Operations Manager"]);
+    expect(rows.every((r) => r.status === "open")).toBe(true);
+    expect(rows.every((r) => r.closedAt === null)).toBe(true);
+    // A partial scan is not evidence of absence, so it does not even count as a miss.
+    expect(rows.every((r) => r.missingScans === 0)).toBe(true);
+    const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source!.id)).orderBy(desc(schema.scans.startedAt)).limit(1);
+    expect(scan!.status).toBe("partial");
+    expect(scan!.error).toContain("roles unread");
   }, 90_000);
 
   it("archives retained non-matches but preserves active decisions and saved CVs", async () => {

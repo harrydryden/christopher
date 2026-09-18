@@ -1,5 +1,5 @@
 /** VERIFY: apply.workable.com/api/v3 is undocumented; www.workable.com/api/accounts is the legacy widget feed. */
-import type { Adapter, FetchContext, RawPosting, SourceSpec } from "../types";
+import { IncompleteListingError, type Adapter, type FetchContext, type RawPosting, type SourceSpec } from "../types";
 import { parseDate } from "../normalize";
 import { fetchJson, htmlToText, joinLocation, pathSegments, rec, safeUrl, slugOk, str, verifyFromFetch, MAX_POSTINGS } from "./common";
 
@@ -77,13 +77,19 @@ function mapJob(j: WkJob, slug: string): RawPosting | null {
   };
 }
 
+/** Ten pages of the v3 feed; a board with an eleventh page is read as incomplete, not as complete. */
+const MAX_PAGES = 10;
+
 async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
   const slug = spec.atsSlug;
   if (!slug) throw new Error("workable spec missing slug");
+  // Set when the page budget ran out with a next-page token still in hand. Thrown after the try,
+  // so the fallback below cannot swallow it and hand back a short listing as a complete one.
+  let truncated: RawPosting[] | undefined;
   try {
     const out: RawPosting[] = [];
     let token: string | undefined;
-    for (let page = 0; page < 10; page++) {
+    for (let page = 0; page < MAX_PAGES; page++) {
       const body: Record<string, unknown> = { query: "", location: [], department: [], worktype: [], remote: [] };
       if (token) body.token = token;
       const { data } = await fetchJson<{ results?: WkJob[]; nextPage?: string; total?: number }>(ctx, `https://apply.workable.com/api/v3/accounts/${slug}/jobs`, {
@@ -98,10 +104,15 @@ async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPo
       token = str(data.nextPage);
       if (!token || results.length === 0 || out.length >= MAX_POSTINGS) break;
     }
-    if (out.length > 0) return out.slice(0, MAX_POSTINGS);
+    if (out.length > 0) {
+      const postings = out.slice(0, MAX_POSTINGS);
+      if (token) truncated = postings;
+      else return postings;
+    }
   } catch {
     // fall through to the widget feed
   }
+  if (truncated) throw new IncompleteListingError(`Workable listing stopped after ${MAX_PAGES} pages with more pages to read; this scan cannot close roles`, truncated);
   const { data } = await fetchJson<unknown>(ctx, `https://www.workable.com/api/accounts/${slug}?details=true`);
   const jobs = rec(data)?.jobs;
   const list = Array.isArray(jobs) ? (jobs as WkJob[]) : [];

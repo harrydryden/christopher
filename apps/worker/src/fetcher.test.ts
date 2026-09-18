@@ -153,6 +153,9 @@ describe("polite fetcher", () => {
     const normal = fetcher({ respectRobots: () => false });
     await expect(normal.fetchText("https://www.example.test/", { maxBodyBytes: 10 })).rejects.toThrow("refusing truncated");
     await expect(normal.fetchText("https://www.example.test/", { maxBodyBytes: 100 })).resolves.toMatchObject({ status: 200 });
+    // Each adapter asks for what its feed needs, so the per-request cap wins over the
+    // fetcher-wide option rather than the other way round.
+    await expect(f.fetchText("https://www.example.test/", { maxBodyBytes: 100 })).resolves.toMatchObject({ status: 200 });
   });
 
 describe("memory bounds", () => {

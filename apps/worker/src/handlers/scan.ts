@@ -18,6 +18,7 @@ import {
   modeForScanStatus,
   normalizeTitle,
   priorityFor,
+  IncompleteListingError,
   reconcile,
   sha1,
   SourceFetchError,
@@ -178,9 +179,18 @@ async function scanSource(
       postings = await ats.getAdapter(source.type).fetchPostings(spec, ctx);
     }
   } catch (err) {
-    fetchOk = false;
-    error = (err as Error).message.slice(0, 1000);
-    blocked = err instanceof SourceFetchError && err.kind === "blocked";
+    if (err instanceof IncompleteListingError) {
+      // The adapter read the board but knows the listing is short (a paging budget ran out, or the
+      // feed said it holds more than it returned). What was read is kept and stored; the scan is
+      // partial, so nothing closes on the strength of a listing that was never complete.
+      postings = err.postings;
+      incomplete = true;
+      error = err.message.slice(0, 1000);
+    } else {
+      fetchOk = false;
+      error = (err as Error).message.slice(0, 1000);
+      blocked = err instanceof SourceFetchError && err.kind === "blocked";
+    }
   }
 
   const previousOk = await deps.db

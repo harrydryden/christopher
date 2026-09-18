@@ -4,11 +4,13 @@ import * as fx from "../fixtures";
 import { adapters, descriptionsFetchedPerPosting, fetchDescriptionFor, findAtsSpecsInText, getAdapter, isAtsHost, specFromAnyUrl } from "./registry";
 import { extractJsonLdPostings } from "./jsonld";
 import { applyRecipe, compactDomForModel, extractPostingsFromHtml, findJobLinks, validateRecipe } from "./html";
-import type { HtmlRecipe } from "../types";
+import { IncompleteListingError, type HtmlRecipe } from "../types";
 
 const ctx = createFakeFetchContext({
   routes: {
     "https://boards-api.greenhouse.io/v1/boards/acme/jobs": { body: fx.GREENHOUSE_JOBS },
+    "https://boards-api.greenhouse.io/v1/boards/acme/departments": { body: fx.GREENHOUSE_DEPARTMENTS },
+    "https://boards-api.greenhouse.io/v1/boards/acme/offices": { body: fx.GREENHOUSE_OFFICES },
     "https://boards-api.greenhouse.io/v1/boards/acme/jobs/4001001": { body: fx.GREENHOUSE_JOB_DETAIL },
     "https://boards-api.greenhouse.io/v1/boards/acme/jobs/4001003": { body: fx.GREENHOUSE_JOB_DETAIL_NO_CONTENT },
     "https://boards-api.greenhouse.io/v1/boards/acme": { body: fx.GREENHOUSE_BOARD },
@@ -80,19 +82,62 @@ describe("greenhouse adapter", () => {
     expect(ops.title).toBe("Operations Manager");
     expect(ops.externalId).toBe("4001001");
     expect(ops.location).toBe("London, UK");
-    expect(ops.department).toBe("Operations");
-    expect(ops.postedAt?.toISOString()).toBe("2026-08-28T09:00:00.000Z");
     expect(ops.url).toBe("https://job-boards.greenhouse.io/acme/jobs/4001001");
     expect(ops.salaryText).toBe("£70,000 - £90,000");
+    expect(ops.updatedAt?.toISOString()).toBe("2026-08-30T09:00:00.000Z");
+    // `first_published` is only on the single-job response, so the listing cannot date a posting.
+    expect(ops.postedAt).toBeUndefined();
     // The listing is fetched without descriptions; they arrive one role at a time.
     expect(ops.descriptionText).toBeUndefined();
     expect(ops.descriptionHtml).toBeUndefined();
   });
+  it("fills department and offices from the index endpoints the plain listing lacks", async () => {
+    const postings = await getAdapter("greenhouse").fetchPostings(spec, ctx);
+    const byId = new Map(postings.map((p) => [p.externalId, p]));
+    // A gate matching on department can only work if this survives the listing having none.
+    expect(byId.get("4001001")!.department).toBe("Operations");
+    expect(byId.get("4001003")!.department).toBe("Engineering");
+    expect(byId.get("4001006")!.department).toBe("People");
+    // Offices, parent office included, exactly as `content=true` used to list them.
+    expect(byId.get("4001001")!.locations).toEqual(["London, UK", "Europe", "London"]);
+    expect(byId.get("4001004")!.locations).toEqual(["New York, NY", "New York"]);
+  });
+  it("still lists every role when the department and office indexes fail", async () => {
+    const listingOnly = createFakeFetchContext({ routes: { "https://boards-api.greenhouse.io/v1/boards/acme/jobs": { body: fx.GREENHOUSE_JOBS } } });
+    const postings = await getAdapter("greenhouse").fetchPostings(spec, listingOnly);
+    expect(postings).toHaveLength(6);
+    expect(postings[0]!.department).toBeUndefined();
+    expect(postings[0]!.locations).toBeUndefined();
+    expect(postings[0]!.title).toBe("Operations Manager");
+  });
+  it("treats a listing shorter than the board's own count as incomplete", async () => {
+    const short = createFakeFetchContext({
+      routes: {
+        "https://boards-api.greenhouse.io/v1/boards/acme/jobs": { body: { jobs: fx.GREENHOUSE_JOBS.jobs.slice(0, 2), meta: { total: 6 } } },
+      },
+    });
+    // Two of six roles returned as a complete listing would close the other four after two scans.
+    const error = await getAdapter("greenhouse").fetchPostings(spec, short).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(IncompleteListingError);
+    expect((error as IncompleteListingError).message).toContain("2 of 6");
+    expect((error as IncompleteListingError).postings).toHaveLength(2);
+  });
   it("never asks the board for every description at once", async () => {
-    const listing = createFakeFetchContext({ routes: { "https://boards-api.greenhouse.io/v1/boards/acme/jobs": { body: fx.GREENHOUSE_JOBS } } });
+    const listing = createFakeFetchContext({
+      routes: {
+        "https://boards-api.greenhouse.io/v1/boards/acme/jobs": { body: fx.GREENHOUSE_JOBS },
+        "https://boards-api.greenhouse.io/v1/boards/acme/departments": { body: fx.GREENHOUSE_DEPARTMENTS },
+        "https://boards-api.greenhouse.io/v1/boards/acme/offices": { body: fx.GREENHOUSE_OFFICES },
+      },
+    });
     await getAdapter("greenhouse").fetchPostings(spec, listing);
-    expect(listing.requestLog).toHaveLength(1);
-    expect(listing.requestLog[0]!.url).toBe("https://boards-api.greenhouse.io/v1/boards/acme/jobs");
+    // The listing, the departments index and the offices index: three bounded requests, and not
+    // one description among them.
+    expect(listing.requestLog.map((r) => r.url)).toEqual([
+      "https://boards-api.greenhouse.io/v1/boards/acme/jobs",
+      "https://boards-api.greenhouse.io/v1/boards/acme/departments",
+      "https://boards-api.greenhouse.io/v1/boards/acme/offices",
+    ]);
     expect(listing.requestLog.some((r) => r.url.includes("content=true"))).toBe(false);
     expect(spec.apiUrl).not.toContain("content=true");
   });
@@ -156,6 +201,89 @@ describe("other adapters", () => {
     const description = await fetchDescriptionFor(spec, postings[0]!, ctx);
     expect(description).toContain("Coordinate day-to-day operations.");
     expect(description).toContain("3+ years in operations.");
+  });
+  it("smartrecruiters defers descriptions instead of fetching them inside the scan", () => {
+    // Without this the scan takes the inline branch and spends one 2-second detail request per
+    // matching role inside a 180-second task; a 500-role board with a description gate never ends.
+    expect(descriptionsFetchedPerPosting("smartrecruiters")).toBe(true);
+  });
+  it("smartrecruiters reports a board larger than its page budget as incomplete", async () => {
+    // Ten pages of 100 with 1,500 roles on the board: the 500 unread roles must not look closed.
+    const page = (offset: number) => ({
+      body: {
+        offset,
+        limit: 100,
+        totalFound: 1500,
+        content: Array.from({ length: 100 }, (_, i) => ({ id: `sr-${offset + i}`, name: `Role ${offset + i}`, location: { city: "London", country: "UK" } })),
+      },
+    });
+    const routes = Object.fromEntries(
+      Array.from({ length: 10 }, (_, i) => [`https://api.smartrecruiters.com/v1/companies/acme/postings?limit=100&offset=${i * 100}`, page(i * 100)]),
+    );
+    const bigCtx = createFakeFetchContext({ routes });
+    const spec = specFromAnyUrl("https://jobs.smartrecruiters.com/acme")!;
+    const error = await getAdapter("smartrecruiters").fetchPostings(spec, bigCtx).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(IncompleteListingError);
+    expect((error as IncompleteListingError).postings).toHaveLength(1000);
+    expect((error as IncompleteListingError).message).toContain("500 roles unread");
+    // The board still verifies: it exists and lists roles, it is only too long to read in one pass.
+    const verified = await getAdapter("smartrecruiters").verify(spec, bigCtx);
+    expect(verified.ok).toBe(true);
+    expect(verified.count).toBe(1000);
+  });
+  it("workable reports a board with an eleventh page as incomplete", async () => {
+    const paged = createFakeFetchContext({
+      routes: {
+        // Every page hands back another next-page token, so the loop always exits with more to read.
+        "https://apply.workable.com/api/v3/accounts/acme/jobs": { body: { total: 400, nextPage: "more", results: fx.WORKABLE_V3.results } },
+        "https://www.workable.com/api/accounts/acme?details=true": { body: { jobs: fx.WORKABLE_V3.results } },
+      },
+    });
+    const error = await getAdapter("workable").fetchPostings(specFromAnyUrl("https://apply.workable.com/acme/")!, paged).catch((e: unknown) => e);
+    // The legacy widget feed must not quietly stand in for the truncated listing either.
+    expect(error).toBeInstanceOf(IncompleteListingError);
+    expect((error as IncompleteListingError).postings.length).toBeGreaterThan(0);
+  });
+  it("workday takes the total from the first page only", async () => {
+    // Some tenants report the total once and send 0 on every page after it; believing the zero
+    // ended the listing at page two and closed everything past it.
+    const pages = [
+      { total: 45, count: 20, offset: 0 },
+      { total: 0, count: 20, offset: 20 },
+      { total: 0, count: 5, offset: 40 },
+    ];
+    const routes = {
+      "https://acmecorp.wd1.myworkdayjobs.com/wday/cxs/acmecorp/External/jobs": pages.map(({ total, count, offset }) => ({
+        bodyContains: `"offset":${offset}`,
+        body: {
+          total,
+          jobPostings: Array.from({ length: count }, (_, i) => ({
+            title: `Role ${offset + i + 1}`,
+            externalPath: `/job/London/Role-${offset + i + 1}_R-${offset + i}`,
+            locationsText: "London, United Kingdom",
+            bulletFields: [`R-${offset + i}`],
+          })),
+        },
+      })),
+    };
+    const spec = specFromAnyUrl("https://acmecorp.wd1.myworkdayjobs.com/en-US/External")!;
+    const postings = await getAdapter("workday").fetchPostings(spec, createFakeFetchContext({ routes }));
+    expect(postings).toHaveLength(45);
+  });
+  it("workday reports a tenant larger than the posting cap as incomplete", async () => {
+    const full = {
+      total: 50_000,
+      jobPostings: Array.from({ length: 20 }, (_, i) => ({
+        title: `Role ${i}`,
+        externalPath: `/job/London/Role-${i}_R-${i}`,
+        locationsText: "London, United Kingdom",
+      })),
+    };
+    const spec = specFromAnyUrl("https://acmecorp.wd1.myworkdayjobs.com/en-US/External")!;
+    const capped = createFakeFetchContext({ routes: { "https://acmecorp.wd1.myworkdayjobs.com/wday/cxs/acmecorp/External/jobs": { body: full } } });
+    const error = await getAdapter("workday").fetchPostings(spec, capped).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(IncompleteListingError);
+    expect((error as IncompleteListingError).postings).toHaveLength(10_000);
   });
   it("recruitee skips unpublished offers", async () => {
     const postings = await getAdapter("recruitee").fetchPostings(specFromAnyUrl("https://acme.recruitee.com")!, ctx);

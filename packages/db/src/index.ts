@@ -21,6 +21,8 @@ export { scanRunSummary, scanRunSummaries, type ScanRunSummary } from "./scan-su
 
 export { abandonCvDraft, actionCvs, completeCv, lockCvDraft, lockCvLifecycle, nextCvRevision } from "./cv-lifecycle";
 
+export { startCvBuildStep, finishCvBuildStep, failOpenCvBuildSteps, listCvBuildSteps, cvBuildStepsSignature, cvBuildMotionStats, type StartCvBuildStep, type FinishCvBuildStep, type CvBuildMotionStat } from "./cv-build-steps";
+
 export { cvRoleKey } from "./cv-role-key";
 
 export { syncCompanyStatus, subscribeToCompany, setSubscriptionStatus, subscribedCompanyIds } from "./subscriptions";

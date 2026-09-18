@@ -21,7 +21,7 @@ beforeEach(async () => { vi.restoreAllMocks();
   );
   vi.spyOn(AiEngine.prototype, "assessCv").mockImplementation(async (input) =>
     reviewFixture(input),
-  ); await client.db.execute(sql`truncate applications, cv_drafts, ai_calls, ai_reservations`); });
+  ); await client.db.execute(sql`truncate applications, cv_build_steps, cv_drafts, ai_calls, ai_reservations`); });
 afterAll(async () => { vi.restoreAllMocks(); await client.pool.end(); });
 async function setup(apiKey: string | undefined = "fixture-key") {
   const [draft] = await client.db.insert(schema.cvDrafts).values({ userId, jobTitle: "Operations Director", companyName: "Acme", jobDescription: "Lead a team", libraryVersion: 1, librarySnapshot: library, model: "claude-sonnet-5" }).returning();
@@ -169,7 +169,8 @@ it("fails after three oversized attempts instead of returning an over-limit CV",
     .from(schema.cvDrafts)
     .where(eq(schema.cvDrafts.id, draft.id));
   expect(saved!.status).toBe("failed");
-  expect(saved!.error).toContain("into 2 pages after three budgeted attempts");
+  expect(saved!.error).toBe("The CV is 3 pages after three attempts; the limit is 2. Remove some evidence in your Library or raise the page limit in Settings.");
+  expect(saved!.failure).toMatchObject({ kind: "page_limit_unfittable", resolvedBy: "user", action: "shorten_or_raise_pages" });
   expect(saved!.content).toBeNull();
 });
 
@@ -241,7 +242,8 @@ it("retains authored content when assessment fails, then retries assessment with
     .where(eq(schema.cvDrafts.id, draft.id));
   expect(failed!.status).toBe("failed");
   expect(failed!.content!.summary).toBe(plan.summary);
-  expect(failed!.error).toContain("assessing");
+  expect(failed!.error).toBe("The model's answer to the assessment step could not be used.");
+  expect(failed!.failure).toMatchObject({ kind: "output_invalid" });
   expect(failed!.finalisedAt).toBeNull();
   task.payload = { draftId: draft.id, mode: "assess" };
   await handleGenerateCv(task, deps);

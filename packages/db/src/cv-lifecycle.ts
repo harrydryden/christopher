@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import type { CvBuildFailure } from "@christopher/core";
 import type { Db } from "./client";
 import { cvDrafts } from "./schema";
 import { cvRoleKey } from "./cv-role-key";
@@ -14,7 +15,9 @@ type Draft = typeof cvDrafts.$inferSelect;
 type CvRole = Pick<Draft, "userId" | "companyName" | "jobTitle">;
 type CompletionValues = Pick<
   Partial<typeof cvDrafts.$inferInsert>,
-  "content" | "assessment" | "revision" | "buildStage" | "error"
+  // A published CV has nothing left to resume from and nothing left to explain, so publication is
+  // also where the build's checkpoint and its last failure are cleared, in the same transaction.
+  "content" | "assessment" | "revision" | "buildStage" | "error" | "buildCheckpoint" | "failure"
 > & { status?: "ready" };
 
 // The same immutable expression is shared by the index, lookup and lock identity.
@@ -237,6 +240,12 @@ export async function abandonCvDraft(
   database: Db,
   id: string,
   error: string,
+  /**
+   * The same event in the taxonomy the page reads. Without it an interrupted build was the one
+   * failure with no kind and no next step: the narrative showed a bare sentence where every other
+   * failure named what had happened and whose move it was.
+   */
+  failure?: CvBuildFailure,
 ): Promise<{ userId: string } | null> {
   return database.transaction(async (tx) => {
     await lockCvDraft(tx, id);
@@ -248,7 +257,7 @@ export async function abandonCvDraft(
     if (draft.status !== "queued" && draft.status !== "generating") return null;
     const rows = await tx
       .update(cvDrafts)
-      .set({ status: "failed", error: error.slice(0, 1000), buildStage: null })
+      .set({ status: "failed", error: error.slice(0, 1000), buildStage: null, ...(failure ? { failure } : {}) })
       .where(and(eq(cvDrafts.id, id), inArray(cvDrafts.status, ["queued", "generating"])))
       .returning({ id: cvDrafts.id });
     return rows.length ? { userId: draft.userId } : null;

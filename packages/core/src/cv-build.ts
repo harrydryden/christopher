@@ -115,10 +115,19 @@ export interface CvBuildFailure {
   cause?: string;
 }
 
+/**
+ * A failure of `kind`, with its policy applied and the figures the page needs.
+ *
+ * `extra` may also override `resolvedBy`, `retryable` and `action`, because two kinds change hands
+ * with repetition rather than being one thing always: a model that ran out of room, or declined,
+ * is worth one more attempt by the system, and after that it is the person who has to choose a
+ * different model or reword the role. The kind stays what it was — what happened did not change —
+ * so Operations still counts them together.
+ */
 export function cvBuildFailure(
   kind: CvFailureKind,
   message: string,
-  extra: Partial<Omit<CvBuildFailure, "kind" | "message" | "resolvedBy" | "retryable">> = {},
+  extra: Partial<Omit<CvBuildFailure, "kind" | "message">> = {},
 ): CvBuildFailure {
   const policy = CV_FAILURE_POLICIES[kind];
   return { kind, resolvedBy: policy.resolvedBy, retryable: policy.retryable, ...(policy.action ? { action: policy.action } : {}), message, ...extra };

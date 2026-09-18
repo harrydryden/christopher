@@ -5,7 +5,8 @@ import type { WorkerDeps } from "./context";
 import { maintainHistory } from "./maintenance";
 import { log } from "./log";
 import { finaliseScanRuns } from "./handlers/daily";
-import { CV_ABANDONED_MESSAGE, onAbandon } from "./handlers/abandon";
+import { CV_ABANDONED_MESSAGE, cvInterruptedFailure, onAbandon } from "./handlers/abandon";
+import { failOpenCvBuildStepsQuietly } from "./handlers/cv-journal";
 import { agePriorities, requeueStale } from "./queue";
 import { getInternal, setInternal } from "./settings";
 
@@ -147,8 +148,12 @@ export async function reconcileCvDrafts(deps: WorkerDeps, graceMinutes = 5): Pro
     limit 200`);
   let failed = 0;
   for (const orphan of orphans.rows) {
-    const abandoned = await abandonCvDraft(deps.db, orphan.id, CV_ABANDONED_MESSAGE);
+    // No task is left to read an attempt count from, so the record names what happened and who
+    // moves next without one; the page never shows a bare "interrupted" without its taxonomy.
+    const failure = cvInterruptedFailure();
+    const abandoned = await abandonCvDraft(deps.db, orphan.id, CV_ABANDONED_MESSAGE, failure);
     if (!abandoned) continue;
+    await failOpenCvBuildStepsQuietly(deps.db, orphan.id, CV_ABANDONED_MESSAGE, failure);
     failed++;
     const released = await releaseAiHolds(deps.db, { userId: abandoned.userId, callSite: "CV" });
     log.warn("failed a CV draft no task was building", { draftId: orphan.id, userId: abandoned.userId, holdsReleased: released.count });

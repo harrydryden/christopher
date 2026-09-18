@@ -12,6 +12,7 @@
  */
 import type { CvLibrary, CvContent } from "@christopher/core";
 import type { CvAssessment, CvJobSource } from "@christopher/core/cv-assessment";
+import type { CvBuildCheckpoint, CvBuildFailure, CvBuildMotion, CvBuildStage, CvBuildStepStatus } from "@christopher/core";
 import { sql } from "drizzle-orm";
 import { cvRoleKey } from "./cv-role-key";
 import {
@@ -629,6 +630,10 @@ export const cvDrafts = pgTable("cv_drafts", {
   buildStage: text("build_stage", { enum: ["analysing", "writing", "fitting", "assessing"] }),
   /** Last moment the build advanced (a stage change, a batch finishing). Stale while `generating` means the worker stopped, not that the model is slow. */
   progressAt: ts("progress_at"),
+  /** What this build has already paid for, so a retry resumes rather than starting over. */
+  buildCheckpoint: jsonb("build_checkpoint").$type<CvBuildCheckpoint>(),
+  /** Why the last attempt stopped and whose move it is; cleared when a build starts afresh. */
+  failure: jsonb("failure").$type<CvBuildFailure>(),
   content: jsonb("content").$type<CvContent>(),
   error: text("error"),
   revision: integer("revision").notNull().default(0),
@@ -777,3 +782,28 @@ export const httpHostDaily = pgTable("http_host_daily", {
   durationMsMax: integer("duration_ms_max").notNull().default(0),
   latencyBuckets: integer("latency_buckets").array().notNull().default(sql`'{0,0,0,0,0,0}'::integer[]`),
 }, (t) => [primaryKey({ columns: [t.day, t.host, t.via] }), index("http_host_daily_day_idx").on(t.day)]);
+
+/**
+ * One row per motion of a CV build: what it was doing, when, for how long, with what result.
+ * The CV page reads them as the build's narrative while it runs and afterwards; Operations reads
+ * them by motion to see where builds spend their time and where they fail. Rows go with the draft.
+ */
+export const cvBuildSteps = pgTable("cv_build_steps", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  draftId: uuid("draft_id").notNull().references(() => cvDrafts.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").notNull(),
+  taskId: uuid("task_id"),
+  attempt: integer("attempt").notNull().default(1),
+  seq: integer("seq").notNull(),
+  stage: text("stage").$type<CvBuildStage>().notNull(),
+  motion: text("motion").$type<CvBuildMotion>().notNull(),
+  title: text("title").notNull(),
+  status: text("status").$type<CvBuildStepStatus>().notNull().default("running"),
+  startedAt: tsNow("started_at"),
+  finishedAt: ts("finished_at"),
+  ms: integer("ms"),
+  detail: jsonb("detail").$type<Record<string, unknown>>().notNull().default({}),
+  error: text("error"),
+  failure: jsonb("failure").$type<CvBuildFailure>(),
+}, (t) => [index("cv_build_steps_draft_seq_idx").on(t.draftId, t.seq), index("cv_build_steps_started_idx").on(t.startedAt)]);
+export type CvBuildStep = typeof cvBuildSteps.$inferSelect;

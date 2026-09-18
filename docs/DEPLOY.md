@@ -116,6 +116,14 @@ repository root.
 | `RESEND_API_KEY`, `EMAIL_FROM` | optional, for confirmation and password-reset emails |
 | `ADMIN_EMAILS` | optional, see step 4 above; defaults to the owner's address |
 
+The interface tolerates being deployed ahead of the worker's migrations. Every read of the newest
+ledgers and draft columns is guarded — the tables by `to_regclass`, the columns by one probe per
+process — so what the database does not have yet reads as "nothing recorded" rather than erroring,
+and the pages recover on their own the moment the worker migrates, with no second deploy. The two
+can therefore be released in either order. Only what *writes* those columns waits: starting or
+retrying a build in that window fails with its own message, not a broken page. A database missing
+migrations altogether is a different thing — the "every page 500s right after deploy" row below.
+
 Vercel's egress addresses vary, so the database is protected by TLS and a strong password rather
 than an IP allowlist. Leave `CRON_SECRET` unset and the daily cron in `apps/web/vercel.json` is
 harmless: without the secret the route refuses anonymous calls, and the worker is doing the work

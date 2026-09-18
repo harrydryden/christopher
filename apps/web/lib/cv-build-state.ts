@@ -14,7 +14,14 @@
  *
  * Pure, so the page renders one named state and the wording lives in one place.
  */
-import { CV_FAILURE_POLICIES, type CvBuildCheckpoint, type CvBuildFailure, type CvFailureAction } from "@christopher/core";
+import {
+  CV_FAILURE_POLICIES,
+  type CvBuildCheckpoint,
+  type CvBuildFailure,
+  type CvBuildStepStatus,
+  type CvFailureAction,
+  type CvFailureKind,
+} from "@christopher/core";
 import { formatClock } from "./format";
 
 /** No progress for this long, while a task is still running, is worth saying out loud. */
@@ -25,8 +32,9 @@ export const CV_PROGRESS_STALE_MS = 10 * 60_000;
  * advances, when a motion of it opens or closes, when a failure is recorded — and once a minute
  * while none of that happens, so "last progress 12 minutes ago" and "running 46 s" keep counting on
  * a page that is otherwise waiting for something that will never come. One mechanism, not two:
- * `/api/work-status` and the page must produce the same string for the same rows, which is why
- * both reach it through `cvWorkVersionFor` in lib/queries/cv.ts rather than assembling their own.
+ * `/api/work-status` and the page must produce the same string for the same rows, so both assemble
+ * it here — the poll through `cvWorkVersionFor` in lib/queries/cv.ts, which has only the draft's
+ * id, and the page from the steps it has already read.
  */
 export function cvWorkVersion(
   draft: { status: string; buildStage: string | null; progressAt: Date | null; createdAt: Date; failure?: CvBuildFailure | null },
@@ -39,6 +47,45 @@ export function cvWorkVersion(
   // The kind and the attempt together: a second attempt failing the same way is still a change.
   const failure = draft.failure ? `${draft.failure.kind}:${draft.failure.attempt ?? ""}` : "";
   return `${draft.status}:${draft.buildStage ?? ""}:${since}:${minutes}:${failure}:${stepsSignature}`;
+}
+
+/** The part of a step the version token is made of: whether it is open, and when it last moved. */
+export interface CvStepMoment {
+  status: CvBuildStepStatus;
+  startedAt: Date;
+  finishedAt: Date | null;
+}
+
+/**
+ * The ledger's part of the version token, from rows the page already has: how many motions there
+ * are, how many are open, and the last moment any of them moved.
+ *
+ * The page renders the steps, so it must not query for a signature of the rows in front of it; the
+ * poll has only the draft's id, so `/api/work-status` keeps the aggregate query in
+ * `cvBuildStepsSignature`. Both go through this canonical form — UTC, to the millisecond —
+ * because the two strings are compared against each other: the SQL one renders
+ * `timestamptz::text`, which carries microseconds in the database's own timezone, and a page whose
+ * version never matched the poll's would refresh itself every ten seconds for ever.
+ */
+export function cvStepsSignature(steps: readonly CvStepMoment[]): string {
+  let running = 0;
+  let last = 0;
+  for (const step of steps) {
+    if (step.status === "running") running++;
+    last = Math.max(last, (step.finishedAt ?? step.startedAt).getTime());
+  }
+  return `${steps.length}:${running}:${last ? new Date(last).toISOString() : ""}`;
+}
+
+/** `cvBuildStepsSignature`'s string reduced to what `cvStepsSignature` produces for the same rows. */
+export function normaliseCvStepsSignature(signature: string): string {
+  // The moment is the third field and carries colons of its own, so it is split off by position.
+  const counts = signature.indexOf(":", signature.indexOf(":") + 1);
+  if (counts === -1) return signature;
+  const moment = signature.slice(counts + 1);
+  if (!moment) return signature;
+  const at = new Date(moment);
+  return `${signature.slice(0, counts + 1)}${Number.isNaN(at.getTime()) ? moment : at.toISOString()}`;
 }
 
 export interface CvBuildTask {
@@ -105,6 +152,15 @@ function resumeNoteFor(checkpoint: CvBuildCheckpoint | null | undefined): string
 }
 
 /**
+ * How the retrying sentence opens for a kind the policy's title does not describe in the reader's
+ * terms. A build the queue stops at its deadline is recorded as `worker_interrupted`, and "Attempt
+ * 1 stopped: The worker was interrupted" is not what happened from where the person is sitting.
+ */
+const RETRY_OPENING: Partial<Record<CvFailureKind, string>> = {
+  worker_interrupted: "ran out of time",
+};
+
+/**
  * `task` is the row with dedupe key `generate_cv:<draftId>`, or null when there is none — which is
  * itself a finding: a draft that says it is building with nothing queued to build it is stopped.
  * `timeZone` is the deployment's, for the clock time a retry is due at.
@@ -116,9 +172,18 @@ export function cvBuildState(draft: CvBuildDraft, task: CvBuildTask | null, now:
   // The kind's policy names the failure; the record itself says who resolves it, because a kind can
   // change hands with repetition (the system tries a refused prompt once, then it is the person's).
   const policyTitle = failure ? CV_FAILURE_POLICIES[failure.kind]?.title ?? "The build failed" : null;
-  const attempts = failure?.attempt ?? task?.attempts ?? null;
-  const maxAttempts = failure?.maxAttempts ?? task?.maxAttempts ?? null;
+  // A failure the queue has already moved past: the worker has claimed a later attempt, so the
+  // record on the draft is history and the build is simply running again.
+  const superseded = !!failure && task?.status === "running" && failure.attempt !== undefined && task.attempts > failure.attempt;
+  // Which attempt is being spoken of. The failure's, because it is the attempt that stopped — but
+  // not once a later one is running: "attempt 1 of 3" over a running attempt 2 is simply wrong.
+  const attempts = (superseded ? null : failure?.attempt ?? null) ?? task?.attempts ?? null;
+  const maxAttempts = (superseded ? null : failure?.maxAttempts ?? null) ?? task?.maxAttempts ?? null;
   const retryAt = parseMoment(failure?.retryAt);
+  // A task handed back to the queue carries the message of the attempt that bounced — a lease
+  // another worker was holding, most often. That is the queue talking to itself, never the
+  // explanation of a build that stopped, so only a task the queue gave up on has one of those.
+  const taskError = task?.status === "failed" ? task.error ?? null : null;
   const resumeNote = resumeNoteFor(draft.buildCheckpoint);
   const base = {
     lastProgressAt,
@@ -134,9 +199,6 @@ export function cvBuildState(draft: CvBuildDraft, task: CvBuildTask | null, now:
     tone: "blue" as CvBuildState["tone"],
   };
 
-  // A failure the queue has already moved past: the worker has claimed a later attempt, so the
-  // record on the draft is history and the build is simply running again.
-  const superseded = !!failure && task?.status === "running" && failure.attempt !== undefined && task.attempts > failure.attempt;
   // The system is resolving it: the attempt stopped, the draft is still building, and the queue is
   // holding the next attempt. There is nothing for the person to do, so the page offers nothing.
   if (
@@ -146,7 +208,8 @@ export function cvBuildState(draft: CvBuildDraft, task: CvBuildTask | null, now:
     (draft.status === "queued" || draft.status === "generating") &&
     (task?.status === "queued" || task?.status === "running")
   ) {
-    const stopped = `Attempt ${attempts ?? 1} stopped: ${policyTitle}.`;
+    const opening = RETRY_OPENING[failure.kind];
+    const stopped = opening ? `Attempt ${attempts ?? 1} ${opening}.` : `Attempt ${attempts ?? 1} stopped: ${policyTitle}.`;
     const next = attempts === null ? "" : ` (attempt ${attempts + 1}${maxAttempts ? ` of ${maxAttempts}` : ""})`;
     return {
       ...base,
@@ -182,7 +245,7 @@ export function cvBuildState(draft: CvBuildDraft, task: CvBuildTask | null, now:
       // own action names that instead, and the page shows the retry beside it.
       action: failure?.action ?? "retry",
       resumeNote,
-      taskError: task?.error ?? null,
+      taskError,
       message: failure?.message ?? draft.error ?? "This build stopped before it finished.",
     };
   }
@@ -196,7 +259,7 @@ export function cvBuildState(draft: CvBuildDraft, task: CvBuildTask | null, now:
       tone: "red",
       title: policyTitle,
       message: failure?.message ?? draft.error ?? "This build stopped before it finished.",
-      taskError: task?.error ?? null,
+      taskError,
     };
   }
 

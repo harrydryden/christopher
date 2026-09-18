@@ -164,7 +164,9 @@ export async function getCvBuildFailureKinds(days = 30): Promise<CvBuildFailureC
       .from(cvBuildSteps)
       .where(and(gte(cvBuildSteps.startedAt, since), isNotNull(cvBuildSteps.failure)))
       .groupBy(kind, resolvedBy)
-      .orderBy(desc(sql`count(*)`));
+      // Commonest first, then most recent, then by name: two kinds that have happened as often as
+      // each other are a card that reorders itself between refreshes without the last two.
+      .orderBy(desc(sql`count(*)`), desc(sql`max(${cvBuildSteps.startedAt})`), kind);
     return rows.map((row) => ({
       kind: row.kind ?? "unknown",
       resolvedBy: row.resolvedBy ?? "unknown",

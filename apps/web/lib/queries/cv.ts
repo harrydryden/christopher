@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, isNull, isNotNull, sql } from "drizzle-orm";
 import { cvBuildStepsSignature, cvDrafts, cvVersions, listCvBuildSteps, tasks } from "@christopher/db";
 import type { CvBuildFailure, CvBuildStepView } from "@christopher/core";
-import { cvWorkVersion } from "@/lib/cv-build-state";
+import { cvWorkVersion, normaliseCvStepsSignature } from "@/lib/cv-build-state";
 import { db, type Db } from "@/lib/db";
 import { pageNumber } from "@/components/Pagination";
 
@@ -80,10 +80,96 @@ export async function dailyCvVersions(database: Pick<Db, "execute" | "select">, 
   return new Map(rows.map(row => [row.id, row.version]));
 }
 
+/**
+ * The columns a build's own account of itself lives in, which arrived with the worker's last two
+ * migrations (`progress_at` in 0025, `build_checkpoint` and `failure` in 0027).
+ *
+ * The interface deploys separately from the worker that migrates, and `select *` over a column
+ * that is not there yet is not a degraded page but a 500 on every CV page and every poll. Probed
+ * once and remembered — but only when they are all present, so the release that is briefly ahead
+ * of its migration recovers by itself the moment the worker catches up, without a redeploy.
+ */
+const BUILD_COLUMNS = ["progress_at", "build_checkpoint", "failure"] as const;
+let buildColumnsPresent: Promise<boolean> | null = null;
+
+function cvBuildColumnsPresent(): Promise<boolean> {
+  buildColumnsPresent ??= db()
+    .execute<{ n: number }>(
+      sql`select count(*)::int as n from information_schema.columns
+          where table_schema = 'public' and table_name = 'cv_drafts'
+            and column_name in (${sql.join(BUILD_COLUMNS.map((column) => sql`${column}`), sql`, `)})`,
+    )
+    .then((result) => {
+      const present = (result.rows[0]?.n ?? 0) === BUILD_COLUMNS.length;
+      if (!present) buildColumnsPresent = null;
+      return present;
+    })
+    .catch(() => {
+      buildColumnsPresent = null;
+      return false;
+    });
+  return buildColumnsPresent;
+}
+
+/** Every column of `cv_drafts` that predates the build ledger, for a database without the rest. */
+const settledCvDraftColumns = {
+  id: cvDrafts.id,
+  userId: cvDrafts.userId,
+  jobId: cvDrafts.jobId,
+  jobTitle: cvDrafts.jobTitle,
+  companyName: cvDrafts.companyName,
+  jobDescription: cvDrafts.jobDescription,
+  jobSource: cvDrafts.jobSource,
+  assessment: cvDrafts.assessment,
+  finalisedAt: cvDrafts.finalisedAt,
+  libraryVersion: cvDrafts.libraryVersion,
+  librarySnapshot: cvDrafts.librarySnapshot,
+  model: cvDrafts.model,
+  status: cvDrafts.status,
+  buildStage: cvDrafts.buildStage,
+  content: cvDrafts.content,
+  error: cvDrafts.error,
+  revision: cvDrafts.revision,
+  parentId: cvDrafts.parentId,
+  archivedAt: cvDrafts.archivedAt,
+  createdAt: cvDrafts.createdAt,
+};
+
 /** One account's draft by id, or null when it belongs to someone else. */
-export async function getOwnCvDraft(userId: string, id: string) {
-  const [draft] = await db().select().from(cvDrafts).where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, userId))).limit(1);
-  return draft ?? null;
+export async function getOwnCvDraft(userId: string, id: string): Promise<typeof cvDrafts.$inferSelect | null> {
+  const owned = and(eq(cvDrafts.id, id), eq(cvDrafts.userId, userId));
+  if (await cvBuildColumnsPresent()) {
+    const [draft] = await db().select().from(cvDrafts).where(owned).limit(1);
+    return draft ?? null;
+  }
+  const [draft] = await db().select(settledCvDraftColumns).from(cvDrafts).where(owned).limit(1);
+  // A build that has not been recorded yet reads as one that recorded nothing.
+  return draft ? { ...draft, progressAt: null, buildCheckpoint: null, failure: null } : null;
+}
+
+/**
+ * What one account's poll needs of its draft: its state, its staleness and its last failure. The
+ * same migration guard as `getOwnCvDraft`, because `/api/work-status` is asked for this every ten
+ * seconds by every open CV page.
+ */
+export async function getOwnCvWorkRow(userId: string, id: string) {
+  const owned = and(eq(cvDrafts.id, id), eq(cvDrafts.userId, userId));
+  const settled = {
+    id: cvDrafts.id,
+    status: cvDrafts.status,
+    buildStage: cvDrafts.buildStage,
+    createdAt: cvDrafts.createdAt,
+  };
+  if (await cvBuildColumnsPresent()) {
+    const [row] = await db()
+      .select({ ...settled, progressAt: cvDrafts.progressAt, failure: cvDrafts.failure })
+      .from(cvDrafts)
+      .where(owned)
+      .limit(1);
+    return row ?? null;
+  }
+  const [row] = await db().select(settled).from(cvDrafts).where(owned).limit(1);
+  return row ? { ...row, progressAt: null, failure: null as CvBuildFailure | null } : null;
 }
 
 /**
@@ -128,10 +214,13 @@ export async function getOwnCvBuildSteps(userId: string, draftId: string): Promi
 }
 
 /**
- * The token the CV page's poll compares, assembled in one place so `/api/work-status` and the page
- * cannot disagree about it: the draft's own state and staleness, the failure it recorded, and the
- * signature of its ledger — so a motion opening or closing refreshes the page as surely as a stage
- * change does.
+ * The token the poll compares: the draft's own state and staleness, the failure it recorded, and
+ * the signature of its ledger — so a motion opening or closing refreshes the page as surely as a
+ * stage change does.
+ *
+ * This is the poll's route to it, which has only an id and so asks the database for the ledger's
+ * signature. The page has the rows themselves and passes `cvStepsSignature` of them to
+ * `cvWorkVersion`; both are reduced to the same canonical moment, so the two agree.
  */
 export async function cvWorkVersionFor(
   draft: { id: string; status: string; buildStage: string | null; progressAt: Date | null; createdAt: Date; failure?: CvBuildFailure | null },
@@ -139,7 +228,7 @@ export async function cvWorkVersionFor(
 ): Promise<string> {
   let signature = "";
   try {
-    signature = await cvBuildStepsSignature(db(), draft.id);
+    signature = normaliseCvStepsSignature(await cvBuildStepsSignature(db(), draft.id));
   } catch {
     // No ledger yet: the version still moves on the draft's own state and the minute tick.
   }

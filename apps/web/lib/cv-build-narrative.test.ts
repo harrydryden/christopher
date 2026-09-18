@@ -141,12 +141,23 @@ it("measures, trims and rewrites in the reader's units", () => {
   expect(narrateStep(step("shorten", "skipped"), now).text).toBe("Nothing needed trimming");
   expect(narrateStep(step("shorten", "failed"), now).text).toBe("Could not trim the CV to fit your page limit");
 
+  // A second or third writing attempt is its own motion, carrying what `write` carries plus the
+  // attempt it is: the worker opens `rewrite` for them, so these are the lines a build can produce.
+  const rewrote = narrateStep(
+    step("rewrite", "done", { attempt: 2, budgetCharacters: 1824, budgetScale: 0.76, maxPages: 2, roles: 6, bullets: 14, characters: 1500, usd: 0.98, tokens: 31_000 }, { ms: 120_000 }),
+    now,
+  );
+  expect(rewrote.text).toBe("Rewrote the CV to a smaller budget (attempt 2): 6 roles, 14 bullets, 1,500 characters");
+  expect(rewrote.hint).toBe("budget 1,824 characters at 76% of full length · for 2 pages · 31,000 tokens");
+  expect(narrateStep(step("rewrite", "running", { attempt: 3, budgetCharacters: 1386 }), now).text).toBe(
+    "Rewriting to a smaller budget (attempt 3)",
+  );
+  // A worker a release behind records no attempt; the line drops the clause rather than inventing one.
+  expect(narrateStep(step("rewrite", "running"), now).text).toBe("Rewriting to a smaller budget");
   expect(narrateStep(step("rewrite", "done", { roles: 6, bullets: 14, characters: 1500 }), now).text).toBe(
     "Rewrote the CV to a smaller budget: 6 roles, 14 bullets, 1,500 characters",
   );
-  expect(narrateStep(step("rewrite", "running"), now).text).toBe("Rewriting to a smaller budget");
-  expect(narrateStep(step("rewrite", "skipped"), now).text).toBe("No rewrite was needed");
-  expect(narrateStep(step("rewrite", "failed"), now).text).toBe("Could not rewrite the CV to a smaller budget");
+  expect(narrateStep(step("rewrite", "failed", { attempt: 2 }), now).text).toBe("Could not rewrite the CV to a smaller budget");
 });
 
 it("counts a batch's requirements and claims, and its position in the assessment", () => {

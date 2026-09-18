@@ -14,6 +14,7 @@ import { DEFAULT_CV_THEME, CV_THEMES } from "@christopher/core/cv";
 import { DEFAULT_ACCOUNT_AI_BUDGET_USD, DEFAULT_SETTINGS, modelForCallSite } from "@christopher/core";
 import { runMigrations } from "@christopher/db/migrate";
 import { and, eq, sql } from "drizzle-orm";
+import { cvBuildState } from "@/lib/cv-build-state";
 import { ensureTestUser, signInTestUser } from "@/test/auth";
 import type { User } from "@christopher/db/schema";
 
@@ -1550,6 +1551,169 @@ it("does not strand an assessment retry while the previous task is still finishi
   expect((await database.select().from(schema.cvDrafts))[0]!.status).toBe(
     "failed",
   );
+});
+
+/** One role, one job's worth of evidence: enough for a build to be asked for and refused. */
+const rebuildLibrary = {
+  name: "Example",
+  contact: "London",
+  profile: "Leader",
+  entries: [
+    {
+      id: "one",
+      kind: "experience" as const,
+      heading: "Director",
+      details: "Led a team",
+      confirmedResponsibilities: ["Led a team"],
+    },
+  ],
+};
+const rebuildContent = {
+  name: "Example",
+  contact: "London",
+  summary: "Original profile",
+  sections: [
+    { entryId: "one", kind: "experience" as const, heading: "Director", bullets: ["Led a team"] },
+  ],
+  gaps: [],
+};
+
+it("starts a rebuild clean of the attempt it replaces, and starts it once", async () => {
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: rebuildLibrary });
+  // The parent spent every attempt on something the system was resolving, and left behind what it
+  // had already paid for and the record of why it stopped.
+  const [parent] = await database
+    .insert(schema.cvDrafts)
+    .values({
+      userId: user.id, jobTitle: "Director", companyName: "Example", jobDescription: "Finance operations",
+      libraryVersion: 1, librarySnapshot: rebuildLibrary, model: "test", status: "failed", revision: 3,
+      content: rebuildContent,
+      progressAt: new Date(Date.now() - 20 * 60_000),
+      buildCheckpoint: { rubricAt: new Date(Date.now() - 25 * 60_000).toISOString(), attempt: 3 },
+      error: "The model provider is overloaded.",
+      failure: {
+        kind: "overloaded", resolvedBy: "system", retryable: true,
+        message: "The model provider is overloaded.", motion: "write", attempt: 3, maxAttempts: 3,
+      },
+    })
+    .returning();
+  const rebuild = () => {
+    const form = new FormData();
+    form.set("intent", "improve");
+    form.set("summary", rebuildContent.summary);
+    form.set("section-0", "Led a team");
+    return form;
+  };
+
+  // Two clicks on Rebuild from Library, as fast as the browser can send them.
+  const attempts = await Promise.allSettled([
+    saveCvDraft(parent!.id, { ok: true }, rebuild()),
+    saveCvDraft(parent!.id, { ok: true }, rebuild()),
+  ]);
+  const outcomes = attempts.map((attempt) =>
+    attempt.status === "rejected" ? String((attempt.reason as Error).message) : attempt.value,
+  );
+  expect(outcomes.filter((outcome) => typeof outcome === "string" && outcome.startsWith("redirect:/cv/"))).toHaveLength(1);
+  expect(outcomes).toContainEqual({ ok: false, error: "This CV is already being rebuilt." });
+
+  const children = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent!.id));
+  expect(children).toHaveLength(1);
+  expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(1);
+
+  // Nothing of the parent's build comes with it: this revision has never run.
+  const child = children[0]!;
+  expect(child).toMatchObject({ status: "queued", progressAt: null, buildCheckpoint: null, failure: null, error: null });
+  const [queued] = await database.select().from(schema.tasks).where(eq(schema.tasks.dedupeKey, `generate_cv:${child.id}`));
+  const state = cvBuildState(child, {
+    status: queued!.status, attempts: queued!.attempts, maxAttempts: queued!.maxAttempts,
+    error: queued!.error, startedAt: queued!.startedAt,
+  }, new Date());
+  // Which is what the page says about it — not "attempt 3 stopped, retrying attempt 4 of 3".
+  expect(state).toMatchObject({ phase: "waiting", message: "Waiting for the worker.", title: null, resumeNote: null, taskError: null });
+});
+
+it("sends a second Generate to the build already running rather than starting another", async () => {
+  const { job } = await fixture();
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: rebuildLibrary });
+  const generate = () => {
+    const form = new FormData();
+    form.set("jobId", job.id);
+    form.set("description", "Lead a business operations team, develop the annual operating plan and work with finance and commercial leaders.");
+    return form;
+  };
+  const clicks = await Promise.allSettled([requestCv({ ok: true }, generate()), requestCv({ ok: true }, generate())]);
+
+  const drafts = await database.select().from(schema.cvDrafts);
+  expect(drafts).toHaveLength(1);
+  expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(1);
+  // Both clicks land on the build that is running; neither starts a second one to pay for.
+  expect(clicks.map((click) => (click.status === "rejected" ? String((click.reason as Error).message) : click.value))).toEqual([
+    `redirect:/cv/${drafts[0]!.id}`,
+    `redirect:/cv/${drafts[0]!.id}`,
+  ]);
+});
+
+it("retries a page-limit failure against the Library and the settings as they are now", async () => {
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: rebuildLibrary });
+  const snapshot = { ...rebuildLibrary, theme: { ...DEFAULT_CV_THEME, maxPages: 2 } };
+  const failed = {
+    userId: user.id, jobTitle: "Director", companyName: "Example", jobDescription: "Finance operations",
+    libraryVersion: 1, librarySnapshot: snapshot, model: "test", status: "failed" as const, content: rebuildContent,
+    buildCheckpoint: { contentAt: new Date().toISOString(), attempt: 1 },
+  };
+  const [draft] = await database
+    .insert(schema.cvDrafts)
+    .values({
+      ...failed,
+      error: "The CV is 3 pages after three attempts; the limit is 2.",
+      failure: {
+        kind: "page_limit_unfittable", resolvedBy: "user", retryable: false, action: "shorten_or_raise_pages",
+        message: "The CV is 3 pages after three attempts; the limit is 2. Remove some evidence in your Library or raise the page limit in Settings.",
+        motion: "shorten", attempt: 1, maxAttempts: 3,
+      },
+    })
+    .returning();
+
+  // The person does what the failure asked: raises the page limit, and tidies the Library.
+  const appearance = new FormData();
+  appearance.set("theme", JSON.stringify({ ...DEFAULT_CV_THEME, maxPages: 4 }));
+  expect(await saveCvAppearance({ ok: true }, appearance)).toEqual({ ok: true });
+  await database.insert(schema.cvLibraries).values({
+    userId: user.id, version: 2, content: { ...rebuildLibrary, profile: "Operations leader" },
+  });
+
+  expect(await assessCvDraft(draft!.id, { ok: true }, new FormData())).toEqual({ ok: true });
+  const [retried] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft!.id));
+  // The frozen snapshot is why the retry could not have succeeded; it is the one thing replaced.
+  expect(retried!.librarySnapshot.theme!.maxPages).toBe(4);
+  expect(retried!.librarySnapshot.profile).toBe("Operations leader");
+  expect(retried!.libraryVersion).toBe(2);
+  expect(retried!.buildCheckpoint).toBeNull();
+  expect(retried!.failure).toBeNull();
+  expect(retried!.status).toBe("queued");
+  // The wording is the person's, and a retry that rewrites it without being asked is a different bug.
+  expect(retried!.content).toEqual(rebuildContent);
+  const [task] = await database.select().from(schema.tasks).where(eq(schema.tasks.dedupeKey, `generate_cv:${draft!.id}`));
+  expect(task!.payload).toMatchObject({ draftId: draft!.id, mode: "assess" });
+
+  // A failure the system was already resolving changes nothing: that retry can succeed as it is,
+  // and the evidence and theme this revision was written against stay with it.
+  const [ordinary] = await database
+    .insert(schema.cvDrafts)
+    .values({
+      ...failed,
+      error: "The model provider is overloaded.",
+      failure: {
+        kind: "overloaded", resolvedBy: "system", retryable: true,
+        message: "The model provider is overloaded.", motion: "write", attempt: 3, maxAttempts: 3,
+      },
+    })
+    .returning();
+  expect(await assessCvDraft(ordinary!.id, { ok: true }, new FormData())).toEqual({ ok: true });
+  const [requeued] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, ordinary!.id));
+  expect(requeued!.librarySnapshot).toEqual(snapshot);
+  expect(requeued!.libraryVersion).toBe(1);
+  expect(requeued!.status).toBe("queued");
 });
 
 

@@ -1,6 +1,6 @@
 import { cvVersionLabel } from "@/lib/cv-version";
-import { cvWorkVersionFor, dailyCvVersions, getOwnCvBuildSteps, getOwnCvBuildTask, getOwnCvDraft } from "@/lib/queries/cv";
-import { cvBuildState } from "@/lib/cv-build-state";
+import { dailyCvVersions, getOwnCvBuildSteps, getOwnCvBuildTask, getOwnCvDraft } from "@/lib/queries/cv";
+import { cvBuildState, cvStepsSignature, cvWorkVersion } from "@/lib/cv-build-state";
 import { CvDisclosure } from "@/components/CvDisclosure";
 import { CvWorkspace, CvWorkspacePanel } from "@/components/CvWorkspace";
 import { CvBuildProgress } from "@/components/CvBuildProgress";
@@ -61,6 +61,18 @@ export default async function CvDraftPage({
       draft.jobDescription,
       draft.librarySnapshot,
     );
+  // The same panel whichever tab holds it: one set of props, written once.
+  const assessment = (
+    <CvAssessmentPanel
+      id={id}
+      assessment={draft.assessment}
+      current={current}
+      finalised={!!draft.finalisedAt}
+      busy={busy}
+      hasContent={!!content}
+      content={content}
+    />
+  );
   const [application] = await db()
     .select({ id: applications.id })
     .from(applications)
@@ -151,9 +163,11 @@ export default async function CvDraftPage({
           />
         )}
         {busy && (
+          // The ledger is already read above; its signature is derived from those rows rather than
+          // asked of the database a second time.
           <AutoRefresh
             cvId={id}
-            initialVersion={await cvWorkVersionFor(draft, now)}
+            initialVersion={cvWorkVersion(draft, now, cvStepsSignature(steps))}
             message={null}
           />
         )}
@@ -263,30 +277,10 @@ export default async function CvDraftPage({
                 </section>
               </>
             }
-            assessment={
-              <CvAssessmentPanel
-                id={id}
-                assessment={draft.assessment}
-                current={current}
-                finalised={!!draft.finalisedAt}
-                busy={busy}
-                hasContent={!!content}
-                content={content}
-              />
-            }
+            assessment={assessment}
           />
         ) : (
-          <CvWorkspacePanel tab="evaluation">
-            <CvAssessmentPanel
-              id={id}
-              assessment={draft.assessment}
-              current={current}
-              finalised={!!draft.finalisedAt}
-              busy={busy}
-              hasContent={!!content}
-              content={content}
-            />
-          </CvWorkspacePanel>
+          <CvWorkspacePanel tab="evaluation">{assessment}</CvWorkspacePanel>
         )}
       </CvWorkspace>
     </div>

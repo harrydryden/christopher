@@ -4,7 +4,15 @@
  * and, once it has stopped, "whose move is it": the queue's, on its own, or the person's.
  */
 import { expect, it } from "vitest";
-import { cvBuildState, cvWorkVersion, failureWayForward, type CvBuildDraft, type CvBuildTask } from "./cv-build-state";
+import {
+  cvBuildState,
+  cvStepsSignature,
+  cvWorkVersion,
+  failureWayForward,
+  normaliseCvStepsSignature,
+  type CvBuildDraft,
+  type CvBuildTask,
+} from "./cv-build-state";
 import type { CvBuildFailure } from "@christopher/core";
 
 const now = new Date("2026-09-18T12:00:00.000Z");
@@ -53,7 +61,7 @@ it("calls a build stopped when nothing is working on it, whatever the draft stil
   expect(missing.message).toBe("This build stopped before it finished.");
   expect(missing.attempts).toBeNull();
 
-  const failed = cvBuildState(draft(), task({ status: "failed", error: "generate_cv exceeded its 1800s deadline", attempts: 28 }), now);
+  const failed = cvBuildState(draft(), task({ status: "failed", error: "generate_cv exceeded its 2700s deadline", attempts: 28 }), now);
   expect(failed.phase).toBe("stopped");
   expect(failed.taskError).toContain("deadline");
   expect(failed.attempts).toBe(28);
@@ -131,12 +139,50 @@ it("says the system is retrying, when it is, and when it will", () => {
   // Clock times are the deployment's, like every other time in the interface.
   expect(cvBuildState(draft({ failure: failure() }), task({ status: "queued" }), now, "Europe/London").message).toContain("at 13:04");
 
-  // Once the queue has claimed the next attempt, the record is history and the build is running.
+  // Once the queue has claimed the next attempt, the record is history and the build is running —
+  // on the attempt the queue is on, not the one the stale record stopped at.
   const resumed = cvBuildState(draft({ failure: failure() }), task({ status: "running", attempts: 2 }), now);
   expect(resumed.phase).toBe("progressing");
+  expect(resumed.attempts).toBe(2);
+  expect(resumed.maxAttempts).toBe(3);
 
   // Nothing is holding it any more: that is stopped, not retrying, whatever the record says.
   expect(cvBuildState(draft({ failure: failure() }), null, now).phase).toBe("stopped");
+});
+
+it("says a build that outlived its deadline ran out of time, and when it runs again", () => {
+  // The queue writes this one from outside the handler when a build passes its 45 minutes, while
+  // attempts remain: the draft is still generating and the task is back in the queue.
+  const state = cvBuildState(
+    draft({ progressAt: ago(46 * 60_000), failure: failure({ kind: "worker_interrupted", message: "This build ran out of time and was handed back.", motion: undefined }) }),
+    task({ status: "queued", attempts: 1, startedAt: ago(46 * 60_000) }),
+    now,
+    "UTC",
+  );
+  expect(state.phase).toBe("retrying");
+  expect(state.message).toBe("Attempt 1 ran out of time. Retrying automatically at 12:04 (attempt 2 of 3).");
+  expect(state.title).toBe("The worker was interrupted");
+  expect(state.action).toBeNull();
+});
+
+it("never reads the queue's own bounce back as the reason a build stopped", () => {
+  // A lease another worker was holding hands the task back to the queue with its message on the
+  // row. Repeating that under "The queue recorded:" told the person about a lock they do not have.
+  const bounced = cvBuildState(
+    draft({ status: "failed", error: "This build stopped before it finished." }),
+    task({ status: "queued", attempts: 1, error: "LeaseBusyError: Operation already running: cv:4f6c" }),
+    now,
+  );
+  expect(bounced.phase).toBe("failed");
+  expect(bounced.taskError).toBeNull();
+
+  // The queue giving up is a different thing, and its message is the only account of it there is.
+  const givenUp = cvBuildState(
+    draft({ status: "failed" }),
+    task({ status: "failed", error: "Error: generate_cv exceeded its 2700s deadline" }),
+    now,
+  );
+  expect(givenUp.taskError).toBe("Error: generate_cv exceeded its 2700s deadline");
 });
 
 it("names the failure, its heading and the person's way forward on a failed draft", () => {
@@ -214,6 +260,26 @@ it("offers each failure the page that fixes it, and the retry only where it woul
   expect(failureWayForward("retry", { canRetry: false }).retry).toBe(false);
   expect(failureWayForward("retry", { canRetry: true })).toMatchObject({ retry: true, retryNote: null });
   expect(failureWayForward(null, { canRetry: true }).retry).toBe(false);
+});
+
+it("signs the ledger from the rows the page already has, in the poll's own terms", () => {
+  const step = (status: "running" | "done", startedAt: Date, finishedAt: Date | null) => ({ status, startedAt, finishedAt });
+  const steps = [
+    step("done", ago(120_000), ago(60_000)),
+    step("done", ago(90_000), ago(30_000)),
+    step("running", ago(20_000), null),
+  ];
+  expect(cvStepsSignature(steps)).toBe(`3:1:${ago(20_000).toISOString()}`);
+  // An empty ledger signs as one, and a motion closing moves the signature.
+  expect(cvStepsSignature([])).toBe("0:0:");
+  expect(cvStepsSignature([...steps.slice(0, 2), step("done", ago(20_000), ago(5_000))])).toBe(`3:0:${ago(5_000).toISOString()}`);
+
+  // The poll's side comes from SQL: `timestamptz::text`, microseconds, in the database's timezone.
+  // Both are reduced to the same moment, or the page would refresh itself every ten seconds.
+  expect(normaliseCvStepsSignature("3:1:2026-09-18 11:59:40.123456+00")).toBe("3:1:2026-09-18T11:59:40.123Z");
+  expect(normaliseCvStepsSignature("3:1:2026-09-18 12:59:40.123456+01")).toBe("3:1:2026-09-18T11:59:40.123Z");
+  expect(normaliseCvStepsSignature("0:0:")).toBe("0:0:");
+  expect(normaliseCvStepsSignature("0:0:nonsense")).toBe("0:0:nonsense");
 });
 
 it("carries the ledger and the failure into the poll's version", () => {

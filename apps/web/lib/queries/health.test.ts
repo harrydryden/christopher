@@ -412,20 +412,25 @@ it("counts build motions and failure kinds, and reads nothing from a database wi
   ]);
 
   const motions = await getCvBuildMotions(30);
-  expect(motions.map((row) => [row.motion, row.runs, row.failed])).toEqual([
+  // Busiest first; the two that ran as often as each other may arrive either way round, because
+  // the ledger's aggregate orders by runs alone.
+  expect(motions.map((row) => [row.motion, row.runs, row.failed]).slice(0, 2).sort()).toEqual([
     ["rubric", 2, 0],
     ["write", 2, 1],
-    ["admit_budget", 1, 1],
   ]);
+  expect(motions[2]).toMatchObject({ motion: "admit_budget", runs: 1, failed: 1 });
   // The median of two is their midpoint, and a motion that spent nothing has no median cost.
-  expect(motions[0]!.medianMs).toBe(50_000);
-  expect(motions[0]!.medianUsd).toBeCloseTo(0.3, 5);
+  const rubric = motions.find((row) => row.motion === "rubric")!;
+  expect(rubric.medianMs).toBe(50_000);
+  expect(rubric.medianUsd).toBeCloseTo(0.3, 5);
   expect(motions[2]!.medianUsd).toBeNull();
 
+  // Commonest first, then most recent, then by name: two kinds that have happened as often as each
+  // other must not swap places between one refresh of the card and the next.
   const failures = await getCvBuildFailureKinds(30);
   expect(failures.map((row) => [row.kind, row.resolvedBy, row.count])).toEqual([
-    ["overloaded", "system", 1],
     ["budget_exhausted", "user", 1],
+    ["overloaded", "system", 1],
   ]);
   expect(failures[0]!.lastAt!.getTime()).toBeCloseTo(inWindow.getTime(), -3);
 

@@ -167,8 +167,6 @@ function skippedPhrase(step: CvBuildStepView): string {
       return "Kept the wording already written";
     case "shorten":
       return "Nothing needed trimming";
-    case "rewrite":
-      return "No rewrite was needed";
     case "measure":
       return "Skipped measuring: the wording has not changed";
     case "assess_retry":
@@ -185,6 +183,12 @@ function runningPhrase(step: CvBuildStepView): string {
     case "write": {
       const attempt = number(detail, "attempt");
       return attempt !== null && attempt > 1 ? `Writing the CV again (attempt ${formatCount(attempt)})` : "Writing the CV";
+    }
+    case "rewrite": {
+      // The second and third writing attempts are their own motion, each against a smaller budget,
+      // so the line says which one is being paid for.
+      const attempt = number(detail, "attempt");
+      return attempt === null ? step.title : `${step.title} (attempt ${formatCount(attempt)})`;
     }
     case "assess_batch": {
       const subject = assessSubject(detail);
@@ -254,7 +258,7 @@ function donePhrase(step: CvBuildStepView, context: NarrativeContext): string {
       const attempt = number(detail, "attempt");
       const opening =
         step.motion === "rewrite"
-          ? "Rewrote the CV to a smaller budget"
+          ? `Rewrote the CV to a smaller budget${attempt === null ? "" : ` (attempt ${formatCount(attempt)})`}`
           : attempt !== null && attempt > 1
             ? `Wrote the CV again (attempt ${formatCount(attempt)})`
             : "Wrote the CV";

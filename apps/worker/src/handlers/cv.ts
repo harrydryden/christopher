@@ -191,6 +191,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
             await ai.analyseCvJob(draft.jobDescription, {
               refType: "cv-rubric",
               refId: draft.id,
+              stage: "rubric",
               userId: draft.userId,
             }),
           ),
@@ -239,7 +240,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
                   improvements,
                   ...input,
                 },
-                { refType: "cv-author", refId: draft.id, userId: draft.userId },
+                { refType: "cv-author", refId: draft.id, stage: "author", userId: draft.userId },
               ),
             ),
           initial,
@@ -260,7 +261,9 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
             claims: cvClaimItems(content),
             evidence: cvEvidenceItems(library),
           },
-          { refType: "cv-review", refId: draft.id, userId: draft.userId },
+          // The engine re-runs a batch whose attribution it had to correct, and names that
+          // second charge `review_retry`, so a build that paid twice for one batch says so.
+          { refType: "cv-review", refId: draft.id, stage: "review", userId: draft.userId },
         ),
       );
       const assessment = createCvAssessment({

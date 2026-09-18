@@ -1,6 +1,16 @@
 import { scanRunReports } from "@/lib/scan-run-report";
 import { and, asc, desc, eq, gte, inArray, isNotNull, ne, sql, getTableColumns } from "drizzle-orm";
-import { aiUsageByAccount, countWorkerEvents, listWorkerEvents, totalAiSpend } from "@christopher/db";
+import {
+  aiUsageByAccount,
+  costPerCvBuild,
+  costPerScoredRole,
+  countWorkerEvents,
+  listHttpHostDaily,
+  listWorkerEvents,
+  totalAiSpend,
+  type CvBuildCosts,
+  type ScoredRoleCost,
+} from "@christopher/db";
 import {
   cvDrafts,
   jobs,
@@ -21,6 +31,7 @@ import {
 // left without importing the worker.
 import { deadlineFor } from "@christopher/core";
 import { groupAiUsage, type AiUsageGroup } from "@/lib/ai-usage";
+import { foldOutboundTraffic, type HostTraffic } from "@/lib/outbound-traffic";
 import { db } from "@/lib/db";
 import { deriveWorkerStatus, type WorkerHeartbeat, type WorkerStatus, type WorkerVitals } from "@/lib/worker-status";
 
@@ -107,6 +118,28 @@ export async function getTotalAiSpend(since: Date): Promise<number> {
 /** The operations report: one line per account, feature and model since `since`, dearest first. */
 export async function getAiUsage(since: Date): Promise<AiUsageGroup[]> {
   return groupAiUsage(await aiUsageByAccount(db(), since));
+}
+
+/**
+ * What the last `limit` CV builds cost, itemised by stage. Administrator-only: it reads every
+ * account's drafts, so the page behind it calls `requireAdmin` and it is never used per account.
+ */
+export async function getCvBuildCosts(limit = 20): Promise<CvBuildCosts> {
+  return ifLedger(() => costPerCvBuild(db(), limit), { builds: [], medianUsd: null, worstUsd: null, stages: [] });
+}
+
+/** What scoring one role costs over `days` — the unit price of the highest-volume call site. */
+export async function getScoredRoleCost(days = 30): Promise<ScoredRoleCost> {
+  return ifLedger(() => costPerScoredRole(db(), days), { roles: 0, calls: 0, totalUsd: 0, meanUsd: null, medianUsd: null });
+}
+
+/**
+ * Outbound traffic per host for the last `days` days, with the `days` before them for a delta.
+ * Twice the window is read in one query and split on the boundary, so one pass answers both.
+ */
+export async function outboundTraffic(days = 7): Promise<HostTraffic[]> {
+  const rows = await ifLedger(() => listHttpHostDaily(db(), days * 2), [] as Awaited<ReturnType<typeof listHttpHostDaily>>);
+  return foldOutboundTraffic(rows, days);
 }
 
 /** Health's run history: one query for the runs, one for every run's counts. */
@@ -516,6 +549,11 @@ export interface ScanInputRow {
   companyName: string;
   sourceType: CareerSource["type"];
   bytes: number;
+  /** How the listing was fetched; a browser render is the dear path as well as the large one. */
+  fetchMethod: string | null;
+  /** Outbound requests that scan made, and how many came back 304 rather than a transfer. */
+  requests: number | null;
+  revalidated: number | null;
   at: Date;
 }
 
@@ -523,27 +561,42 @@ export interface ScanInputRow {
  * The largest listing each source has returned lately. A scan holds its input in memory, so this
  * is the list of pages that can take the process to its heap ceiling — the 41 MB board that spent
  * ten hours restarting the worker would have been at the top of it.
+ *
+ * The ranking is done in the database. Reading every source's largest scan and sorting ten of them
+ * out in the interface meant carrying a row per source in the catalogue to show ten.
  */
 export async function listLargestScanInputs(days = 7, limit = 10): Promise<ScanInputRow[]> {
   const since = new Date(Date.now() - days * 86_400_000);
-  const rows = await db()
+  const largest = db()
     .selectDistinctOn([scans.sourceId], {
       sourceId: scans.sourceId,
-      companyId: companies.id,
-      companyName: companies.name,
-      sourceType: careerSources.type,
-      bytes: scans.fetchedBytes,
-      at: scans.startedAt,
+      companyId: sql<string>`${companies.id}`.as("company_id"),
+      companyName: sql<string>`${companies.name}`.as("company_name"),
+      sourceType: sql<CareerSource["type"]>`${careerSources.type}`.as("source_type"),
+      bytes: sql<number>`coalesce(${scans.fetchedBytes}, 0)`.as("bytes"),
+      fetchMethod: sql<string | null>`${scans.fetchMethod}`.as("fetch_method"),
+      requests: sql<number | null>`${scans.requests}`.as("requests"),
+      revalidated: sql<number | null>`${scans.revalidated}`.as("revalidated"),
+      at: sql<Date>`${scans.startedAt}`.as("at"),
     })
     .from(scans)
     .innerJoin(careerSources, eq(scans.sourceId, careerSources.id))
     .innerJoin(companies, eq(careerSources.companyId, companies.id))
     .where(and(isNotNull(scans.fetchedBytes), gte(scans.startedAt, since)))
-    .orderBy(scans.sourceId, desc(scans.fetchedBytes));
-  return rows
-    .map((row) => ({ ...row, bytes: row.bytes ?? 0 }))
-    .sort((a, b) => b.bytes - a.bytes)
-    .slice(0, limit);
+    .orderBy(scans.sourceId, desc(scans.fetchedBytes))
+    .as("largest");
+  const rows = await db().select().from(largest).orderBy(desc(largest.bytes)).limit(limit);
+  return rows.map((row) => ({
+    sourceId: row.sourceId,
+    companyId: row.companyId,
+    companyName: row.companyName,
+    sourceType: row.sourceType,
+    bytes: Number(row.bytes ?? 0),
+    fetchMethod: row.fetchMethod,
+    requests: row.requests === null ? null : Number(row.requests),
+    revalidated: row.revalidated === null ? null : Number(row.revalidated),
+    at: row.at,
+  }));
 }
 
 export { companySubscriptions as _companySubscriptions, workerEvents as _workerEvents };

@@ -28,6 +28,31 @@ function inferSsl(connectionString: string): NonNullable<CreateDbOptions["ssl"]>
   return "require";
 }
 
+/**
+ * Process-wide counts the worker reports as vitals. A pool with connections waiting and a rising
+ * slow-query count is the shape of "the database is the bottleneck", and neither is visible from
+ * the outside: `pg` keeps its own queue, and a slow query is only a log line nothing adds up.
+ */
+let slowQueries = 0;
+const livePools = new Set<pg.Pool>();
+
+/** How many queries this process has seen take longer than the slow threshold. */
+export function slowQueryCount(): number {
+  return slowQueries;
+}
+
+/** Connections across every pool this process still holds open, or null when it holds none. */
+export function poolStats(): { total: number; idle: number; waiting: number } | null {
+  if (livePools.size === 0) return null;
+  let total = 0, idle = 0, waiting = 0;
+  for (const pool of livePools) {
+    total += pool.totalCount;
+    idle += pool.idleCount;
+    waiting += pool.waitingCount;
+  }
+  return { total, idle, waiting };
+}
+
 export function createDb(connectionString: string, options: CreateDbOptions = {}) {
   const pool = new pg.Pool({
     connectionString,
@@ -49,7 +74,10 @@ export function createDb(connectionString: string, options: CreateDbOptions = {}
         if (reported) return;
         reported = true;
         const durationMs = Math.round(performance.now() - started);
-        if (durationMs >= 250) console.info(JSON.stringify({ event: "slow_database_query", durationMs }));
+        if (durationMs >= 250) {
+          slowQueries += 1;
+          console.info(JSON.stringify({ event: "slow_database_query", durationMs }));
+        }
       };
       const callback = args[args.length - 1];
       if (typeof callback === "function") args[args.length - 1] = (...values: unknown[]) => { finish(); return callback(...values); };
@@ -59,6 +87,13 @@ export function createDb(connectionString: string, options: CreateDbOptions = {}
       } catch (error) { finish(); throw error; }
     }) as typeof client.query;
   });
+  livePools.add(pool);
+  // A pool that has been ended must stop counting towards the process's connection figures.
+  const end = pool.end.bind(pool);
+  pool.end = ((...args: Parameters<typeof end>) => {
+    livePools.delete(pool);
+    return end(...args);
+  }) as typeof pool.end;
   const db = drizzle(pool, { schema, casing: "snake_case" });
   return { db, pool };
 }

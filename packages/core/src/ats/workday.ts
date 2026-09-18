@@ -1,5 +1,5 @@
 /** VERIFY: the /wday/cxs endpoint is undocumented but stable across tenants; shapes confirmed against fixtures. */
-import type { Adapter, FetchContext, RawPosting, SourceSpec } from "../types";
+import { IncompleteListingError, type Adapter, type FetchContext, type RawPosting, type SourceSpec } from "../types";
 import { parseRelativePosted } from "../normalize";
 import { fetchJson, pathSegments, safeUrl, str, verifyFromFetch, MAX_POSTINGS } from "./common";
 
@@ -71,6 +71,10 @@ async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPo
   const now = ctx.now?.() ?? new Date();
   const out: RawPosting[] = [];
   const limit = 20;
+  // Some tenants report `total` on the first page only and send 0 on every page after it, so the
+  // count is taken once: trusting the later zero made page two look like the end of the board.
+  let total: number | undefined;
+  let more = false;
   for (let offset = 0; offset < MAX_POSTINGS; offset += limit) {
     const { data } = await fetchJson<{ total?: number; jobPostings?: WdPosting[] }>(ctx, `https://${p.host}/wday/cxs/${p.tenant}/${p.site}/jobs`, {
       method: "POST",
@@ -81,10 +85,15 @@ async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPo
       const mapped = mapPosting(wp, p.host, p.site, now);
       if (mapped) out.push(mapped);
     }
-    const total = typeof data.total === "number" ? data.total : out.length;
-    if (postings.length === 0 || offset + limit >= total) break;
+    if (total === undefined && typeof data.total === "number" && data.total > 0) total = data.total;
+    if (postings.length === 0) { more = false; break; }
+    // With no usable total, a full page is the only evidence left that another page exists.
+    more = total === undefined ? postings.length === limit : offset + limit < total;
+    if (!more) break;
   }
-  return out.slice(0, MAX_POSTINGS);
+  const result = out.slice(0, MAX_POSTINGS);
+  if (more) throw new IncompleteListingError(`Workday listing stopped at ${result.length} roles with more pages to read; this scan cannot close roles`, result);
+  return result;
 }
 
 export const workday: Adapter = {

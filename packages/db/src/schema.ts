@@ -15,6 +15,7 @@ import type { CvAssessment, CvJobSource } from "@christopher/core/cv-assessment"
 import { sql } from "drizzle-orm";
 import { cvRoleKey } from "./cv-role-key";
 import {
+  bigint,
   boolean,
   index,
   integer,
@@ -249,8 +250,14 @@ export const scans = pgTable(
     closedCount: integer("closed_count").notNull().default(0),
     error: text("error"),
     durationMs: integer("duration_ms"),
-    /** Bytes the listing fetch returned: the input the worker had to hold in memory for this scan. */
+    /**
+     * Bytes this scan actually transferred: the listing and every page it read, excluding a body the
+     * fetcher served from its own cache after a 304 and including a browser render. `requests` and
+     * `revalidated` say how many requests that took and how many of them cost nothing.
+     */
     fetchedBytes: integer("fetched_bytes"),
+    requests: integer("requests"),
+    revalidated: integer("revalidated"),
     rawSnapshot: text("raw_snapshot"),
   },
   (t) => [index("scans_source_started_idx").on(t.sourceId, t.startedAt), index("scans_run_idx").on(t.scanRunId)],
@@ -556,9 +563,11 @@ export const aiCalls = pgTable(
     error: text("error"),
     refType: text("ref_type"),
     refId: text("ref_id"),
+    /** Which step of a multi-call feature this was (a CV build: rubric, author, review, review_retry), so a build's cost can be explained, not only summed. */
+    stage: text("stage"),
     at: tsNow("at"),
   },
-  (t) => [index("ai_calls_at_idx").on(t.at), index("ai_calls_user_at_idx").on(t.userId, t.at)],
+  (t) => [index("ai_calls_at_idx").on(t.at), index("ai_calls_user_at_idx").on(t.userId, t.at), index("ai_calls_site_at_idx").on(t.callSite, t.at)],
 );
 
 export type User = typeof users.$inferSelect;
@@ -736,3 +745,35 @@ export const workerEvents = pgTable("worker_events", {
   userId: uuid("user_id"),
   detail: jsonb("detail").$type<Record<string, unknown>>().notNull().default({}),
 }, (t) => [index("worker_events_at_idx").on(t.at), index("worker_events_kind_at_idx").on(t.kind, t.at)]);
+
+export const HTTP_VIAS = ["http", "browser"] as const;
+export type HttpVia = (typeof HTTP_VIAS)[number];
+
+/**
+ * Outbound traffic per logical host per day, kept by the fetcher and the browser as counters and
+ * flushed in batches. This is the record that says whether a vendor is throttling us, how many
+ * requests and bytes a board costs, and how often revalidation spares a transfer: the per-request
+ * log line answers none of that once the platform has dropped it. Latency buckets are the upper
+ * bounds 0.5 s, 1 s, 2 s, 5 s, 15 s and beyond, in that order.
+ */
+export const httpHostDaily = pgTable("http_host_daily", {
+  day: text("day").notNull(),
+  host: text("host").notNull(),
+  via: text("via", { enum: HTTP_VIAS }).notNull(),
+  requests: integer("requests").notNull().default(0),
+  bytesIn: bigint("bytes_in", { mode: "number" }).notNull().default(0),
+  ok2xx: integer("ok_2xx").notNull().default(0),
+  notModified304: integer("not_modified_304").notNull().default(0),
+  redirects3xx: integer("redirects_3xx").notNull().default(0),
+  client4xx: integer("client_4xx").notNull().default(0),
+  server5xx: integer("server_5xx").notNull().default(0),
+  rateLimited: integer("rate_limited").notNull().default(0),
+  blocked: integer("blocked").notNull().default(0),
+  robotsDenied: integer("robots_denied").notNull().default(0),
+  capRejected: integer("cap_rejected").notNull().default(0),
+  timeouts: integer("timeouts").notNull().default(0),
+  networkErrors: integer("network_errors").notNull().default(0),
+  durationMsSum: bigint("duration_ms_sum", { mode: "number" }).notNull().default(0),
+  durationMsMax: integer("duration_ms_max").notNull().default(0),
+  latencyBuckets: integer("latency_buckets").array().notNull().default(sql`'{0,0,0,0,0,0}'::integer[]`),
+}, (t) => [primaryKey({ columns: [t.day, t.host, t.via] }), index("http_host_daily_day_idx").on(t.day)]);

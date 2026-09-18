@@ -1,0 +1,36 @@
+name: Release
+
+# Not part of CI, so a pull request never lists a skipped release job. This fires
+# only after CI itself has passed on main, which keeps the old `needs: check` promise:
+# the release check cannot go green before main is green.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  worker-release:
+    if: >-
+      github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push'
+      && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    concurrency:
+      group: worker-release
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # GITHUB_SHA on a workflow_run is the default branch's tip, which is not
+      # necessarily the merge CI just passed on, so the commit is named explicitly.
+      - name: Verify the running worker includes this merge
+        run: node scripts/verify-worker-release.mjs
+        env:
+          WORKER_HEALTH_URL: https://christopher-worker.onrender.com/healthz
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}

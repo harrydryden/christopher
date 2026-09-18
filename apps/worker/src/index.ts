@@ -2,9 +2,10 @@
  * Worker entry point. One always-on process that runs the scheduler, the task queue and every
  * outbound fetch and model call. See docs/SPEC.md section 6.
  */
-import { enqueueTask, listUserIds, recordWorkerEvent } from "@christopher/db";
+import { enqueueTask, listUserIds, recordWorkerEvent, type Db } from "@christopher/db";
 import { dedupeKeyFor } from "@christopher/core";
 import { runMigrations } from "@christopher/db/migrate";
+import { sql } from "drizzle-orm";
 import { createDeps } from "./context";
 import { readEnv } from "./env";
 import { startHealthServer } from "./health";
@@ -32,6 +33,7 @@ async function main() {
   // Doing it here rather than waiting for the scheduler is what stops the task that killed the
   // last process being the first thing this one claims.
   await recoverFromCrash(deps, { workerId: env.workerId, onAbandon });
+  await reviveRateLimitedSources(deps.db);
   await ensureSeedTags(deps);
   // Gate semantics can change between releases: re-run every account's gate once on boot. One task
   // per account, so each takes only its own lease and they run across the queue's slots instead of
@@ -74,6 +76,8 @@ async function main() {
       detail: { signal, handedBack: queue.activeCount, uptimeSeconds: vitals().uptimeSeconds, commit, vitals: vitals() },
     });
     clearInterval(heartbeatTimer);
+    // Before the queue stops claiming: the counters are worth more written than complete.
+    await deps.traffic.flush();
     scheduler.stop();
     server.close();
     const timeout = setTimeout(() => {
@@ -88,6 +92,30 @@ async function main() {
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("unhandledRejection", (reason) => log.error("unhandled rejection", reason));
+  // An uncaught exception has already unwound whatever was running, so the process cannot be
+  // trusted to carry on: record why it went, then let the platform restart it. Without this the
+  // default exit leaves no worker event at all, and Health shows a gap nobody can explain.
+  process.on("uncaughtException", (error) => {
+    log.error("uncaught exception", { error: { name: error.name, message: error.message, stack: error.stack }, vitals: vitals() });
+    void recordWorkerEvent(deps.db, {
+      workerId: env.workerId, kind: "shutdown",
+      detail: { signal: "uncaughtException", error: error.message, commit, vitals: vitals() },
+    }).catch(() => undefined).finally(() => process.exit(1));
+  });
+}
+
+/**
+ * One-off repair, idempotent and cheap. Until 429 and 503 became a back-off, a single burst of
+ * either marked a source `blocked` — a state only a person clears — and the daily run never looked
+ * at it again. Those sources are returned to `failing`, which the daily run does pick up; a source
+ * blocked by a 403 or a challenge page is left alone, because that one really does need a person.
+ */
+async function reviveRateLimitedSources(db: Db): Promise<void> {
+  const revived = await db.execute(sql`update career_sources cs set status='failing', next_scan_at=null
+    where cs.status='blocked'
+      and (select s.error from scans s where s.source_id=cs.id order by s.started_at desc, s.id desc limit 1) ~ '^blocked \((429|503)\)'
+    returning cs.id`);
+  if (revived.rows.length) log.info("returned rate-limited sources to the daily run", { sources: revived.rows.length });
 }
 
 main().catch((err) => {

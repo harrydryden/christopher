@@ -113,8 +113,13 @@ Everything else, including keywords, locations, the run time and the model, is e
 stored in the database. Each account has its own monthly AI budget, $25 to start, and that is the
 only budget: its holder changes it on Settings, an administrator changes anyone's in Admin ›
 Accounts. It runs on the calendar month and starts again on the 1st, and Admin › Operations reports
-what was spent by account, feature and model. `DAILY_AI_BUDGET_USD` and `DISCOVERY_AI_BUDGET_USD`
-are optional safety valves for the deployment as a whole, unset by default.
+what was spent by account, feature and model — alongside how each feature performed (latency, cache
+hit rate, and failures kept apart from cancellations), what each of the last twenty CV builds cost
+step by step, and the outbound traffic to every host we fetched from, with its 304 share, rate
+limiting and week-on-week change. [docs/DEPLOY.md](docs/DEPLOY.md#observability) says which ledger
+records what, how long each is kept, and how to answer the usual operational questions from them.
+`DAILY_AI_BUDGET_USD` and `DISCOVERY_AI_BUDGET_USD` are optional safety valves for the deployment
+as a whole, unset by default.
 
 ## Tests
 

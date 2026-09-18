@@ -12,12 +12,15 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { requireAdmin } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { totalAiUsage } from "@/lib/ai-usage";
-import { formatBytes, formatCount, formatDuration, formatUsd, relativeTime, shortDate } from "@/lib/format";
+import { formatBytes, formatCount, formatDelta, formatDuration, formatLatency, formatPercent, formatUsd, formatUsdPrecise, relativeTime, shortDate } from "@/lib/format";
+import { hostNeedsAttention } from "@/lib/outbound-traffic";
 import { heapSummary, workerStateTone, HEAP_WARN_FRACTION } from "@/lib/worker-status";
 import {
   getAiUsage,
+  getCvBuildCosts,
   getLastCrashRecovery,
   getQueueCounts,
+  getScoredRoleCost,
   getTotalAiSpend,
   getWorkerStatus,
   listCompaniesWithNoSource,
@@ -29,6 +32,7 @@ import {
   listRetryingTasks,
   listRunningTasks,
   listSourcesNeedingAttention,
+  outboundTraffic,
 } from "@/lib/queries/health";
 
 export const dynamic = "force-dynamic";
@@ -52,7 +56,7 @@ export default async function AdminOperationsPage() {
   // Budgets belong to accounts and each has its own window; this page is the deployment's report,
   // so it counts the calendar month that everybody's budget resets on.
   const since = aiBudgetWindowStart(now, null);
-  const [metrics, status, crash, running, retrying, events, largestInputs, attentionSources, noSourceCompanies, problemScans, failedTasks, queueCounts, spend, usage, scanRuns, accounts] = await Promise.all([
+  const [metrics, status, crash, running, retrying, events, largestInputs, attentionSources, noSourceCompanies, problemScans, failedTasks, queueCounts, spend, usage, scanRuns, accounts, traffic, cvCosts, scoredRoles] = await Promise.all([
     workloadMetrics(db()),
     getWorkerStatus(now),
     getLastCrashRecovery(),
@@ -69,6 +73,9 @@ export default async function AdminOperationsPage() {
     getAiUsage(since),
     listRecentScanRuns(10),
     db().select({ id: users.id, email: users.email }).from(users),
+    outboundTraffic(7),
+    getCvBuildCosts(20),
+    getScoredRoleCost(30),
   ]);
   const emailById = new Map(accounts.map((a) => [a.id, a.email]));
   const totals = totalAiUsage(usage);
@@ -255,9 +262,61 @@ export default async function AdminOperationsPage() {
         )}
       </Card>
 
+      <Card title="Outbound traffic (last 7 days)">
+        <p className="mb-3 text-14 text-muted">
+          One line per host the deployment fetched from, both the polite fetcher and the headless browser. A high <strong className="font-semibold text-fg">304</strong> share is the good case: those are requests the host answered &ldquo;unchanged&rdquo; to, so nothing transferred and the scan cost a round trip instead of a board. Bytes have no ceiling of their own — what bounds them is the per-scan cap on what a listing may return, and the heap ceiling under Background worker that the largest of them is measured against.
+        </p>
+        {traffic.length === 0 ? (
+          <EmptyState title="No outbound traffic recorded" description="The fetcher and the browser write these counters as they work; the first scan after this release deploys will fill the table." />
+        ) : (
+          <Table>
+            <THead>
+              <tr>
+                <TH>Host</TH>
+                <TH className="text-right">Requests</TH>
+                <TH className="text-right">Week on week</TH>
+                <TH className="text-right">Bytes</TH>
+                <TH className="text-right">Browser</TH>
+                <TH className="text-right">304</TH>
+                <TH className="text-right">Throttled</TH>
+                <TH className="text-right">Blocked / robots / capped</TH>
+                <TH className="text-right">p95</TH>
+              </tr>
+            </THead>
+            <TBody>
+              {traffic.map((row) => {
+                const warn = hostNeedsAttention(row);
+                return (
+                  <TR key={row.host}>
+                    <TD className="max-w-[16rem] truncate" title={row.host}>{row.host}</TD>
+                    <TD className="text-right">{formatCount(row.requests)}</TD>
+                    <TD className="text-right text-muted" title={`${formatCount(row.previousRequests)} requests, ${formatBytes(row.previousBytes)} in the previous 7 days`}>
+                      {formatDelta(row.requests, row.previousRequests)} · {formatDelta(row.bytes, row.previousBytes)}
+                    </TD>
+                    <TD className="text-right">{formatBytes(row.bytes)}</TD>
+                    <TD className="text-right text-muted">{formatPercent(row.browserShare)}</TD>
+                    <TD className="text-right">{formatPercent(row.notModifiedRatio)}</TD>
+                    <TD className={`text-right ${row.rateLimitedRatio > 0.01 ? "text-warn" : ""}`}>{formatPercent(row.rateLimitedRatio, 1)}</TD>
+                    <TD className={`text-right ${row.blocked > 0 ? "text-warn" : "text-muted"}`}>
+                      {formatCount(row.blocked)} / {formatCount(row.robotsDenied)} / {formatCount(row.capRejected)}
+                    </TD>
+                    <TD className="text-right">{row.p95Ms === null ? "over 15s" : formatLatency(row.p95Ms)}</TD>
+                  </TR>
+                );
+              })}
+            </TBody>
+          </Table>
+        )}
+        {traffic.some(hostNeedsAttention) && (
+          <p className="mt-3 text-14 text-warn">
+            A host over 1% throttled is pacing us deliberately; one with blocked responses is refusing us outright. Both are answered by slowing that host down rather than by retrying it.
+          </p>
+        )}
+      </Card>
+
       <Card title="Largest scan inputs (last 7 days)">
         <p className="mb-3 text-14 text-muted">
-          A scan holds the listing it fetched in memory while it extracts from it, against the heap ceiling shown under Background worker — so the pages at the top of this list are the ones that can end the process.
+          A scan holds the listing it fetched in memory while it extracts from it, against the heap ceiling shown under Background worker — so the pages at the top of this list are the ones that can end the process. A scan whose requests all came back 304 read nothing at all, however big the board behind it is.
         </p>
         {largestInputs.length === 0 ? (
           <EmptyState title="No measured scan inputs" description="Scans record the size of what they fetched; a recent scan will populate this." />
@@ -267,7 +326,10 @@ export default async function AdminOperationsPage() {
               <tr>
                 <TH>Company</TH>
                 <TH>Source</TH>
+                <TH>Method</TH>
                 <TH className="text-right">Fetched</TH>
+                <TH className="text-right">Requests</TH>
+                <TH className="text-right">304</TH>
                 <TH>When</TH>
               </tr>
             </THead>
@@ -276,7 +338,10 @@ export default async function AdminOperationsPage() {
                 <TR key={row.sourceId}>
                   <TD><Link href={`/admin/catalogue?q=${encodeURIComponent(row.companyName)}`} className="hover:underline">{row.companyName}</Link></TD>
                   <TD>{row.sourceType}</TD>
+                  <TD className="text-muted">{row.fetchMethod ?? "—"}</TD>
                   <TD className={`text-right ${heartbeat?.vitals && row.bytes > heartbeat.vitals.heapLimitMb * 1_048_576 * 0.1 ? "text-warn" : ""}`}>{formatBytes(row.bytes)}</TD>
+                  <TD className="text-right">{row.requests === null ? "—" : formatCount(row.requests)}</TD>
+                  <TD className="text-right text-muted">{row.revalidated === null ? "—" : formatCount(row.revalidated)}</TD>
                   <TD className="whitespace-nowrap" title={row.at.toISOString()}>{relativeTime(row.at, now)}</TD>
                 </TR>
               ))}
@@ -305,7 +370,7 @@ export default async function AdminOperationsPage() {
                   <TH>Feature</TH>
                   <TH>Model</TH>
                   <TH className="text-right">Calls</TH>
-                  <TH className="text-right">Failed</TH>
+                  <TH className="text-right" title="Calls the model let us down on. Cancelled and stalled calls are counted separately under AI performance.">Failed</TH>
                   <TH className="text-right">Input</TH>
                   <TH className="text-right">Output</TH>
                   <TH className="text-right">Cache read</TH>
@@ -342,6 +407,95 @@ export default async function AdminOperationsPage() {
             </Table>
           )}
         </section>
+      </Card>
+
+      <Card title="AI performance">
+        <p className="mb-3 text-14 text-muted">
+          Cost says what a feature billed; this says why. Latency is the wait the caller sat through, cache hit is the share of each prompt the cache served rather than the model re-reading it, and the three failure columns are kept apart: <strong className="font-semibold text-fg">failed</strong> is the model letting us down, <strong className="font-semibold text-fg">cancelled</strong> is a batch this engine stopped paying for because a sibling had already failed, and <strong className="font-semibold text-fg">stalled</strong> is a stream cut off at the 15-minute ceiling. Only the first is a fault to chase.
+        </p>
+        {usage.length === 0 ? (
+          <EmptyState title="No AI calls this month" description="Every model call writes a row with its tokens, cost, duration and outcome; this fills as soon as one is made." />
+        ) : (
+          <Table>
+            <THead>
+              <tr>
+                <TH>Feature</TH>
+                <TH>Model</TH>
+                <TH>Account</TH>
+                <TH className="text-right">Calls</TH>
+                <TH className="text-right">p50</TH>
+                <TH className="text-right">p95</TH>
+                <TH className="text-right">Cache hit</TH>
+                <TH className="text-right">Failed</TH>
+                <TH className="text-right">Cancelled</TH>
+                <TH className="text-right">Stalled</TH>
+              </tr>
+            </THead>
+            <TBody>
+              {usage.map((row) => (
+                <TR key={`perf-${row.key}`}>
+                  <TD>{row.feature}</TD>
+                  <TD>{row.model}</TD>
+                  <TD className="max-w-40 truncate text-muted" title={accountName(row.userId)}>{accountName(row.userId)}</TD>
+                  <TD className="text-right">{formatCount(row.calls)}</TD>
+                  <TD className="text-right">{formatLatency(row.p50DurationMs)}</TD>
+                  <TD className="text-right">{formatLatency(row.p95DurationMs)}</TD>
+                  <TD className="text-right">{row.cacheHitRatio === null ? "—" : formatPercent(row.cacheHitRatio)}</TD>
+                  <TD className={`text-right ${row.failed > 0 ? "text-danger" : ""}`}>{formatCount(row.failed)}</TD>
+                  <TD className="text-right text-muted">{formatCount(row.cancelled)}</TD>
+                  <TD className={`text-right ${row.stalled > 0 ? "text-warn" : "text-muted"}`}>{formatCount(row.stalled)}</TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+        )}
+      </Card>
+
+      <Card title="Cost per build">
+        <p className="mb-3 text-14 text-muted">
+          The last {cvCosts.builds.length || 20} CV builds, each itemised by the step that incurred it. A build that paid twice for one audit batch shows it as <code>review_retry</code>; a build that simply read a long job description shows it under <code>rubric</code> and <code>author</code>. That is the difference between a dear feature and a dear day.
+        </p>
+        {cvCosts.builds.length === 0 ? (
+          <EmptyState title="No CV builds recorded" description="Each build writes one row per model call with the stage that made it; the next build will fill this." />
+        ) : (
+          <>
+            <p className="mb-3 text-14">
+              Median build {formatUsd(cvCosts.medianUsd ?? 0)} · worst {formatUsd(cvCosts.worstUsd ?? 0)}.
+              {scoredRoles.roles > 0
+                ? <> Scoring one role costs {formatUsdPrecise(scoredRoles.medianUsd ?? 0)} at the median, {formatUsd(scoredRoles.totalUsd)} over {formatCount(scoredRoles.roles)} roles in the last 30 days.</>
+                : <> No roles have been scored in the last 30 days.</>}
+            </p>
+            <Table>
+              <THead>
+                <tr>
+                  <TH>Build</TH>
+                  <TH className="text-right">Calls</TH>
+                  {cvCosts.stages.map((stage) => <TH key={stage} className="text-right">{stage.replace(/_/g, " ")}</TH>)}
+                  <TH className="text-right">Total</TH>
+                  <TH>When</TH>
+                </tr>
+              </THead>
+              <TBody>
+                {cvCosts.builds.map((build) => (
+                  <TR key={build.draftId}>
+                    <TD className="text-muted"><code>{build.draftId.slice(0, 8)}</code></TD>
+                    <TD className="text-right">{formatCount(build.calls)}</TD>
+                    {cvCosts.stages.map((stage) => (
+                      <TD key={stage} className={`text-right ${stage.endsWith("_retry") && build.byStage[stage] ? "text-warn" : ""}`}>
+                        {build.byStage[stage] ? formatUsdPrecise(build.byStage[stage]!) : "—"}
+                      </TD>
+                    ))}
+                    <TD className={`text-right ${cvCosts.worstUsd !== null && build.costUsd >= cvCosts.worstUsd ? "font-semibold" : ""}`}>{formatUsd(build.costUsd)}</TD>
+                    <TD className="whitespace-nowrap" title={build.at.toISOString()}>{relativeTime(build.at, now)}</TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+            {cvCosts.builds.some((build) => build.unattributedUsd > 0) && (
+              <p className="mt-3 text-14 text-muted">Builds from before stages were recorded carry their cost in the total without a step behind it.</p>
+            )}
+          </>
+        )}
       </Card>
 
       <Card title={`Failed tasks (${failedTasks.length})`}>

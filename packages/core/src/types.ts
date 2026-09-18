@@ -54,6 +54,13 @@ export interface FetchInit {
   body?: string;
   timeoutMs?: number;
   maxBodyBytes?: number;
+  /**
+   * Revalidate this URL even though its body is too large to cache. The fetcher keeps the
+   * validators and a hash of the last body it read, sends `If-None-Match`/`If-Modified-Since`, and
+   * may answer with `unchanged: true` and an empty body. Only a caller that can produce the listing
+   * from somewhere else (the scan, from its last snapshot) may ask for this.
+   */
+  revalidateLargeBody?: boolean;
 }
 
 export interface FetchResponse {
@@ -62,6 +69,19 @@ export interface FetchResponse {
   url: string;
   headers: Record<string, string>;
   body: string;
+  /**
+   * The body was served from the fetcher's cache after a 304: nothing was transferred. Callers
+   * that account for bytes must not count this body, or a revalidated scan reads as a full download.
+   */
+  revalidated?: boolean;
+  /**
+   * The resource is byte-for-byte what this fetcher last read from it — either the host said so
+   * with a 304, in which case `body` is empty, or the body arrived and hashed the same, in which
+   * case it is present and only the parse is wasted. Set only for `revalidateLargeBody` requests.
+   */
+  unchanged?: boolean;
+  /** sha1 of the body this URL last served, carried even when the 304 left nothing to hash. */
+  contentHash?: string;
 }
 
 export interface RenderedPage {
@@ -105,10 +125,32 @@ export interface Adapter {
   verify(spec: SourceSpec, ctx: FetchContext): Promise<VerifyResult>;
 }
 
+/**
+ * The listing was read, but the adapter knows it is short: a paging loop hit its page budget with
+ * more pages to go, or the feed said it holds more roles than it returned. The postings that were
+ * read are carried on the error so the scan can still store them, and the scan records itself as
+ * `partial` — the only status that keeps every stored role open. A truncated listing returned as a
+ * complete one is what closes roles that were never missing.
+ */
+export class IncompleteListingError extends Error {
+  constructor(
+    message: string,
+    public readonly postings: RawPosting[],
+  ) {
+    super(message);
+    this.name = "IncompleteListingError";
+  }
+}
+
+/**
+ * `blocked` is bot protection: a 403 or a challenge page, which no retry undoes and whose remedy is
+ * manual. `rate_limited` is a 429 or 503 — the host asking us to come back later, which is an
+ * ordinary failed fetch that retries on the normal schedule and must never disable a source.
+ */
 export class SourceFetchError extends Error {
   constructor(
     message: string,
-    public readonly kind: "http" | "blocked" | "parse" | "timeout" | "network",
+    public readonly kind: "http" | "blocked" | "rate_limited" | "parse" | "timeout" | "network",
     public readonly status?: number,
   ) {
     super(message);

@@ -7,8 +7,9 @@
 
 /**
  * The board listing as the adapter asks for it: `/jobs`, without `content=true`, so no posting
- * carries a description. Anduril's board answered that request in 1-2 MB where the same board
- * with `content=true` answered in 41 MB.
+ * carries a description — and, exactly as the vendor documents it, no `departments`, no `offices`
+ * and no `first_published` either. Anduril's board answered that request in 1-2 MB where the same
+ * board with `content=true` answered in 41 MB.
  */
 export const GREENHOUSE_JOBS = {
   jobs: [
@@ -17,52 +18,40 @@ export const GREENHOUSE_JOBS = {
       internal_job_id: 3001,
       title: "Operations Manager",
       updated_at: "2026-08-30T09:00:00Z",
-      first_published: "2026-08-28T09:00:00Z",
+      requisition_id: "50",
       absolute_url: "https://job-boards.greenhouse.io/acme/jobs/4001001",
       location: { name: "London, UK" },
-      departments: [{ id: 1, name: "Operations" }],
-      offices: [{ id: 1, name: "London" }],
+      language: "en",
       metadata: [{ name: "Salary Range", value: "£70,000 - £90,000" }],
     },
     {
       id: 4001002,
       title: "Senior Operations Associate",
       updated_at: "2026-09-01T09:00:00Z",
-      first_published: "2026-09-01T09:00:00Z",
       absolute_url: "https://job-boards.greenhouse.io/acme/jobs/4001002",
       location: { name: "Remote - USA" },
-      departments: [{ id: 1, name: "Operations" }],
-      offices: [{ id: 2, name: "Remote" }],
+      metadata: null,
     },
     {
       id: 4001003,
       title: "Software Engineer, Platform",
       updated_at: "2026-08-15T09:00:00Z",
-      first_published: "2026-08-10T09:00:00Z",
       absolute_url: "https://job-boards.greenhouse.io/acme/jobs/4001003",
       location: { name: "London, UK" },
-      departments: [{ id: 2, name: "Engineering" }],
-      offices: [{ id: 1, name: "London" }],
     },
     {
       id: 4001004,
       title: "Head of Business Operations",
       updated_at: "2026-07-01T09:00:00Z",
-      first_published: "2026-06-20T09:00:00Z",
       absolute_url: "https://job-boards.greenhouse.io/acme/jobs/4001004",
       location: { name: "New York, NY" },
-      departments: [{ id: 1, name: "Operations" }],
-      offices: [{ id: 3, name: "New York" }],
     },
     {
       id: 4001005,
       title: "Operations Intern",
       updated_at: "2026-09-02T09:00:00Z",
-      first_published: "2026-09-02T09:00:00Z",
       absolute_url: "https://job-boards.greenhouse.io/acme/jobs/4001005",
       location: { name: "Manchester, UK" },
-      departments: [{ id: 1, name: "Operations" }],
-      offices: [{ id: 4, name: "Manchester" }],
     },
     {
       id: 4001006,
@@ -70,11 +59,88 @@ export const GREENHOUSE_JOBS = {
       updated_at: "2026-08-20T09:00:00Z",
       absolute_url: "https://job-boards.greenhouse.io/acme/jobs/4001006",
       location: { name: "Remote - UK" },
-      departments: [{ id: 3, name: "People" }],
-      offices: [],
     },
   ],
   meta: { total: 6 },
+};
+
+/**
+ * `/v1/boards/{slug}/departments`: every department with the ids of the jobs under it and no
+ * description anywhere. This is where the department a gate matches on comes from now that the
+ * listing is fetched without `content=true`.
+ */
+export const GREENHOUSE_DEPARTMENTS = {
+  departments: [
+    { id: 90, name: "R & D", jobs: [], parent_id: null, child_ids: [2] },
+    {
+      id: 1,
+      name: "Operations",
+      jobs: [
+        { id: 4001001, title: "Operations Manager", location: { name: "London, UK" }, updated_at: "2026-08-30T09:00:00Z" },
+        { id: 4001002, title: "Senior Operations Associate", location: { name: "Remote - USA" }, updated_at: "2026-09-01T09:00:00Z" },
+        { id: 4001004, title: "Head of Business Operations", location: { name: "New York, NY" }, updated_at: "2026-07-01T09:00:00Z" },
+        { id: 4001005, title: "Operations Intern", location: { name: "Manchester, UK" }, updated_at: "2026-09-02T09:00:00Z" },
+      ],
+      parent_id: null,
+      child_ids: [],
+    },
+    {
+      id: 2,
+      name: "Engineering",
+      jobs: [{ id: 4001003, title: "Software Engineer, Platform", location: { name: "London, UK" }, updated_at: "2026-08-15T09:00:00Z" }],
+      parent_id: 90,
+      child_ids: [],
+    },
+    {
+      id: 3,
+      name: "People",
+      jobs: [{ id: 4001006, title: "Recruiting Coordinator", location: { name: "Remote - UK" }, updated_at: "2026-08-20T09:00:00Z" }],
+      parent_id: null,
+      child_ids: [],
+    },
+  ],
+};
+
+/**
+ * `/v1/boards/{slug}/offices`: offices, each with its departments and their jobs. A job under a
+ * child office belonged to its parent office too under `content=true` ("Europe" as well as
+ * "London"), so the parent chain is part of the fixture.
+ */
+export const GREENHOUSE_OFFICES = {
+  offices: [
+    { id: 10, name: "Europe", departments: [], parent_id: null, child_ids: [1, 4] },
+    {
+      id: 1,
+      name: "London",
+      departments: [
+        { id: 1, name: "Operations", jobs: [{ id: 4001001, title: "Operations Manager" }], parent_id: null, child_ids: [] },
+        { id: 2, name: "Engineering", jobs: [{ id: 4001003, title: "Software Engineer, Platform" }], parent_id: null, child_ids: [] },
+      ],
+      parent_id: 10,
+      child_ids: [],
+    },
+    {
+      id: 2,
+      name: "Remote",
+      departments: [{ id: 1, name: "Operations", jobs: [{ id: 4001002, title: "Senior Operations Associate" }], parent_id: null, child_ids: [] }],
+      parent_id: null,
+      child_ids: [],
+    },
+    {
+      id: 3,
+      name: "New York",
+      departments: [{ id: 1, name: "Operations", jobs: [{ id: 4001004, title: "Head of Business Operations" }], parent_id: null, child_ids: [] }],
+      parent_id: null,
+      child_ids: [],
+    },
+    {
+      id: 4,
+      name: "Manchester",
+      departments: [{ id: 1, name: "Operations", jobs: [{ id: 4001005, title: "Operations Intern" }], parent_id: null, child_ids: [] }],
+      parent_id: 10,
+      child_ids: [],
+    },
+  ],
 };
 
 /** One role from `/v1/boards/{slug}/jobs/{id}`: the same fields plus the HTML description. */
@@ -109,6 +175,11 @@ export const LEVER_POSTINGS = [
     categories: { commitment: "Full-time", department: "Operations", location: "London", team: "Ops", allLocations: ["London", "Bristol"] },
     description: "<p>Own operations end to end.</p>",
     descriptionPlain: "Own operations end to end.",
+    lists: [
+      { text: "Requirements", content: "<ul><li>Five years running a warehouse</li></ul>" },
+      { text: "Benefits", content: "<ul><li>Four-day week</li></ul>" },
+    ],
+    additionalPlain: "We interview in two rounds.",
     hostedUrl: "https://jobs.lever.co/acme/e6a1f8c2-1111-4c1a-9f11-2f0a1b2c3d4e",
     applyUrl: "https://jobs.lever.co/acme/e6a1f8c2-1111-4c1a-9f11-2f0a1b2c3d4e/apply",
     createdAt: 1756377600000,

@@ -4,7 +4,7 @@ import { createAiEngine, type AiClientLike, type AiEngine, type AiUsageRecord, t
 import { sql } from "drizzle-orm";
 import { BrowserRenderer } from "./browser";
 import type { WorkerEnv } from "./env";
-import { PoliteFetcher, userAgentFor } from "./fetcher";
+import { HttpTrafficLedger, PoliteFetcher, userAgentFor } from "./fetcher";
 import { tryReserveAi } from "./budget";
 import { log } from "./log";
 import { loadSettings, loadUserSettings } from "./settings";
@@ -16,6 +16,8 @@ export interface WorkerDeps {
   pool: { end(): Promise<void> };
   env: WorkerEnv;
   fetcher: PoliteFetcher;
+  /** Per-host traffic counters shared by the fetcher and the browser; flushed on a timer and at close. */
+  traffic: HttpTrafficLedger;
   browser: BrowserRenderer | null;
   ai: AiEngine;
   /** A stand-in for the Anthropic client, so a test can drive the real CV engine with scripted answers. */
@@ -59,7 +61,9 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
     userCache.set(userId, { at: Date.now(), value });
     return value;
   };
+  const traffic = new HttpTrafficLedger(db);
   const fetcher = new PoliteFetcher({
+    traffic,
     deferHost: async (host, delayMs) => { await db.execute(sql`insert into host_pacing (host, next_at) values (${host}, now() + ${delayMs} * interval '1 millisecond')
       on conflict (host) do update set next_at=greatest(host_pacing.next_at, excluded.next_at)`); },
     reserveHost: async (host, delayMs) => {
@@ -75,7 +79,7 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
   });
   const browser = env.disableBrowser
     ? null
-    : new BrowserRenderer({ beforeNavigate: host => fetcher.waitForHost(host), concurrency: env.browserConcurrency, userAgent: userAgentFor(env.contactEmail), executablePath: env.chromiumExecutablePath, hostMap: env.hostMap });
+    : new BrowserRenderer({ traffic, beforeNavigate: host => fetcher.waitForHost(host), concurrency: env.browserConcurrency, userAgent: userAgentFor(env.contactEmail), executablePath: env.chromiumExecutablePath, hostMap: env.hostMap });
 
   const onUsage = async (r: AiUsageRecord) => {
     try {
@@ -93,6 +97,7 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
         error: r.error ?? null,
         refType: r.refType ?? null,
         refId: r.refId ?? null,
+        stage: r.stage ?? null,
       });
     } catch (err) {
       log.warn("failed to record ai usage", err);
@@ -145,6 +150,7 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
     pool,
     env,
     fetcher,
+    traffic,
     browser,
     ai,
     settings,
@@ -156,6 +162,8 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
     now,
     async close() {
       await browser?.close();
+      // The last counters have to reach the table while the pool is still open.
+      await traffic.close();
       await pool.end();
     },
   };

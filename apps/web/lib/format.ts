@@ -67,6 +67,29 @@ export function formatDuration(ms: number): string {
   return rest ? `${hours}h ${rest}m` : `${hours}h`;
 }
 
+/** "+12%", "-4%", "—" when there is nothing to compare against: a week-over-week change. */
+export function formatDelta(current: number, previous: number): string {
+  if (previous === 0) return current === 0 ? "—" : "new";
+  const change = (current - previous) / previous;
+  if (Math.abs(change) < 0.005) return "level";
+  return `${change > 0 ? "+" : "\u2212"}${Math.abs(change * 100).toFixed(0)}%`;
+}
+
+/** "340ms", "2.4s", "18s": a latency, which spans three orders of magnitude here. */
+export function formatLatency(ms: number | null): string {
+  if (ms === null || !Number.isFinite(ms)) return "—";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const seconds = ms / 1000;
+  return seconds < 10 ? `${seconds.toFixed(1)}s` : `${Math.round(seconds)}s`;
+}
+
+/** Costs below a cent, which is what one scored role and one stage of a build come to. */
+export function formatUsdPrecise(n: number): string {
+  if (n === 0) return "$0";
+  if (Math.abs(n) < 0.01) return `$${n.toFixed(4)}`;
+  return formatUsd(n);
+}
+
 export function truncate(text: string, max: number): string {
   const trimmed = text.trim();
   if (trimmed.length <= max) return trimmed;

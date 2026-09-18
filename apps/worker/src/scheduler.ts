@@ -1,4 +1,4 @@
-import { schema, abandonCvDraft, enqueueTask, listUserIds, pruneWorkerEvents, releaseAiHolds } from "@christopher/db";
+import { schema, abandonCvDraft, enqueueTask, listUserIds, pruneWorkerEvents, recordWorkerEvent, releaseAiHolds, releaseOrphanedCvHolds } from "@christopher/db";
 import { dedupeKeyFor, localDateParts, priorityFor } from "@christopher/core";
 import { and, eq, lt, sql } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
@@ -152,6 +152,13 @@ export async function reconcileCvDrafts(deps: WorkerDeps, graceMinutes = 5): Pro
     failed++;
     const released = await releaseAiHolds(deps.db, { userId: abandoned.userId, callSite: "CV" });
     log.warn("failed a CV draft no task was building", { draftId: orphan.id, userId: abandoned.userId, holdsReleased: released.count });
+  }
+  // Holds outlive their builds when the pod that took them dies under another name or the draft
+  // is discarded mid-build; a boot releases only its own pod's holds, so the sweep takes the rest.
+  const orphanedHolds = await releaseOrphanedCvHolds(deps.db);
+  if (orphanedHolds.count) {
+    log.warn("released CV holds with no build behind them", orphanedHolds);
+    await recordWorkerEvent(deps.db, { workerId: deps.env.workerId, kind: "holds_released", detail: { ...orphanedHolds, reason: "orphaned" } });
   }
   return failed;
 }

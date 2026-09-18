@@ -175,6 +175,11 @@ export const LEVER_POSTINGS = [
     categories: { commitment: "Full-time", department: "Operations", location: "London", team: "Ops", allLocations: ["London", "Bristol"] },
     description: "<p>Own operations end to end.</p>",
     descriptionPlain: "Own operations end to end.",
+    lists: [
+      { text: "Requirements", content: "<ul><li>Five years running a warehouse</li></ul>" },
+      { text: "Benefits", content: "<ul><li>Four-day week</li></ul>" },
+    ],
+    additionalPlain: "We interview in two rounds.",
     hostedUrl: "https://jobs.lever.co/acme/e6a1f8c2-1111-4c1a-9f11-2f0a1b2c3d4e",
     applyUrl: "https://jobs.lever.co/acme/e6a1f8c2-1111-4c1a-9f11-2f0a1b2c3d4e/apply",
     createdAt: 1756377600000,

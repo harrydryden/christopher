@@ -1,12 +1,12 @@
 /**
  * Polite HTTP client used for every outbound request the worker makes to company sites and ATS feeds.
- *  - identifies itself, one request per 2s per host, timeouts, size cap
+ *  - identifies itself, paces each host (2s for a company's own site, 250ms for a shared ATS API), timeouts, size cap
  *  - optional robots.txt compliance for HTML pages (ATS feed hosts are exempt: they publish JSON for boards)
  *  - host mapping (tests point real hostnames at a local fake server)
  *  - maps 403 and challenge pages to SourceFetchError("blocked"), 429/503 to "rate_limited"
  *  - counts every outcome per host per day into `http_host_daily`
  */
-import { SourceFetchError, type FetchContext, type FetchInit, type FetchResponse } from "@christopher/core";
+import { sha1, SourceFetchError, type FetchContext, type FetchInit, type FetchResponse } from "@christopher/core";
 import { ats } from "@christopher/core";
 import { addHttpHostDaily, emptyHttpCounters, latencyBucketIndex, type Db, type HttpHostDailyDelta, type HttpVia } from "@christopher/db";
 import { log } from "./log";
@@ -137,6 +137,35 @@ const MAX_CACHE_BYTES = 16_000_000;
 const MAX_CACHE_ENTRIES = 200;
 
 /**
+ * A body too large to cache still gets a validator-only entry: the ETag, the Last-Modified and a
+ * hash of what was read, with no body at all. That is a few hundred bytes a URL, so the map is
+ * bounded by count alone and the oldest entry is evicted first.
+ */
+const MAX_VALIDATOR_ENTRIES = 500;
+
+/** How long a cached body or a stored validator may be used to make a conditional request. */
+const REVALIDATE_TTL_MS = 7 * 86_400_000;
+
+/**
+ * How long to leave a host alone between two requests.
+ *
+ * A company's own careers page is one site serving one employer, and 2 seconds a request is the
+ * politeness the spec promises it. The applicant-tracking API hosts are not that: one host serves
+ * every board on the vendor, it is published for job boards to read (which is why robots.txt does
+ * not apply to it either), and the catalogue points many companies at it at once. At 2 seconds a
+ * request, 30 Greenhouse boards plus 800 per-role description fetches serialise into about half an
+ * hour behind one hostname, so those hosts are paced at 250 ms instead. A `Retry-After` back-off is
+ * written to `host_pacing` and overrides either figure: a host that asks for a minute gets one.
+ */
+export const ATS_API_DELAY_MS = 250;
+export const DEFAULT_HOST_DELAY_MS = 2000;
+
+/** The minimum interval between two requests to `host`. An override never paces a host faster. */
+export function hostDelayMs(host: string, defaultMs: number = DEFAULT_HOST_DELAY_MS): number {
+  return ats.isAtsHost(host) ? Math.min(ATS_API_DELAY_MS, defaultMs) : defaultMs;
+}
+
+/**
  * How long to leave a host alone after a 429 or 503 that names no `Retry-After`, and the ceiling on
  * one it does: an hour is long enough to clear a burst and short enough that a daily scan still runs.
  */
@@ -151,6 +180,8 @@ export class PoliteFetcher {
   private queues = new Map<string, Promise<void>>();
   private responses = new Map<string, { response: FetchResponse; at: number }>();
   private responseBytes = 0;
+  /** Validators for bodies too large to cache: enough to ask "has it changed?", never the body. */
+  private validators = new Map<string, { etag?: string; lastModified?: string; hash: string; bytes: number; at: number }>();
 
   constructor(private readonly opts: FetcherOptions) {}
 
@@ -174,7 +205,7 @@ export class PoliteFetcher {
   }
 
   async waitForHost(host: string): Promise<void> {
-    const delay = this.opts.perHostDelayMs ?? 2000;
+    const delay = hostDelayMs(host, this.opts.perHostDelayMs ?? DEFAULT_HOST_DELAY_MS);
     if (this.opts.reserveHost) {
       const wait = await this.opts.reserveHost(host, delay);
       if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
@@ -261,10 +292,19 @@ export class PoliteFetcher {
     };
     if (target !== url) headers["x-forwarded-host"] = originalHost;
     const cacheKey = JSON.stringify([url, init.headers ?? {}, init.maxBodyBytes ?? null]);
-    const cached = (init.method ?? "GET") === "GET" && !init.body ? this.responses.get(cacheKey) : undefined;
-    const usable = cached && Date.now() - cached.at < 7 * 86400000 ? cached : undefined;
+    const cacheable = (init.method ?? "GET") === "GET" && !init.body;
+    const cached = cacheable ? this.responses.get(cacheKey) : undefined;
+    const usable = cached && Date.now() - cached.at < REVALIDATE_TTL_MS ? cached : undefined;
+    // A large listing is never in the body cache, so without this it is re-downloaded and re-parsed
+    // every day however little it moved. The caller opts in because only it can supply the listing
+    // a 304 does not carry.
+    const wantsLargeRevalidation = cacheable && init.revalidateLargeBody === true && !headers.authorization && !headers.cookie;
+    const storedValidator = wantsLargeRevalidation ? this.validators.get(cacheKey) : undefined;
+    const validator = storedValidator && Date.now() - storedValidator.at < REVALIDATE_TTL_MS ? storedValidator : undefined;
     if (usable?.response.headers.etag) headers["if-none-match"] = usable.response.headers.etag;
     else if (usable?.response.headers["last-modified"]) headers["if-modified-since"] = usable.response.headers["last-modified"];
+    else if (validator?.etag) headers["if-none-match"] = validator.etag;
+    else if (validator?.lastModified) headers["if-modified-since"] = validator.lastModified;
     const started = Date.now();
     // Filled in as the request resolves and recorded once, in the `finally` below, so that every
     // exit — a 304, a body over the cap, a timeout, a dead socket — lands in the same counters.
@@ -285,6 +325,15 @@ export class PoliteFetcher {
         // A fresh object: the caller learns nothing was transferred without the cached entry
         // acquiring the marker for every later reader of it.
         return { ...usable.response, revalidated: true };
+      }
+      if (res.status === 304 && validator) {
+        log.info("http revalidated", { host: originalHost, durationMs: Date.now() - started, bytes: 0, validatorOnly: true });
+        // Nothing was kept of this body but its hash, so there is nothing to return: the caller
+        // asked for `revalidateLargeBody` precisely because it can produce the listing itself.
+        this.rememberValidator(cacheKey, { ...validator, at: Date.now() });
+        const notModifiedHeaders: Record<string, string> = {};
+        res.headers.forEach((v, k) => (notModifiedHeaders[k] = v));
+        return { status: 304, url, headers: notModifiedHeaders, body: "", revalidated: true, unchanged: true, contentHash: validator.hash };
       }
       // The per-request cap wins: each adapter asks for what its feed needs, and the fetcher-wide
       // option is only the default for callers that ask for nothing. `HARD_MAX_BODY_BYTES` is the
@@ -325,8 +374,22 @@ export class PoliteFetcher {
           finalUrl = url;
         }
       }
-      const response = { status: res.status, url: finalUrl, headers: outHeaders, body };
+      const response: FetchResponse = { status: res.status, url: finalUrl, headers: outHeaders, body };
       bytes = Buffer.byteLength(body);
+      if (res.status === 200 && bytes > MAX_CACHED_BODY_BYTES && this.responses.has(cacheKey)) {
+        // The body outgrew the cache. Leaving the old one there would keep sending its validator
+        // for ever, and a 304 against it would hand a caller a listing that is months out of date.
+        this.responseBytes -= Buffer.byteLength(this.responses.get(cacheKey)!.response.body);
+        this.responses.delete(cacheKey);
+      }
+      // Whether a vendor sends validators at all is not something this codebase can assume, so the
+      // hash stands on its own: an identical body still spares the parse and everything after it.
+      if (wantsLargeRevalidation && res.status === 200 && bytes > MAX_CACHED_BODY_BYTES && !/no-store|private/i.test(outHeaders["cache-control"] ?? "")) {
+        const hash = sha1(body);
+        response.contentHash = hash;
+        if (validator?.hash === hash) response.unchanged = true;
+        this.rememberValidator(cacheKey, { etag: outHeaders.etag, lastModified: outHeaders["last-modified"], hash, bytes, at: Date.now() });
+      }
       if ((init.method ?? "GET") === "GET" && !init.body && res.status === 200 && bytes <= MAX_CACHED_BODY_BYTES && !/no-store|private/i.test(outHeaders["cache-control"] ?? "") && !outHeaders["set-cookie"] && !headers.authorization && !headers.cookie && (outHeaders.etag || outHeaders["last-modified"])) {
         const old = this.responses.get(cacheKey);
         if (old) { this.responseBytes -= Buffer.byteLength(old.response.body); this.responses.delete(cacheKey); }
@@ -348,6 +411,13 @@ export class PoliteFetcher {
       clearTimeout(timeout);
       this.opts.traffic?.request(originalHost, "http", { status, bytes, durationMs: Date.now() - started, failure });
     }
+  }
+
+  /** Keep the validators for one large URL, newest last, and drop the oldest past the bound. */
+  private rememberValidator(cacheKey: string, entry: { etag?: string; lastModified?: string; hash: string; bytes: number; at: number }): void {
+    this.validators.delete(cacheKey);
+    this.validators.set(cacheKey, entry);
+    while (this.validators.size > MAX_VALIDATOR_ENTRIES) this.validators.delete(this.validators.keys().next().value!);
   }
 
   async fetchText(url: string, init: FetchInit = {}): Promise<FetchResponse> {

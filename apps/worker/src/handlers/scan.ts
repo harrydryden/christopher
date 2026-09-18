@@ -45,6 +45,36 @@ type ScanStatus = "ok" | "partial" | "suspect_empty" | "failed";
 /** A manual rescan of a company that was scanned this recently is served by the existing result. */
 export const MANUAL_RESCAN_INTERVAL_MS = 30 * 60_000;
 
+/**
+ * The most outbound requests one scan of one source may make.
+ *
+ * The real ceiling is already there and invisible: a company scan runs under a three-minute task
+ * deadline, and at one request every two seconds a source that keeps asking — page after page of a
+ * listing, or one detail text per role for a description gate — runs out of time long before it
+ * runs out of pages. A scan killed by its deadline is a failed scan with nothing to show for the
+ * requests it did make. This makes the ceiling explicit instead: past it the scan stops fetching
+ * and is recorded `partial`, with a reason that says so, which keeps every stored role open (only a
+ * successful scan may close a role) and puts the source on Health beside every other partial scan.
+ */
+export const MAX_REQUESTS_PER_SCAN = 150;
+
+/** Recorded on the scan row when the budget above stopped it, and shown on Health as its reason. */
+const BUDGET_SPENT_REASON = `Scan stopped after its budget of ${MAX_REQUESTS_PER_SCAN} requests to this source was spent; the listing was not read completely, so this scan cannot close roles`;
+
+/**
+ * Thrown by a scan's fetch wrapper when the listing the adapter asked for came back byte-identical
+ * to the one behind this source's last successful scan. The parsed listing from that scan is
+ * carried on the error and reused as this scan's observation: an unchanged listing lists exactly
+ * the same roles, so nothing is missing from it and nothing may close on the strength of it that
+ * would not have closed on a re-parse of the same bytes.
+ */
+class ListingUnchanged extends Error {
+  constructor(readonly snapshot: StoredSnapshot) {
+    super("listing unchanged since the last successful scan");
+    this.name = "ListingUnchanged";
+  }
+}
+
 export async function handleScanCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
   const payload = task.payload as { companyId: string; scanRunId?: string; trigger?: string };
   return withResourceLease(deps, `scan:${payload.companyId}`, locked => scanCompany(task, locked));
@@ -137,17 +167,55 @@ async function scanSource(
   // with a 304. A source whose listing revalidates is nearly free; one that never does is not.
   let requests = 0;
   let revalidated = 0;
-  const ctx: FetchContext = { ...baseCtx, fetchText: async (url, init) => {
+  // Set when the request budget below stopped this scan, whoever ends up catching the error: an
+  // adapter that gives up mid-listing and a description read that swallows the failure both leave
+  // a scan that did not read everything, and it must be recorded as one.
+  let budgetSpent = false;
+  // The evidence kept with this source's last successful scan, read at most once and only when
+  // something is about to reuse it.
+  let snapshot: Promise<StoredSnapshot | null> | null = null;
+  const lastOkSnapshot = () => (snapshot ??= readLastOkSnapshot(deps, source.id));
+  // The hash of the listing body this scan read, stored with its snapshot. A snapshot may only be
+  // reused for bytes it was actually parsed from: "unchanged since the last time this process read
+  // the URL" is not the same claim as "unchanged since the last successful scan", and a snapshot
+  // from some older listing would be a fabricated observation, which is how roles close wrongly.
+  let listingHash: string | undefined;
+  const spend = () => {
+    if (requests >= MAX_REQUESTS_PER_SCAN) {
+      budgetSpent = true;
+      throw new Error(BUDGET_SPENT_REASON);
+    }
     requests += 1;
-    const response = await baseCtx.fetchText(url, init);
+  };
+  const count = (response: { revalidated?: boolean; body: string }) => {
     if (response.revalidated) revalidated += 1;
     else fetchedBytes += Buffer.byteLength(response.body, "utf8");
+  };
+  const ctx: FetchContext = { ...baseCtx, fetchText: async (url, init) => {
+    // Only the first request of a scan is the listing itself; a description, a departments index or
+    // a second listing page says nothing about whether the board as a whole moved, so only this one
+    // asks to be revalidated and only this one may be answered from the last snapshot.
+    const isListing = requests === 0;
+    spend();
+    let response = await baseCtx.fetchText(url, isListing ? { ...init, revalidateLargeBody: true } : init);
+    count(response);
+    if (isListing) listingHash = response.contentHash;
+    if (isListing && response.unchanged) {
+      const stored = await lastOkSnapshot();
+      if (stored && stored.postings.length > 0 && stored.listingHash && stored.listingHash === response.contentHash) throw new ListingUnchanged(stored);
+      // Nothing to reuse: a 304 left no body, so ask again without the validators.
+      if (!response.body) {
+        spend();
+        response = await baseCtx.fetchText(url, { ...init, revalidateLargeBody: false });
+        count(response);
+      }
+    }
     const body = response.body.slice(0, Math.max(0, 2_000_000 - snapshotChars));
     snapshotChars += body.length;
     if (body) responses.push({ url: response.url, status: response.status, body });
     return response;
   }, render: baseCtx.render ? async (url, opts) => {
-    requests += 1;
+    spend();
     const page = await baseCtx.render!(url, opts);
     fetchedBytes += Buffer.byteLength(page.html, "utf8");
     return page;
@@ -171,10 +239,11 @@ async function scanSource(
   let htmlPages: CachedHtmlPage[] = [];
   let incomplete = false;
   let updatedRecipe: HtmlRecipe | undefined;
+  let reusedListing = false;
 
   try {
     if (source.type === "html") {
-      const outcome = await scanHtmlSource(deps, spec, source, ctx);
+      const outcome = await scanHtmlSource(deps, spec, source, ctx, lastOkSnapshot);
       postings = outcome.postings;
       fetchMethod = outcome.method;
       droppedByValidation = outcome.dropped;
@@ -192,13 +261,26 @@ async function scanSource(
       postings = await ats.getAdapter(source.type).fetchPostings(spec, ctx);
     }
   } catch (err) {
-    if (err instanceof IncompleteListingError) {
+    if (err instanceof ListingUnchanged) {
+      // The bytes were identical, so re-parsing them could only produce this same listing. It is
+      // the complete observation of the board, which is why the scan stays `ok`: every stored role
+      // is present in it, so none is missing and none closes, and the two-miss rule is untouched.
+      postings = err.snapshot.postings;
+      htmlPages = err.snapshot.htmlPages;
+      reusedListing = true;
+      log.debug("listing unchanged: reusing the last successful scan's postings", { company: company.name, url: source.url, postings: postings.length });
+    } else if (err instanceof IncompleteListingError) {
       // The adapter read the board but knows the listing is short (a paging budget ran out, or the
       // feed said it holds more than it returned). What was read is kept and stored; the scan is
       // partial, so nothing closes on the strength of a listing that was never complete.
       postings = err.postings;
       incomplete = true;
       error = err.message.slice(0, 1000);
+    } else if (budgetSpent) {
+      // Checked after `IncompleteListingError` so an adapter that gives its partial listing up
+      // rather than propagating still has it stored. The reason and the partial status are applied
+      // below, so that a budget spent inside a description read — where the failure is swallowed
+      // and never reaches here at all — is recorded in exactly the same way.
     } else {
       fetchOk = false;
       error = (err as Error).message.slice(0, 1000);
@@ -263,6 +345,12 @@ async function scanSource(
     incomplete = true;
     error = `${unresolved.size} descriptions unavailable; admission deferred until the next scan`;
   }
+  // Last, so that it names the cause rather than the symptom: a spent budget is why those
+  // descriptions were unavailable, and why the listing above may be short.
+  if (budgetSpent) {
+    incomplete = true;
+    error = BUDGET_SPENT_REASON;
+  }
   const classified = classifyScan({ fetchOk, postingsFound: postings.length, previousOkCount, droppedByValidation });
   // A listing that collapsed against the last ok scan is what an ATS migration
   // looks like while the old board is still up: it keeps serving, just a
@@ -270,12 +358,14 @@ async function scanSource(
   // closes; the message lets the persistence check below recognise it.
   const shrunk = fetchOk && previousOkCount !== null && previousOkCount >= 10 && postings.length > 0 && postings.length < previousOkCount * 0.3;
   if (shrunk) error ??= `Listing shrank from ${previousOkCount} to ${postings.length} postings against the last ok scan; treated as partial`;
-  const status = incomplete && classified === "ok" ? "partial" : classified;
+  // A scan that knows it did not read the whole listing is `partial`, never `suspect_empty`: it is
+  // not evidence that the board went empty, and it must not trigger re-discovery on that reading.
+  const status = incomplete && classified !== "failed" ? "partial" : classified;
   const mode = modeForScanStatus(status);
 
   // Compressing the evidence is synchronous and the snapshot can be megabytes, so it happens
   // before the transaction opens rather than with the source's row lock held.
-  const rawSnapshot = gzipSync(JSON.stringify(snapshotFor(postings, responses, htmlPages))).toString("base64");
+  const rawSnapshot = gzipSync(JSON.stringify(snapshotFor(postings, responses, htmlPages, listingHash))).toString("base64");
   // Scoring is per account, so the budget is asked per account: one follower with nothing left to
   // spend has its roles left unscored, while everyone else scans and scores as usual. Queuing them
   // anyway would only fail and retry each task at the hold. Each distinct account is asked once,
@@ -442,8 +532,12 @@ async function scanSource(
       updatedAt: deps.now(),
     });
     if (changedFields.length) updateEvents.push({ jobId: job.id, type: "updated", payload: { fields: changedFields } });
-    const descriptionStale = !job.descriptionFetchedAt || deps.now().getTime() - job.descriptionFetchedAt.getTime() >= 14 * 86_400_000;
-    const sourceUpdated = posting.updatedAt && (!job.descriptionFetchedAt || posting.updatedAt > job.descriptionFetchedAt);
+    // When the feed carries the vendor's own `updated_at`, that is the refresh rule: the text is
+    // re-read when the posting moved and not otherwise. Age only stands in for it where the feed
+    // carries nothing — re-reading every stored role every fortnight to learn what `updated_at`
+    // already answers costs a board of N roles about N/14 detail fetches a day for nothing.
+    const descriptionAged = !job.descriptionFetchedAt || deps.now().getTime() - job.descriptionFetchedAt.getTime() >= 14 * 86_400_000;
+    const descriptionMoved = !job.descriptionFetchedAt || (posting.updatedAt ? posting.updatedAt > job.descriptionFetchedAt : descriptionAged);
     for (const follower of followers) {
       const gate = follower.settings.gate;
       if (undecided(posting.url) && needsDescription(gate)) continue;
@@ -457,12 +551,14 @@ async function scanSource(
         viewInserts.push({ userId: follower.userId, jobId: job.id, keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms, excluded: verdict.excluded, locationOk: verdict.locationOk, inTable: true, nearMiss: false, seeded: false, createdAt: deps.now(), updatedAt: deps.now() });
         scoreQueue.push({ userId: follower.userId, jobId: job.id });
       } else continue;
-      if (verdict.inTable && posting.descriptionText === undefined && (descriptionStale || sourceUpdated)) descriptionQueue.add(job.id);
+      if (verdict.inTable && posting.descriptionText === undefined && descriptionMoved) descriptionQueue.add(job.id);
     }
     // A stored posting still without text, whose description was never attempted or whose last
     // attempt is 14 days old, is queued again so a description gate is not deferred for ever.
-    // A posting whose text is already stored is not in `deferred` and costs nothing here.
-    if (deferred.has(posting.url) && descriptionStale) descriptionQueue.add(job.id);
+    // A posting whose text is already stored is not in `deferred` and costs nothing here. This one
+    // keeps the age rule whatever the feed says: a failed or empty read leaves no text but does
+    // move `description_fetched_at`, and `updated_at` will never move on our account.
+    if (deferred.has(posting.url) && descriptionAged) descriptionQueue.add(job.id);
   }
   for (let offset = 0; offset < updates.length; offset += 250) {
     await deps.db.execute(sql`update jobs j set title=v.title, url=v.url, location=v.location, locations=v.locations,
@@ -567,6 +663,7 @@ async function scanSource(
     closed: result.closed.length,
     followers: followers.length,
     deferredDescriptions: deferred.size,
+    reusedListing,
     fetchedBytes,
     requests,
     revalidated,
@@ -584,13 +681,62 @@ async function scanSource(
  * response; version 1 stored raw bodies up to 2MB, which for a large feed was
  * the first 5% of the listing and nothing anyone could replay.
  */
-function snapshotFor(postings: RawPosting[], responses: Array<{ url: string; status: number; body: string }>, htmlPages: CachedHtmlPage[]) {
+function snapshotFor(postings: RawPosting[], responses: Array<{ url: string; status: number; body: string }>, htmlPages: CachedHtmlPage[], listingHash?: string) {
   return {
     version: 2,
-    postings: postings.map(p => ({ externalId: p.externalId, title: p.title, url: p.url, location: p.location, locations: p.locations, department: p.department, postedAt: p.postedAt })),
+    listingHash,
+    postings: postings.map(p => ({ externalId: p.externalId, title: p.title, url: p.url, location: p.location, locations: p.locations, department: p.department, postedAt: p.postedAt, updatedAt: p.updatedAt })),
     responses: responses.map(r => ({ url: r.url, status: r.status, bytes: r.body.length, head: r.body.slice(0, 20_000) })),
     htmlPages,
   };
+}
+
+/** A posting as the snapshot holds it: JSON, so every date has been through a string. */
+type StoredPosting = Omit<RawPosting, "postedAt" | "updatedAt"> & { postedAt?: string; updatedAt?: string };
+
+interface StoredSnapshot {
+  /** The hash of the listing body these postings were parsed from, when it was large enough to be
+   * revalidated at all. Reuse is allowed only against bytes that hash to this. */
+  listingHash?: string;
+  /** The listing exactly as the last successful scan parsed it. */
+  postings: RawPosting[];
+  /** That scan's per-page HTML cache, carried forward so reusing it costs the next scan nothing. */
+  htmlPages: CachedHtmlPage[];
+}
+
+function revivePosting(p: StoredPosting): RawPosting {
+  return { ...p, postedAt: p.postedAt ? new Date(p.postedAt) : undefined, updatedAt: p.updatedAt ? new Date(p.updatedAt) : undefined };
+}
+
+/**
+ * The compressed evidence kept with this source's last successful scan. `null` when there is none,
+ * when the prune above dropped it, or when it cannot be read: every caller then fetches and parses
+ * normally, so a missing snapshot costs a re-read and never a wrong listing.
+ */
+async function readLastOkSnapshot(deps: WorkerDeps, sourceId: string): Promise<StoredSnapshot | null> {
+  const [last] = await deps.db.select({ rawSnapshot: schema.scans.rawSnapshot }).from(schema.scans)
+    .where(and(eq(schema.scans.sourceId, sourceId), eq(schema.scans.status, "ok"))).orderBy(desc(schema.scans.startedAt)).limit(1);
+  if (!last?.rawSnapshot) return null;
+  try {
+    const snapshot = JSON.parse(gunzipSync(Buffer.from(last.rawSnapshot, "base64"), { maxOutputLength: 8_000_000 }).toString()) as {
+      version?: number;
+      listingHash?: string;
+      postings?: StoredPosting[];
+      htmlPages?: Array<Omit<CachedHtmlPage, "postings"> & { postings?: StoredPosting[] }>;
+    };
+    // Version 1 stored raw bodies and no parsed listing; its per-page cache is still usable.
+    if (snapshot.version !== 1 && snapshot.version !== 2) return null;
+    return {
+      listingHash: typeof snapshot.listingHash === "string" ? snapshot.listingHash : undefined,
+      postings: (Array.isArray(snapshot.postings) ? snapshot.postings : [])
+        .filter((p): p is StoredPosting => typeof p?.title === "string" && typeof p?.url === "string")
+        .map(revivePosting),
+      htmlPages: (Array.isArray(snapshot.htmlPages) ? snapshot.htmlPages : [])
+        .map(page => ({ ...page, postings: (page.postings ?? []).map(revivePosting) })),
+    };
+  } catch {
+    return null;
+  }
 }
 
 interface CachedHtmlPage {
@@ -624,19 +770,9 @@ interface HtmlScanOutcome {
  * Tier-3 HTML: try the stored selector recipe first, then embedded structure, then the model.
  * A model extraction also produces a recipe, so later scans of an unchanged page cost nothing.
  */
-async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: CareerSource, ctx: FetchContext): Promise<HtmlScanOutcome> {
-  const [last] = await deps.db.select({ rawSnapshot: schema.scans.rawSnapshot }).from(schema.scans)
-    .where(and(eq(schema.scans.sourceId, source.id), eq(schema.scans.status, "ok"))).orderBy(desc(schema.scans.startedAt)).limit(1);
-  let cached: CachedHtmlPage[] = [];
-  try {
-    if (last?.rawSnapshot) {
-      const snapshot = JSON.parse(gunzipSync(Buffer.from(last.rawSnapshot, "base64"), { maxOutputLength: 8_000_000 }).toString());
-      if ((snapshot.version === 1 || snapshot.version === 2) && Array.isArray(snapshot.htmlPages)) cached = snapshot.htmlPages.map((page: CachedHtmlPage) => ({ ...page, postings: page.postings.map(posting => ({ ...posting,
-        postedAt: posting.postedAt ? new Date(posting.postedAt) : undefined,
-        updatedAt: posting.updatedAt ? new Date(posting.updatedAt) : undefined,
-      })) }));
-    }
-  } catch { /* Missing or older snapshots trigger fresh extraction. */ }
+async function scanHtmlSource(deps: WorkerDeps, spec: SourceSpec, source: CareerSource, ctx: FetchContext, lastOkSnapshot: () => Promise<StoredSnapshot | null>): Promise<HtmlScanOutcome> {
+  // Missing or unreadable snapshots trigger fresh extraction.
+  const cached: CachedHtmlPage[] = (await lastOkSnapshot())?.htmlPages ?? [];
   const pages: CachedHtmlPage[] = [];
   const visited = new Set<string>();
   let url: string | null = spec.url;

@@ -28,12 +28,33 @@ interface LeverPosting {
   categories?: { commitment?: string; department?: string; location?: string; team?: string; allLocations?: string[] };
   description?: string;
   descriptionPlain?: string;
+  /** The body of the posting after the opening paragraphs: requirements, benefits, and so on. */
+  lists?: Array<{ text?: string; content?: string }>;
+  additional?: string;
+  additionalPlain?: string;
   hostedUrl?: string;
   applyUrl?: string;
   createdAt?: number;
   workplaceType?: string;
   country?: string;
   salaryRange?: { min?: number; max?: number; currency?: string; interval?: string };
+}
+
+/**
+ * Lever splits a posting into an opening (`description`), a series of headed lists (requirements,
+ * benefits, what we offer) and a closing note (`additional`). `descriptionPlain` is the opening
+ * alone, so a gate matching on the description — which keys on exactly this text — never saw the
+ * requirements, where the words a search is usually written around live. All three are folded in.
+ */
+function descriptionTextFor(p: LeverPosting): string | undefined {
+  const lists = (p.lists ?? []).map((list) => {
+    const heading = str(list?.text);
+    const body = htmlToText(list?.content);
+    return body ? (heading ? `${heading}\n${body}` : body) : undefined;
+  });
+  const parts = [str(p.descriptionPlain) ?? htmlToText(p.description), ...lists, str(p.additionalPlain) ?? htmlToText(p.additional)];
+  const text = parts.filter((part): part is string => !!part).join("\n\n");
+  return text || undefined;
 }
 
 function mapPosting(p: LeverPosting): RawPosting | null {
@@ -57,7 +78,7 @@ function mapPosting(p: LeverPosting): RawPosting | null {
     remote,
     postedAt: parseDate(p.createdAt),
     descriptionHtml: str(p.description),
-    descriptionText: str(p.descriptionPlain) ?? htmlToText(p.description),
+    descriptionText: descriptionTextFor(p),
     salaryText,
   };
 }

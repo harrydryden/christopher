@@ -21,7 +21,7 @@ const ctx = createFakeFetchContext({
     "https://api.smartrecruiters.com/v1/companies/acme/postings?limit=1&offset=0": { body: fx.SMARTRECRUITERS_PAGE },
     "https://api.smartrecruiters.com/v1/companies/acme/postings/744000000000001": { body: fx.SMARTRECRUITERS_DETAIL },
     "https://acme.recruitee.com/api/offers/": { body: fx.RECRUITEE_OFFERS },
-    "https://acme.jobs.personio.de/xml": { body: fx.PERSONIO_XML },
+    "https://acme.jobs.personio.de/xml?language=en": { body: fx.PERSONIO_XML },
     "https://acme.bamboohr.com/careers/list": { body: fx.BAMBOOHR_LIST },
     "https://acmecorp.wd1.myworkdayjobs.com/wday/cxs/acmecorp/External/jobs": [
       { body: fx.WORKDAY_PAGE_1, bodyContains: '"offset":0' },
@@ -186,6 +186,19 @@ describe("other adapters", () => {
     expect(postings[0]!.salaryText).toContain("GBP");
     expect(postings[1]!.remote).toBe(true);
   });
+  it("lever folds the requirement lists and the closing note into the description text", async () => {
+    // A description gate keys on `descriptionText` alone, and `descriptionPlain` is only the
+    // opening paragraph: the requirements are where the words a search is written around live.
+    const postings = await getAdapter("lever").fetchPostings(specFromAnyUrl("https://jobs.lever.co/acme")!, ctx);
+    const text = postings[0]!.descriptionText!;
+    expect(text).toContain("Own operations end to end.");
+    expect(text).toContain("Requirements");
+    expect(text).toContain("Five years running a warehouse");
+    expect(text).toContain("Four-day week");
+    expect(text).toContain("We interview in two rounds.");
+    // A posting with neither lists nor a closing note is unchanged.
+    expect(postings[1]!.descriptionText).toBe("Analyse data.");
+  });
   it("ashby skips unlisted jobs and keeps secondary locations", async () => {
     const postings = await getAdapter("ashby").fetchPostings(specFromAnyUrl("https://jobs.ashbyhq.com/acme")!, ctx);
     expect(postings).toHaveLength(1);
@@ -290,8 +303,12 @@ describe("other adapters", () => {
     expect(postings).toHaveLength(1);
     expect(postings[0]!.descriptionText).toContain("Run operations.");
   });
-  it("personio parses the XML feed", async () => {
+  it("personio parses the XML feed and asks for it in English", async () => {
     const postings = await getAdapter("personio").fetchPostings(specFromAnyUrl("https://acme.jobs.personio.de")!, ctx);
+    // A German tenant's default feed would pass an English keyword gate nothing at all, and the
+    // scan would succeed while doing it, so the language is always asked for.
+    expect(ctx.requestLog.some(r => r.url === "https://acme.jobs.personio.de/xml?language=en")).toBe(true);
+    expect(specFromAnyUrl("https://acme.jobs.personio.de")!.apiUrl).toBe("https://acme.jobs.personio.de/xml?language=en");
     expect(postings).toHaveLength(2);
     expect(postings[0]!.title).toBe("Operations Specialist");
     expect(postings[0]!.url).toBe("https://acme.jobs.personio.de/job/1234567");

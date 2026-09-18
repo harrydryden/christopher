@@ -54,6 +54,13 @@ export interface FetchInit {
   body?: string;
   timeoutMs?: number;
   maxBodyBytes?: number;
+  /**
+   * Revalidate this URL even though its body is too large to cache. The fetcher keeps the
+   * validators and a hash of the last body it read, sends `If-None-Match`/`If-Modified-Since`, and
+   * may answer with `unchanged: true` and an empty body. Only a caller that can produce the listing
+   * from somewhere else (the scan, from its last snapshot) may ask for this.
+   */
+  revalidateLargeBody?: boolean;
 }
 
 export interface FetchResponse {
@@ -67,6 +74,14 @@ export interface FetchResponse {
    * that account for bytes must not count this body, or a revalidated scan reads as a full download.
    */
   revalidated?: boolean;
+  /**
+   * The resource is byte-for-byte what this fetcher last read from it — either the host said so
+   * with a 304, in which case `body` is empty, or the body arrived and hashed the same, in which
+   * case it is present and only the parse is wasted. Set only for `revalidateLargeBody` requests.
+   */
+  unchanged?: boolean;
+  /** sha1 of the body this URL last served, carried even when the 304 left nothing to hash. */
+  contentHash?: string;
 }
 
 export interface RenderedPage {

@@ -4,8 +4,16 @@ import { SourceFetchError } from "../types";
 import { parseDate } from "../normalize";
 import { asArray, htmlToText, joinLocation, safeUrl, slugOk, str, verifyFromFetch, MAX_POSTINGS } from "./common";
 
+/**
+ * The feed answers in the tenant's default language unless asked otherwise, and for a Personio
+ * tenant that default is often German. A gate written in English then matches nothing at all —
+ * silently, because the scan itself succeeds — so every read asks for English explicitly. A tenant
+ * that publishes no English translation still answers with what it has.
+ */
+const FEED_QUERY = "?language=en";
+
 export function personioSpec(slug: string, host = `${slug}.jobs.personio.de`): SourceSpec {
-  return { type: "personio", url: `https://${host}`, apiUrl: `https://${host}/xml`, atsSlug: slug, atsSite: host };
+  return { type: "personio", url: `https://${host}`, apiUrl: `https://${host}/xml${FEED_QUERY}`, atsSlug: slug, atsSite: host };
 }
 
 function fromUrl(url: string): SourceSpec | null {
@@ -62,7 +70,7 @@ function mapPosition(p: PersonioPosition, host: string): RawPosting | null {
 
 async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
   const host = spec.atsSite ?? `${spec.atsSlug}.jobs.personio.de`;
-  const res = await ctx.fetchText(`https://${host}/xml`, { headers: { accept: "application/xml,text/xml" } });
+  const res = await ctx.fetchText(`https://${host}/xml${FEED_QUERY}`, { headers: { accept: "application/xml,text/xml" } });
   if (res.status >= 400) throw new SourceFetchError(`HTTP ${res.status} from personio`, res.status === 403 || res.status === 429 ? "blocked" : "http", res.status);
   let parsed: unknown;
   try {

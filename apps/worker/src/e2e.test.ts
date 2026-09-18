@@ -21,7 +21,7 @@ import { TaskQueue } from "./queue";
 import { startTestServer, type RouteTable, type TestServer } from "./test-server";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test";
-const HOSTS = ["www.acme.example", "acme.example", "boards-api.greenhouse.io", "job-boards.greenhouse.io", "www.orbital.example", "orbital.example", "api.smartrecruiters.com"];
+const HOSTS = ["www.acme.example", "acme.example", "boards-api.greenhouse.io", "job-boards.greenhouse.io", "www.orbital.example", "orbital.example", "api.smartrecruiters.com", "pager.example"];
 
 /** An Anthropic-style site: homepage -> careers landing -> listing backed by a Greenhouse board. */
 function acmeRoutes(): RouteTable[string] {
@@ -1243,4 +1243,200 @@ describe("what a scan costs the host", () => {
     expect(healthy!.consecutiveFailures).toBe(0);
     expect(healthy!.nextScanAt).toBeNull();
   }, 60_000);
+});
+
+describe("what a scan asks for and when", () => {
+  async function latestScan(sourceId: string) {
+    const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, sourceId)).orderBy(desc(schema.scans.startedAt)).limit(1);
+    return scan!;
+  }
+  async function currentSource(sourceId: string) {
+    const [source] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, sourceId));
+    return source!;
+  }
+
+  it("re-reads a description when the board says the role moved, not once a fortnight", async () => {
+    // Greenhouse publishes `updated_at` per role. Re-reading a stored description every fourteen
+    // days to find out what `updated_at` already answers is one detail fetch per role per fortnight
+    // — across a catalogue of boards, most of a day's outbound requests, for text that has not moved.
+    await setGate({});
+    setJobs([JOB_OPERATIONS_MANAGER, JOB_ENGINEER, JOB_OPS_NEW_YORK]);
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
+    const [manager] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, `id:${JOB_OPERATIONS_MANAGER.id}`));
+    expect(manager!.descriptionText).toBeTruthy();
+    expect(manager!.descriptionFetchedAt).toBeInstanceOf(Date);
+
+    // A fortnight and a day later, with every `updated_at` where it was.
+    await db.delete(schema.tasks);
+    now = new Date(now.getTime() + 15 * 86_400_000);
+    const settings = await deps.settings();
+    expect((await _scanSourceForTests(deps, company, await currentSource(source!.id), settings, null)).status).toBe("ok");
+    expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"))).toHaveLength(0);
+
+    // The board edits one role. That, and only that, is what re-reads a description.
+    setJobs([{ ...JOB_OPERATIONS_MANAGER, updated_at: "2026-09-19T09:00:00Z" }, JOB_ENGINEER, JOB_OPS_NEW_YORK]);
+    await _scanSourceForTests(deps, company, await currentSource(source!.id), settings, null);
+    const queued = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"));
+    expect(queued).toHaveLength(1);
+    expect((queued[0]!.payload as { jobId: string }).jobId).toBe(manager!.id);
+  }, 120_000);
+
+  it("keeps the fortnightly refresh for a feed that carries no updated_at", async () => {
+    // SmartRecruiters publishes no `updated_at`, so age is all there is to go on and the old rule
+    // stands: the saving above is taken only where the vendor answers the question for us.
+    await setGate({});
+    server.setRoutes({ "api.smartrecruiters.com": smartRecruitersRoutes("small") });
+    const [company] = await db.insert(schema.companies).values({ name: "Orbital", domain: "orbital.example", homepageUrl: "https://www.orbital.example/" }).returning();
+    await subscribeToCompany(db, user.id, company!.id);
+    const [source] = await db.insert(schema.careerSources).values({
+      companyId: company!.id, type: "smartrecruiters", url: "https://jobs.smartrecruiters.com/orbital",
+      apiUrl: "https://api.smartrecruiters.com/v1/companies/orbital/postings", atsSlug: "orbital", status: "active",
+    }).returning();
+    const settings = await deps.settings();
+    await _scanSourceForTests(deps, company!, source!, settings, null);
+    await queue.drain();
+    const stored = await db.select().from(schema.jobs);
+    expect(stored).toHaveLength(3);
+    expect(stored.every(job => job.descriptionFetchedAt !== null)).toBe(true);
+
+    await db.delete(schema.tasks);
+    await _scanSourceForTests(deps, company!, await currentSource(source!.id), settings, null);
+    expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"))).toHaveLength(0);
+    now = new Date(now.getTime() + 15 * 86_400_000);
+    await _scanSourceForTests(deps, company!, await currentSource(source!.id), settings, null);
+    expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"))).toHaveLength(3);
+  }, 120_000);
+
+  it("reuses the listing behind an unchanged large board, and still needs two misses to close", async () => {
+    // A listing over the cache's per-entry limit was re-downloaded and re-parsed every day because
+    // nothing was kept to revalidate it with. The reuse below is only ever the same bytes read
+    // again: an unchanged board lists every role it listed yesterday, so nothing is missing from
+    // it, nothing closes on it that a re-parse would not have closed, and two consecutive
+    // successful misses are still what closes a role.
+    await setGate({});
+    const filler = (n: number) => ({
+      id: 5_000_000 + n, title: `Systems Technician ${n}`, updated_at: "2026-08-01T09:00:00Z",
+      absolute_url: `https://job-boards.greenhouse.io/acme-big/jobs/${5_000_000 + n}`,
+      location: { name: "London, UK" }, requisition_id: `REQ-${n}-${"x".repeat(600)}`,
+    });
+    const listed: Array<Record<string, unknown>> = [JOB_OPERATIONS_MANAGER, JOB_OPS_NEW_YORK, ...Array.from({ length: 900 }, (_, i) => filler(i))];
+    let etag = "board-1";
+    let jobs = listed;
+    server.setRoutes({ "job-boards.greenhouse.io": {}, "boards-api.greenhouse.io": {
+      "/v1/boards/acme-big/jobs": (req: import("node:http").IncomingMessage) => {
+        const listing = jobs.map(({ content: _content, ...rest }) => rest);
+        return req.headers["if-none-match"] === etag
+          ? { status: 304, body: "", headers: { etag } }
+          : { body: { jobs: listing, meta: { total: listing.length } }, headers: { etag } };
+      },
+      "/v1/boards/acme-big": { body: { name: "Acme Robotics" } },
+    } });
+    const [company] = await db.insert(schema.companies).values({ name: "Acme Robotics", domain: "acme.example", homepageUrl: "https://www.acme.example/" }).returning();
+    await subscribeToCompany(db, user.id, company!.id);
+    const [created] = await db.insert(schema.careerSources).values({
+      companyId: company!.id, type: "greenhouse", url: "https://job-boards.greenhouse.io/acme-big",
+      apiUrl: "https://boards-api.greenhouse.io/v1/boards/acme-big/jobs", atsSlug: "acme-big", status: "active",
+    }).returning();
+    const settings = await deps.settings();
+    const scan = async () => _scanSourceForTests(deps, company!, await currentSource(created!.id), settings, null);
+
+    expect((await scan()).status).toBe("ok");
+    const first = await latestScan(created!.id);
+    expect(first.postingsFound).toBe(902);
+    // Over the 512 KB the revalidation cache will hold, which is the whole point of this path.
+    expect(first.fetchedBytes).toBeGreaterThan(512 * 1024);
+    expect(first.revalidated).toBe(0);
+
+    // The next day, with the board untouched.
+    now = new Date(now.getTime() + 86_400_000);
+    expect((await scan()).status).toBe("ok");
+    const second = await latestScan(created!.id);
+    expect(second.postingsFound).toBe(902);
+    expect(second.requests).toBe(1);
+    expect(second.revalidated).toBe(1);
+    expect(second.fetchedBytes).toBe(0);
+    expect(second.closedCount).toBe(0);
+    const afterReuse = await db.select().from(schema.jobs);
+    expect(afterReuse).toHaveLength(902);
+    // Every stored role was in the reused listing, so none of them even counts as missing.
+    expect(afterReuse.every(job => job.status === "open" && job.missingScans === 0)).toBe(true);
+
+    // With nothing to reuse — pruned, unreadable, or written by a scan of some other listing — the
+    // scan asks again without the validators rather than inventing an observation.
+    await db.update(schema.scans).set({ rawSnapshot: null }).where(eq(schema.scans.sourceId, created!.id));
+    now = new Date(now.getTime() + 86_400_000);
+    expect((await scan()).status).toBe("ok");
+    const refetched = await latestScan(created!.id);
+    expect(refetched.postingsFound).toBe(902);
+    expect(refetched.requests).toBe(4);
+    expect(refetched.revalidated).toBe(1);
+    expect(refetched.fetchedBytes).toBeGreaterThan(512 * 1024);
+
+    // The board takes a role down and its validator moves with it: a full read, one miss.
+    jobs = listed.filter(job => job.id !== JOB_OPERATIONS_MANAGER.id);
+    etag = "board-2";
+    now = new Date(now.getTime() + 86_400_000);
+    expect((await scan()).status).toBe("ok");
+    const third = await latestScan(created!.id);
+    expect(third.fetchedBytes).toBeGreaterThan(512 * 1024);
+    expect(third.closedCount).toBe(0);
+    const [missedOnce] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, `id:${JOB_OPERATIONS_MANAGER.id}`));
+    expect(missedOnce!.status).toBe("open");
+    expect(missedOnce!.missingScans).toBe(1);
+
+    // The day after that the board is unchanged again, so this scan is served from the snapshot
+    // the shortened listing wrote. The second miss is a real one and the role closes on it.
+    now = new Date(now.getTime() + 86_400_000);
+    expect((await scan()).status).toBe("ok");
+    const fourth = await latestScan(created!.id);
+    expect(fourth.revalidated).toBe(1);
+    expect(fourth.fetchedBytes).toBe(0);
+    expect(fourth.closedCount).toBe(1);
+    const [closed] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, `id:${JOB_OPERATIONS_MANAGER.id}`));
+    expect(closed!.status).toBe("closed");
+    expect(closed!.closedAt).toBeInstanceOf(Date);
+  }, 180_000);
+
+  it("stops at its request budget and records a partial scan that closes nothing", async () => {
+    // A description-matching gate on a listing that carries no descriptions is one request per
+    // role. Unbounded, that scan runs until its three-minute deadline kills it; bounded, it stops
+    // and says so, and a scan that did not read the listing out closes nothing.
+    const roles = Array.from({ length: 200 }, (_, i) => i + 1);
+    const page = (shown: number[]) => `<!doctype html><html><body><ul class="roles">${shown
+      .map(n => `<li><a href="/jobs/${n}">Operations Role ${n}</a><span>London, UK</span></li>`).join("")}</ul></body></html>`;
+    const detail = (n: number) => `<!doctype html><html><body><main>${"Warehouse operations work on the night shift. ".repeat(20)} Role ${n}.</main></body></html>`;
+    const routesFor = (shown: number[]) => ({ "pager.example": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /\n", contentType: "text/plain" },
+      "/jobs": { body: page(shown) },
+      ...Object.fromEntries(roles.map(n => [`/jobs/${n}`, { body: detail(n) }])),
+    } });
+    server.setRoutes(routesFor(roles));
+    await setGate({});
+    const [company] = await db.insert(schema.companies).values({ name: "Pager", domain: "pager.example", homepageUrl: "https://pager.example/" }).returning();
+    await subscribeToCompany(db, user.id, company!.id);
+    const [created] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://pager.example/jobs", status: "active" }).returning();
+
+    // A title gate needs no detail text, so the complete first scan costs one request.
+    expect((await _scanSourceForTests(deps, company!, created!, await deps.settings(), null)).status).toBe("ok");
+    expect(await db.select().from(schema.jobs)).toHaveLength(200);
+
+    // Now the gate matches on the description, and one role comes down the same day.
+    await setGate({ includeKeywords: ["warehouse"], matchFields: ["title", "description"] });
+    deps.invalidateSettings();
+    server.setRoutes(routesFor(roles.filter(n => n !== 200)));
+    now = new Date(now.getTime() + 86_400_000);
+    const outcome = await _scanSourceForTests(deps, company!, await currentSource(created!.id), await deps.settings(), null);
+    expect(outcome.status).toBe("partial");
+    expect(outcome.closedCount).toBe(0);
+    const stopped = await latestScan(created!.id);
+    expect(stopped.status).toBe("partial");
+    expect(stopped.requests).toBe(150);
+    expect(stopped.error).toContain("budget of 150 requests");
+    // The role that came down is not closed, not missing, and not counted against: an incomplete
+    // scan is not evidence of absence.
+    const rows = await db.select().from(schema.jobs);
+    expect(rows.every(job => job.status === "open" && job.missingScans === 0)).toBe(true);
+  }, 240_000);
 });

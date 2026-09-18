@@ -5,7 +5,8 @@ import { SourceFetchError } from "@christopher/core";
 import { createDb, listHttpHostDaily } from "@christopher/db";
 import { runMigrations } from "@christopher/db/migrate";
 import { sql } from "drizzle-orm";
-import { HARD_MAX_BODY_BYTES, HttpTrafficLedger, PoliteFetcher, userAgentFor } from "./fetcher";
+import { sha1 } from "@christopher/core";
+import { ATS_API_DELAY_MS, DEFAULT_HOST_DELAY_MS, HARD_MAX_BODY_BYTES, hostDelayMs, HttpTrafficLedger, PoliteFetcher, userAgentFor } from "./fetcher";
 import { startTestServer, type TestServer } from "./test-server";
 
 let server: TestServer;
@@ -35,6 +36,7 @@ beforeAll(async () => {
       "boards-api.greenhouse.io": {
         "/robots.txt": { body: "User-agent: *\nDisallow: /\n", contentType: "text/plain" },
         "/v1/boards/acme/jobs": { body: { jobs: [] } },
+        "/429": { status: 429, body: "slow down", headers: { "retry-after": "30" } },
       },
     },
     HOSTS,
@@ -219,6 +221,87 @@ describe("memory bounds", () => {
       await f.fetchText("https://bounded.test/page/0");
       await f.fetchText("https://bounded.test/page/33");
       expect(conditional).toEqual(["page/0:none", "page/33:page-33"]);
+    } finally { await store.close(); }
+  }, 60_000);
+});
+
+describe("per-host pacing", () => {
+  it("paces a shared applicant-tracking API faster than a company's own site", () => {
+    // Every Greenhouse board in the catalogue and every per-role description fetch goes to one
+    // hostname. At two seconds a request that is half an hour of a daily run spent waiting.
+    expect(hostDelayMs("boards-api.greenhouse.io")).toBe(ATS_API_DELAY_MS);
+    expect(hostDelayMs("boards-api.eu.greenhouse.io")).toBe(ATS_API_DELAY_MS);
+    expect(hostDelayMs("api.lever.co")).toBe(ATS_API_DELAY_MS);
+    // A company's own careers page is one site serving one employer, and keeps the 2s promise.
+    expect(hostDelayMs("careers.example.com")).toBe(DEFAULT_HOST_DELAY_MS);
+    expect(hostDelayMs("www.example.test")).toBe(2000);
+    // An override (the test host map) never paces a host faster than it asks for.
+    expect(hostDelayMs("boards-api.greenhouse.io", 50)).toBe(50);
+  });
+
+  it("reserves each host for its own interval, and a Retry-After still overrides both", async () => {
+    const reserved: Array<{ host: string; delayMs: number }> = [];
+    const paced: Array<{ host: string; delayMs: number }> = [];
+    const f = new PoliteFetcher({
+      userAgent: "test",
+      hostMap: server.hostMap,
+      reserveHost: async (host, delayMs) => { reserved.push({ host, delayMs }); return 0; },
+      deferHost: async (host, delayMs) => { paced.push({ host, delayMs }); },
+    });
+    await f.fetchText("https://boards-api.greenhouse.io/v1/boards/acme/jobs");
+    await f.fetchText("https://www.example.test/allowed");
+    expect(reserved).toEqual([
+      { host: "boards-api.greenhouse.io", delayMs: 250 },
+      { host: "www.example.test", delayMs: 2000 },
+    ]);
+
+    // The back-off is written to the shared pacing table at the host's own request, and the 250ms
+    // interval has nothing to say about it: a host asking for thirty seconds gets thirty seconds.
+    await expect(f.fetchText("https://boards-api.greenhouse.io/429")).rejects.toThrow(SourceFetchError);
+    expect(paced).toEqual([{ host: "boards-api.greenhouse.io", delayMs: 30_000 }]);
+  });
+});
+
+describe("revalidating a listing too large to cache", () => {
+  it("keeps validators without the body, honours a 304, and spots an identical body by hash", async () => {
+    // A body over the cache's per-entry limit used to be re-downloaded and re-parsed every day,
+    // because nothing was kept of it to make a conditional request with.
+    const conditional: Array<string | undefined> = [];
+    const big = "y".repeat(600_000);
+    const store = await startTestServer({ "large.test": {
+      "/board": (req) => {
+        conditional.push(req.headers["if-none-match"] as string | undefined);
+        return req.headers["if-none-match"] === "L1" ? { status: 304, body: "", headers: { etag: "L1" } } : { body: big, headers: { etag: "L1" } };
+      },
+      // A host that publishes no validator at all: the hash has to stand on its own.
+      "/unvalidated": { body: big },
+    } }, ["large.test"]);
+    try {
+      const f = new PoliteFetcher({ userAgent: "test", hostMap: store.hostMap, perHostDelayMs: 0 });
+      const first = await f.fetchText("https://large.test/board", { revalidateLargeBody: true });
+      expect(first.body.length).toBe(600_000);
+      expect(first.unchanged).toBeUndefined();
+      expect(first.contentHash).toBe(sha1(big));
+
+      const second = await f.fetchText("https://large.test/board", { revalidateLargeBody: true });
+      expect(conditional).toEqual([undefined, "L1"]);
+      expect(second).toMatchObject({ status: 304, revalidated: true, unchanged: true, body: "", contentHash: sha1(big) });
+
+      // Nothing of the body was retained, so a caller that cannot handle an empty answer — anything
+      // that does not ask for this — still gets the whole listing, unconditionally.
+      const plain = await f.fetchText("https://large.test/board");
+      expect(plain.body.length).toBe(600_000);
+      expect(plain.unchanged).toBeUndefined();
+      expect(conditional.at(-1)).toBeUndefined();
+
+      const once = await f.fetchText("https://large.test/unvalidated", { revalidateLargeBody: true });
+      expect(once.unchanged).toBeUndefined();
+      const twice = await f.fetchText("https://large.test/unvalidated", { revalidateLargeBody: true });
+      // The bytes came down the wire, so this is no transfer saved; what it saves is the parse and
+      // everything the parse feeds.
+      expect(twice.unchanged).toBe(true);
+      expect(twice.revalidated).toBeUndefined();
+      expect(twice.body.length).toBe(600_000);
     } finally { await store.close(); }
   }, 60_000);
 });

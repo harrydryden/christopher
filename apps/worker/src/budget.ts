@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import type { Db } from "@christopher/db";
+import type { AiBudgetRefusal } from "@christopher/core";
+
+export type { AiBudgetRefusal };
 
 const discoverySites = ["A7", "A8", "A10"];
 
@@ -40,25 +43,41 @@ export type AiBudgetLimits = {
    * expires on its own.
    */
   workerId?: string;
+  /**
+   * What the hold is for: a CV build's draft id. An account may have two builds running at once,
+   * each holding its own share of the month; recorded here, giving up on one gives back that one's
+   * hold instead of every hold the account has.
+   */
+  refId?: string;
 };
 
-/** Which limit refused a hold, and the figures it was measured against. */
-export interface AiBudgetRefusal {
-  limit: "account" | "day" | "discovery";
-  limitUsd: number;
-  /** Recorded spend within the limit's window. */
+/** A hold taken, with the figures it was measured against — read inside the lock that took it. */
+export interface AiHold {
+  /** Release the hold. The call's real cost is already in `ai_calls`, so nothing is charged here. */
+  release: () => Promise<void>;
+  /**
+   * Keep a hold alive through a long build. False when the row is no longer there — it expired, or
+   * something released it — which means the budget has forgotten this work and the caller must
+   * stop rather than spend against capacity nothing is holding.
+   */
+  renew: () => Promise<boolean>;
+  /** Recorded spend in the window this hold was judged against, before this hold. */
   spent: number;
-  /** Held by calls in flight. */
+  /** Held by calls in flight, before this hold. */
   held: number;
+  /** The limit it was judged against: the account's month, or the deployment's day cap. */
+  limitUsd: number;
 }
 
 /** Hold capacity for one call, or say exactly which limit refused it, so the refusal can be explained. */
-export async function tryReserveAi(db: Db, callSite: string, amount: number, limits: AiBudgetLimits, now = new Date(), ttlMinutes = 15): Promise<{ release: () => Promise<void>; renew: () => Promise<void> } | { refused: AiBudgetRefusal }> {
+export async function tryReserveAi(db: Db, callSite: string, amount: number, limits: AiBudgetLimits, now = new Date(), ttlMinutes = 15): Promise<AiHold | { refused: AiBudgetRefusal }> {
   const account = limits.account;
   const dayStart = new Date(`${now.toISOString().slice(0, 10)}T00:00:00Z`);
   const id = randomUUID();
   const isDiscovery = discoverySites.includes(callSite);
-  const refusal = await db.transaction(async (tx): Promise<AiBudgetRefusal | null> => {
+  type Measured = { spent: number; held: number; limitUsd: number };
+  let measured: Measured | undefined;
+  const outcome = await db.transaction(async (tx): Promise<{ refused: AiBudgetRefusal } | { measured: Measured }> => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('christopher:ai-budget'))`);
     await tx.execute(sql`delete from ai_reservations where expires_at <= now()`);
     if (account) {
@@ -69,7 +88,8 @@ export async function tryReserveAi(db: Db, callSite: string, amount: number, lim
         (select coalesce(sum(amount), 0) from ai_reservations where user_id = ${account.userId}) as held`);
       const spent = Number(own.rows[0]?.spent ?? 0);
       const held = Number(own.rows[0]?.held ?? 0);
-      if (spent + held + amount > account.budgetUsd) return { limit: "account", limitUsd: account.budgetUsd, spent, held };
+      if (spent + held + amount > account.budgetUsd) return { refused: { limit: "account", limitUsd: account.budgetUsd, spent, held } };
+      measured = { spent, held, limitUsd: account.budgetUsd };
     }
     // The operator's caps, which keep their own day whatever an account's window is, and count
     // every account's calls together with the work that belongs to none.
@@ -83,17 +103,24 @@ export async function tryReserveAi(db: Db, callSite: string, amount: number, lim
     const pending = Number(held.rows[0]?.total ?? 0);
     const discovery = Number(spent.rows[0]?.discovery ?? 0);
     const discoveryHeld = Number(held.rows[0]?.discovery ?? 0);
-    if (day + pending + amount > limits.daily) return { limit: "day", limitUsd: limits.daily, spent: day, held: pending };
-    if (isDiscovery && discovery + discoveryHeld + amount > limits.discovery) return { limit: "discovery", limitUsd: limits.discovery, spent: discovery, held: discoveryHeld };
-    await tx.execute(sql`insert into ai_reservations (id, user_id, call_site, amount, expires_at, worker_id)
-      values (${id}, ${account?.userId ?? null}, ${callSite}, ${amount}, now() + make_interval(mins => ${ttlMinutes}::int), ${limits.workerId ?? null})`);
-    return null;
+    if (day + pending + amount > limits.daily) return { refused: { limit: "day", limitUsd: limits.daily, spent: day, held: pending } };
+    if (isDiscovery && discovery + discoveryHeld + amount > limits.discovery) return { refused: { limit: "discovery", limitUsd: limits.discovery, spent: discovery, held: discoveryHeld } };
+    await tx.execute(sql`insert into ai_reservations (id, user_id, call_site, amount, expires_at, worker_id, ref_id)
+      values (${id}, ${account?.userId ?? null}, ${callSite}, ${amount}, now() + make_interval(mins => ${ttlMinutes}::int), ${limits.workerId ?? null}, ${limits.refId ?? null})`);
+    // Work with no account of its own is judged by the deployment's day cap, so that is what its
+    // figures are. Either way they are the ones this hold was actually admitted against: a second
+    // reading taken outside the lock could disagree with the decision it is meant to explain.
+    return { measured: measured ?? { spent: day, held: pending, limitUsd: limits.daily } };
   });
-  if (refusal) return { refused: refusal };
+  if ("refused" in outcome) return outcome;
   return {
-    /** Release the hold. The call's real cost is already in `ai_calls`, so nothing is charged here. */
+    ...outcome.measured,
     release: async () => { await db.execute(sql`delete from ai_reservations where id = ${id}`); },
-    /** Keep a hold alive through a long build; one whose process died still expires on its own. */
-    renew: async () => { await db.execute(sql`update ai_reservations set expires_at = now() + make_interval(mins => ${ttlMinutes}::int) where id = ${id}`); },
+    renew: async () => {
+      // A hold whose process died still expires on its own; one released by something else is
+      // already gone, and this is how its build finds out rather than spending on regardless.
+      const rows = await db.execute(sql`update ai_reservations set expires_at = now() + make_interval(mins => ${ttlMinutes}::int) where id = ${id} returning id`);
+      return rows.rows.length === 1;
+    },
   };
 }

@@ -8,6 +8,7 @@ import {
 } from "./cv-budget";
 import { renderCvPdfWithReport, CvLayoutError } from "./cv-pdf";
 import { cvMaxPages } from "./cv-theme";
+import type { CvBuildFailure, CvFailureKind } from "./cv-build";
 
 export type CvFitFeedback = {
   pageCount: number;
@@ -22,27 +23,27 @@ export type CvFitInput = {
 };
 
 /**
- * Why fitting gave up, named rather than described.
+ * Why fitting gave up, in the taxonomy the whole build is classified by.
  *
  * The three ways this can end are three different conversations: the writer dropped evidence it
  * was told to keep, it kept answering in the wrong shape, or the content genuinely does not fit
- * the page limit. Only the last is the person's to resolve, and a caller deciding that must not
- * have to match the sentence we happened to write. The messages are unchanged; the class and its
- * figures are what a caller reads.
+ * the page limit. They used to be three names of their own, which the worker translated into the
+ * build's failure kinds by hand; the fitter now names them in the one taxonomy, so its failures
+ * pass through without a second vocabulary to keep in step. `policy` carries the one case where
+ * repetition changes hands: three attempts inside this build have already been spent on the skill
+ * format, so a fourth from a fresh task would meet the same model and the same library.
  */
 export class CvFitFailure extends Error {
   constructor(
-    readonly kind: "writer_omitted" | "skill_format" | "page_limit",
+    readonly kind: CvFailureKind,
     message: string,
     readonly detail: { omitted?: string[]; corrections?: number; pages?: number; maxPages?: number; attempts?: number } = {},
+    readonly policy: Partial<Pick<CvBuildFailure, "resolvedBy" | "retryable" | "action">> = {},
   ) {
     super(message);
     this.name = "CvFitFailure";
   }
 }
-
-/** The two coarse stages, unchanged, so a caller written against the old callback still works. */
-export type CvFitStage = "writing" | "fitting";
 
 /**
  * One motion of a build's writing and fitting, for a caller that narrates it.
@@ -58,8 +59,15 @@ export type CvFitEvent =
   | { motion: "measure"; attempt: number; pages: number; maxPages: number }
   | { motion: "shorten"; attempt: number; removed: number; pages: number; changes: string[] };
 
-/** What the fitter tells its caller: the two old stage names, and the motions behind them. */
-export type CvFitSignal = CvFitStage | CvFitEvent;
+/**
+ * What the fitter tells its caller: one event per motion, and nothing else.
+ *
+ * It used to emit the two coarse stage names beside the motions, for a caller written before the
+ * motions existed. There is one caller, it reads the motions, and the stage a motion belongs to is
+ * already in the motion catalogue — so the caller derives the milestone from the motion rather
+ * than being told twice, and the two cannot drift apart.
+ */
+export type CvFitSignal = CvFitEvent;
 
 /** Remove complete, lower-priority achievements; never truncate a claim or shrink fonts. */
 export async function selectCvToFit(
@@ -187,9 +195,9 @@ function planSize(plan: CvPlan, budget: CvWritingBudget) {
 /**
  * Bounded writing and measured selection, shared by fresh generation and draft fitting.
  *
- * `onEvent` is the old two-value progress callback widened: the stage names still arrive, in the
- * same order and at the same moments, and the motions behind them arrive as objects beside them.
- * A caller that only understands the strings ignores the objects and behaves exactly as before.
+ * `onEvent` receives one event per motion — each writing attempt with the budget it was given,
+ * the reading of what the writer returned, each measurement and each trim — and nothing else. The
+ * milestone a motion belongs to is the motion catalogue's to say, so the caller reads it there.
  */
 export async function buildFittedCv(
   library: CvLibrary,
@@ -228,7 +236,6 @@ export async function buildFittedCv(
     // measured against the current one, a block that fitted it drew no correction at all, and the
     // ones that did quoted figures a quarter larger than the writer's next allocation.
     const next = () => createCvWritingBudget(library, target, Math.pow(0.76, attempt + 1));
-    await say("writing");
     await say({ motion: "write", phase: "start", attempt: attempt + 1, budgetCharacters: budget.totalCharacters,
       budgetScale: Number(Math.pow(0.76, attempt).toFixed(4)), maxPages });
     const plan = await write({
@@ -260,7 +267,7 @@ export async function buildFittedCv(
       skillFormatCorrections: skillCorrections.length });
     if (missing.length)
       throw new CvFitFailure(
-        "writer_omitted",
+        "output_invalid",
         "The writer omitted employment or education. No incomplete CV was saved.",
         { omitted: missing.map(block => block.entryId) },
       );
@@ -271,7 +278,6 @@ export async function buildFittedCv(
     }
     // Validate evidence before making any selection.
     materialiseCv(library, plan);
-    await say("fitting");
     let selected;
     try {
       selected = await selectCvToFit(library, plan, target, budget);
@@ -311,13 +317,16 @@ export async function buildFittedCv(
     };
   }
   if (invalidSkillFormat)
+    // Three attempts have already been spent on this inside one build, so the person chooses the
+    // model rather than the system spending a fresh task's attempts on the same answer.
     throw new CvFitFailure(
-      "skill_format",
+      "output_invalid",
       "The model repeatedly returned the wrong skill format. Your evidence is unchanged. Retry the build or choose another CV model.",
       { attempts: 3 },
+      { resolvedBy: "user", retryable: false, action: "choose_model" },
     );
   throw new CvFitFailure(
-    "page_limit",
+    "page_limit_unfittable",
     `The builder could not fit the minimum employment and education content into ${maxPages} ${maxPages === 1 ? "page" : "pages"} after three budgeted attempts. Reduce the selected evidence blocks or profile detail, or raise the page limit in Settings, then save again.`,
     { pages: feedback?.pageCount ?? maxPages + 1, maxPages, attempts: 3 },
   );

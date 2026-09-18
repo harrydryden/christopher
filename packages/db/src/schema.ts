@@ -727,7 +727,14 @@ export const aiReservations = pgTable("ai_reservations", {
   expiresAt: ts("expires_at").notNull(),
   /** The worker process holding this reservation, so a shutdown can release its own holds at once. */
   workerId: text("worker_id"),
-}, (t) => [index("ai_reservations_user_idx").on(t.userId), index("ai_reservations_worker_idx").on(t.workerId)]);
+  /**
+   * What the hold is for: a CV build's draft id. An account can hold two builds at once, so a
+   * release scoped to the account alone gave back a sibling's hold as well — its renewal then
+   * updated nothing and the budget admitted a third build the month could not afford.
+   */
+  refId: text("ref_id"),
+}, (t) => [index("ai_reservations_user_idx").on(t.userId), index("ai_reservations_worker_idx").on(t.workerId),
+  index("ai_reservations_ref_idx").on(t.refId)]);
 
 export const WORKER_EVENT_KINDS = [
   "boot", "shutdown", "crash_recovery", "task_abandoned", "task_deadline", "holds_released", "vitals",
@@ -805,5 +812,7 @@ export const cvBuildSteps = pgTable("cv_build_steps", {
   detail: jsonb("detail").$type<Record<string, unknown>>().notNull().default({}),
   error: text("error"),
   failure: jsonb("failure").$type<CvBuildFailure>(),
-}, (t) => [index("cv_build_steps_draft_seq_idx").on(t.draftId, t.seq), index("cv_build_steps_started_idx").on(t.startedAt)]);
+  // One row per place in a draft's narrative: `seq` is allocated under an advisory lock on the
+  // draft, and this is what makes two attempts unable to claim the same place regardless.
+}, (t) => [uniqueIndex("cv_build_steps_draft_seq_uniq").on(t.draftId, t.seq), index("cv_build_steps_started_idx").on(t.startedAt)]);
 export type CvBuildStep = typeof cvBuildSteps.$inferSelect;

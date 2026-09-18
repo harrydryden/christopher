@@ -7,7 +7,7 @@
  * backoff and a real second claim.
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { enqueueTask, listCvBuildSteps, schema, startCvBuildStep, type Db } from "@christopher/db";
+import { actionCvs, enqueueTask, failOpenCvBuildSteps, listCvBuildSteps, schema, startCvBuildStep, type Db } from "@christopher/db";
 import { runMigrations } from "@christopher/db/migrate";
 import { InternalServerError, RateLimitError, type AiClientLike, type ParseResponse } from "@christopher/ai";
 import { DEFAULT_CV_THEME } from "@christopher/core/cv";
@@ -17,9 +17,12 @@ import { eq, sql } from "drizzle-orm";
 import { rubricFixture, reviewFixture } from "../../../packages/core/test/cv-review-fixture";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
-import { claimTask, requeueStale, TaskQueue, TASK_STALE_AFTER_MS } from "./queue";
-import { handleGenerateCv } from "./handlers/cv";
-import { CV_ABANDONED_MESSAGE, onAbandon } from "./handlers/abandon";
+import { claimTask, failTask, requeueStale, TaskQueue, TASK_STALE_AFTER_MS } from "./queue";
+import { CV_BUSY_MESSAGE, handleGenerateCv } from "./handlers/cv";
+import { CvJournal, type CvJournalLoss } from "./handlers/cv-journal";
+import { CV_ABANDONED_MESSAGE, onAbandon, onInterrupted } from "./handlers/abandon";
+import { tryReserveAi } from "./budget";
+import { LeaseBusyError, LeaseLostError } from "./lease";
 import { ensureTestUser } from "./test-users";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test";
@@ -295,6 +298,9 @@ it("names the second charge when a batch has to be re-run to correct its attribu
   expect(retry.status).toBe("done");
   expect(retry.detail).toMatchObject({ batch: 1, corrections: 1 });
   expect(retry.detail.usd as number).toBeGreaterThan(0);
+  // The re-run is charged what it cost, tokens and all: a literal zero here dragged the
+  // Operations median for this motion down to nothing.
+  expect(retry.detail.tokens).toBe(4700);
   // Both charges are the audit's, and the engine names the second separately in the call log.
   expect(await aiCallsByStage()).toEqual({ rubric: 1, author: 1, review: 1, review_retry: 1 });
 });
@@ -349,7 +355,10 @@ it("gives up on a CV that will not fit the page limit, showing what each attempt
   expect(failed.content).toBeNull();
 
   const rows = await steps(draft.id);
-  const writes = rows.filter(row => row.motion === "write");
+  // The first attempt writes; the ones after it rewrite to a smaller budget, which the catalogue
+  // has as a motion of its own — so the narrative names it rather than relabelling a `write`.
+  const writes = rows.filter(row => row.motion === "write" || row.motion === "rewrite");
+  expect(writes.map(row => row.motion)).toEqual(["write", "rewrite", "rewrite"]);
   expect(writes.map(row => row.detail.attempt)).toEqual([1, 2, 3]);
   expect(writes.map(row => row.title)).toEqual(["Writing the CV", "Rewriting to a smaller budget", "Rewriting to a smaller budget"]);
   // Each attempt is given a smaller budget than the last, and each is measured against the limit.
@@ -401,6 +410,12 @@ it("re-assesses a saved CV after a failed batch without paying for the rubric or
   expect(rows.filter(row => row.motion === "assess_batch").map(row => row.attempt)).toEqual([1, 2]);
 
   expect((await draftAfter(draft.id)).status).toBe("ready");
+  // The retry is admitted at what it can still spend — the audit's share — rather than holding a
+  // whole build's estimate against a month that would then refuse work it can plainly afford.
+  const admits = rows.filter(row => row.motion === "admit_budget");
+  expect(admits.map(row => row.detail.resumed)).toEqual([false, true]);
+  expect(admits[1]!.detail.expectedUsd as number).toBeGreaterThan(0);
+  expect(admits[1]!.detail.expectedUsd as number).toBeLessThan(admits[0]!.detail.expectedUsd as number);
   // One rubric, one author, two audits: the retry cost the audit alone.
   expect(await aiCallsByStage()).toEqual({ rubric: 1, author: 1, review: 2 });
   const spentOnRetry = await db.execute<{ total: number }>(sql`select coalesce(sum(cost_usd::float8), 0) as total from ai_calls where stage = 'review'`);
@@ -414,8 +429,8 @@ it("closes the narrative of a build whose worker died, with the taxonomy the pag
   const task = (await claimTask(db, "dead-pod#0", "interactive"))!;
   await db.update(schema.tasks).set({ attempts: 3, lockedAt: new Date(Date.now() - 60 * 60_000) }).where(eq(schema.tasks.id, task.id));
   await startCvBuildStep(db, { draftId: draft.id, userId, taskId: task.id, attempt: 3, motion: "write" });
-  await db.execute(sql`insert into ai_reservations (user_id, call_site, amount, expires_at, worker_id)
-    values (${userId}, 'CV', 3.06, now() + interval '30 minutes', 'dead-pod')`);
+  await db.execute(sql`insert into ai_reservations (user_id, call_site, amount, expires_at, worker_id, ref_id)
+    values (${userId}, 'CV', 3.06, now() + interval '30 minutes', 'dead-pod', ${draft.id})`);
 
   expect(await requeueStale(db, TASK_STALE_AFTER_MS, "live-pod", { deps, onAbandon })).toEqual({ requeued: 0, failed: 1 });
 
@@ -432,4 +447,207 @@ it("closes the narrative of a build whose worker died, with the taxonomy the pag
   // The hold the dead build was keeping is gone, so the rebuild we just asked for is not refused.
   const held = await db.execute<{ n: number }>(sql`select count(*)::int as n from ai_reservations where user_id = ${userId}`);
   expect(Number(held.rows[0]!.n)).toBe(0);
+});
+
+/* -------------------------------------------------------------------------------------------
+ * Two builds of one account, and the fences between them
+ * ----------------------------------------------------------------------------------------- */
+
+/** Hold capacity for one build, exactly as an admitted build does. */
+async function holdFor(draftId: string, amount = 3) {
+  const taken = await tryReserveAi(db, "CV", amount, {
+    account: { userId, budgetUsd: 1000, since: new Date(0) },
+    daily: 1_000_000, discovery: 1_000_000, workerId: "cv-pod", refId: draftId,
+  }, new Date(), 30);
+  if ("refused" in taken) throw new Error("the test account should be able to afford this build");
+  return taken;
+}
+
+it("gives back only the abandoned build's hold, leaving a sibling build's capacity and renewal intact", async () => {
+  const first = await makeDraft({ status: "generating" });
+  const second = await makeDraft({ status: "generating" });
+  const one = await holdFor(first.id);
+  const two = await holdFor(second.id);
+
+  // The queue gives up on the first build's task. The second build is still running.
+  const task = (await claimTask(db, "dead-pod#0", "interactive"))!;
+  expect((task.payload as { draftId: string }).draftId).toBe(first.id);
+  await db.update(schema.tasks).set({ attempts: 3, lockedAt: new Date(Date.now() - 60 * 60_000) }).where(eq(schema.tasks.id, task.id));
+
+  expect(await requeueStale(db, TASK_STALE_AFTER_MS, "live-pod", { deps, onAbandon })).toEqual({ requeued: 0, failed: 1 });
+
+  const held = await db.execute<{ refId: string }>(sql`select ref_id as "refId" from ai_reservations where user_id = ${userId}`);
+  expect(held.rows.map(row => row.refId)).toEqual([second.id]);
+  // The survivor's renewal still matches its row; the abandoned build's has nothing left to renew.
+  expect(await two.renew()).toBe(true);
+  expect(await one.renew()).toBe(false);
+  expect((await draftAfter(first.id)).status).toBe("failed");
+  expect((await draftAfter(second.id)).status).toBe("generating");
+});
+
+it("admits a build at the figures its own reservation was measured against", async () => {
+  // Another build of this account is already holding capacity for itself.
+  await db.execute(sql`insert into ai_reservations (user_id, call_site, amount, expires_at, worker_id, ref_id)
+    values (${userId}, 'CV', 2.5, now() + interval '30 minutes', 'cv-pod', gen_random_uuid()::text)`);
+  deps.aiClient = scriptedClient().client;
+  const draft = await makeDraft();
+
+  await queueFor().drain();
+
+  const admit = (await steps(draft.id)).find(row => row.motion === "admit_budget")!;
+  const expected = admit.detail.expectedUsd as number;
+  expect(expected).toBeGreaterThan(0);
+  // Read inside the lock that took the hold, so the figures explain the decision they came with.
+  expect(admit.detail.limitUsd).toBe(1000);
+  expect(admit.detail.heldUsd).toBe(Number((2.5 + expected).toFixed(4)));
+  expect(admit.detail.leftUsd).toBe(Number((1000 - 2.5 - expected).toFixed(4)));
+  expect(admit.detail.resumed).toBe(false);
+});
+
+it("never deletes a build in flight when its role is archived, and refuses to delete one outright", async () => {
+  const saved = await makeDraft({ status: "ready" });
+  const building = await makeDraft({ status: "generating" });
+  const alsoBuilding = await makeDraft({ status: "generating" });
+
+  await actionCvs(db, userId, [saved.id, building.id, alsoBuilding.id], "archive");
+
+  const rows = await db.select().from(schema.cvDrafts);
+  // Both builds survive their role being archived: their workers are still writing them.
+  expect(rows.map(row => row.id).sort()).toEqual([saved.id, building.id, alsoBuilding.id].sort());
+  expect(rows.find(row => row.id === saved.id)!.archivedAt).not.toBeNull();
+  expect(rows.filter(row => row.status === "generating").map(row => row.archivedAt)).toEqual([null, null]);
+
+  // Deleting one is refused in the person's own words: only they can stop a build first.
+  await expect(actionCvs(db, userId, [saved.id, building.id], "delete")).rejects.toMatchObject({
+    userFacing: true, message: expect.stringContaining("still being built"),
+  });
+  expect(await db.select().from(schema.cvDrafts)).toHaveLength(3);
+});
+
+it("lets one attempt close only its own motions, so a zombie cannot end the attempt that replaced it", async () => {
+  const draft = await makeDraft({ status: "generating" });
+  const zombie = await startCvBuildStep(db, { draftId: draft.id, userId, attempt: 1, motion: "write" });
+  const live = await startCvBuildStep(db, { draftId: draft.id, userId, attempt: 2, motion: "write" });
+
+  expect(await failOpenCvBuildSteps(db, draft.id, "the worker was interrupted", undefined, { attempt: 1 })).toBe(1);
+
+  const rows = await steps(draft.id);
+  expect(rows.find(row => row.id === zombie)).toMatchObject({ status: "failed", attempt: 1 });
+  expect(rows.find(row => row.id === live)).toMatchObject({ status: "running", attempt: 2 });
+  // A recovery giving up on the draft for good closes everything that is left.
+  expect(await failOpenCvBuildSteps(db, draft.id, "gave up", undefined)).toBe(1);
+  expect((await steps(draft.id)).every(row => row.status === "failed")).toBe(true);
+});
+
+it("gives two attempts writing at once distinct places in the narrative", async () => {
+  const draft = await makeDraft();
+  // Without the draft's allocation lock both read the same `max(seq)`; the unique index then
+  // refuses one of them, and the narrative loses a motion.
+  await Promise.all([1, 2, 1, 2, 1].map(attempt =>
+    startCvBuildStep(db, { draftId: draft.id, userId, attempt, motion: "measure" })));
+  const rows = await steps(draft.id);
+  expect(rows).toHaveLength(5);
+  expect(new Set(rows.map(row => row.seq)).size).toBe(5);
+  expect([...rows.map(row => row.seq)].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5]);
+});
+
+it("stops writing for a draft that has been deleted, or a hold something else has released", async () => {
+  const draft = await makeDraft({ status: "generating" });
+  const losses: CvJournalLoss[] = [];
+  let renewable = true;
+  const journal = new CvJournal({
+    db, draftId: draft.id, userId, taskId: null, attempt: 1, now: deps.now,
+    renewHold: async () => renewable,
+    onLost: loss => losses.push(loss),
+  });
+  await journal.record("measure", { pages: 1, maxPages: 3 });
+  expect(losses).toEqual([]);
+
+  // The budget stopped holding capacity for this build while it was running.
+  renewable = false;
+  await journal.record("measure", { pages: 2, maxPages: 3 });
+  expect(losses).toEqual(["hold"]);
+  expect(await steps(draft.id)).toHaveLength(2);
+
+  // A fence that refuses the mark means this attempt is no longer the live one, so the journal
+  // stops writing rather than narrating over the attempt that replaced it.
+  const fenced: CvJournalLoss[] = [];
+  const zombie = new CvJournal({
+    db, draftId: draft.id, userId, taskId: null, attempt: 1, now: deps.now,
+    assertOwnership: async () => { throw new LeaseLostError("Task lease lost; refusing stale writes"); },
+    onLost: loss => fenced.push(loss),
+  });
+  await zombie.record("measure", { pages: 9, maxPages: 3 });
+  expect(fenced).toEqual(["fenced"]);
+  const before = (await steps(draft.id)).length;
+  await zombie.record("measure", { pages: 9, maxPages: 3 });
+  expect(await steps(draft.id)).toHaveLength(before);
+
+  // And a draft deleted mid-build is noticed by the one write every motion makes.
+  await db.delete(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+  const gone = new CvJournal({ db, draftId: draft.id, userId, taskId: null, attempt: 1, now: deps.now, onLost: loss => losses.push(loss) });
+  await gone.record("measure", { pages: 3, maxPages: 3 });
+  expect(losses).toEqual(["hold", "deleted"]);
+});
+
+it("says plainly that another worker is still finishing a build, and gives the attempt back", async () => {
+  const draft = await makeDraft();
+  const task = (await claimTask(db, "cv-pod#0", "interactive"))!;
+  await db.execute(sql`insert into resource_leases (key, owner, expires_at)
+    values (${`cv:${draft.id}`}, gen_random_uuid(), now() + interval '5 minutes')`);
+
+  const busy = await handleGenerateCv(task, deps).catch((error: unknown) => error);
+  expect(busy).toBeInstanceOf(LeaseBusyError);
+  expect((busy as Error).message).toBe(CV_BUSY_MESSAGE);
+
+  // The queue's own truth, in a sentence the page can show: and the attempt is not spent on it.
+  expect(await failTask(db, task, busy)).toBe("retry");
+  const row = await taskRow();
+  expect(row.status).toBe("queued");
+  expect(row.attempts).toBe(0);
+  expect(row.error).toBe("LeaseBusyError: Another worker is still finishing this build");
+  expect((await draftAfter(draft.id)).status).toBe("queued");
+});
+
+it("records an interrupted attempt and stops its model calls when a build outruns its deadline", async () => {
+  let authorSignal: AbortSignal | undefined;
+  const client: AiClientLike = {
+    messages: {
+      async create(params, options) {
+        const content = (params.messages as Array<{ content: string }>)[0]!.content;
+        const payload = JSON.parse(content as string) as { jobTitle?: string; description?: string };
+        if (!payload.jobTitle) return answered(rubricFixture(payload.description!));
+        // The writer never answers. This is the build that outruns its deadline.
+        authorSignal = options?.signal as AbortSignal | undefined;
+        return new Promise<ParseResponse>((_, reject) =>
+          authorSignal?.addEventListener("abort", () => reject(new Error("Request was aborted.")), { once: true }));
+      },
+    },
+  };
+  deps.aiClient = client;
+  const draft = await makeDraft();
+  const queue = new TaskQueue(deps, { generate_cv: handleGenerateCv },
+    { concurrency: 1, workerId: "cv-pod", onAbandon, onInterrupted, deadlines: { generate_cv: 500 } });
+
+  await queue.drain();
+
+  // The task is coming back, so the page is told which attempt stopped and when the next one runs.
+  const waiting = await draftAfter(draft.id);
+  expect(waiting.status).toBe("generating");
+  const failure = waiting.failure as CvBuildFailure;
+  expect(failure).toMatchObject({ kind: "worker_interrupted", attempt: 1, maxAttempts: 3, resolvedBy: "system", retryable: true });
+  expect(new Date(failure.retryAt!).getTime()).toBeGreaterThan(Date.now());
+  const requeued = await taskRow();
+  expect(requeued.status).toBe("queued");
+  expect(requeued.error).toContain("TimeoutError: generate_cv exceeded its 1s deadline");
+
+  // The model call was cut off rather than left streaming for the rest of its fifteen minutes.
+  expect(authorSignal?.aborted).toBe(true);
+  // And nothing is left saying it is still running.
+  for (let tick = 0; tick < 100 && (await steps(draft.id)).some(row => row.status === "running"); tick++)
+    await new Promise(resolve => setTimeout(resolve, 20));
+  const rows = await steps(draft.id);
+  expect(rows.some(row => row.motion === "write")).toBe(true);
+  expect(rows.every(row => row.status !== "running")).toBe(true);
+  expect(rows.filter(row => row.status === "failed").every(row => row.attempt === 1)).toBe(true);
 });

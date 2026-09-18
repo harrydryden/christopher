@@ -155,7 +155,9 @@ export async function reconcileCvDrafts(deps: WorkerDeps, graceMinutes = 5): Pro
     if (!abandoned) continue;
     await failOpenCvBuildStepsQuietly(deps.db, orphan.id, CV_ABANDONED_MESSAGE, failure);
     failed++;
-    const released = await releaseAiHolds(deps.db, { userId: abandoned.userId, callSite: "CV" });
+    // This build's hold alone: the account may have another build running, whose hold is its own
+    // and whose renewal would otherwise silently stop matching a row.
+    const released = await releaseAiHolds(deps.db, { userId: abandoned.userId, callSite: "CV", refId: orphan.id });
     log.warn("failed a CV draft no task was building", { draftId: orphan.id, userId: abandoned.userId, holdsReleased: released.count });
   }
   // Holds outlive their builds when the pod that took them dies under another name or the draft

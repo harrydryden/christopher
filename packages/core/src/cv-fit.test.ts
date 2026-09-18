@@ -31,11 +31,11 @@ it('fits a long CV through measured achievement selection, preserving every role
 });
 it('gives the writer budgets before its first attempt and avoids unnecessary model retries',async()=>{
  const write=vi.fn().mockResolvedValue(plan);
- // The old two-value callback still sees exactly the two stage names, in the same order: a caller
- // written before the motions existed reads the strings and ignores everything else.
- const stages: string[] = [];
- const fitted=await buildFittedCv(library,'Financial planning budgets reporting',write,undefined,async event => { if (typeof event === "string") stages.push(event); });
- expect(stages).toEqual(["writing", "fitting"]);
+ // The milestone each motion belongs to is the motion catalogue's to say; the fitter reports the
+ // motions and nothing else, so there is one vocabulary rather than two that can disagree.
+ const motions: string[] = [];
+ const fitted=await buildFittedCv(library,'Financial planning budgets reporting',write,undefined,async event => { motions.push(event.motion); });
+ expect(motions).toEqual(["write", "write", "check_plan", "measure", "shorten"]);
  expect(write).toHaveBeenCalledTimes(1);
  expect(write.mock.calls[0]![0].maxPages).toBe(2);
  expect(write.mock.calls[0]![0].writingBudget.blocks).toHaveLength(8);
@@ -44,7 +44,7 @@ it('gives the writer budgets before its first attempt and avoids unnecessary mod
 });
 it('reports each motion of writing and fitting with the figures behind it',async()=>{
  const events: CvFitEvent[] = [];
- await buildFittedCv(library,'Financial planning budgets reporting',async()=>plan,undefined,async event => { if (typeof event !== "string") events.push(event); });
+ await buildFittedCv(library,'Financial planning budgets reporting',async()=>plan,undefined,async event => { events.push(event); });
  expect(events.map(e=>e.motion)).toEqual(['write','write','check_plan','measure','shorten']);
  expect(events[0]).toMatchObject({ motion:'write', phase:'start', attempt:1, budgetScale:1, maxPages:2 });
  expect((events[0] as Extract<CvFitEvent,{phase:'start'}>).budgetCharacters).toBeGreaterThan(0);
@@ -60,9 +60,10 @@ it('reports each motion of writing and fitting with the figures behind it',async
 });
 it('never silently drops employment or education to satisfy the page count',async()=>{
  const events: CvFitEvent[] = [];
- const failing = buildFittedCv(library,'Finance',async()=>({...plan,sections:plan.sections.filter(s=>s.entryId!=='e')}),undefined,async event => { if (typeof event !== "string") events.push(event); });
+ const failing = buildFittedCv(library,'Finance',async()=>({...plan,sections:plan.sections.filter(s=>s.entryId!=='e')}),undefined,async event => { events.push(event); });
  await expect(failing).rejects.toThrow('omitted employment or education');
- await expect(failing).rejects.toMatchObject({ kind:'writer_omitted', detail:{ omitted:['e'] } });
+ // Named in the taxonomy the whole build is classified by: what the writer returned is unusable.
+ await expect(failing).rejects.toMatchObject({ kind:'output_invalid', detail:{ omitted:['e'] } });
  // The reading that found it is reported before the build stops, so the page can say what was lost.
  expect(events.at(-1)).toMatchObject({ motion:'check_plan', omitted:['e'] });
 });
@@ -96,7 +97,10 @@ it('bounds retries when the writer repeatedly ignores the legacy skill format', 
  const write=vi.fn().mockResolvedValue({summary:'Analyst',sections:[{entryId:'legacy',bullets:['SQL'],skillItems:['SQL']}],gaps:[]});
  const attempt = buildFittedCv(source,'SQL',write);
  await expect(attempt).rejects.toThrow('wrong skill format');
- await expect(attempt).rejects.toMatchObject({ kind:'skill_format', detail:{ attempts:3 } });
+ // Three attempts inside one build have been spent on it, so the policy hands the next move to
+ // the person: another task would meet the same model and the same library.
+ await expect(attempt).rejects.toMatchObject({ kind:'output_invalid', detail:{ attempts:3 },
+  policy:{ resolvedBy:'user', retryable:false, action:'choose_model' } });
  expect(write).toHaveBeenCalledTimes(3);
 });
 it('scales the writing budget with the page limit held in the library theme', () => {
@@ -138,7 +142,7 @@ it('reports the page limit when the minimum content cannot fit one page', async 
  const attempt = buildFittedCv({...library,theme:{...DEFAULT_CV_THEME,maxPages:1}},'Finance',write);
  await expect(attempt).rejects.toThrow('into 1 page after three budgeted attempts');
  // The caller is told what it is: a page limit the content will not meet, with both figures.
- await expect(attempt).rejects.toMatchObject({ kind:'page_limit', detail:{ maxPages:1, attempts:3 } });
+ await expect(attempt).rejects.toMatchObject({ kind:'page_limit_unfittable', detail:{ maxPages:1, attempts:3 } });
  expect(write).toHaveBeenCalledTimes(3);
  expect(write.mock.calls[1]![0].layoutFeedback?.maxPages).toBe(1);
  expect(write.mock.calls[1]![0].layoutFeedback?.pageCount).toBeGreaterThan(1);

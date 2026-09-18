@@ -349,6 +349,11 @@ describe("helpers", () => {
     expect(estimateCostUsd("who-knows", { inputTokens: 1_000_000, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 })).toBeCloseTo(5, 6);
     // A build is admitted at what it is expected to cost, far below the sum of its calls' ceilings.
     expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 })).toBeCloseTo(3.15, 3);
+    // An attempt resuming with its wording already written pays for the audit alone: on the same
+    // calibration that is about two thirds of a build, and it is derived from the same figures.
+    expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 }, "assessment")).toBeCloseTo(2.115, 3);
+    expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 }, "assessment")).toBeLessThan(
+      estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 }));
     expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 })).toBeLessThan(
       estimateCostUsd("claude-fable-5-1", { inputTokens: 0, outputTokens: 12_000 + 32_000 + 5 * 24_000, cacheReadTokens: 0, cacheWriteTokens: 0 }));
     // Fable 5.1 prices cache reads at $0.25/MTok, a quarter of the tenth-of-input rule.
@@ -799,5 +804,34 @@ describe("assessment batch hooks", () => {
       ({ parsed_output: answerFor(userPayload(params)), usage: { input_tokens: 100, output_tokens: 100 } }) } } });
     const result = await engine.assessCv(input(2), {}, { onBatch: () => { throw new Error("the ledger is down"); } });
     expect(result!.matches).toHaveLength(2);
+  });
+
+  /**
+   * An engine built for one task stops when that task does.
+   *
+   * A CV build that outruns its deadline, or whose worker loses its place, used to go on streaming
+   * answers nobody would read — and go on charging the account for them — because nothing could
+   * cancel a call in flight. The run's signal cuts the batches off exactly as a failed sibling
+   * does, and nothing new is sent afterwards.
+   */
+  it("stops every call in flight, and sends no more, once the run that owns the engine is abandoned", async () => {
+    const stop = new AbortController();
+    const { client, calls, events } = streamingClient((params, index, signal) => {
+      if (index === 0) return Promise.resolve({ parsed_output: answerFor(userPayload(params)) });
+      return new Promise((_, reject) => signal!.addEventListener("abort", () => reject(new Error("Request was aborted."))));
+    });
+    const usage: AiUsageRecord[] = [];
+    const engine = createAiEngine({ client, getModel: () => "claude-fable-5-1", signal: stop.signal, onUsage: record => { usage.push(record); } });
+    const audit = engine.assessCv(input(17), { stage: "review" });
+    for (let tick = 0; tick < 50 && calls.length < 3; tick++) await new Promise(resolve => setTimeout(resolve, 5));
+    expect(calls).toHaveLength(3);
+    stop.abort();
+    // Without every batch the audit is worthless, so it comes back empty rather than partial.
+    expect(await audit).toBeNull();
+    expect(events.filter(event => event.startsWith("cancel:"))).toHaveLength(2);
+    expect(usage.filter(record => record.error === CANCELLED_ERROR)).toHaveLength(2);
+    expect(await engine.analyseCvJob("Lead operations for a growing team.")).toBeNull();
+    expect(await engine.buildCv({ library: { name: "A", contact: "", profile: "", entries: [] }, jobTitle: "Ops", company: "Acme", description: "Lead" })).toBeNull();
+    expect(calls).toHaveLength(3);
   });
 });

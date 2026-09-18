@@ -385,7 +385,7 @@ describe("execution model", () => {
 
   it("uses the per-type deadline table, and a caller's override before it", () => {
     expect(deadlineMsFor("scan_company")).toBe(3 * 60_000);
-    expect(deadlineMsFor("generate_cv")).toBe(30 * 60_000);
+    expect(deadlineMsFor("generate_cv")).toBe(45 * 60_000);
     expect(deadlineMsFor("discover")).toBe(5 * 60_000);
     expect(deadlineMsFor("score_job")).toBe(2 * 60_000);
     expect(deadlineMsFor("scan_company", { scan_company: 5 })).toBe(5);
@@ -550,8 +550,9 @@ describe("crash recovery", () => {
       userId: user.id, jobTitle: "Operations Director", companyName: "Acme", jobDescription: "Lead a team",
       libraryVersion: 1, librarySnapshot: {} as never, model: "claude-sonnet-5", status: "generating", buildStage: "analysing",
     }).returning();
-    await db.execute(sql`insert into ai_reservations (user_id, call_site, amount, expires_at, worker_id)
-      values (${user.id}, 'CV', 3.06, now() + interval '30 minutes', ${workerId})`);
+    // The hold names the build it is for, as a live build's does: an account can have two.
+    await db.execute(sql`insert into ai_reservations (user_id, call_site, amount, expires_at, worker_id, ref_id)
+      values (${user.id}, 'CV', 3.06, now() + interval '30 minutes', ${workerId}, ${draft!.id})`);
     const payload = { draftId: draft!.id };
     await enqueueTask(db, "generate_cv", payload, { dedupeKey: dedupeKeyFor("generate_cv", payload) });
     const task = (await claimTask(db, `${workerId}#0`, "interactive"))!;
@@ -722,4 +723,61 @@ describe("crash recovery", () => {
     expect(await reconcileCvDrafts(deps)).toBe(0);
     expect((await db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id)))[0]!.status).toBe("generating");
   });
+});
+
+/**
+ * The run's own signal, and the beat that keeps it.
+ *
+ * A handler used to run on regardless: nothing could cancel it, and the one thing that kept its
+ * claim alive was a latch that a single hung query turned off for good. Both are how two workers
+ * ended up running one task at the same time.
+ */
+describe("keeping a run alive, and stopping one that is over", () => {
+  it("stops a run whose task another worker has taken", async () => {
+    let aborted: boolean | null = null;
+    const handler = async (task: schema.Task, _deps: WorkerDeps, ctx: { signal: AbortSignal }) => {
+      // Another worker claims the task out from under this run: the heartbeat is how it finds out.
+      await db.update(schema.tasks).set({ attempts: 5, lockedBy: "another-pod#0" }).where(eq(schema.tasks.id, task.id));
+      await new Promise<void>(resolve => ctx.signal.addEventListener("abort", () => resolve(), { once: true }));
+      aborted = ctx.signal.aborted;
+      return { stopped: true };
+    };
+    await enqueueTask(db, "generate_cv", { draftId: "11111111-1111-1111-1111-111111111111" });
+    const queue = new TaskQueue(deps, { generate_cv: handler }, { concurrency: 1, workerId: "stolen", heartbeatMs: 20 });
+    await queue.drain();
+    expect(aborted).toBe(true);
+    // The task belongs to the worker that took it, and this run's completion was discarded.
+    const [row] = await db.select().from(schema.tasks);
+    expect(row!.status).toBe("running");
+    expect(row!.lockedBy).toBe("another-pod#0");
+  }, 15_000);
+
+  it("keeps renewing a claim when one renewal never comes back", async () => {
+    await enqueueTask(db, "generate_cv", { draftId: "22222222-2222-2222-2222-222222222222" });
+    const task = (await claimTask(db, "hung#0", "interactive"))!;
+    let renewals = 0;
+    // A database that answers the completion but never the renewals: one hung query used to latch
+    // the heartbeat off for good, the claim went stale in five minutes, and a second attempt ran
+    // beside the first.
+    const hangingDb = {
+      update: () => ({
+        set: (values: Record<string, unknown>) => ({
+          where: () => ({
+            returning: () => {
+              if ("status" in values) return Promise.resolve([{ id: task.id }]);
+              renewals++;
+              return new Promise(() => {});
+            },
+          }),
+        }),
+      }),
+    } as unknown as Db;
+    const queue = new TaskQueue({ ...deps, db: hangingDb }, {
+      generate_cv: () => new Promise(resolve => setTimeout(() => resolve({ ok: true }), 250)),
+    }, { concurrency: 1, workerId: "hung", heartbeatMs: 30 });
+
+    await queue.runTask(task);
+
+    expect(renewals).toBeGreaterThan(1);
+  }, 15_000);
 });

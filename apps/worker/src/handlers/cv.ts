@@ -1,4 +1,4 @@
-import { buildFittedCv, CvFitFailure } from "@christopher/core/cv-fit";
+import { buildFittedCv, CvFitFailure, type CvFitEvent } from "@christopher/core/cv-fit";
 import {
   renderCvPdfWithReport,
   assertCvPageLimit,
@@ -17,133 +17,77 @@ import {
   type CvReviewPlan,
 } from "@christopher/core/cv-assessment";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
-import { completeCv, cvRoleKey, schema, type Task, type Db } from "@christopher/db";
+import { completeCv, cvRoleKey, recordAiCall, schema, type Task, type Db } from "@christopher/db";
 import { createAiEngine, estimateCvBuildUsd, CANCELLED_ERROR, type AiFailure, type AiUsageRecord } from "@christopher/ai";
 import {
   CvContentSchema,
   CvPlanSchema,
   CvLibrarySchema,
   CV_BUILD_MOTIONS,
+  CV_BUILD_STAGES,
+  aiBudgetRefusalMessage,
   aiBudgetWindowStart,
-  cvBuildFailure,
+  assessmentTally,
+  callCost,
   cvMaxPages,
   cvRelevanceTerms,
   groupCvLibrary,
+  reusedCvRubric,
+  usd,
   type CvBuildCheckpoint,
-  type CvBuildFailure,
   type CvFailureKind,
 } from "@christopher/core";
+import {
+  AUTHOR_CALL,
+  callFailureMessage,
+  CV_LOST_PLACE_MESSAGE,
+  CvBuildStop,
+  cvBuildFailureFor,
+  REVIEW_CALL,
+  RUBRIC_CALL,
+  type CvCallDoing,
+} from "@christopher/core/cv-build-failure";
 import { withResourceLease } from "../lease";
-import { tryReserveAi, type AiBudgetRefusal } from "../budget";
-import { backoffMs } from "../queue";
-import { CvJournal, type CvOpenStep } from "./cv-journal";
+import { tryReserveAi, type AiHold } from "../budget";
+import { backoffMs, type TaskRunContext } from "../queue";
+import { CvJournal, type CvJournalLoss, type CvOpenStep } from "./cv-journal";
 import type { WorkerDeps } from "../context";
 import { log } from "../log";
 
 class CvDeletedError extends Error {}
 
-/**
- * A failure that already knows what it is.
- *
- * Everything the build can be stopped by is either thrown as one of these, at the point that knows
- * which motion it was and what the model said, or is a class the catch can recognise. Nothing is
- * classified by reading English out of an error message, because the sentences that matter come
- * from a provider that is free to reword them.
- */
-export class CvBuildStop extends Error {
-  constructor(
-    readonly kind: CvFailureKind,
-    message: string,
-    readonly extra: Partial<CvBuildFailure> = {},
-  ) {
-    super(message);
-    this.name = "CvBuildStop";
-  }
-}
+export { CvBuildStop };
 
 /**
  * Thrown when the system is going to resolve the failure itself: the queue re-queues the task with
  * its usual backoff, and the next attempt resumes from the build's checkpoint rather than paying
  * for the rubric and the writing again. The draft stays `generating` with `failure` explaining
  * the wait, so the page says what happened and when it will be tried again.
+ *
+ * It carries no more than its message: the failure itself is on the draft, which is where the page
+ * reads it, and a second copy on the error was one the queue never looked at.
  */
 export class CvRetryableBuildError extends Error {
-  constructor(message: string, readonly failure: CvBuildFailure) {
+  constructor(message: string) {
     super(message);
     this.name = "CvRetryableBuildError";
   }
 }
 
-type RubricSource = { jobDescription: string; assessment: { rubric: unknown } | null };
+/** What someone is told when another worker still holds this build's lease. */
+export const CV_BUSY_MESSAGE = "Another worker is still finishing this build";
 
-/**
- * The rubric a revision is assessed against stays fixed for its job description: the one its task
- * carries, else its parent's for the same description, else its own from an earlier assessment.
- * A parent that failed before assessing, or that the rolling archive has removed, must not cost a
- * fresh rubric that would move the goalposts between revisions.
- */
-export function reusableCvRubric(draft: RubricSource, parent: RubricSource | undefined, supplied: unknown): unknown {
-  return supplied ?? (parent?.jobDescription === draft.jobDescription ? parent.assessment?.rubric : undefined) ?? draft.assessment?.rubric;
-}
+/** What the person is told when the budget stopped holding capacity for a build still running. */
+export const CV_HOLD_LOST_MESSAGE =
+  "This build's share of your AI budget was released while it was running, so it stopped rather than spend more.";
 
-/**
- * Which source supplied a rubric this build does not have to pay for, named so the narrative can
- * say which. A checkpoint comes first: it is this build's own earlier attempt, already validated
- * against this description, and the cheapest thing a retry can skip.
- */
-export function reusedCvRubric(
-  draft: RubricSource & { buildCheckpoint?: CvBuildCheckpoint | null },
-  parent: RubricSource | undefined,
-  supplied: unknown,
-): { reused: "checkpoint" | "parent" | "assessment"; rubric: unknown } | null {
-  if (draft.buildCheckpoint?.rubric) return { reused: "checkpoint", rubric: draft.buildCheckpoint.rubric };
-  // A rubric on the task is the parent revision's, carried so that retention deleting the parent
-  // cannot move the goalposts; to the reader it is the same thing as the parent's own.
-  const inherited = reusableCvRubric(draft, parent, supplied);
-  if (!inherited) return null;
-  return { reused: inherited === draft.assessment?.rubric && !supplied ? "assessment" : "parent", rubric: inherited };
-}
-
-/**
- * Why a build was not admitted, with the figures behind it, so the reader can tell a cap from a
- * fault.
- *
- * The account's own budget is the one the person who asked for the build is told about plainly: it
- * is theirs, it is monthly, and they can raise it themselves. Capacity held by their own calls in
- * flight is named when there is any, because a second build started while the first is running is
- * the ordinary way to meet it. The deployment's optional day and discovery caps are the operator's
- * and live in the worker's environment, so a refusal by one of those says so instead.
- */
-function budgetRefusal(expected: number, refusal: AiBudgetRefusal): string {
-  const left = Math.max(0, refusal.limitUsd - refusal.spent - refusal.held);
-  const needs = `This build needs about $${expected.toFixed(2)} of AI budget;`;
-  const held = refusal.held > 0 ? ` after $${refusal.held.toFixed(2)} held by calls in flight` : "";
-  if (refusal.limit === "account")
-    return `${needs} your budget of $${refusal.limitUsd} has $${left.toFixed(2)} left this month${held} (it resets on the 1st). Raise it on Settings, or ask an administrator.`;
-  return `${needs} the deployment's ${refusal.limit === "day" ? "daily" : "discovery"} AI cap of $${refusal.limitUsd} has $${left.toFixed(2)} left${held}. An administrator can raise it in the worker's environment; then retry.`;
-}
 type BuildUpdate = Partial<Pick<typeof schema.cvDrafts.$inferInsert,
   "status" | "content" | "assessment" | "revision" | "buildStage" | "error" | "finalisedAt" | "progressAt" | "buildCheckpoint" | "failure">>;
 
-/** Money as the narrative shows it: enough precision for a batch that cost a fifth of a cent. */
-const usd = (value: number) => Number(value.toFixed(4));
-
-/** What a call consumed, for the step that made it. Tokens are every token it was billed for. */
-function callCost(usage: AiUsageRecord | undefined): Record<string, number> {
-  if (!usage) return {};
-  return {
-    usd: usd(usage.costUsd),
-    tokens: usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens,
-  };
-}
-
-/** What this account has spent and has in flight. Reported only: `tryReserveAi` is what decides. */
-async function accountBudgetSnapshot(db: Db, userId: string, since: Date): Promise<{ spent: number; held: number }> {
-  const rows = await db.execute<{ spent: number; held: number }>(sql`select
-    (select coalesce(sum(cost_usd::float8), 0) from ai_calls where user_id = ${userId} and at >= ${since}) as spent,
-    (select coalesce(sum(amount::float8), 0) from ai_reservations where user_id = ${userId}) as held`);
-  return { spent: Number(rows.rows[0]?.spent ?? 0), held: Number(rows.rows[0]?.held ?? 0) };
-}
+/** The four milestones the draft carries for the page's strip. */
+type BuildStage = NonNullable<BuildUpdate["buildStage"]>;
+/** The motions the fitter reports, whose milestones are always two of those four. */
+type FitMotion = CvFitEvent["motion"] | "rewrite";
 
 /** Whether publishing this build will archive a CV that is currently the saved one for its role. */
 async function archivesPrevious(db: Db, draft: { id: string; userId: string; companyName: string; jobTitle: string }): Promise<boolean> {
@@ -154,97 +98,13 @@ async function archivesPrevious(db: Db, draft: { id: string; userId: string; com
   return rows.length > 0;
 }
 
-/** The assessment in one line of figures: how the requirements landed and how the claims held up. */
-function assessmentTally(review: CvReviewPlan): Record<string, number> {
-  const count = <T extends string>(values: T[], value: T) => values.filter(item => item === value).length;
-  const matches = review.matches.map(match => match.status);
-  const claims = review.claims.map(claim => claim.status);
-  return {
-    demonstrated: count(matches, "demonstrated"), partial: count(matches, "partial"),
-    missing: count(matches, "missing"), unknown: count(matches, "unknown"),
-    supported: count(claims, "supported"), unsupported: count(claims, "unsupported"),
-    uncertain: count(claims, "uncertain"),
-  };
-}
-
-/** What a call was doing, in the two grammars the failure sentences need. */
-type Doing = { gerund: string; step: string };
-const RUBRIC_CALL: Doing = { gerund: "extracting the role's requirements", step: "requirements" };
-const AUTHOR_CALL: Doing = { gerund: "writing the CV", step: "writing" };
-const REVIEW_CALL: Doing = { gerund: "checking the CV against your evidence", step: "assessment" };
-
-/**
- * One plain sentence for a model call that did not produce a usable answer, with the figures that
- * matter. The kind is what the system acts on; this is what the person reads.
- */
-function callFailureMessage(kind: CvFailureKind, doing: Doing, status?: number, note?: string): string {
-  const where = ` while ${doing.gerund}`;
-  switch (kind) {
-    case "rate_limited":
-      return `The model provider asked us to slow down${where}.`;
-    case "overloaded":
-      return `The model provider was overloaded${where}${status ? ` (HTTP ${status})` : ""}.`;
-    case "connection":
-      return `The connection to the model provider dropped${where}.`;
-    case "stalled":
-      return `The model stopped responding${where}: nothing arrived for fifteen minutes.`;
-    case "model_access":
-      return `The CV model could not be reached${where}${status ? ` (HTTP ${status})` : ""}. Check model access and usage in Health, then retry.`;
-    case "output_limit":
-      return `The model ran out of room for its answer${where}${note ? ` ${note}` : ""}.`;
-    case "refused":
-      return `The model declined to answer${where}${note ? ` ${note}` : ""}.`;
-    default:
-      return `The model's answer to the ${doing.step} step could not be used${note ? ` ${note}` : ""}.`;
-  }
-}
-
-/** Asked of the person once the system has tried again and met the same thing. */
-const OUTPUT_LIMIT_ASK =
-  "The model ran out of room for its answer twice. Choose a more capable CV model in Settings, then rebuild this CV.";
-const REFUSED_ASK =
-  "The model declined this request twice. Check the job description for anything it may have objected to, then rebuild this CV.";
-
-/** A build that ends without a lease is a build whose writes would be stale; nothing else is wrong. */
-const LEASE_LOST = "lease lost; refusing stale writes";
-
-/**
- * What stopped the build, in the taxonomy the page and the queue both read.
- *
- * Everything that carries its own kind is taken at its word. The rest are recognised by class:
- * the fitter's three ways of giving up, an over-long layout, and a lease this worker no longer
- * holds. Anything else is honestly `unknown`, which asks the person rather than burning retries
- * on something nobody has understood yet.
- */
-function classifyBuildFailure(error: unknown): { kind: CvFailureKind; message: string; extra: Partial<CvBuildFailure> } {
-  if (error instanceof CvBuildStop) return { kind: error.kind, message: error.message, extra: error.extra };
-  if (error instanceof CvFitFailure) {
-    if (error.kind === "page_limit") {
-      const pages = error.detail.pages ?? 0;
-      const maxPages = error.detail.maxPages ?? 0;
-      return {
-        kind: "page_limit_unfittable",
-        message: `The CV is ${pages} ${pages === 1 ? "page" : "pages"} after three attempts; the limit is ${maxPages}. Remove some evidence in your Library or raise the page limit in Settings.`,
-        extra: {},
-      };
-    }
-    if (error.kind === "skill_format")
-      // Three attempts have already been spent on this inside one build. A fourth from a fresh
-      // task would meet the same model and the same library, so the person chooses instead.
-      return { kind: "output_invalid", message: error.message, extra: { resolvedBy: "user", retryable: false, action: "choose_model" } };
-    return { kind: "output_invalid", message: error.message, extra: {} };
-  }
-  if (error instanceof CvLayoutError) return { kind: "page_limit_unfittable", message: error.message, extra: {} };
-  // Our own sentence, not a provider's: the lease fence raises a plain Error either way it is lost.
-  if (error instanceof Error && error.message.endsWith(LEASE_LOST))
-    return { kind: "worker_interrupted", message: "This build lost its place to another worker before it finished.", extra: {} };
-  const detail = error instanceof Error && !error.message.startsWith("Failed query:")
-    ? error.message : "Could not complete this CV. Please retry.";
-  return { kind: "unknown", message: detail, extra: {} };
+/** A second or third writing attempt is a rewrite: the catalogue has the motion, so the ledger uses it. */
+function writingMotion(attempt: number): "write" | "rewrite" {
+  return attempt > 1 ? "rewrite" : "write";
 }
 
 /** All generation and review modes use the same immutable input snapshot and lease. */
-export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
+export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskRunContext) {
   const payload = task.payload;
   if (!payload || typeof payload !== "object" || typeof payload.draftId !== "string" ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(payload.draftId) ||
@@ -258,6 +118,27 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
     improvements?: string[];
     mode?: "assess" | "improve";
   };
+  /**
+   * This build's own signal. The queue aborts the run's signal when the build outruns its deadline
+   * or the task is taken by another worker; the build aborts this one when it learns the same
+   * thing from inside — its lease went, its draft was deleted, its budget hold was released. Every
+   * model call is made under it, so a build that has been given up on stops paying for answers
+   * nobody will read.
+   */
+  const stop = new AbortController();
+  /** Why this build must stop, when something outside the work itself decided it. */
+  let interrupted: CvBuildStop | CvDeletedError | undefined;
+  const stopBuild = (reason: CvBuildStop | CvDeletedError) => {
+    interrupted ??= reason;
+    stop.abort(reason);
+  };
+  if (ctx?.signal.aborted) stopBuild(new CvBuildStop("worker_interrupted", CV_LOST_PLACE_MESSAGE));
+  else ctx?.signal.addEventListener("abort",
+    () => stopBuild(new CvBuildStop("worker_interrupted", CV_LOST_PLACE_MESSAGE)), { once: true });
+  const lost = (loss: CvJournalLoss) => stopBuild(loss === "deleted"
+    ? new CvDeletedError()
+    : new CvBuildStop("worker_interrupted", loss === "hold" ? CV_HOLD_LOST_MESSAGE : CV_LOST_PLACE_MESSAGE));
+
   return withResourceLease(deps, `cv:${draftId}`, async (locked) => {
     const save = async (values: BuildUpdate) => {
       // Every write a live build makes is progress, so it carries the moment it happened. A build
@@ -284,13 +165,27 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
     // is not a number would reach the ledger as a broken row.
     const attempt = Number.isFinite(task.attempts) ? Math.max(1, task.attempts) : 1;
     const maxAttempts = Number.isFinite(task.maxAttempts) ? task.maxAttempts : attempt;
-    let release: (() => Promise<void>) | undefined;
-    let renewHold: (() => Promise<void>) | undefined;
-    // Every motion of this attempt, written as it happens. A step closing is also the moment the
-    // build's reservation is renewed: it is the one event that is always genuine progress.
+    /** The one hold this build is admitted against, kept alive while the build advances. */
+    let hold: AiHold | undefined;
+    /**
+     * Keep this build's capacity held. A renewal that matches no row means the hold has gone — an
+     * expiry, or a release meant for another build — so the budget no longer knows this build is
+     * running, and continuing would spend money nothing has admitted.
+     */
+    const renewHold = async (): Promise<boolean> => {
+      if (!hold) return true;
+      if (await hold.renew()) return true;
+      stopBuild(new CvBuildStop("worker_interrupted", CV_HOLD_LOST_MESSAGE));
+      return false;
+    };
+    // Every motion of this attempt, written as it happens, behind this attempt's fence. A step
+    // closing is also the moment the build's reservation is renewed: it is the one event that is
+    // always genuine progress.
     const journal = new CvJournal({
       db: deps.db, draftId, userId: draft.userId, taskId: task.id ?? null, attempt, now: deps.now,
-      onClose: async () => { await renewHold?.(); },
+      assertOwnership: locked.assertOwnership,
+      renewHold,
+      onLost: lost,
     });
     // What this build has already paid for. A retry reads it and skips those calls; publication
     // clears it, because a published CV has nothing left to resume.
@@ -356,38 +251,64 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
       // part-way over budget accounting; one it cannot afford is refused here, before it spends
       // anything. Holding each call at its ceiling instead refused builds the month could plainly
       // afford, and did so after the rubric and CV had already been paid for.
+      //
+      // An attempt whose wording is already written and still fits will only re-run the audit, so
+      // it is admitted at the audit's share of the estimate rather than the whole build's: holding
+      // three times what it can spend refused resumptions the month could plainly afford. Such an
+      // attempt may still pay for a rubric it has not inherited, which is cents against a hold
+      // measured in dollars, and the hold covers the calls where the money actually is.
       const expected = estimateCvBuildUsd(draft.model, {
         libraryBytes: Buffer.byteLength(JSON.stringify(library)),
         descriptionBytes: Buffer.byteLength(draft.jobDescription),
-      });
+      }, inputs.reusedContent ? "assessment" : "all");
       const account = await deps.userSettings(draft.userId);
       const since = aiBudgetWindowStart(deps.now(), account.aiBudgetResetAt);
-      await journal.run("admit_budget", { expectedUsd: usd(expected), limitUsd: account.aiBudgetUsd }, async step => {
-        const before = await accountBudgetSnapshot(deps.db, draft.userId, since);
-        const hold = await tryReserveAi(deps.db, "CV", expected, {
+      await journal.run("admit_budget", {
+        expectedUsd: usd(expected), limitUsd: account.aiBudgetUsd, resumed: inputs.reusedContent,
+      }, async step => {
+        const admitted = await tryReserveAi(deps.db, "CV", expected, {
           account: { userId: draft.userId, budgetUsd: account.aiBudgetUsd, since },
           daily: deps.env.dailyAiBudgetUsd ?? 1000000,
           discovery: deps.env.discoveryAiBudgetUsd ?? 1000000,
           workerId: deps.env.workerId,
+          // Which build this hold is for, so giving up on one build never releases another's.
+          refId: draft.id,
         }, deps.now(), 30);
-        if ("refused" in hold) {
-          step.add({ limitUsd: hold.refused.limitUsd, heldUsd: usd(hold.refused.held),
-            leftUsd: usd(Math.max(0, hold.refused.limitUsd - hold.refused.spent - hold.refused.held)) });
-          throw new CvBuildStop("budget_exhausted", budgetRefusal(expected, hold.refused));
+        if ("refused" in admitted) {
+          step.add({ limitUsd: admitted.refused.limitUsd, heldUsd: usd(admitted.refused.held),
+            leftUsd: usd(Math.max(0, admitted.refused.limitUsd - admitted.refused.spent - admitted.refused.held)) });
+          throw new CvBuildStop("budget_exhausted", aiBudgetRefusalMessage("This build", expected, admitted.refused));
         }
-        release = hold.release;
-        renewHold = hold.renew;
-        step.add({ heldUsd: usd(before.held + expected),
-          leftUsd: usd(Math.max(0, account.aiBudgetUsd - before.spent - before.held - expected)) });
+        hold = admitted;
+        // The figures the hold itself was measured against, inside the lock that took it: a
+        // second reading taken outside it could disagree with the decision it is explaining.
+        step.add({ limitUsd: admitted.limitUsd, heldUsd: usd(admitted.held + expected),
+          leftUsd: usd(Math.max(0, admitted.limitUsd - admitted.spent - admitted.held - expected)) });
       });
-      const stage = async (buildStage: NonNullable<BuildUpdate["buildStage"]>) => {
+      let currentStage: BuildStage | undefined;
+      const stage = async (buildStage: BuildStage) => {
+        currentStage = buildStage;
         await save({ buildStage });
-        await renewHold?.();
+        await renewHold();
+      };
+      /**
+       * The milestone a motion belongs to, from the catalogue, and never backwards within one
+       * attempt: a rewrite belongs to fitting, and the reading of its plan belongs to writing, so
+       * taking every motion's stage literally would walk the strip back a milestone mid-attempt.
+       */
+      const stageFor = async (motion: FitMotion) => {
+        const next: BuildStage = CV_BUILD_MOTIONS[motion].stage;
+        if (currentStage === next) return;
+        if (currentStage && CV_BUILD_STAGES.indexOf(next) < CV_BUILD_STAGES.indexOf(currentStage)) return;
+        await stage(next);
       };
       const ai = createAiEngine({
         apiKey: deps.env.anthropicApiKey,
         client: deps.aiClient,
         getModel: () => draft.model,
+        // Every call this build makes is made under its signal, so a deadline, a lost lease or a
+        // released hold stops the calls as well as the bookkeeping.
+        signal: stop.signal,
         onUsage: async ({ failure, ...usage }) => {
           // The failure that ended a build is the one to report: not a batch cancelled because of
           // it, and not a sibling that happened to finish cleanly afterwards.
@@ -397,7 +318,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
             if (failure) callFailures.set(usage.stage, failure);
           }
           // `failure` is the same event named; `ai_calls` keeps the text it always kept.
-          await deps.db.insert(schema.aiCalls).values({ ...usage, userId: draft.userId });
+          await recordAiCall(deps.db, draft.userId, usage);
         },
       });
       /**
@@ -405,9 +326,12 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
        * by whichever error happened to be most recent. `note` carries the figures the sentence
        * needs, such as which of the three writing attempts this was.
        */
-      const requireResult = <T>(value: T | null, stage: string, doing: Doing, note?: string): T => {
+      const requireResult = <T>(value: T | null, stageName: string, doing: CvCallDoing, note?: string): T => {
         if (value) return value;
-        const failure = callFailures.get(stage) ?? (stage === "review" ? callFailures.get("review_retry") : undefined);
+        // A call that returned nothing because this build was told to stop is that interruption,
+        // not a model failure: it never got an answer to be disappointed by.
+        if (interrupted) throw interrupted;
+        const failure = callFailures.get(stageName) ?? (stageName === "review" ? callFailures.get("review_retry") : undefined);
         const kind: CvFailureKind = failure?.kind ?? "output_invalid";
         throw new CvBuildStop(kind, callFailureMessage(kind, doing, failure?.status, note), {
           ...(generationError ? { cause: generationError.slice(0, 500) } : {}),
@@ -446,7 +370,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
 
       let content = inputs.reusedContent ? inputs.saved : undefined;
       if (!content) {
-        let writeStep: CvOpenStep | null = null;
+        let writeStep: CvOpenStep<"write" | "rewrite"> | null = null;
         try {
           // Saved wording that no longer fits is refitted; a rebuild starts from the Library.
           const initial = inputs.saved ? CvPlanSchema.parse(inputs.saved) : undefined;
@@ -481,19 +405,18 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
                 "author", AUTHOR_CALL, `(attempt ${writeAttempt} of 3)`,
               ),
             initial,
-            async (event) => {
-              if (typeof event === "string") {
-                await stage(event);
-                return;
-              }
+            async (event: CvFitEvent) => {
+              // The first attempt writes; the ones after it rewrite to a smaller budget, which is
+              // a motion of its own in the catalogue and reads as one in the narrative.
+              await stageFor(event.motion === "write" ? writingMotion(event.attempt) : event.motion);
               switch (event.motion) {
                 case "write":
                   if (event.phase === "start") {
                     writeAttempt = event.attempt;
-                    writeStep = await journal.open("write", {
+                    writeStep = await journal.open(writingMotion(event.attempt), {
                       attempt: event.attempt, budgetCharacters: event.budgetCharacters,
                       budgetScale: event.budgetScale, maxPages: event.maxPages,
-                    }, event.attempt > 1 ? CV_BUILD_MOTIONS.rewrite.title : undefined);
+                    });
                   } else {
                     await journal.close(writeStep, "done", {
                       roles: event.roles, bullets: event.bullets, characters: event.characters,
@@ -536,8 +459,8 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
       // A build that skipped the writer never measured anything, so its one measurement is here.
       if (inputs.reusedContent) await journal.record("measure", { pages: pageCount, maxPages });
       assertCvPageLimit(pageCount, maxPages);
-      const batchSteps = new Map<number, CvOpenStep>();
-      const retrySteps = new Map<number, CvOpenStep>();
+      const batchSteps = new Map<number, CvOpenStep<"assess_batch">>();
+      const retrySteps = new Map<number, CvOpenStep<"assess_retry">>();
       const requirementsPerBatch = (total: number) => Math.max(1, Math.ceil(rubric.requirements.length / total));
       let review: CvReviewPlan;
       try {
@@ -575,7 +498,9 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
                 const status = event.phase === "done" ? "done" : "failed";
                 const retry = retrySteps.get(event.index);
                 if (retry) {
-                  await journal.close(retry, status, { usd: usd(event.usage?.costUsd ?? 0) });
+                  // The re-run is a call like any other: it is charged what it cost, not zero,
+                  // which is what the Operations median for this motion was being told.
+                  await journal.close(retry, status, callCost(event.usage));
                   retrySteps.delete(event.index);
                   return;
                 }
@@ -629,26 +554,12 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
       });
       return { draftId, ready: true };
     } catch (error) {
-      if (error instanceof CvDeletedError) return { draftId, skipped: true, reason: "deleted" };
-      const base = classifyBuildFailure(error);
-      let message = base.message;
-      let extra: Partial<CvBuildFailure> = { ...base.extra, attempt, maxAttempts };
-      // Two failures change hands with repetition rather than being one thing always. A model that
-      // ran out of room, or declined, is worth one more attempt by the system — the second time it
-      // is the person who has to choose a different model or reword the role, because a third
-      // attempt would meet the same model with the same prompt and cost the same money.
-      if (base.kind === "output_limit" || base.kind === "refused") {
-        const ask = attempt >= 2;
-        extra = ask
-          ? { ...extra, resolvedBy: "user", retryable: false, action: base.kind === "output_limit" ? "choose_model" : "retry" }
-          : { ...extra, resolvedBy: "system", retryable: true };
-        if (ask) message = base.kind === "output_limit" ? OUTPUT_LIMIT_ASK : REFUSED_ASK;
-      }
-      // Operations reads the raw reason; the person never does. Kept whenever the sentence we show
-      // is not the sentence that was thrown, such as a page limit reported in the reader's terms.
-      if (!extra.cause && error instanceof Error && error.message !== message)
-        extra = { ...extra, cause: error.message.slice(0, 500) };
-      const failure = cvBuildFailure(base.kind, message, extra);
+      // Something outside the work told this build to stop, and whatever the work then threw is a
+      // consequence of that rather than the reason: the interruption is what the person is told.
+      const cause = interrupted ?? error;
+      if (cause instanceof CvDeletedError) return { draftId, skipped: true, reason: "deleted" };
+      const failure = cvBuildFailureFor(cause, { attempt, maxAttempts });
+      const message = failure.message;
       // The system resolves what it can: the draft stays alive, the checkpoint stays with it, and
       // the queue brings the build back to finish what it has already paid for.
       if (failure.resolvedBy === "system" && failure.retryable && attempt < maxAttempts) {
@@ -661,7 +572,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
           if (saveError instanceof CvDeletedError) return { draftId, skipped: true, reason: "deleted" };
           throw saveError;
         }
-        throw new CvRetryableBuildError(message, retrying);
+        throw new CvRetryableBuildError(message);
       }
       await journal.failOpen(message, failure);
       log.warn("CV generation failed", { draftId, kind: failure.kind, resolvedBy: failure.resolvedBy, attempt });
@@ -673,7 +584,12 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
       }
       return { draftId, failed: true, error: message };
     } finally {
-      await release?.();
+      await hold?.release();
     }
+  }, {
+    busyMessage: CV_BUSY_MESSAGE,
+    // The lease went to another worker, so every write from here would be stale: stop the model
+    // calls rather than finish a build whose result nothing will accept.
+    onLost: () => stopBuild(new CvBuildStop("worker_interrupted", CV_LOST_PLACE_MESSAGE)),
   });
 }

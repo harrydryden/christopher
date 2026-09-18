@@ -100,15 +100,22 @@ export function priorityFor(type: TaskType): number {
  *
  * Nothing else bounds a handler: a fetch that hangs past its own timeouts, or a model call that
  * never returns, would otherwise hold a slot until the process restarts. `scan_company` is the
- * three minutes per company R-3.1 asks for; a CV build is a chain of model calls and gets half an
- * hour; discovery walks several pages. Everything else is short by construction.
+ * three minutes per company R-3.1 asks for; discovery walks several pages. Everything else is
+ * short by construction.
+ *
+ * A CV build gets three quarters of an hour, because half an hour is reachable by a build that is
+ * working perfectly: three writing attempts of up to five minutes each, the first assessment batch
+ * serially before the rest, and a stream that may legitimately take the fifteen-minute stall
+ * ceiling before it is cut off. The deadline is the ceiling for a build that has stopped, not a
+ * budget a slow one must fit; reaching it now aborts the run's signal, so a build that outruns it
+ * stops spending instead of carrying on unobserved.
  *
  * It lives here rather than in the worker because the interface shows elapsed time against the
  * deadline, and nothing in `apps/web` may import `apps/worker`.
  */
 export const TASK_DEADLINES_MS: Partial<Record<TaskType, number>> & { default: number } = {
   scan_company: 3 * 60_000,
-  generate_cv: 30 * 60_000,
+  generate_cv: 45 * 60_000,
   discover: 5 * 60_000,
   default: 2 * 60_000,
 };

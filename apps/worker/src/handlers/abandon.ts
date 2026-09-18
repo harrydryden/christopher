@@ -1,6 +1,6 @@
-import { abandonCvDraft, releaseAiHolds } from "@christopher/db";
+import { abandonCvDraft, noteCvBuildFailure, releaseAiHolds } from "@christopher/db";
 import { cvBuildFailure, type CvBuildFailure } from "@christopher/core";
-import type { AbandonHookMap } from "../queue";
+import type { AbandonHookMap, InterruptedHookMap } from "../queue";
 import { failOpenCvBuildStepsQuietly } from "./cv-journal";
 import { log } from "../log";
 
@@ -28,6 +28,17 @@ export function cvInterruptedFailure(attempts?: { attempt: number; maxAttempts: 
   });
 }
 
+/** What the page says while the queue is bringing an interrupted build back. */
+export function cvInterruptedMessage(attempts: { attempt: number; maxAttempts: number }): string {
+  return `The worker was interrupted while building this CV (attempt ${attempts.attempt} of ${attempts.maxAttempts}).`;
+}
+
+/** The account a CV task is for, read from its payload. */
+function draftIdOf(task: { payload: unknown }): string | null {
+  const draftId = (task.payload as { draftId?: unknown } | null)?.draftId;
+  return typeof draftId === "string" ? draftId : null;
+}
+
 /**
  * Closing off the work behind a task the queue has given up on.
  *
@@ -38,19 +49,48 @@ export function cvInterruptedFailure(attempts?: { attempt: number; maxAttempts: 
  */
 export const onAbandon: AbandonHookMap = {
   generate_cv: async (task, deps, reason) => {
-    const draftId = (task.payload as { draftId?: unknown }).draftId;
-    if (typeof draftId !== "string") return;
+    const draftId = draftIdOf(task);
+    if (!draftId) return;
     const failure = cvInterruptedFailure({ attempt: task.attempts, maxAttempts: task.maxAttempts }, reason);
     const abandoned = await abandonCvDraft(deps.db, draftId, CV_ABANDONED_MESSAGE, failure);
     if (!abandoned) return;
     // Whatever the build was in the middle of is over; its steps would otherwise stay `running`
-    // for ever and the narrative would end mid-sentence.
+    // for ever and the narrative would end mid-sentence. Every attempt's, because the draft is
+    // failed for good and nothing is coming back to close them.
     await failOpenCvBuildStepsQuietly(deps.db, draftId, CV_ABANDONED_MESSAGE, failure);
     log.warn("cv draft failed by the worker that gave up on its task", { draftId, taskId: task.id, userId: abandoned.userId });
-    // The build held capacity against this account's monthly budget for the whole half hour it
-    // was allowed. Nothing is spending it now, and leaving it held refuses the rebuild we have
-    // just asked the user to start.
-    const released = await releaseAiHolds(deps.db, { userId: abandoned.userId, callSite: "CV" });
+    // The build held capacity against this account's monthly budget for the whole hour it was
+    // allowed. Nothing is spending it now, and leaving it held refuses the rebuild we have just
+    // asked the user to start. Only this build's hold: the account may have another build running.
+    const released = await releaseAiHolds(deps.db, { userId: abandoned.userId, callSite: "CV", refId: draftId });
     if (released.count) log.warn("released the abandoned build's AI holds", { draftId, userId: abandoned.userId, ...released });
+  },
+};
+
+/**
+ * What a CV draft is told when this run of its build was cut off but the task is coming back.
+ *
+ * The handler writes its own failure whenever it can, but a run killed by its deadline cannot: the
+ * queue has already failed the task, so the build's every write is refused by the fence, and the
+ * page went on saying "progressing" — for as long as the person left it open — about a build that
+ * had been abandoned three quarters of an hour earlier. The queue records it here instead, where
+ * the attempt figures and the next run time are known.
+ */
+export const onInterrupted: InterruptedHookMap = {
+  generate_cv: async (task, deps, { retryAt }) => {
+    const draftId = draftIdOf(task);
+    if (!draftId) return;
+    const attempts = { attempt: task.attempts, maxAttempts: task.maxAttempts };
+    const message = cvInterruptedMessage(attempts);
+    // The system is resolving this one: the draft stays `generating`, keeps its checkpoint, and
+    // the page says which attempt stopped and when the next one runs.
+    const failure = cvBuildFailure("worker_interrupted", message, {
+      ...attempts, ...(retryAt ? { retryAt } : {}),
+    });
+    if (!(await noteCvBuildFailure(deps.db, draftId, failure))) return;
+    // Only this attempt's steps: the next attempt has not started, and a later one must not have
+    // its live motions closed by this.
+    await failOpenCvBuildStepsQuietly(deps.db, draftId, message, failure, { attempt: task.attempts });
+    log.warn("cv build interrupted; the queue will run it again", { draftId, taskId: task.id, ...attempts, retryAt });
   },
 };

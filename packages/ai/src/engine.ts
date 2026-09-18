@@ -138,6 +138,14 @@ export interface AiEngineOptions {
   getModel: (callSite: string) => string;
   onUsage?: (record: AiUsageRecord) => void | Promise<void>;
   client?: AiClientLike;
+  /**
+   * The run this engine belongs to, for an engine built for one task.
+   *
+   * When it aborts — the task outran its deadline, or the worker lost its place — every call in
+   * flight is cut off and nothing new is sent. Without it a killed CV build kept streaming
+   * answers nobody would read, and kept spending the account's budget to do it.
+   */
+  signal?: AbortSignal;
   /** Route calls through the server-side refusal fallback. Requires a model that supports it. */
   useServerFallback?: boolean;
   logger?: (msg: string, data?: unknown) => void;
@@ -317,7 +325,9 @@ export class AiEngine {
   }
 
   private async run<T>(callSite: string, params: RunParams, ref: Ref = {}): Promise<T | null> {
-    if (!this.client || params.signal?.aborted) return null;
+    // A call's own signal when it has one (an assessment batch's), the run's otherwise.
+    const signal = params.signal ?? this.options.signal;
+    if (!this.client || signal?.aborted) return null;
     const model = this.options.getModel(callSite);
     const started = Date.now();
     const blocks = typeof params.user === "string" ? [{ text: params.user }] : params.user;
@@ -332,15 +342,21 @@ export class AiEngine {
     };
     if (params.tools) request.tools = params.tools;
 
-    // A generous reading of the prompt: English runs about four bytes per token, so a third of the
-    // byte count leaves roughly 30% of headroom. Output is reserved at the cap the call may reach.
-    const promptBytes = Buffer.byteLength(params.system + blocks.map(block => block.text).join(""));
-    const estimate = estimateCostUsd(model, { inputTokens: promptBytes / 3,
-      outputTokens: params.maxTokens ?? 4096, cacheReadTokens: 0, cacheWriteTokens: 0 }) + (params.tools?.length ? 1 : 0);
-    const settle = this.options.reserve ? await this.options.reserve(callSite, estimate, ref) : undefined;
-    if (settle === null) throw new Error("AI budget reserved or exhausted; retry later");
+    // Estimated only for an engine that holds capacity per call. The CV engine holds one
+    // reservation for the whole build instead, so measuring every prompt for it was work thrown
+    // away — and a second, unused figure beside the one the build was actually admitted at.
+    let settle: (() => Promise<void>) | null | undefined;
+    if (this.options.reserve) {
+      // A generous reading of the prompt: English runs about four bytes per token, so a third of
+      // the byte count leaves roughly 30% of headroom. Output is reserved at the cap it may reach.
+      const promptBytes = Buffer.byteLength(params.system + blocks.map(block => block.text).join(""));
+      const estimate = estimateCostUsd(model, { inputTokens: promptBytes / 3,
+        outputTokens: params.maxTokens ?? 4096, cacheReadTokens: 0, cacheWriteTokens: 0 }) + (params.tools?.length ? 1 : 0);
+      settle = await this.options.reserve(callSite, estimate, ref);
+      if (settle === null) throw new Error("AI budget reserved or exhausted; retry later");
+    }
     try {
-      const response = await this.complete(request, params);
+      const response = await this.complete(request, { ...params, ...(signal ? { signal } : {}) });
       const usage = response.usage ?? {};
       const tokens = {
         inputTokens: usage.input_tokens ?? 0,
@@ -463,7 +479,13 @@ export class AiEngine {
     const stable = JSON.stringify({ evidence: input.evidence, rubric: rubricContext });
     const printed = JSON.stringify({ cv: input.cv });
     const batches = cvReviewBatches(input, batchSize);
+    // One controller for the audit: a batch that fails cancels its siblings, and so does the run's
+    // own signal, so a build whose task has been given up on stops paying for the rest of its audit.
     const controller = new AbortController();
+    const stopBatches = () => controller.abort();
+    const run = this.options.signal;
+    if (run?.aborted) controller.abort();
+    else run?.addEventListener("abort", stopBatches, { once: true });
     const runBatch = (batch: CvReviewBatch, corrections?: string[], onStart?: () => void, onRecord?: (record: AiUsageRecord) => void) => this.run<CvReviewPlan>("CV", {
       system: CV_REVIEW_PROMPT + "\nThis is one batch of a larger audit. The user turn has three parts: the complete evidence library with the rubric's caveats, then the complete cv, then this batch: the rubric requirements and claims to assess now, with claimSources supplying each claim's required source explicitly. Assess only the batch's requirements and claims, using the complete CV and evidence as context. Return an empty array when the batch has no requirements or no claims. Use the shortest sufficient verbatim quotes; usually one or two sources per finding suffice. Keep reasons and improvements concise. Every claim with requiredEvidenceId must cite a verbatim quote from that exact source to be supported, including skills. Evidence from a different role, profile or skill block cannot substitute for it. If that source does not support the complete claim, mark it uncertain or unsupported; never copy in unrelated evidence merely to satisfy this rule.",
       user: [{ text: stable, cache: true }, { text: printed, cache: true }, { text: JSON.stringify({ ...batch, ...(corrections ? { corrections } : {}) }) }],
@@ -546,6 +568,8 @@ export class AiEngine {
       await Promise.allSettled(pending);
       if (err instanceof BatchFailed) return null;
       throw err;
+    } finally {
+      run?.removeEventListener("abort", stopBatches);
     }
     const review = { matches: results.flatMap(result => result.matches), claims: results.flatMap(result => result.claims) };
     const result = CvReviewPlanSchema.safeParse(review);

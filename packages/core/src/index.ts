@@ -14,5 +14,6 @@ export * as discovery from "./discovery/index";
 export type { DiscoveryContext, DiscoveryCandidate, DiscoveryResult, DiscoveryOutcome, DiscoveryAiHooks, HarvestedLink } from "./discovery/types";
 export * from "./cv";
 export * from "./cv-build";
+export * from "./cv-build-plan";
 
 export * from "./role-workflow";

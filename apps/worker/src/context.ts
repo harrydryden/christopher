@@ -1,5 +1,5 @@
-import { accountAiSpend, createDb, schema, totalAiSpend, type Db } from "@christopher/db";
-import { aiBudgetWindowStart, aiFeatureLabel, ats, discovery, modelForCallSite, type AppSettings, type DiscoveryContext, type FetchContext, type SystemSettings } from "@christopher/core";
+import { accountAiSpend, createDb, recordAiCall, totalAiSpend, type Db } from "@christopher/db";
+import { aiBudgetRefusalMessage, aiBudgetWindowStart, aiFeatureLabel, ats, discovery, modelForCallSite, type AppSettings, type DiscoveryContext, type FetchContext, type SystemSettings } from "@christopher/core";
 import { createAiEngine, type AiClientLike, type AiEngine, type AiUsageRecord, type Ref } from "@christopher/ai";
 import { sql } from "drizzle-orm";
 import { BrowserRenderer } from "./browser";
@@ -81,24 +81,11 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
     ? null
     : new BrowserRenderer({ traffic, beforeNavigate: host => fetcher.waitForHost(host), concurrency: env.browserConcurrency, userAgent: userAgentFor(env.contactEmail), executablePath: env.chromiumExecutablePath, hostMap: env.hostMap });
 
+  // One writer for `ai_calls`, shared with every other engine: a budget read from a ledger one
+  // call site writes differently from another is wrong in the direction that spends money.
   const onUsage = async (r: AiUsageRecord) => {
     try {
-      await db.insert(schema.aiCalls).values({
-        userId: r.userId ?? null,
-        callSite: r.callSite,
-        model: r.model,
-        inputTokens: r.inputTokens,
-        outputTokens: r.outputTokens,
-        cacheReadTokens: r.cacheReadTokens,
-        cacheWriteTokens: r.cacheWriteTokens,
-        costUsd: r.costUsd,
-        durationMs: r.durationMs,
-        ok: r.ok,
-        error: r.error ?? null,
-        refType: r.refType ?? null,
-        refId: r.refId ?? null,
-        stage: r.stage ?? null,
-      });
+      await recordAiCall(db, r.userId ?? null, r);
     } catch (err) {
       log.warn("failed to record ai usage", err);
     }
@@ -127,14 +114,10 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
       discovery: env.discoveryAiBudgetUsd ?? 1000000,
       workerId: env.workerId,
     }, at);
-    if ("refused" in hold) {
-      const { limit, limitUsd, spent, held } = hold.refused;
-      const left = Math.max(0, limitUsd - spent - held).toFixed(2);
-      const needs = `AI budget reserved or exhausted; retry later: ${aiFeatureLabel(callSite)} needs about $${estimate.toFixed(2)}`;
-      throw new Error(limit === "account"
-        ? `${needs} and this account's monthly budget of $${limitUsd} has $${left} left. Raise it on Settings, or ask an administrator.`
-        : `${needs} and the deployment's ${limit === "day" ? "daily" : "discovery"} AI cap of $${limitUsd}, set in the worker's environment, has $${left} left.`);
-    }
+    if ("refused" in hold)
+      // One sentence for a refused hold, wherever it was refused: the CV build and this composed
+      // their own, and the two drifted into telling the person different things about one budget.
+      throw new Error(`AI budget reserved or exhausted; retry later: ${aiBudgetRefusalMessage(aiFeatureLabel(callSite), estimate, hold.refused)}`);
     return hold.release;
   };
   const ai = createAiEngine({

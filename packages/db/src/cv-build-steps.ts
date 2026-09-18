@@ -14,15 +14,27 @@ export interface StartCvBuildStep {
   detail?: Record<string, unknown>;
 }
 
-/** Open a step: the next `seq` for the draft, status `running`. Returns the row id. */
+/**
+ * Open a step: the next `seq` for the draft, status `running`. Returns the row id.
+ *
+ * The number is allocated under an advisory lock on the draft, held for the transaction that
+ * inserts the row. `max(seq) + 1` under READ COMMITTED is a read and a write with a gap between
+ * them: two attempts of one draft — a zombie from a deadline and the attempt that replaced it, or
+ * two assessment batches — read the same maximum and both claimed it, leaving the narrative with
+ * two rows in one place and no way to order them. The unique index on `(draft_id, seq)` is what
+ * makes the guarantee the database's; the lock is what keeps the second writer from meeting it.
+ */
 export async function startCvBuildStep(db: Db, step: StartCvBuildStep): Promise<string> {
   const { stage, title } = CV_BUILD_MOTIONS[step.motion];
-  const [row] = await db.insert(cvBuildSteps).values({
-    draftId: step.draftId, userId: step.userId, taskId: step.taskId ?? null, attempt: step.attempt,
-    seq: sql`coalesce((select max(seq) from cv_build_steps where draft_id = ${step.draftId}), 0) + 1`,
-    stage, motion: step.motion, title: step.title ?? title, status: "running", detail: step.detail ?? {},
-  }).returning({ id: cvBuildSteps.id });
-  return row!.id;
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`cv:steps:${step.draftId}`}, 0))`);
+    const [row] = await tx.insert(cvBuildSteps).values({
+      draftId: step.draftId, userId: step.userId, taskId: step.taskId ?? null, attempt: step.attempt,
+      seq: sql`coalesce((select max(seq) from cv_build_steps where draft_id = ${step.draftId}), 0) + 1`,
+      stage, motion: step.motion, title: step.title ?? title, status: "running", detail: step.detail ?? {},
+    }).returning({ id: cvBuildSteps.id });
+    return row!.id;
+  });
 }
 
 export interface FinishCvBuildStep {
@@ -45,13 +57,31 @@ export async function finishCvBuildStep(db: Db, id: string, outcome: FinishCvBui
   }).where(eq(cvBuildSteps.id, id));
 }
 
-/** Any step still `running` for the draft is closed as `failed`: the process that owned it is gone. */
-export async function failOpenCvBuildSteps(db: Db, draftId: string, error: string, failure?: CvBuildFailure): Promise<number> {
+/**
+ * Any step still `running` for the draft is closed as `failed`: the process that owned it is gone.
+ *
+ * `attempt` narrows it to one attempt's steps, and a live build always passes its own. Without it
+ * a build killed by its deadline — which keeps running, because nothing could cancel it — closed
+ * the steps of the attempt that had replaced it, so the second attempt's narrative filled with
+ * failures written by the first attempt's ghost. A recovery giving up on the draft for good passes
+ * none, because then every open step really is over.
+ */
+export async function failOpenCvBuildSteps(
+  db: Db,
+  draftId: string,
+  error: string,
+  failure?: CvBuildFailure,
+  scope: { attempt?: number } = {},
+): Promise<number> {
   const rows = await db.update(cvBuildSteps).set({
     status: "failed", finishedAt: sql`now()`,
     ms: sql`greatest(0, (extract(epoch from now()) - extract(epoch from ${cvBuildSteps.startedAt})) * 1000)::int`,
     error, failure: failure ?? null,
-  }).where(and(eq(cvBuildSteps.draftId, draftId), eq(cvBuildSteps.status, "running"))).returning({ id: cvBuildSteps.id });
+  }).where(and(
+    eq(cvBuildSteps.draftId, draftId),
+    eq(cvBuildSteps.status, "running"),
+    ...(scope.attempt === undefined ? [] : [eq(cvBuildSteps.attempt, scope.attempt)]),
+  )).returning({ id: cvBuildSteps.id });
   return rows.length;
 }
 

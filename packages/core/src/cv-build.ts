@@ -28,6 +28,54 @@ export type CvBuildMotion = keyof typeof CV_BUILD_MOTIONS;
 export const CV_BUILD_STEP_STATUSES = ["running", "done", "failed", "skipped"] as const;
 export type CvBuildStepStatus = (typeof CV_BUILD_STEP_STATUSES)[number];
 
+/** What a model call cost the step that made it. Only steps that made one carry these. */
+export type CvStepCost = { usd?: number; tokens?: number };
+
+/** One writing attempt: what it was allowed, and what it produced. */
+type CvWritingDetail = CvStepCost & {
+  attempt?: number; budgetCharacters?: number; budgetScale?: number; maxPages?: number;
+  roles?: number; bullets?: number; characters?: number;
+};
+
+/**
+ * The figures each motion records, named per motion.
+ *
+ * The ledger stores `detail` as one jsonb object, so for a while every call site could put
+ * anything in it and the interface had to guess what a motion carried. This is the vocabulary:
+ * one entry per motion, every key optional because a step gathers its figures as it goes (opened
+ * with what is known, closed with what it learnt). The journal is generic over the motion, so a
+ * figure written under the wrong motion does not compile.
+ */
+export type CvBuildStepDetails = {
+  load_inputs: {
+    libraryVersion?: number; descriptionCharacters?: number; mode?: "build" | "assess" | "improve";
+    roles?: number; qualifications?: number; skillBlocks?: number;
+    reusedRubric?: boolean; reusedContent?: boolean;
+  };
+  admit_budget: { expectedUsd?: number; limitUsd?: number; heldUsd?: number; leftUsd?: number; resumed?: boolean };
+  rubric: CvStepCost & {
+    reused?: "checkpoint" | "parent" | "assessment";
+    requirements?: number; essential?: number; desirable?: number; responsibilities?: number;
+  };
+  write: CvWritingDetail;
+  /** A second or third writing attempt against a smaller budget; the same figures as `write`. */
+  rewrite: CvWritingDetail;
+  check_plan: { omitted?: string[]; skillFormatCorrections?: number };
+  measure: { pages?: number; maxPages?: number };
+  shorten: { removed?: number; pages?: number; changes?: string[] };
+  assess_batch: CvStepCost & { batch?: number; batches?: number; requirements?: number; claims?: number };
+  assess_retry: CvStepCost & { batch?: number; corrections?: number };
+  assemble: {
+    pageCount?: number;
+    demonstrated?: number; partial?: number; missing?: number; unknown?: number;
+    supported?: number; unsupported?: number; uncertain?: number;
+  };
+  publish: { revision?: number; archivedPrevious?: boolean };
+};
+
+/** The figures one motion records; every motion's when the motion is not yet known. */
+export type CvBuildStepDetail<M extends CvBuildMotion = CvBuildMotion> = CvBuildStepDetails[M];
+
 /**
  * Why a build stopped, named so the system knows whether to try again on its own and the person
  * knows what, if anything, is theirs to change. Every failure the worker can see maps to one of

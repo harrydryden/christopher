@@ -2,7 +2,7 @@
 
 import { Fragment, startTransition, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { decide, archiveRoles } from "@/app/actions/decisions";
+import { decide, decideRoles, archiveRoles } from "@/app/actions/decisions";
 import { Badge, decisionTone } from "@/components/Badge";
 import { FitBar, Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { Button, buttonClass } from "@/components/Button";
@@ -40,6 +40,48 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
     finally { actionsInFlight.current.delete(id); setArchivingId(null); }
     });
   }
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const selectedIds = rows.filter(row => selected.has(row.id)).map(row => row.id);
+  const allSelected = rows.length > 0 && selectedIds.length === rows.length;
+  const [groupReason, setGroupReason] = useState<string | null>(null);
+  const [groupPending, setGroupPending] = useState<string | null>(null);
+  const [groupError, setGroupError] = useState<string | null>(null);
+  const groupBusy = groupPending !== null;
+
+  function toggleSelected(id: string) {
+    setSelected(previous => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  /** One call for the whole selection: it is saved together or not at all. */
+  function runGroup(label: string, run: () => Promise<{ ok: true; message?: string } | { ok: false; error: string }>, leaving: (row: RoleRowVM) => boolean) {
+    if (groupBusy || selectedIds.length === 0) return;
+    const ids = selectedIds;
+    setGroupPending(label); setGroupError(null); setFlashError(null);
+    startTransition(async () => {
+      try {
+        const result = await run();
+        if (!result.ok) { setGroupError(result.error); return; }
+        const gone = inputRows.filter(row => ids.includes(row.id) && leaving(row)).map(row => row.id);
+        setRemovedIds(previous => new Set([...previous, ...gone]));
+        setSelected(new Set());
+        setGroupReason(null);
+        router.refresh();
+      } catch {
+        setGroupError("Could not save. Reload to check the current state before retrying.");
+      } finally { setGroupPending(null); }
+    });
+  }
+
+  function submitGroupDecision(decision: "apply" | "skip" | null, reason: string) {
+    const ids = selectedIds;
+    runGroup(decision === null ? "Undoing…" : "Saving…", () => decideRoles(ids, decision, reason),
+      row => archived || (row.decision?.decision ?? null) !== decision);
+  }
+
   const [highlightIndex, setHighlightIndex] = useState(-1);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [reasonBox, setReasonBox] = useState<ReasonBoxState | null>(null);
@@ -107,6 +149,9 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
           e.preventDefault();
           setHighlightIndex((i) => Math.max(0, i - 1));
           break;
+        case "x":
+          if (row) { e.preventDefault(); toggleSelected(row.id); }
+          break;
         case "o":
           if (row) window.open(row.url, "_blank", "noopener,noreferrer");
           break;
@@ -136,13 +181,76 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
 
   return (
     <div>
-      {keyboard && <details className="mb-3 text-12 text-muted"><summary className="cursor-pointer">Keyboard shortcuts</summary><p> <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>a</kbd> shortlist · <kbd>s</kbd> dismiss · <kbd>o</kbd> open</p></details>}
+      {keyboard && <details className="mb-3 text-12 text-muted"><summary className="cursor-pointer">Keyboard shortcuts</summary><p> <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>x</kbd> select · <kbd>a</kbd> shortlist · <kbd>s</kbd> dismiss · <kbd>o</kbd> open</p></details>}
       {flashError && (
         <p className="mb-2 border-2 border-danger px-3 py-1.5 text-14 text-danger">{flashError}</p>
+      )}
+      {selectedIds.length > 0 && (
+        <div role="group" aria-label="Actions for the selected roles" className="mb-3 flex flex-col gap-2 border-2 border-line bg-sunken px-3 py-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="ds-label" aria-live="polite">{selectedIds.length} selected</span>
+            {groupReason === null ? (
+              <>
+                <Button size="sm" variant="primary" disabled={groupBusy} onClick={() => submitGroupDecision("apply", "")}>Shortlist</Button>
+                <Button size="sm" disabled={groupBusy} onClick={() => { setGroupError(null); setGroupReason(""); }}>Dismiss</Button>
+                <Button size="sm" variant="ghost" disabled={groupBusy} onClick={() => submitGroupDecision(null, "")}>Undo decisions</Button>
+                <Button size="sm" variant="ghost" disabled={groupBusy}
+                  onClick={() => runGroup(archived ? "Restoring…" : "Archiving…", () => archiveRoles(selectedIds, !archived), () => true)}>
+                  {archived ? "Restore" : "Archive"}
+                </Button>
+                <Button size="sm" variant="ghost" disabled={groupBusy} onClick={() => { setSelected(new Set()); setGroupError(null); }}>Clear</Button>
+                {groupPending && <span className="text-12 text-muted">{groupPending}</span>}
+              </>
+            ) : (
+              <>
+                {["Wrong location", "Wrong seniority", "Not interested"].map(reason => (
+                  <Button key={reason} size="sm" variant="ghost" disabled={groupBusy} onClick={() => setGroupReason(reason)}>{reason}</Button>
+                ))}
+              </>
+            )}
+          </div>
+          {groupReason !== null && (
+            <div className="flex flex-col gap-2">
+              <label className="ds-label" htmlFor="group-reason">One reason for all {selectedIds.length}</label>
+              <textarea
+                id="group-reason"
+                value={groupReason}
+                disabled={groupBusy}
+                rows={2}
+                onChange={event => setGroupReason(event.target.value)}
+                onKeyDown={event => {
+                  if (event.key === "Escape") { event.stopPropagation(); setGroupReason(null); event.currentTarget.blur(); }
+                  else if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); submitGroupDecision("skip", groupReason); }
+                }}
+                placeholder="Why are these not for you? (required)"
+                className="w-full resize-y border-2 border-line-muted bg-bg px-2 py-1 font-mono text-12 text-fg placeholder:text-faint focus:border-line focus:outline-none"
+              />
+              <div className="flex gap-2">
+                <Button size="sm" variant="primary" disabled={groupBusy} onClick={() => submitGroupDecision("skip", groupReason)}>
+                  {groupBusy ? groupPending : `Dismiss ${selectedIds.length}`}
+                </Button>
+                <Button size="sm" variant="ghost" disabled={groupBusy} onClick={() => { setGroupReason(null); setGroupError(null); }}>Cancel</Button>
+              </div>
+            </div>
+          )}
+          {groupError && <p className="text-12 text-danger">{groupError}</p>}
+        </div>
       )}
       <Table>
         <THead>
           <tr>
+            <TH className="w-8">
+              <input
+                type="checkbox"
+                className="h-4 w-4 m-0 align-middle"
+                aria-label="Select every role on this page"
+                aria-checked={allSelected ? "true" : selectedIds.length ? "mixed" : "false"}
+                checked={allSelected}
+                disabled={groupBusy}
+                ref={element => { if (element) element.indeterminate = selectedIds.length > 0 && !allSelected; }}
+                onChange={() => setSelected(allSelected ? new Set() : new Set(rows.map(row => row.id)))}
+              />
+            </TH>
             {!hideCompany && <TH>Company</TH>}
             <TH>Role</TH>
             <TH>Location</TH>
@@ -155,7 +263,18 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
             const boxed = reasonBox?.jobId === row.id ? reasonBox : null;
             return (
               <Fragment key={row.id}>
-                <TR highlighted={index === highlightIndex}>
+                <TR highlighted={index === highlightIndex} className={selected.has(row.id) ? "bg-sunken" : ""}>
+                  <TD>
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 m-0 mt-0.5 align-middle"
+                      aria-label={`Select ${row.title}${hideCompany ? "" : ` at ${row.companyName}`}`}
+                      aria-checked={selected.has(row.id)}
+                      checked={selected.has(row.id)}
+                      disabled={groupBusy}
+                      onChange={() => toggleSelected(row.id)}
+                    />
+                  </TD>
                   {!hideCompany && <TD>
                     <a href={`/companies/${row.companyId}`} className="flex items-center gap-1.5 no-underline hover:underline">
                       {row.companyFaviconUrl ? (
@@ -210,7 +329,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                 </TR>
                 {expandedId === row.id && (
                   <tr id={`role-review-${row.id}`} className="bg-sunken">
-                    <td colSpan={hideCompany ? 4 : 5} className="p-4">
+                    <td colSpan={hideCompany ? 5 : 6} className="p-4">
                       <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(256px,352px)]">
                         <div className="space-y-3">
                           <p className="text-14 font-semibold text-fg">{row.title}</p>

@@ -66,6 +66,7 @@ import {
 } from "./learning";
 import {
   decide,
+  decideRoles,
   saveDecisionTags,
   archiveRoles,
 } from "./decisions";
@@ -833,6 +834,98 @@ describe("bulk archive", () => {
     await database.update(schema.userJobs).set({ inTable: false }).where(eq(schema.userJobs.jobId, job.id));
     expect(await archiveRoles([job.id], false)).toEqual({ ok: false, error: "This role no longer matches your criteria. Review it and shortlist it to bring it back, or update your matching preferences." });
     expect(await archiveRoles([], true)).toEqual({ ok: false, error: "Select between 1 and 500 roles." });
+  }, 120_000);
+});
+
+describe("bulk decisions", () => {
+  /** 100 roles this account follows, the first of them already decided. */
+  async function hundredRoles() {
+    const { company, source, job } = await fixture();
+    const inserted = await database.insert(schema.jobs).values(Array.from({ length: 99 }, (_, i) => ({
+      companyId: company.id, sourceId: source.id, externalKey: `group-${i}`, title: `Group ${i}`,
+      normalizedTitle: `group ${i}`, url: `https://acme.example/group/${i}`,
+    }))).returning({ id: schema.jobs.id });
+    await follow(company.id, ...inserted.map((row) => row.id));
+    return { ids: [job.id, ...inserted.map((row) => row.id)], first: job.id };
+  }
+  const taskKeys = async () => (await database.select().from(schema.tasks)).map((task) => ({ type: task.type, dedupeKey: task.dedupeKey }));
+
+  it("decides 100 roles at once exactly as 100 single decisions would", async () => {
+    const { ids, first } = await hundredRoles();
+    expect(ids).toHaveLength(100);
+
+    // The baseline: one role decided on its own, and the tasks that decision leaves behind.
+    expect((await decide(first, "apply", "Shared reason")).ok).toBe(true);
+    const singleTaskTypes = [...new Set((await taskKeys()).map((task) => task.type))].sort();
+    expect(singleTaskTypes).toEqual(["score_job", "suggest_filters", "synthesize_profile", "tag_reason"]);
+    // Clear what the baseline wrote, so what follows is the group's own work alone.
+    await database.execute(sql`delete from tasks`);
+    await database.execute(sql`delete from job_events`);
+
+    expect(await decideRoles(ids, "apply", "  Shared reason  ")).toEqual({ ok: true });
+
+    const rows = await database.select().from(schema.decisions);
+    expect(rows).toHaveLength(101);
+    const active = rows.filter((row) => !row.superseded);
+    expect(active).toHaveLength(100);
+    expect(new Set(active.map((row) => row.jobId))).toEqual(new Set(ids));
+    expect(active.every((row) => row.decision === "apply" && row.reason === "Shared reason")).toBe(true);
+    // The snapshot a single decision writes is written here too.
+    expect(active.every((row) => row.jobTitle && row.companyName === "Acme")).toBe(true);
+    const superseded = rows.filter((row) => row.superseded);
+    expect(superseded.map((row) => row.jobId)).toEqual([first]);
+
+    const decided = (await database.select().from(schema.jobEvents)).filter((event) => event.type === "decided" && event.payload.decision === "apply");
+    expect(decided).toHaveLength(100);
+    expect(new Set(decided.map((event) => event.jobId))).toEqual(new Set(ids));
+    expect(decided.every((event) => event.userId === user.id && event.payload.reason === "Shared reason")).toBe(true);
+
+    // Exactly the tasks the same roles decided one at a time would queue: one per role where the
+    // dedupe key names a role or a decision, one per account where it names the account.
+    const tasks = await taskKeys();
+    expect([...new Set(tasks.map((task) => task.type))].sort()).toEqual(singleTaskTypes);
+    expect(new Set(tasks.filter((task) => task.type === "score_job").map((task) => task.dedupeKey)))
+      .toEqual(new Set(ids.map((id) => `score_job:${user.id}:${id}`)));
+    expect(new Set(tasks.filter((task) => task.type === "tag_reason").map((task) => task.dedupeKey)))
+      .toEqual(new Set(active.map((row) => `tag_reason:${row.id}`)));
+    expect(tasks.filter((task) => task.type === "synthesize_profile")).toHaveLength(1);
+    expect(tasks.filter((task) => task.type === "suggest_filters")).toHaveLength(1);
+
+    // Undoing the group supersedes every one of them and keeps the audit record.
+    expect(await decideRoles(ids, null, "")).toEqual({ ok: true });
+    expect((await database.select().from(schema.decisions)).every((row) => row.superseded)).toBe(true);
+    expect((await database.select().from(schema.jobEvents)).filter((event) => event.type === "decided" && event.payload.decision === null)).toHaveLength(100);
+  }, 120_000);
+
+  it("refuses the whole group, writing nothing, when the reason, an id or the count is wrong", async () => {
+    const { ids } = await hundredRoles();
+    const clean = async () => {
+      expect(await database.select().from(schema.decisions)).toHaveLength(0);
+      expect(await database.select().from(schema.tasks)).toHaveLength(0);
+      expect((await database.select().from(schema.jobEvents)).filter((event) => event.type === "decided")).toHaveLength(0);
+    };
+
+    // Spec R-6.1 applies to the group: a blank shared reason dismisses nothing.
+    expect(await decideRoles(ids, "skip", "   ")).toEqual({ ok: false, error: expect.stringContaining("reason") });
+    await clean();
+
+    // All or nothing: one id that is not this account's view fails the group.
+    const [outside] = await database.insert(schema.companies).values({ name: "Other", domain: "other.example", homepageUrl: "https://other.example" }).returning();
+    const [outsideSource] = await database.insert(schema.careerSources).values({ companyId: outside!.id, type: "html", url: "https://other.example/jobs" }).returning();
+    const [unfollowed] = await database.insert(schema.jobs).values({ companyId: outside!.id, sourceId: outsideSource!.id, externalKey: "outside", title: "Outside", normalizedTitle: "outside", url: "https://other.example/jobs/1" }).returning();
+    for (const stranger of [unfollowed!.id, crypto.randomUUID()]) {
+      expect(await decideRoles([...ids.slice(0, 5), stranger], "apply", "Shared reason")).toEqual({ ok: false, error: "A selected role no longer exists." });
+      await clean();
+    }
+
+    expect(await decideRoles([...ids, unfollowed!.id], "apply", "Shared reason")).toEqual({ ok: false, error: "Select between 1 and 100 roles." });
+    expect(await decideRoles([], "apply", "")).toEqual({ ok: false, error: "Select between 1 and 100 roles." });
+    await clean();
+
+    // Every group mutation authenticates at the action boundary (R-6.12).
+    session = undefined;
+    await expect(decideRoles(ids.slice(0, 2), "apply", "Shared reason")).rejects.toThrow("Unauthorised");
+    await clean();
   }, 120_000);
 });
 

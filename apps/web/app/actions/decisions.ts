@@ -7,7 +7,7 @@ import { companies, decisions, jobEvents, jobs, tagVocabulary, userJobs } from "
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { enqueue } from "@/lib/enqueue";
+import { enqueue, enqueueMany } from "@/lib/enqueue";
 import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
 
 /** Spec R-6.1: a reason is required for `skip`, and encouraged (never required) for `apply`. */
@@ -160,6 +160,102 @@ export async function archiveRoles(jobIds: string[], archived: boolean): Promise
         where v.user_id = ${user.id}::uuid and v.job_id in (${sql.join(ids.map(id => sql`${id}::uuid`), sql`, `)})`);
     });
   } catch (error) { return actionError(error, "Could not update the archive."); }
+  revalidatePath("/", "layout");
+  return ok();
+}
+
+/** Spec R-6.1: the same limit the group toolbar enforces; the archive takes 500 because it writes far less. */
+const MAX_GROUP_DECISION = 100;
+
+const DecideGroupSchema = z
+  .object({
+    jobIds: z.array(zUuid()).min(1).max(MAX_GROUP_DECISION),
+    decision: z.enum(["apply", "skip"]).nullable(),
+    reason: z.string().max(4000).optional().default(""),
+  })
+  .refine((v) => v.decision !== "skip" || v.reason.trim().length > 0, { message: SKIP_REASON_REQUIRED, path: ["reason"] });
+
+/**
+ * Decide a group of roles at once with one shared reason, or undo the group when `decision` is null.
+ * The result is exactly what the same roles decided one at a time would leave behind — one active
+ * decision row each superseding the previous one, one `decided` event each, and the same tasks —
+ * written set-based in a single transaction. All or nothing: a role that is not this account's, or
+ * a group skip without a reason, writes nothing at all rather than leaving part of the group saved.
+ */
+export async function decideRoles(jobIds: string[], decision: "apply" | "skip" | null, reason: string): Promise<ActionResult> {
+  const user = await requireUser();
+  const parsed = DecideGroupSchema.safeParse({ jobIds, decision, reason });
+  if (!parsed.success) {
+    const reasonIssue = parsed.error.issues.find((issue) => issue.path[0] === "reason");
+    return fail(reasonIssue?.message ?? `Select between 1 and ${MAX_GROUP_DECISION} roles.`);
+  }
+  const input = parsed.data;
+  const trimmedReason = input.reason.trim();
+
+  try {
+    await db().transaction(async tx => {
+      const ids = [...new Set(input.jobIds)].sort();
+      const idList = sql.join(ids.map(id => sql`${id}::uuid`), sql`, `);
+      const now = new Date();
+
+      // One locking read in a stable order, like archiveRoles: the whole group or none of it.
+      const rows = await tx.select({ jobId: userJobs.jobId, inTable: userJobs.inTable, archivedAt: userJobs.archivedAt }).from(userJobs)
+        .where(and(eq(userJobs.userId, user.id), inArray(userJobs.jobId, ids))).orderBy(userJobs.jobId).for("update");
+      if (rows.length !== ids.length) throw new UserFacingError("A selected role no longer exists.");
+
+      // Undo keeps the audit record: the previous decision is superseded, never deleted.
+      await tx.update(decisions).set({ superseded: true })
+        .where(and(eq(decisions.userId, user.id), inArray(decisions.jobId, ids), eq(decisions.superseded, false)));
+
+      if (input.decision === null) {
+        // A role the gate no longer admits was only in the table because a decision held it.
+        const drops = rows.filter(row => !row.inTable && !row.archivedAt).map(row => row.jobId);
+        if (drops.length) {
+          await tx.update(userJobs).set({ archivedAt: now, updatedAt: now })
+            .where(and(eq(userJobs.userId, user.id), inArray(userJobs.jobId, drops)));
+          await tx.insert(jobEvents).values(drops.map(jobId => ({
+            jobId, userId: user.id, type: "updated" as const,
+            payload: { action: "archived", actor: "system", reason: "No longer matches your criteria" },
+          })));
+        }
+        await tx.insert(jobEvents).values(ids.map(jobId => ({ jobId, userId: user.id, type: "decided" as const, payload: { decision: null } })));
+        await enqueue("synthesize_profile", { userId: user.id, force: true }, tx);
+        await enqueue("suggest_filters", { userId: user.id }, tx);
+        return;
+      }
+
+      await tx.update(userJobs).set({ archivedAt: null, updatedAt: now })
+        .where(and(eq(userJobs.userId, user.id), inArray(userJobs.jobId, ids)));
+
+      // One insert … select writes the whole group with its denormalised snapshot, so the learning
+      // corpus survives job or company deletion exactly as a single decision's does.
+      const inserted = await tx.execute<{ id: string; job_id: string }>(sql`
+        insert into decisions (user_id, job_id, decision, reason, job_title, company_name, job_location, job_department, description_snippet, fit_score_at_decision)
+        select ${user.id}::uuid, j.id, ${input.decision}, ${trimmedReason}, j.title, coalesce(c.name, ''), j.location, j.department,
+               left(j.description_text, 300), v.fit_score
+        from jobs j
+        join user_jobs v on v.job_id = j.id and v.user_id = ${user.id}::uuid
+        left join companies c on c.id = j.company_id
+        where j.id in (${idList})
+        returning id, job_id`);
+      const insertedRows = [...inserted.rows];
+      if (insertedRows.length !== ids.length) throw new UserFacingError("A selected role no longer exists.");
+
+      const payload = JSON.stringify({ decision: input.decision, reason: trimmedReason });
+      await tx.execute(sql`insert into job_events (job_id, user_id, type, payload)
+        select v.job_id, ${user.id}::uuid, 'decided', ${payload}::jsonb
+        from user_jobs v
+        where v.user_id = ${user.id}::uuid and v.job_id in (${idList})`);
+
+      if (input.decision === "apply") await enqueueMany("score_job", ids.map(jobId => ({ userId: user.id, jobId })), tx);
+      if (trimmedReason) await enqueueMany("tag_reason", insertedRows.map(row => ({ decisionId: row.id })), tx);
+      await enqueue("synthesize_profile", { userId: user.id, force: false }, tx);
+      await enqueue("suggest_filters", { userId: user.id }, tx);
+    });
+  } catch (error) {
+    return actionError(error, "Could not save your decisions. Please try again.");
+  }
+
   revalidatePath("/", "layout");
   return ok();
 }

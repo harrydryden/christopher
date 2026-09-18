@@ -183,6 +183,13 @@
       "when": 1789984800000,
       "tag": "0025_worker_observability",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1790071200000,
+      "tag": "0026_traffic_and_stages",
+      "breakpoints": true
     }
   ]
 }

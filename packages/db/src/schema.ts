@@ -249,6 +249,8 @@ export const scans = pgTable(
     closedCount: integer("closed_count").notNull().default(0),
     error: text("error"),
     durationMs: integer("duration_ms"),
+    /** Bytes the listing fetch returned: the input the worker had to hold in memory for this scan. */
+    fetchedBytes: integer("fetched_bytes"),
     rawSnapshot: text("raw_snapshot"),
   },
   (t) => [index("scans_source_started_idx").on(t.sourceId, t.startedAt), index("scans_run_idx").on(t.scanRunId)],
@@ -616,6 +618,8 @@ export const cvDrafts = pgTable("cv_drafts", {
   model: text("model").notNull(),
   status: text("status", { enum: ["queued", "generating", "ready", "failed"] }).notNull().default("queued"),
   buildStage: text("build_stage", { enum: ["analysing", "writing", "fitting", "assessing"] }),
+  /** Last moment the build advanced (a stage change, a batch finishing). Stale while `generating` means the worker stopped, not that the model is slow. */
+  progressAt: ts("progress_at"),
   content: jsonb("content").$type<CvContent>(),
   error: text("error"),
   revision: integer("revision").notNull().default(0),
@@ -710,3 +714,25 @@ export const aiReservations = pgTable("ai_reservations", {
   /** The worker process holding this reservation, so a shutdown can release its own holds at once. */
   workerId: text("worker_id"),
 }, (t) => [index("ai_reservations_user_idx").on(t.userId), index("ai_reservations_worker_idx").on(t.workerId)]);
+
+export const WORKER_EVENT_KINDS = [
+  "boot", "shutdown", "crash_recovery", "task_abandoned", "task_deadline", "holds_released", "vitals",
+] as const;
+export type WorkerEventKind = (typeof WORKER_EVENT_KINDS)[number];
+
+/**
+ * What the worker process did that a log line alone would lose: boots and their memory ceiling,
+ * crash recoveries with the tasks that were running when the previous process died, tasks given
+ * up on, holds released. Operations reads it to say whether the worker is healthy and, when it is
+ * not, which task is implicated. Pruned after thirty days.
+ */
+export const workerEvents = pgTable("worker_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  at: tsNow("at"),
+  workerId: text("worker_id").notNull(),
+  kind: text("kind", { enum: WORKER_EVENT_KINDS }).notNull(),
+  taskId: uuid("task_id"),
+  taskType: text("task_type"),
+  userId: uuid("user_id"),
+  detail: jsonb("detail").$type<Record<string, unknown>>().notNull().default({}),
+}, (t) => [index("worker_events_at_idx").on(t.at), index("worker_events_kind_at_idx").on(t.kind, t.at)]);

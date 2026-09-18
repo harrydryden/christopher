@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createAiEngine, decisionDigest, extractJsonBlock, CANCELLED_ERROR, OUTPUT_LIMIT_ERROR, STREAM_CEILING_MS, type AiClientLike, type AiUsageRecord, type DecisionForDigest, type ParseResponse } from "./engine";
-import { estimateCostUsd, estimateCvBuildUsd } from "./pricing";
+import { estimateCostUsd, estimateCvBuildUsd, serverToolCostUsd, SERVER_TOOL_USD } from "./pricing";
 
 interface Captured {
   params: Record<string, unknown>;
@@ -40,7 +40,11 @@ function userBlocks(params: Record<string, unknown>) {
  * A client with the SDK's streaming helper. Each response begins on the next tick and ends when
  * `respond` settles; the ceiling's abort or the caller's signal cuts it off.
  */
-function streamingClient(respond: (params: Record<string, unknown>, index: number, signal?: AbortSignal) => Promise<ParseResponse>) {
+function streamingClient(
+  respond: (params: Record<string, unknown>, index: number, signal?: AbortSignal) => Promise<ParseResponse>,
+  /** What the stream had received when it was cut off: the prompt the call was billed for. */
+  snapshot: ParseResponse = { usage: { input_tokens: 400, cache_read_input_tokens: 2000 } },
+) {
   const calls: Captured[] = [];
   const events: string[] = [];
   const client: AiClientLike = { messages: {
@@ -61,7 +65,7 @@ function streamingClient(respond: (params: Record<string, unknown>, index: numbe
           signal?.addEventListener("abort", () => { if (done) return; events.push(`cancel:${index}`); cut(); });
           Promise.resolve().then(() => {
             events.push(`start:${index}`);
-            stream.currentMessage = { usage: { input_tokens: 400, cache_read_input_tokens: 2000 } };
+            stream.currentMessage = snapshot;
             for (const listener of listeners) listener();
             return respond(params, index, signal);
           }).then(response => { done = true; events.push(`end:${index}`); resolve(response); }, error => { done = true; reject(error); });
@@ -169,6 +173,58 @@ describe("engine plumbing", () => {
   it("returns null when the output does not match the schema", async () => {
     const { engine } = engineWith({ nonsense: true });
     expect(await engine.profileCompany({ name: "Acme", domain: "acme.com", homepageText: "x" })).toBeNull();
+  });
+
+  it("charges the searches a server-side tool made, not only the tokens they returned", async () => {
+    // A10's searches are billed per request. Counting tokens alone understates the one call site
+    // whose cost is dominated by something other than its prompt.
+    const { engine, usage } = engineWith({ candidates: [] }, {
+      usage: { input_tokens: 1000, output_tokens: 200, server_tool_use: { web_search_requests: 12 } },
+    });
+    await engine.suggestCompanies({ portfolio: [], excludeDomains: [], rejected: [], limit: 5 });
+    const tokensOnly = estimateCostUsd("claude-opus-5", { inputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0 });
+    expect(usage[0]!.costUsd).toBeCloseTo(tokensOnly + 12 * SERVER_TOOL_USD.web_search_requests!, 6);
+    expect(serverToolCostUsd(undefined)).toBe(0);
+    expect(serverToolCostUsd({ web_fetch_requests: 9 })).toBe(0);
+  });
+
+  it("prices a failed call at the model that served it, and charges its searches too", async () => {
+    // The success path already bills the served model; a call cut off part-way was billed the same
+    // way, so recording it against the model we asked for misattributes a fallback's spend.
+    vi.useFakeTimers();
+    try {
+      const { client } = streamingClient(() => new Promise(() => {}), {
+        model: "claude-haiku-4-5",
+        usage: { input_tokens: 400, cache_read_input_tokens: 2000, server_tool_use: { web_search_requests: 3 } },
+      });
+      const usage: AiUsageRecord[] = [];
+      const engine = createAiEngine({ client, getModel: () => "claude-fable-5-1", onUsage: record => { usage.push(record); } });
+      const pending = engine.analyseCvJob("Must lead operations");
+      await vi.advanceTimersByTimeAsync(STREAM_CEILING_MS);
+      expect(await pending).toBeNull();
+      const served = estimateCostUsd("claude-haiku-4-5", { inputTokens: 400, outputTokens: 0, cacheReadTokens: 2000, cacheWriteTokens: 0 });
+      expect(usage[0]).toMatchObject({ ok: false, model: "claude-haiku-4-5" });
+      expect(usage[0]!.costUsd).toBeCloseTo(served + 3 * SERVER_TOOL_USD.web_search_requests!, 6);
+      // Not the model the call site asked for, whose tokens alone would have cost ten times as much.
+      expect(served).toBeLessThan(estimateCostUsd("claude-fable-5-1", { inputTokens: 400, outputTokens: 0, cacheReadTokens: 2000, cacheWriteTokens: 0 }) / 5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("carries the caller's stage onto every row, and names the engine's own re-run", async () => {
+    const { engine, usage } = engineWith({ score: 80, verdict: "strong", rationale: "Fits.", flags: [] });
+    await engine.scoreJob({ profileMarkdown: "", decisionDigest: "", job: { title: "Ops", company: "Acme" } });
+    expect(usage[0]!.stage).toBeUndefined();
+    await engine.scoreJob({ profileMarkdown: "", decisionDigest: "", job: { title: "Ops", company: "Acme" } }, { stage: "rubric" });
+    expect(usage[1]!.stage).toBe("rubric");
+  });
+
+  it("classifies its two non-failure failures by a prefix the ledger can match", () => {
+    // packages/db's aiOutcome() splits cancellations and stalls out of the failure count by these
+    // prefixes. They are one taxonomy across two packages, so pin both ends.
+    expect(CANCELLED_ERROR.startsWith("Cancelled because another call")).toBe(true);
+    expect(`Stream timed out: no complete response after ${STREAM_CEILING_MS / 60_000} minutes.`.startsWith("Stream timed out:")).toBe(true);
   });
 });
 

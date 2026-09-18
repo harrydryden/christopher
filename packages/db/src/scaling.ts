@@ -26,7 +26,9 @@ export async function workloadMetrics(db: Db) {
       (select count(*)::int from companies c where c.status='active' and c.added_at < now()-interval '1 day'
         and not exists (select 1 from career_sources cs where cs.company_id=c.id and cs.last_ok_scan_at > now()-interval '1 day')) as overdue_companies,
       (select count(*)::int from discovery_sources where enabled=true and next_run_at < now()-interval '1 day') as overdue_discovery,
-      (select coalesce(sum(amount),0)::float from ai_reservations where expires_at > now()) as reserved_usd
+      -- amount is real, as cost_usd is: sum() over it accumulates in single precision, so a month
+      -- of small holds drifts. Widen each value before adding, not the total afterwards.
+      (select coalesce(sum(amount::float8),0) from ai_reservations where expires_at > now()) as reserved_usd
     from queue`);
   const row = result.rows[0]!;
   return {

@@ -5,7 +5,7 @@ import { CvPlanSchema, CV_PAGE_LIMITS, type CvWritingBudget, type CvPlan, type C
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
-import { estimateCostUsd } from "./pricing";
+import { estimateCostUsd, serverToolCostUsd } from "./pricing";
 import * as P from "./prompts";
 import * as S from "./schemas";
 
@@ -24,6 +24,8 @@ export interface AiUsageRecord {
   error?: string;
   refType?: string;
   refId?: string;
+  /** Which step of a multi-call feature this was; a single-call feature leaves it unset. */
+  stage?: string;
   /** The account the call was made for; shared work such as extraction carries none. */
   userId?: string;
 }
@@ -31,6 +33,12 @@ export interface AiUsageRecord {
 export interface Ref {
   refType?: string;
   refId?: string;
+  /**
+   * Which step of a multi-call feature this call is, so a CV build's cost can be explained rather
+   * than only summed. The caller names its own steps; the engine appends `_retry` when it re-runs
+   * a step itself.
+   */
+  stage?: string;
   userId?: string;
 }
 
@@ -66,7 +74,9 @@ export interface AiStreamLike {
 export interface ParseResponse {
   parsed_output?: unknown;
   content?: Array<{ type: string; text?: string }>;
-  usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
+  usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number;
+    /** Per-request charges for server-side tools, such as `web_search_requests`. */
+    server_tool_use?: Record<string, unknown> };
   stop_reason?: string;
   stop_details?: { category?: string | null; explanation?: string } | null;
   model?: string;
@@ -236,11 +246,13 @@ export class AiEngine {
           ? { error: "no parseable output" }
           : validate<T>(params.schema, parsed);
       const validated = "data" in outcome ? outcome.data : null;
+      const served = response.model ?? model;
       await this.record({
         callSite,
-        model: response.model ?? model,
+        model: served,
         ...tokens,
-        costUsd: estimateCostUsd(response.model ?? model, tokens),
+        // A web search is billed per request as well as by the tokens its results add to the turn.
+        costUsd: estimateCostUsd(served, tokens) + serverToolCostUsd(usage.server_tool_use),
         durationMs: Date.now() - started,
         ok: validated !== null,
         error: "error" in outcome ? outcome.error : undefined,
@@ -251,18 +263,22 @@ export class AiEngine {
     } catch (err) {
       // A call that failed before it began spent nothing. One cut off part-way was billed for the
       // prompt it had processed, which is in the snapshot the cut-off carries.
-      const partial: NonNullable<ParseResponse["usage"]> = err instanceof CallCutOff ? err.snapshot?.usage ?? {} : {};
+      const snapshot = err instanceof CallCutOff ? err.snapshot : undefined;
+      const partial: NonNullable<ParseResponse["usage"]> = snapshot?.usage ?? {};
       const tokens = {
         inputTokens: partial.input_tokens ?? 0,
         outputTokens: partial.output_tokens ?? 0,
         cacheReadTokens: partial.cache_read_input_tokens ?? 0,
         cacheWriteTokens: partial.cache_creation_input_tokens ?? 0,
       };
+      // Price at the model that served the call when the snapshot names one, as the success path
+      // does: a server-side fallback bills at the model that answered, not the one that was asked.
+      const served = snapshot?.model ?? model;
       await this.record({
         callSite,
-        model,
+        model: served,
         ...tokens,
-        costUsd: estimateCostUsd(model, tokens),
+        costUsd: estimateCostUsd(served, tokens) + serverToolCostUsd(partial.server_tool_use),
         durationMs: Date.now() - started,
         ok: false,
         error: (err as Error).message.slice(0, 500),
@@ -330,7 +346,9 @@ export class AiEngine {
       timeoutMs: 240_000,
       signal: controller.signal,
       onStart,
-    }, ref);
+      // The corrections re-run is a second charge for one batch, and the difference between an
+      // audit that cost twice over and one that simply had many batches. Name it separately.
+    }, corrections ? { ...ref, stage: `${ref.stage ?? "review"}_retry` } : ref);
     const assess = async (batch: CvReviewBatch, onStart?: () => void): Promise<CvReviewPlan> => {
       const context = { cv: input.cv, claims: batch.claims, evidence: input.evidence };
       let result = await runBatch(batch, undefined, onStart);

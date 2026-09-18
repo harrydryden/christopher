@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { pruneHttpHostDaily } from "@christopher/db";
 import type { WorkerDeps } from "./context";
 
 /** Bounded hourly cleanup. Keep decisions, applications and review evidence. */
@@ -17,6 +18,14 @@ export async function maintainHistory(deps: WorkerDeps) {
     await tx.execute(sql`delete from job_events where id in (select id from job_events where type in ('updated','scored','description_fetched') and at < now() - interval '90 days' limit 1000)`);
     await tx.execute(sql`delete from verification_cache where key in (select key from verification_cache where expires_at < now() limit 1000)`);
     await tx.execute(sql`delete from host_pacing where next_at < now() - interval '7 days'`);
+    // The three ledgers. `ai_calls` is the only record of what was spent, and a budget question can
+    // be asked about last year's invoice, so it is kept for thirteen months — a full year plus the
+    // month being reconciled. The traffic rollup is one small row per host per day, so it keeps
+    // long enough to answer "how did this vendor behave last spring"; `pruneHttpHostDaily` owns
+    // that number. Both are bounded like every other statement here: an hour's cleanup must not
+    // hold a transaction open over a year of rows.
+    await tx.execute(sql`delete from ai_calls where id in (select id from ai_calls where at < now() - interval '13 months' limit 1000)`);
+    await pruneHttpHostDaily(tx as unknown as WorkerDeps["db"], 400);
     // Sign-in bookkeeping: throttling rows, expired sessions and spent links are short-lived.
     await tx.execute(sql`delete from login_attempts where at < now() - interval '1 day'`);
     await tx.execute(sql`delete from sessions where expires_at < now()`);

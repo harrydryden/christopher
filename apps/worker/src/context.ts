@@ -97,6 +97,7 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
         error: r.error ?? null,
         refType: r.refType ?? null,
         refId: r.refId ?? null,
+        stage: r.stage ?? null,
       });
     } catch (err) {
       log.warn("failed to record ai usage", err);

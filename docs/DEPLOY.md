@@ -208,6 +208,76 @@ and `DISCOVERY_AI_BUDGET_USD` in the worker's environment are the safety valves 
 as a whole: unlimited unless set, they cap a day's spend and a day's discovery spend across every
 account, and they refuse any call, a CV build included, so leave them unset unless you want that.
 
+## Observability
+
+Nothing here is a metrics stack. Three ledgers in the database carry what Operations needs to
+answer a question after the fact, and the pages under **Admin › Operations** read them.
+
+| Ledger | What it records | Written by | Retention |
+|---|---|---|---|
+| `worker_events` | Boots, shutdowns, crash recoveries and their suspect tasks, abandoned tasks, deadline abandonments, released budget holds. One row per notable thing the process did. | The worker | 30 days |
+| `http_host_daily` | Outbound traffic per host per day, per path (the polite fetcher or the headless browser): requests, bytes, status classes, 304s, rate limits, blocks, robots denials, cap rejections, timeouts, network errors, and a six-bucket latency histogram. Counters, flushed in batches. | The fetcher and the browser | 400 days |
+| `ai_calls` | One row per model call: call site, stage, model, tokens, cache reads and writes, cost, duration, outcome, the account it was for and what it was about. | The AI engine, through every worker handler | 13 months |
+| `scans` | One row per scan: status, fetch method, postings, bytes fetched, requests made and how many came back 304, duration. | The scan handler | 90 days, keeping each source's last three and its last successful one |
+| `tasks` | The queue itself: type, payload, attempts, error, timings. | The queue | 30 days after finishing |
+
+Retention is enforced by the worker's hourly `maintainHistory`, each statement bounded so an hour's
+cleanup never holds a long transaction. `ai_calls` keeps thirteen months — a full year plus the
+month being reconciled — because a spend question can be asked about last year's invoice, and
+because resetting an account's budget moves its window rather than deleting its calls.
+
+**What stays a log line, deliberately.** The per-request `http fetched` line, the per-task heap
+readings, and the detail of a robots decision are logged and not stored. They are per-request
+volume with no aggregate to answer: the rollup already carries the shape of a host's traffic, and
+keeping a row per request would cost more than it explains. The log is for reading one incident
+while it is fresh; the ledgers are for the questions asked a week later, once the platform has
+dropped the logs.
+
+### Answering four questions
+
+**"Is a vendor throttling us?"** Operations › Outbound traffic. Find the host and read *Throttled*:
+above 1% it is in warn tone, and that host is pacing us deliberately. *Blocked* above zero is worse
+— it is refusing us. Both are answered by slowing that host down, not by retrying it; the
+week-on-week column says whether it started recently. A host whose p95 has moved into "over 15s" is
+slow rather than throttling, which is a different fix.
+
+**"Why did this CV build cost more?"** Operations › Cost per build. Each of the last twenty builds
+is itemised by stage. `review_retry` means the audit's source attribution had to be corrected and
+one batch was paid for twice. A large `rubric` and `author` with no retry means a long job
+description and a long library — a dear input, not a fault. Compare the build against the median on
+the same card before treating it as an outlier.
+
+**"Is Greenhouse (or Ashby) scanning efficiently?"** Two cards together. Outbound traffic gives that
+host's requests, bytes and 304 share for the week: a high 304 share is the good case, because those
+requests transferred nothing. Largest scan inputs names the individual boards behind the bytes,
+with the fetch method and each scan's requests and revalidations. A board on the `http` method with
+most of its requests revalidated is cheap however large it is; one on `browser`, or one fetching
+megabytes fresh every day, is the one to add an adapter for.
+
+**"Is the worker healthy?"** Operations › Background worker for the state (`healthy`, `restarting`,
+`stopped`), the crash-recovery count and the heap reading against the ceiling, then Recent worker
+events for what it has actually been doing. `/healthz` on the worker serves the same vitals for an
+uptime check. The runbook below covers a worker that is restarting.
+
+### Why it is shaped this way
+
+The unit of observation is the external dependency, because that is where this system fails:
+every host we fetch from and every model call has an availability, a latency and an error rate, and
+`http_host_daily` and `ai_calls` are those three SLIs for each. Around them: structured logs that
+carry the task's id and type on every line, so one incident can be read end to end; a health
+endpoint with process vitals, so a scheduler can restart a worker that has stopped answering; and
+ledgers rather than log search, because the hosting platform drops logs on its own schedule and the
+questions above are usually asked after it has. A rollup is cheap enough to keep for a year, which
+is the length of the question "how did this vendor behave last spring".
+
+### What is deliberately not here
+
+No metrics stack — no Prometheus, no time-series database, no alerting rules. For one worker and
+one interface, a table queried by a page is less to run and easier to reason about than a scrape
+target. Product analytics (PostHog or similar) and an error tracker (Sentry or similar) are
+separate, later additions: they answer what people do and which exceptions are thrown, which
+neither of these ledgers claims to.
+
 ## When something is wrong
 
 | Symptom | Cause | Fix |

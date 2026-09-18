@@ -16,6 +16,28 @@ export const PRICING: Record<string, { input: number; output: number; cacheRead?
 
 const FALLBACK = PRICING["claude-opus-5"]!;
 
+/**
+ * Server-side tools are billed per request, on top of the tokens their results add to the turn.
+ * Web search is $10 per 1,000 searches; web fetch is not charged per request. Only A10 and the
+ * newsletter extraction ask for a tool, but a search-heavy suggestion round is the dearest thing
+ * the deployment does, so leaving it out understates exactly the call site that needs watching.
+ * Check against Anthropic's pricing page before relying on the number.
+ */
+export const SERVER_TOOL_USD: Record<string, number> = {
+  web_search_requests: 10 / 1_000,
+};
+
+/** What the model's server-side tool calls cost, from the `server_tool_use` block of its usage. */
+export function serverToolCostUsd(use: Record<string, unknown> | null | undefined): number {
+  if (!use) return 0;
+  let cost = 0;
+  for (const [field, price] of Object.entries(SERVER_TOOL_USD)) {
+    const requests = use[field];
+    if (typeof requests === "number" && Number.isFinite(requests) && requests > 0) cost += requests * price;
+  }
+  return Number(cost.toFixed(6));
+}
+
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;

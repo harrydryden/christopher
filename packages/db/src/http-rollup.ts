@@ -1,4 +1,4 @@
-import { desc, gte, lt, sql } from "drizzle-orm";
+import { desc, gte, sql } from "drizzle-orm";
 import type { Db } from "./client";
 import { httpHostDaily, type HttpVia } from "./schema";
 
@@ -81,15 +81,27 @@ export async function addHttpHostDaily(db: Db, deltas: HttpHostDailyDelta[]): Pr
   }
 }
 
+/** One accumulated day of traffic to one host through one path, as it is stored. */
+export type HttpHostDailyRow = typeof httpHostDaily.$inferSelect;
+
 /** Rows for the last `days` days (UTC), newest first. */
-export async function listHttpHostDaily(db: Db, days = 7) {
+export async function listHttpHostDaily(db: Db, days = 7): Promise<HttpHostDailyRow[]> {
   const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
   return db.select().from(httpHostDaily).where(gte(httpHostDaily.day, since)).orderBy(desc(httpHostDaily.day), httpHostDaily.host);
 }
 
-/** A year of daily rows per host is small and answers "how did this vendor behave last spring". */
-export async function pruneHttpHostDaily(db: Db, olderThanDays = 400): Promise<number> {
+/**
+ * A year of daily rows per host is small and answers "how did this vendor behave last spring".
+ *
+ * Bounded like every other statement in the hourly cleanup: the first run after a long-lived
+ * deployment upgrades would otherwise delete a year of rows inside the maintenance transaction.
+ * A cleanup that runs every hour catches up within a day.
+ */
+export async function pruneHttpHostDaily(db: Db, olderThanDays = 400, limit = 1000): Promise<number> {
   const cutoff = new Date(Date.now() - olderThanDays * 86_400_000).toISOString().slice(0, 10);
-  const rows = await db.delete(httpHostDaily).where(lt(httpHostDaily.day, cutoff)).returning({ day: httpHostDaily.day });
-  return rows.length;
+  const rows = await db.execute<{ day: string }>(sql`
+    delete from http_host_daily where (day, host, via) in
+      (select day, host, via from http_host_daily where day < ${cutoff} limit ${limit})
+    returning day`);
+  return rows.rows.length;
 }

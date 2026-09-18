@@ -700,6 +700,22 @@ describe("crash recovery", () => {
     expect(await reconcileCvDrafts(deps)).toBe(0);
   });
 
+  it("releases a hold whose build is gone, as when a crashed pod's draft was discarded", async () => {
+    // Production on 18 Sep: six $3.06 holds taken by two crashed pods outlived their builds and
+    // refused the next build for half an hour, because a boot releases only its own pod's holds.
+    const gone = await buildInFlight("discarded-build@example.com", "dead-pod", 1);
+    const live = await buildInFlight("live-build@example.com", "pod-a", 1);
+    await db.delete(schema.tasks).where(sql`payload->>'draftId' = ${gone.draft.id}`);
+    await db.delete(schema.cvDrafts).where(eq(schema.cvDrafts.id, gone.draft.id));
+    await db.execute(sql`update ai_reservations set created_at = now() - interval '10 minutes'`);
+
+    expect(await reconcileCvDrafts(deps)).toBe(0);
+    expect(await heldFor(gone.user.id)).toBe(0);
+    expect(await heldFor(live.user.id)).toBe(1);
+    const events = await listWorkerEvents(db, { kinds: ["holds_released"] });
+    expect(events[0]?.detail).toMatchObject({ count: 1, reason: "orphaned" });
+  });
+
   it("leaves a draft whose build has only just been queued", async () => {
     const { draft } = await buildInFlight("fresh-build@example.com", "pod-a", 1);
     await db.delete(schema.tasks).where(sql`payload->>'draftId' = ${draft.id}`);

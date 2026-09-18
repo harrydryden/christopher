@@ -288,3 +288,25 @@ export async function releaseAiHolds(
   const amountUsd = rows.rows.reduce((total, row) => total + Number(row.amount ?? 0), 0);
   return { count: rows.rows.length, amountUsd: Math.round(amountUsd * 100) / 100 };
 }
+
+/**
+ * A CV hold exists to cover one build in flight. When the account it belongs to has no CV build
+ * queued or running any more, the hold is dead: the worker that took it crashed under another pod
+ * name, or the draft was discarded mid-build. Left alone it counts against that account's budget
+ * for up to thirty minutes and refuses the next build for no reason. The grace keeps it away from
+ * a hold taken a moment before its task row is visible.
+ */
+export async function releaseOrphanedCvHolds(db: Db, graceMinutes = 2): Promise<ReleasedHolds> {
+  const rows = await db.execute<{ amount: number }>(sql`
+    delete from ai_reservations r
+    where r.call_site = 'CV'
+      and r.created_at < now() - make_interval(mins => ${graceMinutes}::int)
+      and not exists (
+        select 1 from tasks t
+        join cv_drafts d on t.dedupe_key = 'generate_cv:' || d.id::text
+        where d.user_id = r.user_id and t.status in ('queued', 'running')
+      )
+    returning r.amount`);
+  const amountUsd = rows.rows.reduce((total, row) => total + Number(row.amount ?? 0), 0);
+  return { count: rows.rows.length, amountUsd: Math.round(amountUsd * 100) / 100 };
+}

@@ -182,6 +182,43 @@ every company, role and decision.
 6. **Admin › Accounts** lists everyone sharing the deployment, what each has produced and follows,
    and what each may spend on AI in a month. New accounts start at $25; raise one there.
 
+## Continuous integration
+
+Two workflows. **CI** (`.github/workflows/ci.yml`) runs on every pull request and again on
+every push to `main`; **Release** (`.github/workflows/release.yml`) runs only after CI has
+passed on `main`.
+
+CI is two jobs side by side, each on its own runner with its own throwaway PostgreSQL 16:
+
+| Job | What it runs | Typical |
+|---|---|---|
+| `check` | `pnpm -r typecheck`, then `pnpm -r test` | ~2.5 min |
+| `browser-and-smoke` | Chromium install, the headless browser test, `pnpm db:migrate`, `pnpm smoke:web` (a production `next build`, sign-in, every page, and the CV workspace driven through Playwright) | ~2.5 min |
+
+So a pull request is green in about two and a half minutes of wall clock for about five
+billed minutes. A pull request is checked once, on its merge result: pushing to a branch no
+longer starts a second, identical run. A new push cancels the run still working on the commit
+it replaced, so only the newest commit holds a runner. Runs on `main` are never cancelled,
+because the release check is gated on them.
+
+Two caches keep the slow steps honest but cheap. Chromium is cached at `~/.cache/ms-playwright`
+under the `playwright` version resolved from `pnpm-lock.yaml`, so a bump downloads it again and
+nothing else does; `playwright install --with-deps` still runs, and on a hit only settles the
+operating system packages. The Next.js build cache is kept at `apps/web/.next/cache` under the
+lockfile plus a hash of `apps/web`'s sources, with the lockfile-only key as a fallback, so the
+smoke build reuses its compilation. Caches written on a branch are private to that branch, so
+it is the `main` run that fills them for everyone; the first run after a change to either key
+is a cold one.
+
+`worker-release` is the last thing to go green after a merge. It polls the live worker's
+`/healthz` — up to eight minutes — until it reports the merged commit, and fails if it never
+does. That is the only check that a *worker* deployment happened: Vercel deploying the
+interface says nothing about CV generation or scanning, which the worker alone does. It is
+deliberately not on pull requests, where nothing has been deployed and there is nothing to
+verify; before, it appeared there as a skipped job, which reads like a problem. It runs from
+the `Release` workflow on the commit CI passed on, named explicitly through `RELEASE_SHA`
+because a `workflow_run` job's own `GITHUB_SHA` is the branch tip rather than that commit.
+
 ## Costs
 
 | | |

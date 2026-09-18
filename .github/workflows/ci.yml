@@ -1,11 +1,22 @@
 name: CI
 
+# A pull request is checked once, on its merge result. main is checked again after a
+# merge, because that run is what the release check is gated on. Pushing to a branch
+# that has no pull request open runs nothing; open the pull request and it is checked.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
 
+# One run per ref. A new push to a pull request cancels the run still working on the
+# commit it replaced; a run on main is never cancelled, because worker-release only
+# fires for a successful one.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  # Everything that only needs a database: the type surface and every suite.
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -34,27 +45,59 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r typecheck
       - run: pnpm -r test
+
+  # Everything that needs a real browser: the headless Chromium test and the smoke
+  # run, which builds the interface, signs in, fetches every page and drives the CV
+  # workspace through Playwright. Runs beside `check`, not after it.
+  browser-and-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: christopher_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/christopher_test
+      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/christopher_test
+      CHRISTOPHER_DISABLE_BROWSER: "1"
+    steps:
+      - uses: actions/checkout@v4
+      # Restored before install, so the key never sees a node_modules tree.
+      - name: Restore the Next.js build cache
+        uses: actions/cache@v4
+        with:
+          path: apps/web/.next/cache
+          key: next-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('apps/web/app/**', 'apps/web/components/**', 'apps/web/lib/**', 'apps/web/next.config.*', 'apps/web/package.json') }}
+          restore-keys: |
+            next-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+            next-${{ runner.os }}-
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Read the installed Playwright version
+        id: playwright
+        run: echo "version=$(pnpm --filter @christopher/worker exec node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+      # Keyed on that version, so a Playwright bump downloads Chromium again and
+      # nothing else does. The install step below still runs: on a hit it skips the
+      # download and only settles the operating system packages.
+      - name: Restore the Chromium download
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
       - run: pnpm --filter @christopher/worker exec playwright install --with-deps chromium
       - run: pnpm --filter @christopher/worker exec vitest run src/browser.test.ts
         env:
           CHRISTOPHER_DISABLE_BROWSER: "0"
       - run: pnpm db:migrate
       - run: pnpm smoke:web
-
-  worker-release:
-    needs: check
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 16
-    concurrency:
-      group: worker-release
-      cancel-in-progress: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Verify the running worker includes this merge
-        run: node scripts/verify-worker-release.mjs
-        env:
-          WORKER_HEALTH_URL: https://christopher-worker.onrender.com/healthz

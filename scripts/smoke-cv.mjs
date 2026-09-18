@@ -24,6 +24,16 @@ const { chromium } = createRequire(
 )("playwright");
 
 /** Browser → form action → saved revision, plus progress polling. Uses synthetic evidence only. */
+/** Fill a controlled input and re-fill until its value is exactly `text` (see the call site). */
+async function fillUntilStable(locator, text, attempts = 6) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    await locator.fill(text);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    if ((await locator.inputValue()) === text) return;
+  }
+  throw new Error(`Could not settle the field on "${text}"; it kept re-rendering under the fill.`);
+}
+
 export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
   const pool = new Pool({ connectionString: databaseUrl, max: 1 });
   const readyId = randomUUID(),
@@ -210,9 +220,14 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
           `${error.message}\n${await page.locator("body").innerText()}`,
         );
       });
-    await page
-      .getByRole("textbox", { name: "Profile", exact: true })
-      .fill("Edited profile retained through panel changes.");
+    // The page is server-rendered with the stored summary and refreshes itself every ten seconds.
+    // A fill that lands while React is hydrating or re-rendering the controlled textarea loses
+    // its select-all and prepends instead of replacing, so the value is checked and the fill
+    // repeated until it sticks: the smoke is about the editor, not about winning that race.
+    await fillUntilStable(
+      page.getByRole("textbox", { name: "Profile", exact: true }),
+      "Edited profile retained through panel changes.",
+    );
     const main = page.locator("[data-cv-main]");
     const openWidth = (await main.boundingBox()).width;
     await page
@@ -503,9 +518,11 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       "update cv_drafts set status = 'ready', build_stage = null, content = $2 where id = $1",
       [busyId, JSON.stringify(content)],
     );
+    // The page notices the finished build on its ten-second refresh loop, and the test has just
+    // made it drop one status poll and one refresh on purpose, so allow four cycles, not two.
     await page
       .getByRole("textbox", { name: "Profile", exact: true })
-      .waitFor({ timeout: 25_000 });
+      .waitFor({ timeout: 45_000 });
     await page.setViewportSize({ width: 1440, height: 1000 });
     // Exercise the production server actions through the CV table using disposable rows.
     for (const [index, id] of tableIds.entries()) {

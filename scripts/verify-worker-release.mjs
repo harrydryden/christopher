@@ -1,9 +1,9 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
-const expected = process.env.GITHUB_SHA;
+const expected = process.env.RELEASE_SHA || process.env.GITHUB_SHA;
 const url = process.env.WORKER_HEALTH_URL;
 if (!expected || !/^[a-f0-9]{40}$/.test(expected) || !url) {
-  throw new Error("GITHUB_SHA and WORKER_HEALTH_URL are required to verify the running worker release.");
+  throw new Error("RELEASE_SHA (or GITHUB_SHA) and WORKER_HEALTH_URL are required to verify the running worker release.");
 }
 let reported = "unavailable";
 for (let attempt = 0; attempt < 48; attempt++) {

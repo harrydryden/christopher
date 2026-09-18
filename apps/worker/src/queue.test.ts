@@ -1,7 +1,9 @@
 /** Queue and scheduler behaviour against a real database. */
 import { renewTask, completeTask, assertTaskOwnership } from "./queue";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import {createDb, enqueueTask, schema, type Db} from "@christopher/db";
+import {createDb, enqueueTask, listUserIds, schema, type Db} from "@christopher/db";
+import { isUserSettingsKey } from "@christopher/core";
+import { ensureTestUser } from "./test-users";
 import { runMigrations } from "@christopher/db/migrate";
 import { desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
@@ -30,7 +32,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.execute(sql`truncate tasks, scan_runs, scans, companies, career_sources, jobs, settings restart identity cascade`);
+  await db.execute(sql`truncate tasks, scan_runs, scans, companies, career_sources, jobs, settings, user_settings restart identity cascade`);
   now = new Date("2026-09-05T06:05:00Z");
 });
 
@@ -144,8 +146,24 @@ describe("task queue", () => {
 });
 
 describe("scheduler", () => {
+  // The weekly jobs are queued per account, so there has to be one.
+  beforeEach(async () => { await ensureTestUser(db, "scheduler@example.com"); });
+
+  /**
+   * Each key to the table that owns it. `settings` is the administrator's, and a key that belongs
+   * to an account is only ever read from that account's own rows, so one written into the shared
+   * table would simply be ignored.
+   */
   async function setSettings(values: Record<string, unknown>) {
+    const userIds = await listUserIds(db);
     for (const [key, value] of Object.entries(values)) {
+      if (isUserSettingsKey(key)) {
+        for (const userId of userIds) {
+          await db.insert(schema.userSettings).values({ userId, key, value: value as object })
+            .onConflictDoUpdate({ target: [schema.userSettings.userId, schema.userSettings.key], set: { value: value as object } });
+        }
+        continue;
+      }
       await db.insert(schema.settings).values({ key, value: value as object }).onConflictDoUpdate({ target: schema.settings.key, set: { value: value as object } });
     }
     deps.invalidateSettings();

@@ -581,12 +581,24 @@ describe("functional review regressions", () => {
     const scoreJob = vi.fn().mockResolvedValue({ score: 80, verdict: 'strong', rationale: 'Fixture' });
     const scoringDeps = { ...deps, ai: { ...deps.ai, enabled: true, scoreJob } } as unknown as WorkerDeps;
     const task = { payload: { userId: user.id, jobId: view!.jobId } } as never;
+    const stored = async () => (await db.select().from(schema.userJobs).where(eq(schema.userJobs.jobId, view!.jobId)))[0]!;
     await handleScoreJob(task, scoringDeps);
-    await handleScoreJob(task, scoringDeps);
+    // What the score was computed from is kept on this account's view of the role, not as a row
+    // per (account, role) in the settings table that every hot-path read would then ship.
+    const first = await stored();
+    expect(first.scoreInputHash).toMatch(/^[0-9a-f]{40}$/);
+    expect(await db.select().from(schema.settings)).toHaveLength(0);
+
+    expect(await handleScoreJob(task, scoringDeps)).toEqual({ skipped: "scoring inputs unchanged" });
     expect(scoreJob).toHaveBeenCalledTimes(1);
+    // Skipped means nothing was asked of the model, so nothing was billed.
+    expect(await db.select().from(schema.aiCalls)).toHaveLength(0);
+    expect((await stored()).scoreInputHash).toBe(first.scoreInputHash);
+
     await db.insert(schema.cvLibraries).values({ userId: user.id, version: 100, content: { name: 'Test', contact: '', profile: 'New evidence', entries: [] } });
     await handleScoreJob(task, scoringDeps);
     expect(scoreJob).toHaveBeenCalledTimes(2);
+    expect((await stored()).scoreInputHash).not.toBe(first.scoreInputHash);
   });
   it("skips an exhausted account's scoring cleanly, and scores again once its budget is raised", async () => {
     await addCompany("https://www.acme.example/", "acme.example");

@@ -150,14 +150,16 @@ function applyRows(out: AppSettings, rows: SettingsRow[]): void {
 }
 
 /**
- * Merge stored rows onto defaults. `rows` are usually the system table and `userRows` one
- * account's rows. The two key sets are disjoint, and a key belonging to neither scope — the
- * worker's `internal:` bookkeeping, or a setting a later version removed — is ignored, so an old
- * row left behind by a migration can never change what anything reads.
+ * Merge stored rows onto defaults. `rows` are the system table and `userRows` one account's rows.
+ * A key belonging to neither scope — the worker's `internal:` bookkeeping, or a setting a later
+ * version removed — is ignored, so an old row left behind by a migration can never change what
+ * anything reads. A key that belongs to an account is read only from that account's own rows: one
+ * stray `gate` or `aiBudgetUsd` in the shared table would otherwise silently override the setting
+ * for every account at once.
  */
 export function resolveSettings(rows: SettingsRow[], userRows: SettingsRow[] = []): AppSettings {
   const out: AppSettings = structuredClone(DEFAULT_SETTINGS);
-  applyRows(out, rows);
+  applyRows(out, rows.filter((row) => !isUserSettingsKey(row.key)));
   applyRows(out, userRows);
   return out;
 }
@@ -168,7 +170,9 @@ export function resolveSystemSettings(rows: SettingsRow[]): SystemSettings {
 }
 
 export function resolveUserSettings(rows: SettingsRow[]): UserSettings {
-  const merged = resolveSettings(rows.filter((row) => isUserSettingsKey(row.key)));
+  // One account's rows, so they go in as account rows: `resolveSettings` reads user-scoped keys
+  // from that side alone.
+  const merged = resolveSettings([], rows.filter((row) => isUserSettingsKey(row.key)));
   return Object.fromEntries(USER_SETTINGS_KEYS.map((key) => [key, merged[key]])) as unknown as UserSettings;
 }
 

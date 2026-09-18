@@ -15,23 +15,23 @@ describe("resolveSettings", () => {
   it("applies a numeric hideThreshold even though its default is null", () => {
     // The default is null, meaning the threshold is off. A set value is a number, so the guard
     // must not reject it for having a different type from the default.
-    expect(resolveSettings([{ key: "hideThreshold", value: 30 }]).hideThreshold).toBe(30);
-    expect(resolveSettings([{ key: "hideThreshold", value: 0 }]).hideThreshold).toBe(0);
+    expect(resolveSettings([], [{ key: "hideThreshold", value: 30 }]).hideThreshold).toBe(30);
+    expect(resolveSettings([], [{ key: "hideThreshold", value: 0 }]).hideThreshold).toBe(0);
   });
 
   it("treats a stored null hideThreshold as off", () => {
-    expect(resolveSettings([{ key: "hideThreshold", value: null }]).hideThreshold).toBeNull();
+    expect(resolveSettings([], [{ key: "hideThreshold", value: null }]).hideThreshold).toBeNull();
     expect(resolveSettings([]).hideThreshold).toBeNull();
   });
 
   it("ignores a stored value of the wrong kind", () => {
     expect(resolveSettings([{ key: "scanTime", value: 6 }]).scanTime).toBe(DEFAULT_SETTINGS.scanTime);
-    expect(resolveSettings([{ key: "hideThreshold", value: { nope: true } }]).hideThreshold).toBeNull();
-    expect(resolveSettings([{ key: "showClosedDays", value: "ten" }]).showClosedDays).toBe(DEFAULT_SETTINGS.showClosedDays);
+    expect(resolveSettings([], [{ key: "hideThreshold", value: { nope: true } }]).hideThreshold).toBeNull();
+    expect(resolveSettings([], [{ key: "showClosedDays", value: "ten" }]).showClosedDays).toBe(DEFAULT_SETTINGS.showClosedDays);
   });
 
   it("merges the gate onto its defaults rather than replacing it", () => {
-    const settings = resolveSettings([{ key: "gate", value: { locationTerms: ["London"] } }]);
+    const settings = resolveSettings([], [{ key: "gate", value: { locationTerms: ["London"] } }]);
     expect(settings.gate.locationTerms).toEqual(["London"]);
     expect(settings.gate.includeKeywords).toEqual(DEFAULT_SETTINGS.gate.includeKeywords);
     expect(settings.gate.includeRemote).toBe(true);
@@ -48,6 +48,32 @@ describe("resolveSettings", () => {
     expect(settings).toEqual(DEFAULT_SETTINGS);
     expect(settings).not.toHaveProperty("monthlyAiBudgetUsd");
     expect(resolveSystemSettings([{ key: "monthlyAiBudgetUsd", value: 40 }])).toEqual(DEFAULT_SYSTEM_SETTINGS);
+  });
+
+  it("ignores an account's keys when they turn up in the shared system rows", () => {
+    // `settings` is the administrator's table. A user-scoped row in it — left by an old migration,
+    // a script or a hand-edit — must not become every account's gate, budget or threshold, and
+    // must not beat the account's own row either.
+    const strays = [
+      { key: "gate", value: { includeKeywords: ["everything"], locationTerms: ["Mars"] } },
+      { key: "aiBudgetUsd", value: 9999 },
+      { key: "hideThreshold", value: 90 },
+      { key: "seedProfile", value: "not this account's" },
+    ];
+    const settings = resolveSettings(strays);
+    expect(settings.gate).toEqual(DEFAULT_SETTINGS.gate);
+    expect(settings.aiBudgetUsd).toBe(DEFAULT_ACCOUNT_AI_BUDGET_USD);
+    expect(settings.hideThreshold).toBeNull();
+    expect(settings.seedProfile).toBe(DEFAULT_SETTINGS.seedProfile);
+    expect(settings).toEqual(DEFAULT_SETTINGS);
+    // The account's own rows still decide, and the system rows beside them still apply.
+    const merged = resolveSettings([...strays, { key: "scanTime", value: "07:30" }], [{ key: "hideThreshold", value: 40 }]);
+    expect(merged.hideThreshold).toBe(40);
+    expect(merged.aiBudgetUsd).toBe(DEFAULT_ACCOUNT_AI_BUDGET_USD);
+    expect(merged.scanTime).toBe("07:30");
+    // Both scoped resolvers agree: neither reads a user-scoped key from the shared table.
+    expect(resolveSystemSettings(strays)).toEqual(DEFAULT_SYSTEM_SETTINGS);
+    expect(resolveUserSettings([{ key: "hideThreshold", value: 40 }]).hideThreshold).toBe(40);
   });
 
   it("starts every account on the default AI budget with no reset behind it", () => {
@@ -79,7 +105,7 @@ describe("resolveSettings", () => {
   });
 
   it("does not mutate the defaults", () => {
-    resolveSettings([{ key: "gate", value: { locationTerms: ["London"] } }]);
+    resolveSettings([], [{ key: "gate", value: { locationTerms: ["London"] } }]);
     expect(DEFAULT_SETTINGS.gate.locationTerms).toEqual([]);
   });
 });
@@ -112,8 +138,8 @@ describe("settings helpers", () => {
 it("validates stored appearance and keeps the legacy fallback when absent", () => {
   const theme = { version: 1, primary: "#142D46", background: "#ffffff", surface: "#eff4f8", pill: "#e3edf5", introPanel: true, skillPills: false };
   // Themes saved before the font and page limit existed pick up the defaults without a save.
-  expect(resolveSettings([{ key: "cvTheme", value: theme }]).cvTheme).toEqual({ ...theme, skillPills: true, font: "Christopher", maxPages: 3 });
-  expect(resolveSettings([{ key: "cvTheme", value: { ...theme, font: "Arial", maxPages: 2 } }]).cvTheme).toMatchObject({ font: "Arial", maxPages: 2 });
-  expect(resolveSettings([{ key: "cvTheme", value: { ...theme, maxPages: 9 } }]).cvTheme).toBeUndefined();
-  expect(resolveSettings([{ key: "cvTheme", value: { ...theme, primary: "bad" } }]).cvTheme).toBeUndefined();
+  expect(resolveSettings([], [{ key: "cvTheme", value: theme }]).cvTheme).toEqual({ ...theme, skillPills: true, font: "Christopher", maxPages: 3 });
+  expect(resolveSettings([], [{ key: "cvTheme", value: { ...theme, font: "Arial", maxPages: 2 } }]).cvTheme).toMatchObject({ font: "Arial", maxPages: 2 });
+  expect(resolveSettings([], [{ key: "cvTheme", value: { ...theme, maxPages: 9 } }]).cvTheme).toBeUndefined();
+  expect(resolveSettings([], [{ key: "cvTheme", value: { ...theme, primary: "bad" } }]).cvTheme).toBeUndefined();
 });

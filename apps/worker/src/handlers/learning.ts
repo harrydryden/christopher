@@ -89,10 +89,10 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
     });
     input.profileMarkdown += "\nEvidence library (absence is not proof of inability):\n" + JSON.stringify({ profile: library.content.profile, employment: library.content.employment?.filter(job => entries.some(entry => entry.employmentId === job.id)), entries });
   }
+  // What the score was computed from. It is kept on this account's own view of the role, so an
+  // unchanged rerun costs one row read rather than a row per (account, role) accumulating forever.
   const fingerprint = sha1(JSON.stringify([input, modelForCallSite(settings, "A5")]));
-  const key = `internal:scoreInput:${userId}:${job.id}`;
-  const [previous] = await deps.db.select({ value: schema.settings.value }).from(schema.settings).where(eq(schema.settings.key, key));
-  if (view.fitScore !== null && previous?.value === fingerprint) return { skipped: "scoring inputs unchanged" };
+  if (view.fitScore !== null && view.scoreInputHash === fingerprint) return { skipped: "scoring inputs unchanged" };
   const result = await deps.ai.scoreJob(input,
     { refType: "job", refId: job.id, userId },
   );
@@ -108,11 +108,11 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
       fitRationale: result.rationale,
       fitProfileVersion: profile?.version ?? null,
       fitScoredAt: deps.now(),
+      scoreInputHash: fingerprint,
       hidden: false,
       updatedAt: deps.now(),
     })
     .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, job.id)));
-  await tx.insert(schema.settings).values({ key, value: fingerprint }).onConflictDoUpdate({ target: schema.settings.key, set: { value: fingerprint, updatedAt: deps.now() } });
   await tx.insert(schema.jobEvents).values({ jobId: job.id, userId, type: "scored", payload: { score: result.score, verdict: result.verdict } });
   return { score: result.score, verdict: result.verdict };
   });

@@ -3,6 +3,7 @@ import {
   actionCvs,
   completeCv,
   createDb,
+  cvRoleKey,
   nextCvRevision,
   schema,
   type Db,
@@ -72,7 +73,196 @@ const finish = (id: string) =>
   database.transaction((tx) => completeCv(tx, id, {}));
 const rows = () =>
   database.select().from(schema.cvDrafts).orderBy(schema.cvDrafts.createdAt);
+/** What `requestCv` and `saveCvDraft` do before inserting the revision they just claimed. */
+const allocate = () =>
+  database.transaction((tx) =>
+    nextCvRevision(tx, {
+      userId: user.id,
+      companyName: "Example",
+      jobTitle: "Operations Director",
+    }),
+  );
 
+/**
+ * The retention rule itself, asserted wherever a test leaves the tables at rest: per account,
+ * company and role there is at most one saved CV and at most one archive.
+ */
+async function expectOneSavedAndOneArchive() {
+  const key = cvRoleKey(
+    schema.cvDrafts.userId,
+    schema.cvDrafts.companyName,
+    schema.cvDrafts.jobTitle,
+  );
+  const groups = await database
+    .select({
+      key,
+      saved: sql<number>`count(*) filter (where ${schema.cvDrafts.status} = 'ready' and ${schema.cvDrafts.archivedAt} is null)::int`,
+      archived: sql<number>`count(*) filter (where ${schema.cvDrafts.archivedAt} is not null)::int`,
+    })
+    .from(schema.cvDrafts)
+    .groupBy(key);
+  expect(
+    groups.filter((group) => group.saved > 1 || group.archived > 1),
+  ).toEqual([]);
+}
+
+/**
+ * Production's Humanoid role: one ready archive, one ready current, and three dead attempts —
+ * two fresh builds that failed, and a rebuild of the current one that failed.
+ */
+async function productionRole() {
+  const archive = await draft(1, {
+    status: "ready",
+    archivedAt: new Date(2026, 0, 1),
+  });
+  const failedBuild = await draft(2, { status: "failed" });
+  const failedRetry = await draft(3, { status: "failed" });
+  const current = await draft(4, { status: "ready" });
+  const failedRebuild = await draft(5, {
+    status: "failed",
+    parentId: current.id,
+  });
+  return { archive, failedBuild, failedRetry, current, failedRebuild };
+}
+
+it("drops the superseded failed attempts when the next revision is allocated", async () => {
+  const { archive, current, failedRebuild } = await productionRole();
+  expect(await allocate()).toBe(6);
+  // The newest failure is still worth reopening; the saved CV and its archive are untouched.
+  expect((await rows()).map((row) => row.id)).toEqual([
+    archive.id,
+    current.id,
+    failedRebuild.id,
+  ]);
+  await expectOneSavedAndOneArchive();
+});
+it("spares the failed draft an edit is written from, even with a newer failure beside it", async () => {
+  const { archive, failedBuild, failedRetry, current, failedRebuild } =
+    await productionRole();
+  await database
+    .update(schema.cvDrafts)
+    .set({
+      content: {
+        name: "Example",
+        contact: "London",
+        summary: "Operations leader",
+        sections: [
+          {
+            entryId: "one",
+            kind: "experience" as const,
+            heading: "Director",
+            bullets: ["Led a team"],
+          },
+        ],
+        gaps: [],
+      },
+    })
+    .where(eq(schema.cvDrafts.id, failedRetry.id));
+  const { saveCvDraft } = await import("@/app/actions/cv");
+  const form = new FormData();
+  form.set("summary", "Updated operations profile");
+  await expect(
+    saveCvDraft(failedRetry.id, { ok: true }, form),
+  ).rejects.toThrow("redirect:/cv/");
+  const saved = (await rows()).at(-1)!;
+  expect(saved.revision).toBe(6);
+  expect(saved.parentId).toBe(failedRetry.id);
+  expect(saved.content!.summary).toBe("Updated operations profile");
+  // Only the attempt nothing is reading goes; the source and the newest failure both stay.
+  expect((await rows()).map((row) => row.id)).toEqual([
+    archive.id,
+    failedRetry.id,
+    current.id,
+    failedRebuild.id,
+    saved.id,
+  ]);
+  expect(
+    (await rows()).some((row) => row.id === failedBuild.id),
+  ).toBe(false);
+  await finish(saved.id);
+  expect((await rows()).map((row) => [row.id, Boolean(row.archivedAt)])).toEqual(
+    [
+      [current.id, true],
+      [saved.id, false],
+    ],
+  );
+  await expectOneSavedAndOneArchive();
+});
+it("leaves only the new saved CV and one archive when a revision publishes", async () => {
+  const { current } = await productionRole();
+  expect(await allocate()).toBe(6);
+  const next = await draft(6);
+  await finish(next.id);
+  expect((await rows()).map((row) => [row.id, Boolean(row.archivedAt)])).toEqual(
+    [
+      [current.id, true],
+      [next.id, false],
+    ],
+  );
+  // The ledger keeps every identifier it issued, so a cleanup cannot reuse a version number.
+  expect(await database.select().from(schema.cvVersions)).toHaveLength(6);
+  await expectOneSavedAndOneArchive();
+});
+it("never removes a build a worker still holds a lease on", async () => {
+  const { archive, current, failedRebuild } = await productionRole();
+  const queued = await draft(6);
+  const generating = await draft(7, { status: "generating" });
+  expect(await allocate()).toBe(8);
+  expect((await rows()).map((row) => row.id)).toEqual([
+    archive.id,
+    current.id,
+    failedRebuild.id,
+    queued.id,
+    generating.id,
+  ]);
+  const next = await draft(8);
+  await finish(next.id);
+  expect((await rows()).map((row) => row.id)).toEqual([
+    current.id,
+    queued.id,
+    generating.id,
+    next.id,
+  ]);
+  await expectOneSavedAndOneArchive();
+});
+it("keeps submitted PDFs when retention removes the revisions they came from", async () => {
+  const { archive, failedRetry } = await productionRole();
+  const submitted = (cvId: string, appliedOn: string) => ({
+    userId: user.id,
+    cvId,
+    companyName: "Example",
+    jobTitle: "Operations Director",
+    appliedOn,
+    pdfBase64: `JVBERi0${cvId.slice(0, 4)}`,
+    history: [{ status: "applied", at: appliedOn, notes: "Submitted" }],
+  });
+  const frozen = [
+    submitted(archive.id, "2026-01-01"),
+    submitted(failedRetry.id, "2026-01-03"),
+  ];
+  await database.insert(schema.applications).values(frozen);
+  expect(await allocate()).toBe(6);
+  const next = await draft(6);
+  await finish(next.id);
+  expect(
+    (
+      await database
+        .select()
+        .from(schema.applications)
+        .orderBy(schema.applications.appliedOn)
+    ).map((application) => ({
+      pdfBase64: application.pdfBase64,
+      cvId: application.cvId,
+      history: application.history,
+    })),
+  ).toEqual(
+    frozen.map((application) => ({
+      pdfBase64: application.pdfBase64,
+      cvId: null,
+      history: application.history,
+    })),
+  );
+});
 it("keeps the working CV while a replacement is pending or fails, then rolls one archive", async () => {
   const first = await draft(1, { status: "ready" });
   const next = await draft(2);
@@ -91,6 +281,7 @@ it("keeps the working CV while a replacement is pending or fails, then rolls one
   await finish(latest.id);
   expect((await rows()).map((row) => row.id)).toEqual([next.id, latest.id]);
   expect(await finish(first.id)).toBe(false);
+  await expectOneSavedAndOneArchive();
 });
 it("serialises concurrent completions and ignores out-of-order older builds", async () => {
   const drafts = await Promise.all([draft(1), draft(2), draft(3)]);
@@ -105,6 +296,7 @@ it("serialises concurrent completions and ignores out-of-order older builds", as
     [2, true],
     [3, false],
   ]);
+  await expectOneSavedAndOneArchive();
 });
 it("groups company and role regardless of case or spacing, without touching another role/company", async () => {
   await draft(1, { status: "ready" });
@@ -119,6 +311,7 @@ it("groups company and role regardless of case or spacing, without touching anot
     (await rows()).filter((row) => !row.archivedAt && row.status === "ready"),
   ).toHaveLength(3);
   expect((await rows())[0]!.archivedAt).not.toBeNull();
+  await expectOneSavedAndOneArchive();
 });
 it("restores by swapping the current and archived CV; manual archiving replaces the archive", async () => {
   const first = await draft(1, { status: "ready", archivedAt: new Date() });
@@ -143,6 +336,7 @@ it("respects archive during generation and never resurrects a deleted build", as
   expect(
     (await rows()).find((row) => row.id === pending.id)!.archivedAt,
   ).not.toBeNull();
+  await expectOneSavedAndOneArchive();
   await actionCvs(database, user.id, [pending.id], "delete");
   expect(await finish(pending.id)).toBe(false);
 });
@@ -163,6 +357,7 @@ it("preserves submitted PDFs and application history when retention or bulk dele
   await finish(newer.id);
   const [application] = await database.select().from(schema.applications);
   expect(application).toMatchObject({ ...frozen, cvId: null });
+  await expectOneSavedAndOneArchive();
   await actionCvs(database, user.id, [current.id, newer.id], "delete");
   expect(await rows()).toHaveLength(0);
   expect((await database.select().from(schema.applications))[0]).toEqual(
@@ -241,6 +436,7 @@ it("backfills legacy duplicates without restoring an intentionally archived newe
     current.id,
     chosenArchive.id,
   ]);
+  await expectOneSavedAndOneArchive();
 });
 
 it("bulk archiving a current CV and its pending replacement leaves only the selected newest archive", async () => {
@@ -249,6 +445,7 @@ it("bulk archiving a current CV and its pending replacement leaves only the sele
   await actionCvs(database, user.id, [current.id, pending.id], "archive");
   expect((await rows()).map((row) => row.id)).toEqual([pending.id]);
   expect((await rows())[0]!.archivedAt).not.toBeNull();
+  await expectOneSavedAndOneArchive();
 });
 
 it("archives the chosen current CV after a restore, replacing the previous archive", async () => {
@@ -261,6 +458,7 @@ it("archives the chosen current CV after a restore, replacing the previous archi
     replacement.id,
   ]);
   expect((await rows())[0]!.archivedAt).not.toBeNull();
+  await expectOneSavedAndOneArchive();
 });
 
 it("does not modify a ready CV or its archive timestamp on duplicate completion", async () => {
@@ -285,6 +483,7 @@ it("does not reset an existing archive timestamp when an older build completes l
   expect(
     (await rows()).find((row) => row.id === archive.id)!.archivedAt,
   ).toEqual(archivedAt);
+  await expectOneSavedAndOneArchive();
 });
 it("serialises crossed bulk requests without deadlocks or extra current CVs", async () => {
   const a = await draft(1, { status: "ready" });

@@ -314,7 +314,9 @@ export async function saveCvDraft(
       ...original
     } = draft;
     savedId = await db().transaction(async (tx) => {
-      const revision = await nextCvRevision(tx, draft);
+      // Both a rebuild and a direct edit are written from this draft, so retention spares it
+      // however many newer failures the role has; the next publish clears it.
+      const revision = await nextCvRevision(tx, draft, { spare: id });
       const [source] = await tx.select({ id: cvDrafts.id }).from(cvDrafts).where(eq(cvDrafts.id, id));
       if (!source) throw new Error("This CV was deleted. Open the latest saved CV before editing.");
       // Corrections are remembered whichever build the save requests, and an improved revision

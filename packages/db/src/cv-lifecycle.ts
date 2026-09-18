@@ -61,14 +61,59 @@ export async function lockCvDraft(tx: Transaction, id: string) {
   if (row) await lockCvLifecycle(tx, row);
 }
 
-export async function nextCvRevision(tx: Transaction, role: CvRole) {
+/**
+ * One saved CV and one archive per role, and never a pile of dead attempts beside them: the
+ * retention plans keep the ready pair, and this removes the failures they leave behind — `keep`
+ * is how many of the newest are still worth reopening (one while the next attempt runs, none once
+ * it has published), and `spare` is a draft this particular call must not remove.
+ *
+ * Three kinds of failed row are deliberately out of reach. A build that is queued or generating
+ * belongs to a worker holding its lease and will publish or fail on its own; a failure the user
+ * archived by hand is their archive, and the plans decide that; and the draft a save is reading
+ * its wording from is never pulled out from under that save.
+ */
+async function pruneFailedCvDrafts(
+  tx: Transaction,
+  role: CvRole,
+  keep: number,
+  spare?: string,
+) {
+  const failed = await tx
+    .select({ id: cvDrafts.id })
+    .from(cvDrafts)
+    .where(
+      and(sameRole(role), eq(cvDrafts.status, "failed"), isNull(cvDrafts.archivedAt)),
+    )
+    .orderBy(...newest);
+  const obsolete = failed
+    .slice(keep)
+    .map((row) => row.id)
+    .filter((id) => id !== spare);
+  if (obsolete.length)
+    await tx.delete(cvDrafts).where(inArray(cvDrafts.id, obsolete));
+}
+
+/**
+ * The next version for a role, and the moment its dead attempts are cleared. `spare` is the draft
+ * the new revision is being written from, which an edit passes so that saving from any failed
+ * revision works: it can leave a second failed row behind, and the next publish takes it.
+ */
+export async function nextCvRevision(
+  tx: Transaction,
+  role: CvRole,
+  options?: { spare?: string },
+) {
   await lockCvLifecycle(tx, role);
+  // Read the ledger's high-water mark before pruning, so versions keep increasing whatever goes.
   const [row] = await tx
     .select({
       revision: sql<number>`coalesce(max(${cvDrafts.revision}), 0)::int`,
     })
     .from(cvDrafts)
     .where(sameRole(role));
+  // A new attempt supersedes the earlier failures; only the newest is still worth retrying, so
+  // saved wording on an older one survives until something other than itself supersedes it.
+  await pruneFailedCvDrafts(tx, role, 1, options?.spare);
   return (row?.revision ?? 0) + 1;
 }
 
@@ -105,6 +150,8 @@ export async function completeCv(
     .update(cvDrafts)
     .set({ ...values, status: "ready" })
     .where(eq(cvDrafts.id, id));
+  // A CV that built supersedes every failed attempt at this role, older or newer than it.
+  await pruneFailedCvDrafts(tx, draft, 0);
   if (draft.archivedAt) return true;
   const rows = await tx
     .select(metadata)

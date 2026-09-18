@@ -4,8 +4,10 @@
  * `ai_calls` is the only record of spend: every call writes one row with its real cost, so a
  * budget is a sum over a window rather than a running total that something has to keep correct.
  * Resetting a counter moves that account's window (a reset marker in its settings); nothing is
- * deleted, so the call log stays complete. Everything here is read-only; holding capacity for a
- * call in flight is the worker's `ai_reservations` and is deliberately not mixed in.
+ * deleted, so the call log stays complete. Reading spend never touches `ai_reservations`: a hold
+ * is capacity for a call in flight, taken and released by the worker, and deliberately not mixed
+ * into what was spent. The one write here is `releaseAiHolds`, which drops holds whose call can
+ * no longer be in flight.
  */
 import { sql } from "drizzle-orm";
 import type { Db } from "./client";
@@ -73,4 +75,38 @@ export async function aiUsageByAccount(db: Db, since: Date): Promise<AiAccountUs
     cacheWriteTokens: Number(row.cacheWriteTokens),
     costUsd: Number(row.costUsd),
   }));
+}
+
+/** What a release of holds gave back. */
+export interface ReleasedHolds {
+  count: number;
+  amountUsd: number;
+}
+
+/**
+ * Drop `ai_reservations` that nothing can still be spending, and say what they were holding.
+ *
+ * A hold is taken before a model call and released after it, so the only thing that ever leaves
+ * one behind is a process that died mid-call. Two callers need to clear those: a worker giving up
+ * its own holds (by `workerId`, on shutdown or on the boot that follows an unclean exit — two
+ * processes cannot share a pod name, so its own id can only name dead holds), and a task given up
+ * on, which releases the hold its account was still being charged capacity for.
+ *
+ * A scope is mandatory. Without one this would clear every account's live holds, so a caller that
+ * names neither a worker nor an account is a bug rather than a cleanup.
+ */
+export async function releaseAiHolds(
+  db: Db,
+  scope: { workerId?: string | null; userId?: string | null; callSite?: string | null },
+): Promise<ReleasedHolds> {
+  if (!scope.workerId && !scope.userId) throw new Error("releaseAiHolds needs a worker or an account to scope the release");
+  const conditions = [sql`true`];
+  if (scope.workerId) conditions.push(sql`worker_id = ${scope.workerId}`);
+  if (scope.userId) conditions.push(sql`user_id = ${scope.userId}`);
+  if (scope.callSite) conditions.push(sql`call_site = ${scope.callSite}`);
+  const rows = await db.execute<{ amount: number }>(
+    sql`delete from ai_reservations where ${sql.join(conditions, sql` and `)} returning amount`,
+  );
+  const amountUsd = rows.rows.reduce((total, row) => total + Number(row.amount ?? 0), 0);
+  return { count: rows.rows.length, amountUsd: Math.round(amountUsd * 100) / 100 };
 }

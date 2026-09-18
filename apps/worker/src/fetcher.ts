@@ -20,6 +20,23 @@ export interface FetcherOptions {
   respectRobots?: () => boolean | Promise<boolean>;
 }
 
+/**
+ * The hard ceiling on any response body, which no caller can raise. A Greenhouse board of 2,331
+ * roles answered one request with 41 MB; decoding that into a string took the worker past its
+ * 258 MB heap and killed the process mid-scan. Above this the request fails as a clean
+ * SourceFetchError, which a scan records as a failed scan and retries tomorrow.
+ */
+export const HARD_MAX_BODY_BYTES = 16_000_000;
+
+/**
+ * Revalidation cache bounds. Bodies are held for a week to make conditional requests cheap, so an
+ * unbounded cache is a slow leak: one large feed per company is enough to fill the heap. Only small
+ * pages are worth keeping; the total is capped and the oldest entry is evicted first.
+ */
+const MAX_CACHED_BODY_BYTES = 512 * 1024;
+const MAX_CACHE_BYTES = 16_000_000;
+const MAX_CACHE_ENTRIES = 200;
+
 const CHALLENGE_MARKERS = [/cf-browser-verification/i, /just a moment/i, /attention required!\s*\|\s*cloudflare/i, /captcha/i, /access denied/i, /perimeterx/i, /_incapsula_/i];
 
 export class PoliteFetcher {
@@ -157,7 +174,7 @@ export class PoliteFetcher {
         log.info("http revalidated", { host: originalHost, durationMs: Date.now() - started, bytes: 0 });
         return usable.response;
       }
-      const max = this.opts.maxBodyBytes ?? init.maxBodyBytes ?? 5_000_000;
+      const max = Math.min(this.opts.maxBodyBytes ?? init.maxBodyBytes ?? 5_000_000, HARD_MAX_BODY_BYTES);
       let body = "";
       if (init.method !== "HEAD") {
         const reader = res.body?.getReader();
@@ -194,11 +211,12 @@ export class PoliteFetcher {
       }
       const response = { status: res.status, url: finalUrl, headers: outHeaders, body };
       const bytes = Buffer.byteLength(body);
-      if ((init.method ?? "GET") === "GET" && !init.body && res.status === 200 && bytes <= 2_000_000 && !/no-store|private/i.test(outHeaders["cache-control"] ?? "") && !outHeaders["set-cookie"] && !headers.authorization && !headers.cookie && (outHeaders.etag || outHeaders["last-modified"])) {
+      if ((init.method ?? "GET") === "GET" && !init.body && res.status === 200 && bytes <= MAX_CACHED_BODY_BYTES && !/no-store|private/i.test(outHeaders["cache-control"] ?? "") && !outHeaders["set-cookie"] && !headers.authorization && !headers.cookie && (outHeaders.etag || outHeaders["last-modified"])) {
         const old = this.responses.get(cacheKey);
         if (old) { this.responseBytes -= Buffer.byteLength(old.response.body); this.responses.delete(cacheKey); }
         this.responses.set(cacheKey, { response, at: Date.now() }); this.responseBytes += bytes;
-        while (this.responseBytes > 20_000_000 || this.responses.size > 200) {
+        // Map iteration is insertion order, so this evicts the oldest entry first.
+        while (this.responseBytes > MAX_CACHE_BYTES || this.responses.size > MAX_CACHE_ENTRIES) {
           const key = this.responses.keys().next().value!;
           this.responseBytes -= Buffer.byteLength(this.responses.get(key)!.response.body); this.responses.delete(key);
         }

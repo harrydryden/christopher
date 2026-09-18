@@ -6,9 +6,9 @@ import { harvestLinks, scoreLink } from "./links";
 import { companyNameFromTitle, companyNamesMatch, diceCoefficient, isPlaceholderName, looksLikeSoft404, nameFromDomain, nameFromSlug } from "./text";
 import { AUTO_ACCEPT_CONFIDENCE } from "./confidence";
 
-const GH_JOBS = "https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true";
+const GH_JOBS = "https://boards-api.greenhouse.io/v1/boards/acme/jobs";
 const GH_BOARD = "https://boards-api.greenhouse.io/v1/boards/acme";
-const GH_IND_JOBS = "https://boards-api.greenhouse.io/v1/boards/acmeindustries/jobs?content=true";
+const GH_IND_JOBS = "https://boards-api.greenhouse.io/v1/boards/acmeindustries/jobs";
 
 const greenhouseRoutes = { [GH_JOBS]: { body: fx.GREENHOUSE_JOBS }, [GH_BOARD]: { body: fx.GREENHOUSE_BOARD } };
 const industriesJobs = {

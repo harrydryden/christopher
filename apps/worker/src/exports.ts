@@ -9,10 +9,12 @@ export { createDeps, makeFetchContext, makeDiscoveryContext, aiSpendThisMonth, a
 export type { WorkerDeps, DepsOverrides, AiBudgetStop } from "./context";
 export { readEnv } from "./env";
 export type { WorkerEnv } from "./env";
-export { TaskQueue, claimTask, completeTask, failTask, requeueStale, backoffMs } from "./queue";
-export type { HandlerMap, TaskHandler, QueueOptions } from "./queue";
-export { schedulerTick, startScheduler } from "./scheduler";
-export { handlers } from "./handlers";
+export { TaskQueue, abandonTask, claimTask, completeTask, deadlineMsFor, failTask, recoverFromCrash, requeueStale, backoffMs, TASK_DEADLINES_MS, TASK_STALE_AFTER_MS } from "./queue";
+export type { AbandonHook, AbandonHookMap, CrashRecovery, CrashSuspect, HandlerMap, RequeueOutcome, TaskDeadlines, TaskHandler, QueueOptions } from "./queue";
+export { schedulerTick, startScheduler, reconcileCvDrafts } from "./scheduler";
+export { handlers, onAbandon, CV_ABANDONED_MESSAGE } from "./handlers";
+export { vitals } from "./vitals";
+export type { Vitals } from "./vitals";
 export { ensureSeedTags } from "./handlers/learning";
 export { loadSettings, loadUserSettings } from "./settings";
 export { log } from "./log";

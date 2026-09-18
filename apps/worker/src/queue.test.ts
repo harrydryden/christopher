@@ -1,15 +1,16 @@
 /** Queue and scheduler behaviour against a real database. */
 import { renewTask, completeTask, assertTaskOwnership } from "./queue";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import {createDb, enqueueTask, listUserIds, schema, setSubscriptionStatus, subscribeToCompany, type Db} from "@christopher/db";
+import {createDb, enqueueTask, listUserIds, listWorkerEvents, schema, setSubscriptionStatus, subscribeToCompany, type Db} from "@christopher/db";
 import { dedupeKeyFor, isUserSettingsKey } from "@christopher/core";
 import { ensureTestUser } from "./test-users";
 import { runMigrations } from "@christopher/db/migrate";
 import { desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
-import { agePriorities, backoffMs, claimTask, deadlineMsFor, failTask, laneSlots, requeueStale, TaskQueue } from "./queue";
-import { schedulerTick } from "./scheduler";
+import { agePriorities, backoffMs, claimTask, deadlineMsFor, failTask, laneSlots, recoverFromCrash, requeueStale, TASK_STALE_AFTER_MS, TaskQueue } from "./queue";
+import { reconcileCvDrafts, schedulerTick } from "./scheduler";
+import { CV_ABANDONED_MESSAGE, onAbandon } from "./handlers";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test";
 
@@ -106,14 +107,16 @@ describe("task queue", () => {
     expect(backoffMs(20)).toBe(30 * 60_000);
   });
 
-  it("puts tasks abandoned by a crashed worker back on the queue", async () => {
+  it("puts tasks abandoned by a crashed worker back on the queue, with an attempt spent and a backoff", async () => {
     await enqueueTask(db, "discover", { companyId: "a" }, {});
     const task = await claimTask(db, "w1");
     await db.update(schema.tasks).set({ lockedAt: new Date(Date.now() - 60 * 60_000) }).where(eq(schema.tasks.id, task!.id));
-    expect(await requeueStale(db)).toBe(1);
+    expect(await requeueStale(db)).toEqual({ requeued: 1, failed: 0 });
     const [requeued] = await db.select().from(schema.tasks);
     expect(requeued!.status).toBe("queued");
-    expect(requeued!.error).toContain("stale");
+    expect(requeued!.error).toContain("worker lost while running (attempt 1 of 3)");
+    // The next attempt waits: a worker that died on this task should not be handed it instantly.
+    expect(requeued!.runAfter.getTime()).toBeGreaterThan(Date.now());
   });
 
   it("records a handler's result and keeps going after one fails", async () => {
@@ -243,6 +246,7 @@ it("fences completion, failure and writes from a reclaimed attempt", async () =>
   const old = (await claimTask(db, "same-worker"))!;
   await db.update(schema.tasks).set({ lockedAt: new Date(0) });
   await requeueStale(db);
+  await db.update(schema.tasks).set({ runAfter: new Date() }); // past the recovery backoff
   const current = (await claimTask(db, "same-worker"))!;
   expect(await renewTask(db, old)).toBe(false);
   await completeTask(db, old, { stale: true });
@@ -261,7 +265,7 @@ it("renews a live task lease and isolates queue lanes", async () => {
   const task = (await claimTask(db, "interactive", "interactive"))!;
   await db.update(schema.tasks).set({ lockedAt: new Date(0) }).where(eq(schema.tasks.id, task.id));
   expect(await renewTask(db, task)).toBe(true);
-  expect(await requeueStale(db)).toBe(0);
+  expect(await requeueStale(db)).toEqual({ requeued: 0, failed: 0 });
 });
 
 it("recovers a stopped worker after five missed minutes while retaining a fresh long-running task", async () => {
@@ -271,7 +275,8 @@ it("recovers a stopped worker after five missed minutes while retaining a fresh 
   const live = (await claimTask(db, "current-worker"))!;
   await db.update(schema.tasks).set({ lockedAt: new Date(Date.now() - 6 * 60_000) }).where(eq(schema.tasks.id, stopped.id));
   await db.update(schema.tasks).set({ startedAt: new Date(Date.now() - 30 * 60_000), lockedAt: new Date(Date.now() - 60_000) }).where(eq(schema.tasks.id, live.id));
-  expect(await requeueStale(db)).toBe(1);
+  expect(await requeueStale(db)).toEqual({ requeued: 1, failed: 0 });
+  await db.update(schema.tasks).set({ runAfter: new Date() }).where(eq(schema.tasks.id, stopped.id));
   const recovered = (await claimTask(db, "current-worker"))!;
   expect(recovered.id).toBe(stopped.id);
   expect(recovered.attempts).toBe(stopped.attempts + 1);
@@ -322,6 +327,7 @@ it("does not repeat a manual daily fan-out after a crash between commit and comp
   await handleRunDaily(first, deps);
   await db.update(schema.tasks).set({ lockedAt: new Date(0) }).where(eq(schema.tasks.id, first.id));
   await requeueStale(db);
+  await db.update(schema.tasks).set({ runAfter: new Date() }).where(eq(schema.tasks.id, first.id));
   const retry = (await claimTask(db, "second", "scan"))!;
   expect(retry.id).toBe(first.id);
   await handleRunDaily(retry, deps);
@@ -472,8 +478,10 @@ it("keeps a requeued company scan on one task row, through a deadline, a stale l
   await db.update(schema.tasks).set({ runAfter: new Date() }).where(eq(schema.tasks.id, id!));
   expect((await claimTask(db, "crashed", "scan"))!.id).toBe(id);
   await db.update(schema.tasks).set({ lockedAt: new Date(Date.now() - 6 * 60_000) }).where(eq(schema.tasks.id, id!));
-  expect(await requeueStale(db)).toBe(1);
+  expect(await requeueStale(db)).toEqual({ requeued: 1, failed: 0 });
   expect((await theOneTask()).attempts).toBe(2);
+  // Still the same row, and claimable again once its recovery backoff has passed.
+  await db.update(schema.tasks).set({ runAfter: new Date() }).where(eq(schema.tasks.id, id!));
 
   // And an orderly shutdown hands it straight back, without spending an attempt.
   let seen!: () => void;
@@ -514,5 +522,188 @@ describe("claim ordering", () => {
     expect(await agePriorities(db)).toBe(0);
     const priorities = (await db.select().from(schema.tasks)).map(t => t.priority);
     expect(priorities.sort()).toEqual([0, 0]);
+  });
+});
+
+
+/**
+ * What the queue does when the process running a task dies without warning.
+ *
+ * An out-of-memory is a hard death: no catch, no `failTask`, nothing compares `attempts` with
+ * `max_attempts`. Before this, the next boot simply put the task back and claimed it again, so one
+ * 41 MB response turned into ten hours of crash looping, a CV draft stuck on "generating" for two
+ * and a half hours and six live budget holds for a build that never made a single model call.
+ * None of it needs a real crash to reproduce: a task claimed, its lock aged, and another worker
+ * sweeping is exactly the same situation.
+ */
+describe("crash recovery", () => {
+  beforeEach(async () => {
+    await db.execute(sql`truncate worker_events, cv_drafts, ai_reservations cascade`);
+  });
+
+  const past = () => new Date(Date.now() - 60 * 60_000);
+
+  /** A CV build as the worker leaves it mid-flight: the draft generating, its hold live, its task claimed. */
+  async function buildInFlight(email: string, workerId: string, attempts: number) {
+    const user = await ensureTestUser(db, email);
+    const [draft] = await db.insert(schema.cvDrafts).values({
+      userId: user.id, jobTitle: "Operations Director", companyName: "Acme", jobDescription: "Lead a team",
+      libraryVersion: 1, librarySnapshot: {} as never, model: "claude-sonnet-5", status: "generating", buildStage: "analysing",
+    }).returning();
+    await db.execute(sql`insert into ai_reservations (user_id, call_site, amount, expires_at, worker_id)
+      values (${user.id}, 'CV', 3.06, now() + interval '30 minutes', ${workerId})`);
+    const payload = { draftId: draft!.id };
+    await enqueueTask(db, "generate_cv", payload, { dedupeKey: dedupeKeyFor("generate_cv", payload) });
+    const task = (await claimTask(db, `${workerId}#0`, "interactive"))!;
+    await db.update(schema.tasks).set({ attempts, lockedAt: past() }).where(eq(schema.tasks.id, task.id));
+    return { user, draft: draft!, task };
+  }
+
+  const heldFor = async (userId: string) =>
+    Number((await db.execute<{ n: number }>(sql`select count(*)::int as n from ai_reservations where user_id = ${userId}`)).rows[0]!.n);
+
+  it("spends one attempt per lost worker and gives up at the limit, without ever killing a third worker", async () => {
+    await enqueueTask(db, "scan_company", { companyId: "greenhouse-monster" }, {});
+    // Three incarnations, each claiming the task and dying with it.
+    for (const attempt of [1, 2, 3]) {
+      await db.update(schema.tasks).set({ runAfter: new Date() });
+      const claimed = (await claimTask(db, `pod-${attempt}#0`, "scan"))!;
+      expect(claimed.attempts).toBe(attempt);
+      await db.update(schema.tasks).set({ lockedAt: past() }).where(eq(schema.tasks.id, claimed.id));
+      const outcome = await requeueStale(db, TASK_STALE_AFTER_MS, `pod-${attempt + 1}`);
+      expect(outcome).toEqual(attempt < 3 ? { requeued: 1, failed: 0 } : { requeued: 0, failed: 1 });
+    }
+    const [dead] = await db.select().from(schema.tasks);
+    expect(dead!.status).toBe("failed");
+    expect(dead!.error).toBe("worker lost while running this task (attempt 3 of 3); not retried");
+    expect(dead!.finishedAt).not.toBeNull();
+    // And the ledger names it, with the worker that was holding it.
+    const [event] = await listWorkerEvents(db, { kinds: ["task_abandoned"] });
+    expect(event!.taskType).toBe("scan_company");
+    expect(event!.taskId).toBe(dead!.id);
+    expect(event!.detail).toMatchObject({ attempts: 3, maxAttempts: 3, lockedBy: "pod-3#0", subject: "scan_company:greenhouse-monster" });
+  });
+
+  it("never claims a task that has already spent every attempt, and sweeps it out of the queue", async () => {
+    const id = await enqueueTask(db, "discover", { companyId: "a" }, { maxAttempts: 2 });
+    await db.update(schema.tasks).set({ attempts: 2 }).where(eq(schema.tasks.id, id!));
+    expect(await claimTask(db, "w1")).toBeNull();
+    expect(await claimTask(db, "w1", "interactive")).toBeNull();
+    // Left alone it would sit queued for ever, so the sweep fails it too.
+    expect(await requeueStale(db, TASK_STALE_AFTER_MS, "sweeper")).toEqual({ requeued: 0, failed: 1 });
+    const [row] = await db.select().from(schema.tasks);
+    expect(row!.status).toBe("failed");
+    expect(row!.error).toContain("out of attempts (2 of 2 spent)");
+  });
+
+  it("fails the CV draft and releases its account's hold when the build task is given up on", async () => {
+    const { user, draft } = await buildInFlight("abandoned-build@example.com", "pod-a", 3);
+    expect(await heldFor(user.id)).toBe(1);
+
+    const outcome = await requeueStale(db, TASK_STALE_AFTER_MS, "pod-b", { deps, onAbandon });
+    expect(outcome).toEqual({ requeued: 0, failed: 1 });
+
+    const [after] = await db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+    expect(after!.status).toBe("failed");
+    expect(after!.error).toBe(CV_ABANDONED_MESSAGE);
+    expect(after!.buildStage).toBeNull();
+    // Nothing is spending the hold any more, and the rebuild we just asked for must not be refused.
+    expect(await heldFor(user.id)).toBe(0);
+    const [event] = await listWorkerEvents(db, { kinds: ["task_abandoned"] });
+    expect(event!.taskType).toBe("generate_cv");
+    expect(event!.detail).toMatchObject({ subject: `generate_cv:${draft.id}` });
+  });
+
+  it("leaves a build that still has attempts alone, draft and hold included", async () => {
+    const { user, draft } = await buildInFlight("retryable-build@example.com", "pod-a", 1);
+    expect(await requeueStale(db, TASK_STALE_AFTER_MS, "pod-b", { deps, onAbandon })).toEqual({ requeued: 1, failed: 0 });
+    const [after] = await db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+    expect(after!.status).toBe("generating");
+    expect(await heldFor(user.id)).toBe(1);
+  });
+
+  it("recovers everything a previous incarnation was running, and drops the holds it left behind", async () => {
+    const { user, draft, task: cvTask } = await buildInFlight("crashed-pod@example.com", "pod-x", 3);
+    const other = await ensureTestUser(db, "someone-else@example.com");
+    await db.execute(sql`insert into ai_reservations (user_id, call_site, amount, expires_at, worker_id)
+      values (${other.id}, 'CV', 2, now() + interval '30 minutes', 'another-pod')`);
+    await enqueueTask(db, "scan_company", { companyId: "acme" }, {});
+    const scan = (await claimTask(db, "pod-x#1", "scan"))!;
+    // The lock is fresh: this process has claimed nothing, so a running task is still not its own.
+    await db.update(schema.tasks).set({ lockedAt: new Date() }).where(eq(schema.tasks.id, scan.id));
+
+    const recovery = await recoverFromCrash(deps, { workerId: "pod-x", onAbandon });
+
+    expect(recovery.suspects).toHaveLength(2);
+    expect(recovery.likely!.id).toBe(cvTask.id);
+    expect(recovery.likely!.attempts).toBe(3);
+    expect(recovery.likely!.subject).toBe(`generate_cv:${draft.id}`);
+    expect(recovery).toMatchObject({ requeued: 1, failed: 1 });
+    expect(recovery.holds).toEqual({ count: 1, amountUsd: 3.06 });
+
+    const rows = await db.select().from(schema.tasks).orderBy(schema.tasks.type);
+    expect(rows.find(r => r.type === "generate_cv")!.status).toBe("failed");
+    expect(rows.find(r => r.type === "scan_company")!.status).toBe("queued");
+    // The build that was killed with it is failed, its hold gone; nobody else's hold is touched.
+    expect((await db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id)))[0]!.status).toBe("failed");
+    expect(await heldFor(user.id)).toBe(0);
+    expect(await heldFor(other.id)).toBe(1);
+
+    const [crash] = await listWorkerEvents(db, { kinds: ["crash_recovery"] });
+    expect(crash!.workerId).toBe("pod-x");
+    expect((crash!.detail.suspects as unknown[])).toHaveLength(2);
+    expect(crash!.detail.likely).toMatchObject({ id: cvTask.id, attempts: 3, lockedBy: "pod-x#0" });
+    const [released] = await listWorkerEvents(db, { kinds: ["holds_released"] });
+    expect(released!.detail).toMatchObject({ count: 1, reason: "boot" });
+  });
+
+  it("leaves a task another live pod is running alone, however fresh this boot is", async () => {
+    // Render can overlap two pods for a moment during a deploy. A running task locked by a
+    // different worker whose lock is still being renewed is that worker's, not this one's.
+    await enqueueTask(db, "scan_company", { companyId: "acme" }, {});
+    const theirs = (await claimTask(db, "another-pod#0", "scan"))!;
+    const recovery = await recoverFromCrash(deps, { workerId: "pod-y", onAbandon });
+    expect(recovery.suspects).toEqual([]);
+    expect((await db.select().from(schema.tasks).where(eq(schema.tasks.id, theirs.id)))[0]!.status).toBe("running");
+    // Once its lock has aged out, the ordinary sweep takes it.
+    await db.update(schema.tasks).set({ lockedAt: past() }).where(eq(schema.tasks.id, theirs.id));
+    expect(await requeueStale(db, TASK_STALE_AFTER_MS, "pod-y")).toEqual({ requeued: 1, failed: 0 });
+  });
+
+  it("records nothing and touches nothing when the previous process exited cleanly", async () => {
+    await enqueueTask(db, "discover", { companyId: "a" }, {});
+    const recovery = await recoverFromCrash(deps, { workerId: "tidy-pod", onAbandon });
+    expect(recovery).toMatchObject({ suspects: [], likely: null, requeued: 0, failed: 0 });
+    expect(await listWorkerEvents(db, { kinds: ["crash_recovery"] })).toHaveLength(0);
+    expect((await db.select().from(schema.tasks))[0]!.status).toBe("queued");
+  });
+
+  it("fails a CV draft no task is building any more, and leaves a live build alone", async () => {
+    const { user, draft } = await buildInFlight("orphan-build@example.com", "pod-a", 1);
+    const live = await buildInFlight("live-build@example.com", "pod-a", 1);
+    // The orphan's task is gone (history maintenance takes finished rows after thirty days);
+    // the other's is still running, and its draft is nobody's business.
+    await db.delete(schema.tasks).where(sql`payload->>'draftId' = ${draft.id}`);
+    await db.update(schema.cvDrafts).set({ createdAt: new Date(Date.now() - 30 * 60_000) });
+
+    expect(await reconcileCvDrafts(deps)).toBe(1);
+    const [orphan] = await db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+    expect(orphan!.status).toBe("failed");
+    expect(orphan!.error).toBe(CV_ABANDONED_MESSAGE);
+    expect(await heldFor(user.id)).toBe(0);
+    expect((await db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, live.draft.id)))[0]!.status).toBe("generating");
+    expect(await heldFor(live.user.id)).toBe(1);
+
+    // A build whose task failed is in the same position, and the sweep is idempotent.
+    await db.update(schema.tasks).set({ status: "failed" }).where(sql`payload->>'draftId' = ${live.draft.id}`);
+    expect(await reconcileCvDrafts(deps)).toBe(1);
+    expect(await reconcileCvDrafts(deps)).toBe(0);
+  });
+
+  it("leaves a draft whose build has only just been queued", async () => {
+    const { draft } = await buildInFlight("fresh-build@example.com", "pod-a", 1);
+    await db.delete(schema.tasks).where(sql`payload->>'draftId' = ${draft.id}`);
+    expect(await reconcileCvDrafts(deps)).toBe(0);
+    expect((await db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id)))[0]!.status).toBe("generating");
   });
 });

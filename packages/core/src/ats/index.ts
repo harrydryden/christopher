@@ -10,6 +10,7 @@ export {
   findAtsSpecsInText,
   isAtsHost,
   fetchDescriptionFor,
+  descriptionsFetchedPerPosting,
   fetchHtmlPage,
 } from "./registry";
 export { extractJsonLdPostings } from "./jsonld";

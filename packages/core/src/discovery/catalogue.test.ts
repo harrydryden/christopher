@@ -27,7 +27,7 @@ it.each(["https://waymo.com/", "https://www.waymo.com/", "https://careers.withwa
     const result = await discover(url, ctx);
     expect(result.outcome).toBe("resolved");
     expect(result.best?.spec.atsSlug).toBe("waymo");
-    expect(result.best?.spec.apiUrl).toContain("content=true");
+    expect(result.best?.spec.apiUrl).toBe("https://boards-api.greenhouse.io/v1/boards/waymo/jobs");
     expect(result.best?.method).toBe("verified_catalogue");
     expect(result.fetches).toBe(1);
     expect(ctx.render).not.toHaveBeenCalled();

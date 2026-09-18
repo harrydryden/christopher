@@ -1,36 +1,42 @@
-import { schema, type Db, type Task } from "@christopher/db";
-import { and, eq, lt, sql } from "drizzle-orm";
+import { recordWorkerEvent, releaseAiHolds, schema, type Db, type ReleasedHolds, type Task } from "@christopher/db";
+import { deadlineMsFor, TASK_DEADLINES_MS, taskSubject, taskUserId, type TaskDeadlines } from "@christopher/core";
+import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 import { finaliseScanRuns } from "./handlers/daily";
 import { LeaseBusyError } from "./lease";
 import { log } from "./log";
+import { vitals } from "./vitals";
 
 export type TaskHandler = (task: Task, deps: WorkerDeps) => Promise<unknown>;
 export type HandlerMap = Partial<Record<Task["type"], TaskHandler>>;
+
+/**
+ * What to do for the thing a task was for when the task is given up on for good.
+ *
+ * A failed task is not the end of the story: a CV draft, a scan run, a discovery candidate can be
+ * left half-alive by a task that never wrote its own failure. The hook is the type's chance to
+ * close that off, and it runs on every path that fails a task for good — the last attempt of a
+ * handler that threw, and a task whose worker died with it claimed.
+ */
+export type AbandonHook = (task: Task, deps: WorkerDeps, reason: string) => Promise<void>;
+export type AbandonHookMap = Partial<Record<Task["type"], AbandonHook>>;
+
+/** What a recovery needs to close off the work behind the tasks it gives up on. */
+export interface AbandonContext {
+  deps?: WorkerDeps;
+  onAbandon?: AbandonHookMap;
+}
+
 // Ten missed 30-second renewals; aligned with the resource lease expiry.
 export const TASK_STALE_AFTER_MS = 5 * 60_000;
 
-/**
- * How long one handler may run before its task is abandoned and failed.
- *
- * Nothing else bounds a handler: a fetch that hangs past its own timeouts, or a model call that
- * never returns, would otherwise hold a slot until the process restarts. `scan_company` is the
- * three minutes per company R-3.1 asks for; a CV build is a chain of model calls and gets half an
- * hour; discovery walks several pages. Everything else is short by construction.
- */
-export const TASK_DEADLINES_MS: Partial<Record<Task["type"], number>> & { default: number } = {
-  scan_company: 3 * 60_000,
-  generate_cv: 30 * 60_000,
-  discover: 5 * 60_000,
-  default: 2 * 60_000,
-};
+// The deadline table lives in @christopher/core, because the interface shows elapsed time against
+// it and cannot import the worker. Re-exported here so nothing else had to change.
+export { deadlineMsFor, TASK_DEADLINES_MS };
+export type { TaskDeadlines };
 
-export type TaskDeadlines = Partial<Record<Task["type"] | "default", number>>;
-
-/** The deadline for one type: the caller's override first, then the table above. */
-export function deadlineMsFor(type: Task["type"], overrides: TaskDeadlines = {}): number {
-  return overrides[type] ?? overrides.default ?? TASK_DEADLINES_MS[type] ?? TASK_DEADLINES_MS.default;
-}
+/** Heap in use, as a fraction of the ceiling V8 kills the process at, that is worth a warning. */
+export const HEAP_PRESSURE_FRACTION = 0.85;
 
 /** A handler that outlived its deadline. Carries the type and the elapsed time into the task row. */
 export class TimeoutError extends Error {
@@ -51,6 +57,8 @@ export interface QueueOptions {
   heartbeatMs?: number;
   /** Per-type deadline overrides; tests use them to keep a fake slow handler quick. */
   deadlines?: TaskDeadlines;
+  /** What to close off when a task of a given type is given up on for good. */
+  onAbandon?: AbandonHookMap;
 }
 
 export function backoffMs(attempts: number): number {
@@ -73,8 +81,12 @@ export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all
   const rows = await db
     .update(schema.tasks)
     .set({ status: "running", lockedAt: sql`now()`, lockedBy: workerId, attempts: sql`${schema.tasks.attempts} + 1`, startedAt: sql`now()` })
+    // `attempts < max_attempts` is what stops a task that kills the process being retried forever:
+    // an out-of-memory is a hard death, so nothing compares the two before the lock goes stale and
+    // the task is claimed again. A task already at its limit is failed by `requeueStale`, never
+    // claimed. The column is read from the same index rows the lane filter walks.
     .where(sql`${schema.tasks.id} = (
-      select id from tasks where status = 'queued' and run_after <= now() and ${laneFilter}
+      select id from tasks where status = 'queued' and run_after <= now() and attempts < max_attempts and ${laneFilter}
       order by priority asc, run_after asc, created_at asc
       limit 1 for update skip locked
     )`)
@@ -139,15 +151,179 @@ export async function failTask(db: Db, task: Task, err: unknown): Promise<"retry
   return retry ? "retry" : "failed";
 }
 
-/** Tasks left "running" by a crashed worker go back to the queue. */
-export async function requeueStale(db: Db, staleAfterMs = TASK_STALE_AFTER_MS): Promise<number> {
-  const cutoff = new Date(Date.now() - staleAfterMs);
+/** Run the type's abandonment hook, if it has one. A hook that throws never fails the recovery. */
+export async function runAbandonHook(task: Task, reason: string, context: AbandonContext): Promise<void> {
+  const hook = context.onAbandon?.[task.type];
+  if (!hook || !context.deps) return;
+  try {
+    await hook(task, context.deps, reason);
+  } catch (err) {
+    log.error("abandonment hook failed", { id: task.id, type: task.type, error: (err as Error)?.message });
+  }
+}
+
+/**
+ * Give up on one task for good: fail the row, write the ledger entry, close off what it was for.
+ *
+ * Fenced on the status and attempt it was read at, so a task another worker has already reclaimed
+ * is left alone and its hook does not run.
+ */
+export async function abandonTask(db: Db, task: Task, error: string, workerId: string, context: AbandonContext = {}): Promise<boolean> {
   const rows = await db
     .update(schema.tasks)
-    .set({ status: "queued", lockedAt: null, lockedBy: null, error: "requeued: stale lock" })
-    .where(and(eq(schema.tasks.status, "running"), lt(schema.tasks.lockedAt, cutoff)))
+    .set({ status: "failed", error: error.slice(0, 2000), finishedAt: new Date(), lockedAt: null })
+    .where(and(eq(schema.tasks.id, task.id), eq(schema.tasks.status, task.status), eq(schema.tasks.attempts, task.attempts)))
     .returning({ id: schema.tasks.id });
-  return rows.length;
+  if (!rows.length) return false;
+  log.warn("task abandoned", { id: task.id, type: task.type, attempts: task.attempts, lockedBy: task.lockedBy, error });
+  await recordWorkerEvent(db, {
+    workerId, kind: "task_abandoned", taskId: task.id, taskType: task.type, userId: taskUserId(task.payload),
+    detail: { attempts: task.attempts, maxAttempts: task.maxAttempts, lockedBy: task.lockedBy, subject: taskSubject(task.type, task.payload), error },
+  });
+  await runAbandonHook(task, error, context);
+  return true;
+}
+
+export interface RequeueOutcome {
+  /** Put back on the queue, with an attempt spent and a backoff. */
+  requeued: number;
+  /** Given up on: out of attempts, so retrying it would only kill the next worker too. */
+  failed: number;
+}
+
+/**
+ * Reclaim what a dead worker was holding, and refuse to retry what killed it.
+ *
+ * Two things end up here. A task left `running` by a process that is gone — the lock stopped
+ * being renewed — and a task sitting `queued` that has already spent every attempt, which only a
+ * worker from before this rule can leave behind. Both are the same question: has this task had
+ * its retries? Under the limit it goes back on the queue having spent one, with the usual
+ * backoff, so a transient crash costs a delay rather than the work. At the limit it is failed,
+ * because an out-of-memory is a hard death with no catch and no `failTask`: nothing ever compared
+ * `attempts` with `max_attempts`, so one bad task was claimed, killed the process, and was claimed
+ * again on the next boot, for as long as the deployment was left alone. Failing it also runs the
+ * type's abandonment hook, so a CV draft does not keep saying "generating" for the rest of the day.
+ *
+ * `ids` names the tasks to reclaim whatever their lock age: boot recovery uses it, because a
+ * process that has claimed nothing yet knows every `running` row belongs to an earlier incarnation.
+ */
+export async function requeueStale(
+  db: Db,
+  staleAfterMs = TASK_STALE_AFTER_MS,
+  workerId = "worker",
+  options: AbandonContext & { ids?: string[] } = {},
+): Promise<RequeueOutcome> {
+  const cutoff = new Date(Date.now() - staleAfterMs);
+  const lost = await db.select().from(schema.tasks).where(
+    options.ids?.length
+      ? and(eq(schema.tasks.status, "running"), inArray(schema.tasks.id, options.ids))
+      : and(eq(schema.tasks.status, "running"), lt(schema.tasks.lockedAt, cutoff)),
+  );
+  // A queued task past its limit can never be claimed again, so it would sit in the queue for
+  // ever. It is given up on here, with the same ledger entry and hook.
+  const spent = await db.select().from(schema.tasks)
+    .where(and(eq(schema.tasks.status, "queued"), sql`${schema.tasks.attempts} >= ${schema.tasks.maxAttempts}`));
+
+  const outcome: RequeueOutcome = { requeued: 0, failed: 0 };
+  for (const task of [...lost, ...spent]) {
+    if (task.attempts >= task.maxAttempts) {
+      const error = task.status === "running"
+        ? `worker lost while running this task (attempt ${task.attempts} of ${task.maxAttempts}); not retried`
+        : `out of attempts (${task.attempts} of ${task.maxAttempts} spent); not retried`;
+      if (await abandonTask(db, task, error, workerId, options)) outcome.failed++;
+      continue;
+    }
+    const rows = await db
+      .update(schema.tasks)
+      .set({
+        status: "queued", lockedAt: null, lockedBy: null,
+        error: `requeued: worker lost while running (attempt ${task.attempts} of ${task.maxAttempts})`,
+        runAfter: new Date(Date.now() + backoffMs(task.attempts)),
+      })
+      .where(and(eq(schema.tasks.id, task.id), eq(schema.tasks.status, "running"), eq(schema.tasks.attempts, task.attempts)))
+      .returning({ id: schema.tasks.id });
+    outcome.requeued += rows.length;
+  }
+  return outcome;
+}
+
+/** One task the previous incarnation of this worker was running when it died. */
+export interface CrashSuspect {
+  id: string;
+  type: Task["type"];
+  attempts: number;
+  lockedBy: string | null;
+  lockedAt: string | null;
+  /** A short human label for what it was for: the company, draft or account behind it. */
+  subject: string | null;
+}
+
+export interface CrashRecovery extends RequeueOutcome {
+  suspects: CrashSuspect[];
+  /** The suspect with the most attempts: the task most likely to have killed the process. */
+  likely: CrashSuspect | null;
+  holds: ReleasedHolds;
+}
+
+/**
+ * What a worker does before it starts claiming, having found work that was already claimed.
+ *
+ * This process has claimed nothing yet, so every `running` task belonged to the incarnation
+ * before it, and every AI reservation under this worker's id is a hold no live call can settle —
+ * the id is the pod name, and two processes cannot share one. Both are recorded before they are
+ * cleaned up, because the crash itself leaves no trace anywhere else: the ledger is how Operations
+ * later says "the worker restarted eleven times and this task was running every time".
+ *
+ * The requeue is the scheduler's own function, so the attempts accounting after a crash is
+ * identical to the accounting after a stale lock, and the task that killed the process is failed
+ * here rather than claimed again.
+ */
+export async function recoverFromCrash(
+  deps: WorkerDeps,
+  opts: { workerId: string; onAbandon?: AbandonHookMap; staleAfterMs?: number },
+): Promise<CrashRecovery> {
+  const staleAfterMs = opts.staleAfterMs ?? TASK_STALE_AFTER_MS;
+  const cutoff = Date.now() - staleAfterMs;
+  const all = await deps.db.select().from(schema.tasks).where(eq(schema.tasks.status, "running"));
+  // Ours, or nobody's. A slot locks a task as `<workerId>#<slot>`, and the worker id is the pod
+  // name, so a running task locked by this id belonged to the incarnation before this one and can
+  // be taken back at once. Anything else is left to age out through the ordinary stale sweep,
+  // because a deployment that briefly overlaps two pods must not have its live work reclaimed.
+  const running = all.filter(task =>
+    task.lockedBy === opts.workerId || task.lockedBy?.startsWith(`${opts.workerId}#`)
+    || !task.lockedAt || task.lockedAt.getTime() < cutoff);
+  const suspects: CrashSuspect[] = running.map(task => ({
+    id: task.id, type: task.type, attempts: task.attempts, lockedBy: task.lockedBy,
+    lockedAt: task.lockedAt?.toISOString() ?? null, subject: taskSubject(task.type, task.payload),
+  }));
+  const likely = suspects.reduce<CrashSuspect | null>((worst, s) => (!worst || s.attempts > worst.attempts ? s : worst), null);
+  if (suspects.length) {
+    log.warn("worker recovered after an unclean exit", { workerId: opts.workerId, running: suspects.length, likely, vitals: vitals() });
+    await recordWorkerEvent(deps.db, {
+      workerId: opts.workerId, kind: "crash_recovery", taskId: likely?.id ?? null, taskType: likely?.type ?? null,
+      detail: { suspects, likely, commit: process.env.RENDER_GIT_COMMIT ?? null },
+    });
+  }
+  // Holds taken by the process that died: nothing can still be spending them, and until they
+  // expire on their own they refuse that account work it can plainly afford. Released before the
+  // tasks are recovered, so this reports everything the crash left behind rather than the
+  // remainder after each abandonment hook has released its own.
+  let holds: ReleasedHolds = { count: 0, amountUsd: 0 };
+  try {
+    holds = await releaseAiHolds(deps.db, { workerId: opts.workerId });
+    if (holds.count) {
+      log.warn("released ai holds left behind by an unclean exit", { workerId: opts.workerId, ...holds });
+      await recordWorkerEvent(deps.db, { workerId: opts.workerId, kind: "holds_released", detail: { ...holds, reason: "boot" } });
+    }
+  } catch (err) {
+    log.error("failed to release ai holds on boot", err);
+  }
+
+  const outcome = await requeueStale(deps.db, staleAfterMs, opts.workerId, {
+    ids: suspects.map(s => s.id), deps, onAbandon: opts.onAbandon,
+  });
+  if (outcome.requeued || outcome.failed) log.warn("recovered tasks from a previous incarnation", { ...outcome, workerId: opts.workerId });
+  return { ...outcome, suspects, likely, holds };
 }
 
 const LANES = ["interactive", "scan", "background"] as const;
@@ -257,8 +433,11 @@ export class TaskQueue {
     }
     this.running.clear();
     try {
-      const released = await this.deps.db.execute<{ id: string }>(sql`delete from ai_reservations where worker_id = ${this.opts.workerId} returning id`);
-      if (released.rows.length) log.warn("released ai reservations on shutdown", { held: released.rows.length, workerId: this.opts.workerId });
+      const released = await releaseAiHolds(this.deps.db, { workerId: this.opts.workerId });
+      if (released.count) {
+        log.warn("released ai reservations on shutdown", { ...released, workerId: this.opts.workerId });
+        await recordWorkerEvent(this.deps.db, { workerId: this.opts.workerId, kind: "holds_released", detail: { ...released, reason: "shutdown" } });
+      }
     } catch (err) {
       log.error("failed to release ai reservations on shutdown", err);
     }
@@ -306,6 +485,16 @@ export class TaskQueue {
     }
   }
 
+  /**
+   * What the task cost the heap, and a warning when the process is near the ceiling V8 kills it
+   * at. Logged once per task, after it has finished, so the warning names the task that got there.
+   */
+  private heapReport(before: ReturnType<typeof vitals>): Record<string, number> {
+    const after = vitals();
+    if (after.heapFraction > HEAP_PRESSURE_FRACTION) log.warn("heap pressure", { workerId: this.opts.workerId, ...after });
+    return { heapUsedMb: after.heapUsedMb, heapDeltaMb: after.heapUsedMb - before.heapUsedMb, heapLimitMb: after.heapLimitMb };
+  }
+
   async runTask(task: Task): Promise<void> {
     const handler = this.handlers[task.type];
     const started = Date.now();
@@ -318,9 +507,13 @@ export class TaskQueue {
       void renewTask(this.deps.db, task).catch(err => log.warn("task heartbeat failed", err)).finally(() => { renewing = false; });
     }, this.opts.heartbeatMs ?? Math.max(100, Math.min(30_000, (this.opts.staleAfterMs ?? TASK_STALE_AFTER_MS) / 3)));
     heartbeat.unref();
+    const before = vitals();
     try {
       if (!handler) throw new Error(`no handler for task type ${task.type}`);
-      log.info("task start", { id: task.id, type: task.type, attempt: task.attempts, workerId: this.opts.workerId, commit: process.env.RENDER_GIT_COMMIT ?? null, queueWaitMs: Math.max(0, Date.now() - task.createdAt.getTime()) });
+      // The heap at both ends of every task: an out-of-memory kills the process without reaching
+      // any catch, so the last "task start" line before a restart is the only evidence of which
+      // task was holding what, and the delta is what says which type grows the heap.
+      log.info("task start", { id: task.id, type: task.type, attempt: task.attempts, workerId: this.opts.workerId, commit: process.env.RENDER_GIT_COMMIT ?? null, queueWaitMs: Math.max(0, Date.now() - task.createdAt.getTime()), heapUsedMb: before.heapUsedMb, heapLimitMb: before.heapLimitMb });
       const deadlineMs = deadlineMsFor(task.type, this.opts.deadlines);
       const work = handler(task, { ...this.deps, assertOwnership: db => assertTaskOwnership(db, task) });
       const result = await withDeadline(work, deadlineMs, task.type, started).catch(err => {
@@ -335,13 +528,28 @@ export class TaskQueue {
       });
       if (!await completeTask(this.deps.db, task, result)) { log.warn("task completion discarded: lease lost", { id: task.id }); return; }
       if (task.type === "scan_company" || task.type === "run_daily") await finaliseScanRuns(this.deps);
-      log.info("task done", { id: task.id, type: task.type, ms: Date.now() - started });
+      log.info("task done", { id: task.id, type: task.type, ms: Date.now() - started, ...this.heapReport(before) });
     } catch (err) {
       const outcome = await failTask(this.deps.db, task, err).catch((e) => {
         log.error("failTask failed", e);
         return "failed" as const;
       });
-      log.warn(`task ${outcome}`, { id: task.id, type: task.type, error: (err as Error).message, ms: Date.now() - started });
+      log.warn(`task ${outcome}`, { id: task.id, type: task.type, error: (err as Error).message, ms: Date.now() - started, ...this.heapReport(before) });
+      if (err instanceof TimeoutError) {
+        await recordWorkerEvent(this.deps.db, {
+          workerId: this.opts.workerId, kind: "task_deadline", taskId: task.id, taskType: task.type, userId: taskUserId(task.payload),
+          detail: { attempts: task.attempts, elapsedMs: Date.now() - started, deadlineMs: deadlineMsFor(task.type, this.opts.deadlines), outcome, subject: taskSubject(task.type, task.payload) },
+        });
+      }
+      // The last attempt of a handler that keeps throwing leaves the same half-finished work
+      // behind as a crash, so it closes it off the same way.
+      if (outcome === "failed") {
+        await recordWorkerEvent(this.deps.db, {
+          workerId: this.opts.workerId, kind: "task_abandoned", taskId: task.id, taskType: task.type, userId: taskUserId(task.payload),
+          detail: { attempts: task.attempts, maxAttempts: task.maxAttempts, lockedBy: task.lockedBy, subject: taskSubject(task.type, task.payload), error: (err as Error).message },
+        });
+        await runAbandonHook(task, (err as Error).message, { deps: this.deps, onAbandon: this.opts.onAbandon });
+      }
     } finally {
       clearInterval(heartbeat);
       this.running.delete(task.id);

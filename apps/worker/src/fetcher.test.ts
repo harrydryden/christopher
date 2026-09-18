@@ -1,7 +1,7 @@
 /** The polite fetcher: identification, robots.txt, rate limiting, and bot-protection detection. */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SourceFetchError } from "@christopher/core";
-import { PoliteFetcher, userAgentFor } from "./fetcher";
+import { HARD_MAX_BODY_BYTES, PoliteFetcher, userAgentFor } from "./fetcher";
 import { startTestServer, type TestServer } from "./test-server";
 
 let server: TestServer;
@@ -154,3 +154,45 @@ describe("polite fetcher", () => {
     await expect(normal.fetchText("https://www.example.test/", { maxBodyBytes: 10 })).rejects.toThrow("refusing truncated");
     await expect(normal.fetchText("https://www.example.test/", { maxBodyBytes: 100 })).resolves.toMatchObject({ status: 200 });
   });
+
+describe("memory bounds", () => {
+  it("refuses a body over the global ceiling however much the caller allows", async () => {
+    // The Greenhouse board that killed the worker answered with 41 MB against a caller-set
+    // allowance of 60 MB. No caller may raise the ceiling: the request fails cleanly instead,
+    // which a scan records as a failed scan rather than as a dead process.
+    const huge = await startTestServer({ "huge.test": { "/board": { body: "x".repeat(HARD_MAX_BODY_BYTES + 1_000_000), contentType: "application/json" } } }, ["huge.test"]);
+    try {
+      const f = new PoliteFetcher({ userAgent: "test", hostMap: huge.hostMap, perHostDelayMs: 0 });
+      const error = await f.fetchText("https://huge.test/board", { maxBodyBytes: 60_000_000 }).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(SourceFetchError);
+      expect((error as Error).message).toContain(`Response exceeds ${HARD_MAX_BODY_BYTES} bytes`);
+    } finally { await huge.close(); }
+  }, 60_000);
+
+  it("keeps the revalidation cache bounded: no large bodies, oldest evicted first", async () => {
+    // Every cached body is held for a week, so an unbounded cache leaks the heap a feed at a time.
+    const conditional: string[] = [];
+    const body = (n: number) => "y".repeat(n);
+    const store = await startTestServer({ "bounded.test": {
+      "/big": (req) => { conditional.push(`big:${req.headers["if-none-match"] ?? "none"}`); return { body: body(600_000), headers: { etag: "big-1" } }; },
+      ...Object.fromEntries(Array.from({ length: 34 }, (_, i) => [`/page/${i}`, (req: { headers: Record<string, string | undefined> }) => {
+        conditional.push(`page/${i}:${req.headers["if-none-match"] ?? "none"}`);
+        return { body: body(500_000), headers: { etag: `page-${i}` } };
+      }])),
+    } }, ["bounded.test"]);
+    try {
+      const f = new PoliteFetcher({ userAgent: "test", hostMap: store.hostMap, perHostDelayMs: 0 });
+      // A body over the per-entry limit is never stored, so the second read is unconditional.
+      await f.fetchText("https://bounded.test/big");
+      await f.fetchText("https://bounded.test/big");
+      expect(conditional.filter(c => c.startsWith("big:"))).toEqual(["big:none", "big:none"]);
+
+      // 34 x 500 KB is more than the 16 MB total, so the first pages are evicted and the last kept.
+      for (let i = 0; i < 34; i++) await f.fetchText(`https://bounded.test/page/${i}`);
+      conditional.length = 0;
+      await f.fetchText("https://bounded.test/page/0");
+      await f.fetchText("https://bounded.test/page/33");
+      expect(conditional).toEqual(["page/0:none", "page/33:page-33"]);
+    } finally { await store.close(); }
+  }, 60_000);
+});

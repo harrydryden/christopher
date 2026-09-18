@@ -1,4 +1,5 @@
 import { workloadMetrics } from "@christopher/db";
+import { aiBudgetWindowStart } from "@christopher/core";
 import { users } from "@christopher/db/schema";
 import Link from "next/link";
 import { retryTask } from "@/app/actions/health";
@@ -10,27 +11,29 @@ import { PageHeader } from "@/components/PageHeader";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { requireAdmin } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { formatUsd, relativeTime } from "@/lib/format";
+import { totalAiUsage } from "@/lib/ai-usage";
+import { formatCount, formatUsd, relativeTime, shortDate } from "@/lib/format";
 import {
-  getAiSpendByAccount,
-  getAiSpendThisMonth,
+  getAiUsage,
   getQueueCounts,
+  getTotalAiSpend,
   getWorkerHeartbeat,
   listCompaniesWithNoSource,
   listFailedTasks,
-  listRecentAiCalls,
   listRecentProblemScans,
   listRecentScanRuns,
   listSourcesNeedingAttention,
 } from "@/lib/queries/health";
-import { getSystemSettings } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminOperationsPage() {
   await requireAdmin();
   const now = new Date();
-  const [metrics, heartbeat, attentionSources, noSourceCompanies, problemScans, failedTasks, queueCounts, spend, spendByAccount, aiCalls, scanRuns, settings, accounts] = await Promise.all([
+  // Budgets belong to accounts and each has its own window; this page is the deployment's report,
+  // so it counts the calendar month that everybody's budget resets on.
+  const since = aiBudgetWindowStart(now, null);
+  const [metrics, heartbeat, attentionSources, noSourceCompanies, problemScans, failedTasks, queueCounts, spend, usage, scanRuns, accounts] = await Promise.all([
     workloadMetrics(db()),
     getWorkerHeartbeat(),
     listSourcesNeedingAttention(),
@@ -38,17 +41,14 @@ export default async function AdminOperationsPage() {
     listRecentProblemScans(undefined, 7),
     listFailedTasks(50),
     getQueueCounts(),
-    getAiSpendThisMonth(now),
-    getAiSpendByAccount(now),
-    listRecentAiCalls(20),
+    getTotalAiSpend(since),
+    getAiUsage(since),
     listRecentScanRuns(10),
-    getSystemSettings(),
     db().select({ id: users.id, email: users.email }).from(users),
   ]);
   const emailById = new Map(accounts.map((a) => [a.id, a.email]));
-  const budget = settings.monthlyAiBudgetUsd;
-  const spendFraction = budget > 0 ? spend / budget : 0;
-  const overBudget = budget > 0 && spend > budget;
+  const totals = totalAiUsage(usage);
+  const accountName = (userId: string | null) => (userId ? emailById.get(userId) ?? userId : "Shared");
 
   return (
     <div className="space-y-6">
@@ -65,57 +65,62 @@ export default async function AdminOperationsPage() {
         </p>}
         <p className="mt-2 text-14">{metrics.ready} tasks ready · {metrics.running} running · oldest ready task waiting {Math.round(metrics.oldest_seconds / 60)} minutes.</p>
         <p className="mt-2 text-14">95% of completed tasks in the last day took at most {Math.round(metrics.p95_seconds)} seconds. {metrics.overdueCompanies} companies have no successful scan in 24 hours; {metrics.overdueDiscovery} discovery sources are over a day late.</p>
-        <p className="mt-2 text-14">AI requests currently reserve {formatUsd(metrics.reservedUsd)} against the shared budget.</p>
+        <p className="mt-2 text-14">{formatUsd(metrics.reservedUsd)} is held by calls in flight, against the budgets of the accounts that asked for them.</p>
       </Card>
 
       <Card title="AI spend this month">
         <div className="mb-2 flex items-baseline gap-2">
           <span className="text-16 font-semibold text-fg">{formatUsd(spend)}</span>
-          <span className="text-14 text-muted">of {formatUsd(budget)} budget</span>
+          <span className="text-14 text-muted">spent since {shortDate(since)}, across every account and the work no account asked for</span>
         </div>
-        <div className="mb-3 h-2 w-full overflow-hidden bg-track">
-          <div className={`h-full ${overBudget ? "bg-danger" : "bg-ok"}`} style={{ width: `${Math.min(100, Math.max(2, spendFraction * 100))}%` }} />
-        </div>
-        {overBudget && <p className="mb-3 text-14 text-danger">Over budget — non-essential AI calls (near-miss scoring, then suggestions) are being skipped.</p>}
-        {spendByAccount.length > 0 && (
-          <ul className="mb-3 space-y-1 text-14">
-            {spendByAccount.map((row) => (
-              <li key={row.userId ?? "shared"} className="flex justify-between gap-3">
-                <span className="truncate text-muted">{row.userId ? emailById.get(row.userId) ?? row.userId : "Shared work (extraction, discovery, profiles)"}</span>
-                <span className="tabular-nums">{formatUsd(row.total)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
+        <p className="mb-3 text-14 text-muted">
+          Spending is bounded per account: each has its own monthly budget, which it sets on Settings and which you can set for anyone in <Link href="/admin" className="text-fg underline">Accounts</Link>, where each account&apos;s own figure and window are shown. An account that has spent its month has its optional calls (company and filter suggestions) skipped until the 1st.
+        </p>
         <section>
-          <h3 className="text-14 text-muted">Last {aiCalls.length} calls</h3>
-          {aiCalls.length === 0 ? (
-            <p className="mt-2 text-14 text-muted">No AI calls recorded yet.</p>
+          <h3 className="text-14 text-muted">Usage by account, feature and model</h3>
+          {usage.length === 0 ? (
+            <p className="mt-2 text-14 text-muted">No AI calls recorded in this window.</p>
           ) : (
             <Table className="mt-2">
               <THead>
                 <tr>
-                  <TH>Call site</TH>
                   <TH>Account</TH>
+                  <TH>Feature</TH>
                   <TH>Model</TH>
-                  <TH>Tokens (in/out)</TH>
-                  <TH>Cost</TH>
-                  <TH>When</TH>
-                  <TH>OK</TH>
+                  <TH className="text-right">Calls</TH>
+                  <TH className="text-right">Failed</TH>
+                  <TH className="text-right">Input</TH>
+                  <TH className="text-right">Output</TH>
+                  <TH className="text-right">Cache read</TH>
+                  <TH className="text-right">Cache write</TH>
+                  <TH className="text-right">Cost</TH>
                 </tr>
               </THead>
               <TBody>
-                {aiCalls.map((c) => (
-                  <TR key={c.id}>
-                    <TD>{c.callSite}</TD>
-                    <TD className="max-w-[12rem] truncate">{c.userId ? emailById.get(c.userId) ?? "—" : "shared"}</TD>
-                    <TD>{c.model}</TD>
-                    <TD>{c.inputTokens} / {c.outputTokens}</TD>
-                    <TD>{formatUsd(c.costUsd)}</TD>
-                    <TD className="whitespace-nowrap" title={c.at.toISOString()}>{relativeTime(c.at, now)}</TD>
-                    <TD>{c.ok ? <Badge tone="green">ok</Badge> : <Badge tone="red" title={c.error ?? undefined}>failed</Badge>}</TD>
+                {usage.map((row) => (
+                  <TR key={row.key}>
+                    <TD className="max-w-48 truncate" title={accountName(row.userId)}>{accountName(row.userId)}</TD>
+                    <TD>{row.feature}</TD>
+                    <TD>{row.model}</TD>
+                    <TD className="text-right">{formatCount(row.calls)}</TD>
+                    <TD className={`text-right ${row.failed > 0 ? "text-danger" : ""}`}>{formatCount(row.failed)}</TD>
+                    <TD className="text-right">{formatCount(row.inputTokens)}</TD>
+                    <TD className="text-right">{formatCount(row.outputTokens)}</TD>
+                    <TD className="text-right">{formatCount(row.cacheReadTokens)}</TD>
+                    <TD className="text-right">{formatCount(row.cacheWriteTokens)}</TD>
+                    <TD className="text-right">{formatUsd(row.costUsd)}</TD>
                   </TR>
                 ))}
+                <TR className="bg-sunken">
+                  <TD className="font-semibold" colSpan={3}>Total</TD>
+                  <TD className="text-right font-semibold">{formatCount(totals.calls)}</TD>
+                  <TD className="text-right font-semibold">{formatCount(totals.failed)}</TD>
+                  <TD className="text-right font-semibold">{formatCount(totals.inputTokens)}</TD>
+                  <TD className="text-right font-semibold">{formatCount(totals.outputTokens)}</TD>
+                  <TD className="text-right font-semibold">{formatCount(totals.cacheReadTokens)}</TD>
+                  <TD className="text-right font-semibold">{formatCount(totals.cacheWriteTokens)}</TD>
+                  <TD className="text-right font-semibold">{formatUsd(totals.costUsd)}</TD>
+                </TR>
               </TBody>
             </Table>
           )}

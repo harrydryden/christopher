@@ -5,7 +5,7 @@ import type { WorkerDeps } from "./context";
 import { maintainHistory } from "./maintenance";
 import { log } from "./log";
 import { finaliseScanRuns } from "./handlers/daily";
-import { requeueStale } from "./queue";
+import { agePriorities, requeueStale } from "./queue";
 import { getInternal, setInternal } from "./settings";
 
 function addMinutes(hm: string, minutes: number): string {
@@ -73,6 +73,12 @@ export async function schedulerTick(deps: WorkerDeps): Promise<void> {
 
   const requeued = await requeueStale(deps.db);
   if (requeued) log.warn("requeued stale tasks", { requeued });
+
+  // Ageing, once a minute and bounded, so that a task which keeps losing to newer higher-priority
+  // work still reaches the front. It lives here rather than in the claim because the claim's
+  // ordering has to be something an index can serve.
+  const aged = await agePriorities(deps.db);
+  if (aged) log.debug("aged queued tasks", { aged });
 
   await deps.db
     .update(schema.companySuggestions)

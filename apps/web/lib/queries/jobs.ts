@@ -30,7 +30,7 @@ export interface RoleEvent {
 }
 
 /** A shared posting seen through one account: the job's fields plus that account's gate, fit and archive state. */
-export type RoleJob = Job & Pick<UserJob, "keywordMatched" | "keywordTerms" | "excluded" | "locationOk" | "inTable" | "nearMiss" | "fitScore" | "fitVerdict" | "fitRationale" | "fitProfileVersion" | "fitScoredAt" | "hidden" | "archivedAt">;
+export type RoleJob = Job & Pick<UserJob, "keywordMatched" | "keywordTerms" | "excluded" | "locationOk" | "inTable" | "fitScore" | "fitVerdict" | "fitRationale" | "fitProfileVersion" | "fitScoredAt" | "archivedAt">;
 
 export interface RoleRow {
   job: RoleJob;
@@ -46,13 +46,11 @@ const viewColumns = {
   excluded: userJobs.excluded,
   locationOk: userJobs.locationOk,
   inTable: userJobs.inTable,
-  nearMiss: userJobs.nearMiss,
   fitScore: userJobs.fitScore,
   fitVerdict: userJobs.fitVerdict,
   fitRationale: userJobs.fitRationale,
   fitProfileVersion: userJobs.fitProfileVersion,
   fitScoredAt: userJobs.fitScoredAt,
-  hidden: userJobs.hidden,
   archivedAt: userJobs.archivedAt,
   // New to this account, whether or not the shared scan had seen it before.
   seeded: userJobs.seeded,
@@ -86,9 +84,14 @@ function baseRolesSelect(userId: string, summary = false) {
     .leftJoin(decisions, and(eq(decisions.userId, userId), eq(decisions.jobId, jobs.id), eq(decisions.superseded, false)));
 }
 
-/** Every in-table (keyword+location gate passed) job: the main roles table before display filters. */
-export async function fetchTableJobs(userId: string, archived = false, summary = false): Promise<RoleRow[]> {
-  const rows = await baseRolesSelect(userId, summary).where(and(eq(userJobs.userId, userId), archived ? eq(roleStatusSql, "archived") : ne(roleStatusSql, "archived")));
+/**
+ * Every in-table (keyword+location gate passed) job: the main roles table before display filters.
+ * `summary` leaves the 30k-character description behind, which every caller but role detail wants;
+ * `limit` bounds a read that would otherwise grow with the table (the CSV export sets one).
+ */
+export async function fetchTableJobs(userId: string, archived = false, summary = false, limit?: number): Promise<RoleRow[]> {
+  const query = baseRolesSelect(userId, summary).where(and(eq(userJobs.userId, userId), archived ? eq(roleStatusSql, "archived") : ne(roleStatusSql, "archived")));
+  const rows = await (limit === undefined ? query : query.limit(limit));
   return rows.map((r) => ({ ...r, events: [] as RoleEvent[] }));
 }
 
@@ -306,11 +309,6 @@ export function filtersToQueryString(filters: RolesFilters): string {
   return params.toString();
 }
 
-/** Split in-table open roles below the hide threshold into a separate bucket, unless showHidden is set. */
-export function splitHidden(rows: RoleRow[], hideThreshold: number | null, showHidden: boolean): { visible: RoleRow[]; hidden: RoleRow[] } {
-  return { visible: rows, hidden: [] };
-}
-
 // ---------------------------------------------------------------------------
 // View model: presentation-ready, JSON-serialisable shape for client components.
 // All date formatting happens here (server-side) so client components never
@@ -361,7 +359,6 @@ export interface RoleRowVM {
   postedTitle: string | null;
   closedLabel: string | null;
   closedTitle: string | null;
-  descriptionText: string | null;
   decision: RoleDecisionVM | null;
   events: RoleEventVM[];
 }
@@ -405,7 +402,6 @@ export function buildRoleRowVM(row: RoleRow, now: Date = new Date()): RoleRowVM 
     postedTitle: row.job.postedAt ? row.job.postedAt.toISOString() : null,
     closedLabel: row.job.closedAt ? relativeTime(row.job.closedAt, now) : null,
     closedTitle: row.job.closedAt ? row.job.closedAt.toISOString() : null,
-    descriptionText: row.job.descriptionText,
     decision: row.decision
       ? { id: row.decision.id, decision: row.decision.decision, reason: row.decision.reason, createdLabel: relativeTime(row.decision.createdAt, now) }
       : null,
@@ -413,7 +409,7 @@ export function buildRoleRowVM(row: RoleRow, now: Date = new Date()): RoleRowVM 
   };
 }
 
-/** SQL filters and pagination: descriptions for at most one visible and one hidden page. */
+/** SQL filters and pagination for one 50-row page; descriptions are left in the database. */
 export async function fetchRolePage(userId: string, filters: RolesFilters, archived: boolean, threshold: number | null, requestedPage: number, now = new Date()) {
   const started = Date.now();
   const liveStart = sql`case when ${jobs.postedAt} <= ${jobs.firstSeenAt} + interval '1 day' then ${jobs.postedAt} else ${jobs.firstSeenAt} end`;
@@ -429,12 +425,9 @@ export async function fetchRolePage(userId: string, filters: RolesFilters, archi
     filters.q ? sql`position(lower(${filters.q}) in lower(${jobs.title})) > 0` : undefined,
     filters.location ? sql`(position(lower(${filters.location}) in lower(coalesce(${jobs.location}, ''))) > 0 or exists (select 1 from jsonb_array_elements_text(${jobs.locations}) l where position(lower(${filters.location}) in lower(l)) > 0))` : undefined,
   );
-  const hidden = sql`false`; // Fit is an explicit filter, never a second hidden workflow.
-  const countFor = async (extra: ReturnType<typeof sql>) => {
-    const [row] = await db().select({ n: sql<number>`count(*)::int` }).from(baseRolesSelect(userId, true).where(and(conditions, extra)).as('filtered'));
-    return row?.n ?? 0;
-  };
-  const total = await countFor(sql`not ${hidden}`);
+  const [counted] = await db().select({ n: sql<number>`count(*)::int` }).from(baseRolesSelect(userId, true).where(conditions).as('filtered'));
+  const total = counted?.n ?? 0;
+  // Fit is an explicit filter, never a second hidden workflow: nothing is ever held back.
   const hiddenTotal = 0;
   const pageCount = Math.max(1, Math.ceil(total / 50));
   const page = Math.min(pageCount, Math.max(1, Number.isSafeInteger(requestedPage) ? requestedPage : 1));
@@ -447,12 +440,11 @@ export async function fetchRolePage(userId: string, filters: RolesFilters, archi
   const order = filters.sort === 'status'
     ? [sql`${sorts.status} ${direction}`, sql`${userJobs.fitScore} ${filters.dir === 'asc' ? sql`desc nulls last` : sql`asc nulls first`}`, sql`${jobs.firstSeenAt} ${filters.dir === 'asc' ? sql`desc` : sql`asc`}`, jobs.id]
     : [sql`${sorts[filters.sort]} ${direction} nulls last`, jobs.id];
-  const [visible, concealed] = await Promise.all([
-    baseRolesSelect(userId).where(and(conditions, sql`not ${hidden}`)).orderBy(...order).limit(50).offset((page - 1) * 50),
-    hiddenTotal ? baseRolesSelect(userId).where(and(conditions, hidden)).orderBy(...order).limit(50) : Promise.resolve([]),
-  ]);
+  // Summary rows: nothing on this page renders the stored description, and 50 of them is up to
+  // 1.5 MB read and serialised on every render and every pagination click.
+  const visible = await baseRolesSelect(userId, true).where(conditions).orderBy(...order).limit(50).offset((page - 1) * 50);
   console.info(JSON.stringify({ event: 'role_page', durationMs: Date.now() - started, rows: visible.length, total, page }));
-  return { visible: visible.map(row => ({ ...row, events: [] as RoleEvent[] })), hidden: concealed.map(row => ({ ...row, events: [] as RoleEvent[] })), total, hiddenTotal, page, pageCount };
+  return { visible: visible.map(row => ({ ...row, events: [] as RoleEvent[] })), hidden: [] as RoleRow[], total, hiddenTotal, page, pageCount };
 }
 
 

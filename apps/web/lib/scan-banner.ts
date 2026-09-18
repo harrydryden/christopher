@@ -8,5 +8,5 @@ export function scanBannerText(run: ScanRun | null, tz: string, now: Date): stri
   const prefix = `${run.trigger === "schedule" ? "Scheduled" : "Manual"} batch · ${date} ${start.hm}`;
   if (!run.finishedAt) return `${prefix} · In progress · ${run.companiesOk} of ${run.companiesTotal} of your companies successful so far`;
   if (!run.companiesTotal) return `${prefix} · None of your companies were due`;
-  return `${prefix} · ${run.companiesOk} of ${run.companiesTotal} of your companies successful${run.companiesFailed ? ` · ${run.companiesFailed} incomplete or failed` : ""} · ${run.newRoles} new ${run.newRoles === 1 ? "posting" : "postings"} observed`;
+  return `${prefix} · ${run.companiesOk} of ${run.companiesTotal} of your companies successful${run.companiesFailed ? ` · ${run.companiesFailed} incomplete or failed` : ""} · ${run.newRoles} new ${run.newRoles === 1 ? "posting" : "postings"} for your table`;
 }

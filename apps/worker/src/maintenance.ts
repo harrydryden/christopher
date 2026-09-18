@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 
-/** Bounded hourly cleanup. Keep fingerprints, decisions, applications and review evidence. */
+/** Bounded hourly cleanup. Keep decisions, applications and review evidence. */
 export async function maintainHistory(deps: WorkerDeps) {
   await deps.db.transaction(async tx => {
     const claimed = await tx.execute(sql`insert into settings (key,value,updated_at) values ('internal:lastMaintenance','{}',now())

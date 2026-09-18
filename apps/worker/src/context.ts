@@ -1,11 +1,11 @@
-import { createDb, schema, type Db } from "@christopher/db";
-import { ats, discovery, modelForCallSite, type AppSettings, type DiscoveryContext, type FetchContext, type SystemSettings } from "@christopher/core";
-import { createAiEngine, type AiClientLike, type AiEngine, type AiUsageRecord } from "@christopher/ai";
+import { accountAiSpend, createDb, schema, totalAiSpend, type Db } from "@christopher/db";
+import { aiBudgetWindowStart, aiFeatureLabel, ats, discovery, modelForCallSite, type AppSettings, type DiscoveryContext, type FetchContext, type SystemSettings } from "@christopher/core";
+import { createAiEngine, type AiClientLike, type AiEngine, type AiUsageRecord, type Ref } from "@christopher/ai";
 import { sql } from "drizzle-orm";
 import { BrowserRenderer } from "./browser";
 import type { WorkerEnv } from "./env";
 import { PoliteFetcher, userAgentFor } from "./fetcher";
-import { reserveAi } from "./budget";
+import { tryReserveAi } from "./budget";
 import { log } from "./log";
 import { loadSettings, loadUserSettings } from "./settings";
 
@@ -37,7 +37,11 @@ export interface DepsOverrides {
 }
 
 export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}): Promise<WorkerDeps> {
-  const { db, pool } = createDb(env.databaseUrl, { max: Math.max(4, env.concurrency + 2) });
+  // Two connections per slot plus a margin: a handler holds one for its transaction and asks for
+  // more from inside it (a lease check, a nested read), and the scheduler, the heartbeat and
+  // /healthz all need one at the same time. Sized under the pool the deployment's Postgres allows.
+  const { db, pool } = createDb(env.databaseUrl, { max: env.concurrency * 2 + 4 });
+  const now = overrides.now ?? (() => new Date());
   const settingsTtlMs = overrides.settingsTtlMs ?? 5000;
   let cached: { at: number; value: SystemSettings } | null = null;
   const userCache = new Map<string, { at: number; value: AppSettings }>();
@@ -71,7 +75,7 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
   });
   const browser = env.disableBrowser
     ? null
-    : new BrowserRenderer({ beforeRequest: host => fetcher.waitForHost(host), concurrency: env.browserConcurrency, userAgent: userAgentFor(env.contactEmail), executablePath: env.chromiumExecutablePath, hostMap: env.hostMap });
+    : new BrowserRenderer({ beforeNavigate: host => fetcher.waitForHost(host), concurrency: env.browserConcurrency, userAgent: userAgentFor(env.contactEmail), executablePath: env.chromiumExecutablePath, hostMap: env.hostMap });
 
   const onUsage = async (r: AiUsageRecord) => {
     try {
@@ -94,9 +98,42 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
       log.warn("failed to record ai usage", err);
     }
   };
+  /**
+   * Hold capacity for one call against the budget that can refuse it.
+   *
+   * A call made for an account is held against that account's own monthly budget, the one budget
+   * the product has; work that belongs to nobody (extraction, discovery) is held against the
+   * operator's optional day and discovery caps alone, which bound the deployment either way. A
+   * refusal throws rather than returning null, so the error the task records names the budget that
+   * stopped it instead of leaving the reader to guess which figure to raise.
+   */
+  const reserve = async (callSite: string, estimate: number, ref: Ref) => {
+    // The system settings are read here although no limit comes from them any more: `getModel`
+    // below picks a model synchronously from this cache, so something on the path of every call
+    // has to keep it warm, or an administrator's per-call-site overrides would never be seen.
+    await settings();
+    const at = now();
+    const account = ref.userId ? await userSettings(ref.userId) : null;
+    const hold = await tryReserveAi(db, callSite, estimate, {
+      account: ref.userId && account
+        ? { userId: ref.userId, budgetUsd: account.aiBudgetUsd, since: aiBudgetWindowStart(at, account.aiBudgetResetAt) }
+        : undefined,
+      daily: env.dailyAiBudgetUsd ?? 1000000,
+      discovery: env.discoveryAiBudgetUsd ?? 1000000,
+      workerId: env.workerId,
+    }, at);
+    if ("refused" in hold) {
+      const { limit, limitUsd, spent, held } = hold.refused;
+      const left = Math.max(0, limitUsd - spent - held).toFixed(2);
+      const needs = `AI budget reserved or exhausted; retry later: ${aiFeatureLabel(callSite)} needs about $${estimate.toFixed(2)}`;
+      throw new Error(limit === "account"
+        ? `${needs} and this account's monthly budget of $${limitUsd} has $${left} left. Raise it on Settings, or ask an administrator.`
+        : `${needs} and the deployment's ${limit === "day" ? "daily" : "discovery"} AI cap of $${limitUsd}, set in the worker's environment, has $${left} left.`);
+    }
+    return hold.release;
+  };
   const ai = createAiEngine({
-    reserve: async (callSite, estimate) => reserveAi(db, callSite, estimate, { monthly: (await settings()).monthlyAiBudgetUsd,
-      daily: env.dailyAiBudgetUsd ?? 1000000, discovery: env.discoveryAiBudgetUsd ?? 1000000 }),
+    reserve,
     apiKey: env.anthropicApiKey,
     getModel: (callSite) => modelForCallSite(cached?.value ?? { defaultModel: "claude-sonnet-5", modelOverrides: {} }, callSite),
     onUsage,
@@ -116,7 +153,7 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
       cached = null;
       userCache.clear();
     },
-    now: overrides.now ?? (() => new Date()),
+    now,
     async close() {
       await browser?.close();
       await pool.end();
@@ -153,19 +190,38 @@ export function makeDiscoveryContext(deps: WorkerDeps, opts: { maxFetches?: numb
   };
 }
 
-/** Month-to-date AI spend in USD. */
+/**
+ * Every account's AI spend this month, in USD: every call, whoever it was for, since the month
+ * began. Budgets are per account, so this is a report of the deployment rather than a limit.
+ */
 export async function aiSpendThisMonth(db: Db, now: Date): Promise<number> {
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const rows = await db.execute<{ total: string | null }>(sql`select coalesce(sum(cost_usd), 0)::text as total from ai_calls where at >= ${start}`);
-  const first = rows.rows[0];
-  return Number(first?.total ?? 0);
+  return totalAiSpend(db, aiBudgetWindowStart(now, null));
 }
 
-export async function aiBudgetExceeded(deps: WorkerDeps): Promise<boolean> {
-  const settings = await deps.settings();
-  if (!deps.ai.enabled) return true;
-  const spend = await aiSpendThisMonth(deps.db, deps.now());
-  return spend >= settings.monthlyAiBudgetUsd;
+/** Why no model call may be made now. Worded to be returned as a task's `skipped` reason. */
+export type AiBudgetStop = "ai unavailable" | "account ai budget exceeded";
+
+/**
+ * What stops a model call now, or null when there is room for one.
+ *
+ * `userId` is the account the work is for; work that belongs to no account, such as extraction and
+ * discovery, passes none and only needs a model to be configured. Handlers ask before they begin,
+ * so that an account which has spent its month skips its queued work and the task finishes done.
+ * Leaving it to the hold instead would refuse the call mid-handler, fail the task and retry it: one
+ * exhausted account's near-miss scoring would fill Health's failed-task list with work nothing can
+ * complete.
+ */
+export async function aiBudgetStop(deps: WorkerDeps, userId?: string): Promise<AiBudgetStop | null> {
+  if (!deps.ai.enabled) return "ai unavailable";
+  if (!userId) return null;
+  const account = await deps.userSettings(userId);
+  const spent = await accountAiSpend(deps.db, userId, aiBudgetWindowStart(deps.now(), account.aiBudgetResetAt));
+  return spent >= account.aiBudgetUsd ? "account ai budget exceeded" : null;
+}
+
+/** Whether a model call must not be made: `userId`'s own budget, when the work belongs to an account. */
+export async function aiBudgetExceeded(deps: WorkerDeps, userId?: string): Promise<boolean> {
+  return (await aiBudgetStop(deps, userId)) !== null;
 }
 
 export { discovery as _discoveryNs };

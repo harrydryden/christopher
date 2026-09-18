@@ -5,6 +5,7 @@ export * from "./suggest-from-scans";
 export * from "./reconcile";
 export * from "./status";
 export * from "./settings";
+export * from "./ai-budget";
 export * from "./models";
 export * from "./tasks";
 export * from "./password";

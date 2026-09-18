@@ -3,7 +3,8 @@
 import { requireAdmin, requireUser } from "@/lib/auth";
 
 import { revalidatePath } from "next/cache";
-import { isKnownModel, isValidScanTime, isValidTimezone, parseTermList, type MatchField } from "@christopher/core";
+import { z } from "zod";
+import { isKnownModel, isValidScanTime, isValidTimezone, MAX_ACCOUNT_AI_BUDGET_USD, parseTermList, type MatchField } from "@christopher/core";
 import { enqueue } from "@/lib/enqueue";
 import { getSettings, setSystemSetting, setUserSetting, saveSettingsAndGate } from "@/lib/settings";
 import { fail, ok, type ActionResult } from "@/lib/validation";
@@ -44,22 +45,15 @@ export async function saveLocationFilter(_prev: ActionResult, formData: FormData
   return ok();
 }
 
+/** Automatic score hiding is retired: a stored `hideThreshold` is left where it is and ignored. */
 export async function saveTableSettings(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const user = await requireUser();
-  const hideThresholdRaw = String(formData.get("hideThreshold") ?? "").trim();
-  let hideThreshold: number | null = null;
-  if (hideThresholdRaw !== "") {
-    const n = Number(hideThresholdRaw);
-    if (!Number.isFinite(n) || n < 0 || n > 100) return fail("Hide threshold must be a number between 0 and 100, or blank to turn it off.");
-    hideThreshold = Math.round(n);
-  }
-
   const showClosedDays = Number(formData.get("showClosedDays"));
   if (!Number.isInteger(showClosedDays) || showClosedDays < 0 || showClosedDays > 365) {
     return fail("Show-closed-days must be a whole number between 0 and 365.");
   }
 
-  await saveSettingsAndGate(user.id, { hideThreshold, showClosedDays });
+  await saveSettingsAndGate(user.id, { showClosedDays });
   revalidatePath("/settings");
   revalidatePath("/");
   return ok();
@@ -114,13 +108,28 @@ export async function saveAiSettings(_prev: ActionResult, formData: FormData): P
   const defaultModel = String(formData.get("defaultModel") ?? "").trim();
   if (!isKnownModel(defaultModel)) return fail("Choose a supported model for the default.");
 
-  const monthlyAiBudgetUsd = Number(formData.get("monthlyAiBudgetUsd"));
-  if (!Number.isFinite(monthlyAiBudgetUsd) || monthlyAiBudgetUsd < 0) return fail("Monthly AI budget must be a non-negative number.");
-
   await setSystemSetting("defaultModel", defaultModel);
-  await setSystemSetting("monthlyAiBudgetUsd", monthlyAiBudgetUsd);
   revalidatePath("/admin/settings");
   revalidatePath("/settings");
+  return ok();
+}
+
+/** A budget is money, so it is bounded on the way in as well as on the way out of settings. */
+const AiBudgetSchema = z.coerce.number().min(0).max(MAX_ACCOUNT_AI_BUDGET_USD);
+
+/**
+ * The signed-in account's own monthly AI budget, the one budget there is. Anyone may set their
+ * own; an administrator sets anyone's in Admin › Accounts, which is the same stored key, so Admin
+ * is revalidated too.
+ */
+export async function saveAiBudget(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
+  const user = await requireUser();
+  const entered = String(formData.get("aiBudgetUsd") ?? "").trim();
+  const parsed = entered ? AiBudgetSchema.safeParse(entered) : null;
+  if (!parsed?.success) return fail(`A monthly AI budget is a number between $0 and $${MAX_ACCOUNT_AI_BUDGET_USD}.`);
+  await setUserSetting(user.id, "aiBudgetUsd", Math.round(parsed.data * 100) / 100);
+  revalidatePath("/settings");
+  revalidatePath("/admin");
   return ok();
 }
 

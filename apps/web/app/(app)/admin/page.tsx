@@ -1,25 +1,29 @@
-import { createResetLink, deleteUser, listAccounts, setUserRole } from "@/app/actions/account";
+import { createResetLink, deleteUser, listAccounts, resetAccountAiSpend, setAccountAiBudget, setUserRole } from "@/app/actions/account";
 import { saveRegistrationSettings } from "@/app/actions/settings";
 import { ResetLinkButton } from "@/components/ResetLinkButton";
 import { adminEmails } from "@/lib/accounts";
 import { isPlaceholderEmail } from "@christopher/db";
+import { MAX_ACCOUNT_AI_BUDGET_USD } from "@christopher/core";
 import { getSystemSettings } from "@/lib/settings";
+import { accountAiBudgets, defaultAccountAiBudget } from "@/lib/queries/accounts";
 import { Badge } from "@/components/Badge";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
+import { inputClass } from "@/components/Field";
 import { PageHeader } from "@/components/PageHeader";
 import { SettingsForm } from "@/components/SettingsForm";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { requireAdmin } from "@/lib/auth";
-import { relativeTime } from "@/lib/format";
+import { formatUsd, relativeTime, shortDate } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminAccountsPage() {
   const admin = await requireAdmin();
-  const [accounts, system] = await Promise.all([listAccounts(), getSystemSettings()]);
   const now = new Date();
+  const [accounts, system] = await Promise.all([listAccounts(), getSystemSettings()]);
+  const budgets = await accountAiBudgets(accounts.map((account) => account.id), now);
 
   return (
     <div className="space-y-6">
@@ -39,7 +43,7 @@ export default async function AdminAccountsPage() {
 
       <Card title="Accounts">
         <p className="mb-3 text-14 text-muted">
-          Everyone with an account. Deleting one removes everything it owns; shared companies and postings stay. A reset link lets you onboard or unblock someone when email delivery is not set up: it works once, for an hour, and confirms their address.
+          Everyone with an account. Each has its own monthly AI budget, the only budget there is: it resets on the 1st, its holder sets it on Settings and you can set it for anyone here. <a href="/admin/health" className="text-fg underline">Operations</a> shows what the spend bought. Deleting an account removes everything it owns; shared companies and postings stay. A reset link lets you onboard or unblock someone when email delivery is not set up: it works once, for an hour, and confirms their address.
         </p>
         <Table>
           <THead>
@@ -48,12 +52,16 @@ export default async function AdminAccountsPage() {
               <TH>Role</TH>
               <TH>Created</TH>
               <TH>Last sign-in</TH>
-              <TH>Sessions</TH>
+              <TH title="Ready builds on file">CVs produced</TH>
+              <TH title="Company job boards this account follows">Companies</TH>
+              <TH>AI budget</TH>
               <TH />
             </tr>
           </THead>
           <TBody>
-            {accounts.map((account) => (
+            {accounts.map((account) => {
+              const budget = budgets.get(account.id) ?? defaultAccountAiBudget(now);
+              return (
               <TR key={account.id}>
                 <TD>
                   <span className="text-fg">{account.email}</span>
@@ -64,7 +72,24 @@ export default async function AdminAccountsPage() {
                 <TD><Badge tone={account.role === "admin" ? "blue" : "neutral"}>{account.role}</Badge></TD>
                 <TD className="whitespace-nowrap">{relativeTime(account.createdAt, now)}</TD>
                 <TD className="whitespace-nowrap">{account.lastLoginAt ? relativeTime(account.lastLoginAt, now) : "never"}</TD>
-                <TD>{account.sessions}</TD>
+                <TD>{account.cvsProduced}</TD>
+                <TD>{account.companies}</TD>
+                <TD>
+                  <span className="whitespace-nowrap text-fg">{formatUsd(budget.spentUsd)} of {formatUsd(budget.limitUsd)} this month</span>
+                  {budget.countingSince && <span className="block text-12 text-muted">counting since {shortDate(budget.countingSince)}</span>}
+                  <div className="mt-1.5 flex flex-wrap items-end gap-1.5">
+                    <form action={setAccountAiBudget.bind(null, account.id)} className="flex items-end gap-1.5">
+                      <label htmlFor={`aiBudgetUsd-${account.id}`} className="sr-only">Monthly AI budget for {account.email}, in dollars</label>
+                      <div className="w-24">
+                        <input id={`aiBudgetUsd-${account.id}`} name="aiBudgetUsd" type="number" min={0} max={MAX_ACCOUNT_AI_BUDGET_USD} step={1} defaultValue={budget.limitUsd} className={inputClass} />
+                      </div>
+                      <Button type="submit" size="sm">Set</Button>
+                    </form>
+                    <form action={resetAccountAiSpend.bind(null, account.id)}>
+                      <ConfirmSubmitButton variant="secondary" confirmMessage={`Start ${account.email}'s budget month again from now? Spend up to now stops counting against the budget; nothing is deleted.`}>Reset spend</ConfirmSubmitButton>
+                    </form>
+                  </div>
+                </TD>
                 <TD>
                   {!isPlaceholderEmail(account.email) && (
                     <div className="flex flex-wrap gap-2">
@@ -83,7 +108,8 @@ export default async function AdminAccountsPage() {
                   )}
                 </TD>
               </TR>
-            ))}
+              );
+            })}
           </TBody>
         </Table>
       </Card>

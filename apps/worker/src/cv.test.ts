@@ -21,11 +21,12 @@ beforeEach(async () => { vi.restoreAllMocks();
   );
   vi.spyOn(AiEngine.prototype, "assessCv").mockImplementation(async (input) =>
     reviewFixture(input),
-  ); await client.db.execute(sql`truncate applications, cv_drafts, ai_calls`); });
+  ); await client.db.execute(sql`truncate applications, cv_drafts, ai_calls, ai_reservations`); });
 afterAll(async () => { vi.restoreAllMocks(); await client.pool.end(); });
 async function setup(apiKey: string | undefined = "fixture-key") {
   const [draft] = await client.db.insert(schema.cvDrafts).values({ userId, jobTitle: "Operations Director", companyName: "Acme", jobDescription: "Lead a team", libraryVersion: 1, librarySnapshot: library, model: "claude-sonnet-5" }).returning();
-  const deps = { db: client.db, env: { anthropicApiKey: apiKey }, settings: async () => ({ monthlyAiBudgetUsd: 100 }), now: () => new Date() } as unknown as WorkerDeps;
+  const deps = { db: client.db, env: { anthropicApiKey: apiKey },
+    userSettings: async () => ({ aiBudgetUsd: 1000, aiBudgetResetAt: null }), now: () => new Date() } as unknown as WorkerDeps;
   return { draft: draft!, deps, task: { type: "generate_cv", payload: { draftId: draft!.id } } as unknown as Task };
 }
 it("generates once on duplicate delivery, preserving the saved evidence", async () => {
@@ -357,20 +358,102 @@ it("rejects malformed task inputs before database writes or model calls", async 
   expect((await client.db.select().from(schema.cvDrafts))[0]!.status).toBe("queued");
 });
 
-it("refuses a build the month cannot afford before spending anything, and otherwise holds capacity only while it runs", async () => {
+const accountBudget = (aiBudgetUsd: number, aiBudgetResetAt: string | null = null) =>
+  (async () => ({ aiBudgetUsd, aiBudgetResetAt })) as unknown as WorkerDeps["userSettings"];
+const requeue = (id: string) => client.db.update(schema.cvDrafts).set({ status: "queued" }).where(eq(schema.cvDrafts.id, id));
+const draftAfter = async (id: string) => (await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, id)))[0]!;
+
+it("refuses a build this account cannot afford before spending anything, then admits one it can", async () => {
   const build = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations leader", sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] });
   const { task, deps, draft } = await setup();
-  deps.settings = (async () => ({ monthlyAiBudgetUsd: 0.01 })) as unknown as WorkerDeps["settings"];
+  // $0.20 of this account's $0.25 is already spent; another account's spend is nothing to do with it.
+  const other = await ensureTestUser(client.db, "other-cv@example.com");
+  await client.db.insert(schema.aiCalls).values([
+    { userId, callSite: "A5", model: "fixture", costUsd: 0.2 },
+    { userId: other.id, callSite: "CV", model: "fixture", costUsd: 40 },
+  ]);
+  deps.userSettings = accountBudget(0.25);
   await handleGenerateCv(task, deps);
-  const [refused] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
-  expect(refused!.status).toBe("failed");
-  expect(refused!.error).toContain("monthly budget of $0.01 has $0.01 left");
+  const refused = await draftAfter(draft.id);
+  expect(refused.status).toBe("failed");
+  expect(refused.error).toContain("your budget of $0.25 has $0.05 left this month");
+  expect(refused.error).toContain("Raise it on Settings");
+  expect(build).not.toHaveBeenCalled();
+  // Nothing was spent and no capacity was left held on the way to the refusal.
+  expect(await client.db.select().from(schema.aiCalls)).toHaveLength(2);
+  expect((await client.db.execute<{ n: string }>(sql`select count(*)::text as n from ai_reservations`)).rows[0]!.n).toBe("0");
+
+  // Raising the budget admits the same build, and its hold is gone once it has finished.
+  deps.userSettings = accountBudget(100);
+  await requeue(draft.id);
+  await handleGenerateCv(task, deps);
+  expect((await draftAfter(draft.id)).status).toBe("ready");
+  expect((await client.db.execute<{ n: string }>(sql`select count(*)::text as n from ai_reservations`)).rows[0]!.n).toBe("0");
+});
+
+it("refuses a second build for the same account while the first is still holding its capacity", async () => {
+  const { task, deps, draft } = await setup();
+  const [second] = await client.db.insert(schema.cvDrafts).values({ userId, jobTitle: "Operations Lead", companyName: "Acme", jobDescription: "Lead a team", libraryVersion: 1, librarySnapshot: draft.librarySnapshot, model: "claude-sonnet-5" }).returning();
+  // A build of this fixture costs about $0.55: enough budget for one at a time, not for two.
+  deps.userSettings = accountBudget(1);
+  let releaseFirst: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => {
+    vi.spyOn(AiEngine.prototype, "buildCv").mockImplementation(async () => {
+      resolve();
+      await new Promise<void>((done) => { releaseFirst = done; });
+      return { summary: "Operations leader", sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] };
+    });
+  });
+  const first = handleGenerateCv(task, deps);
+  await started;
+  // The first build's hold is live and belongs to this account, so the second is refused by it
+  // rather than by recorded spend: nothing has been billed yet.
+  expect(await client.db.select().from(schema.aiCalls)).toHaveLength(0);
+  await handleGenerateCv({ ...task, payload: { draftId: second!.id } } as typeof task, deps);
+  const refused = await draftAfter(second!.id);
+  expect(refused.status).toBe("failed");
+  expect(refused.error).toContain("held by calls in flight");
+  expect(refused.error).toContain("your budget of $1");
+  releaseFirst?.();
+  await first;
+  expect((await draftAfter(draft.id)).status).toBe("ready");
+  // The finished build released its hold, so the account's next one is measured against spend alone.
+  expect((await client.db.execute<{ n: string }>(sql`select count(*)::text as n from ai_reservations`)).rows[0]!.n).toBe("0");
+});
+
+it("names the deployment's own cap when that is what refused a build", async () => {
+  const build = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations leader", sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] });
+  const { task, deps, draft } = await setup();
+  // The account has plenty; the operator's optional daily cap for the whole deployment does not.
+  deps.userSettings = accountBudget(100);
+  deps.env.dailyAiBudgetUsd = 0.01;
+  await handleGenerateCv(task, deps);
+  const refused = await draftAfter(draft.id);
+  expect(refused.status).toBe("failed");
+  expect(refused.error).toContain("the deployment's daily AI cap of $0.01");
+  expect(refused.error).toContain("worker's environment");
+  expect(refused.error).not.toContain("your budget");
   expect(build).not.toHaveBeenCalled();
   expect(await client.db.select().from(schema.aiCalls)).toHaveLength(0);
-  deps.settings = (async () => ({ monthlyAiBudgetUsd: 100 })) as unknown as WorkerDeps["settings"];
-  await client.db.update(schema.cvDrafts).set({ status: "queued" }).where(eq(schema.cvDrafts.id, draft.id));
+});
+
+it("stops counting an account's earlier calls once its spend has been reset", async () => {
+  vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations leader", sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] });
+  const { task, deps, draft } = await setup();
+  deps.now = () => new Date("2026-09-17T12:00:00Z");
+  await client.db.insert(schema.aiCalls).values([
+    { userId, callSite: "CV", model: "fixture", costUsd: 5, at: new Date("2026-09-17T09:00:00Z") },
+    { userId, callSite: "A5", model: "fixture", costUsd: 0.1, at: new Date("2026-09-17T11:00:00Z") },
+  ]);
+  deps.userSettings = accountBudget(2);
   await handleGenerateCv(task, deps);
-  const [built] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
-  expect(built!.status).toBe("ready");
-  expect((await client.db.execute<{ n: string }>(sql`select count(*)::text as n from ai_reservations`)).rows[0]!.n).toBe("0");
+  expect((await draftAfter(draft.id)).error).toContain("your budget of $2 has $0.00 left this month");
+
+  // The reset marker moves the window, so only the $0.10 recorded after it still counts.
+  await requeue(draft.id);
+  deps.userSettings = accountBudget(2, "2026-09-17T10:00:00.000Z");
+  await handleGenerateCv(task, deps);
+  expect((await draftAfter(draft.id)).status).toBe("ready");
+  // The log itself is untouched: a reset moves the window, it never deletes what was spent.
+  expect(await client.db.select().from(schema.aiCalls)).toHaveLength(2);
 });

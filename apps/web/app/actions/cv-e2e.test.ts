@@ -280,7 +280,7 @@ describe("the CV pipeline end to end, against a scripted model", () => {
     const deps = {
       db: database,
       env: { anthropicApiKey: "scripted-key" },
-      settings: async () => ({ monthlyAiBudgetUsd: 100 }),
+      userSettings: async () => ({ aiBudgetUsd: 100, aiBudgetResetAt: null }),
       now: () => new Date(),
       aiClient: fake.client,
     } as unknown as import("../../../worker/src/context").WorkerDeps;

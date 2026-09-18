@@ -148,6 +148,34 @@
       "when": 1789554417069,
       "tag": "0020_multi_user",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1789657520896,
+      "tag": "0021_account_ai_budgets",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1789726500000,
+      "tag": "0022_account_ai_reservations",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1789812000000,
+      "tag": "0023_settings_hygiene",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1789898400000,
+      "tag": "0024_worker_runtime",
+      "breakpoints": true
     }
   ]
 }

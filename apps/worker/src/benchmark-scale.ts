@@ -59,7 +59,10 @@ try {
   ready = true;
   const occupied = await deps.db.execute(sql`select id from companies limit 1`);
   if (occupied.rows.length) throw new Error("Benchmark database must be empty; recreate it before rerunning");
-  await deps.db.insert(schema.settings).values({ key: "gate", value: { includeKeywords: ["Engineer"], excludeKeywords: [], seniorityKeywords: [], matchFields: ["title"], locationTerms: ["London"], includeRemote: false } });
+  // No gate is seeded: this benchmark has no account, so it measures the shared work — discovery,
+  // fetching, extraction, reconciliation and the queue — and counts `jobs` and `career_sources`.
+  // A gate belongs to an account and lives in `user_settings`; a row in `settings` would be read
+  // by nothing.
   const seeded = [];
   for (let offset = 0; offset < companies; offset += 100) seeded.push(...await deps.db.insert(schema.companies).values(Array.from({ length: 100 }, (_, i) => {
     const n = offset + i; return { name: `Company ${String(n).padStart(4, "0")}`, domain: `c${n}.example`, homepageUrl: `https://c${n}.example` };

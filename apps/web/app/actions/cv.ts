@@ -15,7 +15,7 @@ import { userSettings as userSettingsTable } from "@christopher/db/schema";
 import { getSettings, setUserSetting } from "@/lib/settings";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { fail, ok, zUuid, type ActionResult } from "@/lib/validation";
+import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
 
 type Tx = Parameters<Parameters<ReturnType<typeof db>["transaction"]>[0]>[0];
 
@@ -109,7 +109,7 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
     await db().transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`cv:library:${user.id}`}))`);
       const latest = await latestLibrary(tx, user.id);
-      if ((latest?.version ?? 0) !== Number(form.get("version"))) throw new Error("The library changed. Reload before saving.");
+      if ((latest?.version ?? 0) !== Number(form.get("version"))) throw new UserFacingError("The library changed. Reload before saving.");
       await tx.insert(cvLibraries).values({ userId: user.id, version: (latest?.version ?? 0) + 1, content: CvLibrarySchema.parse(retainArchivedEvidence(latest?.content, content)) });
       await enqueueTask(tx, "rescore_all", { userId: user.id, onlyInTable: true }, { dedupeKey: `rescore_all:${user.id}`, priority: 5 });
     });
@@ -119,7 +119,7 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
       const label = typeof index === "number" ? `${section === "employment" ? "Job" : "Evidence"} ${index + 1}${field ? ` (${String(field)})` : ""}: ` : "";
       return label + issue.message;
     }).join(" "));
-    return fail(error instanceof Error ? error.message : "Could not save the library.");
+    return actionError(error, "Could not save the library. Please try again.");
   }
   revalidatePath("/library");
   revalidatePath("/cv");
@@ -135,11 +135,11 @@ export async function saveCvWritingPreferences(_prev: ActionResult, form: FormDa
       const [stored] = await tx.select().from(userSettingsTable).where(and(eq(userSettingsTable.userId, user.id), eq(userSettingsTable.key, "cvWritingPreferences")));
       const latest = await latestLibrary(tx, user.id);
       const current = resolveCvWritingPreferences(stored?.value, latest?.content);
-      if (JSON.stringify(current) !== String(form.get("previousPreferences"))) throw new Error("Writing preferences changed. Reload Settings before saving.");
+      if (JSON.stringify(current) !== String(form.get("previousPreferences"))) throw new UserFacingError("Writing preferences changed. Reload Settings before saving.");
       await upsertUserSetting(tx, user.id, "cvWritingPreferences", parsed.data);
     });
   } catch (error) {
-    return fail(error instanceof Error && error.message.startsWith("Writing preferences changed") ? error.message : "Could not save writing preferences. Try again.");
+    return actionError(error, "Could not save writing preferences. Try again.");
   }
   revalidatePath("/settings");
   revalidatePath("/cv");
@@ -170,14 +170,6 @@ export async function saveCvModel(_prev: ActionResult, form: FormData): Promise<
   revalidatePath("/cv");
   return ok();
 }
-export async function setCvArchived(cvId: string, archived: boolean): Promise<void> {
-  const user = await requireUser();
-  const id = zUuid().parse(cvId);
-  await actionCvs(db(), user.id, [id], z.boolean().parse(archived) ? "archive" : "restore");
-  revalidatePath("/cv");
-  revalidatePath("/applications");
-}
-
 export async function manageCvs(_prev: ActionResult, form: FormData): Promise<ActionResult> {
   const user = await requireUser();
   const parsed = CvSelectionSchema
@@ -187,8 +179,8 @@ export async function manageCvs(_prev: ActionResult, form: FormData): Promise<Ac
     await actionCvs(db(), user.id, [...new Set(parsed.data.ids)], parsed.data.action);
   } catch (error) {
     // Do not log SQL parameters, CV contents or user evidence from database exceptions.
-    console.error(JSON.stringify({ event: "cv_management_failed", action: parsed.data.action, count: parsed.data.ids.length, errorType: error instanceof Error ? error.name.slice(0, 64) : "unknown" }));
-    return fail("Could not update the selected CVs. Please try again.");
+    console.error(JSON.stringify({ event: "cv_management_failed", action: parsed.data.action, count: parsed.data.ids.length }));
+    return actionError(error, "Could not update the selected CVs. Please try again.", "cv_management_failed");
   }
   revalidatePath("/cv");
   revalidatePath("/applications");
@@ -210,9 +202,17 @@ export async function requestCv(
       );
     const library = await latestLibrary(db(), user.id);
     if (!library) return fail("Save your Library first.");
-    const generationLibrary = groupCvLibrary(
-      CvLibrarySchema.parse({ ...library.content, ...(settings.cvWritingPreferences ?? {}), theme: settings.cvTheme ?? library.content.theme ?? DEFAULT_CV_THEME }),
-    );
+    // What the library is missing is written for the person who has to fix it.
+    let generationLibrary;
+    try {
+      generationLibrary = groupCvLibrary(
+        CvLibrarySchema.parse({ ...library.content, ...(settings.cvWritingPreferences ?? {}), theme: settings.cvTheme ?? library.content.theme ?? DEFAULT_CV_THEME }),
+      );
+    } catch (error) {
+      // A schema failure is a bug, not advice: only the library's own refusal is repeated back.
+      if (error instanceof z.ZodError) throw error;
+      throw new UserFacingError(error instanceof Error ? error.message : "This library cannot be used for a CV yet.");
+    }
     // The role must be one this account can see.
     const [row] = await db()
       .select({ job: jobs, company: companies.name })
@@ -239,7 +239,12 @@ export async function requestCv(
       );
     if (description.length > 60_000)
       return fail("Keep the job description under 60,000 characters.");
-    createCvWritingBudget(generationLibrary, `${row.job.title} ${description}`);
+    // The budget's refusal names what to change about the library, so it reaches the person.
+    try {
+      createCvWritingBudget(generationLibrary, `${row.job.title} ${description}`);
+    } catch (error) {
+      throw new UserFacingError(error instanceof Error ? error.message : "This library cannot be fitted onto a CV.");
+    }
     draftId = await db().transaction(async (tx) => {
       const revision = await nextCvRevision(tx, { userId: user.id, companyName: row.company, jobTitle: row.job.title });
       const [draft] = await tx
@@ -275,9 +280,7 @@ export async function requestCv(
       return draft!.id;
     });
   } catch (error) {
-    return fail(
-      error instanceof Error ? error.message : "Could not queue the CV.",
-    );
+    return actionError(error, "Could not queue the CV. Please try again.");
   }
   revalidatePath("/library");
   revalidatePath("/cv");
@@ -314,9 +317,11 @@ export async function saveCvDraft(
       ...original
     } = draft;
     savedId = await db().transaction(async (tx) => {
-      const revision = await nextCvRevision(tx, draft);
+      // Both a rebuild and a direct edit are written from this draft, so retention spares it
+      // however many newer failures the role has; the next publish clears it.
+      const revision = await nextCvRevision(tx, draft, { spare: id });
       const [source] = await tx.select({ id: cvDrafts.id }).from(cvDrafts).where(eq(cvDrafts.id, id));
-      if (!source) throw new Error("This CV was deleted. Open the latest saved CV before editing.");
+      if (!source) throw new UserFacingError("This CV was deleted. Open the latest saved CV before editing.");
       // Corrections are remembered whichever build the save requests, and an improved revision
       // is written with them from the start.
       const remembered = form.get("rememberWording") === "on" ? await rememberWording(tx, user.id, draft.content!, content) : undefined;
@@ -375,9 +380,7 @@ export async function saveCvDraft(
     });
   } catch (error) {
     if (error instanceof z.ZodError) return fail(cvContentIssues(error));
-    return fail(
-      error instanceof Error ? error.message : "Could not save the draft.",
-    );
+    return actionError(error, "Could not save the draft. Please try again.");
   }
   revalidatePath("/settings");
   revalidatePath("/cv");
@@ -406,7 +409,7 @@ export async function assessCvDraft(
         draft.status === "queued" ||
         draft.status === "generating"
       )
-        throw new Error(
+        throw new UserFacingError(
           "Choose an unfinished saved draft that is not already being processed.",
         );
       await tx
@@ -420,14 +423,10 @@ export async function assessCvDraft(
         { dedupeKey: `generate_cv:${id}`, priority: 2 },
       );
       if (!queued)
-        throw new Error("The previous task is still finishing. Retry shortly.");
+        throw new UserFacingError("The previous task is still finishing. Retry shortly.");
     });
   } catch (error) {
-    return fail(
-      error instanceof Error
-        ? error.message
-        : "Could not queue the assessment.",
-    );
+    return actionError(error, "Could not queue the assessment. Please try again.");
   }
   revalidatePath(`/cv/${id}`);
   return ok();
@@ -452,8 +451,13 @@ export async function finaliseCvDraft(
         .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, user.id)))
         .for("update");
       if (!draft?.content || draft.status !== "ready")
-        throw new Error("Wait for this revision’s assessment to finish.");
-      assertCvFinalisable({ ...draft, content: draft.content });
+        throw new UserFacingError("Wait for this revision’s assessment to finish.");
+      // What the reviewer found missing is written for the person reading it.
+      try {
+        assertCvFinalisable({ ...draft, content: draft.content });
+      } catch (failure) {
+        throw new UserFacingError(failure instanceof Error ? failure.message : "This CV cannot be finalised yet.");
+      }
       await renderCvPdf(draft.content);
       if (!draft.finalisedAt)
         await tx
@@ -462,9 +466,7 @@ export async function finaliseCvDraft(
           .where(eq(cvDrafts.id, id));
     });
   } catch (error) {
-    return fail(
-      error instanceof Error ? error.message : "Could not finalise the CV.",
-    );
+    return actionError(error, "Could not finalise the CV. Please try again.");
   }
   revalidatePath(`/cv/${id}`);
   return ok();

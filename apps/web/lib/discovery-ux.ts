@@ -1,5 +1,8 @@
-/** Serializable feedback shared by discovery actions and forms. */
-export type DiscoveryActionResult = { ok: true; message: string } | { ok: false; error: string };
+/**
+ * Discovery's forms always have something to say on success, so they name their own result type —
+ * but it is the one `ActionResult`, so a discovery action can be used wherever an action is.
+ */
+export type { ActionResult as DiscoveryActionResult } from "@/lib/validation";
 export const SOURCE_KIND_LABELS = { website: "Website", linkedin: "LinkedIn", email: "Email newsletter" } as const;
 
 export function discoverySourceState(input: {

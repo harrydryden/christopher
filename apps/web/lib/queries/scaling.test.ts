@@ -46,8 +46,8 @@ it("queues large filter changes immediately and keeps later changes made during 
   await subscribeToCompany(database, user.id, company!.id);
   const [source] = await database.insert(schema.careerSources).values({companyId:company!.id,type:"html",url:"https://test.test/jobs"}).returning();
   await database.insert(schema.jobs).values(Array.from({length:501},(_,n)=>({companyId:company!.id,sourceId:source!.id,externalKey:String(n),title:"Engineer",normalizedTitle:"engineer",url:`https://test.test/jobs/${n}`})));
-  await saveSettingsAndGate(user.id, {hideThreshold:20});
-  await saveSettingsAndGate(user.id, {hideThreshold:30});
+  await saveSettingsAndGate(user.id, {showClosedDays:20});
+  await saveSettingsAndGate(user.id, {showClosedDays:30});
   const queued = await database.execute(sql`select count(*)::int as n, min(payload->>'userId') as user_id from tasks where type='reevaluate_gate'`);
   expect(queued.rows[0]!.n).toBe(2);
   expect(queued.rows[0]!.user_id).toBe(user.id);

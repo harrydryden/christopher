@@ -195,6 +195,9 @@ async function scanSource(
     incomplete = true;
     error ??= `Listing reached the ${ats.MAX_POSTINGS}-posting cap; roles beyond it are not tracked and this scan cannot close roles`;
   }
+  // One read of the stored descriptions, taken here and reused by the commit below, so the largest
+  // column on the table is not read a second time while the commit holds the source's row lock.
+  const descriptionsReadAt = deps.now();
   const savedDescriptions = await deps.db.select({ externalKey: schema.jobs.externalKey, url: schema.jobs.url, text: schema.jobs.descriptionText, at: schema.jobs.descriptionFetchedAt }).from(schema.jobs).where(eq(schema.jobs.sourceId, source.id));
   const reusedDescriptions = new Set<string>();
   const savedByUrl = new Map(savedDescriptions.map(row => [row.url, row]));
@@ -224,7 +227,23 @@ async function scanSource(
   const status = incomplete && classified === "ok" ? "partial" : classified;
   const mode = modeForScanStatus(status);
 
-  return deps.db.transaction(async tx => {
+  // Compressing the evidence is synchronous and the snapshot can be megabytes, so it happens
+  // before the transaction opens rather than with the source's row lock held.
+  const rawSnapshot = gzipSync(JSON.stringify(snapshotFor(postings, responses, htmlPages))).toString("base64");
+  // Scoring is per account, so the budget is asked per account: one follower with nothing left to
+  // spend has its roles left unscored, while everyone else scans and scores as usual. Queuing them
+  // anyway would only fail and retry each task at the hold. Each distinct account is asked once,
+  // here, because a month's budget cannot change meaningfully while one commit runs and asking
+  // from inside it took another pooled connection per follower while holding the row lock.
+  const scorable = new Set<string>();
+  if (!(await aiBudgetExceeded(deps))) {
+    for (const follower of followers) {
+      if (!(await aiBudgetExceeded(deps, follower.userId))) scorable.add(follower.userId);
+    }
+  }
+
+  let committed = false;
+  const outcome = await deps.db.transaction(async (tx): Promise<SourceOutcome> => {
   await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
   const [current] = await tx.select().from(schema.careerSources).where(eq(schema.careerSources.id, source.id)).for("update");
   // A user can disable or replace a source while the network request is in flight.
@@ -232,14 +251,18 @@ async function scanSource(
     return { status: "partial", newCount: 0, closedCount: 0, postingsFound: postings.length };
   }
   const commitDeps = { ...deps, db: tx as unknown as WorkerDeps["db"] };
+  committed = true;
   return commitScan(commitDeps);
   });
+  // Idempotent and takes a transaction of its own, so it runs after this scan has committed
+  // instead of extending the window in which the source's row lock is held.
+  if (committed) await archiveNonMatches(deps.db, { sourceId: source.id });
+  return outcome;
 
   async function commitScan(deps: WorkerDeps): Promise<SourceOutcome> {
   if (updatedRecipe) await deps.db.update(schema.careerSources).set({ recipe: updatedRecipe }).where(eq(schema.careerSources.id, source.id));
   const existingRows = await deps.db
     .select({
-      descriptionText: schema.jobs.descriptionText,
       descriptionSource: schema.jobs.descriptionSource,
       descriptionTruncated: schema.jobs.descriptionTruncated,
       descriptionFetchedAt: schema.jobs.descriptionFetchedAt,
@@ -268,7 +291,7 @@ async function scanSource(
   const isFirstScan = existing.length === 0 && previousOkCount === null;
 
   let newCount = 0;
-  const scoreQueue: Array<{ userId: string; jobId: string; nearMiss: boolean }> = [];
+  const scoreQueue: Array<{ userId: string; jobId: string }> = [];
   const descriptionQueue = new Set<string>();
   const viewInserts: Array<typeof schema.userJobs.$inferInsert> = [];
 
@@ -314,7 +337,7 @@ async function scanSource(
         if (!verdict.inTable) continue;
         wanted = true;
         viewInserts.push({ userId: follower.userId, jobId: row.id, keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms, excluded: verdict.excluded, locationOk: verdict.locationOk, inTable: true, nearMiss: false, seeded: isFirstScan, createdAt: deps.now(), updatedAt: deps.now() });
-        scoreQueue.push({ userId: follower.userId, jobId: row.id, nearMiss: false });
+        scoreQueue.push({ userId: follower.userId, jobId: row.id });
       }
       if (wanted && !row.descriptionText) descriptionQueue.add(row.id);
     }
@@ -329,12 +352,22 @@ async function scanSource(
   const updateEvents: Array<typeof schema.jobEvents.$inferInsert> = [];
   const seenIds = new Set(result.seen);
   const seenRows = existingRows.filter((j) => seenIds.has(j.id));
+  // The copy taken before the listing was fetched, topped up for any row a `fetch_description`
+  // task has written (or created) since. Usually no row qualifies and nothing is read.
+  const savedTextByKey = new Map(savedDescriptions.map(row => [row.externalKey, row.text]));
+  const restale = seenRows.filter(j => !savedTextByKey.has(j.externalKey) || (j.descriptionFetchedAt !== null && j.descriptionFetchedAt > descriptionsReadAt));
+  if (restale.length) {
+    const fresh = await deps.db.select({ externalKey: schema.jobs.externalKey, text: schema.jobs.descriptionText })
+      .from(schema.jobs).where(inArray(schema.jobs.id, restale.map(j => j.id)));
+    for (const row of fresh) savedTextByKey.set(row.externalKey, row.text);
+  }
   const views = seenRows.length && followers.length
     ? await deps.db.select().from(schema.userJobs).where(and(inArray(schema.userJobs.jobId, seenRows.map(j => j.id)), inArray(schema.userJobs.userId, followers.map(f => f.userId))))
     : [];
   const viewByKey = new Map(views.map(v => [`${v.userId}:${v.jobId}`, v]));
   const viewUpdates: Array<Record<string, unknown>> = [];
-  for (const job of seenRows) {
+  for (const row of seenRows) {
+    const job = { ...row, descriptionText: savedTextByKey.get(row.externalKey) ?? null };
     const posting = observed.get(job.externalKey)!;
     const fields = {
       title: posting.title, url: posting.url,
@@ -368,10 +401,10 @@ async function scanSource(
       if (view) {
         viewUpdates.push({ userId: follower.userId, jobId: job.id, keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms,
           excluded: verdict.excluded, locationOk: verdict.locationOk, inTable: verdict.inTable });
-        if (verdict.inTable && (changedFields.length || !view.inTable || view.fitScore === null)) scoreQueue.push({ userId: follower.userId, jobId: job.id, nearMiss: false });
+        if (verdict.inTable && (changedFields.length || !view.inTable || view.fitScore === null)) scoreQueue.push({ userId: follower.userId, jobId: job.id });
       } else if (verdict.inTable) {
         viewInserts.push({ userId: follower.userId, jobId: job.id, keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms, excluded: verdict.excluded, locationOk: verdict.locationOk, inTable: true, nearMiss: false, seeded: false, createdAt: deps.now(), updatedAt: deps.now() });
-        scoreQueue.push({ userId: follower.userId, jobId: job.id, nearMiss: false });
+        scoreQueue.push({ userId: follower.userId, jobId: job.id });
       } else continue;
       if (verdict.inTable && posting.descriptionText === undefined && (descriptionStale || sourceUpdated)) descriptionQueue.add(job.id);
     }
@@ -428,7 +461,7 @@ async function scanSource(
     closedCount: result.closed.length,
     error,
     durationMs: Date.now() - started,
-    rawSnapshot: gzipSync(JSON.stringify(snapshotFor(postings, responses, htmlPages))).toString("base64"),
+    rawSnapshot,
   });
 
   // Keep bounded debugging evidence from the three most recent source scans.
@@ -463,7 +496,7 @@ async function scanSource(
   }
 
   const queued: Array<typeof schema.tasks.$inferInsert> = [];
-  if (!(await aiBudgetExceeded(deps))) for (const payload of scoreQueue) queued.push({ type: "score_job", payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") });
+  for (const payload of scoreQueue) if (scorable.has(payload.userId)) queued.push({ type: "score_job", payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") });
   for (const jobId of descriptionQueue) queued.push({ type: "fetch_description", payload: { jobId }, dedupeKey: dedupeKeyFor("fetch_description", { jobId }), priority: priorityFor("fetch_description") });
   for (let offset = 0; offset < queued.length; offset += 250) await deps.db.insert(schema.tasks).values(queued.slice(offset, offset + 250)).onConflictDoNothing();
 
@@ -477,7 +510,6 @@ async function scanSource(
     followers: followers.length,
     ms: Date.now() - started,
   });
-  await archiveNonMatches(deps.db, { sourceId: source.id });
   return { status, newCount, closedCount: result.closed.length, postingsFound: postings.length };
   }
 

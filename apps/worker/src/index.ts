@@ -2,7 +2,8 @@
  * Worker entry point. One always-on process that runs the scheduler, the task queue and every
  * outbound fetch and model call. See docs/SPEC.md section 6.
  */
-import { enqueueTask } from "@christopher/db";
+import { enqueueTask, listUserIds } from "@christopher/db";
+import { dedupeKeyFor } from "@christopher/core";
 import { runMigrations } from "@christopher/db/migrate";
 import { createDeps } from "./context";
 import { readEnv } from "./env";
@@ -21,8 +22,13 @@ async function main() {
 
   await runMigrations(deps.db);
   await ensureSeedTags(deps);
-  // Gate semantics can change between releases: re-run every account's gate once on boot.
-  await enqueueTask(deps.db, "reevaluate_gate", {}, { dedupeKey: "reevaluate_gate:all", priority: 6 });
+  // Gate semantics can change between releases: re-run every account's gate once on boot. One task
+  // per account, so each takes only its own lease and they run across the queue's slots instead of
+  // queueing behind a single account-by-account task.
+  for (const userId of await listUserIds(deps.db)) {
+    const payload = { userId };
+    await enqueueTask(deps.db, "reevaluate_gate", payload, { dedupeKey: dedupeKeyFor("reevaluate_gate", payload), priority: 6 });
+  }
 
   const queue = new TaskQueue(deps, handlers, { concurrency: env.concurrency, workerId: env.workerId });
   queue.start();

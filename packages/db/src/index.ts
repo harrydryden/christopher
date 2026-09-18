@@ -11,10 +11,11 @@ export { enqueueTask, pendingTaskCounts, taskById, activeTaskFor, type EnqueueOp
 export { reevaluateGate, archiveNonMatches, type GateScope, type ArchiveScope } from "./gate";
 export { appendProfile, latestProfileFor } from "./profiles";
 export { workloadMetrics } from "./scaling";
+export { accountAiSpend, totalAiSpend, aiUsageByAccount, type AiAccountUsage } from "./ai-budget";
 
 export { roleStatusSql } from "./role-workflow";
 
-export { scanRunSummary } from "./scan-summary";
+export { scanRunSummary, scanRunSummaries, type ScanRunSummary } from "./scan-summary";
 
 export { actionCvs, completeCv, lockCvDraft, lockCvLifecycle, nextCvRevision } from "./cv-lifecycle";
 

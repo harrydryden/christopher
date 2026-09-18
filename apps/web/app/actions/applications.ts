@@ -6,7 +6,7 @@ import { CvContentSchema } from "@christopher/core";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { renderCvPdf } from "@/lib/cv-pdf";
-import { fail, ok, zUuid, type ActionResult } from "@/lib/validation";
+import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
 import { revalidatePath } from "next/cache";
 
 const statuses = ["applied", "screening", "interview", "offer", "rejected", "withdrawn", "accepted"];
@@ -20,19 +20,24 @@ export async function recordApplication(cvId: string, _prev: ActionResult, form:
     if (notes.length > 4000) return fail("Keep notes under 4,000 characters.");
     await db().transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`application:${cvId}`}))`);
-      if ((await tx.select({ id: applications.id }).from(applications).where(eq(applications.cvId, cvId))).length) throw new Error("This CV revision already has an application record.");
+      if ((await tx.select({ id: applications.id }).from(applications).where(eq(applications.cvId, cvId))).length) throw new UserFacingError("This CV revision already has an application record.");
       const [draft] = await tx.select().from(cvDrafts).where(and(eq(cvDrafts.id, cvId), eq(cvDrafts.userId, user.id))).for("share");
-      if (!draft || draft.status !== "ready" || !draft.content) throw new Error("Choose a completed, saved CV.");
+      if (!draft || draft.status !== "ready" || !draft.content) throw new UserFacingError("Choose a completed, saved CV.");
       if (!draft.finalisedAt)
-        throw new Error(
+        throw new UserFacingError(
           "Review the assessment and finalise this CV before recording an application.",
         );
-      assertCvFinalisable({ ...draft, content: draft.content });
+      // The reviewer's own words about what is missing are written for the person reading them.
+      try {
+        assertCvFinalisable({ ...draft, content: draft.content });
+      } catch (error) {
+        throw new UserFacingError(error instanceof Error ? error.message : "This CV cannot be finalised yet.");
+      }
       const pdf = await renderCvPdf(CvContentSchema.parse(draft.content));
       await tx.insert(applications).values({ userId: user.id, cvId, jobTitle: draft.jobTitle, companyName: draft.companyName, appliedOn, notes,
         pdfBase64: pdf.toString("base64"), status: "applied", history: [{ status: "applied", at: new Date().toISOString(), notes }] });
     });
-  } catch (error) { return fail(error instanceof Error ? error.message : "Could not record application."); }
+  } catch (error) { return actionError(error, "Could not record application. Please try again."); }
   revalidatePath("/applications"); revalidatePath(`/cv/${cvId}`);
   return ok();
 }
@@ -56,7 +61,7 @@ export async function updateApplication(
         .from(applications)
         .where(and(eq(applications.id, id), eq(applications.userId, user.id)))
         .for("update");
-      if (!row) throw new Error("Application not found.");
+      if (!row) throw new UserFacingError("Application not found.");
       await tx
         .update(applications)
         .set({
@@ -70,9 +75,7 @@ export async function updateApplication(
         .where(eq(applications.id, id));
     });
   } catch (error) {
-    return fail(
-      error instanceof Error ? error.message : "Could not update application.",
-    );
+    return actionError(error, "Could not update the application. Please try again.");
   }
   revalidatePath("/applications");
   return ok();

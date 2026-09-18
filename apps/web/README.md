@@ -67,13 +67,10 @@ same `DATABASE_URL` for anything beyond viewing/editing to actually happen.
   '../drizzle'"), even though this app never calls it (migrations run from the worker on boot).
   Importing only the `schema` subpath sidesteps it entirely. `lib/enqueue.ts` reimplements
   `enqueueTask` for the same reason.
-- `lib/settings.ts` patches one field after calling `resolveSettings()` from `@christopher/core`:
-  that function's `typeof def !== typeof val` guard compares a stored `hideThreshold` override
-  (a number) against its default (`null`, `typeof` `"object"`), so the guard always rejects it
-  and the setting can never move off its default through the normal path. This is the only
-  settings key affected (every other default shares its overrides' type). The fix belongs in
-  `packages/core/src/settings.ts`; this is a local workaround so "hide roles under a fit score"
-  actually takes effect from this app in the meantime.
+- Automatic score hiding is retired. Nothing writes `hideThreshold` any more and nothing reads it:
+  the minimum-fit filter on Roles is the only way a score narrows the table, and it belongs to the
+  reader. Stored values (and stored `hide_threshold` filter suggestions, which Accept settles
+  rather than applies) stay readable and are ignored.
 - Status filtering, location substring matching and sorting for the roles table happen in JS
   after a single broad query (`lib/queries/jobs.ts`), per the spec's guidance for this scale
   (a few accounts, a few thousand rows each) — simpler and easier to get right than the equivalent SQL.

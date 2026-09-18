@@ -96,7 +96,7 @@ Set these on the service:
 | `ANTHROPIC_API_KEY` | your key. Without it, scanning still works and scoring is skipped |
 | `SCRAPER_CONTACT_EMAIL` | an address you read; it goes in the user agent |
 | `TZ` | e.g. `Europe/London` |
-| `WORKER_CONCURRENCY` | `3` |
+| `WORKER_CONCURRENCY` | `6` — six task slots: three for work someone is waiting for (CV builds, discovery, re-tagging), two for the daily scan, one for background jobs, and every slot takes from the rest of the queue when its own lane is empty. The database pool follows it, at `2 × concurrency + 4` connections (16 here), so raise it only as far as your Postgres instance's connection limit allows |
 
 The worker runs migrations on boot, so a redeploy is always safe. Check `/healthz` returns
 `{"ok":true,…}` and the logs show `worker starting`.
@@ -133,6 +133,7 @@ Deploy the interface exactly as above, and add:
 | `ANTHROPIC_API_KEY` | your key |
 | `SCRAPER_CONTACT_EMAIL` | an address you read |
 | `CHRISTOPHER_DISABLE_BROWSER` | `1`. There is no Chromium in the Vercel runtime |
+| `CHRISTOPHER_SERVERLESS_FALLBACK` | `1`. Without it the route only queues work; with it the route also runs the queue itself (see below) |
 | `TZ` | e.g. `Europe/London` |
 
 `apps/web/vercel.json` already declares the schedule (`0 6 * * *`). Change the time there if you
@@ -143,6 +144,16 @@ run finishes in one invocation.
 
 ### Living without a worker
 
+- **`CHRISTOPHER_SERVERLESS_FALLBACK=1` is what makes the route do the work.** Without it the cron
+  route only ticks the scheduler — it queues the day's run and the weekly jobs, and nothing runs
+  them. With it, the same invocation works through the queue until its time is nearly up. Its
+  limits are real: no browser, so a JavaScript careers page still cannot be scanned; and each task
+  it starts must finish inside `maxDuration` (60 seconds on Hobby, up to 300 on Pro), so a long
+  scan can be cut short and retried on the next call. It is a fallback, not a second worker.
+- **Beside a worker it stands down.** If the Render worker has reported a heartbeat in the last two
+  minutes, the route neither ticks the scheduler nor claims a task, and answers
+  `{"ok":true,"processed":0,"standDown":"worker"}`. Leaving the cron enabled after moving to shape A
+  is therefore harmless.
 - **The queue only moves when the route is called.** Buttons in the interface that say "run now"
   add work to the queue; nothing processes it until the next cron. To run it immediately, visit
   `https://<your app>/api/cron` while signed in. A session is accepted as well as the bearer token.
@@ -153,7 +164,8 @@ run finishes in one invocation.
   `jobs.lever.co/...` address), and it is scanned normally from then on.
 
 Moving to shape A later is only a Render deploy: add the worker service, unset
-`CHRISTOPHER_DISABLE_BROWSER`, and the same database keeps every company, role and decision.
+`CHRISTOPHER_DISABLE_BROWSER` and `CHRISTOPHER_SERVERLESS_FALLBACK`, and the same database keeps
+every company, role and decision.
 
 ---
 
@@ -167,6 +179,8 @@ Moving to shape A later is only a Render deploy: add the worker service, unset
    `/api/cron`.
 5. **Health** shows anything that needs you: a company whose careers page could not be found, a
    blocked site, or a source needing confirmation.
+6. **Admin › Accounts** lists everyone sharing the deployment, what each has produced and follows,
+   and what each may spend on AI in a month. New accounts start at $25; raise one there.
 
 ## Costs
 
@@ -177,12 +191,22 @@ Moving to shape A later is only a Render deploy: add the worker service, unset
 | Vercel Hobby | $0 |
 | Anthropic API, 30 companies in steady state | ~$3–10/month |
 
-The Health page tracks month-to-date model spend against the budget set in Admin › System settings,
-and stops optional model calls when it is exceeded. A CV build costs about $3 on Fable 5.1 (a 35 KB
-library against a typical advert); it is admitted against the budget once, up front, at that expected
-cost, and a build the month cannot afford fails before it spends anything, naming the limit and what
-is left. `DAILY_AI_BUDGET_USD` and `DISCOVERY_AI_BUDGET_USD` in the worker's environment add daily
-caps on top; leave them unset unless you want them, because a daily cap refuses builds too.
+Every account has its own monthly AI budget, $25 to start, and it is the only budget the product
+has. Each person sets their own on **Settings**; an administrator sets anyone's in
+**Admin › Accounts**, which shows what each account has spent this month and can start an account's
+month again with Reset spend. The budget runs on the calendar month in UTC and starts again on the
+1st; a reset moves the window the spend is counted in rather than deleting anything, so
+**Admin › Operations** still reports every call made, by account, feature and model, and totals the
+month's spend across every account and the work no account asked for. An account's optional model
+calls (company and filter suggestions) stop once it has spent its month. A CV build costs about
+$3 on Fable 5.1 (a 35 KB library against a typical advert); it is admitted against that account's
+budget once, up front, at that expected cost, and a build the account cannot afford fails before it
+spends anything, naming the budget, what is left and what its calls in flight are holding.
+
+Work no account asked for — extraction, discovery — is charged to no budget. `DAILY_AI_BUDGET_USD`
+and `DISCOVERY_AI_BUDGET_USD` in the worker's environment are the safety valves for the deployment
+as a whole: unlimited unless set, they cap a day's spend and a day's discovery spend across every
+account, and they refuse any call, a CV build included, so leave them unset unless you want that.
 
 ## When something is wrong
 

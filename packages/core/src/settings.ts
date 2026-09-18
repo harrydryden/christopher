@@ -1,11 +1,11 @@
 /**
  * Application settings stored as key/value JSON.
  *
- * Two scopes share one shape. System settings (the daily schedule, models, the AI budget, closure
- * and robots policy) live in the `settings` table and are edited by an administrator. User
- * settings (keywords, locations, seed profile, CV preferences) live in `user_settings`, one row
- * per account and key. `AppSettings` is the two merged, which is what most code wants to read.
- * Defaults apply when a key is missing.
+ * Two scopes share one shape. System settings (the daily schedule, models, closure and robots
+ * policy) live in the `settings` table and are edited by an administrator. User settings
+ * (keywords, locations, seed profile, CV preferences and the account's own monthly AI budget) live
+ * in `user_settings`, one row per account and key. `AppSettings` is the two merged, which is what
+ * most code wants to read. Defaults apply when a key is missing.
  */
 import { CvWritingPreferencesSchema, type CvWritingPreferences } from "./cv-writing-preferences";
 import { CvThemeSchema, type CvTheme } from "./cv-theme";
@@ -15,7 +15,6 @@ export interface SystemSettings {
   /** Daily run time "HH:MM" in `timezone`. One run for every company anyone follows. */
   scanTime: string;
   timezone: string;
-  monthlyAiBudgetUsd: number;
   /** Model id per call site; missing keys fall back to `defaultModel`. */
   defaultModel: string;
   modelOverrides: Record<string, string>;
@@ -30,8 +29,13 @@ export interface SystemSettings {
 
 export interface UserSettings {
   gate: GateSettings;
-  /** Fit-score threshold under which in-table roles are collapsed. null = off. */
-  hideThreshold: number | null;
+  /**
+   * This account's own monthly AI budget: the one budget the product has. The account holder
+   * changes it on Settings and an administrator changes anyone's in Admin › Accounts.
+   */
+  aiBudgetUsd: number;
+  /** When this account's spend counter was last zeroed (ISO), or null. Read by `aiBudgetWindowStart`. */
+  aiBudgetResetAt: string | null;
   /** Free text written by the user at setup; never overwritten by the model. */
   seedProfile: string;
   cvModel: string;
@@ -46,10 +50,14 @@ export interface UserSettings {
 
 export type AppSettings = SystemSettings & UserSettings;
 
+/** What a new account may spend on AI in a month until it is changed. */
+export const DEFAULT_ACCOUNT_AI_BUDGET_USD = 25;
+/** The most an account budget may be set to, so a typed figure cannot become an unbounded bill. */
+export const MAX_ACCOUNT_AI_BUDGET_USD = 10000;
+
 export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   scanTime: "06:00",
   timezone: "Europe/London",
-  monthlyAiBudgetUsd: 25,
   defaultModel: "claude-sonnet-5",
   modelOverrides: {},
   closeAfterMissingScans: 2,
@@ -66,7 +74,8 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
     locationTerms: [],
     includeRemote: true,
   },
-  hideThreshold: null,
+  aiBudgetUsd: DEFAULT_ACCOUNT_AI_BUDGET_USD,
+  aiBudgetResetAt: null,
   seedProfile: "",
   cvModel: "claude-fable-5-1",
   cvTheme: undefined,
@@ -113,11 +122,22 @@ function applyRows(out: AppSettings, rows: SettingsRow[]): void {
     const def = DEFAULT_SETTINGS[key];
     const val = row.value;
     if (val === null || val === undefined) continue;
-    // A stored value replaces the default when the two are the same kind. `hideThreshold` is the
-    // one setting whose default is null (meaning "off") and whose set value is a number, so a null
-    // default accepts any primitive; a stored null is already skipped above and keeps the default.
+    // A stored value replaces the default when the two are the same kind. A default of null means
+    // "unset" — `aiBudgetResetAt` is the one such key — so it accepts any primitive; a stored null
+    // is already skipped above and keeps the default.
     const compatible = def === null ? typeof val !== "object" : typeof def === typeof val;
     if (!compatible) continue;
+    // Both budget keys are read by money-spending code, so a stored value is checked here rather
+    // than trusted: the budget is clamped to a sane range and the reset marker must be a usable
+    // timestamp. Both belong to an account, so both arrive in `user_settings` rows.
+    if (key === "aiBudgetUsd") {
+      if (typeof val === "number" && Number.isFinite(val)) out.aiBudgetUsd = Math.min(MAX_ACCOUNT_AI_BUDGET_USD, Math.max(0, val));
+      continue;
+    }
+    if (key === "aiBudgetResetAt") {
+      if (typeof val === "string" && !Number.isNaN(Date.parse(val))) out.aiBudgetResetAt = val;
+      continue;
+    }
     if (key === "gate" && typeof val === "object") {
       out.gate = { ...DEFAULT_SETTINGS.gate, ...(val as Partial<GateSettings>) };
       continue;
@@ -127,12 +147,16 @@ function applyRows(out: AppSettings, rows: SettingsRow[]): void {
 }
 
 /**
- * Merge stored rows onto defaults. `rows` are usually the system table and `userRows` one
- * account's rows; the two key sets are disjoint, so a single mixed list also works.
+ * Merge stored rows onto defaults. `rows` are the system table and `userRows` one account's rows.
+ * A key belonging to neither scope — the worker's `internal:` bookkeeping, or a setting a later
+ * version removed — is ignored, so an old row left behind by a migration can never change what
+ * anything reads. A key that belongs to an account is read only from that account's own rows: one
+ * stray `gate` or `aiBudgetUsd` in the shared table would otherwise silently override the setting
+ * for every account at once.
  */
 export function resolveSettings(rows: SettingsRow[], userRows: SettingsRow[] = []): AppSettings {
   const out: AppSettings = structuredClone(DEFAULT_SETTINGS);
-  applyRows(out, rows);
+  applyRows(out, rows.filter((row) => !isUserSettingsKey(row.key)));
   applyRows(out, userRows);
   return out;
 }
@@ -143,7 +167,9 @@ export function resolveSystemSettings(rows: SettingsRow[]): SystemSettings {
 }
 
 export function resolveUserSettings(rows: SettingsRow[]): UserSettings {
-  const merged = resolveSettings(rows.filter((row) => isUserSettingsKey(row.key)));
+  // One account's rows, so they go in as account rows: `resolveSettings` reads user-scoped keys
+  // from that side alone.
+  const merged = resolveSettings([], rows.filter((row) => isUserSettingsKey(row.key)));
   return Object.fromEntries(USER_SETTINGS_KEYS.map((key) => [key, merged[key]])) as unknown as UserSettings;
 }
 

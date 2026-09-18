@@ -1,5 +1,5 @@
 import { scanRunSummary, schema, enqueueTask, listUserIds, type Task } from "@christopher/db";
-import { dedupeKeyFor, localDateParts, priorityFor } from "@christopher/core";
+import { dedupeKeyFor, localDateParts, priorityFor, type SystemSettings } from "@christopher/core";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { log } from "../log";
@@ -16,18 +16,21 @@ interface DailyPayload {
  * Idempotent per (runDate, trigger) so a restart mid-run does not duplicate it.
  */
 export async function handleRunDaily(task: Task, deps: WorkerDeps): Promise<unknown> {
+  // The timezone is read before the transaction opens: it is an administrator's setting that
+  // cannot meaningfully change while the fan-out runs, and reading it from inside would ask the
+  // pool for a second connection while this one holds the advisory lock.
+  const settings = await deps.settings();
   return deps.db.transaction(async (tx) => {
     await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('christopher:daily-runs'))`);
-    return runDaily(task, { ...deps, db: tx as unknown as WorkerDeps["db"] });
+    return runDaily(task, { ...deps, db: tx as unknown as WorkerDeps["db"] }, settings);
   });
 }
 
-async function runDaily(task: Task, deps: WorkerDeps): Promise<unknown> {
+async function runDaily(task: Task, deps: WorkerDeps, settings: SystemSettings): Promise<unknown> {
   const checkpoint = task.result as { scanRunId?: string } | null;
   if (checkpoint?.scanRunId) return task.result;
   const payload = task.payload as unknown as DailyPayload;
-  const settings = await deps.settings();
   const runDate = payload.runDate ?? localDateParts(deps.now(), settings.timezone).ymd;
 
   const existing = await deps.db

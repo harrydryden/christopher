@@ -1,7 +1,7 @@
-import { scanRunReport } from "@/lib/scan-run-report";
+import { scanRunReports } from "@/lib/scan-run-report";
 import { and, desc, eq, gte, inArray, ne, sql, getTableColumns } from "drizzle-orm";
+import { aiUsageByAccount, totalAiSpend } from "@christopher/db";
 import {
-  aiCalls,
   settings,
   careerSources,
   companies,
@@ -9,10 +9,10 @@ import {
   scanRuns,
   scans,
   tasks,
-  type AiCall,
   type CareerSource,
   type Task,
 } from "@christopher/db/schema";
+import { groupAiUsage, type AiUsageGroup } from "@/lib/ai-usage";
 import { db } from "@/lib/db";
 
 /** Companies one account follows; with no account, every company (the administrator's view). */
@@ -86,37 +86,24 @@ export async function getQueueCounts(): Promise<QueueCount[]> {
     .orderBy(tasks.type, tasks.status);
 }
 
-function startOfCurrentMonthUtc(now: Date): Date {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+/**
+ * Everything spent since `since`, whoever it was for: every account's calls and the work no
+ * account asked for, together. Budgets are per account and each carries its own window, so this is
+ * Operations' report of the deployment rather than a limit anything is measured against.
+ */
+export async function getTotalAiSpend(since: Date): Promise<number> {
+  return totalAiSpend(db(), since);
 }
 
-export async function getAiSpendThisMonth(now: Date = new Date()): Promise<number> {
-  const since = startOfCurrentMonthUtc(now);
-  const rows = await db()
-    .select({ total: sql<number>`coalesce(sum(${aiCalls.costUsd}), 0)::float` })
-    .from(aiCalls)
-    .where(gte(aiCalls.at, since));
-  return rows[0]?.total ?? 0;
+/** The operations report: one line per account, feature and model since `since`, dearest first. */
+export async function getAiUsage(since: Date): Promise<AiUsageGroup[]> {
+  return groupAiUsage(await aiUsageByAccount(db(), since));
 }
 
-/** Month-to-date spend per account (shared work such as extraction is unattributed). */
-export async function getAiSpendByAccount(now: Date = new Date()): Promise<Array<{ userId: string | null; total: number }>> {
-  const since = startOfCurrentMonthUtc(now);
-  return db()
-    .select({ userId: aiCalls.userId, total: sql<number>`coalesce(sum(${aiCalls.costUsd}), 0)::float` })
-    .from(aiCalls)
-    .where(gte(aiCalls.at, since))
-    .groupBy(aiCalls.userId)
-    .orderBy(desc(sql`sum(${aiCalls.costUsd})`));
-}
-
-export async function listRecentAiCalls(limit = 20): Promise<AiCall[]> {
-  return db().select().from(aiCalls).orderBy(desc(aiCalls.at)).limit(limit);
-}
-
+/** Health's run history: one query for the runs, one for every run's counts. */
 export async function listRecentScanRuns(limit = 10, userId?: string) {
   const runs = await db().select().from(scanRuns).orderBy(desc(scanRuns.startedAt)).limit(limit);
-  return Promise.all(runs.map((run) => scanRunReport(run, userId)));
+  return scanRunReports(runs, userId);
 }
 
 /** Last report from the persistent worker; configuration is not a successful API probe. */

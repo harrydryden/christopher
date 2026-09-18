@@ -32,10 +32,14 @@ interface GateRow extends Record<string, unknown> {
 /**
  * Re-run one account's keyword and location gate over the shared postings of the companies it
  * follows. A posting that passes gets a `user_jobs` row if it had none (store matching roles only,
- * per account); a row that stops passing is archived unless it carries a decision. Shared by
- * synchronous settings saves, new subscriptions and the background `reevaluate_gate` task.
+ * per account); a row that stops passing is archived unless it carries a decision or a saved CV.
+ * Shared by synchronous settings saves, new subscriptions and the background `reevaluate_gate` task.
  */
 export async function reevaluateGate(db: Db, userId: string, settings: AppSettings, now = new Date(), scope: GateScope = {}) {
+  // Only a gate that matches on the description needs it, and it is the largest column on `jobs`:
+  // reading it for every posting of every followed company was most of this loop's traffic for the
+  // accounts that match on title and location alone.
+  const matchesDescription = settings.gate.matchFields.includes("description");
   let cursor: string | undefined;
   let examined = 0;
   let changed = 0;
@@ -43,7 +47,7 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
   let queuedForScoring = 0;
   while (true) {
     const page = await db.execute<GateRow>(sql`
-      select j.id, j.title, j.department, j.description_text as "descriptionText", j.location, j.locations, j.remote, j.status,
+      select j.id, j.title, j.department, ${matchesDescription ? sql`j.description_text` : sql`null::text`} as "descriptionText", j.location, j.locations, j.remote, j.status,
         (uj.job_id is not null) as viewed, uj.keyword_matched as "keywordMatched", uj.keyword_terms as "keywordTerms",
         uj.excluded, uj.location_ok as "locationOk", uj.in_table as "inTable", uj.hidden, uj.fit_score as "fitScore"
       from jobs j
@@ -73,7 +77,7 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
         created++;
       } else continue;
       if (gate.inTable && job.fitScore === null && job.status === "open") {
-        const payload = { userId, jobId: job.id, nearMiss: false };
+        const payload = { userId, jobId: job.id };
         scoring.push({ type: "score_job", payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") });
       }
     }
@@ -108,7 +112,9 @@ export interface ArchiveScope {
 
 /**
  * Put away a person's view of a posting that no longer passes their gate, unless they have decided
- * on it. Never deletes: the row keeps its history and shows in the Archive view.
+ * on it or built a CV for it. Never deletes: the row keeps its history and shows in the Archive
+ * view. A saved CV is work the person did on that role; narrowing a filter must not take the role
+ * the CV was written for out of their table behind it.
  */
 export async function archiveNonMatches(db: Db, scope: ArchiveScope = {}): Promise<number> {
   const userId = scope.userId ?? null;
@@ -124,6 +130,7 @@ export async function archiveNonMatches(db: Db, scope: ArchiveScope = {}): Promi
       and (${sourceId}::uuid is null or j.source_id = ${sourceId}::uuid)
       and (${jobId}::uuid is null or uj.job_id = ${jobId}::uuid)
       and (${companyId}::uuid is null or j.company_id = ${companyId}::uuid)
+      and not exists (select 1 from cv_drafts c where c.user_id = uj.user_id and c.job_id = uj.job_id)
       order by uj.user_id, uj.job_id for update of uj`);
     const result = await tx.execute(sql`
     with archived as (
@@ -135,6 +142,7 @@ export async function archiveNonMatches(db: Db, scope: ArchiveScope = {}): Promi
       and (${jobId}::uuid is null or uj.job_id = ${jobId}::uuid)
       and (${companyId}::uuid is null or j.company_id = ${companyId}::uuid)
       and not exists (select 1 from decisions d where d.user_id = uj.user_id and d.job_id = uj.job_id and d.superseded = false)
+      and not exists (select 1 from cv_drafts c where c.user_id = uj.user_id and c.job_id = uj.job_id)
       returning uj.user_id, uj.job_id
     )
     insert into job_events (job_id, user_id, type, payload)

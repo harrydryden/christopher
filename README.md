@@ -110,7 +110,11 @@ Full instructions, including what to set where and what to do when something is 
 | `CHRISTOPHER_DISABLE_BROWSER` | both | set to `1` where there is no Chromium, such as Vercel |
 
 Everything else, including keywords, locations, the run time and the model, is edited in Settings and
-stored in the database.
+stored in the database. Each account has its own monthly AI budget, $25 to start, and that is the
+only budget: its holder changes it on Settings, an administrator changes anyone's in Admin ›
+Accounts. It runs on the calendar month and starts again on the 1st, and Admin › Operations reports
+what was spent by account, feature and model. `DAILY_AI_BUDGET_USD` and `DISCOVERY_AI_BUDGET_USD`
+are optional safety valves for the deployment as a whole, unset by default.
 
 ## Tests
 
@@ -146,14 +150,14 @@ writes nothing to the database.
   saw the role and is marked with an asterisk. Roles found on a company's very first scan are flagged
   as seeded, so day one does not read as a flood of new jobs.
 - **Keywords are a hard filter; learning ranks within it.** The model never silently removes a role
-  from your table. It scores and orders them, proposes filter changes for you to accept, and surfaces
-  near-misses in their own section, which you can switch off in Settings.
+  from your table, and never hides one by score. It scores and orders them, and proposes keyword and
+  location changes for you to accept or reject on Learning.
 - **Blocked sites are reported, not fought.** Bot protection marks a source blocked and puts it on the
   Health page. The usual fix is pasting the underlying board URL, which is rarely protected.
 
 ### Role filtering, table clean-up and CVs
 
-Settings supports separate role and title-seniority keyword lists, combined with location filtering. Use `strateg*` for strategy/strategic. The table offers grouped and bulk decisions plus reversible archive/restore.
+Settings supports separate role and title-seniority keyword lists, combined with location filtering. Use `strateg*` for strategy/strategic. The table groups roles by what you have decided, and archive/restore is reversible. Dismissing a role asks for a reason, because that is what the ranking learns from.
 
 CV builder maintains a versioned evidence library and creates saved CVs for individual roles using a separately selected Anthropic model. Import/export the library as JSON, edit draft text, and download a selectable-text A4 PDF. Apply migrations and run the background worker with `ANTHROPIC_API_KEY` before generating. Missing credentials are shown on the draft; local tests do not call paid models. See [the specification](docs/SPEC.md) and [validation record](docs/REVIEW-PLAN.md).
 

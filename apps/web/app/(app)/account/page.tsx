@@ -106,7 +106,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
       </Card>
 
       {user.role === "admin" && (
-        <p className="text-14 text-muted">Accounts, registration, the shared schedule, models, budget and the company catalogue are managed in <a href="/admin" className="text-fg underline">Admin</a>.</p>
+        <p className="text-14 text-muted">Your monthly AI budget is in <a href="/settings" className="text-fg underline">Settings</a>. Accounts, registration, the shared schedule, models and the company catalogue are managed in <a href="/admin" className="text-fg underline">Admin</a>.</p>
       )}
     </div>
   );

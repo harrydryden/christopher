@@ -122,12 +122,15 @@ export default async function CvDraftPage({
         }
       >
         {draft.status === "failed" && (
-          <p
-            role="alert"
-            className="p-4 text-14 text-danger"
-          >
-            {draft.error}
-          </p>
+          <div role="alert" className="space-y-2 p-4 text-14">
+            <p className="text-danger">{draft.error}</p>
+            <p className="text-muted">
+              Retry or edit this attempt now. Only the newest failed attempt for
+              a company and role is kept, so the next revision you start for{" "}
+              {draft.jobTitle} replaces it, and a revision that builds
+              successfully removes it.
+            </p>
+          </div>
         )}
         {busy && (
           <AutoRefresh

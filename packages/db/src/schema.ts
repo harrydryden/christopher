@@ -219,7 +219,7 @@ export const discoveryRuns = pgTable("discovery_runs", {
   chosenSourceId: uuid("chosen_source_id"),
   log: jsonb("log").$type<unknown[]>().notNull().default(sql`'[]'::jsonb`),
   error: text("error"),
-});
+}, (t) => [index("discovery_runs_company_started_idx").on(t.companyId, t.startedAt.desc())]);
 
 export const scanRuns = pgTable("scan_runs", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -316,6 +316,12 @@ export const userJobs = pgTable(
     fitRationale: text("fit_rationale"),
     fitProfileVersion: integer("fit_profile_version"),
     fitScoredAt: ts("fit_scored_at"),
+    /**
+     * Fingerprint of everything the last A5 score was computed from (the role, this account's
+     * profile and evidence, and the model). Unchanged inputs mean the stored score still stands,
+     * so the call is skipped. Null means "never scored, or scored before this column existed".
+     */
+    scoreInputHash: text("score_input_hash"),
     hidden: boolean("hidden").notNull().default(false),
     /** True when the row was created for a posting the scan had already seen (day-one of a subscription). */
     seeded: boolean("seeded").notNull().default(false),
@@ -434,7 +440,7 @@ export const companyProfiles = pgTable("company_profiles", {
   tags: jsonb("tags").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   raw: jsonb("raw"),
   generatedAt: tsNow("generated_at"),
-});
+}, (t) => [index("company_profiles_company_generated_idx").on(t.companyId, t.generatedAt.desc())]);
 
 export const discoverySources = pgTable("discovery_sources", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -489,7 +495,12 @@ export const companySuggestions = pgTable("company_suggestions", {
   index("suggestions_history_idx").on(t.userId, t.status, t.resolvedAt),
 ]);
 
-/** System-wide settings (schedule, models, budget) and the worker's internal bookkeeping. */
+/**
+ * System-wide settings (schedule, models, scan policy): one row per key, edited by an
+ * administrator, and read whole on hot paths. A few small worker markers share it under an
+ * `internal:` prefix and are read one key at a time; nothing that grows with the number of
+ * accounts, roles or sources belongs here.
+ */
 export const settings = pgTable("settings", {
   key: text("key").primaryKey(),
   value: jsonb("value").notNull(),
@@ -517,10 +528,10 @@ export const tasks = pgTable(
     finishedAt: ts("finished_at"),
   },
   (t) => [
-    index("tasks_status_run_after_idx").on(t.status, t.priority, t.runAfter),
+    index("tasks_status_run_after_idx").on(t.status, t.priority, t.runAfter, t.createdAt),
     index("tasks_scan_run_idx").on(sql`(${t.payload}->>'scanRunId')`, t.status),
     index("tasks_source_status_idx").on(sql`(${t.payload}->>'sourceId')`, t.status, t.createdAt),
-    index("tasks_lane_idx").on(t.type, t.status, t.priority, t.runAfter),
+    index("tasks_lane_idx").on(t.type, t.status, t.priority, t.runAfter, t.createdAt),
     uniqueIndex("tasks_dedupe_active_uidx").on(t.dedupeKey).where(sql`${t.status} in ('queued', 'running') and ${t.dedupeKey} is not null`),
   ],
 );
@@ -545,7 +556,7 @@ export const aiCalls = pgTable(
     refId: text("ref_id"),
     at: tsNow("at"),
   },
-  (t) => [index("ai_calls_at_idx").on(t.at)],
+  (t) => [index("ai_calls_at_idx").on(t.at), index("ai_calls_user_at_idx").on(t.userId, t.at)],
 );
 
 export type User = typeof users.$inferSelect;
@@ -674,14 +685,28 @@ export const hostPacing = pgTable("host_pacing", {
   nextAt: ts("next_at").notNull(),
 });
 
+/**
+ * Sparse-feed admission: the fingerprints of postings whose description was fetched and rejected,
+ * per careers source, so the same detail page is not fetched again every day. Bounded (10,000 per
+ * source, entries expire after seven days) and rewritten on each scan. Nothing here is user data:
+ * a fingerprint covers the listing metadata and the gate it was judged against, so a changed gate
+ * simply misses and the detail is fetched again. It goes with the source it belongs to.
+ */
+export const sourceAdmissionRejections = pgTable("source_admission_rejections", {
+  sourceId: uuid("source_id").primaryKey().references(() => careerSources.id, { onDelete: "cascade" }),
+  /** fingerprint → epoch milliseconds of the rejection. */
+  fingerprints: jsonb("fingerprints").$type<Record<string, number>>().notNull(),
+  updatedAt: tsNow("updated_at"),
+});
+
 export const aiReservations = pgTable("ai_reservations", {
   id: uuid("id").primaryKey().defaultRandom(),
+  /** Whose budget this hold is against; null for work no account asked for (extraction, discovery). */
+  userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
   callSite: text("call_site").notNull(),
   amount: real("amount").notNull(),
   createdAt: tsNow("created_at"),
   expiresAt: ts("expires_at").notNull(),
-});
-export const aiSpendPeriods = pgTable("ai_spend_periods", {
-  key: text("key").primaryKey(),
-  amount: real("amount").notNull().default(0),
-});
+  /** The worker process holding this reservation, so a shutdown can release its own holds at once. */
+  workerId: text("worker_id"),
+}, (t) => [index("ai_reservations_user_idx").on(t.userId), index("ai_reservations_worker_idx").on(t.workerId)]);

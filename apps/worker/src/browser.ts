@@ -14,7 +14,8 @@ export interface BrowserOptions {
   hostMap?: Record<string, string>;
   navigationTimeoutMs?: number;
   concurrency?: number;
-  beforeRequest?: (host: string) => Promise<void>;
+  /** Politeness for one navigation: reserved once, before the page is opened, never per subresource. */
+  beforeNavigate?: (host: string) => Promise<void>;
 }
 
 const COOKIE_BUTTON_TEXT = /^(accept( all)?( cookies)?|allow all|i agree|agree|got it|ok(ay)?|accept and close|accept & close)$/i;
@@ -84,7 +85,6 @@ export class BrowserRenderer {
         const type = req.resourceType();
         if (type === "image" || type === "font" || type === "media") return route.abort();
         const target = new URL(req.url());
-        if (["document", "xhr", "fetch"].includes(type)) await this.opts.beforeRequest?.(target.hostname);
         const mapped = hostMap[target.hostname] ?? hostMap["*"];
         // A configured host map is exhaustive, so a test cannot reach the real internet through
         // the browser either.
@@ -118,6 +118,11 @@ export class BrowserRenderer {
       page.on("request", (req) => {
         if (["xhr", "fetch", "document", "script"].includes(req.resourceType())) requests.push(req.url());
       });
+      // One reservation for the whole navigation. Reserving per request instead made a page with
+      // twenty same-host XHRs sleep the per-host delay twenty times — longer than the navigation
+      // timeout it was sleeping inside — and pushed that host's next allowed request minutes into
+      // the future for every other scan.
+      await this.opts.beforeNavigate?.(new URL(url).hostname);
       const response = await page.goto(url, { waitUntil: "domcontentloaded" });
       status = response?.status() ?? null;
       await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => undefined);

@@ -10,7 +10,7 @@ import {createDb, schema, enqueueTask, reevaluateGate, subscribeToCompany, type 
 import { ensureTestUser } from "./test-users";
 import { runMigrations } from "@christopher/db/migrate";
 import { ats, dedupeKeyFor, displayStatus, liveFor, priorityFor, sha1 } from "@christopher/core";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { handlers } from "./handlers";
@@ -467,7 +467,7 @@ describe("functional review regressions", () => {
     expect(truncated!.descriptionHash).toBe(sha1(truncated!.descriptionText!));
   }, 60_000);
 
-  it("archives retained non-matches but preserves active decisions", async () => {
+  it("archives retained non-matches but preserves active decisions and saved CVs", async () => {
     await setGate({});
     await addCompany("https://www.acme.example/", "acme.example");
     await queue.drain();
@@ -481,10 +481,31 @@ describe("functional review regressions", () => {
     expect(result.removed).toBe(0);
     const kept = await db.select().from(schema.userJobs);
     expect(kept).toHaveLength(4);
-    expect(kept.filter(job => job.archivedAt)).toHaveLength(3);
+    // The decided role and the role a CV was written for stay in the table; the already-archived
+    // row keeps its timestamp and the fourth is archived by the narrowed gate.
+    expect(kept.filter(job => job.archivedAt)).toHaveLength(2);
+    expect(kept.find(job => job.jobId === rows[0]!.jobId)!.archivedAt).toBeNull();
+    expect(kept.find(job => job.jobId === rows[2]!.jobId)!.archivedAt).toBeNull();
     expect(kept.every(j => !j.inTable && !j.nearMiss)).toBe(true);
     expect((await db.select().from(schema.decisions))[0]!.reason).toBe("Too junior");
   });
+
+  it("archives an account's non-matches after the scan commits, not inside it", async () => {
+    // `archiveNonMatches` takes a transaction of its own and runs once the scan has committed, so
+    // the source's row lock is not held for it. The effect must be the same: a role the account's
+    // gate no longer admits is archived by the scan that observed it.
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    expect((await jobsInTable()).filter(r => r.inTable)).toHaveLength(4);
+
+    await setGate({ includeKeywords: ["no-match"] });
+    const [source] = await db.select().from(schema.careerSources);
+    const outcome = await _scanSourceForTests(deps, company, source!, await deps.settings(), null);
+    expect(outcome.status).toBe("ok");
+    const views = await db.select().from(schema.userJobs);
+    expect(views.every(v => !v.inTable && v.archivedAt !== null)).toBe(true);
+  }, 60_000);
 
   it("limits description gate refreshes to their role and rechecks old closed roles globally", async () => {
     await setGate({});
@@ -581,13 +602,74 @@ describe("functional review regressions", () => {
     const scoreJob = vi.fn().mockResolvedValue({ score: 80, verdict: 'strong', rationale: 'Fixture' });
     const scoringDeps = { ...deps, ai: { ...deps.ai, enabled: true, scoreJob } } as unknown as WorkerDeps;
     const task = { payload: { userId: user.id, jobId: view!.jobId } } as never;
+    const stored = async () => (await db.select().from(schema.userJobs).where(eq(schema.userJobs.jobId, view!.jobId)))[0]!;
     await handleScoreJob(task, scoringDeps);
-    await handleScoreJob(task, scoringDeps);
+    // What the score was computed from is kept on this account's view of the role, not as a row
+    // per (account, role) in the settings table that every hot-path read would then ship.
+    const first = await stored();
+    expect(first.scoreInputHash).toMatch(/^[0-9a-f]{40}$/);
+    expect(await db.select().from(schema.settings)).toHaveLength(0);
+
+    expect(await handleScoreJob(task, scoringDeps)).toEqual({ skipped: "scoring inputs unchanged" });
     expect(scoreJob).toHaveBeenCalledTimes(1);
+    // Skipped means nothing was asked of the model, so nothing was billed.
+    expect(await db.select().from(schema.aiCalls)).toHaveLength(0);
+    expect((await stored()).scoreInputHash).toBe(first.scoreInputHash);
+
     await db.insert(schema.cvLibraries).values({ userId: user.id, version: 100, content: { name: 'Test', contact: '', profile: 'New evidence', entries: [] } });
     await handleScoreJob(task, scoringDeps);
     expect(scoreJob).toHaveBeenCalledTimes(2);
+    expect((await stored()).scoreInputHash).not.toBe(first.scoreInputHash);
   });
+  it("skips an exhausted account's scoring cleanly, and scores again once its budget is raised", async () => {
+    await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [view] = await db.select().from(schema.userJobs).where(eq(schema.userJobs.inTable, true));
+    const scoreJob = vi.fn().mockResolvedValue({ score: 80, verdict: "strong", rationale: "Fixture" });
+    const scoringDeps = { ...deps, ai: { ...deps.ai, enabled: true, scoreJob } } as unknown as WorkerDeps;
+    const task = { payload: { userId: user.id, jobId: view!.jobId } } as never;
+    // This account's $1 is spent, so this account stops; nobody else's budget is touched.
+    await db.insert(schema.userSettings).values({ userId: user.id, key: "aiBudgetUsd", value: 1 });
+    await db.insert(schema.aiCalls).values({ userId: user.id, callSite: "A5", model: "fixture", costUsd: 1, at: now });
+    // A skipped result, not a thrown refusal: the task finishes done and never reaches Health's failures.
+    expect(await handleScoreJob(task, scoringDeps)).toEqual({ skipped: "account ai budget exceeded" });
+    expect(scoreJob).not.toHaveBeenCalled();
+    // Nothing was attempted, so nothing more was billed and the role is simply left unscored.
+    expect(await db.select().from(schema.aiCalls)).toHaveLength(1);
+    const [unscored] = await db.select().from(schema.userJobs).where(eq(schema.userJobs.jobId, view!.jobId));
+    expect(unscored!.fitScore).toBeNull();
+
+    // An administrator raises this account's budget: the same role scores, on the same evidence.
+    await db.update(schema.userSettings).set({ value: 50 })
+      .where(and(eq(schema.userSettings.userId, user.id), eq(schema.userSettings.key, "aiBudgetUsd")));
+    expect(await handleScoreJob(task, scoringDeps)).toMatchObject({ score: 80, verdict: "strong" });
+    expect(scoreJob).toHaveBeenCalledTimes(1);
+    const [scored] = await db.select().from(schema.userJobs).where(eq(schema.userJobs.jobId, view!.jobId));
+    expect(scored!.fitScore).toBe(80);
+  }, 60_000);
+
+  it("leaves an exhausted follower's roles unqueued when a scan fans out", async () => {
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources);
+    const aiDeps = { ...deps, ai: { ...deps.ai, enabled: true } } as unknown as WorkerDeps;
+    const scoreTasks = () => db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"));
+    const budget = (value: number) => db.insert(schema.userSettings).values({ userId: user.id, key: "aiBudgetUsd", value })
+      .onConflictDoUpdate({ target: [schema.userSettings.userId, schema.userSettings.key], set: { value } });
+
+    await budget(0);
+    await _scanSourceForTests(aiDeps, company, source!, await deps.settings(), null);
+    // The scan still observes and stores everything; only this account's scoring is held back,
+    // and no task was queued that could only fail at the hold.
+    expect(await scoreTasks()).toHaveLength(0);
+    expect((await db.select().from(schema.userJobs).where(eq(schema.userJobs.inTable, true))).length).toBeGreaterThan(0);
+    expect((await db.select().from(schema.tasks)).filter((row) => row.status === "failed")).toHaveLength(0);
+
+    await budget(25);
+    await _scanSourceForTests(aiDeps, company, source!, await deps.settings(), null);
+    expect((await scoreTasks()).length).toBeGreaterThan(0);
+  }, 60_000);
+
   it("does not score legacy non-matches even when old settings enabled them", async () => {
     await addCompany("https://www.acme.example/", "acme.example");
     await queue.drain();
@@ -851,5 +933,81 @@ describe("shared catalogue", () => {
     // The posting was already known to the scan, so it is seeded for this account rather than news.
     expect(rows[0]!.seeded).toBe(true);
     expect(await db.select().from(schema.scans)).toHaveLength(1);
+  }, 60_000);
+
+  it("widens and narrows one account's gate over the stored listing, leaving the other account alone", async () => {
+    // The catalogue is shared and the table is per account: changing one gate must move that
+    // account's rows only, and must never need the company scanned again.
+    await setGate({});
+    const engineer = await ensureTestUser(db, "widen@example.com", "member");
+    const setEngineerGate = async (includeKeywords: string[]) => {
+      const value = { includeKeywords, excludeKeywords: [], matchFields: ["title"], locationTerms: [], includeRemote: true };
+      await db.insert(schema.userSettings).values({ userId: engineer.id, key: "gate", value })
+        .onConflictDoUpdate({ target: [schema.userSettings.userId, schema.userSettings.key], set: { value } });
+      deps.invalidateSettings();
+    };
+    await setEngineerGate(["engineer"]);
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await subscribeToCompany(db, engineer.id, company.id);
+    await queue.drain();
+
+    // One scan, one shared listing, two different tables.
+    expect(await db.select().from(schema.scans)).toHaveLength(1);
+    expect(await db.select().from(schema.jobs)).toHaveLength(5);
+    expect((await jobsInTable()).map(r => r.title)).toEqual(["Head of Business Operations", "Operations Analyst", "Operations Manager", "Senior Operations Associate"]);
+    expect((await jobsInTable(engineer)).map(r => r.title)).toEqual(["Software Engineer, Platform"]);
+
+    // Widening admits postings the scan already stored, with no second scan.
+    await setEngineerGate(["engineer", "operations"]);
+    await reevaluateGate(db, engineer.id, await deps.userSettings(engineer.id), now);
+    expect((await jobsInTable(engineer)).filter(r => r.inTable)).toHaveLength(5);
+    expect(await db.select().from(schema.scans)).toHaveLength(1);
+
+    // Narrowing archives this account's non-matches, except the two it has invested in.
+    const engineerRows = await jobsInTable(engineer);
+    const decided = engineerRows.find(r => r.title === "Operations Manager")!;
+    const withCv = engineerRows.find(r => r.title === "Operations Analyst")!;
+    await db.insert(schema.decisions).values({ userId: engineer.id, jobId: decided.jobId, decision: "apply", jobTitle: decided.title, companyName: "Acme" });
+    await db.insert(schema.cvDrafts).values({ userId: engineer.id, jobId: withCv.jobId, jobTitle: withCv.title, companyName: "Acme", jobDescription: "Role", libraryVersion: 1, librarySnapshot: { name: "Test", contact: "", profile: "", entries: [] }, model: "fixture" });
+    await setEngineerGate(["engineer"]);
+    await reevaluateGate(db, engineer.id, await deps.userSettings(engineer.id), now);
+
+    const views = await db.select().from(schema.userJobs).where(eq(schema.userJobs.userId, engineer.id));
+    const archived = new Set(views.filter(v => v.archivedAt).map(v => v.jobId));
+    expect(archived.has(decided.jobId)).toBe(false);
+    expect(archived.has(withCv.jobId)).toBe(false);
+    expect(archived.size).toBe(2);
+    // The other account is untouched throughout: same rows, none archived.
+    const mine = await db.select().from(schema.userJobs).where(eq(schema.userJobs.userId, user.id));
+    expect(mine).toHaveLength(4);
+    expect(mine.every(v => v.inTable && v.archivedAt === null)).toBe(true);
+    expect(await db.select().from(schema.scans)).toHaveLength(1);
+  }, 120_000);
+
+  it("keeps a description a fetch_description stored while the scan was in flight", async () => {
+    // The scan reads every stored description before it opens its transaction. A description task
+    // that commits in that window must not be written back to null by the scan's refresh.
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources);
+
+    // A feed that stops supplying descriptions, and a posting that has none stored yet.
+    setJobs([{ ...JOB_OPERATIONS_MANAGER, content: undefined }]);
+    const [target] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, "id:4001001"));
+    await db.update(schema.jobs).set({ descriptionText: null, descriptionHash: null, descriptionFetchedAt: null }).where(eq(schema.jobs.id, target!.id));
+
+    // `assertOwnership` runs as the scan's transaction opens, which is exactly the window a
+    // concurrent fetch_description commits in.
+    const text = "Own operations for our London site, written by the description task.";
+    const racing: WorkerDeps = { ...deps, assertOwnership: async () => {
+      await db.update(schema.jobs).set({ descriptionText: text, descriptionHash: sha1(text), descriptionFetchedAt: new Date(now.getTime() + 1000) }).where(eq(schema.jobs.id, target!.id));
+    } };
+    const outcome = await _scanSourceForTests(racing, company, source!, await deps.settings(), null);
+    expect(outcome.status).toBe("ok");
+
+    const [after] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, target!.id));
+    expect(after!.descriptionText).toBe(text);
+    expect(after!.descriptionHash).toBe(sha1(text));
   }, 60_000);
 });

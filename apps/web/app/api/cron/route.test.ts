@@ -90,12 +90,59 @@ describe("the cron route", () => {
     expect((await call("not-the-secret")).status).toBe(401);
   });
 
-  it("leaves work to a recently reporting persistent worker", async () => {
-    await db.insert(schema.settings).values({ key: "internal:workerHeartbeat", value: { at: new Date().toISOString() } });
+  it("leaves the schedule and the queue to a recently reporting persistent worker", async () => {
+    // The daily run is due, and a task is waiting: beside a healthy worker this route does neither.
+    await db.insert(schema.settings).values([
+      { key: "internal:workerHeartbeat", value: { at: new Date().toISOString() } },
+      { key: "scanTime", value: "00:00" },
+      { key: "timezone", value: "UTC" },
+    ]);
+    const [company] = await db
+      .insert(schema.companies)
+      .values({ name: "acme.example", homepageUrl: "https://www.acme.example/", domain: "acme.example" })
+      .returning();
+    await enqueueTask(db, "discover", { companyId: company!.id, reason: "added" }, {
+      dedupeKey: dedupeKeyFor("discover", { companyId: company!.id }),
+      priority: priorityFor("discover"),
+    });
+
     const response = await call(SECRET);
     expect(response.status).toBe(200);
-    expect((await response.json()).processed).toBe(0);
+    const body = (await response.json()) as { ok: boolean; processed: number; standDown?: string };
+    expect(body).toMatchObject({ ok: true, processed: 0, standDown: "worker" });
+    // No scheduler tick either: the daily run is the worker's to queue.
+    const tasks = await db.select().from(schema.tasks);
+    expect(tasks.map((task) => task.type)).toEqual(["discover"]);
+    expect(tasks[0]!.status).toBe("queued");
+    expect(await db.select().from(schema.scanRuns)).toHaveLength(0);
   });
+
+  it("schedules but does not drain when the fallback is off", async () => {
+    delete process.env.CHRISTOPHER_SERVERLESS_FALLBACK;
+    try {
+      await db.insert(schema.settings).values([
+        { key: "scanTime", value: "00:00" },
+        { key: "timezone", value: "UTC" },
+      ]);
+      const [company] = await db
+        .insert(schema.companies)
+        .values({ name: "acme.example", homepageUrl: "https://www.acme.example/", domain: "acme.example" })
+        .returning();
+      await enqueueTask(db, "discover", { companyId: company!.id, reason: "added" }, {
+        dedupeKey: dedupeKeyFor("discover", { companyId: company!.id }),
+        priority: priorityFor("discover"),
+      });
+      const body = (await (await call(SECRET)).json()) as { processed: number; drained?: boolean };
+      expect(body).toMatchObject({ processed: 0, drained: false });
+      // The tick queues the day's work; with no worker and no fallback, nothing runs it.
+      const tasks = await db.select().from(schema.tasks);
+      expect(tasks.map((task) => task.type).sort()).toEqual(["discover", "run_daily"]);
+      expect(tasks.every((task) => task.status === "queued")).toBe(true);
+      expect(await db.select().from(schema.scanRuns)).toHaveLength(0);
+    } finally {
+      process.env.CHRISTOPHER_SERVERLESS_FALLBACK = "1";
+    }
+  }, 120_000);
 
   it("discovers a careers source and scans it, with no worker running", async () => {
     const [company] = await db

@@ -21,7 +21,7 @@ export default async function AdminSettingsPage() {
     <div className="space-y-6">
       <PageHeader
         title="System settings"
-        description="The daily run, the models and the budget are shared by every account. Personal filters and CV preferences live on each account's Settings page."
+        description="The daily run and the models apply to every account. Personal filters, CV preferences and each account's own monthly AI budget live elsewhere: Settings for the account, Accounts for anyone's budget."
         actions={
           <form action={runDailyScanNow}>
             <Button type="submit" variant="primary">Run daily scan now</Button>
@@ -55,15 +55,11 @@ export default async function AdminSettingsPage() {
 
       <Card title="AI">
         <SettingsForm action={saveAiSettings}>
-          <p className="text-12 text-muted">One key, one budget, for every account. Operations shows spend per account.</p>
+          <p className="text-12 text-muted">One key and one default model for every account. Spending is bounded per account: each has its own monthly budget, which it can set on Settings and which you can set for anyone in <a href="/admin" className="text-fg underline">Accounts</a>. <a href="/admin/health" className="text-fg underline">Operations</a> shows what every account&apos;s spend bought.</p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className={labelClass}>
               <span className={fieldLabelClass}>Default model</span>
               <ModelSelect name="defaultModel" value={settings.defaultModel} className={selectClass} />
-            </label>
-            <label className={labelClass}>
-              <span className={fieldLabelClass}>Monthly AI budget (USD)</span>
-              <input name="monthlyAiBudgetUsd" type="number" min={0} step={1} defaultValue={settings.monthlyAiBudgetUsd} className={inputClass} />
             </label>
           </div>
         </SettingsForm>

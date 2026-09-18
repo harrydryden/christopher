@@ -4,7 +4,7 @@ import { decisionDigest } from "@christopher/ai";
 import { eligibleCvEvidence, evidenceHeading, sha1, dedupeKeyFor, modelForCallSite, priorityFor, type TaskPayloads } from "@christopher/core";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
-import { aiBudgetExceeded } from "../context";
+import { aiBudgetStop } from "../context";
 import { log } from "../log";
 
 /** Every account carries the seed vocabulary; new accounts get it at creation, this covers older ones. */
@@ -18,7 +18,8 @@ export async function handleTagReason(task: Task, deps: WorkerDeps): Promise<unk
   if (!decision) return { skipped: "decision not found" };
   if (decision.superseded || decision.tagsEdited) return { skipped: "decision superseded or tags edited by user" };
   if (!decision.reason.trim()) return { skipped: "no reason text" };
-  if (await aiBudgetExceeded(deps)) return { skipped: "ai budget exceeded" };
+  const tagStop = await aiBudgetStop(deps, decision.userId);
+  if (tagStop) return { skipped: tagStop };
 
   await seedTagVocabulary(deps.db, decision.userId);
   const vocab = await deps.db.select({ tag: schema.tagVocabulary.tag }).from(schema.tagVocabulary)
@@ -56,7 +57,10 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
   const [choice] = await deps.db.select({ decision: schema.decisions.decision }).from(schema.decisions)
     .where(and(eq(schema.decisions.userId, userId), eq(schema.decisions.jobId, jobId), eq(schema.decisions.superseded, false))).limit(1);
   if (!view.inTable && choice?.decision !== "apply") return { skipped: "role does not match and is not shortlisted" };
-  if (await aiBudgetExceeded(deps)) return { skipped: "ai budget exceeded" };
+  // Asked before any of the scoring evidence is gathered: an account with nothing left to spend
+  // skips this role, and the task finishes done rather than failing at the hold and retrying.
+  const scoreStop = await aiBudgetStop(deps, userId);
+  if (scoreStop) return { skipped: scoreStop };
 
   const [company] = await deps.db.select().from(schema.companies).where(eq(schema.companies.id, job.companyId)).limit(1);
   const profile = await latestProfileFor(deps.db, userId);
@@ -85,10 +89,10 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
     });
     input.profileMarkdown += "\nEvidence library (absence is not proof of inability):\n" + JSON.stringify({ profile: library.content.profile, employment: library.content.employment?.filter(job => entries.some(entry => entry.employmentId === job.id)), entries });
   }
+  // What the score was computed from. It is kept on this account's own view of the role, so an
+  // unchanged rerun costs one row read rather than a row per (account, role) accumulating forever.
   const fingerprint = sha1(JSON.stringify([input, modelForCallSite(settings, "A5")]));
-  const key = `internal:scoreInput:${userId}:${job.id}`;
-  const [previous] = await deps.db.select({ value: schema.settings.value }).from(schema.settings).where(eq(schema.settings.key, key));
-  if (view.fitScore !== null && previous?.value === fingerprint) return { skipped: "scoring inputs unchanged" };
+  if (view.fitScore !== null && view.scoreInputHash === fingerprint) return { skipped: "scoring inputs unchanged" };
   const result = await deps.ai.scoreJob(input,
     { refType: "job", refId: job.id, userId },
   );
@@ -104,11 +108,11 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
       fitRationale: result.rationale,
       fitProfileVersion: profile?.version ?? null,
       fitScoredAt: deps.now(),
+      scoreInputHash: fingerprint,
       hidden: false,
       updatedAt: deps.now(),
     })
     .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, job.id)));
-  await tx.insert(schema.settings).values({ key, value: fingerprint }).onConflictDoUpdate({ target: schema.settings.key, set: { value: fingerprint, updatedAt: deps.now() } });
   await tx.insert(schema.jobEvents).values({ jobId: job.id, userId, type: "scored", payload: { score: result.score, verdict: result.verdict } });
   return { score: result.score, verdict: result.verdict };
   });
@@ -151,7 +155,8 @@ const RESYNTHESIS_THRESHOLD = 5;
 export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { userId, force } = (task.payload ?? {}) as TaskPayloads["synthesize_profile"];
   if (!userId) return { skipped: "no account on task" };
-  if (await aiBudgetExceeded(deps)) return { skipped: "ai budget exceeded" };
+  const profileStop = await aiBudgetStop(deps, userId);
+  if (profileStop) return { skipped: profileStop };
   const settings = await deps.userSettings(userId);
   const current = await latestProfile(deps, userId);
   const decisions = await decisionRows(deps, userId, 500);
@@ -211,17 +216,11 @@ export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Pro
 export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { userId } = (task.payload ?? {}) as TaskPayloads["suggest_filters"];
   if (!userId) return { skipped: "no account on task" };
-  if (await aiBudgetExceeded(deps)) return { skipped: "ai budget exceeded" };
+  const filterStop = await aiBudgetStop(deps, userId);
+  if (filterStop) return { skipped: filterStop };
   const settings = await deps.userSettings(userId);
   const decisions = await decisionRows(deps, userId, 300);
   if (decisions.length === 0) return { skipped: "no decisions" };
-
-  const nearMissIds = await deps.db
-    .select({ id: schema.userJobs.jobId })
-    .from(schema.userJobs)
-    .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.nearMiss, true)))
-    .limit(200);
-  const nearMissDecisions = decisions.filter((d) => nearMissIds.some((n) => n.id === d.jobId));
 
   const previouslyRejected = await deps.db
     .select({ type: schema.filterSuggestions.type, value: schema.filterSuggestions.value })
@@ -246,7 +245,6 @@ export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promis
     excludeKeywords: settings.gate.excludeKeywords,
     locationTerms: settings.gate.locationTerms,
     decisions: decisions.map(map),
-    nearMissDecisions: nearMissDecisions.map(map),
     previouslyRejected: previouslyRejected.map((r) => ({ type: r.type, value: r.value })),
   }, { refType: "filters", refId: userId, userId });
   if (!result) return { skipped: "no ai result" };
@@ -266,21 +264,29 @@ export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promis
 }
 
 /** Re-evaluate the keyword and location gate for one account, or every account, after a settings change. */
+/**
+ * Re-run one account's gate, or every account's when the task names none.
+ *
+ * The lease is keyed per account, so one account's re-evaluation never makes another's wait or
+ * fail busy: the boot task and settings saves enqueue one task per account and they run in
+ * parallel across the queue's slots. A task that does name an account takes only that account's
+ * lease.
+ */
 export async function handleReevaluateGate(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { userId, companyId } = (task.payload ?? {}) as TaskPayloads["reevaluate_gate"];
-  return withResourceLease(deps, "reevaluate-gate", async locked => {
-    deps.invalidateSettings();
-    const users = userId ? [userId] : await listUserIds(deps.db);
-    const outcomes: Record<string, unknown> = {};
-    for (const id of users) {
+  deps.invalidateSettings();
+  const users = userId ? [userId] : await listUserIds(deps.db);
+  const outcomes: Record<string, unknown> = {};
+  for (const id of users) {
+    outcomes[id] = await withResourceLease(deps, `reevaluate-gate:${id}`, async locked => {
       const settings = await deps.userSettings(id);
-      outcomes[id] = await deps.db.transaction(async tx => {
+      return deps.db.transaction(async tx => {
         await locked.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
         return reevaluateGate(tx as unknown as WorkerDeps["db"], id, settings, deps.now(), { companyId });
       });
-    }
-    return { accounts: users.length, outcomes };
-  });
+    });
+  }
+  return { accounts: users.length, outcomes };
 }
 
 export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<unknown> {

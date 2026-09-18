@@ -75,7 +75,8 @@ export function describeFilterSuggestion(s: Pick<FilterSuggestion, "type" | "val
     case "location":
       return extracted.kind === "term" ? `Add "${extracted.term}" to the location filter` : "Add a location filter term";
     case "hide_threshold":
-      return extracted.kind === "threshold" ? `Set the hide threshold to ${extracted.threshold}` : "Enable the hide threshold";
+      // Retired: such rows are filtered out of the pending list and settled, never applied.
+      return "Automatic score hiding (retired)";
     case "pause_company":
       return `Pause ${companyName ?? "a company"}`;
     default:

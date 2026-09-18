@@ -4,7 +4,7 @@ import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 import { finaliseScanRuns } from "./handlers/daily";
 import { LeaseBusyError } from "./lease";
-import { log } from "./log";
+import { log, withLogContext } from "./log";
 import { vitals } from "./vitals";
 
 export type TaskHandler = (task: Task, deps: WorkerDeps) => Promise<unknown>;
@@ -495,7 +495,12 @@ export class TaskQueue {
     return { heapUsedMb: after.heapUsedMb, heapDeltaMb: after.heapUsedMb - before.heapUsedMb, heapLimitMb: after.heapLimitMb };
   }
 
+  /** Every line emitted while a task runs — at any depth — carries its id and type. */
   async runTask(task: Task): Promise<void> {
+    return withLogContext({ taskId: task.id, taskType: task.type }, () => this.runTaskInContext(task));
+  }
+
+  private async runTaskInContext(task: Task): Promise<void> {
     const handler = this.handlers[task.type];
     const started = Date.now();
     this.active++;
@@ -513,7 +518,7 @@ export class TaskQueue {
       // The heap at both ends of every task: an out-of-memory kills the process without reaching
       // any catch, so the last "task start" line before a restart is the only evidence of which
       // task was holding what, and the delta is what says which type grows the heap.
-      log.info("task start", { id: task.id, type: task.type, attempt: task.attempts, workerId: this.opts.workerId, commit: process.env.RENDER_GIT_COMMIT ?? null, queueWaitMs: Math.max(0, Date.now() - task.createdAt.getTime()), heapUsedMb: before.heapUsedMb, heapLimitMb: before.heapLimitMb });
+      log.info("task start", { id: task.id, type: task.type, attempt: task.attempts, workerId: this.opts.workerId, commit: process.env.RENDER_GIT_COMMIT ?? null, readyWaitMs: readyWaitMs(task), heapUsedMb: before.heapUsedMb, heapLimitMb: before.heapLimitMb });
       const deadlineMs = deadlineMsFor(task.type, this.opts.deadlines);
       const work = handler(task, { ...this.deps, assertOwnership: db => assertTaskOwnership(db, task) });
       const result = await withDeadline(work, deadlineMs, task.type, started).catch(err => {
@@ -556,6 +561,17 @@ export class TaskQueue {
       this.active--;
     }
   }
+}
+
+/**
+ * How long the task waited after it was ready to run. Measuring from `createdAt` counted the
+ * backoff and the schedule a task was deliberately given as queue time, so a retry in an hour or a
+ * scan queued for the morning read as an hour-long backlog; this measures only the part that
+ * capacity explains.
+ */
+function readyWaitMs(task: Task): number {
+  const readyAt = Math.max(task.createdAt.getTime(), task.runAfter?.getTime() ?? 0);
+  return Math.max(0, Date.now() - readyAt);
 }
 
 export function sleep(ms: number): Promise<void> {

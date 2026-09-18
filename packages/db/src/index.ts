@@ -5,15 +5,15 @@
  */
 export * from "./schema";
 export * as schema from "./schema";
-export { createDb, getDb, type Db, type CreateDbOptions } from "./client";
+export { createDb, getDb, poolStats, slowQueryCount, type Db, type CreateDbOptions } from "./client";
 export { enqueueTask, pendingTaskCounts, taskById, activeTaskFor, type EnqueueOptions } from "./tasks";
 
 export { reevaluateGate, archiveNonMatches, type GateScope, type ArchiveScope } from "./gate";
 export { appendProfile, latestProfileFor } from "./profiles";
 export { workloadMetrics } from "./scaling";
-export { addHttpHostDaily, listHttpHostDaily, pruneHttpHostDaily, emptyHttpCounters, latencyBucketIndex, LATENCY_BUCKET_UPPER_MS, type HttpHostCounters, type HttpHostDailyDelta } from "./http-rollup";
+export { addHttpHostDaily, listHttpHostDaily, pruneHttpHostDaily, emptyHttpCounters, latencyBucketIndex, LATENCY_BUCKET_UPPER_MS, type HttpHostCounters, type HttpHostDailyDelta, type HttpHostDailyRow } from "./http-rollup";
 export { recordWorkerEvent, listWorkerEvents, countWorkerEvents, pruneWorkerEvents, type WorkerEventInput } from "./worker-events";
-export { accountAiSpend, totalAiSpend, aiUsageByAccount, releaseAiHolds, type AiAccountUsage, type ReleasedHolds } from "./ai-budget";
+export { accountAiSpend, totalAiSpend, aiUsageByAccount, releaseAiHolds, aiOutcome, aiOutcomeSql, AI_OUTCOMES, costPerCvBuild, costPerScoredRole, type AiAccountUsage, type AiOutcome, type CvBuildCost, type CvBuildCosts, type ReleasedHolds, type ScoredRoleCost } from "./ai-budget";
 
 export { roleStatusSql } from "./role-workflow";
 

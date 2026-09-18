@@ -128,17 +128,30 @@ async function scanSource(
   const baseCtx = makeFetchContext(deps);
   const responses: Array<{ url: string; status: number; body: string }> = [];
   let snapshotChars = 0;
-  // Every byte the adapter reads for this listing, recorded on the scan row. It is the number that
-  // tells an operator which source is about to run the worker out of memory, before it does.
+  // Every byte this scan actually transferred, recorded on the scan row. It is the number that
+  // tells an operator which source is about to run the worker out of memory, before it does — so a
+  // body the fetcher served from its cache after a 304 is not counted (nothing came down the wire),
+  // and a browser render is, because those bytes were read too.
   let fetchedBytes = 0;
+  // What the scan cost the host: every request attempted, and how many of them the host answered
+  // with a 304. A source whose listing revalidates is nearly free; one that never does is not.
+  let requests = 0;
+  let revalidated = 0;
   const ctx: FetchContext = { ...baseCtx, fetchText: async (url, init) => {
+    requests += 1;
     const response = await baseCtx.fetchText(url, init);
-    fetchedBytes += Buffer.byteLength(response.body, "utf8");
+    if (response.revalidated) revalidated += 1;
+    else fetchedBytes += Buffer.byteLength(response.body, "utf8");
     const body = response.body.slice(0, Math.max(0, 2_000_000 - snapshotChars));
     snapshotChars += body.length;
     if (body) responses.push({ url: response.url, status: response.status, body });
     return response;
-  } };
+  }, render: baseCtx.render ? async (url, opts) => {
+    requests += 1;
+    const page = await baseCtx.render!(url, opts);
+    fetchedBytes += Buffer.byteLength(page.html, "utf8");
+    return page;
+  } : undefined };
   const spec: SourceSpec = {
     type: source.type,
     url: source.url,
@@ -504,6 +517,8 @@ async function scanSource(
     error,
     durationMs: Date.now() - started,
     fetchedBytes,
+    requests,
+    revalidated,
     rawSnapshot,
   });
 
@@ -553,6 +568,8 @@ async function scanSource(
     followers: followers.length,
     deferredDescriptions: deferred.size,
     fetchedBytes,
+    requests,
+    revalidated,
     heapUsedMb: Math.round(process.memoryUsage().heapUsed / 1_048_576),
     ms: Date.now() - started,
   });
@@ -667,7 +684,7 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
 
   let postings = ats.extractPostingsFromHtml(html, finalUrl, spec.recipe);
   const httpHash = supplied ? undefined : sha1(html.replace(/\s+/g, " "));
-  const wantsRender = !supplied && deps.browser && (postings.length === 0 || (!ats.nextListingPage(html, finalUrl) && /<(?:button|a)[^>]*>\s*(?:next|load more|show more)/i.test(html)));
+  const wantsRender = !supplied && ctx.render && (postings.length === 0 || (!ats.nextListingPage(html, finalUrl) && /<(?:button|a)[^>]*>\s*(?:next|load more|show more)/i.test(html)));
   // A server-rendered list with a "load more" control was rendered every scan
   // to reach the rest of it. When the first page is byte-identical to the one
   // behind the last render, the rest has not moved either: reuse that capture
@@ -681,9 +698,14 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
     return { postings: cached.postings, method: "http", dropped: 0, contentHash: cached.contentHash, unchanged: true, html, finalUrl, httpHash, renderedAt: cached.renderedAt };
   }
   if (wantsRender) {
-    const rendered = await deps.browser!.render(spec.url, { scrollAndExpand: true });
+    // Through the scan's context, not the browser directly, so a render counts as a request and
+    // its bytes against this scan like any other fetch.
+    const rendered = await ctx.render!(spec.url, { scrollAndExpand: true });
     if (rendered.status !== null && rendered.status >= 400) {
-      throw new SourceFetchError(`Browser returned HTTP ${rendered.status}`, rendered.status === 403 || rendered.status === 429 ? "blocked" : "http", rendered.status);
+      // Same rule as the fetcher: 403 is bot protection and blocks the source, 429 and 503 are the
+      // host pacing us and only fail this scan.
+      const kind = rendered.status === 403 ? "blocked" : rendered.status === 429 || rendered.status === 503 ? "rate_limited" : "http";
+      throw new SourceFetchError(`Browser returned HTTP ${rendered.status}`, kind, rendered.status);
     }
     const captures = rendered.listingPages?.length ? rendered.listingPages : [{ html: rendered.html, url: rendered.finalUrl }];
     const outcomes: HtmlScanOutcome[] = [];

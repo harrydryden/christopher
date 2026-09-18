@@ -1,7 +1,11 @@
 /** The polite fetcher: identification, robots.txt, rate limiting, and bot-protection detection. */
+import net from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SourceFetchError } from "@christopher/core";
-import { HARD_MAX_BODY_BYTES, PoliteFetcher, userAgentFor } from "./fetcher";
+import { createDb, listHttpHostDaily } from "@christopher/db";
+import { runMigrations } from "@christopher/db/migrate";
+import { sql } from "drizzle-orm";
+import { HARD_MAX_BODY_BYTES, HttpTrafficLedger, PoliteFetcher, userAgentFor } from "./fetcher";
 import { startTestServer, type TestServer } from "./test-server";
 
 let server: TestServer;
@@ -22,7 +26,10 @@ beforeAll(async () => {
       "blocked.test": {
         "/robots.txt": { status: 404, body: "" },
         "/403": { status: 403, body: "<html><body>forbidden</body></html>" },
-        "/429": { status: 429, body: "<html><body>slow down</body></html>" },
+        "/429": { status: 429, body: "<html><body>slow down</body></html>", headers: { "retry-after": "5" } },
+        "/429-no-hint": { status: 429, body: "<html><body>slow down</body></html>" },
+        "/503": { status: 503, body: "<html><body>unavailable</body></html>" },
+        "/503-challenge": { status: 503, body: "<html><head><title>Just a moment...</title></head><body>cf-browser-verification</body></html>" },
         "/challenge": { body: "<html><head><title>Just a moment...</title></head><body>cf-browser-verification</body></html>" },
       },
       "boards-api.greenhouse.io": {
@@ -98,13 +105,29 @@ describe("polite fetcher", () => {
 
   it("reports bot protection as blocked rather than as a normal failure", async () => {
     const f = fetcher();
-    for (const [path, status] of [["/403", 403], ["/429", 429]] as const) {
+    const error = await f.fetchText("https://blocked.test/403").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(SourceFetchError);
+    expect((error as SourceFetchError).kind).toBe("blocked");
+    expect((error as SourceFetchError).status).toBe(403);
+    const challenge = await f.fetchText("https://blocked.test/challenge").catch((e: unknown) => e);
+    expect((challenge as SourceFetchError).kind).toBe("blocked");
+  });
+
+  it("treats 429 and 503 as a back-off: rate limited, paced, never blocked", async () => {
+    // A blocked source stays blocked until someone clears it. A host asking us to come back in a
+    // minute must not cost a source that, so it is a rate limit: the host is paced and the scan
+    // fails and retries like any other failure.
+    const paced: Array<{ host: string; delayMs: number }> = [];
+    const f = fetcher({ deferHost: async (host, delayMs) => { paced.push({ host, delayMs }); } });
+    for (const [path, status, delayMs] of [["/429", 429, 5000], ["/429-no-hint", 429, 60_000], ["/503", 503, 60_000]] as const) {
       const error = await f.fetchText(`https://blocked.test${path}`).catch((e: unknown) => e);
       expect(error).toBeInstanceOf(SourceFetchError);
-      expect((error as SourceFetchError).kind).toBe("blocked");
+      expect((error as SourceFetchError).kind).toBe("rate_limited");
       expect((error as SourceFetchError).status).toBe(status);
+      expect(paced.at(-1)).toEqual({ host: "blocked.test", delayMs });
     }
-    const challenge = await f.fetchText("https://blocked.test/challenge").catch((e: unknown) => e);
+    // Bot protection served under a 503 is still bot protection: waiting does not fix it.
+    const challenge = await f.fetchText("https://blocked.test/503-challenge").catch((e: unknown) => e);
     expect((challenge as SourceFetchError).kind).toBe("blocked");
   });
 
@@ -197,5 +220,121 @@ describe("memory bounds", () => {
       await f.fetchText("https://bounded.test/page/33");
       expect(conditional).toEqual(["page/0:none", "page/33:page-33"]);
     } finally { await store.close(); }
+  }, 60_000);
+});
+
+describe("outbound traffic counters", () => {
+  const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test";
+  const today = () => new Date().toISOString().slice(0, 10);
+  let traffic: TestServer;
+  let blackhole: net.Server;
+  const hungSockets = new Set<net.Socket>();
+  let client: ReturnType<typeof createDb>;
+
+  beforeAll(async () => {
+    traffic = await startTestServer({ "traffic.test": {
+      "/etagged": (req) => req.headers["if-none-match"] === "t1" ? { status: 304, body: "", headers: { etag: "t1" } } : { body: "hello world", headers: { etag: "t1" } },
+      "/429": { status: 429, body: "slow", headers: { "retry-after": "1" } },
+      "/403": { status: 403, body: "nope" },
+    } }, ["traffic.test"]);
+    // Accepts the connection and never answers, so the abort is the only way out: a real timeout
+    // rather than a race between a local response and a one-millisecond deadline.
+    blackhole = net.createServer(socket => { hungSockets.add(socket); socket.on("close", () => hungSockets.delete(socket)); });
+    await new Promise<void>(resolve => blackhole.listen(0, "127.0.0.1", resolve));
+    client = createDb(DATABASE_URL, { max: 2 });
+    await runMigrations(client.db);
+  }, 60_000);
+
+  afterAll(async () => {
+    await traffic?.close();
+    // The aborted request leaves its socket open, and close() waits for every one of them.
+    for (const socket of hungSockets) socket.destroy();
+    await new Promise<void>(resolve => blackhole?.close(() => resolve()));
+    await client?.pool.end();
+  });
+
+  /** The mixed sequence, run against a ledger, so each assertion can name the outcome it counts. */
+  async function runMixedSequence(ledger: HttpTrafficLedger) {
+    const slowPort = (blackhole.address() as net.AddressInfo).port;
+    const f = new PoliteFetcher({ userAgent: "test", perHostDelayMs: 0, traffic: ledger,
+      hostMap: { ...traffic.hostMap, "slow.test": `127.0.0.1:${slowPort}` } });
+    const first = await f.fetchText("https://traffic.test/etagged");
+    expect(first.revalidated).toBeUndefined();
+    const second = await f.fetchText("https://traffic.test/etagged");
+    // Nothing came down the wire, and the caller is told so: a 304 must not read as a transfer.
+    expect(second.revalidated).toBe(true);
+    expect(second.body).toBe("hello world");
+    await expect(f.fetchText("https://traffic.test/429")).rejects.toThrow(SourceFetchError);
+    await expect(f.fetchText("https://traffic.test/403")).rejects.toThrow(SourceFetchError);
+    await expect(f.fetchText("https://traffic.test/etagged", { maxBodyBytes: 3 })).rejects.toThrow("refusing truncated");
+    await expect(f.fetchText("https://slow.test/hang", { timeoutMs: 100 })).rejects.toThrow(SourceFetchError);
+  }
+
+  it("counts 200, 304, 429, 403, a body over the cap and a timeout, per host and day", async () => {
+    const ledger = new HttpTrafficLedger(null);
+    await runMixedSequence(ledger);
+    const rows = ledger.snapshot().sort((a, b) => a.host.localeCompare(b.host));
+    expect(rows.map(r => [r.day, r.host, r.via])).toEqual([[today(), "slow.test", "http"], [today(), "traffic.test", "http"]]);
+
+    const board = rows.find(r => r.host === "traffic.test")!;
+    expect(board.requests).toBe(5);
+    expect(board.ok2xx).toBe(2);
+    expect(board.notModified304).toBe(1);
+    expect(board.client4xx).toBe(2);
+    // The status mix accounts for every request once; the reasons sit on top of it, so the 429 is
+    // both a 4xx and a rate limit.
+    expect(board.rateLimited).toBe(1);
+    expect(board.blocked).toBe(1);
+    expect(board.capRejected).toBe(1);
+    // "hello world" twice (the second read is over the cap but was still transferred), plus the
+    // two short error bodies. The 304 transferred nothing.
+    expect(board.bytesIn).toBe("hello world".length * 2 + "slow".length + "nope".length);
+    expect(board.latencyBuckets[0]).toBe(5);
+    expect(board.durationMsSum).toBeGreaterThanOrEqual(0);
+
+    const hung = rows.find(r => r.host === "slow.test")!;
+    expect(hung.requests).toBe(1);
+    expect(hung.timeouts).toBe(1);
+    expect(hung.bytesIn).toBe(0);
+    expect(hung.ok2xx + hung.client4xx + hung.server5xx + hung.redirects3xx + hung.notModified304).toBe(0);
+  });
+
+  it("counts a robots denial without counting a request for it", async () => {
+    const ledger = new HttpTrafficLedger(null);
+    const f = new PoliteFetcher({ userAgent: "test", perHostDelayMs: 0, traffic: ledger, hostMap: server.hostMap, respectRobots: () => true });
+    await expect(f.fetchText("https://www.example.test/private/secret")).rejects.toThrow(SourceFetchError);
+    const [row] = ledger.snapshot();
+    expect(row!.robotsDenied).toBe(1);
+    // One request was made: robots.txt itself. The page was never asked for.
+    expect(row!.requests).toBe(1);
+  });
+
+  it("flushes one row per day, host and via, and a second flush adds to it", async () => {
+    await client.db.execute(sql`delete from http_host_daily where host in ('traffic.test','slow.test')`);
+    const ledger = new HttpTrafficLedger(client.db, { flushIntervalMs: 3_600_000 });
+    try {
+      await runMixedSequence(ledger);
+      await ledger.flush();
+      // Flushing empties the accumulator: what is written is never written twice.
+      expect(ledger.snapshot()).toEqual([]);
+      const first = (await listHttpHostDaily(client.db, 1)).filter(r => r.host === "traffic.test");
+      expect(first).toHaveLength(1);
+      expect(first[0]!.requests).toBe(5);
+      expect(first[0]!.latencyBuckets[0]).toBe(5);
+
+      await runMixedSequence(ledger);
+      await ledger.flush();
+      const second = (await listHttpHostDaily(client.db, 1)).filter(r => r.host === "traffic.test");
+      // Still one row for the day, with both runs in it: the rollup adds, it does not replace.
+      expect(second).toHaveLength(1);
+      expect(second[0]!.requests).toBe(10);
+      expect(second[0]!.notModified304).toBe(2);
+      expect(second[0]!.rateLimited).toBe(2);
+      expect(second[0]!.latencyBuckets[0]).toBe(10);
+      expect(second[0]!.bytesIn).toBe(first[0]!.bytesIn * 2);
+    } finally {
+      await ledger.close();
+      await client.db.execute(sql`delete from http_host_daily where host in ('traffic.test','slow.test')`);
+    }
   }, 60_000);
 });

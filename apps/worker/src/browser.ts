@@ -3,6 +3,7 @@
  * One browser per process, one context per render, images/fonts/media blocked.
  */
 import type { RenderedPage } from "@christopher/core";
+import type { HttpTrafficLedger } from "./fetcher";
 import { log } from "./log";
 
 type Playwright = typeof import("playwright");
@@ -16,6 +17,12 @@ export interface BrowserOptions {
   concurrency?: number;
   /** Politeness for one navigation: reserved once, before the page is opened, never per subresource. */
   beforeNavigate?: (host: string) => Promise<void>;
+  /**
+   * The same ledger the fetcher writes to, so a render is visible as traffic too. A render is
+   * counted as one request under `via: "browser"` — the subresources it makes are the page's
+   * doing, not ours, and counting them would drown the number that says what a board costs us.
+   */
+  traffic?: HttpTrafficLedger;
 }
 
 const COOKIE_BUTTON_TEXT = /^(accept( all)?( cookies)?|allow all|i agree|agree|got it|ok(ay)?|accept and close|accept & close)$/i;
@@ -67,6 +74,8 @@ export class BrowserRenderer {
   }
 
   private async renderPage(url: string, opts: { scrollAndExpand?: boolean }): Promise<RenderedPage> {
+    const started = Date.now();
+    const host = new URL(url).hostname;
     const browser = await this.getBrowser();
     const context = await browser.newContext({
       userAgent: this.opts.userAgent,
@@ -159,9 +168,14 @@ export class BrowserRenderer {
         await page.waitForTimeout(500);
       }
       const html = await page.content();
+      this.opts.traffic?.request(host, "browser", { status, bytes: Buffer.byteLength(html, "utf8"), durationMs: Date.now() - started });
       return { html, finalUrl: page.url(), requests: [...new Set(requests)], status, listingPages, incomplete };
 
     } catch (err) {
+      // A render that never produced a page is still traffic: a navigation timeout and a dead
+      // host are the two ways a board costs us a browser and returns nothing.
+      const timedOut = (err as Error).name === "TimeoutError" || /timeout/i.test((err as Error).message);
+      this.opts.traffic?.request(host, "browser", { status, bytes: 0, durationMs: Date.now() - started, failure: timedOut ? "timeouts" : "networkErrors" });
       log.warn("render failed", { url, error: (err as Error).message });
       throw err;
     } finally {

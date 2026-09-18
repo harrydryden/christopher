@@ -250,9 +250,12 @@ export const scans = pgTable(
     closedCount: integer("closed_count").notNull().default(0),
     error: text("error"),
     durationMs: integer("duration_ms"),
-    /** Bytes the listing fetch returned: the input the worker had to hold in memory for this scan. */
+    /**
+     * Bytes this scan actually transferred: the listing and every page it read, excluding a body the
+     * fetcher served from its own cache after a 304 and including a browser render. `requests` and
+     * `revalidated` say how many requests that took and how many of them cost nothing.
+     */
     fetchedBytes: integer("fetched_bytes"),
-    /** Outbound requests this scan made, and how many of them came back 304 from the fetcher's revalidation. */
     requests: integer("requests"),
     revalidated: integer("revalidated"),
     rawSnapshot: text("raw_snapshot"),

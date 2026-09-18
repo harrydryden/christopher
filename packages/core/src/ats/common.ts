@@ -32,7 +32,9 @@ export async function fetchJson<T = unknown>(ctx: FetchContext, url: string, ini
     body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
   });
   if (res.status >= 400) {
-    const kind = res.status === 403 || res.status === 429 ? "blocked" : "http";
+    // A 429 is the host pacing us, not refusing us: it retries tomorrow rather than marking the
+    // source blocked, which nothing but a person undoes.
+    const kind = res.status === 403 ? "blocked" : res.status === 429 || res.status === 503 ? "rate_limited" : "http";
     throw new SourceFetchError(`HTTP ${res.status} from ${url}`, kind, res.status);
   }
   try {

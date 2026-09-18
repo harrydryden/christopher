@@ -62,6 +62,11 @@ export interface FetchResponse {
   url: string;
   headers: Record<string, string>;
   body: string;
+  /**
+   * The body was served from the fetcher's cache after a 304: nothing was transferred. Callers
+   * that account for bytes must not count this body, or a revalidated scan reads as a full download.
+   */
+  revalidated?: boolean;
 }
 
 export interface RenderedPage {
@@ -122,10 +127,15 @@ export class IncompleteListingError extends Error {
   }
 }
 
+/**
+ * `blocked` is bot protection: a 403 or a challenge page, which no retry undoes and whose remedy is
+ * manual. `rate_limited` is a 429 or 503 — the host asking us to come back later, which is an
+ * ordinary failed fetch that retries on the normal schedule and must never disable a source.
+ */
 export class SourceFetchError extends Error {
   constructor(
     message: string,
-    public readonly kind: "http" | "blocked" | "parse" | "timeout" | "network",
+    public readonly kind: "http" | "blocked" | "rate_limited" | "parse" | "timeout" | "network",
     public readonly status?: number,
   ) {
     super(message);

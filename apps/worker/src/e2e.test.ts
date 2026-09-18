@@ -1147,3 +1147,100 @@ describe("shared catalogue", () => {
     expect(after!.descriptionHash).toBe(sha1(text));
   }, 60_000);
 });
+
+describe("what a scan costs the host", () => {
+  /** A route that answers a matching `If-None-Match` with 304 and nothing else. */
+  function etagged(body: object, tag: string) {
+    return (req: import("node:http").IncomingMessage) =>
+      req.headers["if-none-match"] === tag ? { status: 304, body: "", headers: { etag: tag } } : { body, headers: { etag: tag } };
+  }
+
+  async function latestScan(sourceId: string) {
+    const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, sourceId)).orderBy(desc(schema.scans.startedAt)).limit(1);
+    return scan!;
+  }
+
+  it("counts its requests and charges no bytes for a listing served from revalidation", async () => {
+    await setGate({});
+    server.setRoutes({
+      "www.acme.example": acmeRoutes(),
+      "acme.example": acmeRoutes(),
+      "job-boards.greenhouse.io": {},
+      "boards-api.greenhouse.io": {
+        "/v1/boards/acme/jobs": etagged({ jobs: [{ ...JOB_OPERATIONS_MANAGER, content: undefined }], meta: { total: 1 } }, "listing-1"),
+        "/v1/boards/acme/departments": etagged({ departments: [] }, "departments-1"),
+        "/v1/boards/acme/offices": etagged({ offices: [] }, "offices-1"),
+      },
+    });
+    // No discovery: discovery reads the same board, and its response would already be in the
+    // fetcher's cache, so the first scan would revalidate too and prove nothing.
+    const [company] = await db.insert(schema.companies).values({ name: "Acme Robotics", domain: "acme.example", homepageUrl: "https://www.acme.example/" }).returning();
+    await subscribeToCompany(db, user.id, company!.id);
+    const [source] = await db.insert(schema.careerSources).values({
+      companyId: company!.id, type: "greenhouse", url: "https://boards.greenhouse.io/acme",
+      apiUrl: "https://boards-api.greenhouse.io/v1/boards/acme/jobs", atsSlug: "acme", confidence: 0.95,
+    }).returning();
+
+    await _scanSourceForTests(deps, company!, source!, await deps.settings(), null);
+    const first = await latestScan(source!.id);
+    expect(first.status).toBe("ok");
+    // The listing plus the department and office indexes: three requests, all transferred.
+    expect(first.requests).toBe(3);
+    expect(first.revalidated).toBe(0);
+    expect(first.fetchedBytes).toBeGreaterThan(0);
+
+    // The next day, with nothing changed on the board: the same three requests, no transfer.
+    now = new Date(now.getTime() + 86_400_000);
+    const [again] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+    await _scanSourceForTests(deps, company!, again!, await deps.settings(), null);
+    const second = await latestScan(source!.id);
+    expect(second.id).not.toBe(first.id);
+    expect(second.status).toBe("ok");
+    expect(second.requests).toBe(3);
+    expect(second.revalidated).toBe(3);
+    expect(second.fetchedBytes).toBe(0);
+  }, 60_000);
+
+  it("treats a rate-limited board as a failed scan, not a blocked source", async () => {
+    // One transient 429 used to mark the source `blocked`, which nothing but a person clears: the
+    // company then stopped being scanned for ever. It is a back-off - this scan fails and the next
+    // one succeeds.
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
+    const before = await jobsInTable();
+    expect(before.length).toBeGreaterThan(0);
+
+    const jobs = [JOB_OPERATIONS_MANAGER, JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK];
+    server.setRoutes({
+      "www.acme.example": acmeRoutes(), "acme.example": acmeRoutes(), "job-boards.greenhouse.io": {},
+      "boards-api.greenhouse.io": { ...greenhouseRoutes(jobs), "/v1/boards/acme/jobs": { status: 429, body: "slow down", headers: { "retry-after": "1" } } },
+    });
+    now = new Date(now.getTime() + 86_400_000);
+    const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+    const outcome = await _scanSourceForTests(deps, company, current!, await deps.settings(), null);
+    expect(outcome.status).toBe("failed");
+    const limited = await latestScan(source!.id);
+    expect(limited.status).toBe("failed");
+    expect(limited.error).toContain("rate limited (429)");
+    const [afterLimit] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+    expect(afterLimit!.status).toBe("active");
+    expect(afterLimit!.consecutiveFailures).toBe(1);
+    // A failed scan is not evidence that anything has gone: no role moved.
+    expect(await jobsInTable()).toEqual(before);
+
+    // The next day, with the burst over. The 429 left a back-off in `host_pacing` that a new day
+    // is long past.
+    await db.execute(sql`delete from host_pacing`);
+    setJobs(jobs);
+    now = new Date(now.getTime() + 86_400_000);
+    await _scanSourceForTests(deps, company, afterLimit!, await deps.settings(), null);
+    const recovered = await latestScan(source!.id);
+    expect(recovered.status).toBe("ok");
+    const [healthy] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+    expect(healthy!.status).toBe("active");
+    expect(healthy!.consecutiveFailures).toBe(0);
+    expect(healthy!.nextScanAt).toBeNull();
+  }, 60_000);
+});

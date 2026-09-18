@@ -9,7 +9,7 @@ import { ensureTestUser } from "./test-users";
 import { selectExamples } from "./recommendation-context";
 const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
 beforeAll(() => runMigrations(db));
-beforeEach(() => db.execute(sql`truncate ai_calls, ai_reservations, ai_spend_periods`));
+beforeEach(() => db.execute(sql`truncate ai_calls, ai_reservations`));
 afterAll(() => pool.end());
 const recordCall = (costUsd: number, callSite = "A10") => db.insert(schema.aiCalls).values({ callSite, model: "fixture", costUsd });
 

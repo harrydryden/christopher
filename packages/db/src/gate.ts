@@ -36,6 +36,10 @@ interface GateRow extends Record<string, unknown> {
  * synchronous settings saves, new subscriptions and the background `reevaluate_gate` task.
  */
 export async function reevaluateGate(db: Db, userId: string, settings: AppSettings, now = new Date(), scope: GateScope = {}) {
+  // Only a gate that matches on the description needs it, and it is the largest column on `jobs`:
+  // reading it for every posting of every followed company was most of this loop's traffic for the
+  // accounts that match on title and location alone.
+  const matchesDescription = settings.gate.matchFields.includes("description");
   let cursor: string | undefined;
   let examined = 0;
   let changed = 0;
@@ -43,7 +47,7 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
   let queuedForScoring = 0;
   while (true) {
     const page = await db.execute<GateRow>(sql`
-      select j.id, j.title, j.department, j.description_text as "descriptionText", j.location, j.locations, j.remote, j.status,
+      select j.id, j.title, j.department, ${matchesDescription ? sql`j.description_text` : sql`null::text`} as "descriptionText", j.location, j.locations, j.remote, j.status,
         (uj.job_id is not null) as viewed, uj.keyword_matched as "keywordMatched", uj.keyword_terms as "keywordTerms",
         uj.excluded, uj.location_ok as "locationOk", uj.in_table as "inTable", uj.hidden, uj.fit_score as "fitScore"
       from jobs j
@@ -73,7 +77,7 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
         created++;
       } else continue;
       if (gate.inTable && job.fitScore === null && job.status === "open") {
-        const payload = { userId, jobId: job.id, nearMiss: false };
+        const payload = { userId, jobId: job.id };
         scoring.push({ type: "score_job", payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") });
       }
     }

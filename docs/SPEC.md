@@ -27,7 +27,7 @@ The user's order is: (1) reliable discovery, scraping and refresh of tracked com
 
 - Anduril is the first supplied company. Its public homepage is a JavaScript shell. A verified catalogue mapping to `andurilindustries` must recheck the feed and company identity at discovery time, then fall back to normal discovery if verification fails. It does not silently replace another confirmed source.
 - Generic discovery has a two-minute soft time budget (checked between requests), in addition to its fetch-count budget. Pending tasks are shown as queued or running and the companies page refreshes. A known board URL can be supplied before discovery finishes; an old queued homepage task cannot swallow that explicit URL.
-- Role-keyword matches use OR within their list. Optional seniority-keyword matches use OR within their own list, against the title only. Role, seniority and location conditions use AND; exclusions win. Blank seniority allows every level. Failed filters stay in the internal source inventory for reconciliation, but never enter the main table. Seniority exclusions cannot be promoted through the near-miss list.
+- Role-keyword matches use OR within their list. Optional seniority-keyword matches use OR within their own list, against the title only. Role, seniority and location conditions use AND; exclusions win. Blank seniority allows every level. Failed filters stay in the internal source inventory for reconciliation, but never enter the main table, and nothing promotes them into it.
 - Prefix terms are explicit: `strateg*` matches both strategy and strategic. Never infer candidate interest solely from a department label; website-facing departments can differ from the ATS taxonomy.
 - The first user-confirmed positive example is **Associate Director, Strategic Execution - International**, London, requisition 13514, Greenhouse posting 5220149007. `strateg*` + `director` + London (remote disabled) includes this role and excludes its Costa Mesa counterpart. These are a starting test case, not learned preferences or a judgement on all future roles.
 - Browser pagination retains every observed page, including pages replaced by JavaScript next buttons. Disabled controls stop traversal; stuck controls, loops and caps mark the observation incomplete. Incomplete scans cannot close unseen postings.
@@ -36,7 +36,7 @@ The user's order is: (1) reliable discovery, scraping and refresh of tracked com
 
 - Select rows, apply/skip/undo a group with a shared reason, and archive or restore selected roles. Skip requires a reason. Bulk decisions allow 100 roles; archive allows 500 per submission. A partially failed decision batch reports that earlier changes were saved.
 - Grouping combines identical titles within a company for display, preserves each posting and its source URL, and applies group decisions to all members. Expanded groups expose locations, individual decisions and per-posting CV links.
-- Archive is a user-owned timestamp independent of open/closed status, gate membership and AI scores. Scans and filter saves preserve it. Archived roles leave the inbox and near-miss list but are accessible in the Archive view, including roles that no longer pass the gate. Restore makes a role eligible for the inbox only if it still passes the gate.
+- Archive is a user-owned timestamp independent of open/closed status, gate membership and AI scores. Scans and filter saves preserve it. Archived roles leave the inbox but are accessible in the Archive view, including roles that no longer pass the gate. Restore makes a role eligible for the inbox only if it still passes the gate.
 
 ### CV builder
 
@@ -54,15 +54,15 @@ The user's order is: (1) reliable discovery, scraping and refresh of tracked com
 
 ## v0.2 clarifications and acceptance gaps
 
-- **R-1.6 — State changes and repeated submissions.** Archived companies are excluded from the main inbox and near-miss list. Queued scans recheck company state before fetching. Repeating a source confirmation is idempotent, including concurrent submissions; rediscovery retains prior user confirmation and proposes any different source.
+- **R-1.6 — State changes and repeated submissions.** Archived companies are excluded from the main inbox. Queued scans recheck company state before fetching. Repeating a source confirmation is idempotent, including concurrent submissions; rediscovery retains prior user confirmation and proposes any different source.
 - **R-3.11 — Run accounting.** Fan-out is atomic. A daily run remains unfinished while any associated company task is queued or running. A company without a usable source is unsuccessful. Company scans are serialised so overlapping manual and scheduled scans cannot reconcile the same source concurrently. Every run has its own task association even when another scan is already queued.
 - **R-3.13 — Unverifiable HTML empties.** An HTML page with no verifiable postings is a failed extraction, including an unchanged page without a usable recipe or a disabled/unavailable model. A content hash alone never establishes an empty board. Structured feeds can still confirm a real empty result.
 - **R-3.12 — Refresh semantics.** Subsequent observations refresh URLs, titles, locations, department, employment type, remote status, salary, posted dates and feed descriptions when supplied. Missing optional fields preserve stored data. Gate membership and matched terms are recalculated from the refreshed fields. Snapshots and their 14-day refresh do not require an enabled model or remaining AI budget.
 - **R-4.9 — Partial observations.** A partial scan may add or refresh observed roles and reopen a positively observed role; it must not change any missing counter or close an absent role. Failed and suspect-empty scans do not change role state. The configurable closure threshold has a minimum of two, including legacy stored settings. “Consecutive successful scans” ignores intervening unsuccessful scans; only an ok observation resets the counter.
 - **R-5.6 — Save consistency.** A gate change and reevaluation commit together before the settings action returns, including matched-term chips when membership is unchanged. Reevaluate all open roles and at least the last 30 days of closed roles. The worker may subsequently score newly eligible roles.
-- **R-6.11 — Near-miss allowance.** Reserve the daily allowance atomically immediately before A5, using the configured local calendar date. Count attempts, including failed or refused model calls. Apply the same allowance to discovery scans, settings changes and rescores. A zero allowance makes no near-miss model calls. Unused allowance is not carried forward.
+- **R-6.11 — Near-miss allowance.** Retired with R-6.10: nothing outside an account's gate is scored, so there is no allowance to reserve. Fit scoring is bounded by the account's monthly budget alone.
 - **R-6.12 — Decision integrity.** Concurrent decisions on the same role are serialised. Undo supersedes the latest decision rather than deleting its audit record. Model learning uses only active decisions. Every mutation authenticates its session at the server action boundary.
-- **R-7.6 — Ranking.** Unscored roles sort after scored roles for either fit-score direction and within the default status ordering. The near-miss list displays at most ten candidates.
+- **R-7.6 — Ranking.** Unscored roles sort after scored roles for either fit-score direction and within the default status ordering.
 
 - **R-6.13 — Versioned manual preferences.** Profile edits, pinned statements and answered questions append an immutable version. Forms identify their base version and reject obsolete submissions. No profile is required to save initial pinned statements. A model synthesis based on an older version cannot overwrite a newer user edit.
 - **R-6.14 — Manual reason tags.** Users may approve proposed tags and edit active decisions using accepted vocabulary. A manual edit, including clearing tags, takes precedence over a queued or in-flight model tagging result.
@@ -141,7 +141,7 @@ These are the places where the literal request cannot be delivered as stated, or
 - Scan every active company once a day; detect new and removed roles.
 - Show keyword-matched roles in a table with: company, website, role, link to the description, live-for, status (New / Active / Closed).
 - Let you record apply/skip with a reason on each role, quickly (keyboard-first).
-- Learn from decisions and reasons: rank roles, suggest filter changes, surface near-misses.
+- Learn from decisions and reasons: rank roles within the gate and suggest filter changes to accept or reject.
 - Recommend companies very similar to the ones you track, verified to be real and hiring.
 - Be reliable and quiet: no false "closed", no duplicate rows, failures surfaced in one place.
 - Serve several people from one deployment: separate accounts, filters, learning and CVs; one shared company catalogue, scanned once a day.
@@ -203,7 +203,7 @@ Pipeline, in order. Every step adds candidates with a confidence; the best candi
 
 ### 3.3 Daily scan and job extraction
 
-- **R-3.1** A daily run starts at the configured local time (default 06:00) and enqueues one `scan_company` task per active company. Tasks execute with concurrency 4 across distinct domains, one request per 2 seconds per domain, a 3-minute budget per company, one retry on transient failure. A run for one company never blocks another.
+- **R-3.1** A daily run starts at the configured local time (default 06:00) and enqueues one `scan_company` task per active company. Tasks execute across distinct domains (`WORKER_CONCURRENCY` slots, six on the deployed worker), one request per 2 seconds per domain, a 3-minute budget per company enforced as a per-task deadline, one retry on transient failure. A run for one company never blocks another.
 - **R-3.2** Each source type has an adapter that returns normalised postings: `external_id?, title, url, location?, department?, employment_type?, remote?, posted_at?, updated_at?, description?, salary_text?`.
 - **R-3.3** Adapter tiers:
   - *Tier 1, structured JSON/XML feeds (v1)*: Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Recruitee, Personio, BambooHR, Workday, Pinpoint, Breezy; plus generic JSON-LD `JobPosting` and RSS/Atom feeds.
@@ -213,7 +213,7 @@ Pipeline, in order. Every step adds candidates with a confidence; the best candi
 - **R-3.5a** Render reuse. A server-rendered listing with a "load more" control is rendered with the browser to reach the rest of it. When the first page over plain HTTP is byte-identical to the page behind the last render, that capture is reused and the browser is not launched — for at most seven days, after which the page is rendered regardless. A JavaScript shell (zero postings over HTTP) is rendered on every scan: its static markup says nothing about what the board lists today.
 - **R-3.5** Self-healing recipes. The recipe is validated against the same page (must reproduce ≥90% of the model's postings) and stored on the source. Subsequent scans run the recipe deterministically at zero AI cost. If the recipe yields zero postings or fails validation, and the page content hash has changed, the model is called again and the recipe replaced. Pages whose content hash is unchanged since the last scan skip extraction entirely.
 - **R-3.6** Anti-hallucination validation of model extraction: every returned URL must be present in the harvested anchor set; every title must appear in page text (fuzzy ≥0.9). Violators are dropped; if more than 20% violate, the scan is marked `partial`.
-- **R-3.7** Job description snapshot. For postings that pass the keyword gate (and near-miss candidates), store the description text (from the feed when the ATS supplies it; otherwise fetch the detail page and extract the main content). Cap 30k characters. Re-fetch when the source's `updated_at` changes or every 14 days. This keeps the description readable after the role closes and the link dies.
+- **R-3.7** Job description snapshot. For postings that pass the keyword gate, store the description text (from the feed when the ATS supplies it; otherwise fetch the detail page and extract the main content). Cap 30k characters. Re-fetch when the source's `updated_at` changes or every 14 days. This keeps the description readable after the role closes and the link dies.
 - **R-3.8** Scan outcome: `ok`, `partial` (some postings dropped by validation, or count fell >70% from the previous ok scan), `suspect_empty` (zero postings where the previous ok scan had ≥3), `failed` (fetch error, HTTP ≥400, bot-protection challenge, parser exception). Only `ok` scans may close roles (3.4).
 - **R-3.9** Every adapter retains all valid roles up to 10,000 per source, with a bounded 60 MB response allowance and no silent truncation: a source that reaches the cap is recorded as `partial`, so it can never close roles. Generic HTML traversal is bounded to 20 pages / 500 roles; hitting a bound is partial for the same reason. Oversized HTTP responses fail explicitly. Store compressed evidence for the last three scans of a source: every parsed posting plus a bounded head of each raw response, never the raw body alone (a large feed's body is mostly beyond any sensible cap and could not be replayed).
 - **R-3.10** Manual "Rescan now" per company and "Run daily scan now" globally.
@@ -245,12 +245,12 @@ Pipeline, in order. Every step adds candidates with a confidence; the best candi
 - **R-6.3** Seed profile. At setup you write a few sentences about what you are looking for (seniority, sectors, locations, compensation floor, deal-breakers). This is the starting point for the preference profile and is never overwritten.
 - **R-6.4** Preference profile (A7). A versioned markdown document synthesised by the model from the seed profile, all decisions with reasons and tags, and the current keywords. Regenerated when five or more new decisions have accumulated since the last version, or weekly. Sections: target roles; seniority band; locations; sectors and companies preferred and avoided; deal-breakers; positive signals; open questions. Statements you edit or add are *pinned* and must be preserved verbatim by later syntheses. Every version is kept and diffable.
 - **R-6.5** Open questions. When the synthesiser is unsure how to generalise (for example, two skipped logistics roles: the sector, or those two companies?), it writes a question. Questions appear on the Learning page; your answer becomes a pinned statement.
-- **R-6.6** Fit scoring (A5). Each role entering the table (and each near-miss candidate) is scored 0–100 with a verdict (`strong` / `possible` / `unlikely`) and a rationale of at most two sentences, using the current profile, a compact digest of your last 100 decisions, and the role's title, company, location, department and description excerpt. Roles are re-scored when a new profile version is published.
-- **R-6.7** Use of the score: default sort is status (New first) then score descending; the rationale shows on hover or row expand. An optional hide threshold (default off) collapses roles under the threshold into "Hidden by your preferences (n)"; expanding and deciding on a hidden role is itself a decision and feeds learning.
+- **R-6.6** Fit scoring (A5). Each role entering the table is scored 0–100 with a verdict (`strong` / `possible` / `unlikely`) and a rationale of at most two sentences, using the current profile, a compact digest of your last 100 decisions, and the role's title, company, location, department and description excerpt. Roles are re-scored when a new profile version is published.
+- **R-6.7** Use of the score: default sort is status (New first) then score descending; the rationale shows on hover or row expand. The score never removes a role from the table: the minimum-fit filter on Roles is the only way a score narrows what is shown, and it is the reader's to set. (The optional hide threshold is retired; stored `hideThreshold` values are ignored, and a stored `hide_threshold` suggestion is settled rather than applied.)
 - **R-6.8** Calibration. After 20 decisions the Learning page shows agreement: the apply rate among roles scored ≥70 and the skip rate among roles scored <30, with counts. Disagreements are fed to the next profile synthesis as explicit cases to reconcile. Target after 50 decisions: ≥75% agreement in both buckets. This is a hypothesis to measure, not a guarantee.
-- **R-6.9** Filter suggestions (A8). Weekly, the model reviews decisions and near-miss outcomes and proposes changes: add an include keyword, add an exclude keyword, add or change a location filter, pause a company, enable the hide threshold. Each carries evidence (the decisions that support it). Accept applies it; reject suppresses that suggestion for 60 days.
-- **R-6.10** Near-miss surfacing (setting `near_miss_enabled`, default on). New postings that fail the keyword gate are scored on title, department and location only. Those scoring ≥70 appear in a separate section "Outside your keywords", capped at 10 per day, ranked by score. Decisions there count like any other and are strong evidence for keyword suggestions.
-- **R-6.11** Every AI call is logged with tokens and cost, against the account it was made for where there is one. One monthly budget bounds the spend: the account's own (`aiBudgetUsd`, $25 by default, set by its holder on Settings or by an administrator in Admin › Accounts). A call made for an account is held against that account's budget — its recorded spend plus its own live holds — and a refusal stops the work and names the budget, what is left and what its calls in flight are holding. Exceeding it stops that account's non-essential calls (near-miss scoring first, then suggestions) and the UI says so; work already queued for an exhausted account is skipped and finishes, never failed and retried. The budget counts from the start of the UTC month or from that account's later recorded reset, so a counter can be zeroed without touching the call log; reports read spend per account, call site and model. Work no account asked for is bounded only by the operator's optional `DAILY_AI_BUDGET_USD` and `DISCOVERY_AI_BUDGET_USD`, which apply to the whole deployment, refuse any call including a build, and are unlimited unless set.
+- **R-6.9** Filter suggestions (A8). Weekly, the model reviews decisions and proposes changes: add an include keyword, add a seniority label, add an exclude keyword, add or change a location filter, pause a company. Each carries evidence (the decisions that support it). Accept applies it; reject suppresses that suggestion for 60 days. It never proposes hiding roles by score.
+- **R-6.10** Near-miss surfacing is **retired**, and with it its setting, its daily cap and its section. A posting that fails an account's gate gets no view, no score and no model call for that account; widening the keywords is how such a role reaches the table. Stored `near_miss` flags and the decisions taken on them stay readable and keep counting as decisions.
+- **R-6.11** Every AI call is logged with tokens and cost, against the account it was made for where there is one. One monthly budget bounds the spend: the account's own (`aiBudgetUsd`, $25 by default, set by its holder on Settings or by an administrator in Admin › Accounts). A call made for an account is held against that account's budget — its recorded spend plus its own live holds — and a refusal stops the work and names the budget, what is left and what its calls in flight are holding. Exceeding it stops that account's non-essential calls (company and filter suggestions) and the UI says so; work already queued for an exhausted account is skipped and finishes, never failed and retried. The budget counts from the start of the UTC month or from that account's later recorded reset, so a counter can be zeroed without touching the call log; reports read spend per account, call site and model. Work no account asked for is bounded only by the operator's optional `DAILY_AI_BUDGET_USD` and `DISCOVERY_AI_BUDGET_USD`, which apply to the whole deployment, refuse any call including a build, and are unlimited unless set.
 
 ### 3.7 The interactive table and other screens
 
@@ -270,7 +270,7 @@ Pipeline, in order. Every step adds candidates with a confidence; the best candi
 
 **Health.** Failed and suspect scans, sources needing confirmation, blocked sources, re-discovery proposals, total AI spend this month with usage by account, feature and model, and each account's spend against its own budget in Accounts.
 
-**Settings.** Keywords, location filter, hide threshold, near-miss toggle, daily run time and timezone, seed profile text, this account's own monthly AI budget and what it has spent, password change.
+**Settings.** Keywords, location filter, how long closed roles stay in view, daily run time and timezone, seed profile text, this account's own monthly AI budget and what it has spent, password change.
 
 ### 3.8 Similar-company recommendations
 
@@ -301,10 +301,10 @@ All calls go through the Anthropic Messages API using the official TypeScript SD
 | A2 | Listing-page classification | Discovery, inconclusive heuristics | Page text excerpt; link pattern summary | `{kind: listing\|landing\|other, next_hop_url?, confidence}` | low | 4k / 0.1k |
 | A3 | HTML posting extraction + selector recipe | Tier-3 scan, content hash changed and no valid recipe | Compact DOM (anchors + surrounding text), ≤20k tokens | `{postings: [{title, url, location?, department?}], recipe: {...}, confidence}` | low | 15k / 2k |
 | A4 | Description clean-up (only when heuristic extraction is poor) | Detail fetch | Raw page text | `{description_text, salary_text?, employment_type?, remote?}` | low | 5k / 1.5k |
-| A5 | Fit scoring | Role enters table; near-miss candidate; profile version change | Cached: instructions + profile + last-100-decision digest. Uncached: role fields + description excerpt (≤1.5k tokens) | `{score, verdict, rationale, flags[]}` | low | 3k cached + 1.5k / 0.15k |
+| A5 | Fit scoring | Role enters table; profile version change | Cached: instructions + profile + last-100-decision digest. Uncached: role fields + description excerpt (≤1.5k tokens) | `{score, verdict, rationale, flags[]}` | low | 3k cached + 1.5k / 0.15k |
 | A6 | Reason tagging | Decision saved | Reason text, role summary, tag vocabulary | `{tags[], proposed_new_tags[]}` | low | 1k / 0.1k |
 | A7 | Profile synthesis | ≥5 new decisions or weekly | Seed profile, pinned statements, all decisions (title, company, location, department, snippet, decision, reason, tags), current profile, calibration disagreements | Markdown profile + `{open_questions[]}` | high | 10k / 2k |
-| A8 | Filter suggestions | Weekly | Decisions, near-miss outcomes, current filters, past rejected suggestions | `{suggestions: [{type, value, evidence[]}]}` | high | 6k / 0.5k |
+| A8 | Filter suggestions | Weekly | Decisions, current filters, past rejected suggestions | `{suggestions: [{type, value, evidence[]}]}` | high | 6k / 0.5k |
 | A9 | Company profiling | Company added; quarterly | Homepage + about text (≤6k tokens) | Company profile schema | low | 6k / 0.3k |
 | A10 | Similar-company generation | Weekly; on demand | Portfolio profiles, preference profile, rejected suggestions; tool `web_search_20260209` (max 15 uses) | `{candidates: [{name, homepage_url, similar_to[], rationale, confidence}]}` | high | 8k / 2k + searches |
 
@@ -334,7 +334,7 @@ auth_accounts        id, user_id, provider [google], provider_account_id (unique
 sessions             id, user_id, expires_at, last_seen_at, user_agent, ip_address, created_at
 auth_tokens          id, user_id, purpose [password_reset|email_verification], token_hash (unique), expires_at, used_at
 login_attempts       id, key, at                                  -- sign-in, sign-up and reset throttling
-user_settings        (user_id, key) pk, value jsonb, updated_at   -- gate, hideThreshold, seedProfile, showClosedDays,
+user_settings        (user_id, key) pk, value jsonb, updated_at   -- gate, seedProfile, showClosedDays,
                                                                   -- descriptionMatchCompanyIds, suggestionsEnabled, cv*,
                                                                   -- aiBudgetUsd (default in code), aiBudgetResetAt
 
@@ -367,8 +367,11 @@ jobs                 id, company_id, source_id, external_key (unique per source)
 
 user_jobs            (user_id, job_id) pk, keyword_matched bool, keyword_terms, excluded bool, location_ok bool,
                      in_table bool, near_miss bool, fit_score int, fit_verdict, fit_rationale, fit_profile_version,
-                     fit_scored_at, hidden bool, seeded bool, archived_at, created_at, updated_at
+                     fit_scored_at, score_input_hash, hidden bool, seeded bool, archived_at,
+                     created_at, updated_at
                      -- one account's view of a posting; created when that account's gate passes
+                     -- score_input_hash fingerprints what the stored fit score was computed from
+                     -- (role, profile, evidence, model); unchanged inputs skip the A5 call
 
 job_events           id, job_id, user_id (null for scan observations),
                      type [discovered|updated|closed|reopened|scored|decided|hidden|unhidden], payload jsonb, at
@@ -393,6 +396,14 @@ company_suggestions  id, user_id, name, homepage_url, domain (unique per user), 
                      rank, status [pending|accepted|rejected|expired], rejection_reason, created_at, resolved_at
 
 settings             key (pk), value jsonb, updated_at        -- system only: scanTime, timezone, models, robots, registrationOpen
+                     -- read whole on hot paths, so it stays small: no per-account, per-role or
+                     -- per-source data. A few fixed worker markers (heartbeat, last weekly run,
+                     -- maintenance claim) share it under an `internal:` prefix and are read one
+                     -- key at a time; the loaders exclude them.
+
+source_admission_rejections  source_id (pk, → career_sources, cascade), fingerprints jsonb, updated_at
+                     -- sparse-feed admission: fingerprints of details fetched and rejected for a
+                     -- source, ≤10,000 per source, entries expiring after seven days
 
 discovery_sources, cv_libraries (version unique per user), cv_drafts, applications: each carries user_id
 
@@ -429,7 +440,7 @@ flowchart LR
 
 **Render (apps/worker).** One *web service* on the Starter instance (always on, roughly $7/month). It runs:
 - an in-process scheduler (daily run, weekly suggestions and synthesis), idempotent against `scan_runs` so a restart during a run resumes rather than repeats;
-- a task loop polling `tasks` every 5 seconds with `SELECT … FOR UPDATE SKIP LOCKED`, which is also how interactive flows (discover a newly added company, rescan now) execute within seconds;
+- a task loop polling `tasks` every 5 seconds with `SELECT … FOR UPDATE SKIP LOCKED`, which is also how interactive flows (discover a newly added company, rescan now) execute within seconds. Each slot prefers one class of work — interactive, the daily scan, background — and falls through to the rest of the queue when its own is empty; a claim is ordered by stored priority and age, which an index serves, and a bounded sweep ages waiting tasks up. Every handler runs under a per-type deadline (3 minutes for a company scan, 30 for a CV build, 5 for discovery, 2 otherwise) and a task that outruns it fails and retries normally. On shutdown the worker puts back the tasks it still holds, without spending one of their attempts, and releases its own AI reservations;
 - headless Chromium via Playwright, from the official Playwright Docker base image;
 - all Anthropic API calls;
 - `GET /healthz` as its only inbound route.
@@ -518,7 +529,7 @@ Approximate, per month. Platform prices should be checked against current pricin
 | Anthropic API, heavy month (several new Tier-3 sources, many decisions) | up to ~$25 |
 | **Total** | **~$16–45** |
 
-What drives API cost, in order: Tier-3 HTML extraction (A3) on pages that change often, near-miss scoring (A5 on non-matching roles), fit scoring on matching roles. The selector-recipe cache (R-3.5) and the content-hash short-circuit are the two controls that keep A3 near zero in steady state; the near-miss cap and each account's monthly budget bound the rest. The Batch API halves the price of non-urgent calls and is an option for scoring if volume grows; it is not in v1.
+What drives API cost, in order: Tier-3 HTML extraction (A3) on pages that change often, fit scoring on matching roles, CV builds. The selector-recipe cache (R-3.5) and the content-hash short-circuit are the two controls that keep A3 near zero in steady state; each account's monthly budget bounds the rest. The Batch API halves the price of non-urgent calls and is an option for scoring if volume grows; it is not in v1.
 
 ---
 
@@ -546,7 +557,7 @@ Answers to these change defaults or the golden set; none of them blocks starting
 2. **Keywords.** Beyond "operations", any include terms (e.g. "ops", "business operations", "chief of staff") or exclusions (e.g. "intern", "director") from day one?
 3. **Seed profile.** Three to five sentences on what you want: seniority, sectors, company stage, compensation floor, deal-breakers.
 4. **Initial company list.** Even ten homepages; they become the golden set and decide which ATS adapters are prioritised.
-5. **Near-miss section on by default.** Comfortable with that, or should the table be strictly keyword-only until you switch it on?
+5. **Near-miss section on by default.** Answered: the table is strictly keyword-only, and near-miss surfacing is retired (R-6.10).
 6. **Applied tracking.** Do you want an "applied on / outcome" field on roles you chose to apply to? It is cheap to add in M3 and turns the tool into a light pipeline tracker. Not included unless you say yes.
 7. **Spend.** Roughly $14/month on Render plus API usage is acceptable? The all-free alternative (Render free web tier plus an external pinger) is fragile and not recommended.
 
@@ -669,7 +680,7 @@ Scale-up stage (Series A to C), remit that includes hiring and process design, r
 - Scan completeness and closure detection still use the full observed listing, never only matching jobs. Scan counts describe observed postings; an account's company role counts describe its stored views.
 - Re-evaluating an account's filters removes its views of non-matches unless they have any decision, a saved CV or an explicit archive marker. These retained records stay outside the inbox. Other followers of the same company are unaffected.
 - Widened filters admit newly eligible postings immediately from the stored catalogue, and further ones on the next scan.
-- Skip requires a non-blank reason for both individual and bulk decisions. Bulk reasons are copied to each affected role. Decision snapshots feed profile synthesis and filter suggestions immediately; accepted suggestions re-evaluate storage and table membership.
+- Skip requires a non-blank reason. Decisions are made one role at a time; there is no bulk decision path. Decision snapshots feed profile synthesis and filter suggestions immediately; accepted suggestions re-evaluate storage and table membership.
 
 ### Evidence visibility, reusable feedback and applications
 - Evidence library has its own navigation entry and shows every editable block, saved version, style preferences and remembered wording. Saving creates an immutable new library version; generation snapshots it.

@@ -219,7 +219,7 @@ export const discoveryRuns = pgTable("discovery_runs", {
   chosenSourceId: uuid("chosen_source_id"),
   log: jsonb("log").$type<unknown[]>().notNull().default(sql`'[]'::jsonb`),
   error: text("error"),
-});
+}, (t) => [index("discovery_runs_company_started_idx").on(t.companyId, t.startedAt.desc())]);
 
 export const scanRuns = pgTable("scan_runs", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -440,7 +440,7 @@ export const companyProfiles = pgTable("company_profiles", {
   tags: jsonb("tags").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   raw: jsonb("raw"),
   generatedAt: tsNow("generated_at"),
-});
+}, (t) => [index("company_profiles_company_generated_idx").on(t.companyId, t.generatedAt.desc())]);
 
 export const discoverySources = pgTable("discovery_sources", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -528,10 +528,10 @@ export const tasks = pgTable(
     finishedAt: ts("finished_at"),
   },
   (t) => [
-    index("tasks_status_run_after_idx").on(t.status, t.priority, t.runAfter),
+    index("tasks_status_run_after_idx").on(t.status, t.priority, t.runAfter, t.createdAt),
     index("tasks_scan_run_idx").on(sql`(${t.payload}->>'scanRunId')`, t.status),
     index("tasks_source_status_idx").on(sql`(${t.payload}->>'sourceId')`, t.status, t.createdAt),
-    index("tasks_lane_idx").on(t.type, t.status, t.priority, t.runAfter),
+    index("tasks_lane_idx").on(t.type, t.status, t.priority, t.runAfter, t.createdAt),
     uniqueIndex("tasks_dedupe_active_uidx").on(t.dedupeKey).where(sql`${t.status} in ('queued', 'running') and ${t.dedupeKey} is not null`),
   ],
 );
@@ -556,7 +556,7 @@ export const aiCalls = pgTable(
     refId: text("ref_id"),
     at: tsNow("at"),
   },
-  (t) => [index("ai_calls_at_idx").on(t.at)],
+  (t) => [index("ai_calls_at_idx").on(t.at), index("ai_calls_user_at_idx").on(t.userId, t.at)],
 );
 
 export type User = typeof users.$inferSelect;
@@ -707,8 +707,6 @@ export const aiReservations = pgTable("ai_reservations", {
   amount: real("amount").notNull(),
   createdAt: tsNow("created_at"),
   expiresAt: ts("expires_at").notNull(),
-}, (t) => [index("ai_reservations_user_idx").on(t.userId)]);
-export const aiSpendPeriods = pgTable("ai_spend_periods", {
-  key: text("key").primaryKey(),
-  amount: real("amount").notNull().default(0),
-});
+  /** The worker process holding this reservation, so a shutdown can release its own holds at once. */
+  workerId: text("worker_id"),
+}, (t) => [index("ai_reservations_user_idx").on(t.userId), index("ai_reservations_worker_idx").on(t.workerId)]);

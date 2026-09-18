@@ -1,6 +1,6 @@
 /** Queue and scheduler behaviour against a real database. */
 import { renewTask, completeTask, assertTaskOwnership } from "./queue";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {createDb, enqueueTask, listUserIds, schema, type Db} from "@christopher/db";
 import { isUserSettingsKey } from "@christopher/core";
 import { ensureTestUser } from "./test-users";
@@ -8,7 +8,7 @@ import { runMigrations } from "@christopher/db/migrate";
 import { desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
-import { backoffMs, claimTask, failTask, requeueStale, TaskQueue } from "./queue";
+import { agePriorities, backoffMs, claimTask, deadlineMsFor, failTask, laneSlots, requeueStale, TaskQueue } from "./queue";
 import { schedulerTick } from "./scheduler";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test";
@@ -27,8 +27,16 @@ beforeAll(async () => {
   db = deps.db;
 }, 60_000);
 
+/** A queue a test started; stopped after the test so a failure cannot leave loops polling. */
+let queueUnderTest: TaskQueue | null = null;
+
 afterAll(async () => {
   await deps?.close();
+});
+
+afterEach(async () => {
+  await queueUnderTest?.stop(1000);
+  queueUnderTest = null;
 });
 
 beforeEach(async () => {
@@ -285,4 +293,116 @@ it("does not repeat a manual daily fan-out after a crash between commit and comp
   await handleRunDaily(retry, deps);
   expect(await db.select().from(schema.scanRuns)).toHaveLength(1);
   expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "scan_company"))).toHaveLength(1);
+});
+
+describe("execution model", () => {
+  it("gives every lane a slot and divides the rest in proportion", () => {
+    // Below three slots a slot rotates lanes instead of owning one.
+    expect(laneSlots(1)).toBeNull();
+    expect(laneSlots(2)).toBeNull();
+    expect(laneSlots(3)).toEqual(["interactive", "scan", "background"]);
+    // The deployed size: half the slots to what someone is waiting for, then the daily scan.
+    expect(laneSlots(6)).toEqual(["interactive", "interactive", "interactive", "scan", "scan", "background"]);
+    for (const n of [3, 4, 5, 6, 7, 10, 30]) {
+      const slots = laneSlots(n)!;
+      expect(slots).toHaveLength(n);
+      for (const lane of ["interactive", "scan", "background"]) expect(slots.filter(s => s === lane).length).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it("lets every slot fall through to the rest of the queue when its own lane is empty", async () => {
+    // Three CV builds and three slots. Pinned to one lane each, only the interactive slot could
+    // take them and they would run one at a time; falling through, all three run at once.
+    let running = 0;
+    let release!: () => void;
+    const started = new Promise<void>(resolve => { release = resolve; });
+    const all = new Promise<void>(resolve => {
+      const handler = async () => { if (++running === 3) resolve(); await started; return { ok: true }; };
+      queueUnderTest = new TaskQueue(deps, { generate_cv: handler }, { concurrency: 3, workerId: "fallthrough", pollMs: 10 });
+    });
+    for (const draftId of ["a", "b", "c"]) await enqueueTask(db, "generate_cv", { draftId });
+    queueUnderTest!.start();
+    await Promise.race([all, new Promise((_, reject) => setTimeout(() => reject(new Error("only one lane served the queue")), 10_000))]);
+    expect(running).toBe(3);
+    release();
+    await queueUnderTest!.stop(5_000);
+  }, 20_000);
+
+  it("fails a handler that outruns its deadline, naming the type and the time it took", async () => {
+    let release!: () => void;
+    const hang = new Promise<void>(resolve => { release = resolve; });
+    const queue = new TaskQueue(deps, { discover: () => hang.then(() => ({})) },
+      { concurrency: 1, workerId: "deadline", deadlines: { default: 60 } });
+    await enqueueTask(db, "discover", { companyId: "a" }, { maxAttempts: 1 });
+    await queue.drain();
+    const [row] = await db.select().from(schema.tasks);
+    expect(row!.status).toBe("failed");
+    expect(row!.error).toContain("TimeoutError: discover exceeded its 0s deadline");
+    // The abandoned handler is still running; the queue has moved on rather than waiting on it.
+    release();
+    await hang;
+  });
+
+  it("uses the per-type deadline table, and a caller's override before it", () => {
+    expect(deadlineMsFor("scan_company")).toBe(3 * 60_000);
+    expect(deadlineMsFor("generate_cv")).toBe(30 * 60_000);
+    expect(deadlineMsFor("discover")).toBe(5 * 60_000);
+    expect(deadlineMsFor("score_job")).toBe(2 * 60_000);
+    expect(deadlineMsFor("scan_company", { scan_company: 5 })).toBe(5);
+    expect(deadlineMsFor("score_job", { default: 5 })).toBe(5);
+  });
+
+  it("hands back its tasks and releases its own AI holds when it stops", async () => {
+    const user = await ensureTestUser(db, "shutdown@example.com");
+    await db.execute(sql`delete from ai_reservations`);
+    await db.execute(sql`insert into ai_reservations (user_id, call_site, amount, expires_at, worker_id)
+      values (${user.id}, 'CV', 1, now() + interval '30 minutes', 'retiring'),
+             (${user.id}, 'CV', 1, now() + interval '30 minutes', 'another-worker')`);
+
+    let seen!: () => void;
+    const claimed = new Promise<void>(resolve => { seen = resolve; });
+    let release!: () => void;
+    const hang = new Promise<void>(resolve => { release = resolve; });
+    const queue = new TaskQueue(deps, { generate_cv: async () => { seen(); await hang; return {}; } },
+      { concurrency: 1, workerId: "retiring", pollMs: 10 });
+    await enqueueTask(db, "generate_cv", { draftId: "interrupted" });
+    queue.start();
+    await claimed;
+
+    // The handler is still running when the cap fires: its task goes straight back on the queue
+    // rather than waiting out the five-minute stale lock, and keeps its attempt.
+    await queue.stop(50);
+    const [row] = await db.select().from(schema.tasks);
+    expect(row!.status).toBe("queued");
+    expect(row!.attempts).toBe(0);
+    expect(row!.lockedBy).toBeNull();
+    expect(row!.error).toContain("shutting down");
+    const holds = await db.execute<{ workerId: string }>(sql`select worker_id as "workerId" from ai_reservations`);
+    expect(holds.rows.map(r => r.workerId)).toEqual(["another-worker"]);
+    release();
+    await hang;
+    await db.execute(sql`delete from ai_reservations`);
+  }, 20_000);
+});
+
+describe("claim ordering", () => {
+  it("claims by stored priority, and ages a waiting task up in a sweep rather than in the claim", async () => {
+    // The old claim ordered by an ageing expression no index could serve, so an old task overtook
+    // a newer one on every claim. The order is now the stored priority; the sweep is what moves a
+    // task that has waited, and it is bounded.
+    const old = await enqueueTask(db, "suggest_companies", { n: 1 }, { priority: 5 });
+    await enqueueTask(db, "suggest_filters", { n: 2 }, { priority: 4 });
+    await db.update(schema.tasks).set({ createdAt: new Date(Date.now() - 3600_000) }).where(eq(schema.tasks.id, old!));
+
+    expect(await agePriorities(db, 300, 1)).toBe(1);
+    expect((await db.select().from(schema.tasks).where(eq(schema.tasks.id, old!)))[0]!.priority).toBe(4);
+    // Same priority now, so the older task goes first.
+    expect((await claimTask(db, "w1"))!.id).toBe(old);
+
+    // A task already at the front of the queue is left alone however long it has waited.
+    await db.update(schema.tasks).set({ status: "queued", priority: 0, createdAt: new Date(Date.now() - 3600_000) });
+    expect(await agePriorities(db)).toBe(0);
+    const priorities = (await db.select().from(schema.tasks)).map(t => t.priority);
+    expect(priorities.sort()).toEqual([0, 0]);
+  });
 });

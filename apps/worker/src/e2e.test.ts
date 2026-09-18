@@ -486,6 +486,23 @@ describe("functional review regressions", () => {
     expect((await db.select().from(schema.decisions))[0]!.reason).toBe("Too junior");
   });
 
+  it("archives an account's non-matches after the scan commits, not inside it", async () => {
+    // `archiveNonMatches` takes a transaction of its own and runs once the scan has committed, so
+    // the source's row lock is not held for it. The effect must be the same: a role the account's
+    // gate no longer admits is archived by the scan that observed it.
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    expect((await jobsInTable()).filter(r => r.inTable)).toHaveLength(4);
+
+    await setGate({ includeKeywords: ["no-match"] });
+    const [source] = await db.select().from(schema.careerSources);
+    const outcome = await _scanSourceForTests(deps, company, source!, await deps.settings(), null);
+    expect(outcome.status).toBe("ok");
+    const views = await db.select().from(schema.userJobs);
+    expect(views.every(v => !v.inTable && v.archivedAt !== null)).toBe(true);
+  }, 60_000);
+
   it("limits description gate refreshes to their role and rechecks old closed roles globally", async () => {
     await setGate({});
     await addCompany("https://www.acme.example/", "acme.example");

@@ -37,7 +37,10 @@ export interface DepsOverrides {
 }
 
 export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}): Promise<WorkerDeps> {
-  const { db, pool } = createDb(env.databaseUrl, { max: Math.max(4, env.concurrency + 2) });
+  // Two connections per slot plus a margin: a handler holds one for its transaction and asks for
+  // more from inside it (a lease check, a nested read), and the scheduler, the heartbeat and
+  // /healthz all need one at the same time. Sized under the pool the deployment's Postgres allows.
+  const { db, pool } = createDb(env.databaseUrl, { max: env.concurrency * 2 + 4 });
   const now = overrides.now ?? (() => new Date());
   const settingsTtlMs = overrides.settingsTtlMs ?? 5000;
   let cached: { at: number; value: SystemSettings } | null = null;
@@ -72,7 +75,7 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
   });
   const browser = env.disableBrowser
     ? null
-    : new BrowserRenderer({ beforeRequest: host => fetcher.waitForHost(host), concurrency: env.browserConcurrency, userAgent: userAgentFor(env.contactEmail), executablePath: env.chromiumExecutablePath, hostMap: env.hostMap });
+    : new BrowserRenderer({ beforeNavigate: host => fetcher.waitForHost(host), concurrency: env.browserConcurrency, userAgent: userAgentFor(env.contactEmail), executablePath: env.chromiumExecutablePath, hostMap: env.hostMap });
 
   const onUsage = async (r: AiUsageRecord) => {
     try {
@@ -117,6 +120,7 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
         : undefined,
       daily: env.dailyAiBudgetUsd ?? 1000000,
       discovery: env.discoveryAiBudgetUsd ?? 1000000,
+      workerId: env.workerId,
     }, at);
     if ("refused" in hold) {
       const { limit, limitUsd, spent, held } = hold.refused;

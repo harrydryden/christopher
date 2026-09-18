@@ -36,8 +36,6 @@ export interface UserSettings {
   aiBudgetUsd: number;
   /** When this account's spend counter was last zeroed (ISO), or null. Read by `aiBudgetWindowStart`. */
   aiBudgetResetAt: string | null;
-  /** Fit-score threshold under which in-table roles are collapsed. null = off. */
-  hideThreshold: number | null;
   /** Free text written by the user at setup; never overwritten by the model. */
   seedProfile: string;
   cvModel: string;
@@ -78,7 +76,6 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   },
   aiBudgetUsd: DEFAULT_ACCOUNT_AI_BUDGET_USD,
   aiBudgetResetAt: null,
-  hideThreshold: null,
   seedProfile: "",
   cvModel: "claude-fable-5-1",
   cvTheme: undefined,
@@ -125,9 +122,9 @@ function applyRows(out: AppSettings, rows: SettingsRow[]): void {
     const def = DEFAULT_SETTINGS[key];
     const val = row.value;
     if (val === null || val === undefined) continue;
-    // A stored value replaces the default when the two are the same kind. `hideThreshold` is the
-    // one setting whose default is null (meaning "off") and whose set value is a number, so a null
-    // default accepts any primitive; a stored null is already skipped above and keeps the default.
+    // A stored value replaces the default when the two are the same kind. A default of null means
+    // "unset" — `aiBudgetResetAt` is the one such key — so it accepts any primitive; a stored null
+    // is already skipped above and keeps the default.
     const compatible = def === null ? typeof val !== "object" : typeof def === typeof val;
     if (!compatible) continue;
     // Both budget keys are read by money-spending code, so a stored value is checked here rather

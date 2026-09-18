@@ -34,6 +34,12 @@ export type AiBudgetLimits = {
   /** Optional operator caps on the whole deployment for today, unlimited unless the environment sets them. */
   daily: number;
   discovery: number;
+  /**
+   * The worker taking the hold. A shutting-down worker releases its own holds by this id, so a
+   * killed build does not leave its estimate held against the account until the reservation
+   * expires on its own.
+   */
+  workerId?: string;
 };
 
 /** Which limit refused a hold, and the figures it was measured against. */
@@ -79,8 +85,8 @@ export async function tryReserveAi(db: Db, callSite: string, amount: number, lim
     const discoveryHeld = Number(held.rows[0]?.discovery ?? 0);
     if (day + pending + amount > limits.daily) return { limit: "day", limitUsd: limits.daily, spent: day, held: pending };
     if (isDiscovery && discovery + discoveryHeld + amount > limits.discovery) return { limit: "discovery", limitUsd: limits.discovery, spent: discovery, held: discoveryHeld };
-    await tx.execute(sql`insert into ai_reservations (id, user_id, call_site, amount, expires_at)
-      values (${id}, ${account?.userId ?? null}, ${callSite}, ${amount}, now() + make_interval(mins => ${ttlMinutes}::int))`);
+    await tx.execute(sql`insert into ai_reservations (id, user_id, call_site, amount, expires_at, worker_id)
+      values (${id}, ${account?.userId ?? null}, ${callSite}, ${amount}, now() + make_interval(mins => ${ttlMinutes}::int), ${limits.workerId ?? null})`);
     return null;
   });
   if (refusal) return { refused: refusal };

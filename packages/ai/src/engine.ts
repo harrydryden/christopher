@@ -684,8 +684,6 @@ export class AiEngine {
       excludeKeywords: string[];
       locationTerms: string[];
       decisions: DecisionForDigest[];
-      /** @deprecated Near-miss scoring is retired; anything passed here is ignored. */
-      nearMissDecisions?: DecisionForDigest[];
       previouslyRejected: Array<{ type: string; value: unknown }>;
     },
     ref: Ref = {},

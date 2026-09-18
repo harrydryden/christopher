@@ -28,6 +28,9 @@ services:
       - key: TZ
         value: Europe/London
       - key: WORKER_CONCURRENCY
-        value: "3"
+        # Six slots: three for the work someone is waiting for, two for the daily scan, one for
+        # background jobs, and every slot falls through to the rest of the queue when its own lane
+        # is empty. The database pool follows it (2 × concurrency + 4 connections).
+        value: "6"
       - key: LOG_LEVEL
         value: info

@@ -222,13 +222,6 @@ export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promis
   const decisions = await decisionRows(deps, userId, 300);
   if (decisions.length === 0) return { skipped: "no decisions" };
 
-  const nearMissIds = await deps.db
-    .select({ id: schema.userJobs.jobId })
-    .from(schema.userJobs)
-    .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.nearMiss, true)))
-    .limit(200);
-  const nearMissDecisions = decisions.filter((d) => nearMissIds.some((n) => n.id === d.jobId));
-
   const previouslyRejected = await deps.db
     .select({ type: schema.filterSuggestions.type, value: schema.filterSuggestions.value })
     .from(schema.filterSuggestions)
@@ -252,7 +245,6 @@ export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promis
     excludeKeywords: settings.gate.excludeKeywords,
     locationTerms: settings.gate.locationTerms,
     decisions: decisions.map(map),
-    nearMissDecisions: nearMissDecisions.map(map),
     previouslyRejected: previouslyRejected.map((r) => ({ type: r.type, value: r.value })),
   }, { refType: "filters", refId: userId, userId });
   if (!result) return { skipped: "no ai result" };
@@ -272,21 +264,29 @@ export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promis
 }
 
 /** Re-evaluate the keyword and location gate for one account, or every account, after a settings change. */
+/**
+ * Re-run one account's gate, or every account's when the task names none.
+ *
+ * The lease is keyed per account, so one account's re-evaluation never makes another's wait or
+ * fail busy: the boot task and settings saves enqueue one task per account and they run in
+ * parallel across the queue's slots. A task that does name an account takes only that account's
+ * lease.
+ */
 export async function handleReevaluateGate(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { userId, companyId } = (task.payload ?? {}) as TaskPayloads["reevaluate_gate"];
-  return withResourceLease(deps, "reevaluate-gate", async locked => {
-    deps.invalidateSettings();
-    const users = userId ? [userId] : await listUserIds(deps.db);
-    const outcomes: Record<string, unknown> = {};
-    for (const id of users) {
+  deps.invalidateSettings();
+  const users = userId ? [userId] : await listUserIds(deps.db);
+  const outcomes: Record<string, unknown> = {};
+  for (const id of users) {
+    outcomes[id] = await withResourceLease(deps, `reevaluate-gate:${id}`, async locked => {
       const settings = await deps.userSettings(id);
-      outcomes[id] = await deps.db.transaction(async tx => {
+      return deps.db.transaction(async tx => {
         await locked.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
         return reevaluateGate(tx as unknown as WorkerDeps["db"], id, settings, deps.now(), { companyId });
       });
-    }
-    return { accounts: users.length, outcomes };
-  });
+    });
+  }
+  return { accounts: users.length, outcomes };
 }
 
 export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<unknown> {

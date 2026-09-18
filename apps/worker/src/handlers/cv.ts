@@ -122,6 +122,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
         account: { userId: draft.userId, budgetUsd: account.aiBudgetUsd, since: aiBudgetWindowStart(deps.now(), account.aiBudgetResetAt) },
         daily: deps.env.dailyAiBudgetUsd ?? 1000000,
         discovery: deps.env.discoveryAiBudgetUsd ?? 1000000,
+        workerId: deps.env.workerId,
       }, deps.now(), 30);
       if ("refused" in hold) throw new Error(budgetRefusal(expected, hold.refused));
       release = hold.release;

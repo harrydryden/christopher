@@ -12,21 +12,16 @@ describe("resolveSettings", () => {
     expect(resolveSettings([{ key: "weeklyDay", value: 3 }]).weeklyDay).toBe(3);
   });
 
-  it("applies a numeric hideThreshold even though its default is null", () => {
-    // The default is null, meaning the threshold is off. A set value is a number, so the guard
-    // must not reject it for having a different type from the default.
-    expect(resolveSettings([], [{ key: "hideThreshold", value: 30 }]).hideThreshold).toBe(30);
-    expect(resolveSettings([], [{ key: "hideThreshold", value: 0 }]).hideThreshold).toBe(0);
-  });
-
-  it("treats a stored null hideThreshold as off", () => {
-    expect(resolveSettings([], [{ key: "hideThreshold", value: null }]).hideThreshold).toBeNull();
-    expect(resolveSettings([]).hideThreshold).toBeNull();
+  it("applies a stored value whose default is null, meaning unset", () => {
+    // `aiBudgetResetAt` defaults to null. A set value is a string, so the guard must not reject it
+    // for having a different type from the default, and a stored null keeps the default.
+    expect(resolveSettings([], [{ key: "aiBudgetResetAt", value: "2026-09-01T00:00:00Z" }]).aiBudgetResetAt).toBe("2026-09-01T00:00:00Z");
+    expect(resolveSettings([], [{ key: "aiBudgetResetAt", value: null }]).aiBudgetResetAt).toBeNull();
   });
 
   it("ignores a stored value of the wrong kind", () => {
     expect(resolveSettings([{ key: "scanTime", value: 6 }]).scanTime).toBe(DEFAULT_SETTINGS.scanTime);
-    expect(resolveSettings([], [{ key: "hideThreshold", value: { nope: true } }]).hideThreshold).toBeNull();
+    expect(resolveSettings([], [{ key: "aiBudgetResetAt", value: { nope: true } }]).aiBudgetResetAt).toBeNull();
     expect(resolveSettings([], [{ key: "showClosedDays", value: "ten" }]).showClosedDays).toBe(DEFAULT_SETTINGS.showClosedDays);
   });
 
@@ -52,28 +47,28 @@ describe("resolveSettings", () => {
 
   it("ignores an account's keys when they turn up in the shared system rows", () => {
     // `settings` is the administrator's table. A user-scoped row in it — left by an old migration,
-    // a script or a hand-edit — must not become every account's gate, budget or threshold, and
+    // a script or a hand-edit — must not become every account's gate, budget or closed-role window, and
     // must not beat the account's own row either.
     const strays = [
       { key: "gate", value: { includeKeywords: ["everything"], locationTerms: ["Mars"] } },
       { key: "aiBudgetUsd", value: 9999 },
-      { key: "hideThreshold", value: 90 },
+      { key: "showClosedDays", value: 90 },
       { key: "seedProfile", value: "not this account's" },
     ];
     const settings = resolveSettings(strays);
     expect(settings.gate).toEqual(DEFAULT_SETTINGS.gate);
     expect(settings.aiBudgetUsd).toBe(DEFAULT_ACCOUNT_AI_BUDGET_USD);
-    expect(settings.hideThreshold).toBeNull();
+    expect(settings.showClosedDays).toBe(DEFAULT_SETTINGS.showClosedDays);
     expect(settings.seedProfile).toBe(DEFAULT_SETTINGS.seedProfile);
     expect(settings).toEqual(DEFAULT_SETTINGS);
     // The account's own rows still decide, and the system rows beside them still apply.
-    const merged = resolveSettings([...strays, { key: "scanTime", value: "07:30" }], [{ key: "hideThreshold", value: 40 }]);
-    expect(merged.hideThreshold).toBe(40);
+    const merged = resolveSettings([...strays, { key: "scanTime", value: "07:30" }], [{ key: "showClosedDays", value: 40 }]);
+    expect(merged.showClosedDays).toBe(40);
     expect(merged.aiBudgetUsd).toBe(DEFAULT_ACCOUNT_AI_BUDGET_USD);
     expect(merged.scanTime).toBe("07:30");
     // Both scoped resolvers agree: neither reads a user-scoped key from the shared table.
     expect(resolveSystemSettings(strays)).toEqual(DEFAULT_SYSTEM_SETTINGS);
-    expect(resolveUserSettings([{ key: "hideThreshold", value: 40 }]).hideThreshold).toBe(40);
+    expect(resolveUserSettings([{ key: "showClosedDays", value: 40 }]).showClosedDays).toBe(40);
   });
 
   it("starts every account on the default AI budget with no reset behind it", () => {

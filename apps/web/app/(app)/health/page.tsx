@@ -5,7 +5,8 @@ import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { relativeTime } from "@/lib/format";
-import { getWorkerHeartbeat, listCompaniesWithNoSource, listRecentProblemScans, listRecentScanRuns, listSourcesNeedingAttention } from "@/lib/queries/health";
+import { workerStatusSentence } from "@/lib/worker-status";
+import { getWorkerStatus, listCompaniesWithNoSource, listRecentProblemScans, listRecentScanRuns, listSourcesNeedingAttention } from "@/lib/queries/health";
 import { requireUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -14,13 +15,16 @@ export const dynamic = "force-dynamic";
 export default async function HealthPage() {
   const user = await requireUser();
   const now = new Date();
-  const [attentionSources, noSourceCompanies, problemScans, scanRuns, heartbeat] = await Promise.all([
+  const [attentionSources, noSourceCompanies, problemScans, scanRuns, status] = await Promise.all([
     listSourcesNeedingAttention(user.id),
     listCompaniesWithNoSource(user.id),
     listRecentProblemScans(user.id, 7),
     listRecentScanRuns(10, user.id),
-    getWorkerHeartbeat(),
+    getWorkerStatus(now),
   ]);
+  // A heartbeat is rewritten on every boot, so "reported a minute ago" is true of a worker that
+  // has crashed a hundred times today. When it has, say so instead.
+  const trouble = workerStatusSentence(status);
 
   return (
     <div className="space-y-6">
@@ -32,9 +36,7 @@ export default async function HealthPage() {
 
       <Card title="Background worker">
         <p className="text-14">
-          {heartbeat && now.getTime() - heartbeat.at.getTime() < 120_000
-            ? `Worker reported ${relativeTime(heartbeat.at, now)}.`
-            : "No recent worker report. Queued scans and CVs may be waiting; an administrator can check Operations."}
+          {trouble ?? (status.heartbeat ? `Worker reported ${relativeTime(status.heartbeat.at, now)}.` : "No worker report.")}
         </p>
       </Card>
 

@@ -1,5 +1,6 @@
 import { cvVersionLabel } from "@/lib/cv-version";
-import { dailyCvVersions, getOwnCvDraft } from "@/lib/queries/cv";
+import { dailyCvVersions, getOwnCvBuildTask, getOwnCvDraft } from "@/lib/queries/cv";
+import { cvBuildState, cvWorkVersion } from "@/lib/cv-build-state";
 import { CvDisclosure } from "@/components/CvDisclosure";
 import { CvWorkspace, CvWorkspacePanel } from "@/components/CvWorkspace";
 import { CvBuildProgress } from "@/components/CvBuildProgress";
@@ -35,6 +36,11 @@ export default async function CvDraftPage({
   const version = cvVersionLabel(draft.createdAt, versions.get(draft.id) ?? Math.max(1, draft.revision));
   const content = draft.content;
   const busy = draft.status === "queued" || draft.status === "generating";
+  // A build that has stopped moving is indistinguishable from a slow one without the queue row
+  // behind it: which attempt this is, whether anything still holds it, and what the last one left.
+  const now = new Date();
+  const buildTask = busy ? await getOwnCvBuildTask(user.id, id) : null;
+  const build = busy ? cvBuildState(draft, buildTask, now) : null;
   const current =
     !!content &&
     cvAssessmentCurrent(
@@ -135,7 +141,7 @@ export default async function CvDraftPage({
         {busy && (
           <AutoRefresh
             cvId={id}
-            initialVersion={`${draft.status}:${draft.buildStage ?? ""}`}
+            initialVersion={cvWorkVersion(draft, now)}
             message={null}
           />
         )}
@@ -159,10 +165,22 @@ export default async function CvDraftPage({
         )}
         {(!content || busy) && (
           <CvWorkspacePanel tab="content">
-            {busy && (
+            {busy && build && (
               <CvBuildProgress
                 stage={draft.buildStage}
                 queued={draft.status === "queued"}
+                build={build}
+                startedAt={draft.createdAt}
+                now={now}
+                action={
+                  build.phase === "stopped" ? (
+                    <p className="text-14 text-muted">
+                      Nothing is working on this build. It is retried automatically while attempts
+                      remain; once the worker gives up, this page offers Retry generation and your
+                      saved wording, if any, stays editable.
+                    </p>
+                  ) : undefined
+                }
               />
             )}
           </CvWorkspacePanel>

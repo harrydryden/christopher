@@ -1,5 +1,10 @@
 # Render blueprint: one always-on worker service plus the Postgres database.
 # The Next.js interface is deployed separately on Vercel and talks to the same database.
+#
+# This file is a template for creating the services, not a description of the live ones. The
+# running worker is not linked to this blueprint — its health check path and environment were set
+# in the Render dashboard and have drifted from what is written here. The dashboard is the source
+# of truth for the deployed service; change a value there as well as here, or it does nothing.
 databases:
   - name: christopher-db
     databaseName: christopher
@@ -28,9 +33,13 @@ services:
       - key: TZ
         value: Europe/London
       - key: WORKER_CONCURRENCY
-        # Six slots: three for the work someone is waiting for, two for the daily scan, one for
-        # background jobs, and every slot falls through to the rest of the queue when its own lane
-        # is empty. The database pool follows it (2 × concurrency + 4 connections).
-        value: "6"
+        # Three slots, which is what production runs. Slots are a memory budget, not a CPU one:
+        # every scan holds the listing it fetched in memory while it extracts from it, and on a
+        # 512 MB Starter instance shared with Chromium the V8 heap ceiling is about 258 MB. Three
+        # concurrent inputs is what that ceiling can hold; six was written here for throughput and
+        # is what a single 41 MB careers page turned into ten hours of out-of-memory restarts.
+        # Six needs a larger instance — raise the plan first, then this. The database pool follows
+        # it (2 × concurrency + 4 connections).
+        value: "3"
       - key: LOG_LEVEL
         value: info

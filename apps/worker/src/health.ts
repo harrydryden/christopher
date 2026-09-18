@@ -2,6 +2,13 @@ import http from "node:http";
 import { pendingTaskCounts, workloadMetrics } from "@christopher/db";
 import type { WorkerDeps } from "./context";
 import { log } from "./log";
+import { vitals } from "./vitals";
+
+/**
+ * Heap use at which the process is close enough to the ceiling that a restart is the likely next
+ * event. Render reads only `ok`, so this is for whoever is watching a deploy or a hang.
+ */
+export const HEAP_PRESSURE_FRACTION = 0.85;
 
 /** How long one reading of the queue and workload serves every caller. */
 export const HEALTH_CACHE_MS = 5000;
@@ -32,8 +39,16 @@ export function startHealthServer(deps: WorkerDeps, port: number, extra: () => R
     if (req.url === "/healthz" || req.url === "/" || req.url === "/health") {
       try {
         const { queue, metrics } = await readState();
+        const reading = vitals();
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true, workerId: deps.env.workerId, queue, metrics, memory: process.memoryUsage(), ...extra() }));
+        // `vitals` is the reading that matters: heap against the ceiling V8 kills the process at.
+        // `memory` is the raw `process.memoryUsage()` this route used to return, kept for one
+        // release in case a dashboard or script outside this repository still reads it.
+        res.end(JSON.stringify({
+          ok: true, workerId: deps.env.workerId, queue, metrics,
+          vitals: reading, pressure: reading.heapFraction >= HEAP_PRESSURE_FRACTION,
+          memory: process.memoryUsage(), ...extra(),
+        }));
       } catch (err) {
         res.writeHead(500, { "content-type": "application/json" });
         res.end(JSON.stringify({ ok: false, error: (err as Error).message }));

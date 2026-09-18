@@ -64,7 +64,7 @@ function budgetRefusal(expected: number, refusal: AiBudgetRefusal): string {
   return `${needs} the deployment's ${refusal.limit === "day" ? "daily" : "discovery"} AI cap of $${refusal.limitUsd} has $${left.toFixed(2)} left${held}. An administrator can raise it in the worker's environment; then retry.`;
 }
 type BuildUpdate = Partial<Pick<typeof schema.cvDrafts.$inferInsert,
-  "status" | "content" | "assessment" | "revision" | "buildStage" | "error" | "finalisedAt">>;
+  "status" | "content" | "assessment" | "revision" | "buildStage" | "error" | "finalisedAt" | "progressAt">>;
 
 /** All generation and review modes use the same immutable input snapshot and lease. */
 export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
@@ -83,14 +83,33 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
   };
   return withResourceLease(deps, `cv:${draftId}`, async (locked) => {
     const save = async (values: BuildUpdate) => {
+      // Every write a live build makes is progress, so it carries the moment it happened. A build
+      // that ends — ready or failed — keeps the last moment it advanced instead: `progressAt` is
+      // read only to tell a slow build from a stopped one, and a finished build is neither.
+      const advancing = values.status !== "ready" && values.status !== "failed";
+      const patch = advancing ? { ...values, progressAt: deps.now() } : values;
       const exists = await deps.db.transaction(async (tx) => {
         await locked.assertOwnership?.(tx as unknown as Db);
-        if (values.status === "ready") return completeCv(tx, draftId, { ...values, status: "ready" });
-        const updated = await tx.update(schema.cvDrafts).set(values)
+        if (patch.status === "ready") return completeCv(tx, draftId, { ...patch, status: "ready" });
+        const updated = await tx.update(schema.cvDrafts).set(patch)
           .where(eq(schema.cvDrafts.id, draftId)).returning({ id: schema.cvDrafts.id });
         return updated.length > 0;
       });
       if (!exists) throw new CvDeletedError();
+    };
+    /**
+     * A stage lasts as long as its model calls, and the longest of them — writing, and each
+     * assessment batch — run for minutes. Without this, a CV that reached `analysing` and then
+     * died with the process was indistinguishable from one still thinking, for hours. Never
+     * throws: a missed progress mark must not fail a build that is otherwise fine.
+     */
+    const markProgress = async () => {
+      try {
+        await deps.db.update(schema.cvDrafts).set({ progressAt: deps.now() })
+          .where(eq(schema.cvDrafts.id, draftId));
+      } catch (error) {
+        log.warn("CV progress mark failed", { draftId, error: (error as Error).message });
+      }
     };
     const [draft] = await deps.db
       .select()
@@ -140,6 +159,9 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
           // it, and not a sibling that happened to finish cleanly afterwards.
           if (usage.error && usage.error !== CANCELLED_ERROR) generationError = usage.error;
           await deps.db.insert(schema.aiCalls).values({ ...usage, userId: draft.userId });
+          // Every model call that returns — the rubric, each writing attempt, each assessment
+          // batch — is the build advancing, even when the stage it belongs to does not change.
+          await markProgress();
         },
       });
       const requireResult = <T>(value: T | null): T => {

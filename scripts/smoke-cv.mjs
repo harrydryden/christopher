@@ -105,6 +105,14 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       readyId,
       JSON.stringify(assessment),
     ]);
+    // A generating draft with no task behind it is a stopped build, and the page now says so.
+    // Give the busy one a worker holding it, and a recent progress mark, so it reads as running.
+    await pool.query(
+      `insert into tasks (type, payload, dedupe_key, status, attempts, started_at, locked_at, locked_by)
+       values ('generate_cv', $1, $2, 'running', 1, now(), now(), 'smoke-worker')`,
+      [JSON.stringify({ draftId: busyId }), `generate_cv:${busyId}`],
+    );
+    await pool.query("update cv_drafts set progress_at = now() where id = $1", [busyId]);
     browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({
       viewport: { width: 1440, height: 1000 },

@@ -1556,9 +1556,17 @@ it("does not strand an assessment retry while the previous task is still finishi
 it("publishes real CV stage changes to the page refresher", async () => {
   const [draft] = await database.insert(schema.cvDrafts).values({ userId: user.id, jobTitle: "Director", companyName: "Example", jobDescription: "Lead a team", libraryVersion: 1, librarySnapshot: { name: "Example", contact: "", profile: "Leader", entries: [] }, model: "test", status: "generating", buildStage: "writing" }).returning();
   const request = () => new Request(`http://localhost/api/work-status?cv=${draft!.id}`);
-  expect(await (await workStatus(request())).json()).toMatchObject({ active: true, version: "generating:writing" });
+  const version = async () => ((await (await workStatus(request())).json()) as { active: boolean; version: string }).version;
+  const writing = await version();
+  expect(writing).toContain("generating:writing");
   await database.update(schema.cvDrafts).set({ buildStage: "fitting" }).where(eq(schema.cvDrafts.id, draft!.id));
-  expect(await (await workStatus(request())).json()).toMatchObject({ active: true, version: "generating:fitting" });
+  const fitting = await version();
+  expect(fitting).toContain("generating:fitting");
+  expect(fitting).not.toBe(writing);
+  // The version also carries how long the build has been still, so a page waiting on a build that
+  // has stopped moving still refreshes and its "no progress for N minutes" keeps counting.
+  await database.update(schema.cvDrafts).set({ progressAt: new Date(Date.now() - 12 * 60_000) }).where(eq(schema.cvDrafts.id, draft!.id));
+  expect(await version()).not.toBe(fitting);
 });
 
 it("saves default appearance independently of library edits and existing CVs", async () => {

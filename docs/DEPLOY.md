@@ -218,12 +218,55 @@ account, and they refuse any call, a CV build included, so leave them unset unle
 | The administrator sees none of the old data | The address used is not in `ADMIN_EMAILS`, or the confirmation link was never completed | Sign up with the listed address and complete the link with your password, or sign in with Google using it |
 | Confirmation or reset emails never arrive | Resend is not configured | Set `RESEND_API_KEY`, `EMAIL_FROM` and `APP_URL`; until then the links appear in the function log, and an administrator can mint reset links from Admin |
 | Worker restarts repeatedly | `DATABASE_URL` wrong, or the internal URL used from another region | Use the external URL |
+| Worker restarts every few minutes and nothing finishes | Out of memory: too many concurrent scans for the instance, or one very large listing | Operations › Background worker, then the runbook below |
 | A company shows no source | Discovery could not find one | Open the company and paste the careers or board URL |
 | A source says "blocked" | Bot protection | Paste the underlying board URL; the tool does not try to evade protection |
 | Cron returns 503 | `CRON_SECRET` is unset | Set it, or ignore it in shape A |
 | Worker exits with `DATABASE_URL is required` | The database is not linked | Add `DATABASE_URL` to the service, picking the database's internal connection string |
 | Pushing to the branch does not deploy | Render is not connected to the GitHub account, so there is no webhook | Connect GitHub in Render, or trigger the deploy by hand |
 | Worker cannot reach the database over TLS | The internal endpoint negotiated differently than expected | Set `DATABASE_SSL=disable` for an internal URL, or `require` for an external one |
+
+### When a build or scan hangs
+
+A CV that has said "generating" for an hour, or a daily run that never finishes, is almost always
+one thing: the worker process is dying and being replaced, not working slowly. Read it in this
+order, from **Admin › Operations**.
+
+1. **Worker status**, at the top of the Background worker card. `healthy` means the worker
+   answered within the last two minutes and has recovered from fewer than two crashes in the last
+   hour. `restarting` means it is answering but has recovered from two or more — the heartbeat is
+   rewritten on every boot, so a fresh report proves a fresh process, not a healthy one. `stopped`
+   means nothing has reported for over two minutes.
+2. **The crash count** for the last 24 hours, on the line below. A number in the dozens is a loop.
+3. **The heap reading**: "184 of 258 MB heap, 71%". The ceiling is V8's, set from the memory the
+   instance has — about 258 MB on a 512 MB Render Starter that also carries Chromium. When the
+   heap reaches it, V8 aborts the process. Nothing catches that: no handler runs, no error is
+   written, and the task that was running is simply still marked running. Above 85% the line turns
+   amber, because the next large input is likely to be the last thing the process does.
+4. **Last crash recovery** names the tasks the dead process was holding, with the likeliest first
+   — the one with the most attempts, because a crash is not a failure and never counts as one, so
+   the task that keeps killing the worker is the task with the impossible attempt count.
+5. **Running tasks** shows elapsed time against each type's deadline; **Retrying tasks** shows what
+   a crash handed back, with the error it left. A long retry list all naming one company or one CV
+   is the cause, not the symptom.
+6. **Largest scan inputs** lists the biggest listing each source returned in the last week. A
+   scan holds its input in memory while it extracts from it, so compare the top of that list with
+   the heap ceiling above. A board in the tens of megabytes will not fit beside two other slots.
+
+The fix for a memory loop is fewer concurrent inputs or a larger instance, in that order:
+`WORKER_CONCURRENCY` is a memory budget, not a CPU one. Production runs **3**. `render.yaml` is a
+template for creating services, not a description of the live ones — **the Render dashboard is the
+source of truth** for the running worker, whose health check path and environment were set there.
+Change the value in the dashboard, and in `render.yaml` so a rebuilt service inherits it.
+
+`NODE_OPTIONS` is deliberately unset. Raising `--max-old-space-size` above what the instance has
+only moves the failure from a V8 abort to the kernel's OOM killer, which is less visible, and
+lowering it makes the process die sooner. The size of the input and the number of slots are the
+two levers.
+
+A CV build has its own view of the same thing: while it is building, its page shows when it
+started, the stage it reached, how long since it last advanced and which attempt it is on, and
+says plainly when it has stopped rather than turning a wheel indefinitely.
 
 ### External company discovery and emailed newsletters
 

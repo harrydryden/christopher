@@ -219,3 +219,38 @@ export async function actionCvs(
     }
   });
 }
+
+/**
+ * Give up on a build nothing is running any more, so the page stops saying "generating".
+ *
+ * A CV build is the one task a person watches while it runs, and the only thing that ever moves
+ * its draft out of `queued`/`generating` is the handler itself. A worker killed mid-build — an
+ * out-of-memory, a pod replaced — writes nothing, so the draft stays half-alive until someone
+ * notices. This is what the queue calls when it gives up on the task: the draft fails with a
+ * message that says what to do, and its stage is cleared so nothing reads a step that is not
+ * running. A draft already `ready` or `failed` is left exactly as it is, and the role's lifecycle
+ * lock is taken first, like every other transition here.
+ *
+ * Returns the account the draft belongs to, so the caller can release that account's hold for it.
+ */
+export async function abandonCvDraft(
+  database: Db,
+  id: string,
+  error: string,
+): Promise<{ userId: string } | null> {
+  return database.transaction(async (tx) => {
+    await lockCvDraft(tx, id);
+    const [draft] = await tx
+      .select(metadata)
+      .from(cvDrafts)
+      .where(eq(cvDrafts.id, id));
+    if (!draft) return null;
+    if (draft.status !== "queued" && draft.status !== "generating") return null;
+    const rows = await tx
+      .update(cvDrafts)
+      .set({ status: "failed", error: error.slice(0, 1000), buildStage: null })
+      .where(and(eq(cvDrafts.id, id), inArray(cvDrafts.status, ["queued", "generating"])))
+      .returning({ id: cvDrafts.id });
+    return rows.length ? { userId: draft.userId } : null;
+  });
+}

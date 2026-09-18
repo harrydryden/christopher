@@ -3,9 +3,25 @@ import { parseDate } from "../normalize";
 import { fetchJson, htmlToText, joinLocation, pathSegments, rec, safeUrl, slugOk, str, verifyFromFetch, MAX_POSTINGS } from "./common";
 
 const API = "https://boards-api.greenhouse.io/v1/boards";
+const EU_API = "https://boards-api.eu.greenhouse.io/v1/boards";
+
+/**
+ * The listing is requested without `content=true`: a board of 2,331 roles answers in 1-2 MB of
+ * metadata, where the same board with every description inline answered in 41 MB and ran the
+ * worker out of heap while decoding the body. Descriptions come one role at a time from
+ * `/jobs/{id}` (see `fetchGreenhouseDescription`), which the scan queues rather than reads inline.
+ */
+const LIST_MAX_BYTES = 8_000_000;
+const DETAIL_MAX_BYTES = 2_000_000;
 
 export function greenhouseSpec(slug: string): SourceSpec {
-  return { type: "greenhouse", url: `https://job-boards.greenhouse.io/${slug}`, apiUrl: `${API}/${slug}/jobs?content=true`, atsSlug: slug };
+  return { type: "greenhouse", url: `https://job-boards.greenhouse.io/${slug}`, apiUrl: `${API}/${slug}/jobs`, atsSlug: slug };
+}
+
+/** Sources stored against the EU host keep using it; everything else is the default board API. */
+function apiBase(spec: SourceSpec): string {
+  const host = spec.apiUrl ? safeUrl(spec.apiUrl)?.hostname.toLowerCase() : undefined;
+  return host === "boards-api.eu.greenhouse.io" ? EU_API : API;
 }
 
 function slugFromUrl(url: string): string | null {
@@ -43,6 +59,11 @@ interface GhJob {
   metadata?: Array<{ name?: string; value?: unknown }>;
 }
 
+/**
+ * The listing carries no description, so `descriptionHtml` and `descriptionText` are undefined
+ * at scan time for every posting. The scan defers description-matching gates for them and queues
+ * one `fetch_description` task per posting instead.
+ */
 function mapJob(j: GhJob): RawPosting | null {
   const title = str(j.title);
   const url = str(j.absolute_url);
@@ -62,8 +83,6 @@ function mapJob(j: GhJob): RawPosting | null {
     remote: /remote/i.test(location ?? "") || undefined,
     postedAt: parseDate(j.first_published),
     updatedAt: parseDate(j.updated_at),
-    descriptionHtml: str(j.content) ? j.content : undefined,
-    descriptionText: htmlToText(j.content),
     salaryText: salary ? str(salary.value) : undefined,
   };
 }
@@ -71,7 +90,7 @@ function mapJob(j: GhJob): RawPosting | null {
 async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
   const slug = spec.atsSlug;
   if (!slug) throw new Error("greenhouse spec missing slug");
-  const { data } = await fetchJson<{ jobs?: GhJob[] }>(ctx, `${API}/${slug}/jobs?content=true`, { maxBodyBytes: 60_000_000, timeoutMs: 60_000 });
+  const { data } = await fetchJson<{ jobs?: GhJob[] }>(ctx, `${apiBase(spec)}/${slug}/jobs`, { maxBodyBytes: LIST_MAX_BYTES, timeoutMs: 60_000 });
   if (!Array.isArray(data.jobs)) throw new Error("Greenhouse response is missing its jobs array");
   if (data.jobs.length > MAX_POSTINGS) throw new Error(`Greenhouse board exceeds the ${MAX_POSTINGS}-role processing limit`);
   const postings = data.jobs.map(mapJob).filter((p): p is RawPosting => !!p);
@@ -79,13 +98,27 @@ async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPo
   return postings;
 }
 
+/**
+ * One role's description. `GET /v1/boards/{slug}/jobs/{id}` returns that posting with its `content`
+ * (HTML, entity-encoded). A board with no description for a role answers without `content`, which
+ * returns undefined and lets the caller fall back to the posting page.
+ */
+export async function fetchGreenhouseDescription(spec: SourceSpec, posting: RawPosting, ctx: FetchContext): Promise<string | undefined> {
+  const slug = spec.atsSlug;
+  const id = posting.externalId;
+  if (!slug || !id || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) return undefined;
+  const { data } = await fetchJson<unknown>(ctx, `${apiBase(spec)}/${slug}/jobs/${id}`, { maxBodyBytes: DETAIL_MAX_BYTES });
+  return htmlToText(rec(data)?.content);
+}
+
 async function companyName(spec: SourceSpec, ctx: FetchContext): Promise<string | undefined> {
-  const { data } = await fetchJson<unknown>(ctx, `${API}/${spec.atsSlug}`);
+  const { data } = await fetchJson<unknown>(ctx, `${apiBase(spec)}/${spec.atsSlug}`);
   return str(rec(data)?.name);
 }
 
 export const greenhouse: Adapter = {
   type: "greenhouse",
+  descriptionsPerPosting: true,
   specFromUrl(url) {
     const slug = slugFromUrl(url);
     return slug ? greenhouseSpec(slug) : null;

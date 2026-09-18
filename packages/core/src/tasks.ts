@@ -94,3 +94,49 @@ export function priorityFor(type: TaskType): number {
       return 5;
   }
 }
+
+/**
+ * How long one handler may run before its task is abandoned and failed.
+ *
+ * Nothing else bounds a handler: a fetch that hangs past its own timeouts, or a model call that
+ * never returns, would otherwise hold a slot until the process restarts. `scan_company` is the
+ * three minutes per company R-3.1 asks for; a CV build is a chain of model calls and gets half an
+ * hour; discovery walks several pages. Everything else is short by construction.
+ *
+ * It lives here rather than in the worker because the interface shows elapsed time against the
+ * deadline, and nothing in `apps/web` may import `apps/worker`.
+ */
+export const TASK_DEADLINES_MS: Partial<Record<TaskType, number>> & { default: number } = {
+  scan_company: 3 * 60_000,
+  generate_cv: 30 * 60_000,
+  discover: 5 * 60_000,
+  default: 2 * 60_000,
+};
+
+export type TaskDeadlines = Partial<Record<TaskType | "default", number>>;
+
+/** The deadline for one type: the caller's override first, then the table above. */
+export function deadlineMsFor(type: TaskType, overrides: TaskDeadlines = {}): number {
+  return overrides[type] ?? overrides.default ?? TASK_DEADLINES_MS[type] ?? TASK_DEADLINES_MS.default;
+}
+
+/** The same function under the shorter name the interface calls it by. */
+export { deadlineMsFor as deadlineFor };
+
+/**
+ * A short human label for what a task is for, read from its payload: the company, draft or
+ * account behind it. Used when a crash recovery has to name the tasks that were running.
+ */
+export function taskSubject(type: TaskType, payload: Record<string, unknown> | null | undefined): string | null {
+  if (!payload) return null;
+  const pick = (key: string) => (typeof payload[key] === "string" ? (payload[key] as string) : null);
+  const subject = pick("draftId") ?? pick("companyId") ?? pick("jobId") ?? pick("sourceId")
+    ?? pick("candidateId") ?? pick("documentId") ?? pick("decisionId") ?? pick("userId");
+  return subject ? `${type}:${subject}` : null;
+}
+
+/** The account a task's payload names, when it names one. Shared work carries none. */
+export function taskUserId(payload: Record<string, unknown> | null | undefined): string | null {
+  const userId = payload?.userId;
+  return typeof userId === "string" ? userId : null;
+}

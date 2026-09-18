@@ -1,16 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { createFakeFetchContext } from "../testing";
 import * as fx from "../fixtures";
-import { adapters, findAtsSpecsInText, getAdapter, isAtsHost, specFromAnyUrl } from "./registry";
+import { adapters, descriptionsFetchedPerPosting, fetchDescriptionFor, findAtsSpecsInText, getAdapter, isAtsHost, specFromAnyUrl } from "./registry";
 import { extractJsonLdPostings } from "./jsonld";
 import { applyRecipe, compactDomForModel, extractPostingsFromHtml, findJobLinks, validateRecipe } from "./html";
 import type { HtmlRecipe } from "../types";
 
 const ctx = createFakeFetchContext({
   routes: {
-    "https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true": { body: fx.GREENHOUSE_JOBS },
+    "https://boards-api.greenhouse.io/v1/boards/acme/jobs": { body: fx.GREENHOUSE_JOBS },
+    "https://boards-api.greenhouse.io/v1/boards/acme/jobs/4001001": { body: fx.GREENHOUSE_JOB_DETAIL },
+    "https://boards-api.greenhouse.io/v1/boards/acme/jobs/4001003": { body: fx.GREENHOUSE_JOB_DETAIL_NO_CONTENT },
     "https://boards-api.greenhouse.io/v1/boards/acme": { body: fx.GREENHOUSE_BOARD },
-    "https://boards-api.greenhouse.io/v1/boards/missing/jobs?content=true": { status: 404, body: { error: "not found" } },
+    "https://boards-api.greenhouse.io/v1/boards/missing/jobs": { status: 404, body: { error: "not found" } },
     "https://api.lever.co/v0/postings/acme?mode=json": { body: fx.LEVER_POSTINGS },
     "https://api.ashbyhq.com/posting-api/job-board/acme?includeCompensation=true": { body: fx.ASHBY_BOARD },
     "https://api.smartrecruiters.com/v1/companies/acme/postings?limit=100&offset=0": { body: fx.SMARTRECRUITERS_PAGE },
@@ -82,7 +84,33 @@ describe("greenhouse adapter", () => {
     expect(ops.postedAt?.toISOString()).toBe("2026-08-28T09:00:00.000Z");
     expect(ops.url).toBe("https://job-boards.greenhouse.io/acme/jobs/4001001");
     expect(ops.salaryText).toBe("£70,000 - £90,000");
-    expect(ops.descriptionText).toContain("Operations Manager");
+    // The listing is fetched without descriptions; they arrive one role at a time.
+    expect(ops.descriptionText).toBeUndefined();
+    expect(ops.descriptionHtml).toBeUndefined();
+  });
+  it("never asks the board for every description at once", async () => {
+    const listing = createFakeFetchContext({ routes: { "https://boards-api.greenhouse.io/v1/boards/acme/jobs": { body: fx.GREENHOUSE_JOBS } } });
+    await getAdapter("greenhouse").fetchPostings(spec, listing);
+    expect(listing.requestLog).toHaveLength(1);
+    expect(listing.requestLog[0]!.url).toBe("https://boards-api.greenhouse.io/v1/boards/acme/jobs");
+    expect(listing.requestLog.some((r) => r.url.includes("content=true"))).toBe(false);
+    expect(spec.apiUrl).not.toContain("content=true");
+  });
+  it("fetches one role's description from the detail endpoint", async () => {
+    const postings = await getAdapter("greenhouse").fetchPostings(spec, ctx);
+    const manager = postings.find((p) => p.externalId === "4001001")!;
+    const description = await fetchDescriptionFor(spec, manager, ctx);
+    expect(description).toContain("We are looking for an Operations Manager in London.");
+    // A posting the board has no description for resolves to nothing rather than to empty text,
+    // so the caller falls back to the posting page instead of storing a blank description.
+    const engineer = postings.find((p) => p.externalId === "4001003")!;
+    expect(await fetchDescriptionFor(spec, engineer, ctx)).toBeUndefined();
+    expect(await fetchDescriptionFor(spec, { title: "No id", url: "https://job-boards.greenhouse.io/acme/jobs/x" }, ctx)).toBeUndefined();
+  });
+  it("is declared as a per-role description source", () => {
+    expect(descriptionsFetchedPerPosting("greenhouse")).toBe(true);
+    expect(descriptionsFetchedPerPosting("lever")).toBe(false);
+    expect(descriptionsFetchedPerPosting("html")).toBe(false);
   });
   it("flags remote roles from the location text", async () => {
     const postings = await getAdapter("greenhouse").fetchPostings(spec, ctx);
@@ -125,7 +153,6 @@ describe("other adapters", () => {
     expect(postings).toHaveLength(2);
     expect(postings[0]!.url).toBe("https://jobs.smartrecruiters.com/acme/744000000000001");
     expect(postings[1]!.remote).toBe(true);
-    const { fetchDescriptionFor } = await import("./registry");
     const description = await fetchDescriptionFor(spec, postings[0]!, ctx);
     expect(description).toContain("Coordinate day-to-day operations.");
     expect(description).toContain("3+ years in operations.");
@@ -266,14 +293,14 @@ describe("HTML extraction", () => {
 describe("large and incomplete Greenhouse boards", () => {
   it("retains every role on an Anduril-sized board", async () => {
     const jobs = Array.from({ length: 2212 }, (_, i) => ({ id: i + 1, title: `Operations Director ${i}`, absolute_url: `https://job-boards.greenhouse.io/large/jobs/${i + 1}` }));
-    const ctx = createFakeFetchContext({ routes: { "https://boards-api.greenhouse.io/v1/boards/large/jobs?content=true": { body: { jobs } } } });
+    const ctx = createFakeFetchContext({ routes: { "https://boards-api.greenhouse.io/v1/boards/large/jobs": { body: { jobs } } } });
     const postings = await getAdapter("greenhouse").fetchPostings({ type: "greenhouse", url: "https://job-boards.greenhouse.io/large", atsSlug: "large" }, ctx);
     expect(postings).toHaveLength(2212);
     expect(postings.at(-1)?.externalId).toBe("2212");
   });
   it("rejects malformed responses instead of treating them as an empty board", async () => {
     for (const body of [{ error: "unavailable" }, { jobs: [{ id: 1, title: "Missing URL" }] }]) {
-      const ctx = createFakeFetchContext({ routes: { "https://boards-api.greenhouse.io/v1/boards/large/jobs?content=true": { body } } });
+      const ctx = createFakeFetchContext({ routes: { "https://boards-api.greenhouse.io/v1/boards/large/jobs": { body } } });
       await expect(getAdapter("greenhouse").fetchPostings({ type: "greenhouse", url: "https://job-boards.greenhouse.io/large", atsSlug: "large" }, ctx)).rejects.toThrow();
     }
   });

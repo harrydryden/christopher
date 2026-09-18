@@ -127,8 +127,12 @@ async function scanSource(
   const baseCtx = makeFetchContext(deps);
   const responses: Array<{ url: string; status: number; body: string }> = [];
   let snapshotChars = 0;
+  // Every byte the adapter reads for this listing, recorded on the scan row. It is the number that
+  // tells an operator which source is about to run the worker out of memory, before it does.
+  let fetchedBytes = 0;
   const ctx: FetchContext = { ...baseCtx, fetchText: async (url, init) => {
     const response = await baseCtx.fetchText(url, init);
+    fetchedBytes += Buffer.byteLength(response.body, "utf8");
     const body = response.body.slice(0, Math.max(0, 2_000_000 - snapshotChars));
     snapshotChars += body.length;
     if (body) responses.push({ url: response.url, status: response.status, body });
@@ -210,9 +214,28 @@ async function scanSource(
   const followers = await loadFollowers(deps, company.id);
   const descriptionGates = [...new Map(followers.filter(f => needsDescription(f.settings.gate)).map(f => [JSON.stringify(f.settings.gate), f.settings.gate])).values()];
   const rejectionCache = await loadAdmissionCache(deps.db, source.id, deps.now());
+  // Two ways a description-matching gate can fail to decide about a posting, and they are not the
+  // same thing. `unresolved`: the detail text was read inline and could not be had, so the listing
+  // was not fully readable and the scan is partial, with admission left to the next scan.
+  // `deferred`: the source lists roles without descriptions and serves one per request (Greenhouse
+  // — reading 2,331 of them inline is what ran the worker out of heap). The listing itself is
+  // complete, so the scan stays `ok` and may still close roles; the posting is stored, a
+  // `fetch_description` task is queued for it below, and every follower's gate is re-run when the
+  // text lands. A posting is never rejected for want of a description it was never offered.
   const unresolved = new Set<string>();
-  if (fetchOk) for (const gate of descriptionGates) for (const url of await prepareForAdmission(postings, spec, ctx, gate, rejectionCache)) unresolved.add(url);
+  const deferred = new Set<string>();
+  if (fetchOk && descriptionGates.length) {
+    if (ats.descriptionsFetchedPerPosting(source.type)) {
+      for (const posting of postings) {
+        if (!posting.descriptionText && !savedByUrl.get(posting.url)?.text) deferred.add(posting.url);
+      }
+    } else {
+      for (const gate of descriptionGates) for (const url of await prepareForAdmission(postings, spec, ctx, gate, rejectionCache)) unresolved.add(url);
+    }
+  }
   await rejectionCache.save();
+  /** The gate cannot judge this posting yet: defer it rather than reject it. */
+  const undecided = (url: string) => unresolved.has(url) || deferred.has(url);
   if (unresolved.size) {
     incomplete = true;
     error = `${unresolved.size} descriptions unavailable; admission deferred until the next scan`;
@@ -332,14 +355,19 @@ async function scanSource(
       let wanted = false;
       for (const follower of followers) {
         const gate = follower.settings.gate;
-        if (unresolved.has(row.url) && needsDescription(gate)) continue;
+        if (undecided(row.url) && needsDescription(gate)) continue;
         const verdict = evaluateGate({ title: row.title, department: row.department, description: gate.matchFields.includes("description") ? row.descriptionText : undefined, location: row.location, locations: row.locations, remote: row.remote }, gate);
         if (!verdict.inTable) continue;
         wanted = true;
         viewInserts.push({ userId: follower.userId, jobId: row.id, keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms, excluded: verdict.excluded, locationOk: verdict.locationOk, inTable: true, nearMiss: false, seeded: isFirstScan, createdAt: deps.now(), updatedAt: deps.now() });
         scoreQueue.push({ userId: follower.userId, jobId: row.id });
       }
-      if (wanted && !row.descriptionText) descriptionQueue.add(row.id);
+      // A posting a follower admitted needs its description stored; a deferred posting needs it
+      // before any description gate can decide. The first scan of a 2,331-role Greenhouse board
+      // with a description-matching follower therefore queues 2,331 tasks, once: dedupe keys stop
+      // duplicates and later scans queue only postings that are new or still have no text. That
+      // cost is accepted rather than capped, because a silent cap would hide roles from the gate.
+      if (!row.descriptionText && (wanted || deferred.has(row.url))) descriptionQueue.add(row.id);
     }
   }
 
@@ -395,7 +423,7 @@ async function scanSource(
     const sourceUpdated = posting.updatedAt && (!job.descriptionFetchedAt || posting.updatedAt > job.descriptionFetchedAt);
     for (const follower of followers) {
       const gate = follower.settings.gate;
-      if (unresolved.has(posting.url) && needsDescription(gate)) continue;
+      if (undecided(posting.url) && needsDescription(gate)) continue;
       const verdict = evaluateGate({ ...fields, description: gate.matchFields.includes("description") ? fields.descriptionText : undefined }, gate);
       const view = viewByKey.get(`${follower.userId}:${job.id}`);
       if (view) {
@@ -408,6 +436,10 @@ async function scanSource(
       } else continue;
       if (verdict.inTable && posting.descriptionText === undefined && (descriptionStale || sourceUpdated)) descriptionQueue.add(job.id);
     }
+    // A stored posting still without text, whose description was never attempted or whose last
+    // attempt is 14 days old, is queued again so a description gate is not deferred for ever.
+    // A posting whose text is already stored is not in `deferred` and costs nothing here.
+    if (deferred.has(posting.url) && descriptionStale) descriptionQueue.add(job.id);
   }
   for (let offset = 0; offset < updates.length; offset += 250) {
     await deps.db.execute(sql`update jobs j set title=v.title, url=v.url, location=v.location, locations=v.locations,
@@ -461,6 +493,7 @@ async function scanSource(
     closedCount: result.closed.length,
     error,
     durationMs: Date.now() - started,
+    fetchedBytes,
     rawSnapshot,
   });
 
@@ -508,6 +541,9 @@ async function scanSource(
     new: newCount,
     closed: result.closed.length,
     followers: followers.length,
+    deferredDescriptions: deferred.size,
+    fetchedBytes,
+    heapUsedMb: Math.round(process.memoryUsage().heapUsed / 1_048_576),
     ms: Date.now() - started,
   });
   return { status, newCount, closedCount: result.closed.length, postingsFound: postings.length };

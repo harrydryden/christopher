@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, isNull, isNotNull, sql } from "drizzle-orm";
-import { cvDrafts, cvVersions } from "@christopher/db";
+import { cvDrafts, cvVersions, tasks } from "@christopher/db";
 import { db, type Db } from "@/lib/db";
 import { pageNumber } from "@/components/Pagination";
 
@@ -82,4 +82,30 @@ export async function dailyCvVersions(database: Pick<Db, "execute" | "select">, 
 export async function getOwnCvDraft(userId: string, id: string) {
   const [draft] = await db().select().from(cvDrafts).where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, userId))).limit(1);
   return draft ?? null;
+}
+
+/**
+ * The queue row behind one account's build, by the dedupe key its enqueue used. It carries the
+ * only evidence that a draft stuck on "generating" has anything working on it: the attempt number,
+ * whether it is claimed, and the error a handed-back attempt left. Reached through the draft, so
+ * it is never read without the account that owns it.
+ *
+ * The dedupe index covers queued and running rows only, so a role can accumulate finished ones;
+ * the newest is the attempt this page is about.
+ */
+export async function getOwnCvBuildTask(userId: string, draftId: string) {
+  const [row] = await db()
+    .select({
+      status: tasks.status,
+      attempts: tasks.attempts,
+      maxAttempts: tasks.maxAttempts,
+      error: tasks.error,
+      startedAt: tasks.startedAt,
+    })
+    .from(tasks)
+    .innerJoin(cvDrafts, eq(cvDrafts.id, draftId))
+    .where(and(eq(tasks.dedupeKey, `generate_cv:${draftId}`), eq(cvDrafts.userId, userId)))
+    .orderBy(desc(tasks.createdAt))
+    .limit(1);
+  return row ?? null;
 }

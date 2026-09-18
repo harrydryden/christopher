@@ -50,9 +50,17 @@ function acmeRoutes(): RouteTable[string] {
   };
 }
 
-function greenhouseRoutes(jobs: object): RouteTable[string] {
+/**
+ * The board API as the adapter now uses it: the listing carries no descriptions (the fixture
+ * strips `content` from it the way `?content=true` being absent does), and each role's text is
+ * served from its own detail endpoint.
+ */
+function greenhouseRoutes(jobs: Array<Record<string, unknown>>): RouteTable[string] {
+  const listing = jobs.map(({ content: _content, ...rest }) => rest);
+  const details = Object.fromEntries(jobs.map((job) => [`/v1/boards/acme/jobs/${String(job.id)}`, { body: job }]));
   return {
-    "/v1/boards/acme/jobs": { body: jobs },
+    ...details,
+    "/v1/boards/acme/jobs": { body: { jobs: listing, meta: { total: listing.length } } },
     "/v1/boards/acme": { body: { name: "Acme Robotics", content: "About Acme" } },
   };
 }
@@ -114,11 +122,11 @@ let db: Db;
 let now = new Date("2026-09-05T06:00:00Z");
 let user: User;
 
-function setJobs(jobs: unknown[]) {
+function setJobs(jobs: Array<Record<string, unknown>>) {
   server.setRoutes({
     "www.acme.example": acmeRoutes(),
     "acme.example": acmeRoutes(),
-    "boards-api.greenhouse.io": greenhouseRoutes({ jobs, meta: { total: jobs.length } }),
+    "boards-api.greenhouse.io": greenhouseRoutes(jobs),
     "job-boards.greenhouse.io": {},
   });
 }
@@ -251,6 +259,8 @@ describe("end to end", () => {
     expect(scan!.status).toBe("ok");
     expect(scan!.postingsFound).toBe(5);
     expect(scan!.fetchMethod).toBe("api");
+    // How large the input was, so an oversized board is visible before it exhausts the worker.
+    expect(scan!.fetchedBytes).toBeGreaterThan(0);
   }, 60_000);
 
   it("stores every observed posting once and shows an account only its matching roles", async () => {
@@ -445,27 +455,36 @@ describe("functional review regressions", () => {
     const company = await addCompany("https://www.acme.example/", "acme.example");
     await queue.drain();
     const [saved] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, "id:4001001"));
+    // The board lists without descriptions, so the role the account wants had its description
+    // fetched from the detail endpoint by the task the first scan queued.
+    expect(saved!.descriptionText).toContain("Own operations for our London site.");
     await db.insert(schema.decisions).values({ userId: user.id, jobId: saved!.id, decision: "skip", reason: "Too junior", jobTitle: saved!.title, companyName: company.name });
-    setJobs([{ ...JOB_OPERATIONS_MANAGER, title: "Engineering Manager", location: { name: "New York, USA" }, offices: [], content: "A changed engineering description", absolute_url: "https://job-boards.greenhouse.io/acme/jobs/4001001?updated=1" }, JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
+    setJobs([{ ...JOB_OPERATIONS_MANAGER, title: "Engineering Manager", location: { name: "New York, USA" }, offices: [], absolute_url: "https://job-boards.greenhouse.io/acme/jobs/4001001?updated=1" }, JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
     const [source] = await db.select().from(schema.careerSources);
     await _scanSourceForTests(deps, company, source!, await deps.settings(), null);
     const [job] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, "id:4001001"));
     expect(job!.title).toBe("Engineering Manager");
-    expect(job!.descriptionText).toContain("changed engineering");
+    expect(job!.url).toContain("updated=1");
+    // A listing that carries no description never blanks the stored snapshot.
+    expect(job!.descriptionText).toContain("Own operations for our London site.");
     expect(job!.descriptionSource).toBe("direct");
     expect(job!.descriptionTruncated).toBe(false);
-    expect(job!.url).toContain("updated=1");
     const [view] = await db.select().from(schema.userJobs).where(eq(schema.userJobs.jobId, job!.id));
     expect(view!.inTable).toBe(false);
     expect(view!.locationOk).toBe(false);
     expect(view!.nearMiss).toBe(false);
-    setJobs([{ ...JOB_OPERATIONS_MANAGER, content: 'Operations planning and reporting. '.repeat(1200) }]);
+
+    // The board says the posting changed: the scan queues the detail fetch again and the
+    // refreshed text replaces the snapshot, truncated at the 30k cap.
+    setJobs([{ ...JOB_OPERATIONS_MANAGER, updated_at: "2026-09-05T08:00:00Z", content: "Operations planning and reporting. ".repeat(1200) }]);
     await _scanSourceForTests(deps, company, source!, await deps.settings(), null);
+    await queue.drain();
     const [truncated] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, saved!.id));
     expect(truncated!.descriptionText).toHaveLength(30000);
+    expect(truncated!.descriptionText).toContain("Operations planning and reporting.");
     expect(truncated!.descriptionTruncated).toBe(true);
     expect(truncated!.descriptionHash).toBe(sha1(truncated!.descriptionText!));
-  }, 60_000);
+  }, 90_000);
 
   it("archives retained non-matches but preserves active decisions and saved CVs", async () => {
     await setGate({});
@@ -556,6 +575,58 @@ describe("functional review regressions", () => {
     expect(job!.keywordTerms).toEqual(["operations", "manager"]);
     expect(job!.inTable).toBe(true);
   }, 60_000);
+
+  it("defers a description-only gate to a queued description fetch instead of rejecting the role", async () => {
+    // Greenhouse lists 2,000+ roles without descriptions, so a gate that matches on the description
+    // cannot decide at scan time. The posting must be deferred, not rejected, and its description
+    // queued even though no follower has admitted it yet.
+    await setGate({});
+    const reader = await ensureTestUser(db, "description-gate@example.com", "member");
+    await db.insert(schema.userSettings).values({ userId: reader.id, key: "gate",
+      value: { includeKeywords: ["robotics"], excludeKeywords: [], matchFields: ["description"], locationTerms: [], includeRemote: true } })
+      .onConflictDoUpdate({ target: [schema.userSettings.userId, schema.userSettings.key], set: { value: { includeKeywords: ["robotics"], excludeKeywords: [], matchFields: ["description"], locationTerms: [], includeRemote: true } } });
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await subscribeToCompany(db, reader.id, company.id);
+    deps.invalidateSettings();
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources);
+
+    const TITLE_MATCH = { id: 4002001, title: "Operations Lead", first_published: "2026-09-04T09:00:00Z",
+      absolute_url: "https://job-boards.greenhouse.io/acme/jobs/4002001", location: { name: "London, UK" },
+      departments: [{ name: "Operations" }], content: "&lt;p&gt;Run the London site.&lt;/p&gt;" };
+    const DESCRIPTION_MATCH = { id: 4002002, title: "Facilities Coordinator", first_published: "2026-09-04T09:00:00Z",
+      absolute_url: "https://job-boards.greenhouse.io/acme/jobs/4002002", location: { name: "London, UK" },
+      departments: [{ name: "Workplace" }], content: "&lt;p&gt;Look after the robotics labs.&lt;/p&gt;" };
+    setJobs([JOB_OPERATIONS_MANAGER, JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK, TITLE_MATCH, DESCRIPTION_MATCH]);
+    const outcome = await _scanSourceForTests(deps, company, source!, await deps.settings(), null);
+    // The listing was read in full, so the scan is still a successful one and may close roles.
+    expect(outcome.status).toBe("ok");
+
+    const [titleMatch] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, "id:4002001"));
+    const [descriptionMatch] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, "id:4002002"));
+    // The title match is admitted at scan time; the description match is deferred, not rejected.
+    expect((await jobsInTable()).map(r => r.title)).toContain("Operations Lead");
+    expect(await db.select().from(schema.userJobs).where(and(eq(schema.userJobs.userId, reader.id), eq(schema.userJobs.jobId, descriptionMatch!.id)))).toHaveLength(0);
+    expect(descriptionMatch!.descriptionText).toBeNull();
+
+    // A description task is queued for the deferred posting although nobody wanted it yet.
+    const queued = await db.select().from(schema.tasks).where(and(eq(schema.tasks.type, "fetch_description"), eq(schema.tasks.status, "queued")));
+    const queuedJobIds = queued.map(t => (t.payload as { jobId: string }).jobId);
+    expect(queuedJobIds).toContain(descriptionMatch!.id);
+    expect(queuedJobIds).toContain(titleMatch!.id);
+
+    await queue.drain();
+    const [readerView] = await db.select().from(schema.userJobs).where(and(eq(schema.userJobs.userId, reader.id), eq(schema.userJobs.jobId, descriptionMatch!.id)));
+    expect(readerView!.inTable).toBe(true);
+    expect(readerView!.keywordTerms).toEqual(["robotics"]);
+    // The other account's title gate never admitted it: the description is shared, the table is not.
+    expect(await db.select().from(schema.userJobs).where(and(eq(schema.userJobs.userId, user.id), eq(schema.userJobs.jobId, descriptionMatch!.id)))).toHaveLength(0);
+
+    // A later scan of the same board queues nothing for postings whose description is stored.
+    await _scanSourceForTests(deps, company, source!, await deps.settings(), null);
+    const stillQueued = await db.select().from(schema.tasks).where(and(eq(schema.tasks.type, "fetch_description"), eq(schema.tasks.status, "queued")));
+    expect(stillQueued).toHaveLength(0);
+  }, 120_000);
 
   it("queues description snapshots without AI", async () => {
     const company = await addCompany("https://www.acme.example/", "acme.example");
@@ -658,16 +729,19 @@ describe("functional review regressions", () => {
       .onConflictDoUpdate({ target: [schema.userSettings.userId, schema.userSettings.key], set: { value } });
 
     await budget(0);
+    // Storing a description re-runs the gate, which scores in its own right, so this counts what
+    // the scan itself fans out rather than every score task on the table.
+    const before = (await scoreTasks()).length;
     await _scanSourceForTests(aiDeps, company, source!, await deps.settings(), null);
     // The scan still observes and stores everything; only this account's scoring is held back,
     // and no task was queued that could only fail at the hold.
-    expect(await scoreTasks()).toHaveLength(0);
+    expect(await scoreTasks()).toHaveLength(before);
     expect((await db.select().from(schema.userJobs).where(eq(schema.userJobs.inTable, true))).length).toBeGreaterThan(0);
     expect((await db.select().from(schema.tasks)).filter((row) => row.status === "failed")).toHaveLength(0);
 
     await budget(25);
     await _scanSourceForTests(aiDeps, company, source!, await deps.settings(), null);
-    expect((await scoreTasks()).length).toBeGreaterThan(0);
+    expect((await scoreTasks()).length).toBeGreaterThan(before);
   }, 60_000);
 
   it("does not score legacy non-matches even when old settings enabled them", async () => {

@@ -12,20 +12,39 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { requireAdmin } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { totalAiUsage } from "@/lib/ai-usage";
-import { formatCount, formatUsd, relativeTime, shortDate } from "@/lib/format";
+import { formatBytes, formatCount, formatDuration, formatUsd, relativeTime, shortDate } from "@/lib/format";
+import { heapSummary, workerStateTone, HEAP_WARN_FRACTION } from "@/lib/worker-status";
 import {
   getAiUsage,
+  getLastCrashRecovery,
   getQueueCounts,
   getTotalAiSpend,
-  getWorkerHeartbeat,
+  getWorkerStatus,
   listCompaniesWithNoSource,
   listFailedTasks,
+  listLargestScanInputs,
   listRecentProblemScans,
   listRecentScanRuns,
+  listRecentWorkerEvents,
+  listRetryingTasks,
+  listRunningTasks,
   listSourcesNeedingAttention,
 } from "@/lib/queries/health";
 
 export const dynamic = "force-dynamic";
+
+/** The three states, in the words the status line uses. */
+const WORKER_STATE_LABEL = { healthy: "healthy", restarting: "restarting", stopped: "stopped" } as const;
+
+const WORKER_EVENT_TONE: Partial<Record<string, "green" | "blue" | "amber" | "red" | "neutral">> = {
+  boot: "blue",
+  shutdown: "neutral",
+  crash_recovery: "red",
+  task_abandoned: "amber",
+  task_deadline: "amber",
+  holds_released: "neutral",
+  vitals: "neutral",
+};
 
 export default async function AdminOperationsPage() {
   await requireAdmin();
@@ -33,9 +52,14 @@ export default async function AdminOperationsPage() {
   // Budgets belong to accounts and each has its own window; this page is the deployment's report,
   // so it counts the calendar month that everybody's budget resets on.
   const since = aiBudgetWindowStart(now, null);
-  const [metrics, heartbeat, attentionSources, noSourceCompanies, problemScans, failedTasks, queueCounts, spend, usage, scanRuns, accounts] = await Promise.all([
+  const [metrics, status, crash, running, retrying, events, largestInputs, attentionSources, noSourceCompanies, problemScans, failedTasks, queueCounts, spend, usage, scanRuns, accounts] = await Promise.all([
     workloadMetrics(db()),
-    getWorkerHeartbeat(),
+    getWorkerStatus(now),
+    getLastCrashRecovery(),
+    listRunningTasks(25),
+    listRetryingTasks(25),
+    listRecentWorkerEvents(30),
+    listLargestScanInputs(7, 10),
     listSourcesNeedingAttention(),
     listCompaniesWithNoSource(),
     listRecentProblemScans(undefined, 7),
@@ -49,23 +73,216 @@ export default async function AdminOperationsPage() {
   const emailById = new Map(accounts.map((a) => [a.id, a.email]));
   const totals = totalAiUsage(usage);
   const accountName = (userId: string | null) => (userId ? emailById.get(userId) ?? userId : "Shared");
+  const heartbeat = status.heartbeat;
 
   return (
     <div className="space-y-6">
       <PageHeader title="Operations" description="Everything the shared worker is doing, across every account and every company in the catalogue." />
 
-      <Card title="Background worker">
+      <Card
+        title="Background worker"
+        actions={<Badge tone={workerStateTone(status.state)}>{WORKER_STATE_LABEL[status.state]}</Badge>}
+      >
         <p className="text-14">
-          {heartbeat && now.getTime() - heartbeat.at.getTime() < 120_000
-            ? `Worker reported ${relativeTime(heartbeat.at, now)}.`
-            : "No recent worker report. Check that the background worker is deployed, running and connected to this database; queued scans and CVs may be waiting."}
+          {status.state === "stopped"
+            ? `No worker report${heartbeat ? ` for ${Math.max(1, Math.round((status.ageMs ?? 0) / 60_000))} minutes` : " at all"}. Check that the background worker is deployed, running and connected to this database; queued scans and CVs are not moving.`
+            : status.state === "restarting"
+              ? `The worker is being restarted: ${status.restartsLastHour} crash recoveries in the last hour. A heartbeat is written on every boot, so "reported ${relativeTime(heartbeat?.at ?? now, now)}" here means a fresh process, not a healthy one.`
+              : `Worker reported ${relativeTime(heartbeat?.at ?? now, now)}.`}
         </p>
+        <p className="mt-2 text-14">
+          {status.restartsLastDay === 0
+            ? "No crash recoveries in the last 24 hours."
+            : `${status.restartsLastDay} crash ${status.restartsLastDay === 1 ? "recovery" : "recoveries"} in the last 24 hours, ${status.restartsLastHour} in the last hour.`}
+          {heartbeat?.bootedAt && <> Up {formatDuration(now.getTime() - heartbeat.bootedAt.getTime())} since its last boot.</>}
+        </p>
+        {heartbeat?.vitals ? (
+          <p className={`mt-2 text-14 ${status.heapPressure ? "text-warn" : ""}`}>
+            {heapSummary(heartbeat.vitals)}; {heartbeat.vitals.rssMb} MB resident, {heartbeat.vitals.externalMb} MB outside the heap.
+            {status.heapPressure
+              ? ` At or above ${Math.round(HEAP_WARN_FRACTION * 100)}% the next large input is likely to end the process, which no handler can catch or report.`
+              : " V8 kills the process when the heap reaches its ceiling, so this is the number that predicts a restart."}
+          </p>
+        ) : (
+          <p className="mt-2 text-14 text-muted">This worker has not reported a memory reading; deploy a release that sends vitals with its heartbeat.</p>
+        )}
         {heartbeat && <p className="mt-2 text-14 text-muted">
-          Last reported configuration: Anthropic key {heartbeat.aiConfigured ? "configured" : "missing"}; browser {heartbeat.browserAvailable ? "available" : "unavailable"}. A configured key still needs a successful model call to confirm access. {heartbeat.commit && <>Worker release: <code>{heartbeat.commit.slice(0, 7)}</code>.</>}
+          {heartbeat.workerId && <>Worker <code>{heartbeat.workerId}</code>. </>}
+          {heartbeat.commit && <>Release <code>{heartbeat.commit.slice(0, 7)}</code>. </>}
+          {heartbeat.concurrency !== null && <>{heartbeat.concurrency} slots. </>}
+          {heartbeat.active !== null && <>{heartbeat.active} tasks active at the last report. </>}
+          Anthropic key {heartbeat.aiConfigured ? "configured" : "missing"}; browser {heartbeat.browserAvailable ? "available" : "unavailable"}. A configured key still needs a successful model call to confirm access.
         </p>}
         <p className="mt-2 text-14">{metrics.ready} tasks ready · {metrics.running} running · oldest ready task waiting {Math.round(metrics.oldest_seconds / 60)} minutes.</p>
         <p className="mt-2 text-14">95% of completed tasks in the last day took at most {Math.round(metrics.p95_seconds)} seconds. {metrics.overdueCompanies} companies have no successful scan in 24 hours; {metrics.overdueDiscovery} discovery sources are over a day late.</p>
         <p className="mt-2 text-14">{formatUsd(metrics.reservedUsd)} is held by calls in flight, against the budgets of the accounts that asked for them.</p>
+      </Card>
+
+      <Card title="Last crash recovery">
+        {!crash ? (
+          <EmptyState title="No crash recovery recorded" description="The worker records one of these whenever it boots and finds tasks another process was still holding. An empty list is the good case." />
+        ) : (
+          <>
+            <p className="text-14">
+              {relativeTime(crash.at, now)}, worker <code>{crash.workerId}</code> booted and found {crash.suspects.length} {crash.suspects.length === 1 ? "task" : "tasks"} still claimed by a process that had gone. A crash is not a failure, so these attempts were handed back rather than counted against the task.
+            </p>
+            {crash.suspects.length > 0 && (
+              <Table className="mt-3">
+                <THead>
+                  <tr>
+                    <TH>Task</TH>
+                    <TH>Subject</TH>
+                    <TH className="text-right">Attempts</TH>
+                    <TH>Claimed</TH>
+                    <TH>By</TH>
+                  </tr>
+                </THead>
+                <TBody>
+                  {crash.suspects.map((suspect, i) => (
+                    <TR key={suspect.id ?? i}>
+                      <TD className="whitespace-nowrap">
+                        <Badge tone="neutral">{suspect.type ?? "unknown"}</Badge>
+                        {suspect.likely && <span className="ml-2 text-12 text-danger">likely cause</span>}
+                      </TD>
+                      <TD className="max-w-[22rem] truncate" title={suspect.subject ?? undefined}>{suspect.subject ?? "—"}</TD>
+                      <TD className="text-right">{suspect.attempts ?? "—"}</TD>
+                      <TD className="whitespace-nowrap">{suspect.lockedAt ? relativeTime(suspect.lockedAt, now) : "—"}</TD>
+                      <TD className="max-w-[12rem] truncate" title={suspect.lockedBy ?? undefined}>{suspect.lockedBy ?? "—"}</TD>
+                    </TR>
+                  ))}
+                </TBody>
+              </Table>
+            )}
+          </>
+        )}
+      </Card>
+
+      <Card title={`Running tasks (${running.length})`}>
+        {running.length === 0 ? (
+          <EmptyState title="Nothing is running" description="Tasks claimed by a worker appear here with how long they have left before they are abandoned." />
+        ) : (
+          <Table>
+            <THead>
+              <tr>
+                <TH>Type</TH>
+                <TH>Subject</TH>
+                <TH>Started</TH>
+                <TH>Elapsed / deadline</TH>
+                <TH className="text-right">Attempt</TH>
+                <TH>Worker</TH>
+              </tr>
+            </THead>
+            <TBody>
+              {running.map((task) => {
+                const elapsed = task.startedAt ? now.getTime() - task.startedAt.getTime() : null;
+                const over = elapsed !== null && elapsed > task.deadlineMs;
+                return (
+                  <TR key={task.id}>
+                    <TD><Badge tone="blue">{task.type}</Badge></TD>
+                    <TD className="max-w-[22rem] truncate" title={task.subject ?? undefined}>{task.subject ?? "—"}</TD>
+                    <TD className="whitespace-nowrap">{task.startedAt ? relativeTime(task.startedAt, now) : "—"}</TD>
+                    <TD className={`whitespace-nowrap ${over ? "text-danger" : ""}`}>
+                      {elapsed === null ? "—" : formatDuration(elapsed)} / {formatDuration(task.deadlineMs)}
+                    </TD>
+                    <TD className="text-right">{task.attempts} of {task.maxAttempts}</TD>
+                    <TD className="max-w-[12rem] truncate" title={task.lockedBy ?? undefined}>{task.lockedBy ?? "—"}</TD>
+                  </TR>
+                );
+              })}
+            </TBody>
+          </Table>
+        )}
+      </Card>
+
+      <Card title={`Retrying tasks (${retrying.length})`}>
+        {retrying.length === 0 ? (
+          <EmptyState title="Nothing is being retried" description="Queued tasks that have already been tried once and carry an error appear here — the ones a crash or a deadline handed back." />
+        ) : (
+          <>
+            <p className="mb-3 text-14 text-muted">A queued task with attempts already spent was handed back by a worker. A long list of these, all naming the same company or CV, is a task the worker cannot survive rather than a queue that is busy.</p>
+            <Table>
+              <THead>
+                <tr>
+                  <TH>Type</TH>
+                  <TH>Subject</TH>
+                  <TH className="text-right">Attempt</TH>
+                  <TH>Next run</TH>
+                  <TH>Error</TH>
+                </tr>
+              </THead>
+              <TBody>
+                {retrying.map((task) => (
+                  <TR key={task.id}>
+                    <TD><Badge tone={taskStatusTone("queued")}>{task.type}</Badge></TD>
+                    <TD className="max-w-[20rem] truncate" title={task.subject ?? undefined}>{task.subject ?? "—"}</TD>
+                    <TD className={`text-right ${task.attempts >= task.maxAttempts ? "text-danger" : ""}`}>{task.attempts} of {task.maxAttempts}</TD>
+                    <TD className="whitespace-nowrap">{relativeTime(task.runAfter, now)}</TD>
+                    <TD className="max-w-[24rem] truncate text-danger" title={task.error ?? undefined}>{task.error ?? ""}</TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          </>
+        )}
+      </Card>
+
+      <Card title="Recent worker events">
+        {events.length === 0 ? (
+          <EmptyState title="No worker events recorded" description="Boots, shutdowns, crash recoveries, abandoned tasks and released budget holds are recorded here." />
+        ) : (
+          <Table>
+            <THead>
+              <tr>
+                <TH>When</TH>
+                <TH>Event</TH>
+                <TH>Task</TH>
+                <TH>Subject</TH>
+                <TH>Detail</TH>
+              </tr>
+            </THead>
+            <TBody>
+              {events.map((event) => (
+                <TR key={event.id}>
+                  <TD className="whitespace-nowrap" title={event.at.toISOString()}>{relativeTime(event.at, now)}</TD>
+                  <TD><Badge tone={WORKER_EVENT_TONE[event.kind] ?? "neutral"}>{event.kind.replace(/_/g, " ")}</Badge></TD>
+                  <TD className="whitespace-nowrap text-muted">{event.taskType ?? "—"}</TD>
+                  <TD className="max-w-[18rem] truncate" title={event.subject ?? undefined}>{event.subject ?? "—"}</TD>
+                  <TD className="max-w-[24rem] truncate text-muted" title={event.detail ?? undefined}>{event.detail ?? ""}</TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+        )}
+      </Card>
+
+      <Card title="Largest scan inputs (last 7 days)">
+        <p className="mb-3 text-14 text-muted">
+          A scan holds the listing it fetched in memory while it extracts from it, against the heap ceiling shown under Background worker — so the pages at the top of this list are the ones that can end the process.
+        </p>
+        {largestInputs.length === 0 ? (
+          <EmptyState title="No measured scan inputs" description="Scans record the size of what they fetched; a recent scan will populate this." />
+        ) : (
+          <Table>
+            <THead>
+              <tr>
+                <TH>Company</TH>
+                <TH>Source</TH>
+                <TH className="text-right">Fetched</TH>
+                <TH>When</TH>
+              </tr>
+            </THead>
+            <TBody>
+              {largestInputs.map((row) => (
+                <TR key={row.sourceId}>
+                  <TD><Link href={`/admin/catalogue?q=${encodeURIComponent(row.companyName)}`} className="hover:underline">{row.companyName}</Link></TD>
+                  <TD>{row.sourceType}</TD>
+                  <TD className={`text-right ${heartbeat?.vitals && row.bytes > heartbeat.vitals.heapLimitMb * 1_048_576 * 0.1 ? "text-warn" : ""}`}>{formatBytes(row.bytes)}</TD>
+                  <TD className="whitespace-nowrap" title={row.at.toISOString()}>{relativeTime(row.at, now)}</TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+        )}
       </Card>
 
       <Card title="AI spend this month">

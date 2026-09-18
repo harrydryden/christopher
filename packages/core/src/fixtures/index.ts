@@ -5,6 +5,11 @@
  * fixtures never imply a live endpoint.
  */
 
+/**
+ * The board listing as the adapter asks for it: `/jobs`, without `content=true`, so no posting
+ * carries a description. Anduril's board answered that request in 1-2 MB where the same board
+ * with `content=true` answered in 41 MB.
+ */
 export const GREENHOUSE_JOBS = {
   jobs: [
     {
@@ -17,7 +22,6 @@ export const GREENHOUSE_JOBS = {
       location: { name: "London, UK" },
       departments: [{ id: 1, name: "Operations" }],
       offices: [{ id: 1, name: "London" }],
-      content: "&lt;p&gt;We are looking for an &lt;strong&gt;Operations Manager&lt;/strong&gt; in London.&lt;/p&gt;",
       metadata: [{ name: "Salary Range", value: "£70,000 - £90,000" }],
     },
     {
@@ -29,7 +33,6 @@ export const GREENHOUSE_JOBS = {
       location: { name: "Remote - USA" },
       departments: [{ id: 1, name: "Operations" }],
       offices: [{ id: 2, name: "Remote" }],
-      content: "&lt;p&gt;Remote operations role based in the United States.&lt;/p&gt;",
     },
     {
       id: 4001003,
@@ -40,7 +43,6 @@ export const GREENHOUSE_JOBS = {
       location: { name: "London, UK" },
       departments: [{ id: 2, name: "Engineering" }],
       offices: [{ id: 1, name: "London" }],
-      content: "&lt;p&gt;Build the platform.&lt;/p&gt;",
     },
     {
       id: 4001004,
@@ -51,7 +53,6 @@ export const GREENHOUSE_JOBS = {
       location: { name: "New York, NY" },
       departments: [{ id: 1, name: "Operations" }],
       offices: [{ id: 3, name: "New York" }],
-      content: "&lt;p&gt;Lead business operations.&lt;/p&gt;",
     },
     {
       id: 4001005,
@@ -62,7 +63,6 @@ export const GREENHOUSE_JOBS = {
       location: { name: "Manchester, UK" },
       departments: [{ id: 1, name: "Operations" }],
       offices: [{ id: 4, name: "Manchester" }],
-      content: "&lt;p&gt;Internship in operations.&lt;/p&gt;",
     },
     {
       id: 4001006,
@@ -72,10 +72,32 @@ export const GREENHOUSE_JOBS = {
       location: { name: "Remote - UK" },
       departments: [{ id: 3, name: "People" }],
       offices: [],
-      content: "&lt;p&gt;Coordinate recruiting.&lt;/p&gt;",
     },
   ],
   meta: { total: 6 },
+};
+
+/** One role from `/v1/boards/{slug}/jobs/{id}`: the same fields plus the HTML description. */
+export const GREENHOUSE_JOB_DETAIL = {
+  id: 4001001,
+  internal_job_id: 3001,
+  title: "Operations Manager",
+  updated_at: "2026-08-30T09:00:00Z",
+  first_published: "2026-08-28T09:00:00Z",
+  absolute_url: "https://job-boards.greenhouse.io/acme/jobs/4001001",
+  location: { name: "London, UK" },
+  departments: [{ id: 1, name: "Operations" }],
+  offices: [{ id: 1, name: "London" }],
+  content: "&lt;p&gt;We are looking for an &lt;strong&gt;Operations Manager&lt;/strong&gt; in London.&lt;/p&gt;",
+  metadata: [{ name: "Salary Range", value: "£70,000 - £90,000" }],
+};
+
+/** A posting the board has no description for: the detail response simply has no `content`. */
+export const GREENHOUSE_JOB_DETAIL_NO_CONTENT = {
+  id: 4001003,
+  title: "Software Engineer, Platform",
+  absolute_url: "https://job-boards.greenhouse.io/acme/jobs/4001003",
+  location: { name: "London, UK" },
 };
 
 export const GREENHOUSE_BOARD = { name: "Acme Robotics", content: "About Acme" };

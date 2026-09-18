@@ -1,7 +1,7 @@
 import type { Adapter, FetchContext, RawPosting, SourceSpec, SourceType, VerifyResult } from "../types";
 import { SourceFetchError } from "../types";
 import { absoluteUrl } from "../normalize";
-import { greenhouse } from "./greenhouse";
+import { greenhouse, fetchGreenhouseDescription } from "./greenhouse";
 import { lever } from "./lever";
 import { ashby } from "./ashby";
 import { workable } from "./workable";
@@ -141,8 +141,18 @@ export function findAtsSpecsInText(text: string, baseUrl?: string): SourceSpec[]
 
 /** Some ATSs keep the description behind a second call; this returns it when supported. */
 export async function fetchDescriptionFor(spec: SourceSpec, posting: RawPosting, ctx: FetchContext): Promise<string | undefined> {
+  if (spec.type === "greenhouse") return fetchGreenhouseDescription(spec, posting, ctx);
   if (spec.type === "smartrecruiters") return fetchSmartRecruitersDescription(spec, posting, ctx);
   return undefined;
+}
+
+/**
+ * True when this source type lists roles without descriptions and can fetch one role's description
+ * on demand. The scan reads that as "defer, do not reject": the posting is stored, a description
+ * task is queued, and every follower's gate is re-run once the text lands.
+ */
+export function descriptionsFetchedPerPosting(type: SourceType): boolean {
+  return byType.get(type)?.descriptionsPerPosting === true;
 }
 
 export { fetchHtmlPage };

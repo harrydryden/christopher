@@ -92,6 +92,13 @@ export interface VerifyResult {
 
 export interface Adapter {
   type: SourceType;
+  /**
+   * True when the listing deliberately carries no description and one request per role does
+   * (Greenhouse). A scan of such a source never reads descriptions inline: it defers every
+   * description-matching gate for the postings that have none and queues the fetches instead,
+   * so a 2,000-role board costs one bounded listing request rather than the whole board at once.
+   */
+  descriptionsPerPosting?: boolean;
   /** Derive a spec from any URL seen on company pages (links, iframes, scripts, network requests). */
   specFromUrl(url: string): SourceSpec | null;
   fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]>;

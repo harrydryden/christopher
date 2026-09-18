@@ -12,13 +12,13 @@ export { reevaluateGate, archiveNonMatches, type GateScope, type ArchiveScope } 
 export { appendProfile, latestProfileFor } from "./profiles";
 export { workloadMetrics } from "./scaling";
 export { recordWorkerEvent, listWorkerEvents, countWorkerEvents, pruneWorkerEvents, type WorkerEventInput } from "./worker-events";
-export { accountAiSpend, totalAiSpend, aiUsageByAccount, type AiAccountUsage } from "./ai-budget";
+export { accountAiSpend, totalAiSpend, aiUsageByAccount, releaseAiHolds, type AiAccountUsage, type ReleasedHolds } from "./ai-budget";
 
 export { roleStatusSql } from "./role-workflow";
 
 export { scanRunSummary, scanRunSummaries, type ScanRunSummary } from "./scan-summary";
 
-export { actionCvs, completeCv, lockCvDraft, lockCvLifecycle, nextCvRevision } from "./cv-lifecycle";
+export { abandonCvDraft, actionCvs, completeCv, lockCvDraft, lockCvLifecycle, nextCvRevision } from "./cv-lifecycle";
 
 export { cvRoleKey } from "./cv-role-key";
 

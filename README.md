@@ -110,11 +110,11 @@ Full instructions, including what to set where and what to do when something is 
 | `CHRISTOPHER_DISABLE_BROWSER` | both | set to `1` where there is no Chromium, such as Vercel |
 
 Everything else, including keywords, locations, the run time and the model, is edited in Settings and
-stored in the database. Each account has its own monthly AI budget, $25 to start, which an
-administrator raises in Admin › Accounts; the shared ceiling over every account, including work no
-account asked for, is the monthly budget in Admin › System settings. Both run on the calendar month
-and start again on the 1st, and Admin › Operations reports what was spent by account, feature and
-model.
+stored in the database. Each account has its own monthly AI budget, $25 to start, and that is the
+only budget: its holder changes it on Settings, an administrator changes anyone's in Admin ›
+Accounts. It runs on the calendar month and starts again on the 1st, and Admin › Operations reports
+what was spent by account, feature and model. `DAILY_AI_BUDGET_USD` and `DISCOVERY_AI_BUDGET_USD`
+are optional safety valves for the deployment as a whole, unset by default.
 
 ## Tests
 

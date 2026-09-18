@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_ACCOUNT_AI_BUDGET_USD, DEFAULT_SETTINGS, MAX_ACCOUNT_AI_BUDGET_USD, isValidScanTime, isValidTimezone, localDateParts, modelForCallSite, resolveSettings, resolveSystemSettings, resolveUserSettings } from "./settings";
+import { DEFAULT_ACCOUNT_AI_BUDGET_USD, DEFAULT_SETTINGS, DEFAULT_SYSTEM_SETTINGS, MAX_ACCOUNT_AI_BUDGET_USD, isValidScanTime, isValidTimezone, localDateParts, modelForCallSite, resolveSettings, resolveSystemSettings, resolveUserSettings } from "./settings";
 
 describe("resolveSettings", () => {
   it("returns the defaults when nothing is stored", () => {
@@ -9,7 +9,7 @@ describe("resolveSettings", () => {
   it("applies a stored value of the same kind", () => {
     expect(resolveSettings([{ key: "scanTime", value: "07:30" }]).scanTime).toBe("07:30");
     expect(resolveSettings([{ key: "nearMissEnabled", value: true }])).not.toHaveProperty("nearMissEnabled");
-    expect(resolveSettings([{ key: "monthlyAiBudgetUsd", value: 40 }]).monthlyAiBudgetUsd).toBe(40);
+    expect(resolveSettings([{ key: "weeklyDay", value: 3 }]).weeklyDay).toBe(3);
   });
 
   it("applies a numeric hideThreshold even though its default is null", () => {
@@ -37,19 +37,27 @@ describe("resolveSettings", () => {
     expect(settings.gate.includeRemote).toBe(true);
   });
 
-  it("ignores unknown keys, including the worker's internal bookkeeping", () => {
+  it("ignores unknown keys: the worker's bookkeeping, and settings a later version removed", () => {
     const settings = resolveSettings([
       { key: "internal:lastWeeklyYmd", value: "2026-09-06" },
       { key: "nonsense", value: 1 },
+      // The shared monthly ceiling that budgets used to have. A database that stored one before it
+      // was removed keeps the row; nothing reads it, and it changes nothing that is read.
+      { key: "monthlyAiBudgetUsd", value: 40 },
     ]);
     expect(settings).toEqual(DEFAULT_SETTINGS);
+    expect(settings).not.toHaveProperty("monthlyAiBudgetUsd");
+    expect(resolveSystemSettings([{ key: "monthlyAiBudgetUsd", value: 40 }])).toEqual(DEFAULT_SYSTEM_SETTINGS);
   });
 
   it("starts every account on the default AI budget with no reset behind it", () => {
     expect(resolveSettings([]).aiBudgetUsd).toBe(DEFAULT_ACCOUNT_AI_BUDGET_USD);
     expect(resolveSettings([]).aiBudgetResetAt).toBeNull();
     expect(resolveUserSettings([]).aiBudgetUsd).toBe(DEFAULT_ACCOUNT_AI_BUDGET_USD);
-    expect(resolveSystemSettings([]).aiBudgetResetAt).toBeNull();
+    expect(resolveUserSettings([]).aiBudgetResetAt).toBeNull();
+    // The budget and its reset marker are an account's alone; neither is a system setting.
+    expect(Object.keys(DEFAULT_SYSTEM_SETTINGS)).not.toContain("aiBudgetUsd");
+    expect(Object.keys(DEFAULT_SYSTEM_SETTINGS)).not.toContain("aiBudgetResetAt");
   });
 
   it("clamps a stored account budget and ignores one that is not a number", () => {
@@ -61,12 +69,12 @@ describe("resolveSettings", () => {
     expect(resolveUserSettings([{ key: "aiBudgetUsd", value: Number.NaN }]).aiBudgetUsd).toBe(DEFAULT_ACCOUNT_AI_BUDGET_USD);
   });
 
-  it("keeps a reset marker only when it is a usable timestamp, and an account's beats the shared one", () => {
-    expect(resolveSystemSettings([{ key: "aiBudgetResetAt", value: "2026-09-17T09:00:00.000Z" }]).aiBudgetResetAt).toBe("2026-09-17T09:00:00.000Z");
+  it("keeps a reset marker only when it is a usable timestamp", () => {
+    expect(resolveUserSettings([{ key: "aiBudgetResetAt", value: "2026-09-17T09:00:00.000Z" }]).aiBudgetResetAt).toBe("2026-09-17T09:00:00.000Z");
     expect(resolveUserSettings([{ key: "aiBudgetResetAt", value: "yesterday" }]).aiBudgetResetAt).toBeNull();
     expect(resolveUserSettings([{ key: "aiBudgetResetAt", value: 1789554417069 }]).aiBudgetResetAt).toBeNull();
-    // Both scopes keep this key; the account's row is applied last, so it wins for that account.
-    const merged = resolveSettings([{ key: "aiBudgetResetAt", value: "2026-09-01T00:00:00.000Z" }], [{ key: "aiBudgetResetAt", value: "2026-09-17T09:00:00.000Z" }]);
+    // The marker arrives with the account's rows, which are applied last.
+    const merged = resolveSettings([{ key: "scanTime", value: "07:30" }], [{ key: "aiBudgetResetAt", value: "2026-09-17T09:00:00.000Z" }]);
     expect(merged.aiBudgetResetAt).toBe("2026-09-17T09:00:00.000Z");
   });
 

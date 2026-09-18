@@ -51,7 +51,7 @@ The worker suites share one database and truncate between tests, so `fileParalle
   without one.
 - **Authentication is a database row, not a cookie.** Middleware checks the cookie signature only;
   `getCurrentUser()` decides. Server actions and route handlers call `requireUser()`, or
-  `requireAdmin()` for the shared schedule, models, budget, catalogue edits and account
+  `requireAdmin()` for the shared schedule, models, catalogue edits and account
   management, before any read or write; work that scans, discovers or calls a model goes through
   `requireVerifiedUser()`. The administrator role and the migrated owner's data go only to an
   `ADMIN_EMAILS` address that has been proven (a Google-verified sign-in, the confirmation link

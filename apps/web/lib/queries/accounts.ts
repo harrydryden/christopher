@@ -1,5 +1,5 @@
 /**
- * What each account has spent on AI this month, against the budget an administrator set for it.
+ * What each account has spent on AI this month, against its own budget: the one budget there is.
  *
  * The limit and the reset marker are two `user_settings` keys, read for every listed account in one
  * query and resolved through the same defaults and clamps as any other setting. Spend itself is a
@@ -11,7 +11,6 @@ import { aiBudgetWindowStart, DEFAULT_ACCOUNT_AI_BUDGET_USD, resolveUserSettings
 import { accountAiSpend } from "@christopher/db";
 import { userSettings } from "@christopher/db/schema";
 import { db } from "@/lib/db";
-import { getSystemSettings } from "@/lib/settings";
 
 /** The two `user_settings` keys that decide one account's budget window. */
 const BUDGET_KEYS = ["aiBudgetUsd", "aiBudgetResetAt"];
@@ -26,10 +25,9 @@ export interface AccountAiBudget {
   spentUsd: number;
 }
 
-/** What an account that has never been listed or charged would show. */
-export function defaultAccountAiBudget(now: Date = new Date(), sharedResetAt: string | null = null): AccountAiBudget {
-  const since = aiBudgetWindowStart(now, sharedResetAt);
-  return { limitUsd: DEFAULT_ACCOUNT_AI_BUDGET_USD, since, countingSince: since.getTime() > aiBudgetWindowStart(now, null).getTime() ? since : null, spentUsd: 0 };
+/** What an account that has never been listed or charged would show: the default, counting from the month. */
+export function defaultAccountAiBudget(now: Date = new Date()): AccountAiBudget {
+  return { limitUsd: DEFAULT_ACCOUNT_AI_BUDGET_USD, since: aiBudgetWindowStart(now, null), countingSince: null, spentUsd: 0 };
 }
 
 /** Month-to-date spend and budget for each of `userIds`, keyed by account id. */
@@ -41,13 +39,12 @@ export async function accountAiBudgets(userIds: string[], now: Date = new Date()
     .from(userSettings)
     .where(and(inArray(userSettings.userId, userIds), inArray(userSettings.key, BUDGET_KEYS)));
   const monthStart = aiBudgetWindowStart(now, null);
-  // An account counts from its own marker; without one it counts from the shared marker, exactly
-  // as the worker admits its work, so one shared reset starts every account afresh.
-  const shared = (await getSystemSettings()).aiBudgetResetAt;
+  // An account counts from its own marker, or from the month when it has none: the same window the
+  // worker admits its work in, and nobody else's reset can move it.
   await Promise.all(
     userIds.map(async (userId) => {
       const settings = resolveUserSettings(rows.filter((row) => row.userId === userId));
-      const since = aiBudgetWindowStart(now, settings.aiBudgetResetAt ?? shared);
+      const since = aiBudgetWindowStart(now, settings.aiBudgetResetAt);
       budgets.set(userId, {
         limitUsd: settings.aiBudgetUsd,
         since,
@@ -61,5 +58,5 @@ export async function accountAiBudgets(userIds: string[], now: Date = new Date()
 
 /** One account's own budget, for its Settings page. */
 export async function accountAiBudget(userId: string, now: Date = new Date()): Promise<AccountAiBudget> {
-  return (await accountAiBudgets([userId], now)).get(userId) ?? defaultAccountAiBudget(now, (await getSystemSettings()).aiBudgetResetAt);
+  return (await accountAiBudgets([userId], now)).get(userId) ?? defaultAccountAiBudget(now);
 }

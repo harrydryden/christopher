@@ -78,25 +78,21 @@ it("counts from the reset marker once an administrator has moved it, and never p
   }
 });
 
-it("counts from the shared reset marker when the account has none of its own, and from its own when it has", async () => {
+it("counts one account's window from its own marker alone, whatever another account carries", async () => {
   const now = new Date();
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const shared = new Date(monthStart.getTime() + 60_000);
-  await database.insert(schema.settings).values({ key: "aiBudgetResetAt", value: shared.toISOString() });
-  try {
-    await database.insert(schema.aiCalls).values([
-      { userId: user.id, callSite: "CV", model: "claude-fable-5-1", costUsd: 5, at: monthStart },
-      { userId: user.id, callSite: "CV", model: "claude-fable-5-1", costUsd: 1, at: new Date(shared.getTime() + 1_000) },
-    ]);
-    // One shared reset starts every account afresh, exactly as the worker admits their work.
-    const inherited = await accountAiBudget(user.id, now);
-    expect(inherited.since.getTime()).toBe(shared.getTime());
-    expect(inherited.countingSince?.getTime()).toBe(shared.getTime());
-    expect(inherited.spentUsd).toBe(1);
-    // An account's own marker wins over the shared one.
-    await database.insert(schema.userSettings).values({ userId: user.id, key: "aiBudgetResetAt", value: new Date(shared.getTime() + 2_000).toISOString() });
-    expect((await accountAiBudget(user.id, now)).spentUsd).toBe(0);
-  } finally {
-    await database.delete(schema.settings).where(sql`key = 'aiBudgetResetAt'`);
-  }
+  const reset = new Date(monthStart.getTime() + 60_000);
+  await database.insert(schema.aiCalls).values([
+    { userId: user.id, callSite: "CV", model: "claude-fable-5-1", costUsd: 5, at: monthStart },
+    { userId: other.id, callSite: "CV", model: "claude-fable-5-1", costUsd: 3, at: monthStart },
+  ]);
+  // Resetting one account moves that account's window and nobody else's: there is no marker
+  // anywhere else for an account to inherit.
+  await database.insert(schema.userSettings).values({ userId: other.id, key: "aiBudgetResetAt", value: reset.toISOString() });
+
+  const untouched = await accountAiBudget(user.id, now);
+  expect(untouched.since.getTime()).toBe(monthStart.getTime());
+  expect(untouched.countingSince).toBeNull();
+  expect(untouched.spentUsd).toBe(5);
+  expect(await accountAiBudget(other.id, now)).toMatchObject({ spentUsd: 0, countingSince: reset });
 });

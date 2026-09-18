@@ -3,14 +3,17 @@
  *
  * `ai_calls` is the only record of spend: every call writes one row with its real cost, so a
  * budget is a sum over a window rather than a running total that something has to keep correct.
- * Resetting a counter moves the window (a reset marker in settings); nothing is deleted, so the
- * call log stays complete. Everything here is read-only; holding capacity for a call in flight is
- * the worker's `ai_reservations` and is deliberately not mixed in.
+ * Resetting a counter moves that account's window (a reset marker in its settings); nothing is
+ * deleted, so the call log stays complete. Everything here is read-only; holding capacity for a
+ * call in flight is the worker's `ai_reservations` and is deliberately not mixed in.
  */
 import { sql } from "drizzle-orm";
 import type { Db } from "./client";
 
-/** One account's recorded spend since `since`, in USD. Shared work carries no account and is excluded. */
+/**
+ * One account's recorded spend since `since`, in USD: what its own monthly budget counts. Work
+ * that belongs to no account carries no `user_id` and is excluded.
+ */
 export async function accountAiSpend(db: Db, userId: string, since: Date): Promise<number> {
   const rows = await db.execute<{ total: number }>(
     sql`select coalesce(sum(cost_usd), 0)::float8 as total from ai_calls where user_id = ${userId} and at >= ${since}`,
@@ -18,8 +21,8 @@ export async function accountAiSpend(db: Db, userId: string, since: Date): Promi
   return Number(rows.rows[0]?.total ?? 0);
 }
 
-/** Every call since `since`, whoever it was for, which is what the shared ceiling counts. */
-export async function sharedAiSpend(db: Db, since: Date): Promise<number> {
+/** Every call since `since`, whoever it was for: the deployment's report, not a budget. */
+export async function totalAiSpend(db: Db, since: Date): Promise<number> {
   const rows = await db.execute<{ total: number }>(
     sql`select coalesce(sum(cost_usd), 0)::float8 as total from ai_calls where at >= ${since}`,
   );

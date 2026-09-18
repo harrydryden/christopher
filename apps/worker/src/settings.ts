@@ -2,7 +2,7 @@ import { schema, type Db } from "@christopher/db";
 import { resolveSettings, resolveSystemSettings, type AppSettings, type SystemSettings } from "@christopher/core";
 import { eq } from "drizzle-orm";
 
-/** System settings: the schedule, models, budget and scan policy an administrator controls. */
+/** System settings: the schedule, models and scan policy an administrator controls. */
 export async function loadSettings(db: Db): Promise<SystemSettings> {
   const rows = await db.select({ key: schema.settings.key, value: schema.settings.value }).from(schema.settings);
   return resolveSystemSettings(rows);

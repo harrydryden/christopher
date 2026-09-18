@@ -16,7 +16,7 @@ import { formatCount, formatUsd, relativeTime, shortDate } from "@/lib/format";
 import {
   getAiUsage,
   getQueueCounts,
-  getSharedAiSpend,
+  getTotalAiSpend,
   getWorkerHeartbeat,
   listCompaniesWithNoSource,
   listFailedTasks,
@@ -24,17 +24,15 @@ import {
   listRecentScanRuns,
   listSourcesNeedingAttention,
 } from "@/lib/queries/health";
-import { getSystemSettings } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminOperationsPage() {
   await requireAdmin();
   const now = new Date();
-  const settings = await getSystemSettings();
-  // The shared counter is reset by moving its window, so both the bar and the report start here.
-  const since = aiBudgetWindowStart(now, settings.aiBudgetResetAt);
-  const monthStart = aiBudgetWindowStart(now, null);
+  // Budgets belong to accounts and each has its own window; this page is the deployment's report,
+  // so it counts the calendar month that everybody's budget resets on.
+  const since = aiBudgetWindowStart(now, null);
   const [metrics, heartbeat, attentionSources, noSourceCompanies, problemScans, failedTasks, queueCounts, spend, usage, scanRuns, accounts] = await Promise.all([
     workloadMetrics(db()),
     getWorkerHeartbeat(),
@@ -43,15 +41,12 @@ export default async function AdminOperationsPage() {
     listRecentProblemScans(undefined, 7),
     listFailedTasks(50),
     getQueueCounts(),
-    getSharedAiSpend(since),
+    getTotalAiSpend(since),
     getAiUsage(since),
     listRecentScanRuns(10),
     db().select({ id: users.id, email: users.email }).from(users),
   ]);
   const emailById = new Map(accounts.map((a) => [a.id, a.email]));
-  const budget = settings.monthlyAiBudgetUsd;
-  const spendFraction = budget > 0 ? spend / budget : 0;
-  const overBudget = budget > 0 && spend > budget;
   const totals = totalAiUsage(usage);
   const accountName = (userId: string | null) => (userId ? emailById.get(userId) ?? userId : "Shared");
 
@@ -70,23 +65,16 @@ export default async function AdminOperationsPage() {
         </p>}
         <p className="mt-2 text-14">{metrics.ready} tasks ready · {metrics.running} running · oldest ready task waiting {Math.round(metrics.oldest_seconds / 60)} minutes.</p>
         <p className="mt-2 text-14">95% of completed tasks in the last day took at most {Math.round(metrics.p95_seconds)} seconds. {metrics.overdueCompanies} companies have no successful scan in 24 hours; {metrics.overdueDiscovery} discovery sources are over a day late.</p>
-        <p className="mt-2 text-14">AI requests currently reserve {formatUsd(metrics.reservedUsd)} against the shared budget.</p>
+        <p className="mt-2 text-14">{formatUsd(metrics.reservedUsd)} is held by calls in flight, against the budgets of the accounts that asked for them.</p>
       </Card>
 
       <Card title="AI spend this month">
         <div className="mb-2 flex items-baseline gap-2">
           <span className="text-16 font-semibold text-fg">{formatUsd(spend)}</span>
-          <span className="text-14 text-muted">of {formatUsd(budget)} shared ceiling</span>
+          <span className="text-14 text-muted">spent since {shortDate(since)}, across every account and the work no account asked for</span>
         </div>
-        <div className="mb-3 h-2 w-full overflow-hidden bg-track">
-          <div className={`h-full ${overBudget ? "bg-danger" : "bg-ok"}`} style={{ width: `${Math.min(100, Math.max(2, spendFraction * 100))}%` }} />
-        </div>
-        {overBudget && <p className="mb-3 text-14 text-danger">Over budget — non-essential AI calls (near-miss scoring, then suggestions) are being skipped.</p>}
         <p className="mb-3 text-14 text-muted">
-          {since.getTime() > monthStart.getTime()
-            ? `Counting since ${shortDate(since)}, the shared reset marker, rather than the start of the month.`
-            : "Counting since the start of the month."}
-          {" "}Every account also has its own budget, set in <Link href="/admin" className="text-fg underline">Accounts</Link>; this is the ceiling over all of them.
+          Spending is bounded per account: each has its own monthly budget, which it sets on Settings and which you can set for anyone in <Link href="/admin" className="text-fg underline">Accounts</Link>, where each account&apos;s own figure and window are shown. An account that has spent its month has its optional calls (near-miss scoring, then suggestions) skipped until the 1st.
         </p>
         <section>
           <h3 className="text-14 text-muted">Usage by account, feature and model</h3>

@@ -11,7 +11,7 @@ export { enqueueTask, pendingTaskCounts, taskById, activeTaskFor, type EnqueueOp
 export { reevaluateGate, archiveNonMatches, type GateScope, type ArchiveScope } from "./gate";
 export { appendProfile, latestProfileFor } from "./profiles";
 export { workloadMetrics } from "./scaling";
-export { accountAiSpend, sharedAiSpend, aiUsageByAccount, type AiAccountUsage } from "./ai-budget";
+export { accountAiSpend, totalAiSpend, aiUsageByAccount, type AiAccountUsage } from "./ai-budget";
 
 export { roleStatusSql } from "./role-workflow";
 

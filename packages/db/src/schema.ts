@@ -489,7 +489,7 @@ export const companySuggestions = pgTable("company_suggestions", {
   index("suggestions_history_idx").on(t.userId, t.status, t.resolvedAt),
 ]);
 
-/** System-wide settings (schedule, models, budget) and the worker's internal bookkeeping. */
+/** System-wide settings (schedule, models, scan policy) and the worker's internal bookkeeping. */
 export const settings = pgTable("settings", {
   key: text("key").primaryKey(),
   value: jsonb("value").notNull(),
@@ -676,11 +676,13 @@ export const hostPacing = pgTable("host_pacing", {
 
 export const aiReservations = pgTable("ai_reservations", {
   id: uuid("id").primaryKey().defaultRandom(),
+  /** Whose budget this hold is against; null for work no account asked for (extraction, discovery). */
+  userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
   callSite: text("call_site").notNull(),
   amount: real("amount").notNull(),
   createdAt: tsNow("created_at"),
   expiresAt: ts("expires_at").notNull(),
-});
+}, (t) => [index("ai_reservations_user_idx").on(t.userId)]);
 export const aiSpendPeriods = pgTable("ai_spend_periods", {
   key: text("key").primaryKey(),
   amount: real("amount").notNull().default(0),

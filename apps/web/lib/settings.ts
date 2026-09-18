@@ -16,7 +16,7 @@ async function userRows(userId: string, writer: Writer = db()) {
   return writer.select({ key: userSettingsTable.key, value: userSettingsTable.value }).from(userSettingsTable).where(eq(userSettingsTable.userId, userId));
 }
 
-/** The schedule, models, budget and scan policy: one set for the whole deployment. */
+/** The schedule, models and scan policy: one set for the whole deployment. */
 export const getSystemSettings = cache(async (): Promise<SystemSettings> => resolveSystemSettings(await systemRows()));
 
 /** One account's settings merged onto the system ones. */

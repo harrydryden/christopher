@@ -1,8 +1,9 @@
+import { MAX_ACCOUNT_AI_BUDGET_USD } from "@christopher/core";
 import { getCvWritingPreferences } from "@/lib/cv-writing-preferences";
 import { CvAppearance } from "@/components/CvAppearance";
 import { getDefaultCvAppearance } from "@/lib/cv-appearance";
 import { saveCvModel, saveCvAppearance, saveCvWritingPreferences } from "@/app/actions/cv";
-import { saveKeywords, saveLocationFilter, saveMatchFields, saveSuggestionSettings, saveTableSettings } from "@/app/actions/settings";
+import { saveAiBudget, saveKeywords, saveLocationFilter, saveMatchFields, saveSuggestionSettings, saveTableSettings } from "@/app/actions/settings";
 import { rescoreAllRoles } from "@/app/actions/learning";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
@@ -31,7 +32,7 @@ export default async function SettingsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Settings"
-        description="Keywords, locations and CV preferences are yours, as is your monthly AI budget. The scan schedule and models are shared and live in Admin."
+        description="Keywords, locations, CV preferences and your monthly AI budget are yours to set. The scan schedule and models are shared and live in Admin."
         actions={
           <form action={rescoreAllRoles}>
             <Button type="submit">Re-score all</Button>
@@ -134,11 +135,16 @@ export default async function SettingsPage() {
           You have used {formatUsd(budget.spentUsd)} of your {formatUsd(budget.limitUsd)} this month; it resets on the 1st.
           {budget.countingSince && <> Counting since {shortDate(budget.countingSince)}, when an administrator last reset it.</>}
         </p>
+        <SettingsForm action={saveAiBudget}>
+          <label className={labelClass}>
+            <span className={fieldLabelClass}>Monthly AI budget (USD)</span>
+            <input name="aiBudgetUsd" type="number" min={0} max={MAX_ACCOUNT_AI_BUDGET_USD} step={1} defaultValue={budget.limitUsd} className={fieldClass} />
+            <span className="text-12 text-muted">Scoring, suggestions and CV builds stop for this account once the month&apos;s budget is spent.</span>
+          </label>
+        </SettingsForm>
         <p className="mt-2 text-14 text-muted">
           Scoring and extraction use the shared default model <code>{settings.defaultModel}</code>.
-          {admin
-            ? <> Raise any account&apos;s budget in <a href="/admin" className="text-fg underline">Admin › Accounts</a>, and change the model or the shared ceiling in <a href="/admin/settings" className="text-fg underline">System settings</a>.</>
-            : " An administrator can raise your budget in Admin › Accounts."}
+          {admin && <> Set any account&apos;s budget in <a href="/admin" className="text-fg underline">Admin › Accounts</a>, and change the model in <a href="/admin/settings" className="text-fg underline">System settings</a>.</>}
         </p>
       </Card>
     </div>

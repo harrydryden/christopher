@@ -108,8 +108,9 @@ export async function listAccounts() {
 const AiBudgetSchema = z.coerce.number().min(0).max(MAX_ACCOUNT_AI_BUDGET_USD);
 
 /**
- * Administrators: set one account's monthly AI budget. The shared ceiling in System settings still
- * caps everything, so raising an account's budget can never take the deployment past it.
+ * Administrators: set one account's monthly AI budget. It is the same stored key the account sets
+ * for itself on Settings, and it is the only budget there is, so this is the whole of what that
+ * account may spend in a month.
  */
 export async function setAccountAiBudget(userId: string, formData: FormData): Promise<void> {
   await requireAdmin();

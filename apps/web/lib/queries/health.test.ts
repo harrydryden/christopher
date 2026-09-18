@@ -15,7 +15,7 @@ let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 let user: User;
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { getAiUsage, getSharedAiSpend } from "./health";
+import { getAiUsage, getTotalAiSpend } from "./health";
 import { totalAiUsage } from "@/lib/ai-usage";
 
 beforeAll(async () => {
@@ -59,8 +59,8 @@ it("adds AI calls up by account, feature and model, dearest first, and leaves th
   expect(rows[0]!.failed).toBe(1);
 
   expect(totalAiUsage(rows)).toEqual({ calls: 4, failed: 1, inputTokens: 4_000, outputTokens: 400, cacheReadTokens: 40, cacheWriteTokens: 20, costUsd: 4.25 });
-  // The shared ceiling counts every account's calls and the unattributed ones together.
-  expect(await getSharedAiSpend(since)).toBe(4.25);
+  // Operations reports every account's calls and the unattributed ones together.
+  expect(await getTotalAiSpend(since)).toBe(4.25);
   expect(await getAiUsage(new Date(Date.now() + 60_000))).toEqual([]);
   expect(totalAiUsage([])).toMatchObject({ calls: 0, costUsd: 0 });
 });

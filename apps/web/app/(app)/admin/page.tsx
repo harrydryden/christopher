@@ -43,7 +43,7 @@ export default async function AdminAccountsPage() {
 
       <Card title="Accounts">
         <p className="mb-3 text-14 text-muted">
-          Everyone with an account. Each has its own monthly AI budget, which resets on the 1st and which you can raise here; the shared ceiling over all of them is in <a href="/admin/settings" className="text-fg underline">System settings</a>, and <a href="/admin/health" className="text-fg underline">Operations</a> shows what the spend bought. Deleting an account removes everything it owns; shared companies and postings stay. A reset link lets you onboard or unblock someone when email delivery is not set up: it works once, for an hour, and confirms their address.
+          Everyone with an account. Each has its own monthly AI budget, the only budget there is: it resets on the 1st, its holder sets it on Settings and you can set it for anyone here. <a href="/admin/health" className="text-fg underline">Operations</a> shows what the spend bought. Deleting an account removes everything it owns; shared companies and postings stay. A reset link lets you onboard or unblock someone when email delivery is not set up: it works once, for an hour, and confirms their address.
         </p>
         <Table>
           <THead>

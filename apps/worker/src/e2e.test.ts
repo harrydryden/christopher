@@ -595,7 +595,7 @@ describe("functional review regressions", () => {
     const scoreJob = vi.fn().mockResolvedValue({ score: 80, verdict: "strong", rationale: "Fixture" });
     const scoringDeps = { ...deps, ai: { ...deps.ai, enabled: true, scoreJob } } as unknown as WorkerDeps;
     const task = { payload: { userId: user.id, jobId: view!.jobId } } as never;
-    // This account's $1 is spent; the shared ceiling is untouched, so only this account stops.
+    // This account's $1 is spent, so this account stops; nobody else's budget is touched.
     await db.insert(schema.userSettings).values({ userId: user.id, key: "aiBudgetUsd", value: 1 });
     await db.insert(schema.aiCalls).values({ userId: user.id, callSite: "A5", model: "fixture", costUsd: 1, at: now });
     // A skipped result, not a thrown refusal: the task finishes done and never reaches Health's failures.

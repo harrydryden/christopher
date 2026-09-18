@@ -1,6 +1,6 @@
 import { scanRunReport } from "@/lib/scan-run-report";
 import { and, desc, eq, gte, inArray, ne, sql, getTableColumns } from "drizzle-orm";
-import { aiUsageByAccount, sharedAiSpend } from "@christopher/db";
+import { aiUsageByAccount, totalAiSpend } from "@christopher/db";
 import {
   settings,
   careerSources,
@@ -87,12 +87,12 @@ export async function getQueueCounts(): Promise<QueueCount[]> {
 }
 
 /**
- * Everything spent since `since`, whoever it was for: what the deployment's shared ceiling counts.
- * The window starts at the start of the UTC month, or later if the shared counter was reset;
- * `aiBudgetWindowStart` decides, so this takes the instant rather than working it out again.
+ * Everything spent since `since`, whoever it was for: every account's calls and the work no
+ * account asked for, together. Budgets are per account and each carries its own window, so this is
+ * Operations' report of the deployment rather than a limit anything is measured against.
  */
-export async function getSharedAiSpend(since: Date): Promise<number> {
-  return sharedAiSpend(db(), since);
+export async function getTotalAiSpend(since: Date): Promise<number> {
+  return totalAiSpend(db(), since);
 }
 
 /** The operations report: one line per account, feature and model since `since`, dearest first. */

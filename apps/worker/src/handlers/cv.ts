@@ -15,7 +15,7 @@ import {
   cvImprovementOwner,
 } from "@christopher/core/cv-assessment";
 import { eq } from "drizzle-orm";
-import { accountAiSpend, completeCv, schema, type Task, type Db } from "@christopher/db";
+import { completeCv, schema, type Task, type Db } from "@christopher/db";
 import { createAiEngine, estimateCvBuildUsd, CANCELLED_ERROR, OUTPUT_LIMIT_ERROR } from "@christopher/ai";
 import {
   CvContentSchema,
@@ -28,7 +28,7 @@ import {
 } from "@christopher/core";
 import { withResourceLease } from "../lease";
 import { tryReserveAi, type AiBudgetRefusal } from "../budget";
-import { aiSpendThisMonth, type WorkerDeps } from "../context";
+import type { WorkerDeps } from "../context";
 import { log } from "../log";
 
 class CvDeletedError extends Error {}
@@ -46,26 +46,22 @@ export function reusableCvRubric(draft: RubricSource, parent: RubricSource | und
 }
 
 /**
- * Why a build was not admitted against this account's own budget.
+ * Why a build was not admitted, with the figures behind it, so the reader can tell a cap from a
+ * fault.
  *
- * The account budget is the one the person who asked for the build can be told about plainly: it
- * is theirs, it is monthly, and an administrator raises it per account. Work in flight is not
- * named here because an account's builds are serialised by the draft lease; the shared refusal
- * below is the one that has to explain held capacity.
+ * The account's own budget is the one the person who asked for the build is told about plainly: it
+ * is theirs, it is monthly, and they can raise it themselves. Capacity held by their own calls in
+ * flight is named when there is any, because a second build started while the first is running is
+ * the ordinary way to meet it. The deployment's optional day and discovery caps are the operator's
+ * and live in the worker's environment, so a refusal by one of those says so instead.
  */
-function accountBudgetRefusal(expected: number, budgetUsd: number, spent: number): string {
-  const left = Math.max(0, budgetUsd - spent);
-  return `This build needs about $${expected.toFixed(2)} of AI budget; your budget of $${budgetUsd} has $${left.toFixed(2)} left this month (it resets on the 1st). An administrator can raise it in Admin › Accounts.`;
-}
-
-/** Why a build was not admitted, with the figures behind it, so the reader can tell a cap from a fault. */
 function budgetRefusal(expected: number, refusal: AiBudgetRefusal): string {
-  const name = refusal.limit === "month" ? "monthly" : refusal.limit === "day" ? "daily" : "discovery";
   const left = Math.max(0, refusal.limitUsd - refusal.spent - refusal.held);
-  const where = refusal.limit === "month" ? "in Admin › System settings" : "in the worker's environment";
-  return `This build needs about $${expected.toFixed(2)} of AI budget; the shared ${name} budget of $${refusal.limitUsd} has $${left.toFixed(2)} left` +
-    (refusal.held > 0 ? ` after $${refusal.held.toFixed(2)} held by work in flight` : "") +
-    `. An administrator can raise it ${where}; then retry.`;
+  const needs = `This build needs about $${expected.toFixed(2)} of AI budget;`;
+  const held = refusal.held > 0 ? ` after $${refusal.held.toFixed(2)} held by calls in flight` : "";
+  if (refusal.limit === "account")
+    return `${needs} your budget of $${refusal.limitUsd} has $${left.toFixed(2)} left this month${held} (it resets on the 1st). Raise it on Settings, or ask an administrator.`;
+  return `${needs} the deployment's ${refusal.limit === "day" ? "daily" : "discovery"} AI cap of $${refusal.limitUsd} has $${left.toFixed(2)} left${held}. An administrator can raise it in the worker's environment; then retry.`;
 }
 type BuildUpdate = Partial<Pick<typeof schema.cvDrafts.$inferInsert,
   "status" | "content" | "assessment" | "revision" | "buildStage" | "error" | "finalisedAt">>;
@@ -109,35 +105,23 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps) {
         throw new Error(
           "Add ANTHROPIC_API_KEY to the worker to generate a CV.",
         );
-      const settings = await deps.settings();
-      const spent = await aiSpendThisMonth(deps.db, deps.now(), settings.aiBudgetResetAt);
-      if (spent >= settings.monthlyAiBudgetUsd)
-        throw new Error(
-          `Shared monthly AI budget reached: $${spent.toFixed(2)} of $${settings.monthlyAiBudgetUsd} is spent. An administrator can raise it in Admin › System settings; then retry.`,
-        );
       const library = groupCvLibrary(
         CvLibrarySchema.parse(draft.librarySnapshot),
       );
-      // One hold for the whole build, at what it is expected to cost. A build the month can afford
-      // is admitted and never fails part-way over budget accounting; one it cannot afford is refused
-      // here, before it spends anything. Holding each call at its ceiling instead refused builds
-      // the month could plainly afford, and did so after the rubric and CV had already been paid for.
+      // One hold for the whole build, at what it is expected to cost, against the budget of the
+      // account that asked for it. A build that account can afford is admitted and never fails
+      // part-way over budget accounting; one it cannot afford is refused here, before it spends
+      // anything. Holding each call at its ceiling instead refused builds the month could plainly
+      // afford, and did so after the rubric and CV had already been paid for.
       const expected = estimateCvBuildUsd(draft.model, {
         libraryBytes: Buffer.byteLength(JSON.stringify(library)),
         descriptionBytes: Buffer.byteLength(draft.jobDescription),
       });
-      // The account's own budget first: it is this person's monthly allowance, so a build they
-      // cannot afford is refused here, before the shared capacity is held and before anything is
-      // spent. The shared ceiling below then covers the deployment, this build included.
       const account = await deps.userSettings(draft.userId);
-      const accountSpent = await accountAiSpend(deps.db, draft.userId, aiBudgetWindowStart(deps.now(), account.aiBudgetResetAt));
-      if (accountSpent + expected > account.aiBudgetUsd)
-        throw new Error(accountBudgetRefusal(expected, account.aiBudgetUsd, accountSpent));
       const hold = await tryReserveAi(deps.db, "CV", expected, {
-        monthly: settings.monthlyAiBudgetUsd,
+        account: { userId: draft.userId, budgetUsd: account.aiBudgetUsd, since: aiBudgetWindowStart(deps.now(), account.aiBudgetResetAt) },
         daily: deps.env.dailyAiBudgetUsd ?? 1000000,
         discovery: deps.env.discoveryAiBudgetUsd ?? 1000000,
-        resetAt: settings.aiBudgetResetAt,
       }, deps.now(), 30);
       if ("refused" in hold) throw new Error(budgetRefusal(expected, hold.refused));
       release = hold.release;

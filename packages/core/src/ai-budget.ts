@@ -1,17 +1,17 @@
 /**
  * Which AI spend counts towards a budget, and what to call the work that spent it.
  *
- * Budgets are monthly and there are two of them: every account has its own, which an administrator
- * may raise, and the deployment has one shared ceiling over everything, including work done for no
- * particular account (extraction, discovery). Neither keeps a running total; both are the sum of
- * the `ai_calls` rows inside their window, so a counter is "reset" by moving the window rather than
- * by deleting anything, and Health can still show every call that was ever made.
+ * There is one budget and it is an account's: monthly, set by its holder or by an administrator.
+ * It keeps no running total; it is the sum of that account's `ai_calls` rows inside its window, so
+ * a counter is "reset" by moving the window rather than by deleting anything, and Health can still
+ * show every call that was ever made. Work no account asked for (extraction, discovery) counts
+ * towards no budget.
  */
 
 /**
  * The instant a monthly budget starts counting from: the later of the start of the current UTC
- * month and the recorded reset. A missing or unusable marker means the month start, so a corrupt
- * setting can never widen a budget beyond the month it belongs to.
+ * month and the account's recorded reset. A missing or unusable marker means the month start, so a
+ * corrupt setting can never widen a budget beyond the month it belongs to.
  */
 export function aiBudgetWindowStart(now: Date, resetAt: string | null | undefined): Date {
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));

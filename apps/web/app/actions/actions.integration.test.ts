@@ -91,7 +91,7 @@ import {
   fetchTableJobs,
   fetchRecentEventsFor,
 } from "@/lib/queries/jobs";
-import { saveKeywords } from "./settings";
+import { saveAiBudget, saveAiSettings, saveKeywords } from "./settings";
 import {
   addCompanies,
   useDiscoveryCandidate,
@@ -272,7 +272,7 @@ describe("authenticated mutations", () => {
     );
     expect(await database.select().from(schema.decisions)).toHaveLength(0);
   });
-  it("asks an unconfirmed member to confirm before spending the shared budget, but never an administrator", async () => {
+  it("asks an unconfirmed member to confirm before spending on AI, but never an administrator", async () => {
     const form = new FormData();
     form.set("urls", "https://gate.example");
     // The budget the gate protects is the administrator's own to set.
@@ -923,7 +923,6 @@ it("carries library styling through generation, revision, matching preview/downl
     await handleGenerateCv(task!, {
       db: database,
       env: { anthropicApiKey: "fixture-key" },
-      settings: async () => ({ monthlyAiBudgetUsd: 100 }),
       userSettings: async () => ({ aiBudgetUsd: 100, aiBudgetResetAt: null }),
       now: () => new Date(),
     } as unknown as import("../../../worker/src/context").WorkerDeps);
@@ -1145,7 +1144,6 @@ it("assesses, improves with current evidence, finalises and exports through the 
   const deps = {
     db: database,
     env: { anthropicApiKey: "fixture-key" },
-    settings: async () => ({ monthlyAiBudgetUsd: 100 }),
     userSettings: async () => ({ aiBudgetUsd: 100, aiBudgetResetAt: null }),
     now: () => new Date(),
   } as unknown as import("../../../worker/src/context").WorkerDeps;
@@ -1501,7 +1499,7 @@ describe("administering accounts", () => {
     expect((await accountAiBudgets([member.id])).get(member.id)).toMatchObject({ limitUsd: 40, spentUsd: 0 });
     expect(await database.select().from(schema.aiCalls)).toHaveLength(1);
 
-    // Budgets are an administrator's to set, including one's own.
+    // Another account's budget is an administrator's to set, as is resetting its spend.
     await database.update(schema.users).set({ role: "member" }).where(eq(schema.users.id, user.id));
     await expect(listAccounts()).rejects.toThrow("Forbidden");
     await expect(setAccountAiBudget(member.id, budgetForm("60"))).rejects.toThrow("Forbidden");
@@ -1510,5 +1508,34 @@ describe("administering accounts", () => {
     expect(await stored(member.id, "aiBudgetUsd")).toBe(40);
     session = undefined;
     await expect(setAccountAiBudget(member.id, budgetForm("60"))).rejects.toThrow("Unauthorised");
+  });
+
+  it("lets any account set its own monthly AI budget, within bounds", async () => {
+    // The budget is the account's own, so no administrator is needed to change it.
+    await database.update(schema.users).set({ role: "member" }).where(eq(schema.users.id, user.id));
+    expect(await saveAiBudget({ ok: true }, budgetForm("40"))).toEqual({ ok: true });
+    expect(await stored(user.id, "aiBudgetUsd")).toBe(40);
+    // Blank, negative, over the ceiling or not a number: refused inline, and the saved figure stands.
+    for (const bad of ["", "-1", "10001", "abc"]) {
+      expect(await saveAiBudget({ ok: true }, budgetForm(bad))).toMatchObject({ ok: false });
+    }
+    expect(await stored(user.id, "aiBudgetUsd")).toBe(40);
+    // It is one's own budget and nobody else's: signed out, there is no account to set.
+    session = undefined;
+    await expect(saveAiBudget({ ok: true }, budgetForm("60"))).rejects.toThrow("Unauthorised");
+  });
+
+  it("saves the shared AI settings, which no longer hold a budget", async () => {
+    const form = new FormData();
+    form.set("defaultModel", DEFAULT_SETTINGS.defaultModel);
+    // A budget posted with them is not a system setting and is not stored as one.
+    form.set("monthlyAiBudgetUsd", "500");
+    expect(await saveAiSettings({ ok: true }, form)).toEqual({ ok: true });
+    const keys = (await database.select().from(schema.settings)).map((row) => row.key);
+    expect(keys).toContain("defaultModel");
+    expect(keys).not.toContain("monthlyAiBudgetUsd");
+    // The shared model list stays an administrator's.
+    await database.update(schema.users).set({ role: "member" }).where(eq(schema.users.id, user.id));
+    await expect(saveAiSettings({ ok: true }, form)).rejects.toThrow("Forbidden");
   });
 });

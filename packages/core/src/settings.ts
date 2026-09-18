@@ -1,11 +1,11 @@
 /**
  * Application settings stored as key/value JSON.
  *
- * Two scopes share one shape. System settings (the daily schedule, models, the AI budget, closure
- * and robots policy) live in the `settings` table and are edited by an administrator. User
- * settings (keywords, locations, seed profile, CV preferences) live in `user_settings`, one row
- * per account and key. `AppSettings` is the two merged, which is what most code wants to read.
- * Defaults apply when a key is missing.
+ * Two scopes share one shape. System settings (the daily schedule, models, closure and robots
+ * policy) live in the `settings` table and are edited by an administrator. User settings
+ * (keywords, locations, seed profile, CV preferences and the account's own monthly AI budget) live
+ * in `user_settings`, one row per account and key. `AppSettings` is the two merged, which is what
+ * most code wants to read. Defaults apply when a key is missing.
  */
 import { CvWritingPreferencesSchema, type CvWritingPreferences } from "./cv-writing-preferences";
 import { CvThemeSchema, type CvTheme } from "./cv-theme";
@@ -15,13 +15,6 @@ export interface SystemSettings {
   /** Daily run time "HH:MM" in `timezone`. One run for every company anyone follows. */
   scanTime: string;
   timezone: string;
-  /** The ceiling over everything, including work done for no particular account. */
-  monthlyAiBudgetUsd: number;
-  /**
-   * When the shared spend counter was last zeroed (ISO), or null for "not since the month began".
-   * Spend recorded before it does not count this month; see `aiBudgetWindowStart`.
-   */
-  aiBudgetResetAt: string | null;
   /** Model id per call site; missing keys fall back to `defaultModel`. */
   defaultModel: string;
   modelOverrides: Record<string, string>;
@@ -37,8 +30,8 @@ export interface SystemSettings {
 export interface UserSettings {
   gate: GateSettings;
   /**
-   * This account's own monthly AI budget, which an administrator may raise. The shared
-   * `monthlyAiBudgetUsd` still caps everything, so an account can never spend past it.
+   * This account's own monthly AI budget: the one budget the product has. The account holder
+   * changes it on Settings and an administrator changes anyone's in Admin › Accounts.
    */
   aiBudgetUsd: number;
   /** When this account's spend counter was last zeroed (ISO), or null. Read by `aiBudgetWindowStart`. */
@@ -59,7 +52,7 @@ export interface UserSettings {
 
 export type AppSettings = SystemSettings & UserSettings;
 
-/** What a new account may spend on AI in a month until an administrator raises it. */
+/** What a new account may spend on AI in a month until it is changed. */
 export const DEFAULT_ACCOUNT_AI_BUDGET_USD = 25;
 /** The most an account budget may be set to, so a typed figure cannot become an unbounded bill. */
 export const MAX_ACCOUNT_AI_BUDGET_USD = 10000;
@@ -67,8 +60,6 @@ export const MAX_ACCOUNT_AI_BUDGET_USD = 10000;
 export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   scanTime: "06:00",
   timezone: "Europe/London",
-  monthlyAiBudgetUsd: 25,
-  aiBudgetResetAt: null,
   defaultModel: "claude-sonnet-5",
   modelOverrides: {},
   closeAfterMissingScans: 2,
@@ -141,8 +132,7 @@ function applyRows(out: AppSettings, rows: SettingsRow[]): void {
     if (!compatible) continue;
     // Both budget keys are read by money-spending code, so a stored value is checked here rather
     // than trusted: the budget is clamped to a sane range and the reset marker must be a usable
-    // timestamp. `aiBudgetResetAt` belongs to both scopes — the shared counter in `settings`, an
-    // account's in `user_settings` — and the account row is applied last, so it wins for an account.
+    // timestamp. Both belong to an account, so both arrive in `user_settings` rows.
     if (key === "aiBudgetUsd") {
       if (typeof val === "number" && Number.isFinite(val)) out.aiBudgetUsd = Math.min(MAX_ACCOUNT_AI_BUDGET_USD, Math.max(0, val));
       continue;
@@ -161,9 +151,9 @@ function applyRows(out: AppSettings, rows: SettingsRow[]): void {
 
 /**
  * Merge stored rows onto defaults. `rows` are usually the system table and `userRows` one
- * account's rows. The key sets are disjoint but for `aiBudgetResetAt`, which both scopes keep:
- * user rows are applied last, so an account's own reset marker wins over the shared one. A single
- * mixed list therefore still works, as long as it is ordered system rows first.
+ * account's rows. The two key sets are disjoint, and a key belonging to neither scope — the
+ * worker's `internal:` bookkeeping, or a setting a later version removed — is ignored, so an old
+ * row left behind by a migration can never change what anything reads.
  */
 export function resolveSettings(rows: SettingsRow[], userRows: SettingsRow[] = []): AppSettings {
   const out: AppSettings = structuredClone(DEFAULT_SETTINGS);

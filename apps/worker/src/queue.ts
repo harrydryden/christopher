@@ -3,12 +3,35 @@ import { deadlineMsFor, TASK_DEADLINES_MS, taskSubject, taskUserId, type TaskDea
 import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 import { finaliseScanRuns } from "./handlers/daily";
-import { LeaseBusyError } from "./lease";
+import { LeaseBusyError, LeaseLostError } from "./lease";
 import { log, withLogContext } from "./log";
 import { vitals } from "./vitals";
 
-export type TaskHandler = (task: Task, deps: WorkerDeps) => Promise<unknown>;
+/**
+ * What a handler is told about the run it is part of.
+ *
+ * `signal` aborts when this run must stop: it outran its deadline, or the task was reclaimed by
+ * another worker. Nothing used to cancel a handler, so a CV build killed by its deadline went on
+ * streaming model answers — spending the account's budget — while the attempt that replaced it ran
+ * beside it. A handler that starts nothing long-running may ignore it.
+ */
+export interface TaskRunContext {
+  signal: AbortSignal;
+}
+
+export type TaskHandler = (task: Task, deps: WorkerDeps, ctx: TaskRunContext) => Promise<unknown>;
 export type HandlerMap = Partial<Record<Task["type"], TaskHandler>>;
+
+/**
+ * What to do for the thing a task was for when this run of it is abandoned but the task is not:
+ * the deadline killed the handler and attempts remain.
+ *
+ * The hook records the interruption where the person will see it, because the process that would
+ * have written it is the one that has just been given up on. `retryAt` is when the queue will run
+ * the next attempt, when there is one.
+ */
+export type InterruptedHook = (task: Task, deps: WorkerDeps, info: { retryAt?: string }) => Promise<void>;
+export type InterruptedHookMap = Partial<Record<Task["type"], InterruptedHook>>;
 
 /**
  * What to do for the thing a task was for when the task is given up on for good.
@@ -59,6 +82,8 @@ export interface QueueOptions {
   deadlines?: TaskDeadlines;
   /** What to close off when a task of a given type is given up on for good. */
   onAbandon?: AbandonHookMap;
+  /** What to record when a run of a given type is cut off by its deadline but the task lives on. */
+  onInterrupted?: InterruptedHookMap;
 }
 
 export function backoffMs(attempts: number): number {
@@ -124,7 +149,7 @@ export async function renewTask(db: Db, task: Task): Promise<boolean> {
 
 export async function assertTaskOwnership(db: Db, task: Task): Promise<void> {
   const rows = await db.select({ id: schema.tasks.id }).from(schema.tasks).where(ownedTask(task)).for("update");
-  if (!rows.length) throw new Error("Task lease lost; refusing stale writes");
+  if (!rows.length) throw new LeaseLostError("Task lease lost; refusing stale writes");
 }
 
 export async function completeTask(db: Db, task: Task, result: unknown): Promise<boolean> {
@@ -159,6 +184,17 @@ export async function runAbandonHook(task: Task, reason: string, context: Abando
     await hook(task, context.deps, reason);
   } catch (err) {
     log.error("abandonment hook failed", { id: task.id, type: task.type, error: (err as Error)?.message });
+  }
+}
+
+/** Run the type's interruption hook, if it has one. A hook that throws never fails the recovery. */
+async function runInterruptedHook(task: Task, deps: WorkerDeps, hooks: InterruptedHookMap | undefined, info: { retryAt?: string }): Promise<void> {
+  const hook = hooks?.[task.type];
+  if (!hook) return;
+  try {
+    await hook(task, deps, info);
+  } catch (err) {
+    log.error("interruption hook failed", { id: task.id, type: task.type, error: (err as Error)?.message });
   }
 }
 
@@ -360,14 +396,25 @@ export function laneSlots(concurrency: number): QueueLane[] | null {
   return LANES.flatMap(lane => Array.from({ length: counts.get(lane)! }, () => lane as QueueLane));
 }
 
-/** Run `work`, rejecting with a `TimeoutError` if it has not settled within `ms`. */
-async function withDeadline<T>(work: Promise<T>, ms: number, type: Task["type"], startedAt: number): Promise<T> {
+/**
+ * Run `work`, rejecting with a `TimeoutError` if it has not settled within `ms`, and telling the
+ * run to stop when that happens.
+ *
+ * The rejection alone only frees the slot: the handler keeps running, because a promise cannot be
+ * cancelled. `stop` is the run's signal, so a handler that took one puts its model calls and its
+ * ledger down instead of spending the account's money on work whose writes the fence will refuse.
+ */
+async function withDeadline<T>(work: Promise<T>, ms: number, type: Task["type"], startedAt: number, stop?: AbortController): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
       work,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new TimeoutError(type, ms, Date.now() - startedAt)), ms);
+        timer = setTimeout(() => {
+          const error = new TimeoutError(type, ms, Date.now() - startedAt);
+          stop?.abort(error);
+          reject(error);
+        }, ms);
         timer.unref?.();
       }),
     ]);
@@ -505,12 +552,28 @@ export class TaskQueue {
     const started = Date.now();
     this.active++;
     this.running.set(task.id, task);
+    // This run's own signal: the deadline aborts it, and so does a heartbeat that finds the task
+    // has been taken by another worker. A handler that made model calls or took holds stops.
+    const stop = new AbortController();
     let renewing = false;
+    const heartbeatMs = this.opts.heartbeatMs ?? Math.max(100, Math.min(30_000, (this.opts.staleAfterMs ?? TASK_STALE_AFTER_MS) / 3));
     const heartbeat = setInterval(() => {
       if (renewing) return;
       renewing = true;
-      void renewTask(this.deps.db, task).catch(err => log.warn("task heartbeat failed", err)).finally(() => { renewing = false; });
-    }, this.opts.heartbeatMs ?? Math.max(100, Math.min(30_000, (this.opts.staleAfterMs ?? TASK_STALE_AFTER_MS) / 3)));
+      const renewal = renewTask(this.deps.db, task).then(renewed => {
+        // The task is someone else's now: this run's writes are stale and it must not spend more.
+        if (!renewed && !stop.signal.aborted) {
+          log.warn("task heartbeat lost the task", { id: task.id, type: task.type });
+          stop.abort(new LeaseLostError("Task lease lost; another worker holds it"));
+        }
+      }).catch(err => log.warn("task heartbeat failed", err));
+      // A renewal that never settles used to latch the heartbeat off for good, so the task went
+      // stale in five minutes and a second attempt ran alongside this one. One hung renewal now
+      // costs one beat: the latch clears on a timeout and the next beat issues a fresh renewal.
+      void Promise.race([renewal, heartbeatTimeout(Math.min(heartbeatMs, HEARTBEAT_TIMEOUT_MS), () =>
+        log.warn("task heartbeat timed out", { id: task.id, type: task.type }))])
+        .finally(() => { renewing = false; });
+    }, heartbeatMs);
     heartbeat.unref();
     const before = vitals();
     try {
@@ -520,11 +583,11 @@ export class TaskQueue {
       // task was holding what, and the delta is what says which type grows the heap.
       log.info("task start", { id: task.id, type: task.type, attempt: task.attempts, workerId: this.opts.workerId, commit: process.env.RENDER_GIT_COMMIT ?? null, readyWaitMs: readyWaitMs(task), heapUsedMb: before.heapUsedMb, heapLimitMb: before.heapLimitMb });
       const deadlineMs = deadlineMsFor(task.type, this.opts.deadlines);
-      const work = handler(task, { ...this.deps, assertOwnership: db => assertTaskOwnership(db, task) });
-      const result = await withDeadline(work, deadlineMs, task.type, started).catch(err => {
-        // The handler keeps running: nothing here can cancel a fetch or a model call in flight.
-        // Its outcome is logged rather than left unobserved, and its writes are refused by the
-        // lease fence, because failing the task has already given the lease to someone else.
+      const work = handler(task, { ...this.deps, assertOwnership: db => assertTaskOwnership(db, task) }, { signal: stop.signal });
+      const result = await withDeadline(work, deadlineMs, task.type, started, stop).catch(err => {
+        // The handler is told to stop, but it settles in its own time: its outcome is logged
+        // rather than left unobserved, and its writes are refused by the lease fence, because
+        // failing the task has already given the lease to someone else.
         if (err instanceof TimeoutError) void work.then(
           () => log.warn("abandoned task finished after its deadline", { id: task.id, type: task.type }),
           (e: unknown) => log.warn("abandoned task failed after its deadline", { id: task.id, type: task.type, error: (e as Error)?.message }),
@@ -545,6 +608,13 @@ export class TaskQueue {
           workerId: this.opts.workerId, kind: "task_deadline", taskId: task.id, taskType: task.type, userId: taskUserId(task.payload),
           detail: { attempts: task.attempts, elapsedMs: Date.now() - started, deadlineMs: deadlineMsFor(task.type, this.opts.deadlines), outcome, subject: taskSubject(task.type, task.payload) },
         });
+        // The handler that would have written this run's failure is the one that has just been
+        // given up on, and its writes are fenced out. A task with attempts left is coming back, so
+        // the type's hook says so where the person is looking; one with none is closed off by the
+        // abandonment hook below instead.
+        if (outcome === "retry")
+          await runInterruptedHook(task, this.deps, this.opts.onInterrupted,
+            { retryAt: new Date(Date.now() + backoffMs(task.attempts)).toISOString() });
       }
       // The last attempt of a handler that keeps throwing leaves the same half-finished work
       // behind as a crash, so it closes it off the same way.
@@ -576,4 +646,15 @@ function readyWaitMs(task: Task): number {
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/** The longest one heartbeat renewal may take before the next beat is allowed to try again. */
+const HEARTBEAT_TIMEOUT_MS = 10_000;
+
+/** Resolves after `ms`, saying so once, without holding the process open. */
+function heartbeatTimeout(ms: number, onTimeout: () => void): Promise<void> {
+  return new Promise<void>(resolve => {
+    const timer = setTimeout(() => { onTimeout(); resolve(); }, ms);
+    timer.unref?.();
+  });
 }

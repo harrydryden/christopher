@@ -49,6 +49,48 @@ export function priceFor(model: string): { input: number; output: number; cacheR
   return PRICING[model] ?? PRICING[model.replace(/-\d{8}$/, "")] ?? FALLBACK;
 }
 
+/** How many assessment batches a calibrated build is expected to run. */
+const CV_ASSESSMENT_BATCHES = 5;
+
+/** What a CV build is measured in: the two inputs every one of its calls is sized from. */
+export interface CvBuildSize {
+  libraryBytes: number;
+  descriptionBytes: number;
+}
+
+/**
+ * Which calls of a build are still to come.
+ *
+ * `all` is a build starting from nothing. `assessment` is a retry resuming from a checkpoint that
+ * already carries the written CV: the rubric and the author have been paid for and will not run
+ * again, so holding the whole build's estimate against the account would refuse a resumption the
+ * month can plainly afford — and hold roughly three times what the attempt can spend.
+ */
+export type CvBuildParts = "all" | "assessment";
+
+/** The tokens each part of a build is calibrated at, so the parts always add up to the whole. */
+function cvBuildUsage(size: CvBuildSize, parts: CvBuildParts): TokenUsage {
+  const description = size.descriptionBytes / 3;
+  const library = size.libraryBytes / 3;
+  const batches = CV_ASSESSMENT_BATCHES;
+  // The audit writes the evidence, rubric and CV to the cache once and reads them back for the
+  // other batches; each batch sends its own slice of the rubric and writes about 7k tokens.
+  const assessment: TokenUsage = {
+    inputTokens: batches * 2_500,
+    cacheWriteTokens: library + 3_000,
+    cacheReadTokens: (batches - 1) * library,
+    outputTokens: batches * 7_000,
+  };
+  if (parts === "assessment") return assessment;
+  return {
+    // The rubric reads the description; the author reads the library and the description.
+    inputTokens: description + (library + description) + assessment.inputTokens,
+    cacheWriteTokens: assessment.cacheWriteTokens,
+    cacheReadTokens: assessment.cacheReadTokens,
+    outputTokens: 4_500 + 12_000 + assessment.outputTokens,
+  };
+}
+
 /**
  * What a CV build is expected to cost, for admitting it against the budget. Calibrated on recorded
  * builds of a 35 KB library against a 7.7 KB description, which cost $3.0–3.4 on Fable 5.1: the
@@ -56,17 +98,13 @@ export function priceFor(model: string): { input: number; output: number; cacheR
  * description and writes 8–16k; the assessment writes the CV-sized context to the cache once,
  * reads it back for the other four batches, and writes about 7k tokens a batch. A hold at the
  * calls' ceilings instead refused builds the month could plainly afford, and only part-way through.
+ *
+ * `parts` narrows it to what a resumed attempt has left to pay for: on that calibration the audit
+ * alone is about two thirds of a build, and the share is derived from the same figures rather than
+ * written down as a fraction that could drift away from them.
  */
-export function estimateCvBuildUsd(model: string, size: { libraryBytes: number; descriptionBytes: number }): number {
-  const description = size.descriptionBytes / 3;
-  const library = size.libraryBytes / 3;
-  const batches = 5;
-  return estimateCostUsd(model, {
-    inputTokens: description + (library + description) + batches * 2_500,
-    cacheWriteTokens: library + 3_000,
-    cacheReadTokens: (batches - 1) * library,
-    outputTokens: 4_500 + 12_000 + batches * 7_000,
-  });
+export function estimateCvBuildUsd(model: string, size: CvBuildSize, parts: CvBuildParts = "all"): number {
+  return estimateCostUsd(model, cvBuildUsage(size, parts));
 }
 
 /** Cache writes cost 1.25x input (the five-minute entries this engine writes). */

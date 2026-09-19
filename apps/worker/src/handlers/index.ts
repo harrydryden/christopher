@@ -41,4 +41,4 @@ export { handleDiscover, handleRunDaily, handleScanCompany, handleFetchDescripti
 
 // Kept in a module of its own so that importing "what to do when a task is abandoned" does not
 // drag every handler in with it: the scheduler needs the hooks and nothing else here.
-export { CV_ABANDONED_MESSAGE, onAbandon } from "./abandon";
+export { CV_ABANDONED_MESSAGE, onAbandon, onInterrupted } from "./abandon";

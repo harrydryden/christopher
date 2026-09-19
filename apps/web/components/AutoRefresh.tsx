@@ -49,6 +49,9 @@ export function AutoRefresh({
           clearTimeout(timeout);
         }
       }
+      // Ten seconds, unchanged now that the version also carries the build's step ledger: the
+      // motions it reports last tens of seconds to minutes, and each poll is two small indexed
+      // reads, so halving the interval would double the queries to sharpen nothing.
       if (!cancelled) timer = setTimeout(poll, 10000);
     }
     void poll();

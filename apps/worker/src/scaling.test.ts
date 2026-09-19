@@ -191,3 +191,19 @@ it("fences a reclaimed operation without holding a database transaction across e
   });
   await db.execute(sql`delete from resource_leases where key=${key}`);
 });
+
+it("tells a run that its lease has gone, so it stops instead of finishing work nothing will accept", async () => {
+  const { withResourceLease, LeaseLostError } = await import("./lease");
+  const deps = { db } as unknown as import("./context").WorkerDeps;
+  const key = `lost-operation-${Date.now()}`;
+  const lost: Error[] = [];
+  await withResourceLease(deps, key, async () => {
+    // Another worker takes the lease while this run is still going. The renewal is how it finds
+    // out: every write from here would be refused by the fence, and every model call wasted.
+    await db.execute(sql`update resource_leases set owner=gen_random_uuid() where key=${key}`);
+    for (let tick = 0; tick < 50 && !lost.length; tick++) await new Promise(resolve => setTimeout(resolve, 10));
+  }, { renewEveryMs: 20, onLost: error => lost.push(error) });
+  expect(lost).toHaveLength(1);
+  expect(lost[0]).toBeInstanceOf(LeaseLostError);
+  await db.execute(sql`delete from resource_leases where key=${key}`);
+});

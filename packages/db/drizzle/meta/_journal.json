@@ -190,6 +190,20 @@
       "when": 1790071200000,
       "tag": "0026_traffic_and_stages",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1790157600000,
+      "tag": "0027_cv_build_steps",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1790244000000,
+      "tag": "0028_cv_build_fences",
+      "breakpoints": true
     }
   ]
 }

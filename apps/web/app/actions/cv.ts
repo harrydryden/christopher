@@ -4,7 +4,7 @@ import { cvImprovementOwner } from "@christopher/core/cv-assessment";
 import { assertCvFinalisable } from "@christopher/core/cv-review";
 import { renderCvPdf } from "@/lib/cv-pdf";
 import { z } from "zod";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { actionCvs, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, userJobs, enqueueTask } from "@christopher/db";
 import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvWritingPreferences,
   createCvWritingBudget, CvLibrarySchema, consolidateExperience, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel,
@@ -12,7 +12,7 @@ import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvW
 import { requireUser, requireVerifiedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { userSettings as userSettingsTable } from "@christopher/db/schema";
-import { getSettings, setUserSetting } from "@/lib/settings";
+import { getSettings, getSettingsFor, setUserSetting } from "@/lib/settings";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
@@ -247,6 +247,25 @@ export async function requestCv(
     }
     draftId = await db().transaction(async (tx) => {
       const revision = await nextCvRevision(tx, { userId: user.id, companyName: row.company, jobTitle: row.job.title });
+      // Two clicks on Generate are two of these transactions, one behind the other. The second
+      // finds the build the first queued, behind the same role lock, and goes to it rather than
+      // starting a second build of the same role against the same budget.
+      const [inFlight] = await tx
+        .select({ id: cvDrafts.id })
+        .from(cvDrafts)
+        .where(
+          and(
+            eq(cvDrafts.userId, user.id),
+            eq(cvDrafts.jobId, id),
+            eq(cvDrafts.companyName, row.company),
+            eq(cvDrafts.jobTitle, row.job.title),
+            inArray(cvDrafts.status, ["queued", "generating"]),
+            isNull(cvDrafts.archivedAt),
+          ),
+        )
+        .orderBy(desc(cvDrafts.createdAt))
+        .limit(1);
+      if (inFlight) return inFlight.id;
       const [draft] = await tx
         .insert(cvDrafts)
         .values({
@@ -308,20 +327,39 @@ export async function saveCvDraft(
     const rubric = draft.assessment ? { rubric: draft.assessment.rubric } : {};
     const improvements = draft.assessment?.review.matches.filter(match => cvImprovementOwner(match) === "system").map(match => match.improvement).filter(Boolean) ?? [];
     // The worker measures saved edits and automatically fits any overflow before assessing.
+    //
+    // What the parent's build left behind belongs to the parent: its last moment of progress, the
+    // work a retry of *it* would have resumed from, and why it stopped. Carried onto a revision
+    // that has never run, they made a queued build render its parent's failure — "Attempt 3
+    // stopped … retrying (attempt 4 of 3)" — over a build with no attempts at all.
     const {
       id: _id,
       createdAt: _created,
       assessment: _assessment,
       finalisedAt: _finalised,
       buildStage: _buildStage,
+      progressAt: _progressAt,
+      buildCheckpoint: _checkpoint,
+      failure: _failure,
       ...original
     } = draft;
     savedId = await db().transaction(async (tx) => {
       // Both a rebuild and a direct edit are written from this draft, so retention spares it
       // however many newer failures the role has; the next publish clears it.
       const revision = await nextCvRevision(tx, draft, { spare: id });
-      const [source] = await tx.select({ id: cvDrafts.id }).from(cvDrafts).where(eq(cvDrafts.id, id));
+      // Read again inside the lock. The status this save was offered on is as old as the page, and
+      // two clicks on Rebuild are two of these transactions, one behind the other: without this the
+      // second one wrote a second draft, queued a second build and held the budget twice.
+      const [source] = await tx.select({ id: cvDrafts.id, status: cvDrafts.status }).from(cvDrafts).where(eq(cvDrafts.id, id));
       if (!source) throw new UserFacingError("This CV was deleted. Open the latest saved CV before editing.");
+      if (source.status !== "ready" && source.status !== "failed")
+        throw new UserFacingError("Wait for the current build to finish before editing.");
+      const [building] = await tx
+        .select({ id: cvDrafts.id })
+        .from(cvDrafts)
+        .where(and(eq(cvDrafts.parentId, id), eq(cvDrafts.userId, user.id), inArray(cvDrafts.status, ["queued", "generating"]), isNull(cvDrafts.archivedAt)))
+        .limit(1);
+      if (building) throw new UserFacingError("This CV is already being rebuilt.");
       // Corrections are remembered whichever build the save requests, and an improved revision
       // is written with them from the start.
       const remembered = form.get("rememberWording") === "on" ? await rememberWording(tx, user.id, draft.content!, content) : undefined;
@@ -387,7 +425,38 @@ export async function saveCvDraft(
   redirect(`/cv/${savedId}`);
 }
 
-/** Assessment retries preserve saved wording and use the original JD/evidence snapshot. */
+/**
+ * The Library, writing preferences and theme as they are now, in the shape `requestCv` builds a
+ * build from. Undefined when the account has no Library to read, which leaves the draft's own
+ * snapshot in place rather than emptying it.
+ */
+async function currentLibrarySnapshot(tx: Tx, userId: string) {
+  const latest = await latestLibrary(tx, userId);
+  if (!latest) return undefined;
+  const settings = await getSettingsFor(userId, tx);
+  try {
+    return {
+      libraryVersion: latest.version,
+      librarySnapshot: groupCvLibrary(
+        CvLibrarySchema.parse({ ...latest.content, ...(settings.cvWritingPreferences ?? {}), theme: settings.cvTheme ?? latest.content.theme ?? DEFAULT_CV_THEME }),
+      ),
+    };
+  } catch (error) {
+    // A schema failure is a bug, not advice: only the library's own refusal is repeated back.
+    if (error instanceof z.ZodError) throw error;
+    throw new UserFacingError(error instanceof Error ? error.message : "This library cannot be used for a CV yet.");
+  }
+}
+
+/**
+ * Assessment retries preserve saved wording and use the original JD/evidence snapshot.
+ *
+ * A retry after a failure the person had to resolve is the exception. They resolved it in their
+ * Library or in Settings, and the draft's snapshot is the frozen copy that failed — the evidence,
+ * the writing preferences and the page limit as they were. Re-queueing that is a retry that cannot
+ * succeed and costs what the first attempt cost, so those retries take the Library and the
+ * settings as they are now, and the checkpoint and failure of the attempt they replace go with it.
+ */
 export async function assessCvDraft(
   id: string,
   _prev: ActionResult,
@@ -412,9 +481,21 @@ export async function assessCvDraft(
         throw new UserFacingError(
           "Choose an unfinished saved draft that is not already being processed.",
         );
+      // Both the failures whose way forward is a page limit or a Library, and every draft that
+      // stopped before it wrote anything: none of them can succeed against the snapshot they hold.
+      const stale =
+        draft.failure?.kind === "page_limit_unfittable" ||
+        draft.failure?.kind === "library_invalid" ||
+        !draft.content;
+      const refreshed = stale ? await currentLibrarySnapshot(tx, user.id) : undefined;
       await tx
         .update(cvDrafts)
-        .set({ status: "queued", error: null, buildStage: null })
+        .set({
+          status: "queued",
+          error: null,
+          buildStage: null,
+          ...(refreshed ? { ...refreshed, buildCheckpoint: null, failure: null } : {}),
+        })
         .where(eq(cvDrafts.id, id));
       const queued = await enqueueTask(
         tx,

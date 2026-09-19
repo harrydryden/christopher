@@ -24,6 +24,10 @@
       "types": "./src/cv-fit.ts",
       "default": "./src/cv-fit.ts"
     },
+    "./cv-build-failure": {
+      "types": "./src/cv-build-failure.ts",
+      "default": "./src/cv-build-failure.ts"
+    },
     "./cv-assessment": {
       "types": "./src/cv-assessment.ts",
       "default": "./src/cv-assessment.ts"

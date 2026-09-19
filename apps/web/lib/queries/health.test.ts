@@ -15,7 +15,7 @@ let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 let user: User;
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { getAiUsage, getCvBuildCosts, getScoredRoleCost, getTotalAiSpend } from "./health";
+import { getAiUsage, getCvBuildCosts, getCvBuildFailureKinds, getCvBuildMotions, getScoredRoleCost, getTotalAiSpend } from "./health";
 import { totalAiUsage } from "@/lib/ai-usage";
 import { aiOutcome } from "@christopher/db";
 
@@ -387,5 +387,59 @@ it("reads the worker's own ledger into a timeline, and survives a database witho
     expect((await getWorkerStatus()).restartsLastDay).toBe(0);
   } finally {
     await database.execute(sql`alter table worker_events_hidden rename to worker_events`);
+  }
+});
+
+it("counts build motions and failure kinds, and reads nothing from a database without the ledger", async () => {
+  const [cv] = await database.insert(schema.cvDrafts).values({
+    userId: user.id, jobTitle: "Operations Director", companyName: "Example", jobDescription: "Lead a team.",
+    libraryVersion: 1, librarySnapshot: {} as never, model: "claude-fable-5-1",
+  }).returning();
+  const inWindow = new Date(Date.now() - 2 * MINUTE);
+  const old = new Date(Date.now() - 40 * 24 * 60 * MINUTE);
+  const base = { draftId: cv!.id, userId: user.id, attempt: 1 };
+  const overloaded = { kind: "overloaded", resolvedBy: "system", retryable: true, message: "The model provider is overloaded.", motion: "write", attempt: 1, maxAttempts: 3 } as const;
+  await database.insert(schema.cvBuildSteps).values([
+    { ...base, seq: 1, stage: "analysing", motion: "rubric", title: "Extracting the role's requirements", status: "done", startedAt: inWindow, ms: 40_000, detail: { usd: 0.2 } },
+    { ...base, seq: 2, stage: "analysing", motion: "rubric", title: "Extracting the role's requirements", status: "done", startedAt: inWindow, ms: 60_000, detail: { usd: 0.4 } },
+    // One writing attempt the provider dropped, one that worked: the motion's failure rate is 50%.
+    { ...base, seq: 3, stage: "writing", motion: "write", title: "Writing the CV", status: "failed", startedAt: inWindow, ms: 10_000, detail: {}, error: "overloaded", failure: overloaded },
+    { ...base, seq: 4, attempt: 2, stage: "writing", motion: "write", title: "Writing the CV", status: "done", startedAt: inWindow, ms: 120_000, detail: { usd: 1.2 } },
+    // A person's failure, and one older than the window, which belongs to neither card.
+    { ...base, seq: 5, stage: "preparing", motion: "admit_budget", title: "Reserving this build's share of your AI budget", status: "failed", startedAt: inWindow, ms: 100,
+      detail: {}, error: "budget", failure: { kind: "budget_exhausted", resolvedBy: "user", retryable: false, action: "raise_budget", message: "Not enough budget." } },
+    { ...base, seq: 6, stage: "analysing", motion: "rubric", title: "Extracting the role's requirements", status: "failed", startedAt: old, ms: 1_000, detail: {}, error: "old", failure: overloaded },
+  ]);
+
+  const motions = await getCvBuildMotions(30);
+  // Busiest first; the two that ran as often as each other may arrive either way round, because
+  // the ledger's aggregate orders by runs alone.
+  expect(motions.map((row) => [row.motion, row.runs, row.failed]).slice(0, 2).sort()).toEqual([
+    ["rubric", 2, 0],
+    ["write", 2, 1],
+  ]);
+  expect(motions[2]).toMatchObject({ motion: "admit_budget", runs: 1, failed: 1 });
+  // The median of two is their midpoint, and a motion that spent nothing has no median cost.
+  const rubric = motions.find((row) => row.motion === "rubric")!;
+  expect(rubric.medianMs).toBe(50_000);
+  expect(rubric.medianUsd).toBeCloseTo(0.3, 5);
+  expect(motions[2]!.medianUsd).toBeNull();
+
+  // Commonest first, then most recent, then by name: two kinds that have happened as often as each
+  // other must not swap places between one refresh of the card and the next.
+  const failures = await getCvBuildFailureKinds(30);
+  expect(failures.map((row) => [row.kind, row.resolvedBy, row.count])).toEqual([
+    ["budget_exhausted", "user", 1],
+    ["overloaded", "system", 1],
+  ]);
+  expect(failures[0]!.lastAt!.getTime()).toBeCloseTo(inWindow.getTime(), -3);
+
+  // The interface can be serving before the worker has run the migration that creates the ledger.
+  await database.execute(sql`alter table cv_build_steps rename to cv_build_steps_hidden`);
+  try {
+    expect(await getCvBuildMotions(30)).toEqual([]);
+    expect(await getCvBuildFailureKinds(30)).toEqual([]);
+  } finally {
+    await database.execute(sql`alter table cv_build_steps_hidden rename to cv_build_steps`);
   }
 });

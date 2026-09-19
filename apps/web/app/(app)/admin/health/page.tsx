@@ -1,5 +1,6 @@
 import { workloadMetrics } from "@christopher/db";
-import { aiBudgetWindowStart } from "@christopher/core";
+import { aiBudgetWindowStart, CV_BUILD_MOTIONS, CV_FAILURE_POLICIES, type CvFailureKind } from "@christopher/core";
+import { CV_STAGE_LABELS } from "@/lib/cv-build-narrative";
 import { users } from "@christopher/db/schema";
 import Link from "next/link";
 import { retryTask } from "@/app/actions/health";
@@ -12,12 +13,14 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { requireAdmin } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { totalAiUsage } from "@/lib/ai-usage";
-import { formatBytes, formatCount, formatDelta, formatDuration, formatLatency, formatPercent, formatUsd, formatUsdPrecise, relativeTime, shortDate } from "@/lib/format";
+import { formatBytes, formatCount, formatDelta, formatDuration, formatLatency, formatPercent, formatStepDuration, formatUsd, formatUsdPrecise, relativeTime, shortDate } from "@/lib/format";
 import { hostNeedsAttention } from "@/lib/outbound-traffic";
 import { heapSummary, workerStateTone, HEAP_WARN_FRACTION } from "@/lib/worker-status";
 import {
   getAiUsage,
   getCvBuildCosts,
+  getCvBuildFailureKinds,
+  getCvBuildMotions,
   getLastCrashRecovery,
   getQueueCounts,
   getScoredRoleCost,
@@ -56,7 +59,7 @@ export default async function AdminOperationsPage() {
   // Budgets belong to accounts and each has its own window; this page is the deployment's report,
   // so it counts the calendar month that everybody's budget resets on.
   const since = aiBudgetWindowStart(now, null);
-  const [metrics, status, crash, running, retrying, events, largestInputs, attentionSources, noSourceCompanies, problemScans, failedTasks, queueCounts, spend, usage, scanRuns, accounts, traffic, cvCosts, scoredRoles] = await Promise.all([
+  const [metrics, status, crash, running, retrying, events, largestInputs, attentionSources, noSourceCompanies, problemScans, failedTasks, queueCounts, spend, usage, scanRuns, accounts, traffic, cvCosts, scoredRoles, cvMotions, cvFailures] = await Promise.all([
     workloadMetrics(db()),
     getWorkerStatus(now),
     getLastCrashRecovery(),
@@ -76,6 +79,8 @@ export default async function AdminOperationsPage() {
     outboundTraffic(7),
     getCvBuildCosts(20),
     getScoredRoleCost(30),
+    getCvBuildMotions(30),
+    getCvBuildFailureKinds(30),
   ]);
   const emailById = new Map(accounts.map((a) => [a.id, a.email]));
   const totals = totalAiUsage(usage);
@@ -495,6 +500,78 @@ export default async function AdminOperationsPage() {
               <p className="mt-3 text-14 text-muted">Builds from before stages were recorded carry their cost in the total without a step behind it.</p>
             )}
           </>
+        )}
+      </Card>
+
+      <Card title="CV build motions (30 days)">
+        <p className="mb-3 text-14 text-muted">
+          One row per motion of a build — reading the Library, extracting the requirements, each writing attempt, each measurement and trim, each assessment batch, scoring, saving. Cost per build says what a build spent; this says what it spent it on, and which motion is the one that fails.
+        </p>
+        {cvMotions.length === 0 ? (
+          <EmptyState title="No build motions recorded" description="Every build writes one row per motion as it runs. The next build fills this; a deployment whose worker predates the ledger shows nothing here." />
+        ) : (
+          <Table>
+            <THead>
+              <tr>
+                <TH>Motion</TH>
+                <TH>Milestone</TH>
+                <TH className="text-right">Runs</TH>
+                <TH className="text-right">Failed</TH>
+                <TH className="text-right">Failure rate</TH>
+                <TH className="text-right">Median time</TH>
+                <TH className="text-right">Median cost</TH>
+              </tr>
+            </THead>
+            <TBody>
+              {cvMotions.map((motion) => (
+                <TR key={motion.motion}>
+                  <TD className="whitespace-nowrap">{CV_BUILD_MOTIONS[motion.motion]?.title ?? motion.motion}</TD>
+                  <TD className="whitespace-nowrap text-muted">{CV_STAGE_LABELS[CV_BUILD_MOTIONS[motion.motion]?.stage ?? "preparing"]}</TD>
+                  <TD className="text-right">{formatCount(motion.runs)}</TD>
+                  <TD className="text-right">{formatCount(motion.failed)}</TD>
+                  <TD className={`text-right ${motion.failed > 0 && motion.failed / motion.runs >= 0.1 ? "text-warn" : ""}`}>
+                    {formatPercent(motion.runs ? motion.failed / motion.runs : 0)}
+                  </TD>
+                  <TD className="text-right">{motion.medianMs === null ? "—" : formatStepDuration(motion.medianMs)}</TD>
+                  <TD className="text-right">{motion.medianUsd === null ? "—" : formatUsdPrecise(motion.medianUsd)}</TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+        )}
+      </Card>
+
+      <Card title="Build failures by kind (30 days)">
+        <p className="mb-3 text-14 text-muted">
+          Every attempt that stopped, by what stopped it and whose move it was. A <strong>system</strong> failure was resolved by the queue trying again from the build&apos;s checkpoint, so most of these never reached the person who asked for the CV; a <strong>user</strong> failure stopped the build and named the action on the CV&apos;s own page.
+        </p>
+        {cvFailures.length === 0 ? (
+          <EmptyState title="No build failures recorded" description="Builds that stop write the reason on the motion that stopped them. An empty list is the good case." />
+        ) : (
+          <Table>
+            <THead>
+              <tr>
+                <TH>Failure</TH>
+                <TH>Kind</TH>
+                <TH>Resolved by</TH>
+                <TH className="text-right">Attempts</TH>
+                <TH>Last seen</TH>
+              </tr>
+            </THead>
+            <TBody>
+              {cvFailures.map((failure) => (
+                <TR key={`${failure.kind}:${failure.resolvedBy}`}>
+                  <TD>{CV_FAILURE_POLICIES[failure.kind as CvFailureKind]?.title ?? failure.kind}</TD>
+                  <TD className="text-muted"><code>{failure.kind}</code></TD>
+                  <TD>
+                    <Badge tone={failure.resolvedBy === "system" ? "blue" : "amber"}>{failure.resolvedBy}</Badge>
+                  </TD>
+                  <TD className="text-right">{formatCount(failure.count)}</TD>
+                  <TD className="whitespace-nowrap" title={failure.lastAt?.toISOString()}>{failure.lastAt ? relativeTime(failure.lastAt, now) : "—"}</TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
         )}
       </Card>
 

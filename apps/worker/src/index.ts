@@ -9,7 +9,7 @@ import { sql } from "drizzle-orm";
 import { createDeps } from "./context";
 import { readEnv } from "./env";
 import { startHealthServer } from "./health";
-import { handlers, onAbandon } from "./handlers";
+import { handlers, onAbandon, onInterrupted } from "./handlers";
 import { ensureSeedTags } from "./handlers/learning";
 import { log } from "./log";
 import { setInternal } from "./settings";
@@ -43,7 +43,7 @@ async function main() {
     await enqueueTask(deps.db, "reevaluate_gate", payload, { dedupeKey: dedupeKeyFor("reevaluate_gate", payload), priority: 6 });
   }
 
-  const queue = new TaskQueue(deps, handlers, { concurrency: env.concurrency, workerId: env.workerId, onAbandon });
+  const queue = new TaskQueue(deps, handlers, { concurrency: env.concurrency, workerId: env.workerId, onAbandon, onInterrupted });
   queue.start();
   // Written only by the persistent worker, never the short-lived web cron runner.
   const reportHeartbeat = async () => {

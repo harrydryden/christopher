@@ -10,6 +10,16 @@ export type CvRetentionPlan = {
   deleteIds: string[];
 };
 
+/**
+ * A build that is queued or generating belongs to the worker that will run it: it will publish or
+ * fail on its own, and until it does nothing may delete it. Retention used to sweep one up
+ * whenever a selection made it obsolete, which deleted a draft while its worker was building it —
+ * the build then spent the rest of its model calls on a row that was no longer there.
+ */
+export function cvBuildInFlight(row: Pick<CvRetentionRow, "status">): boolean {
+  return row.status === "queued" || row.status === "generating";
+}
+
 function plan(
   rows: CvRetentionRow[],
   currentId?: string,
@@ -24,6 +34,7 @@ function plan(
         (row) =>
           row.id !== currentId &&
           row.id !== archiveId &&
+          !cvBuildInFlight(row) &&
           (row.status === "ready" ||
             row.archivedAt ||
             additionallyObsolete.has(row.id)),

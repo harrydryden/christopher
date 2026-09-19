@@ -127,3 +127,37 @@ export function scanStatusLabel(status: string): string {
 export function eventTypeLabel(type: string): string {
   return EVENT_TYPE_LABELS[type] ?? type;
 }
+
+/**
+ * A CV build motion's duration, at the precision the figure deserves: "0.3 s" for reading the
+ * library, "52 s" for a rubric, "3 min" for the writing call. Whole minutes rather than "3m 12s"
+ * once a step runs past a minute, because the narrative line is read, not scanned in a table.
+ */
+export function formatStepDuration(ms: number): string {
+  const safe = Math.max(0, Number.isFinite(ms) ? ms : 0);
+  if (safe < 10_000) return `${(safe / 1000).toFixed(1)} s`;
+  const seconds = Math.round(safe / 1000);
+  if (seconds < 60) return `${seconds} s`;
+  const minutes = Math.floor(seconds / 60);
+  const restSeconds = seconds % 60;
+  if (minutes < 60) return restSeconds ? `${minutes} min ${restSeconds} s` : `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const restMinutes = minutes % 60;
+  return restMinutes ? `${hours} h ${restMinutes} min` : `${hours} h`;
+}
+
+/**
+ * "18:10:25" in the deployment's timezone. The build narrative is a log, so it carries clock
+ * times rather than "2m ago"; the timezone is the shared one from Admin › System settings, the
+ * same one the scan banner reads, and UTC when a caller has none.
+ */
+export function formatClock(date: Date, timeZone = "UTC", withSeconds = true): string {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", ...(withSeconds ? { second: "2-digit" as const } : {}), hour12: false })
+      .formatToParts(date)
+      .map((part) => [part.type, part.value]),
+  );
+  // en-GB with hour12 off renders midnight as 24 in some ICU builds, as localDateParts also guards.
+  const hour = parts.hour === "24" ? "00" : parts.hour ?? "00";
+  return `${hour}:${parts.minute ?? "00"}${withSeconds ? `:${parts.second ?? "00"}` : ""}`;
+}

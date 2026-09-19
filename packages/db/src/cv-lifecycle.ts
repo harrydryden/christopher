@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import type { CvBuildFailure } from "@christopher/core";
 import type { Db } from "./client";
 import { cvDrafts } from "./schema";
 import { cvRoleKey } from "./cv-role-key";
@@ -9,12 +10,30 @@ import {
   type CvRetentionPlan,
 } from "./cv-retention";
 
+/**
+ * Asked to remove a CV a worker is building.
+ *
+ * `userFacing` is the interface's contract for an error whose message is the person's to read: the
+ * action shows it verbatim instead of its own fallback. Deleting a draft mid-build used to
+ * succeed, and the build then spent the rest of its model calls writing a CV into a row that no
+ * longer existed, with nothing on the page to say so.
+ */
+export class CvBuildInFlightError extends Error {
+  readonly userFacing = true as const;
+  constructor(message: string) {
+    super(message);
+    this.name = "CvBuildInFlightError";
+  }
+}
+
 type Transaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type Draft = typeof cvDrafts.$inferSelect;
 type CvRole = Pick<Draft, "userId" | "companyName" | "jobTitle">;
 type CompletionValues = Pick<
   Partial<typeof cvDrafts.$inferInsert>,
-  "content" | "assessment" | "revision" | "buildStage" | "error"
+  // A published CV has nothing left to resume from and nothing left to explain, so publication is
+  // also where the build's checkpoint and its last failure are cleared, in the same transaction.
+  "content" | "assessment" | "revision" | "buildStage" | "error" | "buildCheckpoint" | "failure"
 > & { status?: "ready" };
 
 // The same immutable expression is shared by the index, lookup and lock identity.
@@ -162,7 +181,15 @@ export async function completeCv(
   return true;
 }
 
-/** Archive, restore or delete some of one account's CVs. Ids belonging to anyone else are ignored. */
+/**
+ * Archive, restore or delete some of one account's CVs. Ids belonging to anyone else are ignored.
+ *
+ * A build a worker is running is left alone: archiving it is skipped, because the retention plan
+ * it takes part in would decide the fate of a draft that is still being written, and deleting it
+ * is refused outright, because the build would carry on spending the account's budget on a row
+ * that had gone. A queued build nothing has claimed yet is still the person's to archive, which is
+ * how a replacement is asked for and archived in one motion.
+ */
 export async function actionCvs(
   database: Db,
   userId: string,
@@ -173,6 +200,23 @@ export async function actionCvs(
   const selectedIds = new Set(ids);
   await database.transaction(async (tx) => {
     await lockLegacyLifecycle(tx);
+    // Read under the same transaction the action runs in, so a build that starts after this is
+    // fenced by the role lock below rather than slipping between the read and the write.
+    const building = await tx
+      .select({ id: cvDrafts.id, status: cvDrafts.status })
+      .from(cvDrafts)
+      .where(and(inArray(cvDrafts.id, [...selectedIds]), eq(cvDrafts.userId, userId), eq(cvDrafts.status, "generating")));
+    if (action === "delete" && building.length)
+      throw new CvBuildInFlightError(
+        building.length === 1
+          ? "This CV is still being built. Wait for the build to finish or fail, then delete it."
+          : `${building.length} of the selected CVs are still being built. Wait for those builds to finish or fail, then delete them.`,
+      );
+    // Archiving is what runs a retention plan over the role, so a build in flight is left out of
+    // the selection it decides. Restoring one is harmless — it moves that draft's own marker and
+    // nothing else — and the plans can no longer delete an in-flight row whatever the action.
+    if (action === "archive") for (const row of building) selectedIds.delete(row.id);
+    if (!selectedIds.size) return;
     // Lock all affected roles in a stable order, preventing crossed bulk requests deadlocking.
     const roles = await tx
       .selectDistinct({ key: roleKey(cvDrafts) })
@@ -221,6 +265,31 @@ export async function actionCvs(
 }
 
 /**
+ * Record why this attempt stopped on a draft that is still building, without ending the build.
+ *
+ * The queue writes this when a handler outruns its deadline and there are attempts left: the draft
+ * stays `generating`, because the queue is bringing it back, and the failure says which attempt
+ * stopped, what stopped it and when the next one runs. Without it the page went on saying
+ * "progressing" for the rest of the day, because the worker that would have written the failure
+ * was the one that had been given up on.
+ *
+ * Returns false when the draft has since finished, failed or gone: a late write must not overwrite
+ * the outcome of an attempt that got there first.
+ */
+export async function noteCvBuildFailure(
+  database: Db,
+  id: string,
+  failure: CvBuildFailure,
+): Promise<boolean> {
+  const rows = await database
+    .update(cvDrafts)
+    .set({ failure })
+    .where(and(eq(cvDrafts.id, id), inArray(cvDrafts.status, ["queued", "generating"])))
+    .returning({ id: cvDrafts.id });
+  return rows.length > 0;
+}
+
+/**
  * Give up on a build nothing is running any more, so the page stops saying "generating".
  *
  * A CV build is the one task a person watches while it runs, and the only thing that ever moves
@@ -237,6 +306,12 @@ export async function abandonCvDraft(
   database: Db,
   id: string,
   error: string,
+  /**
+   * The same event in the taxonomy the page reads. Without it an interrupted build was the one
+   * failure with no kind and no next step: the narrative showed a bare sentence where every other
+   * failure named what had happened and whose move it was.
+   */
+  failure?: CvBuildFailure,
 ): Promise<{ userId: string } | null> {
   return database.transaction(async (tx) => {
     await lockCvDraft(tx, id);
@@ -248,7 +323,7 @@ export async function abandonCvDraft(
     if (draft.status !== "queued" && draft.status !== "generating") return null;
     const rows = await tx
       .update(cvDrafts)
-      .set({ status: "failed", error: error.slice(0, 1000), buildStage: null })
+      .set({ status: "failed", error: error.slice(0, 1000), buildStage: null, ...(failure ? { failure } : {}) })
       .where(and(eq(cvDrafts.id, id), inArray(cvDrafts.status, ["queued", "generating"])))
       .returning({ id: cvDrafts.id });
     return rows.length ? { userId: draft.userId } : null;

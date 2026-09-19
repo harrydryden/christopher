@@ -1,40 +1,43 @@
 import type { ReactNode } from "react";
+import { CV_BUILD_STAGES, type CvBuildStage } from "@christopher/core";
 import { Mark } from "./brand";
 import { Badge, toneText } from "./Badge";
 import { relativeTime } from "@/lib/format";
+import { CV_STAGE_LABELS } from "@/lib/cv-build-narrative";
 import type { CvBuildState } from "@/lib/cv-build-state";
 
-const stages = [
-  {
-    id: "analysing",
-    title: "Understand the role",
-    detail:
-      "Reading the company’s requirements and matching your confirmed evidence.",
-  },
-  {
-    id: "writing",
-    title: "Write your CV",
-    detail:
-      "Choosing relevant achievements and writing to the content budget for your page limit.",
-  },
-  {
-    id: "fitting",
-    title: "Optimise",
-    detail:
-      "Measuring the actual PDF and prioritising the strongest content within your page limit, keeping every job and qualification.",
-  },
-  {
-    id: "assessing",
-    title: "Check and score",
-    detail:
-      "Checking the optimised wording against your evidence and the company’s job description.",
-  },
-];
+/**
+ * The four the strip shows. `preparing` and `publishing` are the moments either side of a build,
+ * over in seconds, and a milestone nobody ever sees lit is noise.
+ */
+type CvMilestone = Exclude<CvBuildStage, "preparing" | "publishing">;
+const MILESTONE_DETAILS: Record<CvMilestone, string> = {
+  analysing:
+    "Reading the company’s requirements and matching your confirmed evidence.",
+  writing:
+    "Choosing relevant achievements and writing to the content budget for your page limit.",
+  fitting:
+    "Measuring the actual PDF and prioritising the strongest content within your page limit, keeping every job and qualification.",
+  assessing:
+    "Checking the optimised wording against your evidence and the company’s job description.",
+};
+
+/**
+ * The milestones in the order a build runs them, named as the narrative names them: the strip and
+ * the lines beneath it label one stage one way, so a line can be traced to the card above it.
+ */
+const stages = CV_BUILD_STAGES.filter(
+  (stage): stage is CvMilestone => stage in MILESTONE_DETAILS,
+).map((id) => ({ id, title: CV_STAGE_LABELS[id], detail: MILESTONE_DETAILS[id] }));
 
 /**
  * A build is a chain of model calls that can honestly take twenty minutes, so a turning wheel says
  * nothing. What the reader needs is when it started, what it is doing, when it last moved, and
  * which attempt this is — and, when it has stopped moving, to be told so rather than left watching.
+ *
+ * The milestone strip is the shape of a build; the narrative below it is what is actually
+ * happening inside the milestone, motion by motion, so a reader watching "Optimise" for four
+ * minutes can see the measuring and the trimming that make it up.
  */
 export function CvBuildProgress({
   stage,
@@ -42,6 +45,7 @@ export function CvBuildProgress({
   build,
   startedAt,
   now,
+  narrative,
   action,
 }: {
   stage: string | null;
@@ -49,13 +53,16 @@ export function CvBuildProgress({
   build: CvBuildState;
   startedAt: Date;
   now: Date;
+  /** The motions of this build so far, under the strip. */
+  narrative?: ReactNode;
   /** The way out of a stopped build, when there is one.  */
   action?: ReactNode;
 }) {
   const index = queued ? -1 : stages.findIndex((item) => item.id === stage);
   const active = stages[index];
   const stopped = build.phase === "stopped";
-  const tone = stopped ? "red" : build.phase === "stalled" ? "amber" : "blue";
+  const retrying = build.phase === "retrying";
+  const tone = build.tone;
   return (
     <section
       aria-label="CV build progress"
@@ -84,7 +91,11 @@ export function CvBuildProgress({
             </p>
           )}
         </div>
-        {(stopped || build.phase === "stalled") && <Badge tone={tone} className="ml-auto shrink-0">{stopped ? "stopped" : "no progress"}</Badge>}
+        {(stopped || retrying || build.phase === "stalled") && (
+          <Badge tone={tone} className="ml-auto shrink-0">
+            {stopped ? "stopped" : retrying ? "retrying" : "no progress"}
+          </Badge>
+        )}
       </div>
       <ol className="grid gap-3 sm:grid-cols-4" aria-label="Build stages">
         {stages.map((item, i) => (
@@ -106,6 +117,7 @@ export function CvBuildProgress({
         ))}
       </ol>
       {active && !stopped && <p className="text-14 text-muted">{active.detail}</p>}
+      {narrative}
       {action}
     </section>
   );

@@ -2,7 +2,16 @@ import { CvRubricSchema, CvReviewPlanSchema, type CvRubric, type CvReviewPlan, t
 import { CV_RUBRIC_PROMPT, CV_REVIEW_PROMPT, CV_AUTHOR_PROMPT } from "./cv-prompts";
 import { cvReviewBatches, reviewBatchIssues, markUnverifiedFindings, type CvReviewBatch } from "./cv-review-batch";
 import { CvPlanSchema, CV_PAGE_LIMITS, type CvWritingBudget, type CvPlan, type CvLibrary } from "@christopher/core";
-import Anthropic from "@anthropic-ai/sdk";
+import Anthropic, {
+  APIConnectionError,
+  APIError,
+  AuthenticationError,
+  BadRequestError,
+  InternalServerError,
+  NotFoundError,
+  PermissionDeniedError,
+  RateLimitError,
+} from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { estimateCostUsd, serverToolCostUsd } from "./pricing";
@@ -10,6 +19,31 @@ import * as P from "./prompts";
 import * as S from "./schemas";
 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+
+/**
+ * Why a call failed, named rather than described.
+ *
+ * The message a provider error carries is prose that changes without notice, so the class it was
+ * thrown as is what the caller is told: a caller deciding whether to try again must not have to
+ * read English to find out that a 429 is a 429. Every name here is also a `CvFailureKind` in core,
+ * so a CV build can adopt the kind of the call that ended it without translating anything.
+ */
+export type AiFailureKind =
+  | "rate_limited"
+  | "overloaded"
+  | "connection"
+  | "model_access"
+  | "stalled"
+  | "refused"
+  | "output_limit"
+  | "output_invalid"
+  | "unknown";
+
+export interface AiFailure {
+  kind: AiFailureKind;
+  /** The HTTP status, when the provider gave one; a dropped connection has none. */
+  status?: number;
+}
 
 export interface AiUsageRecord {
   callSite: string;
@@ -22,6 +56,12 @@ export interface AiUsageRecord {
   durationMs: number;
   ok: boolean;
   error?: string;
+  /**
+   * The failure named, when there was one. `error` stays the text — it is what `ai_calls` stores
+   * and what Operations reads — and this is the same event classified, so a caller can act on it.
+   * A call cancelled because a sibling failed carries none: it is not a failure of its own.
+   */
+  failure?: AiFailure;
   refType?: string;
   refId?: string;
   /** Which step of a multi-call feature this was; a single-call feature leaves it unset. */
@@ -98,6 +138,14 @@ export interface AiEngineOptions {
   getModel: (callSite: string) => string;
   onUsage?: (record: AiUsageRecord) => void | Promise<void>;
   client?: AiClientLike;
+  /**
+   * The run this engine belongs to, for an engine built for one task.
+   *
+   * When it aborts — the task outran its deadline, or the worker lost its place — every call in
+   * flight is cut off and nothing new is sent. Without it a killed CV build kept streaming
+   * answers nobody would read, and kept spending the account's budget to do it.
+   */
+  signal?: AbortSignal;
   /** Route calls through the server-side refusal fallback. Requires a model that supports it. */
   useServerFallback?: boolean;
   logger?: (msg: string, data?: unknown) => void;
@@ -122,6 +170,12 @@ interface RunParams {
   onStart?: () => void;
   /** Cancels the call; whatever it had consumed by then is recorded against CANCELLED_ERROR. */
   signal?: AbortSignal;
+  /**
+   * This call's own usage record, after it has been recorded. `onUsage` sees every call the engine
+   * makes, so a method running several at once cannot tell from it which record belongs to which;
+   * this hands each call its own, which is how an assessment batch reports its cost as its own.
+   */
+  onRecord?: (record: AiUsageRecord) => void;
 }
 
 export const OUTPUT_LIMIT_ERROR = "Model output limit reached before the response was complete.";
@@ -129,14 +183,80 @@ export const CANCELLED_ERROR = "Cancelled because another call in the same task 
 /** No answer legitimately takes this long, so a stream still open at the ceiling has stalled. */
 export const STREAM_CEILING_MS = 15 * 60_000;
 
-/** A streamed call cut off before it completed, carrying whatever the stream had received. */
+/**
+ * A streamed call cut off before it completed, carrying whatever the stream had received.
+ *
+ * It also carries the error the stream threw. Wrapping used to keep the message alone, which threw
+ * away the class the provider raised: a 429 and a dropped socket arrived at the caller as two
+ * strings, and the only way left to tell them apart was to match English that the provider is free
+ * to reword. `reason` keeps the original in hand so `classifyAiFailure` can ask what it is.
+ */
 class CallCutOff extends Error {
-  constructor(message: string, readonly snapshot: ParseResponse | undefined) {
+  constructor(
+    message: string,
+    readonly snapshot: ParseResponse | undefined,
+    /** The error the stream rejected with, when the cut-off was not one we decided on ourselves. */
+    readonly reason?: unknown,
+    /** Set when this process cut the call off: the ceiling, or a caller's signal. */
+    readonly cut?: "stalled" | "cancelled",
+  ) {
     super(message);
   }
 }
 
+/**
+ * What a thrown call was, by the class it was thrown as.
+ *
+ * Returns null for a call this process cancelled, which is not a failure of its own: the batch it
+ * was cancelled for is the failure, and reporting both would name the wrong one. A fake client in
+ * a test throws plain errors, and an SDK class we do not know yet is equally unnamed, so anything
+ * unrecognised is honestly `unknown` rather than guessed at from its message.
+ */
+export function classifyAiFailure(error: unknown): AiFailure | null {
+  if (error instanceof CallCutOff) {
+    if (error.cut === "cancelled") return null;
+    if (error.cut === "stalled") return { kind: "stalled" };
+    return classifyAiFailure(error.reason);
+  }
+  // Order matters: the timeout is a subclass of the connection error, and every one of these is a
+  // subclass of APIError, which is the catch-all for a status we have no specific name for.
+  if (error instanceof RateLimitError) return { kind: "rate_limited", status: error.status };
+  if (error instanceof InternalServerError) return { kind: "overloaded", status: error.status };
+  if (error instanceof APIConnectionError) return { kind: "connection" };
+  if (error instanceof AuthenticationError || error instanceof PermissionDeniedError ||
+      error instanceof NotFoundError || error instanceof BadRequestError)
+    return { kind: "model_access", status: error.status };
+  if (error instanceof APIError) return { kind: "unknown", status: error.status };
+  return { kind: "unknown" };
+}
+
 class BatchFailed extends Error {}
+
+/**
+ * One assessment batch reporting on itself, so a caller can narrate an audit that runs its batches
+ * together instead of only saying it began and ended.
+ *
+ * `start` opens a batch. `retry` says the batch's first call is finished and paid for — its
+ * `usage` is that call's — and that a second is going out to correct its attribution. `done` and
+ * `failed` close it, carrying the usage of whichever call was the last one made.
+ */
+export interface CvAssessBatchEvent {
+  /** Zero-based, in the order `cvReviewBatches` sliced them. */
+  index: number;
+  total: number;
+  phase: "start" | "done" | "retry" | "failed";
+  requirements: number;
+  claims: number;
+  /** How many attribution corrections the re-run was asked to make; absent when there was none. */
+  corrections?: number;
+  /** The call's own cost and tokens, once it has been recorded. */
+  usage?: AiUsageRecord;
+}
+
+export interface CvAssessHooks {
+  /** Never throws into the audit: a hook that fails is logged and the batch carries on. */
+  onBatch?: (event: CvAssessBatchEvent) => void | Promise<void>;
+}
 
 export class AiEngine {
   readonly enabled: boolean;
@@ -194,17 +314,20 @@ export class AiEngine {
     try {
       return await stream.finalMessage();
     } catch (err) {
+      const cut = stalled ? "stalled" : params.signal?.aborted ? "cancelled" : undefined;
       const reason = stalled
         ? `Stream timed out: no complete response after ${STREAM_CEILING_MS / 60_000} minutes.`
-        : params.signal?.aborted ? CANCELLED_ERROR : (err as Error).message;
-      throw new CallCutOff(reason, stream.currentMessage);
+        : cut === "cancelled" ? CANCELLED_ERROR : (err as Error).message;
+      throw new CallCutOff(reason, stream.currentMessage, err, cut);
     } finally {
       clearTimeout(ceiling);
     }
   }
 
   private async run<T>(callSite: string, params: RunParams, ref: Ref = {}): Promise<T | null> {
-    if (!this.client || params.signal?.aborted) return null;
+    // A call's own signal when it has one (an assessment batch's), the run's otherwise.
+    const signal = params.signal ?? this.options.signal;
+    if (!this.client || signal?.aborted) return null;
     const model = this.options.getModel(callSite);
     const started = Date.now();
     const blocks = typeof params.user === "string" ? [{ text: params.user }] : params.user;
@@ -219,15 +342,21 @@ export class AiEngine {
     };
     if (params.tools) request.tools = params.tools;
 
-    // A generous reading of the prompt: English runs about four bytes per token, so a third of the
-    // byte count leaves roughly 30% of headroom. Output is reserved at the cap the call may reach.
-    const promptBytes = Buffer.byteLength(params.system + blocks.map(block => block.text).join(""));
-    const estimate = estimateCostUsd(model, { inputTokens: promptBytes / 3,
-      outputTokens: params.maxTokens ?? 4096, cacheReadTokens: 0, cacheWriteTokens: 0 }) + (params.tools?.length ? 1 : 0);
-    const settle = this.options.reserve ? await this.options.reserve(callSite, estimate, ref) : undefined;
-    if (settle === null) throw new Error("AI budget reserved or exhausted; retry later");
+    // Estimated only for an engine that holds capacity per call. The CV engine holds one
+    // reservation for the whole build instead, so measuring every prompt for it was work thrown
+    // away — and a second, unused figure beside the one the build was actually admitted at.
+    let settle: (() => Promise<void>) | null | undefined;
+    if (this.options.reserve) {
+      // A generous reading of the prompt: English runs about four bytes per token, so a third of
+      // the byte count leaves roughly 30% of headroom. Output is reserved at the cap it may reach.
+      const promptBytes = Buffer.byteLength(params.system + blocks.map(block => block.text).join(""));
+      const estimate = estimateCostUsd(model, { inputTokens: promptBytes / 3,
+        outputTokens: params.maxTokens ?? 4096, cacheReadTokens: 0, cacheWriteTokens: 0 }) + (params.tools?.length ? 1 : 0);
+      settle = await this.options.reserve(callSite, estimate, ref);
+      if (settle === null) throw new Error("AI budget reserved or exhausted; retry later");
+    }
     try {
-      const response = await this.complete(request, params);
+      const response = await this.complete(request, { ...params, ...(signal ? { signal } : {}) });
       const usage = response.usage ?? {};
       const tokens = {
         inputTokens: usage.input_tokens ?? 0,
@@ -247,7 +376,14 @@ export class AiEngine {
           : validate<T>(params.schema, parsed);
       const validated = "data" in outcome ? outcome.data : null;
       const served = response.model ?? model;
-      await this.record({
+      // An answered call that cannot be used still has a name: the model declined, it ran out of
+      // room, or what came back did not fit the schema. All three are the model's answer failing,
+      // never the transport, and the caller decides differently about each.
+      const failure: AiFailure | undefined = validated !== null ? undefined
+        : refused ? { kind: "refused" }
+        : truncated ? { kind: "output_limit" }
+        : { kind: "output_invalid" };
+      const record: AiUsageRecord = {
         callSite,
         model: served,
         ...tokens,
@@ -256,8 +392,11 @@ export class AiEngine {
         durationMs: Date.now() - started,
         ok: validated !== null,
         error: "error" in outcome ? outcome.error : undefined,
+        ...(failure ? { failure } : {}),
         ...ref,
-      });
+      };
+      await this.record(record);
+      params.onRecord?.(record);
       if (refused) this.log(`${callSite} refused`, response.stop_details);
       return validated;
     } catch (err) {
@@ -274,7 +413,8 @@ export class AiEngine {
       // Price at the model that served the call when the snapshot names one, as the success path
       // does: a server-side fallback bills at the model that answered, not the one that was asked.
       const served = snapshot?.model ?? model;
-      await this.record({
+      const failure = classifyAiFailure(err);
+      const record: AiUsageRecord = {
         callSite,
         model: served,
         ...tokens,
@@ -282,8 +422,11 @@ export class AiEngine {
         durationMs: Date.now() - started,
         ok: false,
         error: (err as Error).message.slice(0, 500),
+        ...(failure ? { failure } : {}),
         ...ref,
-      });
+      };
+      await this.record(record);
+      params.onRecord?.(record);
       this.log(`${callSite} failed`, err);
       return null;
     } finally {
@@ -318,6 +461,7 @@ export class AiEngine {
       evidence: CvTextItem[];
     },
     ref: Ref = {},
+    hooks: CvAssessHooks = {},
   ): Promise<CvReviewPlan | null> {
     // A full CV audit can exceed what one call may produce, so it is split into batches that each
     // see the complete CV and evidence. The batches are independent: they run together, and they
@@ -335,8 +479,14 @@ export class AiEngine {
     const stable = JSON.stringify({ evidence: input.evidence, rubric: rubricContext });
     const printed = JSON.stringify({ cv: input.cv });
     const batches = cvReviewBatches(input, batchSize);
+    // One controller for the audit: a batch that fails cancels its siblings, and so does the run's
+    // own signal, so a build whose task has been given up on stops paying for the rest of its audit.
     const controller = new AbortController();
-    const runBatch = (batch: CvReviewBatch, corrections?: string[], onStart?: () => void) => this.run<CvReviewPlan>("CV", {
+    const stopBatches = () => controller.abort();
+    const run = this.options.signal;
+    if (run?.aborted) controller.abort();
+    else run?.addEventListener("abort", stopBatches, { once: true });
+    const runBatch = (batch: CvReviewBatch, corrections?: string[], onStart?: () => void, onRecord?: (record: AiUsageRecord) => void) => this.run<CvReviewPlan>("CV", {
       system: CV_REVIEW_PROMPT + "\nThis is one batch of a larger audit. The user turn has three parts: the complete evidence library with the rubric's caveats, then the complete cv, then this batch: the rubric requirements and claims to assess now, with claimSources supplying each claim's required source explicitly. Assess only the batch's requirements and claims, using the complete CV and evidence as context. Return an empty array when the batch has no requirements or no claims. Use the shortest sufficient verbatim quotes; usually one or two sources per finding suffice. Keep reasons and improvements concise. Every claim with requiredEvidenceId must cite a verbatim quote from that exact source to be supported, including skills. Evidence from a different role, profile or skill block cannot substitute for it. If that source does not support the complete claim, mark it uncertain or unsupported; never copy in unrelated evidence merely to satisfy this rule.",
       user: [{ text: stable, cache: true }, { text: printed, cache: true }, { text: JSON.stringify({ ...batch, ...(corrections ? { corrections } : {}) }) }],
       schema,
@@ -346,17 +496,39 @@ export class AiEngine {
       timeoutMs: 240_000,
       signal: controller.signal,
       onStart,
+      onRecord,
       // The corrections re-run is a second charge for one batch, and the difference between an
       // audit that cost twice over and one that simply had many batches. Name it separately.
     }, corrections ? { ...ref, stage: `${ref.stage ?? "review"}_retry` } : ref);
-    const assess = async (batch: CvReviewBatch, onStart?: () => void): Promise<CvReviewPlan> => {
+    const assess = async (batch: CvReviewBatch, index: number, onStart?: () => void): Promise<CvReviewPlan> => {
       const context = { cv: input.cv, claims: batch.claims, evidence: input.evidence };
-      let result = await runBatch(batch, undefined, onStart);
-      if (!result) throw new BatchFailed();
+      // The batches run together, so a watcher that only saw the audit begin and end could not say
+      // which of five was slow or which paid twice. Each says so for itself, carrying the usage of
+      // its own call rather than leaving the caller to guess from the engine-wide record.
+      const say = async (phase: CvAssessBatchEvent["phase"], extra: Partial<CvAssessBatchEvent> = {}) => {
+        try {
+          await hooks.onBatch?.({ index, total: batches.length, phase,
+            requirements: batch.requirements.length, claims: batch.claims.length, ...extra });
+        } catch (err) {
+          this.log("assessment batch hook failed", err);
+        }
+      };
+      await say("start");
+      let usage: AiUsageRecord | undefined;
+      let result = await runBatch(batch, undefined, onStart, record => { usage = record; });
+      if (!result) {
+        await say("failed", { usage });
+        throw new BatchFailed();
+      }
       const corrections = reviewBatchIssues(result, context).map(issue => issue.correction);
       if (corrections.length) {
-        result = await runBatch(batch, corrections);
-        if (!result) throw new BatchFailed();
+        // The first call is finished and paid for; what follows is a second charge for this batch.
+        await say("retry", { usage, corrections: corrections.length });
+        result = await runBatch(batch, corrections, undefined, record => { usage = record; });
+        if (!result) {
+          await say("failed", { usage, corrections: corrections.length });
+          throw new BatchFailed();
+        }
         // A repeated attribution mistake earns no credit and remains visible for review.
         // The final strict source validator still checks all accepted evidence quotes.
         result = markUnverifiedFindings(result, reviewBatchIssues(result, context));
@@ -366,8 +538,10 @@ export class AiEngine {
         expected.every(id => actual.includes(id));
       if (!complete(batch.requirements.map(item => item.id), result.matches.map(item => item.requirementId)) ||
           !complete(batch.claims.map(item => item.id), result.claims.map(item => item.claimId))) {
+        await say("failed", { usage, ...(corrections.length ? { corrections: corrections.length } : {}) });
         throw new Error("The assessment did not cover every requested requirement and claim exactly once. The fitted CV is saved; retry its assessment.");
       }
+      await say("done", { usage, ...(corrections.length ? { corrections: corrections.length } : {}) });
       return result;
     };
     const results: CvReviewPlan[] = [];
@@ -379,12 +553,12 @@ export class AiEngine {
         let begun!: () => void;
         const firstBegun = new Promise<void>(resolve => { begun = resolve; });
         let firstFailed = false;
-        const first = assess(batches[0]!, () => begun()).then(result => { results[0] = result; });
+        const first = assess(batches[0]!, 0, () => begun()).then(result => { results[0] = result; });
         pending.push(first);
         await Promise.race([firstBegun, first.then(() => undefined, () => { firstFailed = true; })]);
         if (firstFailed) await first;
         batches.slice(1).forEach((batch, index) => {
-          pending.push(assess(batch).then(result => { results[index + 1] = result; }));
+          pending.push(assess(batch, index + 1).then(result => { results[index + 1] = result; }));
         });
         await Promise.all(pending);
       }
@@ -394,6 +568,8 @@ export class AiEngine {
       await Promise.allSettled(pending);
       if (err instanceof BatchFailed) return null;
       throw err;
+    } finally {
+      run?.removeEventListener("abort", stopBatches);
     }
     const review = { matches: results.flatMap(result => result.matches), claims: results.flatMap(result => result.claims) };
     const result = CvReviewPlanSchema.safeParse(review);

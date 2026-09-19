@@ -13,13 +13,15 @@ export { appendProfile, latestProfileFor } from "./profiles";
 export { workloadMetrics } from "./scaling";
 export { addHttpHostDaily, listHttpHostDaily, pruneHttpHostDaily, emptyHttpCounters, latencyBucketIndex, LATENCY_BUCKET_UPPER_MS, type HttpHostCounters, type HttpHostDailyDelta, type HttpHostDailyRow } from "./http-rollup";
 export { recordWorkerEvent, listWorkerEvents, countWorkerEvents, pruneWorkerEvents, type WorkerEventInput } from "./worker-events";
-export { accountAiSpend, totalAiSpend, aiUsageByAccount, releaseAiHolds, releaseOrphanedCvHolds, aiOutcome, aiOutcomeSql, AI_OUTCOMES, costPerCvBuild, costPerScoredRole, type AiAccountUsage, type AiOutcome, type CvBuildCost, type CvBuildCosts, type ReleasedHolds, type ScoredRoleCost } from "./ai-budget";
+export { accountAiSpend, totalAiSpend, aiUsageByAccount, recordAiCall, releaseAiHolds, releaseOrphanedCvHolds, aiOutcome, aiOutcomeSql, AI_OUTCOMES, costPerCvBuild, costPerScoredRole, type AiAccountUsage, type AiCallRecord, type AiOutcome, type CvBuildCost, type CvBuildCosts, type ReleasedHolds, type ScoredRoleCost } from "./ai-budget";
 
 export { roleStatusSql } from "./role-workflow";
 
 export { scanRunSummary, scanRunSummaries, type ScanRunSummary } from "./scan-summary";
 
-export { abandonCvDraft, actionCvs, completeCv, lockCvDraft, lockCvLifecycle, nextCvRevision } from "./cv-lifecycle";
+export { abandonCvDraft, actionCvs, completeCv, CvBuildInFlightError, lockCvDraft, lockCvLifecycle, nextCvRevision, noteCvBuildFailure } from "./cv-lifecycle";
+
+export { startCvBuildStep, finishCvBuildStep, failOpenCvBuildSteps, listCvBuildSteps, cvBuildStepsSignature, cvBuildMotionStats, type StartCvBuildStep, type FinishCvBuildStep, type CvBuildMotionStat } from "./cv-build-steps";
 
 export { cvRoleKey } from "./cv-role-key";
 

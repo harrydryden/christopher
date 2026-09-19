@@ -5,6 +5,8 @@ import {
   costPerCvBuild,
   costPerScoredRole,
   countWorkerEvents,
+  cvBuildMotionStats,
+  type CvBuildMotionStat,
   listHttpHostDaily,
   listWorkerEvents,
   totalAiSpend,
@@ -12,6 +14,7 @@ import {
   type ScoredRoleCost,
 } from "@christopher/db";
 import {
+  cvBuildSteps,
   cvDrafts,
   jobs,
   settings,
@@ -126,6 +129,51 @@ export async function getAiUsage(since: Date): Promise<AiUsageGroup[]> {
  */
 export async function getCvBuildCosts(limit = 20): Promise<CvBuildCosts> {
   return ifLedger(() => costPerCvBuild(db(), limit), { builds: [], medianUsd: null, worstUsd: null, stages: [] });
+}
+
+/**
+ * Where builds spend their time and where they fail, by motion, over a window. Administrator-only,
+ * like the costs above: it reads every account's builds, and the page behind it calls
+ * `requireAdmin`. A deployment whose worker has not yet run the ledger's migration reads as an
+ * empty card rather than an error over the whole of Operations.
+ */
+export async function getCvBuildMotions(days = 30): Promise<CvBuildMotionStat[]> {
+  return ifLedger(() => cvBuildMotionStats(db(), days), [] as CvBuildMotionStat[]);
+}
+
+export interface CvBuildFailureCount {
+  kind: string;
+  /** What the failure record said about whose move it was: "system" or "user". */
+  resolvedBy: string;
+  count: number;
+  lastAt: Date | null;
+}
+
+/**
+ * What builds have failed of, over a window, counted by kind and by whose move it was. The counts
+ * come from the steps' own failure records rather than from the drafts, so an attempt the system
+ * resolved by retrying is counted too — those are exactly the failures nobody would otherwise see.
+ */
+export async function getCvBuildFailureKinds(days = 30): Promise<CvBuildFailureCount[]> {
+  return ifLedger(async () => {
+    const since = new Date(Date.now() - days * 86_400_000);
+    const kind = sql<string>`${cvBuildSteps.failure}->>'kind'`;
+    const resolvedBy = sql<string>`${cvBuildSteps.failure}->>'resolvedBy'`;
+    const rows = await db()
+      .select({ kind, resolvedBy, count: sql<number>`count(*)::int`, lastAt: sql<Date>`max(${cvBuildSteps.startedAt})` })
+      .from(cvBuildSteps)
+      .where(and(gte(cvBuildSteps.startedAt, since), isNotNull(cvBuildSteps.failure)))
+      .groupBy(kind, resolvedBy)
+      // Commonest first, then most recent, then by name: two kinds that have happened as often as
+      // each other are a card that reorders itself between refreshes without the last two.
+      .orderBy(desc(sql`count(*)`), desc(sql`max(${cvBuildSteps.startedAt})`), kind);
+    return rows.map((row) => ({
+      kind: row.kind ?? "unknown",
+      resolvedBy: row.resolvedBy ?? "unknown",
+      count: row.count,
+      lastAt: row.lastAt ? new Date(row.lastAt) : null,
+    }));
+  }, [] as CvBuildFailureCount[]);
 }
 
 /** What scoring one role costs over `days` — the unit price of the highest-volume call site. */

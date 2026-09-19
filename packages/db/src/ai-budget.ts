@@ -6,11 +6,12 @@
  * Resetting a counter moves that account's window (a reset marker in its settings); nothing is
  * deleted, so the call log stays complete. Reading spend never touches `ai_reservations`: a hold
  * is capacity for a call in flight, taken and released by the worker, and deliberately not mixed
- * into what was spent. The one write here is `releaseAiHolds`, which drops holds whose call can
- * no longer be in flight.
+ * into what was spent. The writes here are `recordAiCall`, which appends the row a finished call
+ * leaves behind, and `releaseAiHolds`, which drops holds whose call can no longer be in flight.
  */
 import { sql } from "drizzle-orm";
 import type { Db } from "./client";
+import { aiCalls } from "./schema";
 
 /**
  * One account's recorded spend since `since`, in USD: what its own monthly budget counts. Work
@@ -271,17 +272,23 @@ export interface ReleasedHolds {
  * on, which releases the hold its account was still being charged capacity for.
  *
  * A scope is mandatory. Without one this would clear every account's live holds, so a caller that
- * names neither a worker nor an account is a bug rather than a cleanup.
+ * names neither a worker nor an account is a bug rather than a cleanup. A caller giving up on one
+ * piece of work names it with `refId`: scoped to the account alone, abandoning one CV build
+ * released a sibling build's hold too, whose renewal then silently updated nothing and whose
+ * capacity the budget forgot — which is how a month admitted a third build it could not afford.
  */
 export async function releaseAiHolds(
   db: Db,
-  scope: { workerId?: string | null; userId?: string | null; callSite?: string | null },
+  scope: { workerId?: string | null; userId?: string | null; callSite?: string | null; refId?: string | null },
 ): Promise<ReleasedHolds> {
   if (!scope.workerId && !scope.userId) throw new Error("releaseAiHolds needs a worker or an account to scope the release");
   const conditions = [sql`true`];
   if (scope.workerId) conditions.push(sql`worker_id = ${scope.workerId}`);
   if (scope.userId) conditions.push(sql`user_id = ${scope.userId}`);
   if (scope.callSite) conditions.push(sql`call_site = ${scope.callSite}`);
+  // What the hold was taken for. An account can have two builds in flight, each holding its own
+  // share of the budget; giving up on one must give back that one's hold and nothing else.
+  if (scope.refId) conditions.push(sql`ref_id = ${scope.refId}`);
   const rows = await db.execute<{ amount: number }>(
     sql`delete from ai_reservations where ${sql.join(conditions, sql` and `)} returning amount`,
   );
@@ -290,23 +297,81 @@ export async function releaseAiHolds(
 }
 
 /**
- * A CV hold exists to cover one build in flight. When the account it belongs to has no CV build
+ * A CV hold exists to cover one build in flight. When the build it was taken for has no task
  * queued or running any more, the hold is dead: the worker that took it crashed under another pod
  * name, or the draft was discarded mid-build. Left alone it counts against that account's budget
- * for up to thirty minutes and refuses the next build for no reason. The grace keeps it away from
- * a hold taken a moment before its task row is visible.
+ * for the life of the reservation and refuses the next build for no reason. The grace keeps it
+ * away from a hold taken a moment before its task row is visible.
+ *
+ * A hold that names its build is judged by that build alone, so an account running two builds
+ * keeps the hold of the one still going. Holds from before `ref_id` existed are judged by the old
+ * rule — any CV task of that account — which is the safe direction: it keeps a hold the account
+ * may still need rather than releasing capacity something is spending.
  */
 export async function releaseOrphanedCvHolds(db: Db, graceMinutes = 2): Promise<ReleasedHolds> {
   const rows = await db.execute<{ amount: number }>(sql`
     delete from ai_reservations r
     where r.call_site = 'CV'
       and r.created_at < now() - make_interval(mins => ${graceMinutes}::int)
-      and not exists (
-        select 1 from tasks t
-        join cv_drafts d on t.dedupe_key = 'generate_cv:' || d.id::text
-        where d.user_id = r.user_id and t.status in ('queued', 'running')
-      )
+      and case when r.ref_id is not null
+        then not exists (
+          select 1 from tasks t
+          where t.dedupe_key = 'generate_cv:' || r.ref_id and t.status in ('queued', 'running')
+        )
+        else not exists (
+          select 1 from tasks t
+          join cv_drafts d on t.dedupe_key = 'generate_cv:' || d.id::text
+          where d.user_id = r.user_id and t.status in ('queued', 'running')
+        )
+      end
     returning r.amount`);
   const amountUsd = rows.rows.reduce((total, row) => total + Number(row.amount ?? 0), 0);
   return { count: rows.rows.length, amountUsd: Math.round(amountUsd * 100) / 100 };
+}
+
+/**
+ * What one finished model call is recorded as. Structural, so the ledger does not depend on the
+ * engine: `AiUsageRecord` satisfies it, and the account is passed separately because shared work
+ * (extraction, discovery) has none while every CV call has one.
+ */
+export interface AiCallRecord {
+  callSite: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number;
+  durationMs: number;
+  ok: boolean;
+  error?: string | null;
+  refType?: string | null;
+  refId?: string | null;
+  stage?: string | null;
+}
+
+/**
+ * Append one call to `ai_calls`, the only record of what was spent.
+ *
+ * Every engine writes through here, so a column added to the ledger reaches every call site at
+ * once: the two that existed had drifted into writing different subsets of the row, and a budget
+ * read from a table missing one of them is wrong in the direction that spends money.
+ */
+export async function recordAiCall(db: Db, userId: string | null, record: AiCallRecord): Promise<void> {
+  await db.insert(aiCalls).values({
+    userId,
+    callSite: record.callSite,
+    model: record.model,
+    inputTokens: record.inputTokens,
+    outputTokens: record.outputTokens,
+    cacheReadTokens: record.cacheReadTokens,
+    cacheWriteTokens: record.cacheWriteTokens,
+    costUsd: record.costUsd,
+    durationMs: record.durationMs,
+    ok: record.ok,
+    error: record.error ?? null,
+    refType: record.refType ?? null,
+    refId: record.refId ?? null,
+    stage: record.stage ?? null,
+  });
 }

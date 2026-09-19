@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createAiEngine, decisionDigest, extractJsonBlock, CANCELLED_ERROR, OUTPUT_LIMIT_ERROR, STREAM_CEILING_MS, type AiClientLike, type AiUsageRecord, type DecisionForDigest, type ParseResponse } from "./engine";
+import { APIConnectionError, APIConnectionTimeoutError, APIError, AuthenticationError, BadRequestError, InternalServerError, NotFoundError, PermissionDeniedError, RateLimitError } from "@anthropic-ai/sdk";
 import { estimateCostUsd, estimateCvBuildUsd, serverToolCostUsd, SERVER_TOOL_USD } from "./pricing";
 
 interface Captured {
@@ -348,6 +349,11 @@ describe("helpers", () => {
     expect(estimateCostUsd("who-knows", { inputTokens: 1_000_000, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 })).toBeCloseTo(5, 6);
     // A build is admitted at what it is expected to cost, far below the sum of its calls' ceilings.
     expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 })).toBeCloseTo(3.15, 3);
+    // An attempt resuming with its wording already written pays for the audit alone: on the same
+    // calibration that is about two thirds of a build, and it is derived from the same figures.
+    expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 }, "assessment")).toBeCloseTo(2.115, 3);
+    expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 }, "assessment")).toBeLessThan(
+      estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 }));
     expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 })).toBeLessThan(
       estimateCostUsd("claude-fable-5-1", { inputTokens: 0, outputTokens: 12_000 + 32_000 + 5 * 24_000, cacheReadTokens: 0, cacheWriteTokens: 0 }));
     // Fable 5.1 prices cache reads at $0.25/MTok, a quarter of the tenth-of-input rule.
@@ -624,5 +630,208 @@ describe("bounded CV assessment", () => {
       expect(claim.evidence).toEqual([]);
       expect(claim.reason).toContain("automated review could not link");
     }
+  });
+});
+
+/**
+ * A failed call named by the class it was thrown as.
+ *
+ * The caller has to decide whether to try again, and whether to ask the person to do something
+ * first. It used to have a string to decide by — one the provider is free to reword between
+ * releases — so a rate limit and a bad API key were told apart by a regular expression. The class
+ * is the contract; the message stays what Operations reads.
+ */
+describe("named failures", () => {
+  const raise = (error: unknown) => {
+    const usage: AiUsageRecord[] = [];
+    const engine = createAiEngine({
+      getModel: () => "claude-opus-5",
+      onUsage: record => { usage.push(record); },
+      client: { messages: { create: () => Promise.reject(error) } },
+    });
+    return { engine, usage };
+  };
+  const headers = () => new Headers();
+  const body = (type: string) => ({ type: "error", error: { type, message: type } });
+
+  it.each([
+    ["a rate limit", new RateLimitError(429, body("rate_limit_error"), undefined, headers()), "rate_limited", 429],
+    ["an overloaded provider", new InternalServerError(529, body("overloaded_error"), undefined, headers()), "overloaded", 529],
+    ["a dropped connection", new APIConnectionError({ message: "socket hang up" }), "connection", undefined],
+    ["a connection timeout", new APIConnectionTimeoutError({ message: "timed out" }), "connection", undefined],
+    ["a bad key", new AuthenticationError(401, body("authentication_error"), undefined, headers()), "model_access", 401],
+    ["a forbidden key", new PermissionDeniedError(403, body("permission_error"), undefined, headers()), "model_access", 403],
+    ["an unknown model", new NotFoundError(404, body("not_found_error"), undefined, headers()), "model_access", 404],
+    ["a rejected request", new BadRequestError(400, body("invalid_request_error"), undefined, headers()), "model_access", 400],
+    ["a status we have no name for", new APIError(418, body("teapot"), undefined, headers()), "unknown", 418],
+  ])("names %s", async (_label, error, kind, status) => {
+    const { engine, usage } = raise(error);
+    expect(await engine.analyseCvJob("Must lead operations")).toBeNull();
+    expect(usage[0]!.failure).toEqual(status === undefined ? { kind } : { kind, status });
+    // The text is unchanged: `ai_calls` keeps what it always kept.
+    expect(usage[0]!.error).toBeTruthy();
+  });
+
+  it("falls back to unknown for an error that is not the provider's", async () => {
+    // A fake client in a test, or a bug in our own code, throws a plain Error. Guessing a kind
+    // from its message would be inventing one.
+    const { engine, usage } = raise(new Error("boom"));
+    expect(await engine.analyseCvJob("Must lead operations")).toBeNull();
+    expect(usage[0]!.failure).toEqual({ kind: "unknown" });
+  });
+
+  it("keeps the class through a stream that was cut off part-way", async () => {
+    const { client } = streamingClient(() => Promise.reject(new RateLimitError(429, body("rate_limit_error"), undefined, headers())));
+    const usage: AiUsageRecord[] = [];
+    const engine = createAiEngine({ client, getModel: () => "claude-opus-5", onUsage: record => { usage.push(record); } });
+    expect(await engine.analyseCvJob("Must lead operations")).toBeNull();
+    expect(usage[0]!.failure).toEqual({ kind: "rate_limited", status: 429 });
+  });
+
+  it("names a stalled stream by the ceiling that cut it off", async () => {
+    vi.useFakeTimers();
+    try {
+      const { client } = streamingClient(() => new Promise(() => {}));
+      const usage: AiUsageRecord[] = [];
+      const engine = createAiEngine({ client, getModel: () => "claude-opus-5", onUsage: record => { usage.push(record); } });
+      const pending = engine.analyseCvJob("Must lead operations");
+      await vi.advanceTimersByTimeAsync(STREAM_CEILING_MS);
+      expect(await pending).toBeNull();
+      expect(usage[0]!.failure).toEqual({ kind: "stalled" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ["a refusal", { stop_reason: "refusal", stop_details: { category: "cyber" } }, "refused"],
+    ["an answer cut off at the ceiling", { stop_reason: "max_tokens" }, "output_limit"],
+    ["an answer the schema rejects", { parsed_output: { nonsense: true } }, "output_invalid"],
+  ])("names %s the model itself produced", async (_label, over, kind) => {
+    const { engine, usage } = engineWith({ score: 90, verdict: "strong", rationale: "x", flags: [] }, over as Partial<ParseResponse>);
+    expect(await engine.scoreJob({ profileMarkdown: "", decisionDigest: "", job: { title: "Ops", company: "Acme" } })).toBeNull();
+    expect(usage[0]!.failure).toEqual({ kind });
+  });
+
+  it("leaves a successful call and a cancelled one unnamed", async () => {
+    const { engine, usage } = engineWith({ score: 80, verdict: "strong", rationale: "Fits.", flags: [] });
+    await engine.scoreJob({ profileMarkdown: "", decisionDigest: "", job: { title: "Ops", company: "Acme" } });
+    expect(usage[0]!.failure).toBeUndefined();
+
+    // A batch cancelled because a sibling failed is not a failure of its own: naming it would put
+    // the wrong kind in front of the reader, and the caller reads the last kind it was given.
+    const input = {
+      rubric: { requirements: Array.from({ length: 24 }, (_, i) => ({ id: `r${i}`, label: "Operations", quote: "Lead operations", importance: "essential" as const, category: "experience" as const })), caveats: [] },
+      cv: [{ id: "profile", text: "Operations leader" }],
+      claims: [{ id: "claim0", text: "Operations leader" }],
+      evidence: [{ id: "source:profile", text: "Operations leader" }],
+    };
+    const records: AiUsageRecord[] = [];
+    const { client } = streamingClient((_params, index, signal) => {
+      if (index === 1) return Promise.reject(new RateLimitError(429, body("rate_limit_error"), undefined, headers()));
+      return new Promise((_resolve, reject) => signal!.addEventListener("abort", () => reject(new Error("Request was aborted."))));
+    });
+    const assessor = createAiEngine({ client, getModel: () => "claude-fable-5-1", onUsage: record => { records.push(record); } });
+    expect(await assessor.assessCv(input)).toBeNull();
+    expect(records.filter(record => record.error === CANCELLED_ERROR).every(record => record.failure === undefined)).toBe(true);
+    expect(records.filter(record => record.failure?.kind === "rate_limited")).toHaveLength(1);
+  });
+});
+
+/**
+ * The batches reporting on themselves.
+ *
+ * Five batches run together for a minute and a half each, and one of them may pay twice. A caller
+ * narrating the build cannot tell any of that from the engine-wide usage callback, which sees five
+ * indistinguishable rows, so each batch says which it is, how much of the audit it carries and
+ * what its own call cost.
+ */
+describe("assessment batch hooks", () => {
+  const input = (requirements: number) => ({
+    rubric: { requirements: Array.from({ length: requirements }, (_, i) => ({ id: `r${i}`, label: "Operations", quote: "Lead operations", importance: "essential" as const, category: "experience" as const })), caveats: [] },
+    cv: [{ id: "profile", text: "Operations leader" }],
+    claims: [{ id: "claim0", text: "Operations leader" }],
+    evidence: [{ id: "source:profile", text: "Operations leader" }],
+  });
+  const answerFor = (batch: { requirements: Array<{ id: string }>; claims: Array<{ id: string }> }) => ({
+    matches: batch.requirements.map(item => ({ requirementId: item.id, status: "demonstrated", libraryStatus: "demonstrated", cvEvidence: [{ id: "profile", quote: "Operations leader" }], libraryEvidence: [{ id: "source:profile", quote: "Operations leader" }], reason: "Supported", improvement: "" })),
+    claims: batch.claims.map(item => ({ claimId: item.id, status: "supported", evidence: [{ id: "source:profile", quote: "Operations leader" }], reason: "Supported" })),
+  });
+
+  it("opens and closes one batch at a time, each carrying its own cost", async () => {
+    const events: Array<{ index: number; total: number; phase: string; requirements: number; claims: number; usd?: number }> = [];
+    const engine = createAiEngine({ getModel: () => "claude-fable-5-1", client: { messages: { create: async params =>
+      ({ parsed_output: answerFor(userPayload(params)), usage: { input_tokens: 100, output_tokens: 100 } }) } } });
+    const result = await engine.assessCv(input(17), { stage: "review" }, {
+      onBatch: event => { events.push({ index: event.index, total: event.total, phase: event.phase, requirements: event.requirements, claims: event.claims, usd: event.usage?.costUsd }); },
+    });
+    expect(result!.matches).toHaveLength(17);
+    expect(events.filter(event => event.phase === "start")).toHaveLength(3);
+    expect(events.filter(event => event.phase === "done")).toHaveLength(3);
+    expect(events.filter(event => event.phase === "retry")).toHaveLength(0);
+    expect(new Set(events.map(event => event.index))).toEqual(new Set([0, 1, 2]));
+    expect(events.every(event => event.total === 3)).toBe(true);
+    // The batches carry the whole rubric between them, and only the closing events have a cost.
+    expect(events.filter(event => event.phase === "start").reduce((sum, event) => sum + event.requirements, 0)).toBe(17);
+    expect(events.filter(event => event.phase === "start").every(event => event.usd === undefined)).toBe(true);
+    expect(events.filter(event => event.phase === "done").every(event => (event.usd ?? 0) > 0)).toBe(true);
+  });
+
+  it("says when a batch is paying a second time, and when one has failed", async () => {
+    const source = { ...input(2), claims: [{ id: "claim0", text: "Operations leader", requiredEvidenceId: "entry:role" }],
+      evidence: [{ id: "source:profile", text: "Operations leader" }, { id: "entry:role", text: "Operations leader" }] };
+    const events: Array<{ phase: string; corrections?: number }> = [];
+    let calls = 0;
+    const engine = createAiEngine({ getModel: () => "claude-fable-5-1", client: { messages: { create: async params => {
+      calls++;
+      return { parsed_output: answerFor(userPayload(params)), usage: { input_tokens: 100, output_tokens: 100 } };
+    } } } });
+    await engine.assessCv(source, {}, { onBatch: event => { events.push({ phase: event.phase, corrections: event.corrections }); } });
+    // The first answer cited the wrong source, so the batch was re-run; both charges are reported.
+    expect(calls).toBe(2);
+    expect(events.map(event => event.phase)).toEqual(["start", "retry", "done"]);
+    expect(events[1]!.corrections).toBe(1);
+    expect(events[2]!.corrections).toBe(1);
+
+    const failing = createAiEngine({ getModel: () => "claude-fable-5-1", client: { messages: { create: () => Promise.reject(new Error("nope")) } } });
+    const failures: string[] = [];
+    expect(await failing.assessCv(input(2), {}, { onBatch: event => { failures.push(event.phase); } })).toBeNull();
+    expect(failures).toEqual(["start", "failed"]);
+  });
+
+  it("never lets a hook that throws reach the audit", async () => {
+    const engine = createAiEngine({ getModel: () => "claude-fable-5-1", client: { messages: { create: async params =>
+      ({ parsed_output: answerFor(userPayload(params)), usage: { input_tokens: 100, output_tokens: 100 } }) } } });
+    const result = await engine.assessCv(input(2), {}, { onBatch: () => { throw new Error("the ledger is down"); } });
+    expect(result!.matches).toHaveLength(2);
+  });
+
+  /**
+   * An engine built for one task stops when that task does.
+   *
+   * A CV build that outruns its deadline, or whose worker loses its place, used to go on streaming
+   * answers nobody would read — and go on charging the account for them — because nothing could
+   * cancel a call in flight. The run's signal cuts the batches off exactly as a failed sibling
+   * does, and nothing new is sent afterwards.
+   */
+  it("stops every call in flight, and sends no more, once the run that owns the engine is abandoned", async () => {
+    const stop = new AbortController();
+    const { client, calls, events } = streamingClient((params, index, signal) => {
+      if (index === 0) return Promise.resolve({ parsed_output: answerFor(userPayload(params)) });
+      return new Promise((_, reject) => signal!.addEventListener("abort", () => reject(new Error("Request was aborted."))));
+    });
+    const usage: AiUsageRecord[] = [];
+    const engine = createAiEngine({ client, getModel: () => "claude-fable-5-1", signal: stop.signal, onUsage: record => { usage.push(record); } });
+    const audit = engine.assessCv(input(17), { stage: "review" });
+    for (let tick = 0; tick < 50 && calls.length < 3; tick++) await new Promise(resolve => setTimeout(resolve, 5));
+    expect(calls).toHaveLength(3);
+    stop.abort();
+    // Without every batch the audit is worthless, so it comes back empty rather than partial.
+    expect(await audit).toBeNull();
+    expect(events.filter(event => event.startsWith("cancel:"))).toHaveLength(2);
+    expect(usage.filter(record => record.error === CANCELLED_ERROR)).toHaveLength(2);
+    expect(await engine.analyseCvJob("Lead operations for a growing team.")).toBeNull();
+    expect(await engine.buildCv({ library: { name: "A", contact: "", profile: "", entries: [] }, jobTitle: "Ops", company: "Acme", description: "Lead" })).toBeNull();
+    expect(calls).toHaveLength(3);
   });
 });

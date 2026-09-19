@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import { createCvWritingBudget, cvBudgetViolations } from './cv-budget';
-import { buildFittedCv, selectCvToFit } from './cv-fit';
+import { buildFittedCv, selectCvToFit, type CvFitEvent } from './cv-fit';
 import { DEFAULT_CV_THEME, materialiseCv, type CvLibrary, type CvPlan } from './cv';
 import { renderCvPdfWithReport } from './cv-pdf';
 // The allocations below were calibrated on two pages; the page limit tests scale from there.
@@ -31,17 +31,41 @@ it('fits a long CV through measured achievement selection, preserving every role
 });
 it('gives the writer budgets before its first attempt and avoids unnecessary model retries',async()=>{
  const write=vi.fn().mockResolvedValue(plan);
- const stages: string[] = [];
- const fitted=await buildFittedCv(library,'Financial planning budgets reporting',write,undefined,async stage => { stages.push(stage); });
- expect(stages).toEqual(["writing", "fitting"]);
+ // The milestone each motion belongs to is the motion catalogue's to say; the fitter reports the
+ // motions and nothing else, so there is one vocabulary rather than two that can disagree.
+ const motions: string[] = [];
+ const fitted=await buildFittedCv(library,'Financial planning budgets reporting',write,undefined,async event => { motions.push(event.motion); });
+ expect(motions).toEqual(["write", "write", "check_plan", "measure", "shorten"]);
  expect(write).toHaveBeenCalledTimes(1);
  expect(write.mock.calls[0]![0].maxPages).toBe(2);
  expect(write.mock.calls[0]![0].writingBudget.blocks).toHaveLength(8);
  expect((await renderCvPdfWithReport(fitted)).pageCount).toBeLessThanOrEqual(2);
  expect(fitted.fitNotes!.length).toBeGreaterThan(0);
 });
+it('reports each motion of writing and fitting with the figures behind it',async()=>{
+ const events: CvFitEvent[] = [];
+ await buildFittedCv(library,'Financial planning budgets reporting',async()=>plan,undefined,async event => { events.push(event); });
+ expect(events.map(e=>e.motion)).toEqual(['write','write','check_plan','measure','shorten']);
+ expect(events[0]).toMatchObject({ motion:'write', phase:'start', attempt:1, budgetScale:1, maxPages:2 });
+ expect((events[0] as Extract<CvFitEvent,{phase:'start'}>).budgetCharacters).toBeGreaterThan(0);
+ // Six roles written, every bullet counted, and the prose measured before anything was trimmed.
+ expect(events[1]).toMatchObject({ motion:'write', phase:'done', attempt:1, roles:6, bullets:38 });
+ expect((events[1] as Extract<CvFitEvent,{phase:'done'}>).characters).toBeGreaterThan(1000);
+ expect(events[2]).toMatchObject({ motion:'check_plan', attempt:1, omitted:[], skillFormatCorrections:0 });
+ expect(events[3]).toMatchObject({ motion:'measure', attempt:1, maxPages:2, pages:2 });
+ const shorten = events[4] as Extract<CvFitEvent,{motion:'shorten'}>;
+ expect(shorten.removed).toBeGreaterThan(0);
+ expect(shorten.changes.length).toBeLessThanOrEqual(6);
+ expect(shorten.changes[0]).toContain('prioritised');
+});
 it('never silently drops employment or education to satisfy the page count',async()=>{
- await expect(buildFittedCv(library,'Finance',async()=>({...plan,sections:plan.sections.filter(s=>s.entryId!=='e')}))).rejects.toThrow('omitted employment or education');
+ const events: CvFitEvent[] = [];
+ const failing = buildFittedCv(library,'Finance',async()=>({...plan,sections:plan.sections.filter(s=>s.entryId!=='e')}),undefined,async event => { events.push(event); });
+ await expect(failing).rejects.toThrow('omitted employment or education');
+ // Named in the taxonomy the whole build is classified by: what the writer returned is unusable.
+ await expect(failing).rejects.toMatchObject({ kind:'output_invalid', detail:{ omitted:['e'] } });
+ // The reading that found it is reported before the build stops, so the page can say what was lost.
+ expect(events.at(-1)).toMatchObject({ motion:'check_plan', omitted:['e'] });
 });
 it('ranks structured skill labels including AI and R, and enforces their allocated count', async () => {
  const source: CvLibrary = {name:'Example',contact:'',profile:'Analyst',theme:{ ...DEFAULT_CV_THEME, maxPages: 2 },entries:[
@@ -71,7 +95,12 @@ it('repairs a model using structured labels for a legacy prose skill block witho
 it('bounds retries when the writer repeatedly ignores the legacy skill format', async () => {
  const source: CvLibrary = { name:'Example',contact:'',profile:'Analyst',entries:[{id:'legacy',kind:'skill',heading:'Tools',details:'SQL'}] };
  const write=vi.fn().mockResolvedValue({summary:'Analyst',sections:[{entryId:'legacy',bullets:['SQL'],skillItems:['SQL']}],gaps:[]});
- await expect(buildFittedCv(source,'SQL',write)).rejects.toThrow('wrong skill format');
+ const attempt = buildFittedCv(source,'SQL',write);
+ await expect(attempt).rejects.toThrow('wrong skill format');
+ // Three attempts inside one build have been spent on it, so the policy hands the next move to
+ // the person: another task would meet the same model and the same library.
+ await expect(attempt).rejects.toMatchObject({ kind:'output_invalid', detail:{ attempts:3 },
+  policy:{ resolvedBy:'user', retryable:false, action:'choose_model' } });
  expect(write).toHaveBeenCalledTimes(3);
 });
 it('scales the writing budget with the page limit held in the library theme', () => {
@@ -110,7 +139,10 @@ it('fits to the page limit in the library theme, keeping more achievements when 
 it('reports the page limit when the minimum content cannot fit one page', async () => {
  const minimal: CvPlan={...plan,sections:plan.sections.map(section=>section.entryId.startsWith('r')?{...section,bullets:[plan.sections[1]!.bullets[1]!]}:section)};
  const write=vi.fn().mockResolvedValue(minimal);
- await expect(buildFittedCv({...library,theme:{...DEFAULT_CV_THEME,maxPages:1}},'Finance',write)).rejects.toThrow('into 1 page after three budgeted attempts');
+ const attempt = buildFittedCv({...library,theme:{...DEFAULT_CV_THEME,maxPages:1}},'Finance',write);
+ await expect(attempt).rejects.toThrow('into 1 page after three budgeted attempts');
+ // The caller is told what it is: a page limit the content will not meet, with both figures.
+ await expect(attempt).rejects.toMatchObject({ kind:'page_limit_unfittable', detail:{ maxPages:1, attempts:3 } });
  expect(write).toHaveBeenCalledTimes(3);
  expect(write.mock.calls[1]![0].layoutFeedback?.maxPages).toBe(1);
  expect(write.mock.calls[1]![0].layoutFeedback?.pageCount).toBeGreaterThan(1);

@@ -107,6 +107,45 @@ export function estimateCvBuildUsd(model: string, size: CvBuildSize, parts: CvBu
   return estimateCostUsd(model, cvBuildUsage(size, parts));
 }
 
+/** Entries per A12 batch. Mirrors `LIBRARY_REVIEW_BATCH` in @christopher/core. */
+const LIBRARY_REVIEW_BATCH = 8;
+
+/** What a library evidence review is measured in: the library itself and how much of it to review. */
+export interface LibraryReviewSize {
+  libraryBytes: number;
+  /** Entries this pass will review — every entry on a first pass, one after a typo fix. */
+  entryCount: number;
+}
+
+/**
+ * What an A12 evidence review is expected to cost, for admitting it against the budget.
+ *
+ * Shaped like the CV assessment above, because it is the same motion: the whole library and the
+ * instructions are written to the cache once and read back by every later batch, and each batch of
+ * eight entries then sends only the entries it is about. It runs on `effort: "low"` — it
+ * classifies rows and asks questions, it does not reason its way to a judgement — which is why the
+ * output is a few hundred tokens an entry rather than the seven thousand a batch an assessment
+ * writes. On a 45 KB library of ten entries on Fable 5.1 that is about $0.43 for the whole pass.
+ *
+ * A one-entry pass is dominated by that cached write, not by the entry: re-reviewing one entry
+ * still has to put the library in front of the model. That is the reason the task reviews a whole
+ * library at once rather than firing per entry, and the reason an unchanged entry is answered from
+ * its stored review instead of being asked about again.
+ */
+export function estimateLibraryReviewUsd(model: string, size: LibraryReviewSize): number {
+  if (size.entryCount <= 0) return 0;
+  const library = size.libraryBytes / 3;
+  const batches = Math.ceil(size.entryCount / LIBRARY_REVIEW_BATCH);
+  const cached = library + 1_500;
+  return estimateCostUsd(model, {
+    // Each batch names its entries and their rows; the library behind them is read from the cache.
+    inputTokens: batches * 1_200,
+    cacheWriteTokens: cached,
+    cacheReadTokens: (batches - 1) * cached,
+    outputTokens: size.entryCount * 400,
+  });
+}
+
 /** Cache writes cost 1.25x input (the five-minute entries this engine writes). */
 export function estimateCostUsd(model: string, usage: TokenUsage): number {
   const price = priceFor(model);

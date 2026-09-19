@@ -7,6 +7,8 @@ import { Suspense, type ReactNode } from "react";
 import { logout } from "@/app/login/actions";
 import { resendVerification } from "@/app/actions/account";
 import { WorkspaceNav } from "@/components/WorkspaceNav";
+// The banner and every control it disables say one sentence, from one place.
+import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
 import { NavLink } from "@/components/NavLink";
 import { Mark } from "@/components/brand";
 import Link from "next/link";
@@ -41,7 +43,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       </div>
       {needsEmailConfirmation(user) && (
         <div className="flex flex-wrap items-center gap-3 border-b-2 border-line bg-sunken px-4 py-2 text-13" role="status">
-          <span>Confirm your email address to add companies, run discovery and build CVs. The link asks for your password.</span>
+          <span>{VERIFY_SENTENCE} The link asks for your password.</span>
           <form action={resendVerification}>
             <button type="submit" className="underline">Send the link again</button>
           </form>

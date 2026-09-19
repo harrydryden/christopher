@@ -294,6 +294,7 @@ export interface SubjectRef {
 /** Which payload field names the thing a task is about, per task type. */
 const SUBJECT_FIELDS: Partial<Record<Task["type"], { kind: SubjectKind; field: string }>> = {
   generate_cv: { kind: "cv", field: "draftId" },
+  review_library: { kind: "user", field: "userId" },
   scan_company: { kind: "company", field: "companyId" },
   discover: { kind: "company", field: "companyId" },
   profile_company: { kind: "company", field: "companyId" },

@@ -10,6 +10,9 @@ import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvW
   createCvWritingBudget, CvLibrarySchema, consolidateExperience, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel,
   type CvContent, type CvWritingPreferences } from "@christopher/core";
 import { requireUser, requireVerifiedUser } from "@/lib/auth";
+import { cvLibraryIssues } from "@/lib/cv-library-issues";
+import { cvBuildQuote } from "@/lib/cv-quote";
+import { enqueue } from "@/lib/enqueue";
 import { db } from "@/lib/db";
 import { userSettings as userSettingsTable } from "@christopher/db/schema";
 import { getSettings, getSettingsFor, setUserSetting } from "@/lib/settings";
@@ -101,24 +104,29 @@ async function rememberWording(tx: Tx, userId: string, before: CvContent, after:
 
 export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promise<ActionResult> {
   const user = await requireUser();
+  // Held outside the try so a refusal can name the job or the block it is about, rather than the
+  // array index the schema reports.
+  let submitted: unknown;
   try {
     const raw = String(form.get("library") ?? "");
     if (raw.length > 150_000) return fail("Library is too large. Keep it under 150,000 characters.");
-    const parsed = CvLibrarySchema.parse(JSON.parse(raw));
+    submitted = JSON.parse(raw);
+    const parsed = CvLibrarySchema.parse(submitted);
     const content = CvLibrarySchema.parse(consolidateExperience({ ...parsed, theme: parsed.theme ?? DEFAULT_CV_THEME }));
     await db().transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`cv:library:${user.id}`}))`);
       const latest = await latestLibrary(tx, user.id);
       if ((latest?.version ?? 0) !== Number(form.get("version"))) throw new UserFacingError("The library changed. Reload before saving.");
-      await tx.insert(cvLibraries).values({ userId: user.id, version: (latest?.version ?? 0) + 1, content: CvLibrarySchema.parse(retainArchivedEvidence(latest?.content, content)) });
+      const version = (latest?.version ?? 0) + 1;
+      await tx.insert(cvLibraries).values({ userId: user.id, version, content: CvLibrarySchema.parse(retainArchivedEvidence(latest?.content, content)) });
       await enqueueTask(tx, "rescore_all", { userId: user.id, onlyInTable: true }, { dedupeKey: `rescore_all:${user.id}`, priority: 5 });
+      // The evidence review of the version this save just wrote. Its dedupe key is the account,
+      // not the version, so a person typing through five saves queues one pass; the handler reads
+      // the newest library when it runs.
+      await enqueue("review_library", { userId: user.id, libraryVersion: version }, tx);
     });
   } catch (error) {
-    if (error instanceof z.ZodError) return fail(error.issues.map((issue) => {
-      const [section, index, field] = issue.path;
-      const label = typeof index === "number" ? `${section === "employment" ? "Job" : "Evidence"} ${index + 1}${field ? ` (${String(field)})` : ""}: ` : "";
-      return label + issue.message;
-    }).join(" "));
+    if (error instanceof z.ZodError) return fail(cvLibraryIssues(error, submitted));
     return actionError(error, "Could not save the library. Please try again.");
   }
   revalidatePath("/library");
@@ -245,6 +253,12 @@ export async function requestCv(
     } catch (error) {
       throw new UserFacingError(error instanceof Error ? error.message : "This library cannot be fitted onto a CV.");
     }
+    // What this build will cost, answered here rather than on a CV page after the redirect. The
+    // worker's admission is still the authority — it holds the capacity inside the budget lock and
+    // knows the operator's caps — but a build this account plainly cannot afford is refused before
+    // a draft, a task and an application row exist for it.
+    const quote = await cvBuildQuote(user.id, id);
+    if (quote.refusal) return fail(quote.refusal);
     draftId = await db().transaction(async (tx) => {
       const revision = await nextCvRevision(tx, { userId: user.id, companyName: row.company, jobTitle: row.job.title });
       // Two clicks on Generate are two of these transactions, one behind the other. The second

@@ -28,6 +28,7 @@ import { manageRoleCv, recordApplication, setRoleStage, updateApplication } from
 import { decide } from "./decisions";
 import { finaliseCvDraft, requestCv, saveCvLibrary } from "./cv";
 import { GET as cvRedirect } from "@/app/(app)/cv/route";
+import { GET as workStatus } from "@/app/api/work-status/route";
 
 const DESCRIPTION =
   "Lead a business operations team, develop the annual operating plan and work with finance and commercial leaders.";
@@ -115,6 +116,54 @@ it("creates the role's application row on the first status set from the table, t
   expect((await setRoleStage(job.id, { ok: true }, form({ status: "applied", appliedOn: "2026-02-30" }))).ok).toBe(false);
   expect((await setRoleStage(crypto.randomUUID(), { ok: true }, form({ status: "applied", appliedOn: "2026-09-03" })))).toEqual({ ok: false, error: "Role not found." });
   expect(await applicationsOf()).toHaveLength(1);
+});
+
+it("asks before walking a row backwards, and writes nothing when nothing changed", async () => {
+  const { job } = await fixture();
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "offer", appliedOn: "2026-09-03", notes: "Offer made" }))).toEqual({ ok: true });
+
+  // Back from Offer (In process) to Applied is a step down the lifecycle, and an outcome on
+  // record is never rewritten silently: without the row's own confirmation it is refused.
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "applied", appliedOn: "2026-09-03", notes: "Offer made" }))).toEqual({
+    ok: false, error: "Confirm the move from Offer back to Applied before saving it.",
+  });
+  let [unmoved] = await applicationsOf();
+  expect(unmoved!.status).toBe("offer");
+  expect(unmoved!.history).toHaveLength(1);
+
+  // Screening, Interview and Offer are one stage, so moving between them is not backwards.
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "screening", appliedOn: "2026-09-03", notes: "Back to screening" }))).toEqual({ ok: true });
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "offer", appliedOn: "2026-09-03", notes: "Offer again" }))).toEqual({ ok: true });
+
+  // With the confirmation the row sends, the move is made and recorded like any other.
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "applied", appliedOn: "2026-09-03", notes: "Offer withdrawn", confirm: "1" }))).toEqual({ ok: true });
+  const [moved] = await applicationsOf();
+  expect(moved!.status).toBe("applied");
+  expect(moved!.history.map((entry) => entry.status)).toEqual(["offer", "screening", "offer", "applied"]);
+
+  // Saving the same status, date and notes again is not an event: no write, no history entry.
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "applied", appliedOn: "2026-09-03", notes: "Offer withdrawn" }))).toEqual({ ok: true });
+  [unmoved] = await applicationsOf();
+  expect(unmoved!.history).toHaveLength(4);
+  // One character of notes is a change, and is recorded.
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "applied", appliedOn: "2026-09-03", notes: "Offer withdrawn." }))).toEqual({ ok: true });
+  expect((await applicationsOf())[0]!.history).toHaveLength(5);
+});
+
+it("applies the same two rules to a row with no posting behind it", async () => {
+  const [legacy] = await database.insert(schema.applications).values({
+    userId: user.id, jobId: null, jobTitle: "Legacy Role", companyName: "Legacy Co", appliedOn: "2026-08-01",
+    status: "interview", notes: "Booked", history: [{ status: "interview", at: "2026-08-01T09:00:00.000Z", notes: "Booked" }],
+  }).returning();
+  expect(await updateApplication(legacy!.id, { ok: true }, form({ status: "applied", appliedOn: "2026-08-01", notes: "Booked" }))).toEqual({
+    ok: false, error: "Confirm the move from Interview back to Applied before saving it.",
+  });
+  expect(await updateApplication(legacy!.id, { ok: true }, form({ status: "interview", appliedOn: "2026-08-01", notes: "Booked" }))).toEqual({ ok: true });
+  expect((await applicationsOf())[0]!.history).toHaveLength(1);
+  expect(await updateApplication(legacy!.id, { ok: true }, form({ status: "applied", appliedOn: "2026-08-01", notes: "Booked", confirm: "1" }))).toEqual({ ok: true });
+  const [moved] = await applicationsOf();
+  expect(moved!.status).toBe("applied");
+  expect(moved!.history.map((entry) => entry.status)).toEqual(["interview", "applied"]);
 });
 
 it("records a skip decision when a role is withdrawn, so it leaves the shortlist", async () => {
@@ -226,6 +275,42 @@ it("keeps a row with no posting behind it editable by id", async () => {
   const [row] = await applicationsOf();
   expect(row).toMatchObject({ status: "screening", notes: "Call booked", appliedOn: "2026-08-02" });
   expect(row!.history.map((entry) => entry.status)).toEqual(["applied", "screening"]);
+});
+
+it("tells the applications table that one of its CVs is still being written", async () => {
+  const { job } = await fixture();
+  const status = async () =>
+    (await (await workStatus(new Request("http://localhost/api/work-status"))).json()) as { active: boolean; version: string };
+  // Nothing queued, nothing building: the page has nothing to wait for and renders no poll.
+  expect((await status()).active).toBe(false);
+
+  const [draft] = await database.insert(schema.cvDrafts).values({
+    userId: user.id, jobId: job.id, jobTitle: job.title, companyName: "Acme", jobDescription: DESCRIPTION,
+    libraryVersion: 1, librarySnapshot: LIBRARY, model: "test", status: "queued", revision: 1,
+  }).returning();
+  const queued = await status();
+  expect(queued.active).toBe(true);
+
+  // Queued to building is what moves the cell, so it has to move the version the poll compares.
+  await database.update(schema.cvDrafts).set({ status: "generating" }).where(eq(schema.cvDrafts.id, draft!.id));
+  const building = await status();
+  expect(building.active).toBe(true);
+  expect(building.version).not.toBe(queued.version);
+
+  // The queue row behind the build counts too: an attempt handed back changes what the cell says.
+  await database.insert(schema.tasks).values({ type: "generate_cv", payload: { draftId: draft!.id }, dedupeKey: `generate_cv:${draft!.id}`, priority: 2, status: "running" });
+  expect((await status()).version).not.toBe(building.version);
+
+  // Published: nothing of this account's is in flight, so the page stops polling itself.
+  await database.update(schema.cvDrafts).set({ status: "ready" }).where(eq(schema.cvDrafts.id, draft!.id));
+  expect((await status()).active).toBe(false);
+  // Another account's build is not this one's business.
+  const [other] = await database.insert(schema.users).values({ email: "other-builds@example.com", name: "Other", role: "member", claimedAt: new Date() }).returning();
+  await database.insert(schema.cvDrafts).values({
+    userId: other!.id, jobId: null, jobTitle: "Elsewhere", companyName: "Elsewhere", jobDescription: DESCRIPTION,
+    libraryVersion: 1, librarySnapshot: LIBRARY, model: "test", status: "generating", revision: 1,
+  });
+  expect((await status()).active).toBe(false);
 });
 
 it("sends the retired CV list to the applications table, carrying the role it was opened for", () => {

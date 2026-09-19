@@ -45,14 +45,15 @@ export function TD({ children, className = "", ...rest }: TdHTMLAttributes<HTMLT
 
 /**
  * Fit as ten stepped cells, never a smooth bar: the score is a model estimate
- * on a coarse scale and the shape should say so.
+ * on a coarse scale and the shape should say so. `title` carries the stored
+ * rationale, so hovering the score explains it without expanding the row (R-6.7).
  */
-export function FitBar({ score }: { score: number | null }) {
-  if (score === null) return <span className="text-muted">—</span>;
+export function FitBar({ score, title }: { score: number | null; title?: string }) {
+  if (score === null) return <span className="text-muted" title={title}>—</span>;
   const filled = Math.round(Math.max(0, Math.min(100, score)) / 10);
   const tone = score >= 70 ? "bg-ok" : score >= 30 ? "bg-warn" : "bg-danger";
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2" title={title}>
       <span className="ds-pixel w-6 text-right text-10 text-fg">{score}</span>
       <span className="flex gap-0.5" aria-hidden="true">
         {Array.from({ length: 10 }, (_, i) => (

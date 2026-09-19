@@ -72,7 +72,8 @@ const PAGES = [
   // The three tabs are the whole role workflow; archived roles are a section inside Dismissed.
   // The smoke account has nothing matched, which is exactly when the table opens on Shortlisted.
   ["/", ["Roles", "Location", "Shortlisted", "Matched", "Dismissed"], "Shortlisted"],
-  ["/companies", ["Companies"]],
+  // The header carries the shared schedule: one scan a day for every follower.
+  ["/companies", ["Companies", "next scheduled scan"]],
   ["/suggestions", ["Discover companies", "Companies to review"]],
   ["/suggestions?view=sources", ["Add a source"]],
   ["/suggestions?view=history", ["Recently reviewed"]],
@@ -91,6 +92,8 @@ const PAGES = [
   ["/?archive=1", ["Roles", "Archived"], "Dismissed"],
   ["/?view=auto-matched", ["Roles"], "Matched"],
   ["/?view=user-shortlisted", ["Roles"], "Shortlisted"],
+  // The Decided sort and the This week chip render only on the Shortlisted and Dismissed tabs.
+  ["/?view=user-shortlisted&since=7d", ["Roles", "This week"], "Shortlisted"],
   ["/?view=user-dismissed", ["Roles", "Archived"], "Dismissed"],
   ["/?view=archived", ["Roles", "Archived"], "Dismissed"],
   ["/api/scan-status", ['"text"']],
@@ -170,7 +173,9 @@ async function main() {
 
   // The company page and its logo are per company, so they join the list once there is one.
   const companyId = await followCompany(pool, userId);
-  const pages = [...PAGES, [`/companies/${companyId}`, ["Roles", "Add a role", "Notepad", "Set up this company"]]];
+  // The company with no source shows the setup card; the header says when it was last scanned,
+  // when the next scan is due, and how many roles here this account is pursuing.
+  const pages = [...PAGES, [`/companies/${companyId}`, ["Roles", "Add a role", "Notepad", "Set up this company", "next scheduled scan", "applications"]]];
 
   for (const [path, expected, selectedStatus] of pages) {
     let res;

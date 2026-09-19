@@ -20,6 +20,15 @@ const ERROR_MESSAGES: Record<string, string> = {
   rate_limited: "Too many requests from this address. Try again later.",
 };
 
+/**
+ * Said before the form is filled in, not after it is sent. The rule is `registrationAllowed()`:
+ * an `ADMIN_EMAILS` address may always register, everyone else only while `registrationOpen`.
+ * The check needs the address, which the page does not have yet, so the form stays and submit
+ * still explains for an address that is not one of them.
+ */
+const CLOSED_NOTICE =
+  "Registration is closed on this deployment. Only an address an administrator has listed can create an account: if yours is one, carry on below.";
+
 export default async function SignupPage({
   searchParams,
 }: {
@@ -59,7 +68,7 @@ export default async function SignupPage({
       <p className="mb-3 text-13 text-muted">
         Your companies, filters, decisions, evidence library and CVs are yours alone. Careers pages are discovered and scanned once for everyone.
       </p>
-      {!open && <p className="mb-3 text-13 text-muted">{ERROR_MESSAGES.closed}</p>}
+      {!open && <p className="mb-3 border-2 border-warn px-3 py-2 text-13 text-warn" role="status">{CLOSED_NOTICE}</p>}
       {googleConfigured() && (
         <>
           <GoogleButton next={next} label="Sign up with Google" />

@@ -10,7 +10,7 @@
  *    follows which company, `user_jobs` holds one person's gate result, fit score and archive
  *    marker for a shared posting, and decisions, profiles, CVs and settings all carry a `user_id`.
  */
-import type { CvLibrary, CvContent } from "@christopher/core";
+import type { CvLibrary, CvContent, LibraryEntryReview } from "@christopher/core";
 import type { CvAssessment, CvJobSource } from "@christopher/core/cv-assessment";
 import type { CvBuildCheckpoint, CvBuildFailure, CvBuildMotion, CvBuildStage, CvBuildStepStatus } from "@christopher/core";
 import { sql } from "drizzle-orm";
@@ -46,6 +46,16 @@ export const FETCH_METHODS = ["api", "http", "browser"] as const;
 export const JOB_STATUSES = ["open", "closed"] as const;
 /** Where a posting came from: the daily scan of a source, or a follower who pasted its URL. */
 export const JOB_ORIGINS = ["scan", "user"] as const;
+/**
+ * Why one account's view of a posting carries the fit score it carries — or none.
+ *
+ * A blank score covered five different situations and the table could not tell them apart:
+ * waiting, scored, never scored because the posting closed first, skipped because the account had
+ * nothing left to spend, and not eligible (neither in the table nor shortlisted) when the task
+ * ran. The score handler already decides all five; this records which one it decided.
+ */
+export const SCORE_STATES = ["queued", "scored", "closed", "budget", "ineligible"] as const;
+export type ScoreState = (typeof SCORE_STATES)[number];
 /** Where captured logo bytes came from. Mirrors `LOGO_SOURCES` in @christopher/core. */
 export const LOGO_SOURCES = ["site_icon", "icon_service"] as const;
 export const NAME_SUGGESTION_STATUSES = ["pending", "applied", "dismissed"] as const;
@@ -64,7 +74,7 @@ export const AUTH_TOKEN_PURPOSES = ["password_reset", "email_verification"] as c
 export const TASK_TYPES = [
   "extract_document", "verify_company", "monitor_source", "discover", "scan_company", "run_daily", "fetch_description", "score_job", "tag_reason",
   "synthesize_profile", "suggest_filters", "suggest_from_scans", "profile_company", "suggest_companies", "rescore_all",
-  "reevaluate_gate", "generate_cv", "import_posting",
+  "reevaluate_gate", "generate_cv", "import_posting", "review_library",
 ] as const;
 export const TASK_STATUSES = ["queued", "running", "done", "failed"] as const;
 
@@ -406,6 +416,14 @@ export const userJobs = pgTable(
      * so the call is skipped. Null means "never scored, or scored before this column existed".
      */
     scoreInputHash: text("score_input_hash"),
+    /**
+     * What happened to the last score attempt, so a blank score can say which of its five causes
+     * it is. Null means "nothing recorded yet", which is how every row that predates the column
+     * reads; the interface falls back to the score itself, exactly as R-9.6 requires.
+     */
+    scoreState: text("score_state", { enum: SCORE_STATES }).$type<ScoreState>(),
+    /** When `scoreState` was last set. A `queued` state older than the task deadline is stale. */
+    scoreStateAt: ts("score_state_at"),
     hidden: boolean("hidden").notNull().default(false),
     /** True when the row was created for a posting the scan had already seen (day-one of a subscription). */
     seeded: boolean("seeded").notNull().default(false),
@@ -691,6 +709,52 @@ export const cvLibraries = pgTable("cv_libraries", {
   content: jsonb("content").$type<CvLibrary>().notNull(),
   createdAt: tsNow("created_at"),
 }, t => [uniqueIndex("cv_libraries_user_version_uidx").on(t.userId, t.version)]);
+
+/** How much evidence an entry carries. Mirrors `EVIDENCE_RATINGS` in @christopher/core. */
+export const EVIDENCE_RATINGS = ["none", "weak", "good", "strong"] as const;
+export type EvidenceRating = (typeof EVIDENCE_RATINGS)[number];
+/**
+ * Who produced a review. `rules` is the deterministic baseline computed from the person's own
+ * facet tags, written the moment a library is saved; `model` is the A12 review, which lands when
+ * the task has run. Mirrors `LIBRARY_REVIEW_SOURCES` in @christopher/core.
+ */
+export const LIBRARY_REVIEW_SOURCES = ["rules", "model"] as const;
+export type LibraryReviewSource = (typeof LIBRARY_REVIEW_SOURCES)[number];
+
+/**
+ * The evidence review of one library entry: what each row was classified as, which facets are
+ * covered, what to ask for next, and the score code computed from all of it.
+ *
+ * It is a separate table rather than a column on `cv_libraries` because a library version is
+ * immutable and a review is not part of what the person wrote: the review arrives after the save,
+ * can be recomputed, and is derived rather than authored. `input_hash` is what makes that cheap —
+ * it covers the entry's rows, its facets and the job it belongs to, so a typo fix re-reviews one
+ * entry and every unchanged entry carries its review forward to the new version untouched.
+ *
+ * A score here gates nothing. It informs the person, exactly as the fit score ranks a role
+ * without ever removing it from the table.
+ */
+export const cvLibraryReviews = pgTable("cv_library_reviews", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  libraryVersion: integer("library_version").notNull(),
+  entryId: text("entry_id").notNull(),
+  /** Fingerprint of everything the review was computed from; see `libraryEntryInputHash` in core. */
+  inputHash: text("input_hash").notNull(),
+  score: integer("score").notNull(),
+  rating: text("rating", { enum: EVIDENCE_RATINGS }).$type<EvidenceRating>().notNull(),
+  source: text("source", { enum: LIBRARY_REVIEW_SOURCES }).$type<LibraryReviewSource>().notNull(),
+  review: jsonb("review").$type<LibraryEntryReview>().notNull(),
+  /** The model that produced a `model` review; null for the rules baseline. */
+  model: text("model"),
+  createdAt: tsNow("created_at"),
+}, t => [
+  uniqueIndex("cv_library_reviews_version_entry_uidx").on(t.userId, t.libraryVersion, t.entryId),
+  index("cv_library_reviews_entry_idx").on(t.userId, t.entryId, t.createdAt.desc()),
+]);
+export type CvLibraryReview = typeof cvLibraryReviews.$inferSelect;
+export type NewCvLibraryReview = typeof cvLibraryReviews.$inferInsert;
+
 export const cvDrafts = pgTable("cv_drafts", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
@@ -746,7 +810,17 @@ export const applications = pgTable("applications", {
   pdfBase64: text("pdf_base64"),
   status: text("status", { enum: APPLICATION_STATUSES }).notNull().default("applied"),
   notes: text("notes").notNull().default(""),
-  history: jsonb("history").$type<Array<{ status: string; at: string; notes: string }>>().notNull(),
+  /** What the person owes this application next, in their own words. The interface caps it at 200 characters. */
+  nextAction: text("next_action"),
+  /** The day that next action is due, as YYYY-MM-DD. A day, not an instant: "Tuesday" is not a timestamp. */
+  nextActionOn: text("next_action_on"),
+  /**
+   * One entry per recorded stage change. `at` is when it was saved; `on` is the day the entry is
+   * *about* — an interview date, a rejection date — which is the thing people actually track and
+   * which the save time cannot express. Optional, because every entry written before it existed
+   * has only its save time.
+   */
+  history: jsonb("history").$type<Array<{ status: string; at: string; notes: string; on?: string }>>().notNull(),
   createdAt: tsNow("created_at"),
 }, t => [
   index("applications_user_idx").on(t.userId, t.appliedOn),

@@ -15,6 +15,7 @@ import {
   evaluateGate,
   keyPostings,
   looksRemote,
+  MANUAL_RESCAN_INTERVAL_MS,
   modeForScanStatus,
   normalisePostingUrl,
   normalizeTitle,
@@ -43,8 +44,12 @@ import { log } from "../log";
 
 type ScanStatus = "ok" | "partial" | "suspect_empty" | "failed";
 
-/** A manual rescan of a company that was scanned this recently is served by the existing result. */
-export const MANUAL_RESCAN_INTERVAL_MS = 30 * 60_000;
+/**
+ * A manual rescan of a company that was scanned this recently is served by the existing result.
+ * Re-exported from core, where the interface reads it too: it writes the same sentence into the
+ * Refresh control, and `apps/web` may not import `apps/worker`.
+ */
+export { MANUAL_RESCAN_INTERVAL_MS };
 
 /**
  * The most outbound requests one scan of one source may make.
@@ -714,9 +719,17 @@ async function scanSource(
   }
 
   const queued: Array<typeof schema.tasks.$inferInsert> = [];
-  for (const payload of scoreQueue) if (scorable.has(payload.userId)) queued.push({ type: "score_job", payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") });
+  const scoring = scoreQueue.filter(payload => scorable.has(payload.userId));
+  for (const payload of scoring) queued.push({ type: "score_job", payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") });
   for (const jobId of descriptionQueue) queued.push({ type: "fetch_description", payload: { jobId }, dedupeKey: dedupeKeyFor("fetch_description", { jobId }), priority: priorityFor("fetch_description") });
   for (let offset = 0; offset < queued.length; offset += 250) await deps.db.insert(schema.tasks).values(queued.slice(offset, offset + 250)).onConflictDoNothing();
+  // A role whose score is on its way says so on the view, so the table can tell waiting from
+  // refused instead of showing one em dash for five different situations.
+  for (let offset = 0; offset < scoring.length; offset += 250) {
+    await deps.db.execute(sql`update user_jobs uj set score_state = 'queued', score_state_at = ${deps.now()}
+      from jsonb_to_recordset(${JSON.stringify(scoring.slice(offset, offset + 250))}::jsonb) as v("userId" uuid, "jobId" uuid)
+      where uj.user_id = v."userId" and uj.job_id = v."jobId"`);
+  }
 
   log.info("source scanned", {
     company: company.name,

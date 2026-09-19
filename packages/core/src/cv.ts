@@ -67,6 +67,36 @@ export function employmentHeading(job: Employment): string {
   return [job.jobTitle, job.company, dates].filter(Boolean).join(" · ");
 }
 
+/**
+ * What a responsibility row is *for*. Six facets, because an entry that only ever says what
+ * someone was responsible for cannot evidence anything a reviewer weighs: the problem, what
+ * changed, by how much, what shipped, and how they work are the parts a CV assessment rewards and
+ * the parts a blank textarea never asks for.
+ *
+ * A facet is a classification of a row, kept per exact row text like `confirmedResponsibilities`
+ * — but unlike confirmation it is not an assertion that the row is true, so it survives an edit
+ * (see `updateResponsibilityRows`).
+ */
+export const EVIDENCE_FACETS = ["responsibility", "problem", "outcome", "metric", "milestone", "style"] as const;
+export type EvidenceFacet = (typeof EVIDENCE_FACETS)[number];
+export const EVIDENCE_FACET_LABELS: Readonly<Record<EvidenceFacet, string>> = {
+  responsibility: "Responsibility",
+  problem: "Problem solved",
+  outcome: "Outcome",
+  metric: "Metric",
+  milestone: "Milestone",
+  style: "Working style",
+};
+/** One question per facet, answerable in a line. This is what a missing facet is shown as. */
+export const EVIDENCE_FACET_PROMPTS: Readonly<Record<EvidenceFacet, string>> = {
+  responsibility: "What were you responsible for, and for whom?",
+  problem: "What problem or constraint were you there to solve?",
+  outcome: "What changed as a result?",
+  metric: "By how much, or how many?",
+  milestone: "What did you ship or complete, and when?",
+  style: "How do you work with other people to get this done?",
+};
+
 export const CvEntrySchema = z.object({
   id: z.string().min(1).max(100),
   kind: z.enum(["experience", "education", "skill", "interest"]),
@@ -76,6 +106,10 @@ export const CvEntrySchema = z.object({
   skillItems: SkillItemsSchema.optional(),
   // Confirmation belongs to the exact wording, so editing or removing a row cannot transfer it.
   confirmedResponsibilities: z.array(z.string().min(1).max(40000)).max(20).optional(),
+  // Keyed by exact row text, like the confirmations above. Stale keys are dropped by
+  // `tidyRowFacets` rather than rejected here, so a save is never blocked by leftover bookkeeping.
+  rowFacets: z.record(z.string().min(1).max(40000), z.enum(EVIDENCE_FACETS))
+    .refine(facets => Object.keys(facets).length <= 20, "Keep up to 20 responsibilities and outcomes per job.").optional(),
   company: z.string().trim().max(160).optional(),
   employmentId: z.string().min(1).max(100).optional(),
   roleId: z.string().min(1).max(100).optional(),
@@ -90,6 +124,13 @@ export const CvLibrarySchema = z.object({
   preferredWording: z.string().max(12000).optional(),
   theme: CvThemeSchema.optional(),
   structuredExperience: z.literal(true).optional(),
+  /**
+   * Version flag, as `structuredExperience` is: set once the library has been through the
+   * facet-aware editor. Absent means nobody has been offered the facets yet, which is different
+   * from having been offered them and tagged nothing — the Library needs to tell those apart.
+   * A legacy library without it parses unchanged.
+   */
+  facetedRows: z.literal(true).optional(),
   employment: z.array(EmploymentSchema).max(100).optional(),
   entries: z.array(CvEntrySchema).min(1).max(100),
 }).superRefine((library, ctx) => {
@@ -248,11 +289,56 @@ export function responsibilityRows(details: string): string[] {
   return details.split(/\r?\n/).map(line => line.replace(/^\s*[•*\-]\s+/, "").trim()).filter(Boolean);
 }
 
-/** Editing/removing a row clears its confirmation; other rows retain theirs. */
+/** Which facet a row serves, as the person tagged it. Null when they have not said. */
+export function rowFacet(entry: CvLibrary["entries"][number], row: string): EvidenceFacet | null {
+  return entry.rowFacets?.[row] ?? null;
+}
+
+/** Tag a row, or clear its tag with `null`. Unknown rows are tagged anyway; `tidyRowFacets` sweeps. */
+export function setRowFacet(entry: CvLibrary["entries"][number], row: string, facet: EvidenceFacet | null): CvLibrary["entries"][number] {
+  const { rowFacets: previous, ...rest } = entry;
+  const facets = { ...previous };
+  if (facet) facets[row] = facet; else delete facets[row];
+  return Object.keys(facets).length ? { ...rest, rowFacets: facets } : rest;
+}
+
+/**
+ * Drop facets whose row no longer exists, and the empty map that leaves behind. A no-op otherwise,
+ * down to the object identity, so running it on open and on save costs nothing and changes no
+ * stored library that is already tidy.
+ */
+export function tidyRowFacets(entry: CvLibrary["entries"][number]): CvLibrary["entries"][number] {
+  const facets = entry.rowFacets;
+  if (!facets) return entry;
+  const rows = new Set(responsibilityRows(entry.details));
+  const kept = Object.entries(facets).filter(([row]) => rows.has(row));
+  if (kept.length && kept.length === Object.keys(facets).length) return entry;
+  const { rowFacets: _dropped, ...rest } = entry;
+  return kept.length ? { ...rest, rowFacets: Object.fromEntries(kept) } : rest;
+}
+
+/**
+ * Editing/removing a row clears its confirmation; other rows retain theirs.
+ *
+ * A facet, unlike a confirmation, is carried across the edit. Confirmation is the person asserting
+ * that this exact wording is true of them, so rewording it has to be re-asserted; a facet only
+ * classifies what the row is for, and fixing a typo in an outcome leaves it an outcome. Rows are
+ * matched by their text first and by position second, which is how the editor rewrites them.
+ */
 export function updateResponsibilityRows(entry: CvLibrary["entries"][number], rows: string[]): CvLibrary["entries"][number] {
   const details = rows.join("\n");
-  const retained = new Set(responsibilityRows(details));
-  return { ...entry, details, confirmedResponsibilities: (entry.confirmedResponsibilities ?? []).filter(row => retained.has(row)) };
+  const previous = responsibilityRows(entry.details);
+  const next = responsibilityRows(details);
+  const retained = new Set(next);
+  const existing = entry.rowFacets ?? {};
+  const facets: Record<string, EvidenceFacet> = {};
+  for (const [index, row] of next.entries()) {
+    const carried = existing[row] ?? (previous[index] !== undefined ? existing[previous[index]!] : undefined);
+    if (carried) facets[row] = carried;
+  }
+  const { rowFacets: _previous, ...rest } = entry;
+  const updated = { ...rest, details, confirmedResponsibilities: (entry.confirmedResponsibilities ?? []).filter(row => retained.has(row)) };
+  return Object.keys(facets).length ? { ...updated, rowFacets: facets } : updated;
 }
 
 /** One eligibility rule for CV generation and role qualification. Missing confirmation is unconfirmed. */
@@ -296,11 +382,22 @@ export function employmentCompanyGroups(employment: Employment[]): { company: st
     .sort((a, b) => compareEmploymentDates(a.jobs[0]!, b.jobs[0]!) || a.company.localeCompare(b.company));
 }
 
+/**
+ * Mark the library as facet-aware and sweep facets whose row is gone.
+ *
+ * There is nothing to migrate — a legacy library simply carries no facets, and tagging is the
+ * person's to do — so this only raises the flag and tidies, exactly where `structuredExperience`
+ * is raised. Rows are the key, so a removed or rewritten row must not leave its facet behind.
+ */
+function facetedLibrary(library: CvLibrary): CvLibrary {
+  return { ...library, facetedRows: true, entries: library.entries.map(tidyRowFacets) };
+}
+
 /** Consolidate editable evidence without truncating historical wording or changing snapshots. */
 export function consolidateExperience(library: CvLibrary): CvLibrary {
   const history = migrateEmploymentHistory(library);
   const migrated = { ...history, entries: history.entries.map(entry => ({ ...entry, status: entry.status ?? "active" as const })) };
-  if (migrated.structuredExperience) return migrated;
+  if (migrated.structuredExperience) return facetedLibrary(migrated);
   const entries = (migrated.employment ?? []).flatMap(job => {
     const members = migrated.entries.filter(entry => entry.kind === "experience" && entry.employmentId === job.id);
     if (!members.length) return [];
@@ -315,9 +412,12 @@ export function consolidateExperience(library: CvLibrary): CvLibrary {
       }
     }
     const confirmed = new Set(members.flatMap(member => member.confirmedResponsibilities ?? []));
-    return [{ ...members[0]!, status: members.every(entry => entry.status === members[0]!.status) ? members[0]!.status : "draft" as const, heading: employmentHeading(job), details: rows.join("\n"), confirmedResponsibilities: rows.filter(row => confirmed.has(row)) }];
+    // Facets are keyed by row text, so merging the members' maps carries each row's own tag into
+    // the consolidated block rather than keeping only the first member's.
+    const facets: Record<string, EvidenceFacet> = Object.assign({}, ...members.map(member => member.rowFacets ?? {}));
+    return [{ ...members[0]!, status: members.every(entry => entry.status === members[0]!.status) ? members[0]!.status : "draft" as const, heading: employmentHeading(job), details: rows.join("\n"), confirmedResponsibilities: rows.filter(row => confirmed.has(row)), rowFacets: facets }];
   });
-  return { ...migrated, structuredExperience: true, entries: [...entries, ...migrated.entries.filter(entry => entry.kind !== "experience")] };
+  return facetedLibrary({ ...migrated, structuredExperience: true, entries: [...entries, ...migrated.entries.filter(entry => entry.kind !== "experience")] });
 }
 
 /** Missing statuses belong to legacy snapshots, where evidence was active by default. */

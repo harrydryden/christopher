@@ -1,6 +1,6 @@
 "use client";
 import { updateEmploymentIndustries, type CvLibrary, type Employment } from "@christopher/core/cv";
-import { inputClass } from "@/components/Field";
+import { inputClass, labelClass } from "@/components/Field";
 import { Table, TBody, TH, THead, TR } from "@/components/table";
 
 // Every control in the grid is the same height, so the rows read as rows
@@ -15,10 +15,16 @@ export function EmploymentHistoryTable({ employment, entries, onChange }: {
   function update(id: string, patch: Partial<Employment>) {
     onChange(employment.map(job => job.id === id ? { ...job, ...patch } : job));
   }
+  const removable = (job: Employment) => !entries.some(entry => entry.employmentId === job.id);
+  const removeTitle = (job: Employment) =>
+    removable(job) ? "Remove job" : "This job has an evidence block. Archive the block to exclude it from CVs.";
   return <section aria-labelledby="employment-heading" className="space-y-3">
     <h2 id="employment-heading" className="ds-pixel text-12">Employment history</h2>
     <datalist id="employment-companies">{companies.map(company => <option key={company} value={company} />)}</datalist>
-    {employment.length > 0 && <Table>
+    {/* The grid is seven columns wide, which is a horizontal scroll on a phone. Below `md` the
+        same fields are stacked one job to a card; only one of the two is ever rendered visibly,
+        so nothing is edited twice and the hidden copy is out of the accessibility tree. */}
+    {employment.length > 0 && <div className="hidden md:block"><Table>
       <THead><tr>
         <TH className="min-w-40">Company</TH>
         <TH className="min-w-56">Industry descriptions</TH>
@@ -28,9 +34,7 @@ export function EmploymentHistoryTable({ employment, entries, onChange }: {
         <TH className="w-20 text-center">Current</TH>
         <TH><span className="sr-only">Remove</span></TH>
       </tr></THead>
-      <TBody>{employment.map((job, i) => {
-        const hasEvidence = entries.some(entry => entry.employmentId === job.id);
-        return <TR key={job.id}>
+      <TBody>{employment.map((job, i) => <TR key={job.id}>
           <td className={cellPad}><input required maxLength={160} aria-label={`Job ${i + 1} company`} list="employment-companies" className={cell} value={job.company} onChange={e => {
             const company = e.target.value;
             const existing = employment.find(item => item.id !== job.id && item.company.trim().toLowerCase() === company.trim().toLowerCase());
@@ -41,10 +45,31 @@ export function EmploymentHistoryTable({ employment, entries, onChange }: {
           <td className={cellPad}><input aria-label={`Job ${i + 1} start date`} placeholder="YYYY-MM" pattern="[0-9]{4}(-[0-9]{2})?" className={cell} value={job.startDate} onChange={e => update(job.id, { startDate: e.target.value })} /></td>
           <td className={cellPad}><input disabled={job.current} aria-label={`Job ${i + 1} end date`} placeholder={job.current ? "Present" : "YYYY-MM"} pattern="[0-9]{4}(-[0-9]{2})?" className={`${cell} disabled:opacity-40`} value={job.endDate} onChange={e => update(job.id, { endDate: e.target.value })} /></td>
           <td className={`${cellPad} text-center`}><input type="checkbox" aria-label={`Job ${i + 1} current`} checked={job.current} onChange={e => update(job.id, { current: e.target.checked, endDate: e.target.checked ? "" : job.endDate })} /></td>
-          <td className={`${cellPad} whitespace-nowrap text-right`}><button type="button" disabled={hasEvidence} title={hasEvidence ? "This job has an evidence block. Archive the block to exclude it from CVs." : "Remove job"} aria-label={`Remove job ${i + 1}`} className="text-12 text-muted underline hover:text-fg disabled:opacity-40" onClick={() => onChange(employment.filter(item => item.id !== job.id))}>Remove</button></td>
-        </TR>;
-      })}</TBody>
-    </Table>}
+          <td className={`${cellPad} whitespace-nowrap text-right`}><button type="button" disabled={!removable(job)} title={removeTitle(job)} aria-label={`Remove job ${i + 1}`} className="text-12 text-muted underline hover:text-fg disabled:opacity-40" onClick={() => onChange(employment.filter(item => item.id !== job.id))}>Remove</button></td>
+        </TR>)}</TBody>
+    </Table></div>}
+    {employment.length > 0 && <div className="space-y-3 md:hidden">{employment.map((job, i) => <div key={job.id} className="space-y-3 border-2 border-line-muted p-3">
+      <label className="block space-y-1.5 text-14"><span className={labelClass}>Company</span>
+        <input required maxLength={160} aria-label={`Job ${i + 1} company`} list="employment-companies" className={inputClass} value={job.company} onChange={e => {
+          const company = e.target.value;
+          const existing = employment.find(item => item.id !== job.id && item.company.trim().toLowerCase() === company.trim().toLowerCase());
+          update(job.id, { company, ...(existing ? { industryDescriptions: existing.industryDescriptions ?? "" } : {}) });
+        }} /></label>
+      <label className="block space-y-1.5 text-14"><span className={labelClass}>Job title</span>
+        <input required maxLength={160} aria-label={`Job ${i + 1} title`} className={inputClass} value={job.jobTitle} onChange={e => update(job.id, { jobTitle: e.target.value })} /></label>
+      <label className="block space-y-1.5 text-14"><span className={labelClass}>Industry descriptions</span>
+        <input maxLength={1200} aria-label={`Job ${i + 1} industry descriptions`} placeholder="Workplace mental health, SaaS" className={inputClass} value={job.industryDescriptions ?? ""} onChange={e => onChange(updateEmploymentIndustries(employment, job.id, e.target.value))} /></label>
+      <div className="flex flex-wrap gap-3">
+        <label className="block flex-1 space-y-1.5 text-14"><span className={labelClass}>Start date</span>
+          <input aria-label={`Job ${i + 1} start date`} placeholder="YYYY-MM" pattern="[0-9]{4}(-[0-9]{2})?" className={inputClass} value={job.startDate} onChange={e => update(job.id, { startDate: e.target.value })} /></label>
+        <label className="block flex-1 space-y-1.5 text-14"><span className={labelClass}>End date</span>
+          <input disabled={job.current} aria-label={`Job ${i + 1} end date`} placeholder={job.current ? "Present" : "YYYY-MM"} pattern="[0-9]{4}(-[0-9]{2})?" className={`${inputClass} disabled:opacity-40`} value={job.endDate} onChange={e => update(job.id, { endDate: e.target.value })} /></label>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 text-14">
+        <label className="flex items-center gap-2"><input type="checkbox" aria-label={`Job ${i + 1} current`} checked={job.current} onChange={e => update(job.id, { current: e.target.checked, endDate: e.target.checked ? "" : job.endDate })} /> Current</label>
+        <button type="button" disabled={!removable(job)} title={removeTitle(job)} aria-label={`Remove job ${i + 1}`} className="text-12 text-muted underline hover:text-fg disabled:opacity-40" onClick={() => onChange(employment.filter(item => item.id !== job.id))}>Remove</button>
+      </div>
+    </div>)}</div>}
     {!employment.length && <p className="text-14 text-muted">Add your first job, then add its responsibilities and outcomes below.</p>}
     <button type="button" className="text-14 underline" onClick={() => onChange([...employment, { id: crypto.randomUUID(), company: "", jobTitle: "", startDate: "", endDate: "", current: false }])}>Add job</button>
   </section>;

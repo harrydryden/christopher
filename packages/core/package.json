@@ -35,6 +35,10 @@
     "./cv-review": {
       "types": "./src/cv-review.ts",
       "default": "./src/cv-review.ts"
+    },
+    "./library-review": {
+      "types": "./src/library-review.ts",
+      "default": "./src/library-review.ts"
     }
   },
   "scripts": {

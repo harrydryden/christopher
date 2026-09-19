@@ -3,7 +3,7 @@ import { assertCvFinalisable } from "@christopher/core/cv-review";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { actionCvs, applications, companies, cvDrafts, jobs, userJobs, type ApplicationStatus } from "@christopher/db";
 import { pipelineRowForJob, type PipelineRow } from "@/lib/queries/applications";
-import { APPLICATION_STATUSES, CvContentSchema, applicationStage, roleStageRank } from "@christopher/core";
+import { APPLICATION_STATUSES, APPLICATION_STATUS_LABELS, CvContentSchema, applicationStage, roleStageRank } from "@christopher/core";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { renderCvPdf } from "@/lib/cv-pdf";
@@ -34,6 +34,35 @@ function beyondApplied(status: ApplicationStatus): boolean {
   return roleStageRank(applicationStage(status)) > roleStageRank("applied");
 }
 
+/**
+ * Moving a row backwards is a real thing to want — an offer withdrawn, a status set by mistake —
+ * but it rewrites what the row says happened, and an outcome is the one thing nothing else in the
+ * product overwrites. So it is allowed and confirmed rather than refused: the row asks the
+ * question before it submits and sends `confirm`, and this is the check behind that, for a form
+ * that arrives without one. Same-stage moves (Screening to Interview and back) are not backwards:
+ * the three In process steps are one stage.
+ */
+function movesBackwards(from: ApplicationStatus, to: ApplicationStatus): boolean {
+  return roleStageRank(applicationStage(to)) < roleStageRank(applicationStage(from));
+}
+
+function confirmBackwards(form: FormData, from: ApplicationStatus, to: ApplicationStatus): string | null {
+  if (!movesBackwards(from, to) || String(form.get("confirm") ?? "") === "1") return null;
+  return `Confirm the move from ${APPLICATION_STATUS_LABELS[from]} back to ${APPLICATION_STATUS_LABELS[to]} before saving it.`;
+}
+
+/**
+ * A save that changes nothing is not an event. Re-reading a row and pressing Save used to append a
+ * history entry, so the history of a role somebody checked on weekly read as a weekly status
+ * change. An unsupplied date is not a change either: the field is hidden while a role is Applying.
+ */
+function unchanged(
+  existing: { status: ApplicationStatus; notes: string; appliedOn: string },
+  next: { status: ApplicationStatus; notes: string; appliedOn: string },
+): boolean {
+  return existing.status === next.status && existing.notes === next.notes && (!next.appliedOn || existing.appliedOn === next.appliedOn);
+}
+
 /** The account's newest application for a posting, locked, or null when it has none. */
 async function latestApplicationRow(tx: Transaction, userId: string, jobId: string) {
   const [row] = await tx
@@ -59,6 +88,9 @@ export async function setRoleStage(jobId: string, _prev: ActionResult, form: For
   const user = await requireUser();
   let companyId: string | null = null;
   let withdrawn = false;
+  // A save that changed nothing writes nothing, and a withdrawal that was already recorded is not
+  // withdrawn again: the skip decision behind it is already on the role.
+  let settled = false;
   try {
     zUuid().parse(jobId);
     const status = String(form.get("status") ?? "") as ApplicationStatus;
@@ -107,6 +139,12 @@ export async function setRoleStage(jobId: string, _prev: ActionResult, form: For
         });
         return;
       }
+      const refusal = confirmBackwards(form, existing.status, status);
+      if (refusal) throw new UserFacingError(refusal);
+      if (unchanged(existing, { status, notes, appliedOn: supplied })) {
+        settled = true;
+        return;
+      }
       await tx
         .update(applications)
         .set({
@@ -123,7 +161,7 @@ export async function setRoleStage(jobId: string, _prev: ActionResult, form: For
   // Withdrawing is a decision about the role as well as a status, and `decide` is what writes one:
   // it supersedes the previous decision, records the event and re-teaches the ranking. It takes
   // the same row lock, so it runs after the transaction above rather than inside it.
-  if (withdrawn) {
+  if (withdrawn && !settled) {
     const result = await decide(jobId, "skip", "Withdrawn from application");
     if (!result.ok) return result;
   }
@@ -222,6 +260,11 @@ export async function updateApplication(
         .where(and(eq(applications.id, id), eq(applications.userId, user.id)))
         .for("update");
       if (!row) throw new UserFacingError("Application not found.");
+      // The same status control, so the same two rules: an outcome is never walked back without
+      // the row asking first, and a save that changes nothing appends nothing.
+      const refusal = confirmBackwards(form, row.status, status);
+      if (refusal) throw new UserFacingError(refusal);
+      if (unchanged(row, { status, notes, appliedOn: supplied })) return;
       await tx
         .update(applications)
         .set({

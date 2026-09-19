@@ -1,7 +1,22 @@
 import { CvRubricSchema, CvReviewPlanSchema, type CvRubric, type CvReviewPlan, type CvTextItem, type CvClaimItem } from "@christopher/core/cv-assessment";
 import { CV_RUBRIC_PROMPT, CV_REVIEW_PROMPT, CV_AUTHOR_PROMPT } from "./cv-prompts";
 import { cvReviewBatches, reviewBatchIssues, markUnverifiedFindings, type CvReviewBatch } from "./cv-review-batch";
-import { CvPlanSchema, CV_PAGE_LIMITS, type CvWritingBudget, type CvPlan, type CvLibrary } from "@christopher/core";
+import {
+  CvPlanSchema,
+  CV_PAGE_LIMITS,
+  LIBRARY_REVIEW_BATCH,
+  LibraryReviewPlanSchema,
+  employmentHeading,
+  responsibilityRows,
+  reviewableRows,
+  rowFacet,
+  validateLibraryReview,
+  type CvWritingBudget,
+  type CvPlan,
+  type CvLibrary,
+  type LibraryEntryReview,
+  type LibraryReviewPlan,
+} from "@christopher/core";
 import Anthropic, {
   APIConnectionError,
   APIError,
@@ -162,6 +177,12 @@ interface RunParams {
   user: string | UserBlock[];
   schema: z.ZodType;
   effort: Effort;
+  /**
+   * The model for this one call, when the caller has already chosen it. Used where the choice
+   * belongs to the account rather than to the deployment — a library review runs on the same
+   * `cvModel` the CV builder does — so the engine does not have to be rebuilt to say so.
+   */
+  model?: string;
   maxTokens?: number;
   /** How long to wait for the response to begin. A streamed answer is then bounded by STREAM_CEILING_MS. */
   timeoutMs?: number;
@@ -258,6 +279,31 @@ export interface CvAssessHooks {
   onBatch?: (event: CvAssessBatchEvent) => void | Promise<void>;
 }
 
+/**
+ * One batch of an evidence review reporting on itself, so a caller can say which part of a pass
+ * cost what. `retry` says the batch's first answer left entries uncovered and a second call is
+ * going out to ask for them; `done` and `failed` carry the usage of whichever call was last.
+ */
+export interface LibraryReviewBatchEvent {
+  /** Zero-based, in the order the entries were given. */
+  index: number;
+  total: number;
+  phase: "start" | "done" | "retry" | "failed";
+  /** Entries in this batch. */
+  entries: number;
+  /** Entries the first answer left out, which is what the re-run was asked for; absent when none. */
+  uncovered?: number;
+  /** The call's own cost and tokens, once it has been recorded. */
+  usage?: AiUsageRecord;
+}
+
+export interface LibraryReviewHooks {
+  /** Never throws into the pass: a hook that fails is logged and the batch carries on. */
+  onBatch?: (event: LibraryReviewBatchEvent) => void | Promise<void>;
+  /** Stops the pass: every call in flight is cut off and nothing new is sent. */
+  signal?: AbortSignal;
+}
+
 export class AiEngine {
   readonly enabled: boolean;
   private readonly client: AiClientLike | null;
@@ -328,7 +374,7 @@ export class AiEngine {
     // A call's own signal when it has one (an assessment batch's), the run's otherwise.
     const signal = params.signal ?? this.options.signal;
     if (!this.client || signal?.aborted) return null;
-    const model = this.options.getModel(callSite);
+    const model = params.model ?? this.options.getModel(callSite);
     const started = Date.now();
     const blocks = typeof params.user === "string" ? [{ text: params.user }] : params.user;
     const request: Record<string, unknown> = {
@@ -835,6 +881,12 @@ export class AiEngine {
       decisions: DecisionForDigest[];
       disagreements?: Array<{ title: string; company: string; decision: string; fitScore: number; reason: string }>;
       rejectedCompanySuggestions?: Array<{ name: string; reason: string }>;
+      /**
+       * Where this account's applications actually ended up. Distinct from a decision on purpose:
+       * a shortlist is what someone hoped for, an acceptance is what they chose, and a rejection
+       * is evidence about fit rather than about their preferences.
+       */
+      outcomes?: Array<{ title: string; company: string; status: string; appliedOn: string }>;
     },
     ref: Ref = {},
   ): Promise<{ markdown: string; openQuestions: Array<{ id: string; question: string }> } | null> {
@@ -844,6 +896,11 @@ export class AiEngine {
       P.wrap("pinned_statements", input.pinnedStatements.length ? input.pinnedStatements.map((s) => `- ${s}`).join("\n") : "(none)"),
       input.currentProfile ? P.wrap("current_profile", P.truncate(input.currentProfile, 8000)) : "",
       P.wrap("decisions", digest),
+      input.outcomes?.length
+        ? "Outcomes the person reached, which weigh more than a decision: an accepted offer is what they want, a rejection is a signal about fit.\n" +
+          P.wrap("outcomes", input.outcomes.slice(0, 50)
+            .map(outcome => `- [${outcome.status}] ${outcome.title} @ ${outcome.company} (applied ${outcome.appliedOn})`).join("\n"))
+        : "",
       input.disagreements?.length
         ? P.wrap(
             "score_disagreements",
@@ -1002,6 +1059,174 @@ export class AiEngine {
     }
     return out.slice(0, input.limit);
   }
+
+  // A12 --------------------------------------------------------------------
+  /**
+   * How much evidence each entry of a person's library carries, and what to ask for next.
+   *
+   * Batched exactly as the CV assessment is, and for the same reason: every batch has to see the
+   * whole library to judge one entry against the rest of it, so the library is written to the
+   * cache once and read back rather than paid for per batch. The first batch runs alone until its
+   * response begins — that is when the cache entry becomes readable — and the rest run together.
+   *
+   * The model classifies and asks; it never writes evidence, and it never returns a score. Every
+   * entry is put through `validateLibraryReview`, which keeps the person's rows as the unit, drops
+   * rows the model invented, marks a row whose quote is not anchored in it as unverified, and
+   * computes the score in code. An entry the model left out is asked for once more, and what is
+   * still uncovered comes back with every row unverified: marked as unread, never guessed at.
+   *
+   * A batch that produces nothing usable at all fails the pass rather than returning zeros,
+   * because a caller writing those zeros over the rules baseline would report a transport fault
+   * as a judgement about the person's writing.
+   */
+  async reviewLibraryEntries(
+    input: { library: CvLibrary; entries: CvEntry[]; model?: string },
+    ref: { userId: string; refType: "library"; refId: string },
+    hooks: LibraryReviewHooks = {},
+  ): Promise<LibraryEntryReview[]> {
+    if (!input.entries.length) return [];
+    // The whole library, as written, including the entries this pass is not reviewing: an entry is
+    // judged for what it adds to the record, which needs the rest of the record in view.
+    const evidence = P.wrap("library", P.truncate(libraryEvidenceText(input.library), 120_000));
+    const batches: CvEntry[][] = [];
+    for (let offset = 0; offset < input.entries.length; offset += LIBRARY_REVIEW_BATCH)
+      batches.push(input.entries.slice(offset, offset + LIBRARY_REVIEW_BATCH));
+
+    // One controller for the pass: a batch that fails cancels its siblings, and so does the run's
+    // signal or the caller's, so a task that has been given up on stops paying for the rest.
+    const controller = new AbortController();
+    const stopBatches = () => controller.abort();
+    const outer = [this.options.signal, hooks.signal].filter((signal): signal is AbortSignal => !!signal);
+    if (outer.some(signal => signal.aborted)) controller.abort();
+    else for (const signal of outer) signal.addEventListener("abort", stopBatches, { once: true });
+
+    const ask = (entries: CvEntry[], missing: string[] | undefined, onStart: (() => void) | undefined,
+      onRecord: (record: AiUsageRecord) => void) => this.run<LibraryReviewPlan>("A12", {
+      system: P.A12_REVIEW_LIBRARY,
+      user: [
+        { text: evidence, cache: true },
+        { text: P.wrap("entries_under_review", entriesUnderReview(input.library, entries)) + (missing?.length
+          ? `\n\nYour previous answer left these entries out. Return each of them exactly once, with every row classified: ${missing.join(", ")}.`
+          : "") },
+      ],
+      schema: LibraryReviewPlanSchema,
+      effort: "low",
+      ...(input.model ? { model: input.model } : {}),
+      // Twenty rows an entry, eight entries a batch, and a classification is a short object.
+      maxTokens: 16000,
+      timeoutMs: 120_000,
+      signal: controller.signal,
+      onStart,
+      onRecord,
+      // A re-run is a second charge for one batch, and the difference between a pass that asked
+      // twice and one that simply had many batches. Name it separately.
+    }, { ...ref, stage: missing ? "review_retry" : "review" });
+
+    const reviewBatch = async (entries: CvEntry[], index: number, onStart?: () => void): Promise<LibraryEntryReview[]> => {
+      const say = async (phase: LibraryReviewBatchEvent["phase"], extra: Partial<LibraryReviewBatchEvent> = {}) => {
+        try {
+          await hooks.onBatch?.({ index, total: batches.length, phase, entries: entries.length, ...extra });
+        } catch (err) {
+          this.log("library review batch hook failed", err);
+        }
+      };
+      await say("start");
+      let usage: AiUsageRecord | undefined;
+      let plan = await ask(entries, undefined, onStart, record => { usage = record; });
+      let uncovered = plan ? entries.filter(entry => !plan!.entries.some(said => said.entryId === entry.id)) : entries;
+      if (uncovered.length) {
+        await say("retry", { usage, uncovered: uncovered.length });
+        const again = await ask(entries, uncovered.map(entry => entry.id), undefined, record => { usage = record; });
+        if (!plan && !again) {
+          await say("failed", { usage, uncovered: uncovered.length });
+          throw new BatchFailed();
+        }
+        if (again) {
+          const already = new Set(plan?.entries.map(said => said.entryId) ?? []);
+          plan = { entries: [...(plan?.entries ?? []), ...again.entries.filter(said => !already.has(said.entryId))] };
+          uncovered = entries.filter(entry => !plan!.entries.some(said => said.entryId === entry.id));
+        }
+      }
+      const said = new Map(plan!.entries.map(entry => [entry.entryId, entry]));
+      // Every entry is answered for, covered or not: an entry the model never mentioned reads as
+      // rows nobody classified, which is what the Library shows as unread rather than as absent.
+      const reviews = entries.map(entry =>
+        validateLibraryReview(entry, said.get(entry.id) ?? { entryId: entry.id, rows: [], prompts: [] }));
+      await say("done", { usage, ...(uncovered.length ? { uncovered: uncovered.length } : {}) });
+      return reviews;
+    };
+
+    const results: LibraryEntryReview[][] = [];
+    const pending: Promise<void>[] = [];
+    try {
+      // The cache entry is readable only once the first response has begun; batches sent before
+      // then would each write their own copy of the library. So the first goes alone until then.
+      let begun!: () => void;
+      const firstBegun = new Promise<void>(resolve => { begun = resolve; });
+      let firstFailed = false;
+      const first = reviewBatch(batches[0]!, 0, () => begun()).then(result => { results[0] = result; });
+      pending.push(first);
+      await Promise.race([firstBegun, first.then(() => undefined, () => { firstFailed = true; })]);
+      if (firstFailed) await first;
+      batches.slice(1).forEach((batch, index) => {
+        pending.push(reviewBatch(batch, index + 1).then(result => { results[index + 1] = result; }));
+      });
+      await Promise.all(pending);
+    } catch (err) {
+      // Without every batch the pass is incomplete: stop paying for the rest, then let them record.
+      controller.abort();
+      await Promise.allSettled(pending);
+      throw err instanceof BatchFailed
+        ? new Error("The evidence review returned nothing usable for one batch of entries.")
+        : err;
+    } finally {
+      for (const signal of outer) signal.removeEventListener("abort", stopBatches);
+    }
+    return results.flat();
+  }
+}
+
+type CvEntry = CvLibrary["entries"][number];
+
+/**
+ * The library as evidence context: the jobs it records and every entry's rows exactly as written,
+ * including the entries this pass is not reviewing and the facets the person tagged themselves.
+ *
+ * Deliberately not `groupCvLibrary`/`cvEvidenceItems`, which the CV assessment uses: those keep
+ * only confirmed rows of active blocks and refuse a library with none, and a draft entry nobody
+ * has confirmed yet is exactly the one this review exists to help with.
+ */
+function libraryEvidenceText(library: CvLibrary): string {
+  const lines: string[] = [];
+  if (library.profile.trim()) lines.push(`Profile: ${library.profile.trim()}`, "");
+  for (const job of library.employment ?? []) lines.push(`Job [${job.id}]: ${employmentHeading(job)}`);
+  if (library.employment?.length) lines.push("");
+  for (const entry of library.entries) {
+    const job = library.employment?.find(item => item.id === entry.employmentId);
+    lines.push(`Entry [${entry.id}] ${entry.kind}${job ? ` at job [${job.id}]` : ""}: ${entry.heading}`);
+    for (const row of responsibilityRows(entry.details)) {
+      const facet = rowFacet(entry, row);
+      lines.push(`  - ${row}${facet ? ` (they tagged this ${facet})` : ""}`);
+    }
+    for (const skill of entry.skillItems ?? []) lines.push(`  - skill: ${skill}`);
+    lines.push("");
+  }
+  return lines.join("\n").trimEnd();
+}
+
+/** The batch: which entries to classify now, whose they are, and their rows verbatim. */
+function entriesUnderReview(library: CvLibrary, entries: CvEntry[]): string {
+  return entries.map(entry => {
+    const job = library.employment?.find(item => item.id === entry.employmentId);
+    return [
+      `Entry [${entry.id}] (${entry.kind})`,
+      job ? `Company: ${job.company}` : null,
+      job ? `Title: ${job.jobTitle}` : null,
+      `Heading: ${entry.heading}`,
+      "Rows:",
+      ...reviewableRows(entry).map(row => `- ${row}`),
+    ].filter(Boolean).join("\n");
+  }).join("\n\n");
 }
 
 const AGGREGATORS = [

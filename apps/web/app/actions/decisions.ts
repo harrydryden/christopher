@@ -4,11 +4,83 @@ import { requireUser } from "@/lib/auth";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { companies, decisions, jobEvents, jobs, tagVocabulary, userJobs } from "@christopher/db/schema";
+import { evaluateLocation } from "@christopher/core";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { enqueue, enqueueMany } from "@/lib/enqueue";
+import { fetchRoleDetails, locationReasonText, type RoleDetailsVM } from "@/lib/queries/jobs";
+import { getSettingsFor } from "@/lib/settings";
 import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
+
+/**
+ * How many decisions pass before the filter-suggestion call is queued again (R-6.9 asks for a
+ * weekly call; the scheduler owns that). A review session of thirty roles used to queue the model
+ * on every one of them, deduped only by the account, so it became a per-decision call.
+ */
+const SUGGEST_FILTERS_EVERY = 5;
+
+type Tx = Parameters<Parameters<ReturnType<typeof db>["transaction"]>[0]>[0];
+
+/**
+ * Queue A8 after every fifth decision this account has standing, counted inside the transaction
+ * that wrote the decision. The dedupe key is the account, so a group decision that crosses the
+ * fifth queues exactly one task, as the same roles decided one at a time would.
+ */
+async function queueFilterSuggestionsEveryFifth(tx: Tx, userId: string): Promise<void> {
+  const [counted] = await tx.select({ n: sql<number>`count(*)::int` }).from(decisions)
+    .where(and(eq(decisions.userId, userId), eq(decisions.superseded, false)));
+  const n = counted?.n ?? 0;
+  if (n > 0 && n % SUGGEST_FILTERS_EVERY === 0) await enqueue("suggest_filters", { userId }, tx);
+}
+
+export type RoleDetailsResult = { ok: true; details: RoleDetailsVM } | { ok: false; error: string };
+
+const ROLE_DETAILS_FAILED = "Could not load this role. Please try again.";
+
+/**
+ * The evidence the review panel needs, for one role this account can see: the stored description
+ * the page read deliberately leaves behind, the gate hits behind "why is this here", and the
+ * verdict and rationale stored beside the fit score. One round trip, taken when a row expands.
+ */
+export async function roleDetails(jobId: string): Promise<RoleDetailsResult> {
+  const user = await requireUser();
+  const parsed = zUuid().safeParse(jobId);
+  if (!parsed.success) return { ok: false, error: "Role not found." };
+  try {
+    const [row] = await fetchRoleDetails(user.id, [parsed.data]);
+    if (!row) return { ok: false, error: "Role not found." };
+    const settings = await getSettingsFor(user.id);
+    // The same rule the gate itself ran: `user_jobs` keeps the verdict, not the terms behind it.
+    const evaluated = evaluateLocation(
+      { title: row.job.title, location: row.job.location, locations: row.job.locations, remote: row.job.remote },
+      settings.gate,
+    );
+    const hasLocationFilter = settings.gate.locationTerms.some(term => term.trim().length > 0);
+    return {
+      ok: true,
+      details: {
+        jobId: row.job.id,
+        description: row.job.descriptionText,
+        salaryText: row.job.salaryText,
+        department: row.job.department,
+        employmentType: row.job.employmentType,
+        keywordTerms: row.job.keywordTerms,
+        fitVerdict: row.job.fitVerdict,
+        fitRationale: row.job.fitRationale,
+        locationReason: locationReasonText(
+          { ok: row.job.locationOk && evaluated.ok, terms: evaluated.terms, remote: evaluated.remote },
+          hasLocationFilter,
+          row.job.origin === "user" && row.job.addedBy === user.id,
+        ),
+      },
+    };
+  } catch (error) {
+    // `actionError` logs the fault and never leaks it; the narrowing keeps this result's shape.
+    const failure = actionError(error, ROLE_DETAILS_FAILED);
+    return failure.ok ? { ok: false, error: ROLE_DETAILS_FAILED } : failure;
+  }
+}
 
 /** Spec R-6.1: a reason is required for `skip`, and encouraged (never required) for `apply`. */
 const SKIP_REASON_REQUIRED = "Give a reason when you dismiss a role: it is what the ranking learns from.";
@@ -55,7 +127,7 @@ export async function decide(jobId: string, decision: "apply" | "skip" | null, r
         }
         await tx.insert(jobEvents).values({ jobId: input.jobId, userId: user.id, type: "decided", payload: { decision: null } });
         await enqueue("synthesize_profile", { userId: user.id, force: true }, tx);
-        await enqueue("suggest_filters", { userId: user.id }, tx);
+        await queueFilterSuggestionsEveryFifth(tx, user.id);
         return;
       }
 
@@ -100,7 +172,7 @@ export async function decide(jobId: string, decision: "apply" | "skip" | null, r
       if (input.decision === "skip") await withdrawLiveApplications(tx, user.id, [input.jobId]);
       if (decisionId && trimmedReason) await enqueue("tag_reason", { decisionId }, tx);
       await enqueue("synthesize_profile", { userId: user.id, force: false }, tx);
-      await enqueue("suggest_filters", { userId: user.id }, tx);
+      await queueFilterSuggestionsEveryFifth(tx, user.id);
     });
   } catch (err) {
     return actionError(err, "Could not save your decision. Please try again.");
@@ -221,7 +293,7 @@ export async function decideRoles(jobIds: string[], decision: "apply" | "skip" |
         }
         await tx.insert(jobEvents).values(ids.map(jobId => ({ jobId, userId: user.id, type: "decided" as const, payload: { decision: null } })));
         await enqueue("synthesize_profile", { userId: user.id, force: true }, tx);
-        await enqueue("suggest_filters", { userId: user.id }, tx);
+        await queueFilterSuggestionsEveryFifth(tx, user.id);
         return;
       }
 
@@ -252,7 +324,7 @@ export async function decideRoles(jobIds: string[], decision: "apply" | "skip" |
       if (input.decision === "skip") await withdrawLiveApplications(tx, user.id, ids);
       if (trimmedReason) await enqueueMany("tag_reason", insertedRows.map(row => ({ decisionId: row.id })), tx);
       await enqueue("synthesize_profile", { userId: user.id, force: false }, tx);
-      await enqueue("suggest_filters", { userId: user.id }, tx);
+      await queueFilterSuggestionsEveryFifth(tx, user.id);
     });
   } catch (error) {
     return actionError(error, "Could not save your decisions. Please try again.");

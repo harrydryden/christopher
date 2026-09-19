@@ -31,6 +31,12 @@ export interface TaskPayloads {
    * The row it stores is shared like any other posting; the view it creates is this account's.
    */
   import_posting: { userId: string; companyId: string; url: string };
+  /**
+   * Review one account's evidence library for how well each entry evidences itself. The version
+   * is what the save that enqueued it produced; the handler reads the newest one, because the
+   * dedupe key is the account and a burst of saves must run once, for what is there when it runs.
+   */
+  review_library: { userId: string; libraryVersion: number };
 }
 
 export type TaskType = keyof TaskPayloads;
@@ -72,6 +78,10 @@ export function dedupeKeyFor<T extends TaskType>(type: T, payload: TaskPayloads[
     case "import_posting":
       { const p = payload as TaskPayloads["import_posting"];
         return `import_posting:${p.userId}:${p.companyId}:${p.url}`; }
+    // Deliberately not scoped to the version: the editor saves the whole library at once, so a
+    // person typing through five saves would otherwise queue five passes over the same entries.
+    case "review_library":
+      return `review_library:${(payload as TaskPayloads["review_library"]).userId}`;
     default:
       return null;
   }
@@ -84,6 +94,8 @@ export function priorityFor(type: TaskType): number {
     case "tag_reason":
     case "reevaluate_gate":
     case "import_posting":
+    // Someone is looking at the Library, waiting for the scores to land.
+    case "review_library":
       return 1;
     case "fetch_description":
     case "score_job":
@@ -128,8 +140,21 @@ export const TASK_DEADLINES_MS: Partial<Record<TaskType, number>> & { default: n
   discover: 5 * 60_000,
   // A page fetch, a browser render when the page needs one, and one model call.
   import_posting: 4 * 60_000,
+  // One batched model call per eight entries, each seeing the whole library from the cache.
+  review_library: 4 * 60_000,
   default: 2 * 60_000,
 };
+
+/**
+ * A manual rescan of a company scanned this recently is served by the existing result.
+ *
+ * The catalogue is shared and scanned once a day for everyone, so "Refresh" is a request, not a
+ * command: a source another follower read minutes ago is not fetched again. It lives here beside
+ * the deadlines because both the scan handler that enforces it and the interface that promises it
+ * ("a scan made in the last half hour is reused") have to say the same number, and `apps/web` may
+ * not import `apps/worker`.
+ */
+export const MANUAL_RESCAN_INTERVAL_MS = 30 * 60_000;
 
 export type TaskDeadlines = Partial<Record<TaskType | "default", number>>;
 

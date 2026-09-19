@@ -218,6 +218,13 @@
       "when": 1790416800000,
       "tag": "0030_application_lifecycle",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1790503200000,
+      "tag": "0031_wave2_evidence_and_states",
+      "breakpoints": true
     }
   ]
 }

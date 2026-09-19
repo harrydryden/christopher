@@ -3,10 +3,8 @@ import { roleStatus, liveFor } from "@christopher/core";
 import { requireUser } from "@/lib/auth";
 import { csvRow } from "@/lib/csv";
 import {
-  applyRolesFilters,
-  fetchTableJobs,
+  fetchRoleRows,
   parseRolesFilters,
-  sortRoleRows,
   type RawSearchParams,
 } from "@/lib/queries/jobs";
 
@@ -27,33 +25,40 @@ const HEADER = ["company", "website", "role", "location", "url", "live_for_days"
 /**
  * A spreadsheet's worth of roles, not a database dump: the read is bounded so one export can never
  * pull an unbounded table into memory, and the rows are written out in blocks rather than joined
- * into one string.
+ * into one string. The blocks come from the same SQL the table pages — same filters, same sort — so
+ * the file and the screen cannot disagree about a view (R-7.5).
  */
 const MAX_ROWS = 20_000;
 const BLOCK = 500;
+
+/** The last line of a truncated file says so, rather than ending mid-view with no word. */
+const CAP_NOTICE = `# Truncated at ${MAX_ROWS.toLocaleString("en-GB")} rows. Narrow the filters and export again for the rest.`;
 
 export async function GET(request: NextRequest) {
   const user = await requireUser();
   const now = new Date();
   const filters = parseRolesFilters(rawParamsFrom(request.nextUrl.searchParams));
-  // The CSV has no description column, so the summary read leaves them in the database.
-  const rows = await fetchTableJobs(user.id, (request.nextUrl.searchParams.get("archive") === "1" || request.nextUrl.searchParams.get("view") === "archived"), true, MAX_ROWS);
-  const visible = sortRoleRows(applyRolesFilters(rows, filters, now), filters.sort, filters.dir, now);
+  const archived = request.nextUrl.searchParams.get("archive") === "1" || request.nextUrl.searchParams.get("view") === "archived";
 
   const encoder = new TextEncoder();
-  let index = 0;
+  let offset = 0;
+  let written = 0;
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
       controller.enqueue(encoder.encode(csvRow(HEADER) + "\r\n"));
     },
-    pull(controller) {
-      if (index >= visible.length) {
+    async pull(controller) {
+      // The CSV has no description column, so these are the table's own summary rows.
+      const rows = await fetchRoleRows(user.id, filters, archived, { offset, limit: BLOCK, now });
+      if (rows.length === 0) {
         controller.close();
         return;
       }
-      let block = "";
-      for (const r of visible.slice(index, index + BLOCK)) {
-        block += csvRow([
+      const remaining = MAX_ROWS - written;
+      const block = rows.slice(0, remaining);
+      let text = "";
+      for (const r of block) {
+        text += csvRow([
           r.company.name,
           r.company.homepageUrl,
           r.job.title,
@@ -70,8 +75,19 @@ export async function GET(request: NextRequest) {
           r.job.closedAt ? r.job.closedAt.toISOString() : "",
         ]) + "\r\n";
       }
-      index += BLOCK;
-      controller.enqueue(encoder.encode(block));
+      written += block.length;
+      offset += block.length;
+      if (written >= MAX_ROWS) {
+        // The cap is only worth naming when something was actually left out, so a view of exactly
+        // 20,000 rows asks the database for one more row rather than claiming it was truncated.
+        const more = block.length < rows.length || (await fetchRoleRows(user.id, filters, archived, { offset, limit: 1, now })).length > 0;
+        if (more) text += csvRow([CAP_NOTICE]) + "\r\n";
+        controller.enqueue(encoder.encode(text));
+        controller.close();
+        return;
+      }
+      controller.enqueue(encoder.encode(text));
+      if (rows.length < BLOCK) controller.close();
     },
   });
 

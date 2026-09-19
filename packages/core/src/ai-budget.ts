@@ -22,8 +22,9 @@ export function aiBudgetWindowStart(now: Date, resetAt: string | null | undefine
 }
 
 /**
- * What a call site is called in a report. The call sites are the spec's A1–A10 plus the CV
- * builder; a reader of a spend table should see the feature they recognise, not the code.
+ * What a call site is called in a report. The call sites are the spec's A1–A10, the later
+ * additions above them, and the CV builder; a reader of a spend table should see the feature they
+ * recognise, not the code.
  */
 export const AI_FEATURE_LABELS: Readonly<Record<string, string>> = {
   CV: "CV builder",
@@ -37,6 +38,7 @@ export const AI_FEATURE_LABELS: Readonly<Record<string, string>> = {
   A8: "Filter suggestions",
   A9: "Company profiling",
   A10: "Company suggestions",
+  A12: "Library evidence review",
 };
 
 /** A short product name for one call site; an unknown call site is reported as itself. */

@@ -34,8 +34,37 @@ Applying; then the bare shortlist; then the gate. `roleStage` in `@christopher/c
 
 Dismissed and Archived are one stage shown in one place: the Dismissed tab, with the
 archived card below it. The roles table's Shortlisted tab carries the stage as a badge
-beside the decision once a role is past Shortlisted, and the Applications page lists
+on the row — beside the title, and again beside the decision inside the panel — once a role is past
+Shortlisted, with a legend under the table naming all eight; the Applications page lists
 every role that is Shortlisted or beyond; the CSV export carries the stage as a column.
+
+## Reviewing and deciding
+
+Expanding a row loads the stored description in one round trip (`roleDetails` in
+`app/actions/decisions.ts`, over the existing `fetchRoleDetails`); the page read itself stays
+summary rows, so pagination never carries 50 descriptions. The panel shows that description
+collapsed behind "Show more", the salary, **why this is here** — the account's matched keywords as
+chips and the line that says which location term admitted it, or that it is remote, or that the
+filter names no location — the fit verdict and rationale beside the score, and the decision with its
+date. `user_jobs` stores the location verdict as a boolean and not the terms behind it, so the
+terms are recomputed on expand with the same `evaluateLocation` the gate ran.
+
+A decision taken from the table removes the row optimistically and leaves a five-second notice
+under the table naming it ("Shortlisted VP Operations at Hims · Undo"). Undo is
+`decide(jobId, null, "")`, which returns the role to the tab it left. One notice at a time.
+
+The keyboard cursor starts on the first row, the five shortcuts are printed under the table,
+`enter` saves an open reason box and `shift`+`enter` is a new line. `a` opens a one-line optional
+reason box — R-6.1 encourages a reason on apply and never requires one, so `enter` on an empty box
+shortlists — while `s` keeps the required dismissal reason.
+
+"What did I decide last week?" is a **Decided** sort key and a `since=7d` window, both offered on
+the Shortlisted and Dismissed tabs only, because both read the decision's date.
+
+Deciding no longer queues the filter-suggestion call every time. `decide` and `decideRoles` count
+the account's standing decisions inside the transaction and queue `suggest_filters` on every fifth;
+the weekly call stays with the scheduler (R-6.9). `synthesize_profile` is still queued every time,
+because its handler enforces its own five-decision threshold.
 
 ## Statuses, decisions and archiving
 
@@ -63,7 +92,9 @@ explicit and does not change workflow status. Missing scores do not imply reject
 
 The company page embeds the same RoleWorkspace as the global Roles page. Company
 summaries link to exact company status views. Counts cover all retained records
-before search filters and pagination, and tables disclose filtered totals.
+before search filters and pagination, and tables disclose filtered totals. The CSV export reads the
+same SQL the table pages, in blocks, so the file cannot disagree with the screen; it stops at
+20,000 rows and says so on its last line when that leaves anything out.
 Legacy decision/archive URLs remain readable. New links use the view parameter.
 
 Migration 0013 preserves previously retained non-matches in Archive and clears

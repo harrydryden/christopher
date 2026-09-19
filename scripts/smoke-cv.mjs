@@ -39,7 +39,10 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
   const readyId = randomUUID(),
     busyId = randomUUID(),
     failedId = randomUUID();
-  const tableIds = [randomUUID(), randomUUID()];
+  const tableIds = [randomUUID()];
+  // The role the applications table is exercised against: its own company, so it goes at the end.
+  const TABLE_DOMAIN = "cvtable.invalid";
+  const tableCompanyId = randomUUID(), tableSourceId = randomUUID(), tableJobId = randomUUID();
   let browser;
   const content = {
     name: "Example Candidate",
@@ -133,7 +136,9 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     const page = await context.newPage();
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
+    // The CV list has gone; the link every older page carries lands on the applications table.
     await page.goto(`${baseUrl}/cv`);
+    assert.equal(new URL(page.url()).pathname, "/applications");
     assert.equal(await page.getByRole("heading", { name: "CV model", exact: true }).count(), 0);
     assert.equal(await page.getByText(/Uses library version/).count(), 0);
     await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Library", exact: true }).click();
@@ -624,152 +629,137 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       "the failed build's way forward must not overflow a phone viewport",
     );
     await page.setViewportSize({ width: 1440, height: 1000 });
-    // Exercise the production server actions through the CV table using disposable rows.
-    for (const [index, id] of tableIds.entries()) {
-      await pool.query(
-        `insert into cv_drafts (id, user_id, job_title, company_name, job_description, library_version, library_snapshot, model, status, revision)
-        values ($1, $4, $2, 'CV Table Check', 'Synthetic table test', 1, $3, 'test', 'ready', 1)`,
-        [id, `Table role ${index + 1}`, JSON.stringify(library), userId],
-      );
-    }
-    await page.goto(`${baseUrl}/cv`);
-    const savedTable = page.getByRole("table", {
-      name: "Saved CVs",
-      exact: true,
-    });
-    await savedTable.waitFor();
-    assert.deepEqual(
-      await savedTable.getByRole("columnheader").allTextContents(),
-      ["Company", "Job role", "Version", "Actions"],
+    // Exercise the production server actions through the applications table. The row is a
+    // throwaway company this account follows and has shortlisted, with one ready CV for it, so
+    // archiving that CV leaves the role on the table with a predecessor to restore.
+    await pool.query(
+      `insert into companies (id, name, homepage_url, domain) values ($1, 'CV Table Check', 'https://cvtable.invalid', $2)`,
+      [tableCompanyId, TABLE_DOMAIN],
     );
-    await savedTable
-      .getByRole("checkbox", { name: "Select all saved CVs on this page" })
-      .check();
-    assert.equal(
-      await savedTable.locator("tbody input:checked").count(),
-      await savedTable.locator("tbody tr").count(),
+    await pool.query(
+      `insert into career_sources (id, company_id, type, url) values ($1, $2, 'html', 'https://cvtable.invalid/jobs')`,
+      [tableSourceId, tableCompanyId],
     );
-    await savedTable
-      .getByRole("checkbox", { name: "Select all saved CVs on this page" })
-      .uncheck();
-    // Repeated cross-table actions guard against stale or unfinished route transitions.
-    for (let round = 0; round < 3; round++) {
-      for (let n = 1; n <= 2; n++)
-        await savedTable
-          .getByRole("checkbox", {
-            name: new RegExp(`^Select CV Table Check · Table role ${n} · [0-9]{2}-[A-Z][a-z]{2}-V[0-9]+$`),
-          })
-          .check();
-      await page
-        .getByRole("button", { name: "Archive selected", exact: true })
-        .click();
-      const archivedTable = page.getByRole("table", {
-        name: "Archived CVs",
-        exact: true,
-      });
-      await archivedTable
-        .getByRole("link", { name: "Table role 2", exact: true })
-        .waitFor();
-      assert.equal(
-        (
-          await pool.query(
-            "select count(*)::int n from cv_drafts where id = any($1::uuid[]) and archived_at is not null",
-            [tableIds],
-          )
-        ).rows[0].n,
-        2,
-      );
-      await archivedTable
-        .getByRole("checkbox", { name: "Select all archived CVs on this page" })
-        .check();
-      await page
-        .getByRole("button", { name: "Restore selected", exact: true })
-        .click();
-      await savedTable
-        .getByRole("link", { name: "Table role 2", exact: true })
-        .waitFor()
-        .catch(async (error) => {
-          throw new Error(
-            `${error.message}\nTable state: ${await page.locator("main").innerText()}\nRows: ${JSON.stringify((await pool.query("select id,status,archived_at from cv_drafts where id = any($1::uuid[])", [tableIds])).rows)}`,
-          );
-        });
-    }
-    for (let n = 1; n <= 2; n++)
-      await savedTable
-        .getByRole("checkbox", {
-          name: new RegExp(`^Select CV Table Check · Table role ${n} · [0-9]{2}-[A-Z][a-z]{2}-V[0-9]+$`),
-        })
-        .check();
+    await pool.query(
+      `insert into jobs (id, company_id, source_id, external_key, title, normalized_title, url)
+       values ($1, $2, $3, 'table-role', 'Table role 1', 'table role 1', 'https://cvtable.invalid/jobs/1')`,
+      [tableJobId, tableCompanyId, tableSourceId],
+    );
+    await pool.query(
+      "insert into company_subscriptions (user_id, company_id) values ($1, $2) on conflict do nothing",
+      [userId, tableCompanyId],
+    );
+    await pool.query(
+      "insert into user_jobs (user_id, job_id, in_table, keyword_matched) values ($1, $2, true, true)",
+      [userId, tableJobId],
+    );
+    await pool.query(
+      `insert into decisions (user_id, job_id, decision, reason, job_title, company_name)
+       values ($1, $2, 'apply', '', 'Table role 1', 'CV Table Check')`,
+      [userId, tableJobId],
+    );
+    await pool.query(
+      `insert into cv_drafts (id, user_id, job_id, job_title, company_name, job_description, library_version, library_snapshot, model, status, revision)
+       values ($1, $2, $3, 'Table role 1', 'CV Table Check', 'Synthetic table test', 1, $4, 'test', 'ready', 1)`,
+      [tableIds[0], userId, tableJobId, JSON.stringify(library)],
+    );
+
+    await page.goto(`${baseUrl}/applications`);
+    await page.getByRole("heading", { name: "Applications", exact: true }).waitFor();
+    // One sidebar entry for applications and CVs, and no section tabs underneath it any more.
+    const mainNav = page.getByRole("navigation", { name: "Main navigation" });
+    assert.equal(await mainNav.getByRole("link", { name: "Applications", exact: true }).count(), 1);
+    assert.equal(await mainNav.getByRole("link", { name: "Applications", exact: true }).getAttribute("aria-current"), "page");
+    assert.equal(await mainNav.getByRole("link", { name: "CVs", exact: true }).count(), 0);
+    assert.equal(await page.getByRole("navigation", { name: "Workspace sections" }).count(), 0);
+    const segments = page.getByRole("navigation", { name: "Application progress", exact: true });
+    for (const segment of ["Active", "Closed", "All"]) assert.equal(await segments.getByRole("link", { name: new RegExp(`^${segment} `) }).count(), 1);
+
+    const tableRow = () => page.getByRole("row").filter({ hasText: "Table role 1" });
+    await tableRow().waitFor();
+    // A shortlisted role with a live CV is Applying, and the CV cell says which revision.
+    assert.match(await tableRow().innerText(), /Applying/i);
+    assert.match(await tableRow().innerText(), /Ready · V1/);
+    await tableRow().getByRole("button", { name: "Table role 1", exact: true }).click();
+    const expansion = page.getByRole("row").filter({ has: page.getByRole("button", { name: "Archive CV", exact: true }) });
+    await expansion.waitFor();
+    assert.equal(await expansion.getByRole("combobox", { name: "Where it stands", exact: true }).count(), 1);
     await page.screenshot({
-      path: "tmp/cv-review-tabs/saved-cvs-desktop.png",
+      path: "tmp/cv-review-tabs/applications-desktop.png",
       fullPage: true,
     });
+
+    // Archive, restore and delete, one row at a time, through the same action the CV list used.
+    await expansion.getByRole("button", { name: "Archive CV", exact: true }).click();
+    await page.getByRole("button", { name: "Restore previous CV", exact: true }).waitFor();
+    assert.match(await tableRow().innerText(), /previous archived/);
+    assert.equal(
+      (await pool.query("select count(*)::int n from cv_drafts where id = any($1::uuid[]) and archived_at is not null", [tableIds])).rows[0].n,
+      1,
+    );
+    await page.getByRole("button", { name: "Restore previous CV", exact: true }).click();
+    await page.getByRole("link", { name: "Ready · V1", exact: true }).waitFor().catch(async (error) => {
+      throw new Error(
+        `${error.message}\nTable state: ${await page.locator("main").innerText()}\nRows: ${JSON.stringify((await pool.query("select id,status,archived_at from cv_drafts where id = any($1::uuid[])", [tableIds])).rows)}`,
+      );
+    });
+    assert.equal(
+      (await pool.query("select count(*)::int n from cv_drafts where id = any($1::uuid[]) and archived_at is null", [tableIds])).rows[0].n,
+      1,
+    );
+
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth > window.innerWidth,
-      ),
+      await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth),
       false,
+      "the applications table must not overflow a phone viewport",
     );
     await page.screenshot({
-      path: "tmp/cv-review-tabs/saved-cvs-mobile.png",
+      path: "tmp/cv-review-tabs/applications-mobile.png",
       fullPage: true,
     });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+
+    // Deleting asks first, and a dismissed confirm leaves the CV exactly where it was.
     const cancelledDeletion = new Promise((resolve, reject) =>
-      page.once("dialog", (dialog) => {
-        dialog.dismiss().then(resolve, reject);
-      }),
+      page.once("dialog", (dialog) => { dialog.dismiss().then(resolve, reject); }),
     );
-    await page
-      .getByRole("button", { name: "Delete selected", exact: true })
-      .first()
-      .click();
-    assert.equal(
-      (
-        await pool.query(
-          "select count(*)::int n from cv_drafts where id = any($1::uuid[])",
-          [tableIds],
-        )
-      ).rows[0].n,
-      2,
-    );
+    await page.getByRole("button", { name: "Delete CV", exact: true }).click();
     await cancelledDeletion;
-    const confirmedDeletion = new Promise((resolve, reject) =>
-      page.once("dialog", (dialog) => {
-        dialog.accept().then(resolve, reject);
-      }),
-    );
-    await page
-      .getByRole("button", { name: "Delete selected", exact: true })
-      .first()
-      .click();
-    await confirmedDeletion;
-    await savedTable
-      .getByRole("link", { name: "Table role 2", exact: true })
-      .waitFor({ state: "detached" })
-      .catch(async (error) => {
-        throw new Error(
-          `${error.message}\nDelete UI: ${await page.locator("main").innerText()}\nErrors: ${JSON.stringify(errors)}\nRows: ${JSON.stringify((await pool.query("select id,status,archived_at from cv_drafts where id = any($1::uuid[])", [tableIds])).rows)}`,
-        );
-      });
     assert.equal(
-      (
-        await pool.query(
-          "select count(*)::int n from cv_drafts where id = any($1::uuid[])",
-          [tableIds],
-        )
-      ).rows[0].n,
+      (await pool.query("select count(*)::int n from cv_drafts where id = any($1::uuid[])", [tableIds])).rows[0].n,
+      1,
+    );
+    const confirmedDeletion = new Promise((resolve, reject) =>
+      page.once("dialog", (dialog) => { dialog.accept().then(resolve, reject); }),
+    );
+    await page.getByRole("button", { name: "Delete CV", exact: true }).click();
+    await confirmedDeletion;
+    // With no CV the role falls back to Shortlisted and offers to build one.
+    await tableRow().getByRole("button", { name: "Build CV", exact: true }).waitFor({ timeout: 60_000 }).catch(async (error) => {
+      throw new Error(
+        `${error.message}\nDelete UI: ${await page.locator("main").innerText()}\nErrors: ${JSON.stringify(errors)}\nRows: ${JSON.stringify((await pool.query("select id,status,archived_at from cv_drafts where id = any($1::uuid[])", [tableIds])).rows)}`,
+      );
+    });
+    assert.match(await tableRow().innerText(), /Shortlisted/i);
+    assert.equal(
+      (await pool.query("select count(*)::int n from cv_drafts where id = any($1::uuid[])", [tableIds])).rows[0].n,
       0,
     );
+
     assert.deepEqual(errors, []);
     console.log(
-      "  CV browser flow passed: tabs, unified evaluation, keyboard navigation, full sidebar collapse, saved edits, mobile layout, real progress updates, the build narrative and its log, a failed build's way forward, and bulk CV archive/restore/delete",
+      "  CV browser flow passed: tabs, unified evaluation, keyboard navigation, full sidebar collapse, saved edits, mobile layout, real progress updates, the build narrative and its log, a failed build's way forward, and the applications table's stage, CV cell and archive/restore/delete",
     );
   } finally {
     await browser?.close();
     await pool.query("delete from cv_drafts where id = any($1::uuid[])", [
       tableIds,
     ]);
+    // The throwaway role goes with its company: sources, jobs and views cascade from it.
+    await pool.query("delete from applications where user_id = $1 and job_id = $2", [userId, tableJobId]);
+    await pool.query("delete from decisions where user_id = $1 and job_id = $2", [userId, tableJobId]);
+    await pool.query("delete from companies where domain = $1", [TABLE_DOMAIN]);
     await pool.query(
       "delete from tasks where payload->>'draftId' in (select id::text from cv_drafts where id in ($1, $2, $3) or parent_id = $1)",
       [readyId, busyId, failedId],

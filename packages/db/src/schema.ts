@@ -50,6 +50,14 @@ export const JOB_ORIGINS = ["scan", "user"] as const;
 export const LOGO_SOURCES = ["site_icon", "icon_service"] as const;
 export const NAME_SUGGESTION_STATUSES = ["pending", "applied", "dismissed"] as const;
 export const DECISIONS = ["apply", "skip"] as const;
+/**
+ * What an `applications` row can say. Mirrors `APPLICATION_STATUSES` in @christopher/core, which
+ * maps each one onto a role stage; the two lists are maintained together because core cannot
+ * import this package. "applying" is the stage a person sets from the table before anything is
+ * submitted, which is why `pdf_base64` is nullable.
+ */
+export const APPLICATION_STATUSES = ["applying", "applied", "screening", "interview", "offer", "accepted", "rejected", "withdrawn"] as const;
+export type ApplicationStatus = (typeof APPLICATION_STATUSES)[number];
 export const USER_ROLES = ["admin", "member"] as const;
 export const AUTH_PROVIDERS = ["google"] as const;
 export const AUTH_TOKEN_PURPOSES = ["password_reset", "email_verification"] as const;
@@ -729,15 +737,21 @@ export const applications = pgTable("applications", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   cvId: uuid("cv_id").references(() => cvDrafts.id, { onDelete: "set null" }),
+  /** The shared posting this is an application for: what ties the row to the account's role stage. */
+  jobId: uuid("job_id").references(() => jobs.id, { onDelete: "set null" }),
   jobTitle: text("job_title").notNull(),
   companyName: text("company_name").notNull(),
   appliedOn: text("applied_on").notNull(),
-  pdfBase64: text("pdf_base64").notNull(),
-  status: text("status").notNull().default("applied"),
+  /** Null when the stage was set from the roles table and no CV was submitted through us. */
+  pdfBase64: text("pdf_base64"),
+  status: text("status", { enum: APPLICATION_STATUSES }).notNull().default("applied"),
   notes: text("notes").notNull().default(""),
   history: jsonb("history").$type<Array<{ status: string; at: string; notes: string }>>().notNull(),
   createdAt: tsNow("created_at"),
-}, t => [index("applications_user_idx").on(t.userId, t.appliedOn)]);
+}, t => [
+  index("applications_user_idx").on(t.userId, t.appliedOn),
+  index("applications_user_job_idx").on(t.userId, t.jobId),
+]);
 
 /** Renewable operation locks do not retain a connection while doing network work. */
 export const resourceLeases = pgTable("resource_leases", {

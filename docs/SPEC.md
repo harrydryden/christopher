@@ -269,13 +269,26 @@ Pipeline, in order. Every step adds candidates with a confidence; the best candi
 
 **Roles table (home).** Columns: Company (favicon + name), Website (link icon), Role (title, linking to the live description in a new tab), Location, Live for (e.g. `3d`, `6w`, with the first-seen marker), Status chip (New / Active / Closed), Fit (score; rationale on hover), Decision (Apply / Skip; opens a reason field), Reason (truncated, click to edit), Source badge (Greenhouse, Lever, HTML …). Row expand shows the stored description, matched keywords, tags, scan history and events.
 
+**R-7.10 — Role lifecycle.** One company-role, seen from one account, is at exactly one of eight stages. The pieces behind them are stored apart — the gate result and the archive marker in `user_jobs`, the apply/skip decision, the CV draft, the application row — and the stage is the single reading of them, so the roles table and the Applications page can never disagree about where a role has got to.
+
+- **Matched** — passed your keyword and location filters; nothing decided yet. The gate admits a posting here.
+- **Shortlisted** — you chose to pursue it. Apply moves a role here.
+- **Applying** — a CV is being built or is ready; nothing submitted yet. Building a CV moves it here.
+- **Applied** — you recorded an application. Recording one, or setting the status to Applied, moves it here.
+- **In process** — the employer is considering it: screening, interview or offer. Those three are one stage, and the badge names the step.
+- **Accepted** — you received and accepted an offer.
+- **Rejected** — the employer said no.
+- **Dismissed** — you passed on it, withdrew, or it stopped matching and was archived. Skip, Withdrawn and an archive all land here.
+
+When the pieces disagree, precedence decides: an application's status wins, because it is the furthest anything has got (a role skipped after an offer was accepted is Accepted, not Dismissed); then a dismissal or an archive, which beats a CV; then a CV, which makes a shortlist Applying; then the bare shortlist; then the gate. **Dismissed and Archived are one stage shown in one place** — the Dismissed tab, with the archived roles as a card below it (R-7.8) — so nothing is put away twice. Stages show in two places: a role in the roles table's Shortlisted tab carries its stage as a badge beside its decision once it is past Shortlisted, and the Applications page lists every role that is Shortlisted or beyond. The CSV export carries the stage as its own column.
+
 - **R-7.1** Filters: status (multi), company, decision state (undecided / apply / skip), minimum fit, show hidden, show closed, free-text search. Sorting on every column. Filter state persists in the URL.
 - **R-7.2** Keyboard: `j`/`k` move, `a` apply, `s` skip (focus reason), `enter` save, `o` open description, `g` toggle group-by-role. Multi-select with `x`; bulk skip with one reason.
 - **R-7.3** Header banner: last run time and outcome ("Today 06:03 · 28 of 30 companies OK · 4 new roles"), linking to the Health panel when anything failed.
 - **R-7.4** Sections below the table: "Outside your keywords" (3.6) and "Hidden by your preferences" (collapsed).
 - **R-7.5** CSV export of the current filtered view. `?view=archived` still exports the archived view, which no longer has a tab of its own.
-- **R-7.8** **Tabs.** The strip above the table is three tabs — **Shortlisted**, **Matched**, **Dismissed** — each with its count, because those are the three things a person acts on. **Archived is a status but not a tab**: archived roles are a card below the dismissed table, with their own count, their own pagination (`archivedPage`) and their own Restore. A link that still says `view=archived`, `archive=1` or `decision=skip` — a bookmark, an export URL, an older page — lands on Dismissed, where those roles now are.
-- **R-7.9** **Sidebar.** Roles, Companies, **Applications**, Library, Settings. Applications and CVs are one job, so they are one entry with section tabs (Applications / CVs); `/cv`, `/cv/library` and `/cv/<id>` all keep Applications lit.
+- **R-7.8** **Tabs.** The strip above the table is three tabs — **Matched**, **Shortlisted**, **Dismissed**, in that order — each with its count, because those are the three things a person acts on, in the order a role meets them. The page opens on **Matched**, the day's new roles, unless the account has no matched roles in that scope — and the company page counts only that company's — when it opens on **Shortlisted** instead, which is where someone with nothing new to review is working. A link that names a tab is answered whatever the counts say. **Archived is a status but not a tab**: archived roles are a card below the dismissed table, with their own count, their own pagination (`archivedPage`) and their own Restore. A link that still says `view=archived`, `archive=1` or `decision=skip` — a bookmark, an export URL, an older page — lands on Dismissed, where those roles now are.
+- **R-7.9** **Sidebar.** Roles, Companies, **Applications**, Library, Settings. Applications and CVs are one job, so they are one entry leading to one page, with no section tabs beneath it; `/cv/<id>` keeps Applications lit.
 
 **Companies.** List with source type, confidence badge, last scan status, open/matched role counts, actions (rescan, re-discover, edit source URL, pause, archive).
 
@@ -287,6 +300,14 @@ Pipeline, in order. Every step adds candidates with a confidence; the best candi
 - **Add a role** is R-1.7: the URL form, this account's recent imports, and the roles it added that fall outside its filters. While an import is queued or running the page refreshes itself.
 - **Notepad** replaces the old details card. The note is the follower's own, stored as markdown-lite text (paragraphs, `- ` bullets, `**bold**`) in `company_subscriptions.notes`, so notes typed into the earlier plain textarea are still valid and still read as themselves. The editor is a `contenteditable` with Bold and Bullet list, Ctrl/Cmd+B and Ctrl/Cmd+S, and a saved/unsaved indicator; stored text is never rendered as HTML.
 - **Catalogue diagnostics** is a collapsed `<details>` at the bottom, **for administrators only**: the sources with Enable / Disable / Mark confirmed, the scan history with outcomes and durations, the discovery log, the company profile with Refresh profile, and the logo's capture state with Refresh logo. Nothing an ordinary follower needs lives only here — every action it holds is also reachable from the header or the setup card.
+
+**Applications page.** One table of every company-role this account is pursuing — Company, Role, Status, CV, Updated — one row per role whatever its progress is spread across. Company links to the company page; Role opens the posting in a new tab and expands the row; Status is the stage badge, naming the step for In process ("In process · Interview"); CV is that role's current CV — "Ready · V3", "Building…", "Queued", "Failed", or a Build CV button when there is none — with "· previous archived" when a predecessor is retained; Updated is when the role last moved.
+
+- **Active / Closed / All** segments with counts, in the URL (`?filter=`), fifty rows a page (`?page=`). Active is shortlisted, applying, applied and in process; Closed is accepted, rejected and dismissed — but a dismissed role is listed only when it was pursued (an application row, or a CV whether archived or not); a role merely passed on from Roles is not an application and does not appear at all. Matched roles are not here: they are the roles table's business until something is decided.
+- The expanded row sets the status — Applying, Applied, Screening, Interview, Offer, Accepted, Rejected, Withdrawn — with an application date (shown from Applied onwards) and notes, above the status history. The first status set writes the role's `applications` row; later ones update it and append to its history, never touching a stored PDF or CV reference. Withdrawn also records a skip decision, so the role leaves the shortlist; and the mirror holds: dismissing a role from Roles withdraws its live application (one that is accepted or rejected is an outcome and stands), so the two pages cannot disagree about a role the person has passed on.
+- The expanded row also builds the CV (with an optional pasted replacement description), and archives, restores or deletes that one CV, delete asking for confirmation. It offers the submitted PDF when the row stores one.
+- Records with no posting behind them — an application recorded before the link existed, a CV whose company has left the catalogue — are one row per company and role, with no posting link and nothing to build a CV from.
+- A collapsed legend, "What the stages mean", carries all eight stages with a sentence each. `/applications?job=<id>` opens that role's row on its CV section, which is where the roles table's Build CV leads, and `/cv` redirects here.
 
 **Suggestions.** Similar-company recommendations (3.8) with accept / reject-with-reason.
 
@@ -459,6 +480,12 @@ source_admission_rejections  source_id (pk, → career_sources, cascade), finger
                      -- source, ≤10,000 per source, entries expiring after seven days
 
 discovery_sources, cv_libraries (version unique per user), cv_drafts, applications: each carries user_id
+
+applications         … job_id (nullable, → jobs, set null; backfilled from the CV each row was
+                     submitted from), pdf_base64 (nullable: a stage set from the applications
+                     table has no submitted PDF), status [applying|applied|screening|interview|
+                     offer|accepted|rejected|withdrawn], history jsonb
+                     -- indexed on (user_id, job_id): the per-account join behind the role's stage
 
 tasks                id, type [discover|scan_company|fetch_description|score_job|tag_reason|synthesize_profile|
                      suggest_filters|profile_company|suggest_companies|rescore_all],
@@ -743,8 +770,8 @@ Scale-up stage (Series A to C), remit that includes hiring and process design, r
 ### Evidence visibility, reusable feedback and applications
 - Evidence library has its own navigation entry and shows every editable block, saved version, style preferences and remembered wording. Saving creates an immutable new library version; generation snapshots it.
 - Editing a CV offers a checked option to remember changed profile/bullet wording in the latest library. It does not add facts to evidence entries. Remembered wording is visible, editable and removable; style preferences affect phrasing only. Old drafts remain unchanged.
-- A ready CV can be recorded as an application with an explicit application date. The application stores PDF bytes and its immutable CV revision, plus company/title snapshots. This records a user-reported submission; it does not submit to an employer or verify an external upload.
-- Applications track applied, screening, interview, offer, rejected, withdrawn and accepted statuses with timestamped notes history. Status changes cannot overwrite the submitted PDF or CV reference. Duplicate recording of the same revision is rejected.
+- A ready CV can be recorded as an application with an explicit application date. The application stores PDF bytes and its immutable CV revision, plus company/title snapshots. This records a user-reported submission; it does not submit to an employer or verify an external upload. A role can also reach a stage without any of that: requesting a CV opens the role's application at `applying`, and a status set from the applications table opens or updates it with no PDF at all. Recording a submitted CV upgrades that existing row — its revision, its bytes, its date — rather than adding a second, so one company-role keeps one application.
+- Applications track applying, applied, screening, interview, offer, rejected, withdrawn and accepted statuses with timestamped notes history. Status changes cannot overwrite the submitted PDF or CV reference. Withdrawing records a skip decision on the role as well, so the roles table and the applications table agree about it. Duplicate recording is rejected only for a revision whose row already stores the submitted bytes.
 
 
 ### Employment history and evidence ownership

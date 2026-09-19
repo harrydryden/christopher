@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
 
 export function NavLink({ href, children }: { href: string; children: ReactNode }) {
   const pathname = usePathname();
-  // A sidebar entry owns the pages its section tabs reach, so the CV builder keeps Applications lit.
+  // A sidebar entry owns every page its section reaches, so the CV workspace keeps Applications lit.
   const active = href === "/" ? pathname === "/" : pathname.startsWith(href) || (href === "/companies" && pathname === "/suggestions") || (href === "/applications" && pathname.startsWith("/cv")) || (href === "/settings" && ["/learning", "/health", "/account"].includes(pathname));
   return (
     <Link

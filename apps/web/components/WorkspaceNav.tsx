@@ -1,9 +1,10 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+// Applications has no group: every company-role being pursued, and the CV in its row, is one
+// table on one page, so there is nothing for a section tab to move between.
 const groups = [
   [["/companies", "Tracked companies"], ["/suggestions", "Discover companies"]],
-  [["/applications", "Applications"], ["/cv", "CVs"]],
   [["/settings", "Preferences"], ["/learning", "Learning and feedback"], ["/health", "Health"], ["/account", "Account"]],
   [["/admin", "Accounts"], ["/admin/settings", "System settings"], ["/admin/catalogue", "Company catalogue"], ["/admin/health", "Operations"]],
 ];

@@ -70,7 +70,8 @@ function run(cmd, args, opts = {}) {
 
 const PAGES = [
   // The three tabs are the whole role workflow; archived roles are a section inside Dismissed.
-  ["/", ["Roles", "Location", "Shortlisted", "Matched", "Dismissed"], "Matched"],
+  // The smoke account has nothing matched, which is exactly when the table opens on Shortlisted.
+  ["/", ["Roles", "Location", "Shortlisted", "Matched", "Dismissed"], "Shortlisted"],
   ["/companies", ["Companies"]],
   ["/suggestions", ["Discover companies", "Companies to review"]],
   ["/suggestions?view=sources", ["Add a source"]],
@@ -83,9 +84,10 @@ const PAGES = [
   ["/admin/settings", ["System settings", "Schedule"]],
   ["/admin/catalogue", ["Company catalogue"]],
   ["/admin/health", ["Operations", "Background worker"]],
-  ["/cv", ["CV builder", "Saved CVs", "Applications", "CVs"]],
+  // The CV list has gone: `/cv` is a redirect into the applications table, which holds the CVs.
+  ["/cv", { redirectsTo: "/applications" }],
   ["/library", ["Library", "Intro", "Website", "Experience", "Education, skills and interests"]],
-  ["/applications", ["Applications", "CVs"]],
+  ["/applications", ["Applications", "Active", "Closed", "What the stages mean"]],
   ["/?archive=1", ["Roles", "Archived"], "Dismissed"],
   ["/?view=auto-matched", ["Roles"], "Matched"],
   ["/?view=user-shortlisted", ["Roles"], "Shortlisted"],
@@ -181,6 +183,17 @@ async function main() {
       failures.push(`${path} threw: ${err.cause?.message ?? err.message}`);
       // A server that stops answering will not recover for the next page; stop and report with its log.
       if (err.name === "TimeoutError" || err.name === "AbortError") break;
+      continue;
+    }
+    // A retired path is checked the way the signed-out root is: the status and the destination.
+    const redirectsTo = Array.isArray(expected) ? null : expected.redirectsTo;
+    if (redirectsTo) {
+      const location = res.headers.get("location") ?? "";
+      // Next sends an absolute Location; compare the part of it that is ours.
+      const target = location.startsWith("http") ? new URL(location).pathname + new URL(location).search : location;
+      if (res.status !== 307 && res.status !== 308) failures.push(`${path} returned ${res.status}, expected a redirect to ${redirectsTo}`);
+      else if (!target.startsWith(redirectsTo)) failures.push(`${path} redirected to ${location}, expected ${redirectsTo}`);
+      else console.log(`  ${res.status}  ${path}  -> ${location}`);
       continue;
     }
     const text = visibleText(body);

@@ -30,6 +30,47 @@ export function normalizeUrl(input: string): string {
   return u.toString();
 }
 
+/**
+ * Tracking parameters stripped from a posting URL a person pasted. Deliberately shorter than
+ * `TRACKING_PARAMS`: this is a URL someone will click, and the only safe thing to remove is what
+ * is unambiguously a referral marker. Identifying parameters — `gh_jid`, `lever` ids, a Workday
+ * job path — carry the posting and are kept, order and all.
+ */
+const POSTING_TRACKING_PARAMS = new Set(["ref", "source", "src", "gh_src", "lever-source", "fbclid", "gclid"]);
+
+/**
+ * Canonicalise a posting URL for identity: the same role pasted twice, once from a newsletter and
+ * once from the board, must be one row. Scheme and host are lowercased (the URL parser does it),
+ * the fragment goes, the referral parameters above and anything `utm_*` go, and a trailing slash
+ * goes unless the path is the root. Everything else — parameters, their order, the port, the case
+ * of the path — is kept, because on some boards it is the identifier.
+ *
+ * Distinct from `normalizeUrl`, which is the aggressive form used for an external key: that one
+ * also sorts the query and strips a wider list, which is right for a key nobody sees and wrong
+ * for a URL the interface links to.
+ */
+export function normalisePostingUrl(url: string): string {
+  const trimmed = url.trim();
+  let u: URL;
+  try {
+    u = new URL(trimmed);
+  } catch {
+    return trimmed;
+  }
+  u.hash = "";
+  u.hostname = u.hostname.toLowerCase();
+  const keep: Array<[string, string]> = [];
+  for (const [k, v] of u.searchParams.entries()) {
+    const key = k.toLowerCase();
+    if (key.startsWith("utm_") || POSTING_TRACKING_PARAMS.has(key)) continue;
+    keep.push([k, v]);
+  }
+  u.search = "";
+  for (const [k, v] of keep) u.searchParams.append(k, v);
+  if (u.pathname.length > 1 && u.pathname.endsWith("/")) u.pathname = u.pathname.replace(/\/+$/, "");
+  return u.toString();
+}
+
 export function normalizeTitle(title: string): string {
   return title
     .toLowerCase()

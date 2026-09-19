@@ -1,11 +1,12 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { careerSources, companies } from "@christopher/db/schema";
+import { careerSources, companies, companyNameSuggestions } from "@christopher/db/schema";
 import { ensureHttpUrl, extractDomain } from "@christopher/core";
 import { requireAdmin } from "@/lib/auth";
+import { applySuggestedName, normaliseCompanyName } from "@/lib/company-names";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { fail, zUuid, type ActionResult } from "@/lib/validation";
@@ -24,7 +25,7 @@ export async function saveCatalogueCompany(companyId: string, _previous: ActionR
   const id = zUuid().parse(companyId);
   const [current] = await db().select({ homepageUrl: companies.homepageUrl, name: companies.name }).from(companies).where(eq(companies.id, id)).limit(1);
   if (!current) return fail("Company not found.");
-  const name = String(formData.get("name") ?? "").trim().slice(0, 200);
+  const name = normaliseCompanyName(String(formData.get("name") ?? ""));
   const rawHomepage = String(formData.get("homepageUrl") ?? "").trim();
   let homepageUrl: string;
   try {
@@ -49,6 +50,29 @@ export async function saveCatalogueCompany(companyId: string, _previous: ActionR
   });
   revalidateCatalogue(id);
   return { ok: true };
+}
+
+/**
+ * Apply a follower's proposed name. The rename and the resolution are one transaction, so a name
+ * can never be taken from a suggestion that still reads as pending, and applying the same row
+ * from two tabs renames nothing the second time.
+ */
+export async function applyNameSuggestion(suggestionId: string): Promise<void> {
+  const admin = await requireAdmin();
+  const id = zUuid().parse(suggestionId);
+  const applied = await db().transaction(async tx => applySuggestedName(tx, id, admin.id));
+  revalidateCatalogue(applied?.companyId);
+}
+
+/** Turn a proposal down. It leaves the administrator's queue; the follower may propose another. */
+export async function dismissNameSuggestion(suggestionId: string): Promise<void> {
+  const admin = await requireAdmin();
+  const id = zUuid().parse(suggestionId);
+  const [dismissed] = await db().update(companyNameSuggestions)
+    .set({ status: "dismissed", resolvedBy: admin.id, resolvedAt: new Date() })
+    .where(and(eq(companyNameSuggestions.id, id), eq(companyNameSuggestions.status, "pending")))
+    .returning({ companyId: companyNameSuggestions.companyId });
+  revalidateCatalogue(dismissed?.companyId);
 }
 
 /** Deleting a shared source affects every follower. Its scan history stays; it is simply no longer scanned. */

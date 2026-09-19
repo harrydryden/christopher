@@ -141,7 +141,8 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     assert.equal(new URL(page.url()).pathname, "/library");
     assert.equal(await page.getByRole("group", { name: "Appearance", exact: true }).count(), 0);
     assert.equal(await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Library", exact: true }).getAttribute("aria-current"), "page");
-    assert.equal(await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "CVs", exact: true }).getAttribute("aria-current"), null);
+    // Applications owns the CV pages now; on Library it must not be the current entry.
+    assert.equal(await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Applications", exact: true }).getAttribute("aria-current"), null);
     const experienceTab = page.getByRole("tab", { name: "Experience", exact: true });
     const educationTab = page.getByRole("tab", { name: "Education, skills and interests", exact: true });
     const introTab = page.getByRole("tab", { name: "Intro", exact: true });

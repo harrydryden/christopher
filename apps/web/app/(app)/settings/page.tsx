@@ -40,6 +40,7 @@ export default async function SettingsPage() {
         }
       />
 
+      <div id="keywords">
       <Card title="Keywords">
         <SettingsForm action={saveKeywords}>
           <label className={labelClass}>
@@ -58,6 +59,7 @@ export default async function SettingsPage() {
           </label>
         </SettingsForm>
       </Card>
+      </div>
 
       <Card title="Match fields">
         <SettingsForm action={saveMatchFields}>

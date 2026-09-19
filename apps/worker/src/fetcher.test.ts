@@ -183,6 +183,69 @@ describe("polite fetcher", () => {
     await expect(f.fetchText("https://www.example.test/", { maxBodyBytes: 100 })).resolves.toMatchObject({ status: 200 });
   });
 
+describe("binary bodies", () => {
+  /** A PNG with a recognisable body, so a test can tell "the same bytes" from "about that many". */
+  const png = (length = 400) => {
+    const bytes = Buffer.alloc(length);
+    bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+    for (let i = 8; i < length; i++) bytes[i] = i % 251;
+    return bytes;
+  };
+
+  it("returns the exact bytes and the response's headers", async () => {
+    const icon = png();
+    const site = await startTestServer({ "icons.test": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /\n", contentType: "text/plain" },
+      "/favicon.png": { body: icon, contentType: "image/png", headers: { "cache-control": "max-age=3600" } },
+      "/wants-an-image": (req) => ({ body: String(req.headers.accept ?? ""), contentType: "text/plain" }),
+    } }, ["icons.test"]);
+    try {
+      const f = new PoliteFetcher({ userAgent: "test", hostMap: site.hostMap, perHostDelayMs: 0, respectRobots: () => true });
+      const res = await f.fetchBytes("https://icons.test/favicon.png");
+      expect(res.status).toBe(200);
+      expect(res.url).toBe("https://icons.test/favicon.png");
+      expect(res.headers["content-type"]).toBe("image/png");
+      expect(res.headers["cache-control"]).toBe("max-age=3600");
+      // Byte for byte: a logo that arrives through a utf8 decode is a different image.
+      expect(Buffer.from(res.bytes)).toEqual(icon);
+      expect(res.bytes).toBeInstanceOf(Uint8Array);
+
+      // It says what it is after, so a host that serves HTML to anything else sends the icon.
+      const echoed = await f.fetchBytes("https://icons.test/wants-an-image");
+      expect(Buffer.from(echoed.bytes).toString("utf8")).toContain("image/");
+    } finally { await site.close(); }
+  });
+
+  it("refuses a body over the cap rather than storing half an image", async () => {
+    const site = await startTestServer({ "big-icon.test": {
+      "/robots.txt": { status: 404, body: "" },
+      "/hero.png": { body: png(20_000), contentType: "image/png" },
+    } }, ["big-icon.test"]);
+    try {
+      const f = new PoliteFetcher({ userAgent: "test", hostMap: site.hostMap, perHostDelayMs: 0 });
+      const error = await f.fetchBytes("https://big-icon.test/hero.png", { maxBodyBytes: 1_000 }).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(SourceFetchError);
+      expect((error as SourceFetchError).kind).toBe("parse");
+      expect((error as Error).message).toContain("refusing truncated");
+      await expect(f.fetchBytes("https://big-icon.test/hero.png", { maxBodyBytes: 512 * 1024 })).resolves.toMatchObject({ status: 200 });
+    } finally { await site.close(); }
+  });
+
+  it("obeys robots.txt, and reads a 403 and a 429 the way a page fetch does", async () => {
+    const paced: Array<{ host: string; delayMs: number }> = [];
+    const f = fetcher({ deferHost: async (host, delayMs) => { paced.push({ host, delayMs }); } });
+    const denied = await f.fetchBytes("https://www.example.test/private/secret").catch((e: unknown) => e);
+    expect(denied).toBeInstanceOf(SourceFetchError);
+    expect((denied as Error).message).toContain("robots.txt disallows");
+
+    const blocked = await f.fetchBytes("https://blocked.test/403").catch((e: unknown) => e);
+    expect((blocked as SourceFetchError).kind).toBe("blocked");
+    const limited = await f.fetchBytes("https://blocked.test/429").catch((e: unknown) => e);
+    expect((limited as SourceFetchError).kind).toBe("rate_limited");
+    expect(paced.at(-1)).toEqual({ host: "blocked.test", delayMs: 5000 });
+  });
+});
+
 describe("memory bounds", () => {
   it("refuses a body over the global ceiling however much the caller allows", async () => {
     // The Greenhouse board that killed the worker answered with 41 MB against a caller-set

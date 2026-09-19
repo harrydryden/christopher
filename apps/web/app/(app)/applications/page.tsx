@@ -13,7 +13,6 @@ export default async function ApplicationsPage() {
   const rows = await db().select({ id: applications.id, cvId: applications.cvId, jobTitle: applications.jobTitle, companyName: applications.companyName, appliedOn: applications.appliedOn, status: applications.status, notes: applications.notes, history: applications.history })
     .from(applications).where(eq(applications.userId, user.id)).orderBy(desc(applications.appliedOn));
   return <div className="max-w-4xl space-y-5"><PageHeader title="Applications" />
-    <Link href="/cv" className="underline">Open CV builder</Link>
     {!rows.length && <p>No applications recorded yet.</p>}
     {rows.map(row => <section key={row.id} className="space-y-3 border-2 border-line bg-raised p-4">
       <h2 className="ds-pixel text-12">{row.companyName} · {row.jobTitle}</h2><p className="text-14 text-muted">Applied on {row.appliedOn}</p>

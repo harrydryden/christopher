@@ -21,6 +21,7 @@ const skipBuild = process.argv.includes("--no-build");
 
 const { Pool } = createRequire(new URL("../apps/web/package.json", import.meta.url))("pg");
 const SMOKE_EMAIL = "smoke@christopher.invalid";
+const SMOKE_DOMAIN = "smoke.invalid";
 
 /**
  * A disposable administrator account with one session row. Same cookie shape as apps/web/lib/session.ts:
@@ -41,6 +42,24 @@ async function signIn(pool) {
   return { userId: user.id, cookie: `christopher_session=v2.${session.id}.${expires}.${sig}` };
 }
 
+/**
+ * A company this account follows, so the company page has something to render. The catalogue is
+ * shared, so the row is its own throwaway domain rather than one of the seeded companies, and it
+ * goes at the end with the account.
+ */
+async function followCompany(pool, userId) {
+  const { rows: [company] } = await pool.query(
+    `insert into companies (name, homepage_url, domain) values ('Smoke Company', 'https://smoke.invalid', $1)
+     on conflict (domain) do update set name = excluded.name returning id`,
+    [SMOKE_DOMAIN],
+  );
+  await pool.query(
+    "insert into company_subscriptions (user_id, company_id) values ($1, $2) on conflict do nothing",
+    [userId, company.id],
+  );
+  return company.id;
+}
+
 function run(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { stdio: "inherit", ...opts });
@@ -50,7 +69,8 @@ function run(cmd, args, opts = {}) {
 }
 
 const PAGES = [
-  ["/", ["Roles", "Location"], "Auto-matched"],
+  // The three tabs are the whole role workflow; archived roles are a section inside Dismissed.
+  ["/", ["Roles", "Location", "Shortlisted", "Matched", "Dismissed"], "Matched"],
   ["/companies", ["Companies"]],
   ["/suggestions", ["Discover companies", "Companies to review"]],
   ["/suggestions?view=sources", ["Add a source"]],
@@ -63,14 +83,14 @@ const PAGES = [
   ["/admin/settings", ["System settings", "Schedule"]],
   ["/admin/catalogue", ["Company catalogue"]],
   ["/admin/health", ["Operations", "Background worker"]],
-  ["/cv", ["CV builder", "Saved CVs"]],
+  ["/cv", ["CV builder", "Saved CVs", "Applications", "CVs"]],
   ["/library", ["Library", "Intro", "Website", "Experience", "Education, skills and interests"]],
-  ["/applications", ["Applications"]],
-  ["/?archive=1", ["Roles"], "Archived"],
-  ["/?view=auto-matched", ["Roles"], "Auto-matched"],
-  ["/?view=user-shortlisted", ["Roles"], "User-shortlisted"],
-  ["/?view=user-dismissed", ["Roles"], "User-dismissed"],
-  ["/?view=archived", ["Roles"], "Archived"],
+  ["/applications", ["Applications", "CVs"]],
+  ["/?archive=1", ["Roles", "Archived"], "Dismissed"],
+  ["/?view=auto-matched", ["Roles"], "Matched"],
+  ["/?view=user-shortlisted", ["Roles"], "Shortlisted"],
+  ["/?view=user-dismissed", ["Roles", "Archived"], "Dismissed"],
+  ["/?view=archived", ["Roles", "Archived"], "Dismissed"],
   ["/api/scan-status", ['"text"']],
   ["/api/export.csv", ["company"]],
 ];
@@ -146,7 +166,11 @@ async function main() {
   if (anon.status !== 307 && anon.status !== 302) failures.push(`/ without a session returned ${anon.status}, expected a redirect to /login`);
   else if (!(anon.headers.get("location") ?? "").includes("/login")) failures.push(`/ redirected to ${anon.headers.get("location")}, expected /login`);
 
-  for (const [path, expected, selectedStatus] of PAGES) {
+  // The company page and its logo are per company, so they join the list once there is one.
+  const companyId = await followCompany(pool, userId);
+  const pages = [...PAGES, [`/companies/${companyId}`, ["Roles", "Add a role", "Notepad", "Set up this company"]]];
+
+  for (const [path, expected, selectedStatus] of pages) {
     let res;
     let body;
     try {
@@ -178,11 +202,24 @@ async function main() {
     console.log(`  ${res.status}  ${path}  (${body.length} bytes)`);
   }
 
+  // A company with no captured logo answers 404, one the worker has captured answers 200. A 500
+  // means the route is broken, and an image that 500s is invisible on every page that shows it.
+  const logoPath = `/api/companies/${companyId}/logo`;
+  try {
+    const logo = await fetch(`http://127.0.0.1:${PORT}${logoPath}`, { headers: { cookie }, redirect: "manual", signal: AbortSignal.timeout(15_000) });
+    if (logo.status !== 200 && logo.status !== 404) failures.push(`${logoPath} returned ${logo.status}, expected 200 or 404`);
+    else console.log(`  ${logo.status}  ${logoPath}`);
+  } catch (err) {
+    failures.push(`${logoPath} threw: ${err.cause?.message ?? err.message}`);
+  }
+
   try { await verifyCvWorkspace(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL, userId); }
   catch (error) { failures.push(`CV browser flow: ${error.message}`); }
 
-  // The disposable account takes its sessions, settings and drafts with it.
+  // The disposable account takes its sessions, settings and drafts with it, and the throwaway
+  // company takes its subscription.
   await pool.query("delete from users where email = $1", [SMOKE_EMAIL]);
+  await pool.query("delete from companies where domain = $1", [SMOKE_DOMAIN]);
   await pool.end();
 
   const exited = once(server, "exit");

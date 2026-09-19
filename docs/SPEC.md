@@ -172,12 +172,14 @@ Requirement IDs (R-x.y) are referenced by the test plan.
 
 ### 3.1 Company list
 
-- **R-1.1** Add a company by homepage URL. Name is derived from the page title / `og:site_name` and editable. Favicon fetched for display.
+- **R-1.1** Add a company by homepage URL. Name is derived from the page title / `og:site_name`, and changed by an administrator or proposed by a follower (R-1.8). The logo is **captured once by the worker and stored as bytes** in `company_logos`: a remote icon URL is not enough, because some sites hand their icon to a browser and refuse ours, so what a page showed used to depend on who asked. The interface serves the stored bytes from `/api/companies/<id>/logo` to signed-in readers, versioned by capture time (`?v=<ms>` and a matching `etag`, cached private for a week), and shows that one image everywhere a company appears — the company page, the companies list, the administrator's catalogue, and every row of the roles table. A refusal is retried with a widening backoff (`logo_attempts`, `logo_next_attempt_at`, `logo_error`); a stored logo is re-captured after 90 days so a rebrand is not permanent, and is never blanked by a site that is merely down today. Until a capture succeeds the browser walks the old chain — the stored `favicon_url`, the site's `/favicon.ico`, a public icon service — so nothing shows a broken image.
 - **R-1.2** Company states: `active` (scanned daily), `paused` (kept, not scanned), `archived` (hidden, data retained).
 - **R-1.3** A company can have more than one careers source (e.g. a Greenhouse board plus a separate internships page). Scans union them.
 - **R-1.4** Bulk add by pasting a list of URLs (one per line). Each is discovered independently.
 - **R-1.5** Deleting a company (administrators only) requires confirmation and cascades to its postings and every follower's views; decisions remain in each learning corpus (anonymised to title/company name). Stopping following removes only your subscription and views.
 - **R-1.6** Companies are shared. Adding a homepage URL already in the catalogue follows the existing company rather than creating a second one, and its matching open roles enter your table immediately from the last scan. The states in R-1.2 are per follower; the shared company is scanned while any follower is active, once a day.
+- **R-1.7** **Add a role by URL.** A follower can paste the URL of one posting the scan has not collected, from the company page. The URL is canonicalised for identity (fragment, `utm_*` and referral parameters removed, trailing slash dropped) so the same posting pasted twice is one row, and the same paste repeated collapses onto one queued task. The worker fetches and extracts it into the shared catalogue with `origin = 'user'` and `added_by` set to that account. **The account's own view is created whatever its gate says** — a role you went and found is one you meant to see — and when it falls outside that gate the interface says so and offers to widen the keywords, because a scan would not have caught it. Other followers see it only if their own gate passes, exactly as for a scanned posting. **A scan never closes a `user` posting**: it was never in a listing to go missing from. A later scan that observes the same URL adopts the row, which from then on behaves as an ordinary posting. The company page shows this account's imports from the last seven days (queued, the reason a refusal gives, or the role it added) and, outliving those tasks, the roles it added that its filters would have refused.
+- **R-1.8** **Name suggestions.** The catalogue is shared, so a name reaches every follower and only an administrator changes it. A follower proposes one instead — the case that matters is a company added before anyone confirmed its careers page, whose name was taken from its domain. One pending proposal per account and company: proposing again corrects it. The company page shows "You suggested «X» · awaiting an administrator", and Admin › Company catalogue lists each pending proposal with who made it and when, to Apply (rename and resolve in one transaction) or Dismiss. An administrator proposing a name is simply renaming it, so it is applied at once and recorded as resolved by them.
 
 ### 3.2 Careers source discovery (homepage → careers page)
 
@@ -212,7 +214,7 @@ Pipeline, in order. Every step adds candidates with a confidence; the best candi
 
 ### 3.3 Daily scan and job extraction
 
-- **R-3.1** A daily run starts at the configured local time (default 06:00) and enqueues one `scan_company` task per active company. Tasks execute across distinct domains (`WORKER_CONCURRENCY` slots, six on the deployed worker), a 3-minute budget per company enforced as a per-task deadline, one retry on transient failure. Pacing is per host and shared across the deployment through `host_pacing`: one request per 2 seconds to a company's own site, and one per 250 ms to the applicant-tracking API hosts, which are shared vendor infrastructure published for job boards to read (the same list that is exempt from robots.txt, `ATS_HOST_SUFFIXES`) — at 2 seconds a request, every Greenhouse board in the catalogue and every per-role description fetch would queue behind one hostname for half an hour. A `Retry-After` back-off overrides either interval. A run for one company never blocks another.
+- **R-3.1** A daily run starts at the configured local time (default 06:00) and enqueues one `scan_company` task per active company. Tasks execute across distinct domains (`WORKER_CONCURRENCY` slots, six on the deployed worker), a 3-minute budget per company enforced as a per-task deadline, one retry on transient failure. Pacing is per host and shared across the deployment through `host_pacing`: one request per 2 seconds to a company's own site, and one per 250 ms to the applicant-tracking API hosts, which are shared vendor infrastructure published for job boards to read (the same list that is exempt from robots.txt, `ATS_HOST_SUFFIXES`) — at 2 seconds a request, every Greenhouse board in the catalogue and every per-role description fetch would queue behind one hostname for half an hour. A `Retry-After` back-off overrides either interval. A run for one company never blocks another. The same run sweeps the catalogue for logos: up to 200 companies that have never been captured, were captured more than 90 days ago, or whose retry backoff has passed are queued as `discover` tasks with `logo_only`, oldest attempt first. A capture that fails records its backoff and the task still finishes `done`: the retry policy for a logo is the stored backoff, not the queue's attempts.
 - **R-3.2** Each source type has an adapter that returns normalised postings: `external_id?, title, url, location?, department?, employment_type?, remote?, posted_at?, updated_at?, description?, salary_text?`.
 - **R-3.3** Adapter tiers:
   - *Tier 1, structured JSON/XML feeds (v1)*: Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Recruitee, Personio, BambooHR, Workday, Pinpoint, Breezy; plus generic JSON-LD `JobPosting` and RSS/Atom feeds.
@@ -238,12 +240,13 @@ Pipeline, in order. Every step adds candidates with a confidence; the best candi
 - **R-4.6** Postings found on a company's first successful scan are flagged `seeded`. They still show as New for 7 days (they are new to you) but carry the seeded marker.
 - **R-4.7** Scans that are not `ok` never change `missing_scans` or close anything.
 - **R-4.8** Roles that are identical in title at the same company but differ in location (common on Greenhouse) remain separate rows; the table offers "group by role" which merges them into one expandable row, and a decision on the group applies to all members.
+- **R-4.10** A posting with `origin = 'user'` (added by a follower from its URL, R-1.7) takes no part in reconciliation: it was never in a listing, so no `ok` scan counts it missing, closes it or reopens it. When a scan does observe its canonical URL, the row is *adopted* rather than duplicated: it takes the listing's `external_key` and source, becomes `origin = 'scan'`, keeps `added_by`, and is reconciled from then on like any other posting, including the two-miss close in R-4.2. An `updated` event records the adoption. Adoption is skipped if a scanned row already holds that `(source, external_key)`.
 
 ### 3.5 Keyword gate
 
 - **R-5.1** Settings: `include_keywords` (default `["operations"]`), `exclude_keywords` (default empty), `match_fields` (default title; optional department, description), `location_filter` (optional list of allowed location substrings or countries, plus an include-remote flag).
 - **R-5.2** Matching is case-insensitive and word-boundary aware; a quoted phrase matches exactly and treats `*` literally; a trailing `*` matches a prefix (`operat*` → Operations, Operational), a leading `*` a suffix (`*ops` → DevOps, RevOps), and inside a phrase the wildcard widens only its own word (`strateg* lead`). A bare `*` matches nothing. Any exclude match wins. Description matching uses text the feed already supplies; for HTML sources it is title and department only unless enabled per company (it requires a detail fetch per posting).
-- **R-5.3** Every posting from every scan is stored once in the shared `jobs` table regardless of anyone's gate. Each follower's gate is evaluated separately and recorded in `user_jobs`; a view is created when the gate passes, and only views with `in_table = matched AND NOT excluded AND location_ok` appear in that account's table. Storing every posting is what makes keyword changes retroactive without a rescan.
+- **R-5.3** Every posting from every scan is stored once in the shared `jobs` table regardless of anyone's gate. Each follower's gate is evaluated separately and recorded in `user_jobs`; a view is created when the gate passes, and only views with `in_table = matched AND NOT excluded AND location_ok` appear in that account's table. Storing every posting is what makes keyword changes retroactive without a rescan. A role the account added itself by pasting its URL (`jobs.added_by`) is in that account's table whatever the gate says, before and after a scan adopts it; the gate verdict is still recorded beside it so the interface can say the role is an exception.
 - **R-5.4** Changing keywords re-evaluates all open roles and roles closed in the last 30 days immediately; the table reflects the new gate without waiting for the next scan.
 - **R-5.5** The matched terms are stored per job and shown in the row (e.g. a chip "operations").
 - **R-5.6** Suggestions from scans. After every daily run (and on demand from Learning), the latest scan evidence of every active source is mined, without a model call, for what the gate turns away in the user's locations: seniority labels from a fixed vocabulary that would admit roles already matching the role keywords ("Lead" admitting nine London roles), and role-type words the include list does not cover, proposed as a wildcard when the word appears in several inflections (`partnership*`). Level words (manager, analyst, senior…) are never proposed as role types. Each suggestion carries the count, the companies and three example titles, and is accepted or rejected like any other filter suggestion; accepting a seniority label adds it to the seniority list.
@@ -270,9 +273,20 @@ Pipeline, in order. Every step adds candidates with a confidence; the best candi
 - **R-7.2** Keyboard: `j`/`k` move, `a` apply, `s` skip (focus reason), `enter` save, `o` open description, `g` toggle group-by-role. Multi-select with `x`; bulk skip with one reason.
 - **R-7.3** Header banner: last run time and outcome ("Today 06:03 · 28 of 30 companies OK · 4 new roles"), linking to the Health panel when anything failed.
 - **R-7.4** Sections below the table: "Outside your keywords" (3.6) and "Hidden by your preferences" (collapsed).
-- **R-7.5** CSV export of the current filtered view.
+- **R-7.5** CSV export of the current filtered view. `?view=archived` still exports the archived view, which no longer has a tab of its own.
+- **R-7.8** **Tabs.** The strip above the table is three tabs — **Shortlisted**, **Matched**, **Dismissed** — each with its count, because those are the three things a person acts on. **Archived is a status but not a tab**: archived roles are a card below the dismissed table, with their own count, their own pagination (`archivedPage`) and their own Restore. A link that still says `view=archived`, `archive=1` or `decision=skip` — a bookmark, an export URL, an older page — lands on Dismissed, where those roles now are.
+- **R-7.9** **Sidebar.** Roles, Companies, **Applications**, Library, Settings. Applications and CVs are one job, so they are one entry with section tabs (Applications / CVs); `/cv`, `/cv/library` and `/cv/<id>` all keep Applications lit.
 
-**Companies.** List with source type, confidence badge, last scan status, open/matched role counts, actions (rescan, re-discover, edit source URL, pause, archive). Company detail shows sources, scan history with outcomes and durations, and all roles including closed.
+**Companies.** List with source type, confidence badge, last scan status, open/matched role counts, actions (rescan, re-discover, edit source URL, pause, archive).
+
+**Company page.** Header, Roles, Add a role, Notepad — in that order, and nothing else by default.
+
+- The **header** carries the company's stored logo, its name, this account's status for it, the homepage link and the "shared catalogue entry · followed by N accounts" line, with every action beside it: Rescan, Re-discover, Pause / Resume / Follow again, Archive and Stop following.
+- **Set up this company** appears only while the company has no working careers source — no source that is `active` or `failing`, or a discovery run that stopped at `needs_confirmation` or `not_found`. It holds everything needed to fix that and nothing else: one sentence that says whether discovery is still looking, the paste-a-URL form, the candidates discovery found with "Use this", and the name suggestion form (R-1.8). It is gone the moment a source works.
+- **Roles** is the same tabbed workspace the roles page shows, scoped to this company.
+- **Add a role** is R-1.7: the URL form, this account's recent imports, and the roles it added that fall outside its filters. While an import is queued or running the page refreshes itself.
+- **Notepad** replaces the old details card. The note is the follower's own, stored as markdown-lite text (paragraphs, `- ` bullets, `**bold**`) in `company_subscriptions.notes`, so notes typed into the earlier plain textarea are still valid and still read as themselves. The editor is a `contenteditable` with Bold and Bullet list, Ctrl/Cmd+B and Ctrl/Cmd+S, and a saved/unsaved indicator; stored text is never rendered as HTML.
+- **Catalogue diagnostics** is a collapsed `<details>` at the bottom, **for administrators only**: the sources with Enable / Disable / Mark confirmed, the scan history with outcomes and durations, the discovery log, the company profile with Refresh profile, and the logo's capture state with Refresh logo. Nothing an ordinary follower needs lives only here — every action it holds is also reachable from the header or the setup card.
 
 **Suggestions.** Similar-company recommendations (3.8) with accept / reject-with-reason.
 
@@ -360,10 +374,24 @@ user_settings        (user_id, key) pk, value jsonb, updated_at   -- gate, seedP
                                                                   -- descriptionMatchCompanyIds, suggestionsEnabled, cv*,
                                                                   -- aiBudgetUsd (default in code), aiBudgetResetAt
 
-companies            id, name, homepage_url, domain (unique), favicon_url, added_at, archived_at,
+companies            id, name, homepage_url, domain (unique), favicon_url, added_by, added_at, archived_at,
+                     logo_fetched_at, logo_attempts int, logo_next_attempt_at, logo_error,
                      status [active|paused|archived]  -- derived: active while any follower is active
+                     -- favicon_url is where the stored logo came from, and the browser's fallback
+                     -- while nothing is stored; the logo retry state sits here so the scheduler
+                     -- can ask "what is due?" with one query and no join
+
+company_logos        company_id pk, content_type, data_base64, byte_length, source [site_icon|icon_service],
+                     source_url, fetched_at
+                     -- the captured bytes, stored once and served by the interface everywhere
+
+company_name_suggestions id, company_id, user_id, name, note, status [pending|applied|dismissed],
+                     created_at, resolved_at, resolved_by
+                     -- one pending row per account and company; an administrator applies or dismisses it
+
 company_subscriptions id, user_id, company_id (unique per user), status [active|paused|archived], notes,
                      added_at, archived_at
+                     -- notes are markdown-lite text: paragraphs, `- ` bullets, `**bold**`
 
 career_sources       id, company_id, type [greenhouse|lever|ashby|workable|smartrecruiters|recruitee|
                      personio|bamboohr|workday|pinpoint|breezy|jsonld|rss|html], url, api_url,
@@ -384,8 +412,11 @@ jobs                 id, company_id, source_id, external_key (unique per source)
                      url, location, department, employment_type, remote bool, salary_text,
                      posted_at, first_seen_at, last_seen_at, closed_at, status [open|closed],
                      missing_scans int, seeded bool, reopened_count int, repost_of_job_id,
-                     description_text, description_hash, description_fetched_at, created_at, updated_at
+                     description_text, description_hash, description_fetched_at,
+                     origin [scan|user], added_by, created_at, updated_at
                      -- one row per observed posting, shared by every follower
+                     -- origin = 'user' is a posting a follower pasted the URL of (R-1.7): a scan
+                     -- never closes one, and a scan that observes the same URL adopts it
 
 user_jobs            (user_id, job_id) pk, keyword_matched bool, keyword_terms, excluded bool, location_ok bool,
                      in_table bool, near_miss bool, fit_score int, fit_verdict, fit_rationale, fit_profile_version,
@@ -705,7 +736,7 @@ Scale-up stage (Series A to C), remit that includes hiring and process design, r
 ### Store matching roles only (per account)
 - Every observed posting is stored once in the shared catalogue. An account's *view* of it (`user_jobs`) is created only when that account's role, seniority and location gates pass; near-miss storage/scoring is disabled.
 - Scan completeness and closure detection still use the full observed listing, never only matching jobs. Scan counts describe observed postings; an account's company role counts describe its stored views.
-- Re-evaluating an account's filters removes its views of non-matches unless they have any decision, a saved CV or an explicit archive marker. These retained records stay outside the inbox. Other followers of the same company are unaffected.
+- Re-evaluating an account's filters removes its views of non-matches unless they have any decision, a saved CV, an explicit archive marker, or were added by that account from a URL. These retained records stay outside the inbox. Other followers of the same company are unaffected.
 - Widened filters admit newly eligible postings immediately from the stored catalogue, and further ones on the next scan.
 - Skip requires a non-blank reason. Decisions are made one role at a time; there is no bulk decision path. Decision snapshots feed profile synthesis and filter suggestions immediately; accepted suggestions re-evaluate storage and table membership.
 

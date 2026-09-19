@@ -278,6 +278,19 @@ kbd {
   background-repeat: no-repeat;
 }
 
+/* The notepad's content. A contenteditable makes its own `p`, `ul` and `li`, which preflight
+   otherwise leaves unmarked and unindented, so the bullets a person inserts must be drawn here
+   rather than by a class the browser will never add. */
+@utility ds-notepad {
+  & p { margin: 0; }
+  & p + p,
+  & p + ul,
+  & ul + p,
+  & ul + ul { margin-top: 0.625rem; }
+  & ul { list-style: disc; padding-left: 1.25rem; }
+  & li { margin: 0; }
+}
+
 /* Primary and danger buttons carry a hard shadow that collapses on press. */
 @utility ds-press {
   &:active:not(:disabled) {

@@ -1,4 +1,4 @@
-import { scanRunSummary, schema, enqueueTask, listUserIds, type Task } from "@christopher/db";
+import { companiesDueLogoCapture, scanRunSummary, schema, enqueueTask, listUserIds, type Task } from "@christopher/db";
 import { dedupeKeyFor, localDateParts, priorityFor, type SystemSettings } from "@christopher/core";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
@@ -8,6 +8,13 @@ interface DailyPayload {
   trigger: "schedule" | "manual";
   runDate?: string;
 }
+
+/**
+ * How many logos one daily run will capture. A logo is decoration and each one costs a homepage
+ * read plus an icon read, so the sweep is bounded and takes the oldest attempt first: a catalogue
+ * larger than this still works through itself a day at a time, newly followed companies first.
+ */
+const LOGO_CAPTURES_PER_DAY = 200;
 
 /**
  * Fan out one scan_company task per active company, then a finaliser that summarises the run.
@@ -65,9 +72,21 @@ async function runDaily(task: Task, deps: WorkerDeps, settings: SystemSettings):
     })).onConflictDoNothing();
   }
 
+  // The logo sweep rides with the scan fan-out rather than on a schedule of its own: it is the
+  // once-a-day pass over the catalogue, and a company nobody has captured yet, one whose icon is
+  // three months old, and one whose last attempt has finished backing off are all due here. The
+  // dedupe key means a sweep that runs twice, or one that runs while yesterday's task is still
+  // queued, adds nothing.
+  const dueLogos = await companiesDueLogoCapture(deps.db, deps.now(), LOGO_CAPTURES_PER_DAY);
+  let logosQueued = 0;
+  for (const company of dueLogos) {
+    const payload = { companyId: company.id, logoOnly: true, homepageUrl: company.homepageUrl };
+    if (await enqueueTask(deps.db, "discover", payload, { dedupeKey: dedupeKeyFor("discover", payload), priority: 6 })) logosQueued++;
+  }
+
   if (task.id) await deps.db.update(schema.tasks).set({ result: { scanRunId: run.id, companies: companies.length } }).where(eq(schema.tasks.id, task.id));
-  log.info("daily run started", { runId: run.id, runDate, companies: companies.length });
-  return { scanRunId: run.id, companies: companies.length };
+  log.info("daily run started", { runId: run.id, runDate, companies: companies.length, logosQueued });
+  return { scanRunId: run.id, companies: companies.length, logosQueued };
 }
 
 /** Summarise a scan run once its scans are done. Called after the queue drains and by the scheduler. */

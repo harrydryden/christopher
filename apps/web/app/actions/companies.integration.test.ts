@@ -23,7 +23,7 @@ vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (session ? {
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
-import { addCompanies, rescanCompany, unfollowCompany } from "./companies";
+import { addCompanies, importPosting, refreshCompanyLogo, rescanCompany, saveCompanyNotes, suggestCompanyName, unfollowCompany } from "./companies";
 
 beforeAll(async () => {
   const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
@@ -42,8 +42,10 @@ beforeEach(async () => {
 });
 
 const urls = (value: string) => { const form = new FormData(); form.set("urls", value); return form; };
-const tasksOfType = (type: "scan_company" | "discover" | "reevaluate_gate") =>
+const tasksOfType = (type: "scan_company" | "discover" | "reevaluate_gate" | "import_posting") =>
   database.select().from(schema.tasks).where(eq(schema.tasks.type, type));
+const urlForm = (value: string) => { const form = new FormData(); form.set("url", value); return form; };
+const nameForm = (value: string) => { const form = new FormData(); form.set("name", value); return form; };
 
 /** The company one account already added, with a source and a posting a scan stored. */
 async function scannedCompany() {
@@ -108,4 +110,96 @@ it("leaves the shared company and the other follower alone when one account stop
   // One active follower is still enough to keep the shared company scanned.
   expect((await database.select().from(schema.companies))[0]!.status).toBe("active");
   expect(job.companyId).toBe(company.id);
+});
+
+/** The account that added the company follows it; `second` does not until it says so. */
+async function followedCompany() {
+  await expect(addCompanies(urls("https://acme.example"))).rejects.toThrow("redirect:/companies?added=1");
+  const [company] = await database.select().from(schema.companies);
+  return company!;
+}
+
+it("queues one import per posting, however the URL was decorated, and only for a follower", async () => {
+  const company = await followedCompany();
+
+  await importPosting(company.id, urlForm("https://job-boards.greenhouse.io/acme/jobs/1234567?utm_source=newsletter&gh_src=abc#apply"));
+  const queued = await tasksOfType("import_posting");
+  expect(queued).toHaveLength(1);
+  expect(queued[0]!.payload).toEqual({ userId: first.id, companyId: company.id, url: "https://job-boards.greenhouse.io/acme/jobs/1234567" });
+
+  // The same posting pasted again, from the board this time: one task, not two.
+  await importPosting(company.id, urlForm("  https://job-boards.greenhouse.io/acme/jobs/1234567/  "));
+  expect(await tasksOfType("import_posting")).toHaveLength(1);
+
+  // A different posting is its own task.
+  await importPosting(company.id, urlForm("https://job-boards.greenhouse.io/acme/jobs/7654321"));
+  expect(await tasksOfType("import_posting")).toHaveLength(2);
+
+  // An account that does not follow the company cannot put anything in the shared catalogue.
+  session = secondCookie;
+  await expect(importPosting(company.id, urlForm("https://job-boards.greenhouse.io/acme/jobs/999"))).rejects.toThrow("You do not follow this company.");
+  expect(await tasksOfType("import_posting")).toHaveLength(2);
+});
+
+it("takes a member's name suggestion as a proposal and an administrator's as the rename", async () => {
+  const company = await followedCompany();
+  session = secondCookie;
+  await expect(addCompanies(urls("https://acme.example"))).rejects.toThrow("redirect:/companies?added=0&followed=1");
+
+  // A member proposes; the shared name is untouched until an administrator says so.
+  expect(await suggestCompanyName(company.id, { ok: true }, nameForm("  Acme Robotics  "))).toEqual({ ok: true, message: "An administrator will review your suggestion." });
+  const pending = await database.select().from(schema.companyNameSuggestions);
+  expect(pending.map(row => [row.userId, row.name, row.status])).toEqual([[second.id, "Acme Robotics", "pending"]]);
+  expect((await database.select().from(schema.companies))[0]!.name).toBe(company.name);
+
+  // Proposing again corrects that one row rather than queuing a second.
+  await suggestCompanyName(company.id, { ok: true }, nameForm("Acme Robotics Ltd"));
+  const corrected = await database.select().from(schema.companyNameSuggestions);
+  expect(corrected).toHaveLength(1);
+  expect(corrected[0]!.name).toBe("Acme Robotics Ltd");
+
+  // An administrator proposing a name is renaming it: applied on the spot, and recorded as theirs.
+  session = firstCookie;
+  const result = await suggestCompanyName(company.id, { ok: true }, nameForm("Acme Robotics plc"));
+  expect(result).toEqual({ ok: true, message: "Renamed to «Acme Robotics plc»." });
+  expect((await database.select().from(schema.companies))[0]!.name).toBe("Acme Robotics plc");
+  const applied = (await database.select().from(schema.companyNameSuggestions)).find(row => row.userId === first.id)!;
+  expect([applied.status, applied.resolvedBy]).toEqual(["applied", first.id]);
+  // The member's proposal is untouched: an administrator resolves it in the catalogue.
+  expect((await database.select().from(schema.companyNameSuggestions)).find(row => row.userId === second.id)!.status).toBe("pending");
+
+  expect(await suggestCompanyName(company.id, { ok: true }, nameForm("   "))).toEqual({ ok: false, error: "Enter the company's name." });
+});
+
+it("stores the notepad's text, clears it to null when empty, and refuses an unreasonable one", async () => {
+  const company = await followedCompany();
+  const notes = async () => (await database.select().from(schema.companySubscriptions))[0]!.notes;
+
+  expect(await saveCompanyNotes(company.id, "Spoke to their recruiter.\n\n- **next** wave ~September")).toEqual({ ok: true });
+  expect(await notes()).toBe("Spoke to their recruiter.\n\n- **next** wave ~September");
+
+  expect(await saveCompanyNotes(company.id, "   ")).toEqual({ ok: true });
+  expect(await notes()).toBeNull();
+
+  expect(await saveCompanyNotes(company.id, "x".repeat(20_001)))
+    .toEqual({ ok: false, error: "These notes are too long. Keep them under 20,000 characters." });
+  expect(await notes()).toBeNull();
+
+  session = secondCookie;
+  expect(await saveCompanyNotes(company.id, "not mine")).toEqual({ ok: false, error: "You do not follow this company." });
+});
+
+it("queues a logo capture for one company without disturbing its scan", async () => {
+  const company = await followedCompany();
+  await refreshCompanyLogo(company.id);
+  const discovers = await tasksOfType("discover");
+  // The company was added with a discovery task; the logo capture is a second, separately keyed one.
+  expect(discovers.map(task => task.dedupeKey).sort()).toEqual([`company_logo:${company.id}:${company.homepageUrl}`, `discover:${company.id}`]);
+  expect(discovers.find(task => task.dedupeKey?.startsWith("company_logo"))!.payload)
+    .toEqual({ companyId: company.id, logoOnly: true, homepageUrl: company.homepageUrl });
+
+  // Asking twice while it is still queued queues nothing more.
+  await refreshCompanyLogo(company.id);
+  expect(await tasksOfType("discover")).toHaveLength(2);
+  expect(await tasksOfType("scan_company")).toHaveLength(0);
 });

@@ -26,4 +26,5 @@ export { startCvBuildStep, finishCvBuildStep, failOpenCvBuildSteps, listCvBuildS
 export { cvRoleKey } from "./cv-role-key";
 
 export { syncCompanyStatus, subscribeToCompany, setSubscriptionStatus, subscribedCompanyIds } from "./subscriptions";
+export { storeCompanyLogo, noteLogoFailure, readCompanyLogo, companiesDueLogoCapture, LOGO_REFRESH_AFTER_MS, type StoredLogo } from "./company-logos";
 export { BOOTSTRAP_USER_ID, BOOTSTRAP_EMAIL, DEFAULT_ADMIN_EMAILS, SEED_TAGS, adminEmailsFrom, completeAccountClaim, createUser, isEntitledEmail, isPlaceholderEmail, listUserIds, normaliseEmail, promoteIfEntitled, seedTagVocabulary, type CreateUserInput, type CreateUserResult } from "./users";

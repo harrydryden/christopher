@@ -4,6 +4,7 @@ import { Fragment, startTransition, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { decide, decideRoles, archiveRoles } from "@/app/actions/decisions";
 import { Badge, decisionTone } from "@/components/Badge";
+import { CompanyFavicon } from "@/components/CompanyFavicon";
 import { FitBar, Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { Button, buttonClass } from "@/components/Button";
 import type { RoleRowVM } from "@/lib/queries/jobs";
@@ -277,29 +278,20 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                   </TD>
                   {!hideCompany && <TD>
                     <a href={`/companies/${row.companyId}`} className="flex items-center gap-1.5 no-underline hover:underline">
-                      {row.companyFaviconUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={row.companyFaviconUrl}
-                          alt=""
-                          width={14}
-                          height={14}
-                          referrerPolicy="no-referrer"
-                          className="shrink-0"
-                          onError={(e) => {
-                            e.currentTarget.style.display = "none";
-                          }}
-                        />
-                      ) : (
-                        <span className="inline-block h-3.5 w-3.5 shrink-0 bg-track" />
-                      )}
+                      {/* The same icon the company page shows: the captured logo when there is one,
+                          and the browser's own chain behind it. A bare <img> here is why Hims had a
+                          logo on its company page and a blank square on its roles. */}
+                      <CompanyFavicon src={row.companyLogoUrl ?? row.companyFaviconUrl} domain={row.companyDomain} size={14} />
                       <span className="max-w-[12rem] truncate">{row.companyName}</span>
                     </a>
                   </TD>}
                   <TD id={`role-row-${row.id}`} className="max-w-[22rem]">
-                    <button type="button" disabled={reasonBox?.pending} onClick={() => { setExpandedId(expandedId === row.id ? null : row.id); setReasonBox(null); }} aria-expanded={expandedId === row.id} className="text-left font-semibold text-fg hover:underline">
-                      {row.title}
-                    </button>
+                    <span className="flex flex-wrap items-center gap-2">
+                      <button type="button" disabled={reasonBox?.pending} onClick={() => { setExpandedId(expandedId === row.id ? null : row.id); setReasonBox(null); }} aria-expanded={expandedId === row.id} className="text-left font-semibold text-fg hover:underline">
+                        {row.title}
+                      </button>
+                      {row.addedByYou && <Badge tone="neutral">Added by you</Badge>}
+                    </span>
                     <p className="mt-1 text-12 text-muted"><span title={row.liveForTitle}>{row.liveForText}</span>{row.status === "closed" && <span className="ml-2 text-warn">Vacancy closed</span>}</p>
                   </TD>
                   <TD className="max-w-[10rem]">
@@ -403,7 +395,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                       </div>
                     ) : row.decision ? (
                       <div className="flex flex-wrap items-center gap-2">
-                        <Badge tone={decisionTone(row.decision.decision)}>{row.decision.decision === "apply" ? "User-shortlisted" : "User-dismissed"}</Badge>
+                        <Badge tone={decisionTone(row.decision.decision)}>{ROLE_STATUS_LABELS[row.decision.decision === "apply" ? "user-shortlisted" : "user-dismissed"]}</Badge>
                         {row.decision.reason && <p className="w-full text-14 text-fg">{row.decision.reason}</p>}
                         <button type="button" onClick={() => openReasonBox(row.id, row.decision!.decision, row.decision!.reason)} className="text-12 text-muted underline hover:text-fg">
                           Reconsider

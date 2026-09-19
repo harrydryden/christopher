@@ -1,5 +1,5 @@
 import { schema, reevaluateGate, type Task } from "@christopher/db";
-import { ats, sha1, stripHtml } from "@christopher/core";
+import { ats, extractMainText, sha1, stripHtml } from "@christopher/core";
 import { and, eq, inArray, ne } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { makeFetchContext, aiBudgetExceeded } from "../context";
@@ -85,21 +85,8 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
   });
 }
 
-/** Pick the densest plausible main-content block from a job detail page. */
-export function extractMainText(html: string): string | undefined {
-  const candidates = [
-    /<main\b[^>]*>([\s\S]*?)<\/main>/i,
-    /<article\b[^>]*>([\s\S]*?)<\/article>/i,
-    /<div[^>]+(?:id|class)="[^"]*(job-?description|posting|content|opening)[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
-  ];
-  for (const re of candidates) {
-    const m = html.match(re);
-    const body = m?.[m.length - 1];
-    if (body) {
-      const text = stripHtml(body);
-      if (text.length > 200) return text;
-    }
-  }
-  const all = stripHtml(html);
-  return all.length > 200 ? all : undefined;
-}
+/**
+ * Moved to @christopher/core (`posting-page.ts`), where the same reading serves a posting a
+ * follower pastes the URL of. Re-exported so the worker's own callers keep their import.
+ */
+export { extractMainText };

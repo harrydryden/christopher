@@ -16,6 +16,7 @@ import {
   keyPostings,
   looksRemote,
   modeForScanStatus,
+  normalisePostingUrl,
   normalizeTitle,
   priorityFor,
   IncompleteListingError,
@@ -397,8 +398,10 @@ async function scanSource(
 
   async function commitScan(deps: WorkerDeps): Promise<SourceOutcome> {
   if (updatedRecipe) await deps.db.update(schema.careerSources).set({ recipe: updatedRecipe }).where(eq(schema.careerSources.id, source.id));
-  const existingRows = await deps.db
+  const sourceRows = await deps.db
     .select({
+      origin: schema.jobs.origin,
+      addedBy: schema.jobs.addedBy,
       descriptionSource: schema.jobs.descriptionSource,
       descriptionTruncated: schema.jobs.descriptionTruncated,
       descriptionFetchedAt: schema.jobs.descriptionFetchedAt,
@@ -421,6 +424,11 @@ async function scanSource(
     })
     .from(schema.jobs)
     .where(eq(schema.jobs.sourceId, source.id));
+  // A posting a follower pasted the URL of was never in this listing, so its absence from one is
+  // no evidence about it: it is kept out of reconciliation altogether, which is what stops a scan
+  // counting it missing, closing it or reopening it. It rejoins the listing below, the first time
+  // a scan actually observes its URL.
+  const existingRows = sourceRows.filter((row) => row.origin !== "user");
   const existing: ExistingJob[] = existingRows.map((r) => ({ ...r, status: r.status, closedAt: r.closedAt }));
 
   const result = reconcile(existing, postings, { mode, now: deps.now(), closeAfterMissing: settings.closeAfterMissingScans });
@@ -431,9 +439,37 @@ async function scanSource(
   const descriptionQueue = new Set<string>();
   const viewInserts: Array<typeof schema.userJobs.$inferInsert> = [];
 
+  // A role somebody added by URL, which this listing now carries, is the same vacancy. The scan
+  // adopts that row instead of storing a second one beside it: the person's decisions, CV and
+  // history stay with it, and from here it is an ordinary scanned posting the two-miss rule can
+  // close like any other. The match is on the canonical URL, because the listing's identifier and
+  // the one derived from a pasted link will never agree.
+  const userRows = await deps.db
+    .select({
+      id: schema.jobs.id, url: schema.jobs.url, externalKey: schema.jobs.externalKey,
+      location: schema.jobs.location, locations: schema.jobs.locations, department: schema.jobs.department,
+      employmentType: schema.jobs.employmentType, remote: schema.jobs.remote, salaryText: schema.jobs.salaryText,
+      postedAt: schema.jobs.postedAt,
+    })
+    .from(schema.jobs)
+    .where(and(eq(schema.jobs.companyId, company.id), eq(schema.jobs.origin, "user")));
+  const userByUrl = new Map(userRows.map((row) => [normalisePostingUrl(row.url), row]));
+  // (source, external_key) is unique. A scanned row already holding the key the listing gives this
+  // posting means the two are not the same row after all, so both are left as they are.
+  const keyOwner = new Map(sourceRows.map((row) => [row.externalKey, row.id]));
+  const adoptions: Array<{ job: (typeof userRows)[number]; insert: (typeof result.inserts)[number] }> = [];
+  const adoptedIds = new Set<string>();
+
   // Every observed posting is stored once, for everyone; the gate is applied per follower below.
   const newRows: Array<typeof schema.jobs.$inferInsert> = [];
   for (const insert of result.inserts) {
+    const candidate = userByUrl.get(normalisePostingUrl(insert.url));
+    const holder = keyOwner.get(insert.externalKey);
+    if (candidate && !adoptedIds.has(candidate.id) && (holder === undefined || holder === candidate.id)) {
+      adoptions.push({ job: candidate, insert });
+      adoptedIds.add(candidate.id);
+      continue;
+    }
     newRows.push({
         companyId: company.id,
         sourceId: source.id,
@@ -458,6 +494,31 @@ async function scanSource(
         descriptionHash: insert.descriptionText ? sha1(insert.descriptionText.slice(0, 30_000)) : null,
         descriptionFetchedAt: insert.descriptionText ? deps.now() : null,
       });
+  }
+  for (const { job, insert } of adoptions) {
+    await deps.db.update(schema.jobs).set({
+      sourceId: source.id,
+      externalKey: insert.externalKey,
+      // From here it belongs to the listing, and `added_by` stays: the person who found it keeps
+      // the credit, and their view of it keeps its place.
+      origin: "scan",
+      lastSeenAt: deps.now(),
+      missingScans: 0,
+      status: "open",
+      closedAt: null,
+      title: insert.title,
+      normalizedTitle: normalizeTitle(insert.title),
+      url: insert.url,
+      location: insert.location ?? job.location,
+      locations: insert.locations ?? (insert.location ? [insert.location] : job.locations),
+      department: insert.department ?? job.department,
+      employmentType: insert.employmentType ?? job.employmentType,
+      remote: insert.remote ?? job.remote,
+      salaryText: insert.salaryText ?? job.salaryText,
+      postedAt: insert.postedAt ?? job.postedAt,
+      updatedAt: deps.now(),
+    }).where(eq(schema.jobs.id, job.id));
+    await deps.db.insert(schema.jobEvents).values({ jobId: job.id, type: "updated", payload: { action: "adopted", method: fetchMethod } });
   }
   for (let offset = 0; offset < newRows.length; offset += 100) {
     const created = await deps.db.insert(schema.jobs).values(newRows.slice(offset, offset + 100)).onConflictDoNothing()
@@ -542,16 +603,19 @@ async function scanSource(
       const gate = follower.settings.gate;
       if (undecided(posting.url) && needsDescription(gate)) continue;
       const verdict = evaluateGate({ ...fields, description: gate.matchFields.includes("description") ? fields.descriptionText : undefined }, gate);
+      // The account that added this role by pasting its URL keeps it, whatever their gate says and
+      // whether or not a later scan adopted the row: they asked for that one by name.
+      const inTable = verdict.inTable || job.addedBy === follower.userId;
       const view = viewByKey.get(`${follower.userId}:${job.id}`);
       if (view) {
         viewUpdates.push({ userId: follower.userId, jobId: job.id, keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms,
-          excluded: verdict.excluded, locationOk: verdict.locationOk, inTable: verdict.inTable });
-        if (verdict.inTable && (changedFields.length || !view.inTable || view.fitScore === null)) scoreQueue.push({ userId: follower.userId, jobId: job.id });
-      } else if (verdict.inTable) {
+          excluded: verdict.excluded, locationOk: verdict.locationOk, inTable });
+        if (inTable && (changedFields.length || !view.inTable || view.fitScore === null)) scoreQueue.push({ userId: follower.userId, jobId: job.id });
+      } else if (inTable) {
         viewInserts.push({ userId: follower.userId, jobId: job.id, keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms, excluded: verdict.excluded, locationOk: verdict.locationOk, inTable: true, nearMiss: false, seeded: false, createdAt: deps.now(), updatedAt: deps.now() });
         scoreQueue.push({ userId: follower.userId, jobId: job.id });
       } else continue;
-      if (verdict.inTable && posting.descriptionText === undefined && descriptionMoved) descriptionQueue.add(job.id);
+      if (inTable && posting.descriptionText === undefined && descriptionMoved) descriptionQueue.add(job.id);
     }
     // A stored posting still without text, whose description was never attempted or whose last
     // attempt is 14 days old, is queued again so a description gate is not deferred for ever.

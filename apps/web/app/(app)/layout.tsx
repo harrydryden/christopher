@@ -13,7 +13,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 export const dynamic = "force-dynamic";
 
-/** One entry for applications and CVs: the two are one job, and the section tabs separate them. */
+/** One entry for applications and CVs: the two are one job, on one page, under one heading. */
 const NAV_ITEMS = [
   { href: "/", label: "Roles" },
   { href: "/companies", label: "Companies" },

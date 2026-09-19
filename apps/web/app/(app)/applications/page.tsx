@@ -1,27 +1,68 @@
-import { PageHeader } from "@/components/PageHeader";
 import Link from "next/link";
-import { desc, eq } from "drizzle-orm";
-import { applications } from "@christopher/db";
-import { db } from "@/lib/db";
-import { SettingsForm } from "@/components/SettingsForm";
-import { inputClass, labelClass, selectClass } from "@/components/Field";
-import { updateApplication } from "@/app/actions/applications";
+import { z } from "zod";
+import { ROLE_STAGES, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS } from "@christopher/core";
+import { ApplicationsTable } from "@/components/ApplicationsTable";
+import { EmptyState } from "@/components/EmptyState";
+import { PageHeader } from "@/components/PageHeader";
+import { Pagination } from "@/components/Pagination";
 import { requireUser } from "@/lib/auth";
+import { listPipeline, pipelineFilter, PIPELINE_FILTERS, PIPELINE_FILTER_LABELS } from "@/lib/queries/applications";
+
 export const dynamic = "force-dynamic";
-export default async function ApplicationsPage() {
+
+const EMPTY: Record<string, { title: string; description?: string }> = {
+  active: { title: "Nothing in progress", description: "Shortlist a role from Roles to start." },
+  closed: { title: "Nothing closed yet" },
+  all: { title: "Nothing in progress", description: "Shortlist a role from Roles to start." },
+};
+
+export default async function ApplicationsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ filter?: string | string[]; page?: string; job?: string }>;
+}) {
   const user = await requireUser();
-  const rows = await db().select({ id: applications.id, cvId: applications.cvId, jobTitle: applications.jobTitle, companyName: applications.companyName, appliedOn: applications.appliedOn, status: applications.status, notes: applications.notes, history: applications.history })
-    .from(applications).where(eq(applications.userId, user.id)).orderBy(desc(applications.appliedOn));
-  return <div className="max-w-4xl space-y-5"><PageHeader title="Applications" />
-    {!rows.length && <p>No applications recorded yet.</p>}
-    {rows.map(row => <section key={row.id} className="space-y-3 border-2 border-line bg-raised p-4">
-      <h2 className="ds-pixel text-12">{row.companyName} · {row.jobTitle}</h2><p className="text-14 text-muted">Applied on {row.appliedOn}</p>
-      <div className="flex gap-4 text-14"><a className="underline" href={`/api/applications/${row.id}/pdf`}>Download submitted CV</a>{row.cvId && <Link className="underline" href={`/cv/${row.cvId}`}>View submitted revision</Link>}</div>
-      <SettingsForm action={updateApplication.bind(null, row.id)} submitLabel="Save application update">
-        <label className="grid gap-1.5"><span className={labelClass}>Status</span><select name="status" defaultValue={row.status} className={selectClass}>{["applied", "screening", "interview", "offer", "rejected", "withdrawn", "accepted"].map(s => <option key={s}>{s}</option>)}</select></label>
-        <label className="grid gap-1.5"><span className={labelClass}>Notes</span><textarea name="notes" defaultValue={row.notes} maxLength={4000} rows={3} className={`resize-y ${inputClass}`} /></label>
-      </SettingsForm>
-      <section><h3 className="ds-label">Status history</h3><ul className="mt-1 space-y-2 text-14">{row.history.map((h, i) => <li key={i}>{h.at} · {h.status}{h.notes && ` — ${h.notes}`}</li>)}</ul></section>
-    </section>)}
-  </div>;
+  const { filter: requestedFilter, page, job: requestedJob } = await searchParams;
+  const filter = pipelineFilter(requestedFilter);
+  const job = z.string().uuid().safeParse(requestedJob).success ? requestedJob : undefined;
+  const result = await listPipeline(user.id, { filter, page });
+  const empty = EMPTY[filter]!;
+  return (
+    <div className="max-w-6xl space-y-5">
+      <PageHeader title="Applications" description="Every role you are pursuing, from shortlist to outcome." />
+      {/* The same shape as the roles tabs: links, so the segment is in the URL and shareable. */}
+      <nav aria-label="Application progress" className="mb-4 flex flex-wrap gap-2">
+        {PIPELINE_FILTERS.map((segment) => (
+          <Link
+            key={segment}
+            href={`/applications?filter=${segment}`}
+            aria-current={segment === filter ? "page" : undefined}
+            className={`ds-pixel border-2 px-3 py-2 text-11 no-underline ${segment === filter ? "border-fg bg-fg text-bg" : "border-transparent text-muted hover:bg-sunken hover:text-fg"}`}
+          >
+            {PIPELINE_FILTER_LABELS[segment]} <span className="ml-1 tabular-nums">{result.counts[segment]}</span>
+          </Link>
+        ))}
+      </nav>
+      <ApplicationsTable
+        key={`${filter}:${result.page}`}
+        rows={result.rows}
+        openKey={job}
+        emptyState={<EmptyState title={empty.title} description={empty.description} />}
+      />
+      {result.pageCount > 1 && (
+        <Pagination page={result.page} total={result.total} path="/applications" params={{ filter }} label="Application pages" />
+      )}
+      <details className="text-13 text-muted">
+        <summary className="cursor-pointer">What the stages mean</summary>
+        <dl className="mt-2 space-y-1">
+          {ROLE_STAGES.map((stage) => (
+            <div key={stage} className="flex flex-wrap gap-2">
+              <dt className="ds-pixel text-10 text-fg">{ROLE_STAGE_LABELS[stage]}</dt>
+              <dd>{ROLE_STAGE_DESCRIPTIONS[stage]}</dd>
+            </div>
+          ))}
+        </dl>
+      </details>
+    </div>
+  );
 }

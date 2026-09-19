@@ -21,7 +21,8 @@ function rawParamsFrom(sp: URLSearchParams): RawSearchParams {
   return out;
 }
 
-const HEADER = ["company", "website", "role", "location", "url", "live_for_days", "availability", "fit", "status", "reason", "first_seen", "posted_at", "closed_at"];
+/** `status` is the tab a role sits under; `stage` is how far it has got (R-7.10). */
+const HEADER = ["company", "website", "role", "location", "url", "live_for_days", "availability", "fit", "status", "stage", "reason", "first_seen", "posted_at", "closed_at"];
 
 /**
  * A spreadsheet's worth of roles, not a database dump: the read is bounded so one export can never
@@ -62,6 +63,7 @@ export async function GET(request: NextRequest) {
           r.job.status,
           r.job.fitScore ?? "",
           roleStatus(r.job, r.decision),
+          r.stage,
           r.decision?.reason ?? "",
           r.job.firstSeenAt.toISOString(),
           r.job.postedAt ? r.job.postedAt.toISOString() : "",

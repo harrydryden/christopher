@@ -1,5 +1,5 @@
-import { roleStatusSql } from "@christopher/db";
-import { roleStatus, ROLE_STATUSES, ROLE_TABS, type RoleStatus } from "@christopher/core";
+import { latestApplicationFor, roleStageSql, roleStatusSql, type LatestApplication } from "@christopher/db";
+import { defaultRoleTab, roleStatus, ROLE_STATUSES, ROLE_TABS, type ApplicationStatus, type RoleStage, type RoleStatus, type RoleTab } from "@christopher/core";
 import { getTableColumns, and, desc, eq, inArray, ne, isNull, or, sql, lte } from "drizzle-orm";
 import { careerSources, companies, decisions, jobEvents, jobs, userJobs, type Job, type SourceType, type UserJob } from "@christopher/db/schema";
 import { displayStatus, formatDuration, liveFor, type DisplayStatus } from "@christopher/core";
@@ -40,6 +40,10 @@ export interface RoleRow {
   company: RoleCompany;
   sourceType: SourceType;
   decision: RoleDecision | null;
+  /** Where this role has got to for this account, read at the database (packages/db `roleStageSql`). */
+  stage: RoleStage;
+  /** The newest application for it, or null when none was ever recorded. */
+  applicationStatus: ApplicationStatus | null;
   events: RoleEvent[];
 }
 
@@ -59,33 +63,45 @@ const viewColumns = {
   seeded: userJobs.seeded,
 };
 
-const roleRowSelection = {
-  company: {
-    id: companies.id,
-    name: companies.name,
-    faviconUrl: companies.faviconUrl,
-    logoFetchedAt: companies.logoFetchedAt,
-    homepageUrl: companies.homepageUrl,
-    domain: companies.domain,
-  },
-  sourceType: careerSources.type,
-  decision: {
-    id: decisions.id,
-    decision: decisions.decision,
-    reason: decisions.reason,
-    tags: decisions.tags,
-    createdAt: decisions.createdAt,
-  },
-} as const;
+/**
+ * The stage reads the account's newest application, so the selection is built around that
+ * subquery rather than being a constant: `latest` is the one `baseRolesSelect` left-joins.
+ */
+function roleRowSelection(latest: LatestApplication, userId: string) {
+  return {
+    company: {
+      id: companies.id,
+      name: companies.name,
+      faviconUrl: companies.faviconUrl,
+      logoFetchedAt: companies.logoFetchedAt,
+      homepageUrl: companies.homepageUrl,
+      domain: companies.domain,
+    },
+    sourceType: careerSources.type,
+    decision: {
+      id: decisions.id,
+      decision: decisions.decision,
+      reason: decisions.reason,
+      tags: decisions.tags,
+      createdAt: decisions.createdAt,
+    },
+    // One reading of the lifecycle for the table, the counts and the export: the same expression
+    // the applications table uses, so the two can never disagree about where a role has got to.
+    stage: roleStageSql(latest, userId),
+    applicationStatus: latest.status,
+  } as const;
+}
 
 function baseRolesSelect(userId: string, summary = false) {
+  const latest = latestApplicationFor(userId);
   return db()
-    .select({ ...roleRowSelection, job: { ...getTableColumns(jobs), ...viewColumns, descriptionText: summary ? sql<string | null>`null` : jobs.descriptionText } })
+    .select({ ...roleRowSelection(latest, userId), job: { ...getTableColumns(jobs), ...viewColumns, descriptionText: summary ? sql<string | null>`null` : jobs.descriptionText } })
     .from(userJobs)
     .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
     .innerJoin(companies, eq(jobs.companyId, companies.id))
     .innerJoin(careerSources, eq(jobs.sourceId, careerSources.id))
-    .leftJoin(decisions, and(eq(decisions.userId, userId), eq(decisions.jobId, jobs.id), eq(decisions.superseded, false)));
+    .leftJoin(decisions, and(eq(decisions.userId, userId), eq(decisions.jobId, jobs.id), eq(decisions.superseded, false)))
+    .leftJoin(latest, eq(latest.jobId, jobs.id));
 }
 
 /**
@@ -173,7 +189,7 @@ export interface RolesFilters {
 export type RawSearchParams = Record<string, string | string[] | undefined>;
 
 /** The three statuses the tab strip shows. Archived is a section inside Dismissed, not a tab. */
-export type RoleTab = (typeof ROLE_TABS)[number];
+export type { RoleTab };
 
 function first(v: string | string[] | undefined): string | undefined {
   return Array.isArray(v) ? v[0] : v;
@@ -189,17 +205,28 @@ function toList(v: string | string[] | undefined): string[] {
 }
 
 /**
- * Which role tab a request is asking for. Archived is not one of them: a link that still says
- * `view=archived` or `archive=1` — a bookmark, a CSV export, an older page — lands on Dismissed,
- * where the archived roles now live, rather than on a tab that no longer exists.
+ * Which role tab a request is asking for, or null when it asks for none. Archived is not one of
+ * them: a link that still says `view=archived` or `archive=1` — a bookmark, a CSV export, an older
+ * page — lands on Dismissed, where the archived roles now live, rather than on a tab that no
+ * longer exists. A request that names no view at all, and one that names an unknown one, answer
+ * null: there is no fixed landing tab any more, so the counts decide (`resolveRoleView`).
  */
-export function roleTabFor(sp: RawSearchParams): RoleTab {
+export function roleTabFor(sp: RawSearchParams): RoleTab | null {
   const raw = first(sp.view);
   if ((ROLE_TABS as readonly string[]).includes(raw ?? "")) return raw as RoleTab;
   if (raw === "archived" || first(sp.archive) === "1" || first(sp.decision) === "skip") return "user-dismissed";
   if (first(sp.decision) === "apply") return "user-shortlisted";
-  // An unknown view falls back the way a bare request does: the daily inbox.
-  return "auto-matched";
+  return null;
+}
+
+/**
+ * The tab a request lands on: the one its link names, or — when it names none — the account's
+ * default for this scope, which is Matched unless there is nothing matched to review and then
+ * Shortlisted. The counts are the scope's own, so a company page with no new roles opens on that
+ * company's shortlist rather than on an empty tab.
+ */
+export function resolveRoleView(sp: RawSearchParams, counts: Partial<Record<RoleStatus, number>>): RoleTab {
+  return roleTabFor(sp) ?? defaultRoleTab(counts);
 }
 
 export function parseRolesFilters(sp: RawSearchParams): RolesFilters {
@@ -370,6 +397,10 @@ export interface RoleRowVM {
   salaryText: string | null;
   status: DisplayStatus;
   workflowStatus: RoleStatus;
+  /** How far this role has got for this account: what the Shortlisted tab badges. */
+  stage: RoleStage;
+  /** The newest application's own status, so "In process" can name its step. */
+  applicationStatus: ApplicationStatus | null;
   liveForText: string;
   liveForTitle: string;
   seeded: boolean;
@@ -421,6 +452,8 @@ export function buildRoleRowVM(row: RoleRow, now: Date = new Date(), viewerId?: 
     salaryText: row.job.salaryText,
     status,
     workflowStatus: roleStatus(row.job, row.decision),
+    stage: row.stage,
+    applicationStatus: row.applicationStatus,
     liveForText,
     liveForTitle,
     seeded: row.job.seeded,

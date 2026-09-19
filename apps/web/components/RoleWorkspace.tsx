@@ -4,21 +4,24 @@ import { Card } from "./Card";
 import { EmptyState } from "./EmptyState";
 import { RolesTable } from "./RolesTable";
 import { RolesFilterBar } from "./RolesFilterBar";
-import { attachEvents, buildRoleRowVM, fetchRecentEventsFor, fetchRolePage, fetchRoleCounts, filtersToQueryString, parseRolesFilters, roleTabFor, type RawSearchParams } from "@/lib/queries/jobs";
+import { attachEvents, buildRoleRowVM, fetchRecentEventsFor, fetchRolePage, fetchRoleCounts, filtersToQueryString, parseRolesFilters, resolveRoleView, type RawSearchParams } from "@/lib/queries/jobs";
 import { listCompanyOptions } from "@/lib/queries/companies";
 
 export async function RoleWorkspace({ userId, searchParams, companyId }: { userId: string; searchParams: RawSearchParams; companyId?: string }) {
   const sp = searchParams;
-  const view = roleTabFor(sp);
+  const scoped = companyId ? { company: companyId } : {};
+  // Counts first, then the page: a link that names no view opens on Matched unless this scope has
+  // no matched roles, so the counts are an input to every read below them.
+  const counts = await fetchRoleCounts(userId, parseRolesFilters({ ...sp, ...scoped }).company || undefined);
+  const view = resolveRoleView(sp, counts);
   const dismissed = view === "user-dismissed";
-  const filters = parseRolesFilters({ ...sp, view, ...(companyId ? { company: companyId } : {}) });
-  const archivedFilters = parseRolesFilters({ ...sp, view: "archived", ...(companyId ? { company: companyId } : {}) });
+  const filters = parseRolesFilters({ ...sp, view, ...scoped });
+  const archivedFilters = parseRolesFilters({ ...sp, view: "archived", ...scoped });
   const path = companyId ? `/companies/${companyId}` : "/";
-  const [result, archivedResult, counts, options] = await Promise.all([
+  const [result, archivedResult, options] = await Promise.all([
     fetchRolePage(userId, filters, false, null, Number(sp.page)),
     // The archived section is only rendered under Dismissed, so nothing else pays for the read.
     dismissed ? fetchRolePage(userId, archivedFilters, true, null, Number(sp.archivedPage)) : null,
-    fetchRoleCounts(userId, companyId || filters.company || undefined),
     companyId ? Promise.resolve([]) : listCompanyOptions(userId),
   ]);
   const pageRows = [...result.visible, ...(archivedResult?.visible ?? [])];

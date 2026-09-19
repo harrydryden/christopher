@@ -82,10 +82,10 @@ export default async function CvDraftPage({
     <div className="w-full space-y-5">
       <nav aria-label="CV navigation">
         <Link
-          href={draft.jobId ? `/cv?job=${draft.jobId}` : "/cv"}
+          href={draft.jobId ? `/applications?job=${draft.jobId}` : "/applications"}
           className="text-14 font-medium text-muted hover:text-fg hover:underline"
         >
-          ← Back to CV builder
+          ← Back to Applications
         </Link>
       </nav>
       <PageHeader
@@ -235,7 +235,7 @@ export default async function CvDraftPage({
                 <section className="space-y-3 border-2 border-line bg-raised p-4">
                   <CvDisclosure label="application tracking">
                     {application ? (
-                      <Link href="/applications" className="underline">
+                      <Link href={draft.jobId ? `/applications?job=${draft.jobId}` : "/applications"} className="underline">
                         Application recorded — view status and frozen PDF
                       </Link>
                     ) : !draft.finalisedAt ? (

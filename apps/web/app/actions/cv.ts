@@ -5,7 +5,7 @@ import { assertCvFinalisable } from "@christopher/core/cv-review";
 import { renderCvPdf } from "@/lib/cv-pdf";
 import { z } from "zod";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { actionCvs, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, userJobs, enqueueTask } from "@christopher/db";
+import { actionCvs, applications, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, userJobs, enqueueTask } from "@christopher/db";
 import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvWritingPreferences,
   createCvWritingBudget, CvLibrarySchema, consolidateExperience, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel,
   type CvContent, type CvWritingPreferences } from "@christopher/core";
@@ -296,12 +296,29 @@ export async function requestCv(
         { draftId: draft!.id },
         { dedupeKey: `generate_cv:${draft!.id}`, priority: 2 },
       );
+      // Building a CV for a role is the moment applying starts, so the role gets its application
+      // row here — status `applying`, no CV reference and no PDF, because nothing has been
+      // submitted. It is written under the same lifecycle lock as the draft, and only on the path
+      // that actually starts a build: a refused request and a reopened in-flight one write nothing.
+      const [pursued] = await tx
+        .select({ id: applications.id })
+        .from(applications)
+        .where(and(eq(applications.userId, user.id), eq(applications.jobId, id)))
+        .limit(1);
+      if (!pursued)
+        await tx.insert(applications).values({
+          userId: user.id, jobId: id, cvId: null, pdfBase64: null,
+          jobTitle: row.job.title, companyName: row.company,
+          appliedOn: new Date().toISOString().slice(0, 10), status: "applying", notes: "",
+          history: [{ status: "applying", at: new Date().toISOString(), notes: "" }],
+        });
       return draft!.id;
     });
   } catch (error) {
     return actionError(error, "Could not queue the CV. Please try again.");
   }
   revalidatePath("/library");
+  revalidatePath("/applications");
   revalidatePath("/cv");
   redirect(`/cv/${draftId}`);
 }

@@ -323,7 +323,7 @@ export function failureWayForward(
       };
     case "paste_description":
       return {
-        links: [{ label: "Paste the full job description", href: context.jobId ? `/cv?job=${context.jobId}` : "/cv" }],
+        links: [{ label: "Paste the full job description", href: context.jobId ? `/applications?job=${context.jobId}` : "/applications" }],
         note: null,
         ...done,
       };

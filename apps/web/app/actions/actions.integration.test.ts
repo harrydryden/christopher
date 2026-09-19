@@ -636,7 +636,9 @@ describe("priority workflows", () => {
     const update = new FormData(); update.set("status", "interview"); update.set("notes", "First interview arranged");
     expect((await updateApplication(savedApplication!.id, { ok: true }, update)).ok).toBe(true);
     const [after] = await database.select().from(schema.applications);
-    expect(after!.history.map((h) => h.status)).toEqual(["applied", "interview"]);
+    // One row for the role from the moment its CV was requested: "applying" when the build was
+    // queued, "applied" when the submitted revision was recorded onto that same row.
+    expect(after!.history.map((h) => h.status)).toEqual(["applying", "applied", "interview"]);
     expect(after!.pdfBase64).toBe(frozen);
     expect(after!.cvId).toBe(versions[1]!.id);
     const response = await downloadApplication(new Request("https://example.test"), { params: Promise.resolve({ id: after!.id }) });
@@ -767,7 +769,7 @@ describe("CSV export", () => {
     expect(response.headers.get("content-type")).toBe("text/csv; charset=utf-8");
     const csv = await response.text();
     const lines = csv.trim().split("\r\n");
-    expect(lines[0]).toBe("company,website,role,location,url,live_for_days,availability,fit,status,reason,first_seen,posted_at,closed_at");
+    expect(lines[0]).toBe("company,website,role,location,url,live_for_days,availability,fit,status,stage,reason,first_seen,posted_at,closed_at");
     // Every row, in blocks, and not one character of the stored descriptions.
     expect(lines).toHaveLength(122);
     expect(csv).not.toContain("xxxx");

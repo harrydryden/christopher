@@ -1,3 +1,5 @@
+import type { RoleStage } from "@christopher/core";
+
 export type Tone = "green" | "blue" | "gray" | "amber" | "red" | "neutral";
 
 /** Tones map to the status roles in docs/DESIGN-SYSTEM.md, not to raw hues.
@@ -117,6 +119,29 @@ export function companyStatusTone(status: string): Tone {
 
 export function decisionTone(decision: "apply" | "skip"): Tone {
   return decision === "apply" ? "green" : "red";
+}
+
+/**
+ * How far a role has got, for one account (`ROLE_STAGES` in @christopher/core). The two stages
+ * nothing has happened in yet carry no tone of their own; the three in flight are informational;
+ * the two endings take the ok and danger roles, and a dismissal is muted like any put-away row.
+ */
+export function stageTone(stage: RoleStage): Tone {
+  switch (stage) {
+    case "matched":
+    case "shortlisted":
+      return "neutral";
+    case "applying":
+    case "applied":
+    case "in_process":
+      return "blue";
+    case "accepted":
+      return "green";
+    case "rejected":
+      return "red";
+    case "dismissed":
+      return "gray";
+  }
 }
 
 export function discoveryStatusTone(status: string): Tone {

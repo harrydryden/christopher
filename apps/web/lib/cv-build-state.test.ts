@@ -246,10 +246,10 @@ it("offers each failure the page that fixes it, and the retry only where it woul
     { label: "Raise the page limit", href: "/settings" },
   ]);
   expect(failureWayForward("paste_description", { jobId: "job-1" }).links).toEqual([
-    { label: "Paste the full job description", href: "/cv?job=job-1" },
+    { label: "Paste the full job description", href: "/applications?job=job-1" },
   ]);
-  // A draft whose role has been deleted still has the builder's paste field.
-  expect(failureWayForward("paste_description", { jobId: null }).links[0]!.href).toBe("/cv");
+  // A draft whose role has been deleted still has the applications table's paste field.
+  expect(failureWayForward("paste_description", { jobId: null }).links[0]!.href).toBe("/applications");
   expect(failureWayForward("check_model_access", { admin: true }).links.map((link) => link.href)).toEqual(["/admin/settings", "/admin/health"]);
   expect(failureWayForward("check_model_access", { admin: false })).toMatchObject({
     links: [],

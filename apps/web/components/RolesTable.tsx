@@ -3,15 +3,34 @@
 import { Fragment, startTransition, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { decide, decideRoles, archiveRoles } from "@/app/actions/decisions";
-import { Badge, decisionTone } from "@/components/Badge";
+import { Badge, decisionTone, stageTone } from "@/components/Badge";
 import { CompanyFavicon } from "@/components/CompanyFavicon";
 import { FitBar, Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { Button, buttonClass } from "@/components/Button";
 import type { RoleRowVM } from "@/lib/queries/jobs";
 
-import { ROLE_STATUS_LABELS } from "@christopher/core/role-workflow";
+import { APPLICATION_STATUS_LABELS, ROLE_STAGE_LABELS, ROLE_STATUS_LABELS, roleStageRank } from "@christopher/core/role-workflow";
 
 type ReasonKind = "apply" | "skip";
+
+/** "In process · Interview": the stage, and — for the three steps it collapses — which one. */
+function stageLabel(row: RoleRowVM): string {
+  const label = ROLE_STAGE_LABELS[row.stage];
+  return row.stage === "in_process" && row.applicationStatus ? `${label} · ${APPLICATION_STATUS_LABELS[row.applicationStatus]}` : label;
+}
+
+/** A shortlisted role that has moved on: the badge beside the decision says where to. */
+function movedOn(row: RoleRowVM): boolean {
+  return row.workflowStatus === "user-shortlisted" && roleStageRank(row.stage) > roleStageRank("shortlisted");
+}
+
+/**
+ * The same destination either way — the application row is where the CV lives — but it is only a
+ * CV to build until there is one; from Applying on, the row is an application to open.
+ */
+function applicationLabel(row: RoleRowVM): string {
+  return roleStageRank(row.stage) >= roleStageRank("applying") ? "Open application" : "Build CV";
+}
 
 interface ReasonBoxState {
   jobId: string;
@@ -305,7 +324,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                     <FitBar score={row.fitScore} />
                   </TD>
                   <TD className="text-right">
-                    {row.workflowStatus === "user-shortlisted" ? <a href={`/cv?job=${row.id}`} className={buttonClass("secondary", "sm", "whitespace-nowrap no-underline")}>Build CV</a>
+                    {row.workflowStatus === "user-shortlisted" ? <a href={`/applications?job=${row.id}`} className={buttonClass("secondary", "sm", "whitespace-nowrap no-underline")}>{applicationLabel(row)}</a>
                     : archived ? <Button size="sm" disabled={archivingId !== null || reasonBox?.pending} onClick={() => void archiveRow(row.id)}>{archivingId === row.id ? "Restoring…" : "Restore"}</Button>
                     : <Button
                       size="sm"
@@ -329,7 +348,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                           {row.fitRationale && <div><h3 className="ds-label mb-1">Why this fits</h3><p className="max-w-3xl text-14 text-fg">{row.fitRationale}</p></div>}
                           {row.events.filter(event => event.label.includes("archiv")).map(event => <p key={event.id} className="text-12 text-muted">{event.label}</p>)}
                           <div className="flex flex-wrap items-center gap-4 text-12">
-                            <a href={`/cv?job=${row.id}`} className="font-semibold underline">Build CV</a>
+                            <a href={`/applications?job=${row.id}`} className="font-semibold underline">{applicationLabel(row)}</a>
                             <a href={row.url} target="_blank" rel="noopener noreferrer" className="text-muted underline">View vacancy ↗</a>
                             <a href={row.companyHomepageUrl} target="_blank" rel="noopener noreferrer" className="text-muted underline">Company website ↗</a>
                           </div>
@@ -396,6 +415,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                     ) : row.decision ? (
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge tone={decisionTone(row.decision.decision)}>{ROLE_STATUS_LABELS[row.decision.decision === "apply" ? "user-shortlisted" : "user-dismissed"]}</Badge>
+                        {movedOn(row) && <Badge tone={stageTone(row.stage)}>{stageLabel(row)}</Badge>}
                         {row.decision.reason && <p className="w-full text-14 text-fg">{row.decision.reason}</p>}
                         <button type="button" onClick={() => openReasonBox(row.id, row.decision!.decision, row.decision!.reason)} className="text-12 text-muted underline hover:text-fg">
                           Reconsider

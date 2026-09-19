@@ -94,8 +94,24 @@ export interface RenderedPage {
   status: number | null;
 }
 
+/** A binary body, read with the same politeness, caps and timeouts as a text fetch. */
+export interface FetchBytesResponse {
+  status: number;
+  /** Final URL after redirects. */
+  url: string;
+  headers: Record<string, string>;
+  bytes: Uint8Array;
+}
+
 export interface FetchContext {
   fetchText(url: string, init?: FetchInit): Promise<FetchResponse>;
+  /**
+   * Fetch a body as bytes rather than text — an icon, an image. Optional: a context without it
+   * simply cannot capture binary assets, and callers that need one say so (`captureCompanyLogo`
+   * throws rather than guessing). `maxBodyBytes` is a hard cap, not a truncation point: a body
+   * over it is rejected, because half an image is worse than none.
+   */
+  fetchBytes?(url: string, init?: FetchInit): Promise<FetchBytesResponse>;
   /** Headless-browser render. Optional: when absent, discovery and scanning fall back to plain HTTP. */
   render?: (url: string, opts?: { scrollAndExpand?: boolean }) => Promise<RenderedPage>;
   log?: (msg: string, data?: unknown) => void;

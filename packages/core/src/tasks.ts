@@ -26,6 +26,11 @@ export interface TaskPayloads {
   rescore_all: { userId: string; onlyInTable?: boolean };
   /** Without a `userId` every account is re-evaluated; `companyId` narrows it to one company's postings. */
   reevaluate_gate: { userId?: string; companyId?: string };
+  /**
+   * One posting a follower pasted the URL of, fetched and extracted into the shared catalogue.
+   * The row it stores is shared like any other posting; the view it creates is this account's.
+   */
+  import_posting: { userId: string; companyId: string; url: string };
 }
 
 export type TaskType = keyof TaskPayloads;
@@ -64,6 +69,9 @@ export function dedupeKeyFor<T extends TaskType>(type: T, payload: TaskPayloads[
     case "reevaluate_gate":
       { const p = payload as TaskPayloads["reevaluate_gate"];
         return `reevaluate_gate:${p.userId ?? "all"}${p.companyId ? `:${p.companyId}` : ""}`; }
+    case "import_posting":
+      { const p = payload as TaskPayloads["import_posting"];
+        return `import_posting:${p.userId}:${p.companyId}:${p.url}`; }
     default:
       return null;
   }
@@ -75,6 +83,7 @@ export function priorityFor(type: TaskType): number {
     case "discover":
     case "tag_reason":
     case "reevaluate_gate":
+    case "import_posting":
       return 1;
     case "fetch_description":
     case "score_job":
@@ -117,6 +126,8 @@ export const TASK_DEADLINES_MS: Partial<Record<TaskType, number>> & { default: n
   scan_company: 3 * 60_000,
   generate_cv: 45 * 60_000,
   discover: 5 * 60_000,
+  // A page fetch, a browser render when the page needs one, and one model call.
+  import_posting: 4 * 60_000,
   default: 2 * 60_000,
 };
 

@@ -204,6 +204,13 @@
       "when": 1790244000000,
       "tag": "0028_cv_build_fences",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1790330400000,
+      "tag": "0029_company_logos_and_user_postings",
+      "breakpoints": true
     }
   ]
 }

@@ -8,6 +8,8 @@ export * from "./settings";
 export * from "./ai-budget";
 export * from "./models";
 export * from "./tasks";
+export * from "./logo-capture";
+export * from "./posting-page";
 export * from "./password";
 export * as ats from "./ats/index";
 export * as discovery from "./discovery/index";

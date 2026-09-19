@@ -44,6 +44,11 @@ export const SOURCE_STATUSES = ["active", "needs_confirmation", "failing", "bloc
 export const SCAN_STATUSES = ["ok", "partial", "suspect_empty", "failed"] as const;
 export const FETCH_METHODS = ["api", "http", "browser"] as const;
 export const JOB_STATUSES = ["open", "closed"] as const;
+/** Where a posting came from: the daily scan of a source, or a follower who pasted its URL. */
+export const JOB_ORIGINS = ["scan", "user"] as const;
+/** Where captured logo bytes came from. Mirrors `LOGO_SOURCES` in @christopher/core. */
+export const LOGO_SOURCES = ["site_icon", "icon_service"] as const;
+export const NAME_SUGGESTION_STATUSES = ["pending", "applied", "dismissed"] as const;
 export const DECISIONS = ["apply", "skip"] as const;
 export const USER_ROLES = ["admin", "member"] as const;
 export const AUTH_PROVIDERS = ["google"] as const;
@@ -51,7 +56,7 @@ export const AUTH_TOKEN_PURPOSES = ["password_reset", "email_verification"] as c
 export const TASK_TYPES = [
   "extract_document", "verify_company", "monitor_source", "discover", "scan_company", "run_daily", "fetch_description", "score_job", "tag_reason",
   "synthesize_profile", "suggest_filters", "suggest_from_scans", "profile_company", "suggest_companies", "rescore_all",
-  "reevaluate_gate", "generate_cv",
+  "reevaluate_gate", "generate_cv", "import_posting",
 ] as const;
 export const TASK_STATUSES = ["queued", "running", "done", "failed"] as const;
 
@@ -156,7 +161,20 @@ export const companies = pgTable("companies", {
   name: text("name").notNull(),
   homepageUrl: text("homepage_url").notNull(),
   domain: text("domain").notNull().unique(),
+  /**
+   * Where the stored logo was captured from, and the browser's fallback while nothing is stored.
+   * The image the interface serves is the one in `company_logos`; this is a URL, not the bytes.
+   */
   faviconUrl: text("favicon_url"),
+  /** When the bytes in `company_logos` were stored. The interface versions the image URL with it. */
+  logoFetchedAt: ts("logo_fetched_at"),
+  /** Failed capture attempts since the last success; drives the retry backoff. */
+  logoAttempts: integer("logo_attempts").notNull().default(0),
+  /** Null means "capture whenever it is due"; a future time means "not before then". */
+  logoNextAttemptAt: ts("logo_next_attempt_at"),
+  logoError: text("logo_error"),
+  /** The account that put the company in the shared catalogue, when one did. */
+  addedBy: uuid("added_by").references(() => users.id, { onDelete: "set null" }),
   /**
    * Derived from subscriptions: active while anyone follows the company actively, paused while
    * every follower has paused it, archived when nobody follows it. Kept as a column so the
@@ -166,6 +184,45 @@ export const companies = pgTable("companies", {
   addedAt: tsNow("added_at"),
   archivedAt: ts("archived_at"),
 });
+
+/**
+ * The company logo as bytes, captured once by the worker and served by the interface everywhere.
+ * A remote icon URL is not enough: the roles table and the company page disagreed because some
+ * sites serve their icon to a browser and refuse ours, so what a page showed depended on who
+ * asked. Base64 for the same reason `applications.pdf_base64` is: one column, no large-object
+ * plumbing, and a row that travels with a dump. Bounded by `LOGO_MAX_BYTES` at capture time.
+ */
+export const companyLogos = pgTable("company_logos", {
+  companyId: uuid("company_id").primaryKey().references(() => companies.id, { onDelete: "cascade" }),
+  contentType: text("content_type").notNull(),
+  dataBase64: text("data_base64").notNull(),
+  byteLength: integer("byte_length").notNull(),
+  source: text("source", { enum: LOGO_SOURCES }).notNull(),
+  sourceUrl: text("source_url").notNull(),
+  fetchedAt: tsNow("fetched_at"),
+});
+
+/**
+ * A follower's proposed name for a company in the shared catalogue — the case a person adds a
+ * company before anyone has confirmed its careers page, when the name taken from the domain is
+ * often wrong. The catalogue is shared, so the rename itself is an administrator's; this is the
+ * proposal and who made it.
+ */
+export const companyNameSuggestions = pgTable(
+  "company_name_suggestions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    note: text("note"),
+    status: text("status", { enum: NAME_SUGGESTION_STATUSES }).notNull().default("pending"),
+    createdAt: tsNow("created_at"),
+    resolvedAt: ts("resolved_at"),
+    resolvedBy: uuid("resolved_by").references(() => users.id, { onDelete: "set null" }),
+  },
+  (t) => [index("company_name_suggestions_company_status_idx").on(t.companyId, t.status)],
+);
 
 /** Who follows which company. Notes, pause and archive are the follower's own. */
 export const companySubscriptions = pgTable(
@@ -295,6 +352,14 @@ export const jobs = pgTable(
     descriptionTruncated: boolean("description_truncated").notNull().default(false),
     descriptionHash: text("description_hash"),
     descriptionFetchedAt: ts("description_fetched_at"),
+    /**
+     * `scan` for a posting a source's listing produced, `user` for one a follower pasted the URL
+     * of. A scan never closes a `user` row — it was never in a listing to go missing from — but a
+     * later scan that observes the same URL adopts the row and it becomes an ordinary posting.
+     */
+    origin: text("origin", { enum: JOB_ORIGINS }).notNull().default("scan"),
+    /** The account that pasted the URL, for a posting with `origin = 'user'`. */
+    addedBy: uuid("added_by").references(() => users.id, { onDelete: "set null" }),
     createdAt: tsNow("created_at"),
     updatedAt: tsNow("updated_at"),
   },
@@ -302,6 +367,7 @@ export const jobs = pgTable(
     uniqueIndex("jobs_source_external_key_uidx").on(t.sourceId, t.externalKey),
     index("jobs_company_status_idx").on(t.companyId, t.status),
     index("jobs_first_seen_idx").on(t.firstSeenAt),
+    index("jobs_company_origin_idx").on(t.companyId, t.origin),
   ],
 );
 
@@ -579,6 +645,8 @@ export type AuthToken = typeof authTokens.$inferSelect;
 export type UserSetting = typeof userSettings.$inferSelect;
 export type Company = typeof companies.$inferSelect;
 export type NewCompany = typeof companies.$inferInsert;
+export type CompanyLogo = typeof companyLogos.$inferSelect;
+export type CompanyNameSuggestion = typeof companyNameSuggestions.$inferSelect;
 export type CompanySubscription = typeof companySubscriptions.$inferSelect;
 export type CareerSource = typeof careerSources.$inferSelect;
 export type NewCareerSource = typeof careerSources.$inferInsert;
@@ -604,6 +672,8 @@ export type AiCall = typeof aiCalls.$inferSelect;
 export type TaskType = (typeof TASK_TYPES)[number];
 export type SourceType = (typeof SOURCE_TYPES)[number];
 export type UserRole = (typeof USER_ROLES)[number];
+export type JobOrigin = (typeof JOB_ORIGINS)[number];
+export type NameSuggestionStatus = (typeof NAME_SUGGESTION_STATUSES)[number];
 
 
 export const cvLibraries = pgTable("cv_libraries", {

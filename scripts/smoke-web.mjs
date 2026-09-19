@@ -50,7 +50,7 @@ function run(cmd, args, opts = {}) {
 }
 
 const PAGES = [
-  ["/", ["Roles", "Location"], "Auto-matched"],
+  ["/", ["Roles", "Location"], "Matched"],
   ["/companies", ["Companies"]],
   ["/suggestions", ["Discover companies", "Companies to review"]],
   ["/suggestions?view=sources", ["Add a source"]],
@@ -67,9 +67,9 @@ const PAGES = [
   ["/library", ["Library", "Intro", "Website", "Experience", "Education, skills and interests"]],
   ["/applications", ["Applications"]],
   ["/?archive=1", ["Roles"], "Archived"],
-  ["/?view=auto-matched", ["Roles"], "Auto-matched"],
-  ["/?view=user-shortlisted", ["Roles"], "User-shortlisted"],
-  ["/?view=user-dismissed", ["Roles"], "User-dismissed"],
+  ["/?view=auto-matched", ["Roles"], "Matched"],
+  ["/?view=user-shortlisted", ["Roles"], "Shortlisted"],
+  ["/?view=user-dismissed", ["Roles"], "Dismissed"],
   ["/?view=archived", ["Roles"], "Archived"],
   ["/api/scan-status", ['"text"']],
   ["/api/export.csv", ["company"]],

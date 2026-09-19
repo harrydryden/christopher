@@ -1,9 +1,15 @@
-export const ROLE_STATUSES = ["auto-matched", "user-shortlisted", "user-dismissed", "archived"] as const;
+export const ROLE_STATUSES = ["user-shortlisted", "auto-matched", "user-dismissed", "archived"] as const;
 export type RoleStatus = typeof ROLE_STATUSES[number];
 export const ROLE_STATUS_LABELS: Record<RoleStatus, string> = {
-  "auto-matched": "Auto-matched", "user-shortlisted": "User-shortlisted",
-  "user-dismissed": "User-dismissed", archived: "Archived",
+  "user-shortlisted": "Shortlisted", "auto-matched": "Matched",
+  "user-dismissed": "Dismissed", archived: "Archived",
 };
+/**
+ * The three the tab strip shows, in order. Archived is a status like any other — it is what a
+ * narrowed gate and a closed-out role become — but it is not a tab: archived roles are a section
+ * inside Dismissed, so the strip stays the three things a person acts on.
+ */
+export const ROLE_TABS = ["user-shortlisted", "auto-matched", "user-dismissed"] as const;
 /** Archive takes precedence; automation never overrides an active user decision.
  * Legacy retained non-matches appear in Archive until maintenance records their archive event.
  */

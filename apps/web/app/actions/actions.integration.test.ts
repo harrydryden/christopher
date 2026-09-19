@@ -631,7 +631,7 @@ describe("priority workflows", () => {
     expect((await recordApplication(versions[1]!.id, { ok: true }, application)).ok).toBe(true);
     expect((await recordApplication(versions[1]!.id, { ok: true }, application)).ok).toBe(false);
     const [savedApplication] = await database.select().from(schema.applications);
-    const frozen = savedApplication!.pdfBase64;
+    const frozen = savedApplication!.pdfBase64!;
     expect(Buffer.from(frozen, "base64").subarray(0, 5).toString()).toBe("%PDF-");
     const update = new FormData(); update.set("status", "interview"); update.set("notes", "First interview arranged");
     expect((await updateApplication(savedApplication!.id, { ok: true }, update)).ok).toBe(true);

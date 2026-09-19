@@ -15,7 +15,7 @@ export { addHttpHostDaily, listHttpHostDaily, pruneHttpHostDaily, emptyHttpCount
 export { recordWorkerEvent, listWorkerEvents, countWorkerEvents, pruneWorkerEvents, type WorkerEventInput } from "./worker-events";
 export { accountAiSpend, totalAiSpend, aiUsageByAccount, recordAiCall, releaseAiHolds, releaseOrphanedCvHolds, aiOutcome, aiOutcomeSql, AI_OUTCOMES, costPerCvBuild, costPerScoredRole, type AiAccountUsage, type AiCallRecord, type AiOutcome, type CvBuildCost, type CvBuildCosts, type ReleasedHolds, type ScoredRoleCost } from "./ai-budget";
 
-export { roleStatusSql } from "./role-workflow";
+export { roleStatusSql, roleStageSql, latestApplicationFor, hasCvSql, type LatestApplication } from "./role-workflow";
 
 export { scanRunSummary, scanRunSummaries, type ScanRunSummary } from "./scan-summary";
 

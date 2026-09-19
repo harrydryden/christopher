@@ -1,7 +1,7 @@
 "use server";
 import { assertCvFinalisable } from "@christopher/core/cv-review";
 import { and, eq, sql } from "drizzle-orm";
-import { applications, cvDrafts } from "@christopher/db";
+import { applications, cvDrafts, type ApplicationStatus } from "@christopher/db";
 import { CvContentSchema } from "@christopher/core";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
@@ -9,7 +9,7 @@ import { renderCvPdf } from "@/lib/cv-pdf";
 import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
 import { revalidatePath } from "next/cache";
 
-const statuses = ["applied", "screening", "interview", "offer", "rejected", "withdrawn", "accepted"];
+const statuses: ApplicationStatus[] = ["applied", "screening", "interview", "offer", "rejected", "withdrawn", "accepted"];
 export async function recordApplication(cvId: string, _prev: ActionResult, form: FormData): Promise<ActionResult> {
   const user = await requireUser();
   try {
@@ -49,7 +49,7 @@ export async function updateApplication(
   const user = await requireUser();
   try {
     zUuid().parse(id);
-    const status = String(form.get("status") ?? "");
+    const status = String(form.get("status") ?? "") as ApplicationStatus;
     const notes = String(form.get("notes") ?? "").trim();
     if (!statuses.includes(status) || notes.length > 4000)
       return fail(

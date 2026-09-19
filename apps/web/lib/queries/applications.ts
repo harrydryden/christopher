@@ -156,7 +156,7 @@ function newest(...times: Array<Date | null | undefined>): Date | null {
 }
 
 /** Rows this account is pursuing that the catalogue still knows about: the ordinary case. */
-async function roleRows(userId: string): Promise<PipelineRow[]> {
+async function roleRows(userId: string, onlyJobId?: string): Promise<PipelineRow[]> {
   const latest = latestApplicationFor(userId);
   const currentCv = currentCvFor(userId);
   const stage = roleStageSql(latest, userId);
@@ -204,6 +204,7 @@ async function roleRows(userId: string): Promise<PipelineRow[]> {
     // dismissed after applying) or a CV, archived or not.
     .where(and(
       eq(userJobs.userId, userId),
+      onlyJobId ? eq(jobs.id, onlyJobId) : undefined,
       ne(stage, "matched"),
       or(ne(stage, "dismissed"), isNotNull(latest.id), sql`exists (select 1 from ${cvDrafts} pursued where pursued.user_id = ${userId} and pursued.job_id = ${jobs.id})`),
     ));
@@ -325,6 +326,15 @@ async function legacyRows(userId: string): Promise<PipelineRow[]> {
  * Every company-role this account is pursuing, ordered the way it is worked: by how far it has
  * got, and within a stage by what moved most recently.
  */
+/**
+ * One role's row as the table would show it now, or null when the role is not in the pipeline
+ * (matched, or merely passed on). A CV action returns this so the row can follow the database
+ * without waiting for the page to be rendered again.
+ */
+export async function pipelineRowForJob(userId: string, jobId: string): Promise<PipelineRow | null> {
+  return (await roleRows(userId, jobId))[0] ?? null;
+}
+
 export async function listPipeline(
   userId: string,
   options: { filter?: PipelineFilter; page?: string | number } = {},

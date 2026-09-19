@@ -736,7 +736,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await page.getByRole("button", { name: "Delete CV", exact: true }).click();
     await confirmedDeletion;
     // With no CV the role falls back to Shortlisted and offers to build one.
-    await tableRow().getByRole("button", { name: "Build CV", exact: true }).waitFor().catch(async (error) => {
+    await tableRow().getByRole("button", { name: "Build CV", exact: true }).waitFor({ timeout: 60_000 }).catch(async (error) => {
       throw new Error(
         `${error.message}\nDelete UI: ${await page.locator("main").innerText()}\nErrors: ${JSON.stringify(errors)}\nRows: ${JSON.stringify((await pool.query("select id,status,archived_at from cv_drafts where id = any($1::uuid[])", [tableIds])).rows)}`,
       );

@@ -1,7 +1,8 @@
 "use server";
 import { assertCvFinalisable } from "@christopher/core/cv-review";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
-import { applications, companies, cvDrafts, jobs, userJobs, type ApplicationStatus } from "@christopher/db";
+import { actionCvs, applications, companies, cvDrafts, jobs, userJobs, type ApplicationStatus } from "@christopher/db";
+import { pipelineRowForJob, type PipelineRow } from "@/lib/queries/applications";
 import { APPLICATION_STATUSES, CvContentSchema, applicationStage, roleStageRank } from "@christopher/core";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
@@ -239,4 +240,30 @@ export async function updateApplication(
   }
   revalidatePath("/applications");
   return ok();
+}
+
+export type ManageRoleCvResult = { ok: true; row: PipelineRow | null } | { ok: false; error: string };
+
+const CV_ACTIONS = ["archive", "restore", "delete"] as const;
+
+/**
+ * Archive, restore or delete one CV from its role's row, and hand back the row as the table would
+ * show it now. The page is revalidated too, but the row does not wait for that render: what the
+ * database holds after the action is in the answer, so the cell follows it at once.
+ */
+export async function manageRoleCv(jobId: string | null, cvId: string, action: string): Promise<ManageRoleCvResult> {
+  const user = await requireUser();
+  try {
+    zUuid().parse(cvId);
+    if (jobId !== null) zUuid().parse(jobId);
+    if (!(CV_ACTIONS as readonly string[]).includes(action)) return { ok: false, error: "Choose Archive, Restore or Delete." };
+    await actionCvs(db(), user.id, [cvId], action as (typeof CV_ACTIONS)[number]);
+    const row = jobId ? await pipelineRowForJob(user.id, jobId) : null;
+    revalidatePath("/applications");
+    revalidatePath("/", "layout");
+    return { ok: true, row };
+  } catch (error) {
+    const failed = actionError(error, "Could not update this CV. Please try again.");
+    return failed.ok ? { ok: false, error: "Could not update this CV. Please try again." } : failed;
+  }
 }

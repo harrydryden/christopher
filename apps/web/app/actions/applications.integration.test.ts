@@ -24,7 +24,7 @@ vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (session ? {
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
-import { recordApplication, setRoleStage, updateApplication } from "./applications";
+import { manageRoleCv, recordApplication, setRoleStage, updateApplication } from "./applications";
 import { decide } from "./decisions";
 import { finaliseCvDraft, requestCv, saveCvLibrary } from "./cv";
 import { GET as cvRedirect } from "@/app/(app)/cv/route";
@@ -144,6 +144,36 @@ it("withdraws a live application when the role is dismissed from Roles, and leav
   const [settled] = await applicationsOf();
   expect(settled!.status).toBe("accepted");
   expect(settled!.history).toHaveLength(2);
+});
+
+it("answers a CV action with the row as the table should now show it", async () => {
+  const { job } = await fixture();
+  await database.insert(schema.decisions).values({ userId: user.id, jobId: job.id, decision: "apply", reason: "", jobTitle: job.title, companyName: "Acme" });
+  const [current] = await database.insert(schema.cvDrafts).values({
+    userId: user.id, jobId: job.id, jobTitle: job.title, companyName: "Acme", jobDescription: DESCRIPTION,
+    libraryVersion: 1, librarySnapshot: LIBRARY, model: "test", status: "ready", revision: 1,
+  }).returning();
+
+  const archived = await manageRoleCv(job.id, current!.id, "archive");
+  expect(archived.ok).toBe(true);
+  if (!archived.ok) return;
+  expect(archived.row).toMatchObject({ jobId: job.id, cv: null, archivedCvId: current!.id, stage: "shortlisted" });
+
+  const restored = await manageRoleCv(job.id, current!.id, "restore");
+  expect(restored.ok && restored.row?.cv?.id).toBe(current!.id);
+  expect(restored.ok && restored.row?.stage).toBe("applying");
+
+  const deleted = await manageRoleCv(job.id, current!.id, "delete");
+  expect(deleted.ok && deleted.row).toMatchObject({ cv: null, archivedCvId: null, stage: "shortlisted" });
+  expect(await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.userId, user.id))).toHaveLength(0);
+
+  // A row with no posting behind it has no row to answer with; the caller refreshes instead.
+  const [legacy] = await database.insert(schema.cvDrafts).values({
+    userId: user.id, jobId: null, jobTitle: "Old role", companyName: "Gone Ltd", jobDescription: DESCRIPTION,
+    libraryVersion: 1, librarySnapshot: LIBRARY, model: "test", status: "ready", revision: 1,
+  }).returning();
+  expect(await manageRoleCv(null, legacy!.id, "archive")).toEqual({ ok: true, row: null });
+  expect(await manageRoleCv(job.id, legacy!.id, "shred")).toEqual({ ok: false, error: "Choose Archive, Restore or Delete." });
 });
 
 it("upgrades the role's existing application when the submitted CV is recorded, rather than adding one", async () => {

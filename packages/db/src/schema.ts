@@ -18,6 +18,7 @@ import { cvRoleKey } from "./cv-role-key";
 import {
   bigint,
   boolean,
+  customType,
   index,
   integer,
   jsonb,
@@ -974,3 +975,135 @@ export const cvBuildSteps = pgTable("cv_build_steps", {
   // draft, and this is what makes two attempts unable to claim the same place regardless.
 }, (t) => [uniqueIndex("cv_build_steps_draft_seq_uniq").on(t.draftId, t.seq), index("cv_build_steps_started_idx").on(t.startedAt)]);
 export type CvBuildStep = typeof cvBuildSteps.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Documents imported into the Library, and CV previews shared for comment
+// ---------------------------------------------------------------------------
+
+/** Postgres `bytea`, which drizzle has no column builder for. The pg driver reads and writes it as a Buffer. */
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => "bytea" });
+
+export const LIBRARY_IMPORT_KINDS = ["cv", "linkedin", "website", "paste"] as const;
+export type LibraryImportKind = (typeof LIBRARY_IMPORT_KINDS)[number];
+
+/** The most extracted text one import keeps; the column's check constraint repeats the number. */
+export const LIBRARY_IMPORT_MAX_CHARS = 40_000;
+/** The largest upload an import may carry, in bytes; the column's check constraint repeats the number. */
+export const LIBRARY_IMPORT_MAX_BYTES = 5 * 1024 * 1024;
+
+/**
+ * One document a person brought to the Library: a past CV, LinkedIn's own PDF of their profile,
+ * their personal website, or text they pasted.
+ *
+ * The row is the whole of an import's life. An upload arrives as `source_bytes`, because the
+ * conversion belongs in the worker, which already owns every parser; the worker converts it,
+ * writes the text into `content` and clears the bytes, so nothing binary outlives the conversion.
+ * A paste arrives with its `content` already. A website arrives as a `url` and is fetched
+ * politely, because it is the person's own site — the product never crawls LinkedIn for this, and
+ * asks for LinkedIn's own PDF instead.
+ *
+ * `fingerprint` is what stops the same document being imported twice: sha256 of the bytes for an
+ * upload, of the stored text for a paste, of the normalised URL for a website, unique per account.
+ * A second attempt reads the first import back rather than making another.
+ *
+ * `proposal` is deliberately untyped jsonb here: what the extraction proposes is the engine's
+ * schema, validated where it is produced, and the database is not the place for a second copy of
+ * it. It is only ever a proposal — every item is accepted or dismissed by the person before
+ * anything reaches the Library, which is what `resolved_at` records, and what takes an import off
+ * the Library page.
+ */
+export const libraryImports = pgTable("library_imports", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  kind: text("kind", { enum: LIBRARY_IMPORT_KINDS }).$type<LibraryImportKind>().notNull(),
+  /** What the upload was called, so the person recognises it. Null for a paste or a website. */
+  filename: text("filename"),
+  /** The person's own site, for a `website` import; null otherwise. */
+  url: text("url"),
+  /** The extracted text, capped at `LIBRARY_IMPORT_MAX_CHARS`. Null until the worker has converted an upload or fetched a page. */
+  content: text("content"),
+  /** The uploaded PDF or DOCX, capped at `LIBRARY_IMPORT_MAX_BYTES`, kept only until the worker has converted it. */
+  sourceBytes: bytea("source_bytes"),
+  /** The upload's media type, so the worker knows which parser to use. Cleared with the bytes. */
+  sourceMime: text("source_mime"),
+  fingerprint: text("fingerprint").notNull(),
+  proposal: jsonb("proposal").$type<unknown>(),
+  error: text("error"),
+  /** When the worker finished with it, whether it produced a proposal or an error. */
+  processedAt: ts("processed_at"),
+  /** When the person accepted or dismissed the proposal, which is what takes the import off the page. */
+  resolvedAt: ts("resolved_at"),
+  createdAt: tsNow("created_at"),
+}, t => [
+  index("library_imports_user_idx").on(t.userId, t.createdAt.desc()),
+  uniqueIndex("library_imports_user_fingerprint_uidx").on(t.userId, t.fingerprint),
+]);
+export type LibraryImport = typeof libraryImports.$inferSelect;
+export type NewLibraryImport = typeof libraryImports.$inferInsert;
+
+/**
+ * A link that shows one CV preview to someone the person chose, for as long as they choose.
+ *
+ * Modelled on `auth_tokens`: only a hash of the token is stored, so the link sitting in a
+ * reviewer's inbox cannot be recovered from the database. It differs in being multi-use — a
+ * reviewer opens it as often as they like — which is why it carries `revoked_at`, `expires_at`
+ * and a view count rather than `used_at`: the owner can see that it was read and can end it at
+ * any moment.
+ *
+ * The row is also how "never read per-account data without a `userId`" survives a route with no
+ * session. The owner's `user_id` is on the share, so a token lookup yields the account the read
+ * must be scoped by, and the reader gets one revision of one document and no reach into anything
+ * else in the account.
+ */
+export const cvShares = pgTable("cv_shares", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  /** The owner: the account every read made through this link is scoped by. */
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  draftId: uuid("draft_id").notNull().references(() => cvDrafts.id, { onDelete: "cascade" }),
+  /** sha256 of the token in the link. The token itself is never stored. */
+  tokenHash: text("token_hash").notNull().unique(),
+  allowComments: boolean("allow_comments").notNull().default(true),
+  expiresAt: ts("expires_at").notNull(),
+  revokedAt: ts("revoked_at"),
+  viewCount: integer("view_count").notNull().default(0),
+  lastViewedAt: ts("last_viewed_at"),
+  createdAt: tsNow("created_at"),
+}, t => [index("cv_shares_user_draft_idx").on(t.userId, t.draftId)]);
+export type CvShare = typeof cvShares.$inferSelect;
+export type NewCvShare = typeof cvShares.$inferInsert;
+
+/** The longest anchor, name and note a comment may carry; the column check constraints repeat the numbers. */
+export const CV_SHARE_ANCHOR_MAX_CHARS = 120;
+export const CV_SHARE_AUTHOR_NAME_MAX_CHARS = 80;
+export const CV_SHARE_BODY_MAX_CHARS = 2_000;
+
+/**
+ * A note a reader left against one block of a shared CV.
+ *
+ * `anchor` is an id the assessment already cites — the profile block, or a section block — so a
+ * reader's note and the reviewer's finding sit beside the same text. `user_id` is the owner's,
+ * denormalised from the share, so that every read of a comment is scoped by account without
+ * depending on anyone remembering the join.
+ *
+ * Nothing written here reaches a model call unless the owner copies it there themselves: a
+ * comment is data, exactly as an imported document is, never an instruction.
+ */
+export const cvShareComments = pgTable("cv_share_comments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  shareId: uuid("share_id").notNull().references(() => cvShares.id, { onDelete: "cascade" }),
+  /** The owner of the CV, copied from the share; never the reader, who has no account. */
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  /** The block the note is about: free text here, an assessment anchor in practice. */
+  anchor: text("anchor").notNull(),
+  /** What the reader called themselves. Unverified, and shown as such. */
+  authorName: text("author_name").notNull(),
+  body: text("body").notNull(),
+  createdAt: tsNow("created_at"),
+  /** When the owner marked the note dealt with. Null while it is still open. */
+  resolvedAt: ts("resolved_at"),
+}, t => [
+  index("cv_share_comments_share_idx").on(t.shareId, t.createdAt),
+  index("cv_share_comments_user_open_idx").on(t.userId, t.resolvedAt),
+]);
+export type CvShareComment = typeof cvShareComments.$inferSelect;
+export type NewCvShareComment = typeof cvShareComments.$inferInsert;

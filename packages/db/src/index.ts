@@ -30,3 +30,6 @@ export { upsertLibraryReviews, latestLibraryReviews, libraryReviewsSignature, pr
 export { syncCompanyStatus, subscribeToCompany, setSubscriptionStatus, subscribedCompanyIds } from "./subscriptions";
 export { storeCompanyLogo, noteLogoFailure, readCompanyLogo, companiesDueLogoCapture, LOGO_REFRESH_AFTER_MS, type StoredLogo } from "./company-logos";
 export { BOOTSTRAP_USER_ID, BOOTSTRAP_EMAIL, DEFAULT_ADMIN_EMAILS, SEED_TAGS, adminEmailsFrom, completeAccountClaim, createUser, isEntitledEmail, isPlaceholderEmail, listUserIds, normaliseEmail, promoteIfEntitled, seedTagVocabulary, type CreateUserInput, type CreateUserResult } from "./users";
+
+export { createLibraryImport, getLibraryImport, getLibraryImportForWorker, listOpenLibraryImports, completeLibraryImport, resolveLibraryImport, pruneLibraryImports, type CreateLibraryImportInput, type LibraryImportOutcome, type LibraryImportRow, type LibraryImportSummary } from "./library-imports";
+export { createCvShare, findLiveCvShareByHash, recordCvShareView, listCvShares, revokeCvShare, addCvShareComment, listCvShareComments, resolveCvShareComment, countOpenCvShareComments, CvShareClosedError, type AddCvShareCommentInput, type CreateCvShareInput, type CvShareRefusal, type LiveCvShare } from "./cv-shares";

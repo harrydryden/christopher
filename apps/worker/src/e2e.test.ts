@@ -818,6 +818,10 @@ describe("functional review regressions", () => {
     await budget(25);
     await _scanSourceForTests(aiDeps, company, source!, await deps.settings(), null);
     expect((await scoreTasks()).length).toBeGreaterThan(before);
+    // The views the scan queued say so, so the table reads "scoring" rather than a blank score.
+    const queued = await db.select().from(schema.userJobs).where(eq(schema.userJobs.scoreState, "queued"));
+    expect(queued.length).toBeGreaterThan(0);
+    expect(queued.every((row) => row.scoreStateAt !== null)).toBe(true);
   }, 60_000);
 
   it("does not score legacy non-matches even when old settings enabled them", async () => {

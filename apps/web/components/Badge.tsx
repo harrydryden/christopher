@@ -144,6 +144,17 @@ export function stageTone(stage: RoleStage): Tone {
   }
 }
 
+/** The A5 verdict beside a fit score (R-6.6). The three read as the score's own words. */
+export function fitVerdictTone(verdict: "strong" | "possible" | "unlikely"): Tone {
+  return verdict === "strong" ? "green" : verdict === "possible" ? "blue" : "gray";
+}
+
+export const FIT_VERDICT_LABELS: Record<"strong" | "possible" | "unlikely", string> = {
+  strong: "Strong fit",
+  possible: "Possible fit",
+  unlikely: "Unlikely fit",
+};
+
 export function discoveryStatusTone(status: string): Tone {
   switch (status) {
     case "resolved":

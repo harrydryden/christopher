@@ -9,6 +9,7 @@ import { schema, type Task } from "@christopher/db";
 import { suggestFromScans, type ScannedTitle, type TaskPayloads, type TermSuggestion } from "@christopher/core";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { gunzipSync } from "node:zlib";
+import { rejectionCutoff } from "./learning";
 import type { WorkerDeps } from "../context";
 import { log } from "../log";
 
@@ -47,10 +48,16 @@ export async function handleSuggestFromScans(task: Task, deps: WorkerDeps): Prom
   const result = suggestFromScans(titles, settings.gate);
 
   const existing = await deps.db
-    .select({ type: schema.filterSuggestions.type, value: schema.filterSuggestions.value, status: schema.filterSuggestions.status })
+    .select({ type: schema.filterSuggestions.type, value: schema.filterSuggestions.value, status: schema.filterSuggestions.status,
+      resolvedAt: schema.filterSuggestions.resolvedAt, createdAt: schema.filterSuggestions.createdAt })
     .from(schema.filterSuggestions)
     .where(and(eq(schema.filterSuggestions.userId, userId), inArray(schema.filterSuggestions.type, ["keyword_include", "seniority_include"])));
-  const taken = new Set(existing.filter((e) => e.status === "pending" || e.status === "rejected").map((e) => `${e.type}:${String((e.value as { term?: string }).term ?? "").toLowerCase()}`));
+  // A rejection stands for sixty days (R-6.9). Past that the term may be proposed again: the scans
+  // it would admit today are not the ones the person turned down two months ago.
+  const cutoff = rejectionCutoff(deps.now());
+  const live = (e: (typeof existing)[number]) => e.status === "pending" ||
+    (e.status === "rejected" && (e.resolvedAt ?? e.createdAt).getTime() >= cutoff.getTime());
+  const taken = new Set(existing.filter(live).map((e) => `${e.type}:${String((e.value as { term?: string }).term ?? "").toLowerCase()}`));
 
   const file = async (type: "keyword_include" | "seniority_include", s: TermSuggestion) => {
     if (taken.has(`${type}:${s.term.toLowerCase()}`)) return 0;

@@ -102,6 +102,13 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
       const queued = await db.insert(schema.tasks).values(scoring.slice(offset, offset + 250)).onConflictDoNothing().returning({ id: schema.tasks.id });
       queuedForScoring += queued.length;
     }
+    // Say so on the view as well as in the queue: a role waiting for its score reads "scoring"
+    // rather than as a blank the reader cannot tell from "not scored: budget spent".
+    if (scoring.length) {
+      await db.execute(sql`update user_jobs set score_state = 'queued', score_state_at = ${now}
+        where user_id = ${userId}
+          and job_id in (select value::uuid from jsonb_array_elements_text(${JSON.stringify(scoring.map(row => (row.payload as { jobId: string }).jobId))}::jsonb))`);
+    }
     cursor = rows.at(-1)!.id;
     if (scope.jobId) break;
   }

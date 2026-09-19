@@ -2,16 +2,27 @@
 
 import { Fragment, startTransition, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { decide, decideRoles, archiveRoles } from "@/app/actions/decisions";
-import { Badge, decisionTone, stageTone } from "@/components/Badge";
+import { decide, decideRoles, archiveRoles, roleDetails } from "@/app/actions/decisions";
+import { Badge, decisionTone, fitVerdictTone, stageTone, FIT_VERDICT_LABELS } from "@/components/Badge";
 import { CompanyFavicon } from "@/components/CompanyFavicon";
 import { FitBar, Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { Button, buttonClass } from "@/components/Button";
-import type { RoleRowVM } from "@/lib/queries/jobs";
+import { Mark } from "@/components/brand/Mark";
+import { SafeMarkdown } from "@/components/SafeMarkdown";
+import type { RoleDetailsVM, RoleRowVM, SortDir, SortKey } from "@/lib/queries/jobs";
 
 import { APPLICATION_STATUS_LABELS, ROLE_STAGE_LABELS, ROLE_STATUS_LABELS, roleStageRank } from "@christopher/core/role-workflow";
 
 type ReasonKind = "apply" | "skip";
+
+/** How long the undo notice stays. Long enough to read a line and reach for it, short enough to leave. */
+const NOTICE_MS = 5000;
+
+/** Roughly what fits in the collapsed height; below it there is nothing to show more of. */
+const COLLAPSED_DESCRIPTION_CHARS = 400;
+
+/** The nudge R-6.1 asks for: a reason on apply is wanted, never required. */
+const APPLY_REASON_HINT = "One line on why helps the ranking. Enter to skip.";
 
 /** "In process · Interview": the stage, and — for the three steps it collapses — which one. */
 function stageLabel(row: RoleRowVM): string {
@@ -19,7 +30,7 @@ function stageLabel(row: RoleRowVM): string {
   return row.stage === "in_process" && row.applicationStatus ? `${label} · ${APPLICATION_STATUS_LABELS[row.applicationStatus]}` : label;
 }
 
-/** A shortlisted role that has moved on: the badge beside the decision says where to. */
+/** A shortlisted role that has moved on: the badge beside the title says where to. */
 function movedOn(row: RoleRowVM): boolean {
   return row.workflowStatus === "user-shortlisted" && roleStageRank(row.stage) > roleStageRank("shortlisted");
 }
@@ -32,6 +43,22 @@ function applicationLabel(row: RoleRowVM): string {
   return roleStageRank(row.stage) >= roleStageRank("applying") ? "Open application" : "Build CV";
 }
 
+/** What the score says, for the `title` on the bar: the verdict, then the rationale behind it. */
+function fitTitle(row: RoleRowVM): string | undefined {
+  const parts = [row.fitVerdict ? FIT_VERDICT_LABELS[row.fitVerdict] : null, row.fitRationale].filter(Boolean);
+  return parts.length ? parts.join(" · ") : undefined;
+}
+
+/** Descriptions arrive as cleaned text; some sources hand over headings and bullets. */
+function looksMarkdown(text: string): boolean {
+  return /^\s*(#{1,3}\s|[-*]\s)/m.test(text) || /\*\*[^*]+\*\*/.test(text);
+}
+
+type DetailState =
+  | { state: "loading" }
+  | { state: "ready"; details: RoleDetailsVM }
+  | { state: "error"; error: string };
+
 interface ReasonBoxState {
   jobId: string;
   kind: ReasonKind;
@@ -40,7 +67,30 @@ interface ReasonBoxState {
   error: string | null;
 }
 
-export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = false, archived = false, emptyState }: { hideCompany?: boolean; archived?: boolean; rows: RoleRowVM[]; keyboard?: boolean; emptyState: React.ReactNode }) {
+/** A column head that sorts (R-7.1). The link carries the filters in hand, so sorting keeps them. */
+function SortTH({ label, sortKey, links, sort, dir, className = "" }: {
+  label: string; sortKey: SortKey; links?: Partial<Record<SortKey, string>>; sort?: SortKey; dir?: SortDir; className?: string;
+}) {
+  const href = links?.[sortKey];
+  if (!href) return <TH className={className}>{label}</TH>;
+  const active = sort === sortKey;
+  return (
+    <TH className={className} aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}>
+      <a href={href} title={`Sort by ${label.toLowerCase()}`} className={`no-underline hover:underline ${active ? "text-fg" : ""}`}>
+        {label}
+        {active && <span aria-hidden="true">{dir === "asc" ? " ↑" : " ↓"}</span>}
+      </a>
+    </TH>
+  );
+}
+
+export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = false, archived = false, emptyState, sortLinks, sort, dir }: {
+  hideCompany?: boolean; archived?: boolean; rows: RoleRowVM[]; keyboard?: boolean; emptyState: React.ReactNode;
+  /** One href per sortable column, built by the server with the filters in hand. */
+  sortLinks?: Partial<Record<SortKey, string>>;
+  sort?: SortKey;
+  dir?: SortDir;
+}) {
   const router = useRouter();
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const rows = inputRows.filter(row => !removedIds.has(row.id));
@@ -102,16 +152,60 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
       row => archived || (row.decision?.decision ?? null) !== decision);
   }
 
-  const [highlightIndex, setHighlightIndex] = useState(-1);
+  // The cursor starts on the first row rather than nowhere, so the first `a` or `s` acts on
+  // something and the shortcuts under the table are about a row the reader can see.
+  const [highlightIndex, setHighlightIndex] = useState(keyboard && inputRows.length > 0 ? 0 : -1);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [details, setDetails] = useState<Record<string, DetailState>>({});
+  const [descriptionOpen, setDescriptionOpen] = useState(false);
   const [reasonBox, setReasonBox] = useState<ReasonBoxState | null>(null);
   const [flashError, setFlashError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ jobId: string; text: string } | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reasonBoxRef = useRef(reasonBox);
   reasonBoxRef.current = reasonBox;
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
+  /** One notice at a time: the newest decision replaces whatever was there. */
+  function showNotice(jobId: string, text: string) {
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    setNotice({ jobId, text });
+    noticeTimer.current = setTimeout(() => setNotice(null), NOTICE_MS);
+  }
+  function clearNotice() {
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = null;
+    setNotice(null);
+  }
+  useEffect(() => () => { if (noticeTimer.current) clearTimeout(noticeTimer.current); }, []);
+
+  /** The evidence a decision needs, fetched once per row when it expands and kept for the page. */
+  function loadDetails(jobId: string) {
+    setDetails(current => ({ ...current, [jobId]: { state: "loading" } }));
+    startTransition(async () => {
+      try {
+        const result = await roleDetails(jobId);
+        setDetails(current => ({ ...current, [jobId]: result.ok ? { state: "ready", details: result.details } : { state: "error", error: result.error } }));
+      } catch {
+        setDetails(current => ({ ...current, [jobId]: { state: "error", error: "Could not load this role. Reload and try again." } }));
+      }
+    });
+  }
+
+  function toggleExpanded(jobId: string) {
+    const next = expandedId === jobId ? null : jobId;
+    setExpandedId(next);
+    setReasonBox(null);
+    setDescriptionOpen(false);
+    if (next && !details[next]) loadDetails(next);
+  }
+
   function openReasonBox(jobId: string, kind: ReasonKind, prefill = "") {
-    setExpandedId(jobId);
+    if (expandedId !== jobId) {
+      setExpandedId(jobId);
+      setDescriptionOpen(false);
+      if (!details[jobId]) loadDetails(jobId);
+    }
     setReasonBox({ jobId, kind, text: prefill, pending: false, error: null });
     requestAnimationFrame(() => textareaRef.current?.focus());
   }
@@ -133,12 +227,34 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
     if (isBoxed) setReasonBox(null);
     const previous = inputRows.find(row => row.id === jobId);
     if (archived || previous?.decision?.decision !== decision) setRemovedIds(ids => new Set([...ids, jobId]));
+    // The row leaves the page the moment it is decided; the notice says where it went and offers
+    // the way back, so nothing vanishes without a word.
+    if (decision === null) clearNotice();
+    else if (previous) showNotice(jobId, `${decision === "apply" ? "Shortlisted" : "Dismissed"} ${previous.title}${hideCompany ? "" : ` at ${previous.companyName}`}`);
     router.refresh();
     } catch {
       const error = "Could not save. Reload to check the current state before retrying.";
       if (isBoxed) setReasonBox(b => b?.jobId === jobId ? { ...b, pending: false, error } : b);
       else setFlashError(error);
     } finally { actionsInFlight.current.delete(jobId); }
+    });
+  }
+
+  /** The notice's way back: the decision is undone and the row returns to the page it left. */
+  function undoDecision(jobId: string) {
+    if (actionsInFlight.current.has(jobId)) return;
+    actionsInFlight.current.add(jobId);
+    clearNotice();
+    startTransition(async () => {
+      setFlashError(null);
+      try {
+        const result = await decide(jobId, null, "");
+        if (!result.ok) { setFlashError(result.error); return; }
+        setRemovedIds(ids => { const next = new Set(ids); next.delete(jobId); return next; });
+        router.refresh();
+      } catch {
+        setFlashError("Could not save. Reload to check the current state before retrying.");
+      } finally { actionsInFlight.current.delete(jobId); }
     });
   }
 
@@ -176,10 +292,13 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
           if (row) window.open(row.url, "_blank", "noopener,noreferrer");
           break;
         case "a":
-          if (row) void submitDecision(row.id, "apply", "");
+          // R-6.1: shortlisting asks for a line rather than taking the decision silently. Enter on
+          // an empty box shortlists anyway, so the one-keystroke path is still one keystroke and
+          // a return.
+          if (row) { e.preventDefault(); openReasonBox(row.id, "apply", row.decision?.decision === "apply" ? row.decision.reason : ""); }
           break;
         case "s":
-          if (row) openReasonBox(row.id, "skip", row.decision?.decision === "skip" ? row.decision.reason : "");
+          if (row) { e.preventDefault(); openReasonBox(row.id, "skip", row.decision?.decision === "skip" ? row.decision.reason : ""); }
           break;
         default:
           break;
@@ -197,11 +316,18 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
     document.getElementById(`role-row-${row.id}`)?.scrollIntoView({ block: "nearest" });
   }, [highlightIndex, rows]);
 
-  if (rows.length === 0) return <>{emptyState}</>;
+  const undoNotice = notice && (
+    <p role="status" aria-live="polite" className="mt-3 flex flex-wrap items-center gap-3 border-2 border-line-muted px-3 py-1.5 text-13 text-fg">
+      <span>{notice.text}</span>
+      <button type="button" onClick={() => undoDecision(notice.jobId)} className="text-13 font-semibold underline hover:text-muted">Undo</button>
+    </p>
+  );
+
+  if (rows.length === 0 && !notice) return <>{emptyState}</>;
+  if (rows.length === 0) return <div>{emptyState}{undoNotice}</div>;
 
   return (
     <div>
-      {keyboard && <details className="mb-3 text-12 text-muted"><summary className="cursor-pointer">Keyboard shortcuts</summary><p> <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>x</kbd> select · <kbd>a</kbd> shortlist · <kbd>s</kbd> dismiss · <kbd>o</kbd> open</p></details>}
       {flashError && (
         <p className="mb-2 border-2 border-danger px-3 py-1.5 text-14 text-danger">{flashError}</p>
       )}
@@ -271,16 +397,17 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                 onChange={() => setSelected(allSelected ? new Set() : new Set(rows.map(row => row.id)))}
               />
             </TH>
-            {!hideCompany && <TH>Company</TH>}
-            <TH>Role</TH>
-            <TH>Location</TH>
-            <TH>Fit</TH>
+            {!hideCompany && <SortTH label="Company" sortKey="company" links={sortLinks} sort={sort} dir={dir} />}
+            <SortTH label="Role" sortKey="title" links={sortLinks} sort={sort} dir={dir} />
+            <SortTH label="Location" sortKey="location" links={sortLinks} sort={sort} dir={dir} />
+            <SortTH label="Fit" sortKey="fit" links={sortLinks} sort={sort} dir={dir} />
             <TH><span className="sr-only">Action</span></TH>
           </tr>
         </THead>
         <TBody>
           {rows.map((row, index) => {
             const boxed = reasonBox?.jobId === row.id ? reasonBox : null;
+            const detail = details[row.id];
             return (
               <Fragment key={row.id}>
                 <TR highlighted={index === highlightIndex} className={selected.has(row.id) ? "bg-sunken" : ""}>
@@ -306,10 +433,12 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                   </TD>}
                   <TD id={`role-row-${row.id}`} className="max-w-[22rem]">
                     <span className="flex flex-wrap items-center gap-2">
-                      <button type="button" disabled={reasonBox?.pending} onClick={() => { setExpandedId(expandedId === row.id ? null : row.id); setReasonBox(null); }} aria-expanded={expandedId === row.id} className="text-left font-semibold text-fg hover:underline">
+                      <button type="button" disabled={reasonBox?.pending} onClick={() => toggleExpanded(row.id)} aria-expanded={expandedId === row.id} className="text-left font-semibold text-fg hover:underline">
                         {row.title}
                       </button>
                       {row.addedByYou && <Badge tone="neutral">Added by you</Badge>}
+                      {/* Where a shortlisted role has got to, on the row rather than only inside it. */}
+                      {movedOn(row) && <Badge tone={stageTone(row.stage)}>{stageLabel(row)}</Badge>}
                     </span>
                     <p className="mt-1 text-12 text-muted"><span title={row.liveForTitle}>{row.liveForText}</span>{row.status === "closed" && <span className="ml-2 text-warn">Vacancy closed</span>}</p>
                   </TD>
@@ -321,7 +450,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                     </div>
                   </TD>
                   <TD className="whitespace-nowrap">
-                    <FitBar score={row.fitScore} />
+                    <FitBar score={row.fitScore} title={fitTitle(row)} />
                   </TD>
                   <TD className="text-right">
                     {row.workflowStatus === "user-shortlisted" ? <a href={`/applications?job=${row.id}`} className={buttonClass("secondary", "sm", "whitespace-nowrap no-underline")}>{applicationLabel(row)}</a>
@@ -332,7 +461,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                       aria-controls={`role-review-${row.id}`}
                       aria-label={`${expandedId === row.id ? "Close review for" : "Review"} ${row.title} at ${row.companyName}`}
                       disabled={reasonBox?.pending}
-                      onClick={() => { setExpandedId(expandedId === row.id ? null : row.id); setReasonBox(null); }}
+                      onClick={() => toggleExpanded(row.id)}
                     >
                       {expandedId === row.id ? "Close" : row.workflowStatus === "user-dismissed" ? "Reconsider" : "Review"}
                     </Button>}
@@ -344,8 +473,50 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                       <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(256px,352px)]">
                         <div className="space-y-3">
                           <p className="text-14 font-semibold text-fg">{row.title}</p>
-                          <p className="text-12 text-muted">{[row.department, row.employmentType, row.salaryText].filter(Boolean).join(" · ")}</p>
-                          {row.fitRationale && <div><h3 className="ds-label mb-1">Why this fits</h3><p className="max-w-3xl text-14 text-fg">{row.fitRationale}</p></div>}
+                          <p className="text-12 text-muted">{[row.department, row.employmentType].filter(Boolean).join(" · ")}</p>
+                          {row.salaryText && <p className="text-14 text-fg"><span className="ds-label mr-2">Salary</span>{row.salaryText}</p>}
+                          <div>
+                            <h3 className="ds-label mb-1">Why this is here</h3>
+                            {row.keywordTerms.length > 0 && (
+                              <div className="mb-1 flex flex-wrap gap-1.5">
+                                {row.keywordTerms.map(term => <Badge key={term} tone="gray" title="A keyword of yours that this role matched">{term}</Badge>)}
+                              </div>
+                            )}
+                            {detail?.state === "ready" && <p className="text-13 text-muted">{detail.details.locationReason}</p>}
+                          </div>
+                          {row.fitScore !== null && (
+                            <div>
+                              <h3 className="ds-label mb-1">Fit</h3>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <FitBar score={row.fitScore} title={fitTitle(row)} />
+                                {row.fitVerdict && <Badge tone={fitVerdictTone(row.fitVerdict)}>{FIT_VERDICT_LABELS[row.fitVerdict]}</Badge>}
+                              </div>
+                              {row.fitRationale && <p className="mt-1 max-w-3xl text-14 text-fg">{row.fitRationale}</p>}
+                            </div>
+                          )}
+                          <div>
+                            <h3 className="ds-label mb-1">Role description</h3>
+                            {detail?.state === "loading" && <span className="inline-block text-muted"><Mark size={16} searching title="Loading the description" /></span>}
+                            {detail?.state === "error" && <p className="text-13 text-danger">{detail.error}</p>}
+                            {detail?.state === "ready" && (detail.details.description?.trim() ? (
+                              <>
+                                <div className={descriptionOpen || detail.details.description.length <= COLLAPSED_DESCRIPTION_CHARS ? "" : "max-h-32 overflow-hidden"}>
+                                  {looksMarkdown(detail.details.description)
+                                    ? <SafeMarkdown markdown={detail.details.description} className="max-w-3xl" />
+                                    : <div className="max-w-3xl space-y-2.5 text-14 leading-relaxed text-fg">
+                                        {detail.details.description.split(/\n{2,}/).map((paragraph, i) => <p key={i}>{paragraph.trim()}</p>)}
+                                      </div>}
+                                </div>
+                                {detail.details.description.length > COLLAPSED_DESCRIPTION_CHARS && (
+                                  <button type="button" onClick={() => setDescriptionOpen(open => !open)} className="mt-1 text-12 text-muted underline hover:text-fg">
+                                    {descriptionOpen ? "Show less" : "Show more"}
+                                  </button>
+                                )}
+                              </>
+                            ) : (
+                              <p className="text-13 text-muted">No description stored yet. Open the vacancy to read it.</p>
+                            ))}
+                          </div>
                           {row.events.filter(event => event.label.includes("archiv")).map(event => <p key={event.id} className="text-12 text-muted">{event.label}</p>)}
                           <div className="flex flex-wrap items-center gap-4 text-12">
                             <a href={`/applications?job=${row.id}`} className="font-semibold underline">{applicationLabel(row)}</a>
@@ -388,13 +559,15 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                               e.stopPropagation();
                               setReasonBox(null);
                               e.currentTarget.blur();
-                            } else if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                            } else if (e.key === "Enter" && !e.shiftKey) {
+                              // R-7.2: enter saves. Shift+Enter is still a new line, and an empty
+                              // box on a shortlist saves the decision without a reason.
                               e.preventDefault();
                               if (!boxed.pending) void submitDecision(row.id, boxed.kind, boxed.text);
                             }
                           }}
-                          placeholder={boxed.kind === "skip" ? "Why is this not for you? (required)" : "Add a reason (optional, but it improves the ranking)"}
-                          rows={2}
+                          placeholder={boxed.kind === "skip" ? "Why is this not for you? (required)" : APPLY_REASON_HINT}
+                          rows={boxed.kind === "skip" ? 2 : 1}
                           className="w-full resize-y border-2 border-line-muted bg-bg px-2 py-1 font-mono text-12 text-fg placeholder:text-faint focus:border-line focus:outline-none"
                         />
                         {boxed.error && <p className="text-12 text-danger">{boxed.error}</p>}
@@ -416,6 +589,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge tone={decisionTone(row.decision.decision)}>{ROLE_STATUS_LABELS[row.decision.decision === "apply" ? "user-shortlisted" : "user-dismissed"]}</Badge>
                         {movedOn(row) && <Badge tone={stageTone(row.stage)}>{stageLabel(row)}</Badge>}
+                        <span className="text-12 text-muted" title={row.decision.createdTitle}>Decided {row.decision.createdLabel}</span>
                         {row.decision.reason && <p className="w-full text-14 text-fg">{row.decision.reason}</p>}
                         <button type="button" onClick={() => openReasonBox(row.id, row.decision!.decision, row.decision!.reason)} className="text-12 text-muted underline hover:text-fg">
                           Reconsider
@@ -451,6 +625,11 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
           })}
         </TBody>
       </Table>
+      {undoNotice}
+      {/* The shortcuts are the table's own caption, not a disclosure nobody opens. */}
+      {keyboard && <p className="mt-3 text-12 text-muted">
+        <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>x</kbd> select · <kbd>a</kbd> shortlist · <kbd>s</kbd> dismiss · <kbd>o</kbd> open · <kbd>enter</kbd> save
+      </p>}
     </div>
   );
 }

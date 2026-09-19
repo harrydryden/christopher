@@ -158,7 +158,7 @@ export type StatusFilter = (typeof STATUS_VALUES)[number];
 export const DECISION_VALUES = ["inbox", "all", "undecided", "apply", "skip"] as const;
 export type DecisionFilter = (typeof DECISION_VALUES)[number];
 
-export const SORT_KEYS = ["status", "fit", "company", "liveFor", "firstSeen", "title", "location"] as const;
+export const SORT_KEYS = ["status", "fit", "company", "liveFor", "firstSeen", "title", "location", "decided"] as const;
 export type SortKey = (typeof SORT_KEYS)[number];
 
 export type SortDir = "asc" | "desc";
@@ -171,6 +171,8 @@ export const DEFAULT_SORT_DIR: Record<SortKey, SortDir> = {
   firstSeen: "desc",
   title: "asc",
   location: "asc",
+  // "What did I decide last week?" is answered newest first.
+  decided: "desc",
 };
 
 export interface RolesFilters {
@@ -182,8 +184,18 @@ export interface RolesFilters {
   q: string;
   showHidden: boolean;
   closed: boolean;
+  /** `since=7d`: only roles decided within this many days. Null means every decision, however old. */
+  sinceDays: number | null;
   sort: SortKey;
   dir: SortDir;
+}
+
+/** `since=7d` — a whole number of days, bounded so a hand-edited URL cannot ask for a silly window. */
+export function parseSince(raw: string | undefined): number | null {
+  const match = /^(\d{1,3})d$/.exec((raw ?? "").trim());
+  if (!match) return null;
+  const days = Number(match[1]);
+  return days >= 1 && days <= 365 ? days : null;
 }
 
 export type RawSearchParams = Record<string, string | string[] | undefined>;
@@ -256,9 +268,15 @@ export function parseRolesFilters(sp: RawSearchParams): RolesFilters {
     q: (first(sp.q) ?? "").trim(),
     showHidden: first(sp.showHidden) === "1",
     closed: first(sp.closed) === "1",
+    sinceDays: parseSince(first(sp.since)),
     sort,
     dir,
   };
+}
+
+/** The cut-off a `since` window makes, or null when the filter names no window. */
+export function sinceCutoff(filters: Pick<RolesFilters, "sinceDays">, now: Date): Date | null {
+  return filters.sinceDays === null ? null : new Date(now.getTime() - filters.sinceDays * 86400000);
 }
 
 function locationMatches(job: RoleJob, needle: string): boolean {
@@ -284,6 +302,9 @@ export function matchesRolesFilters(row: RoleRow, filters: RolesFilters, now: Da
   if (filters.location && !locationMatches(row.job, filters.location)) return false;
 
   if (filters.q && !row.job.title.toLowerCase().includes(filters.q.toLowerCase())) return false;
+
+  const cutoff = sinceCutoff(filters, now);
+  if (cutoff && (!row.decision || row.decision.createdAt < cutoff)) return false;
 
   return true;
 }
@@ -328,6 +349,9 @@ function compareRows(a: RoleRow, b: RoleRow, sort: SortKey, now: Date): number {
       return a.job.title.localeCompare(b.job.title);
     case "location":
       return (a.job.location ?? "").localeCompare(b.job.location ?? "");
+    case "decided":
+      // Undecided rows have no date to sort by, so they keep the fit ordering's rule: last.
+      return (a.decision?.createdAt.getTime() ?? -Infinity) - (b.decision?.createdAt.getTime() ?? -Infinity);
     default:
       return 0;
   }
@@ -352,6 +376,7 @@ export function filtersToQueryString(filters: RolesFilters): string {
   if (filters.q) params.set("q", filters.q);
   if (filters.showHidden) params.set("showHidden", "1");
   if (filters.closed) params.set("closed", "1");
+  if (filters.sinceDays !== null) params.set("since", `${filters.sinceDays}d`);
   params.set("sort", filters.sort);
   params.set("dir", filters.dir);
   return params.toString();
@@ -369,6 +394,8 @@ export interface RoleDecisionVM {
   decision: "apply" | "skip";
   reason: string;
   createdLabel: string;
+  /** The exact moment, for the `title` on the relative label. */
+  createdTitle: string;
 }
 
 export interface RoleEventVM {
@@ -405,8 +432,12 @@ export interface RoleRowVM {
   liveForTitle: string;
   seeded: boolean;
   fitScore: number | null;
+  /** The A5 verdict stored beside the score (R-6.6): shown beside it, never instead of it. */
+  fitVerdict: "strong" | "possible" | "unlikely" | null;
   fitRationale: string | null;
   keywordTerms: string[];
+  /** This account's stored location verdict for the posting (`user_jobs.location_ok`). */
+  locationOk: boolean;
   sourceType: SourceType;
   firstSeenLabel: string;
   firstSeenTitle: string;
@@ -458,8 +489,10 @@ export function buildRoleRowVM(row: RoleRow, now: Date = new Date(), viewerId?: 
     liveForTitle,
     seeded: row.job.seeded,
     fitScore: row.job.fitScore,
+    fitVerdict: row.job.fitVerdict,
     fitRationale: row.job.fitRationale,
     keywordTerms: row.job.keywordTerms,
+    locationOk: row.job.locationOk,
     sourceType: row.sourceType,
     firstSeenLabel: relativeTime(row.job.firstSeenAt, now),
     firstSeenTitle: row.job.firstSeenAt.toISOString(),
@@ -469,18 +502,22 @@ export function buildRoleRowVM(row: RoleRow, now: Date = new Date(), viewerId?: 
     closedTitle: row.job.closedAt ? row.job.closedAt.toISOString() : null,
     addedByYou: row.job.origin === "user" && !!viewerId && row.job.addedBy === viewerId,
     decision: row.decision
-      ? { id: row.decision.id, decision: row.decision.decision, reason: row.decision.reason, createdLabel: relativeTime(row.decision.createdAt, now) }
+      ? { id: row.decision.id, decision: row.decision.decision, reason: row.decision.reason, createdLabel: relativeTime(row.decision.createdAt, now), createdTitle: row.decision.createdAt.toISOString() }
       : null,
     events: row.events.map((e) => ({ id: e.id, type: e.type, label: e.payload.action === "archived" ? `Archived: ${e.payload.reason ?? "Put away by you"}` : e.payload.action === "restored" ? "Restored by you" : eventTypeLabel(e.type), title: `${relativeTime(e.at, now)} · ${e.at.toISOString()}` })),
   };
 }
 
-/** SQL filters and pagination for one 50-row page; descriptions are left in the database. */
-export async function fetchRolePage(userId: string, filters: RolesFilters, archived: boolean, threshold: number | null, requestedPage: number, now = new Date()) {
-  const started = Date.now();
+/**
+ * The one reading of a filtered view in SQL — the `where` and the `order by` the table, its counts
+ * and the CSV export all share, so the file and the screen cannot disagree about which roles are in
+ * a view or in what order (R-7.5).
+ */
+function rolesQuery(userId: string, filters: RolesFilters, archived: boolean, now: Date) {
   const liveStart = sql`case when ${jobs.postedAt} <= ${jobs.firstSeenAt} + interval '1 day' then ${jobs.postedAt} else ${jobs.firstSeenAt} end`;
   const status = sql`case when ${jobs.status} = 'closed' then 'closed' when ${liveStart} >= ${new Date(now.getTime() - 7 * 86400000)} then 'new' else 'active' end`;
   const statuses = filters.closed ? [...new Set([...filters.status, 'closed'])] : filters.status;
+  const cutoff = sinceCutoff(filters, now);
   const conditions = and(
     eq(userJobs.userId, userId),
     archived ? eq(roleStatusSql, "archived") : ne(roleStatusSql, "archived"),
@@ -490,27 +527,84 @@ export async function fetchRolePage(userId: string, filters: RolesFilters, archi
     filters.minFit !== null ? sql`${userJobs.fitScore} >= ${filters.minFit}` : undefined,
     filters.q ? sql`position(lower(${filters.q}) in lower(${jobs.title})) > 0` : undefined,
     filters.location ? sql`(position(lower(${filters.location}) in lower(coalesce(${jobs.location}, ''))) > 0 or exists (select 1 from jsonb_array_elements_text(${jobs.locations}) l where position(lower(${filters.location}) in lower(l)) > 0))` : undefined,
+    // "This week": the window is on the decision, so an undecided role is never in a `since` view.
+    cutoff ? sql`${decisions.createdAt} >= ${cutoff}` : undefined,
   );
+  const direction = sql.raw(filters.dir === 'desc' ? 'desc' : 'asc');
+  const sorts = {
+    status: sql`case ${status} when 'new' then 0 when 'active' then 1 else 2 end`,
+    fit: userJobs.fitScore, company: companies.name, firstSeen: jobs.firstSeenAt, title: jobs.title, location: sql`coalesce(${jobs.location}, '')`,
+    decided: decisions.createdAt,
+    liveFor: sql`greatest(0, floor(extract(epoch from (case when ${jobs.status} = 'closed' then coalesce(${jobs.closedAt}, ${now}) else ${now} end - (${liveStart}))) / 86400))`,
+  };
+  const order = filters.sort === 'status'
+    ? [sql`${sorts.status} ${direction}`, sql`${userJobs.fitScore} ${filters.dir === 'asc' ? sql`desc nulls last` : sql`asc nulls first`}`, sql`${jobs.firstSeenAt} ${filters.dir === 'asc' ? sql`desc` : sql`asc`}`, jobs.id]
+    : [sql`${sorts[filters.sort]} ${direction} nulls last`, jobs.id];
+  return { conditions, order };
+}
+
+/**
+ * One block of a filtered view, at any offset and size: the table reads 50 of these, the export
+ * reads them 500 at a time until its cap. Summary rows either way — nothing that renders a block
+ * renders the stored description, and 50 of them is up to 1.5 MB read and serialised on every
+ * render and every pagination click.
+ */
+export async function fetchRoleRows(userId: string, filters: RolesFilters, archived: boolean, { offset = 0, limit = 50, now = new Date() }: { offset?: number; limit?: number; now?: Date } = {}): Promise<RoleRow[]> {
+  const { conditions, order } = rolesQuery(userId, filters, archived, now);
+  const rows = await baseRolesSelect(userId, true).where(conditions).orderBy(...order).limit(limit).offset(offset);
+  return rows.map(row => ({ ...row, events: [] as RoleEvent[] }));
+}
+
+/**
+ * What the review panel loads on expand: the evidence a decision needs that the page read leaves in
+ * the database (the description) or that no column on the row can carry. One round trip per row.
+ */
+export interface RoleDetailsVM {
+  jobId: string;
+  /** The stored description, as the extractor cleaned it. Null when no scan has fetched one yet. */
+  description: string | null;
+  salaryText: string | null;
+  department: string | null;
+  employmentType: string | null;
+  /** The account's own gate hits (R-5.5), rendered as chips. */
+  keywordTerms: string[];
+  fitVerdict: "strong" | "possible" | "unlikely" | null;
+  fitRationale: string | null;
+  /** One line on why this role passed the location filter. */
+  locationReason: string;
+}
+
+/**
+ * Why a role passed this account's location filter, in one line (the other half of R-5.5's "why is
+ * this here"). `user_jobs` stores only the boolean verdict, so the terms behind it are recomputed
+ * from the stored posting and the account's own gate when the review panel opens — the same
+ * `evaluateLocation` the gate itself runs, never a second rule.
+ */
+export function locationReasonText(evaluated: { ok: boolean; terms: string[]; remote: boolean }, hasLocationFilter: boolean, addedByYou: boolean): string {
+  if (!evaluated.ok) {
+    return addedByYou
+      ? "Outside your location filter — it is here because you added it by its URL."
+      : "Outside your location filter — it is here because you decided on it.";
+  }
+  if (!hasLocationFilter) return evaluated.remote ? "Remote, and your filter names no location, so every location passes." : "Your filter names no location, so every location passes.";
+  const named = evaluated.terms.filter(term => term !== "remote");
+  if (named.length) return `Matches your location filter: ${named.join(", ")}.`;
+  return "Remote, and your filter allows remote roles.";
+}
+
+/** SQL filters and pagination for one 50-row page; descriptions are left in the database. */
+export async function fetchRolePage(userId: string, filters: RolesFilters, archived: boolean, threshold: number | null, requestedPage: number, now = new Date()) {
+  const started = Date.now();
+  const { conditions } = rolesQuery(userId, filters, archived, now);
   const [counted] = await db().select({ n: sql<number>`count(*)::int` }).from(baseRolesSelect(userId, true).where(conditions).as('filtered'));
   const total = counted?.n ?? 0;
   // Fit is an explicit filter, never a second hidden workflow: nothing is ever held back.
   const hiddenTotal = 0;
   const pageCount = Math.max(1, Math.ceil(total / 50));
   const page = Math.min(pageCount, Math.max(1, Number.isSafeInteger(requestedPage) ? requestedPage : 1));
-  const direction = sql.raw(filters.dir === 'desc' ? 'desc' : 'asc');
-  const sorts = {
-    status: sql`case ${status} when 'new' then 0 when 'active' then 1 else 2 end`,
-    fit: userJobs.fitScore, company: companies.name, firstSeen: jobs.firstSeenAt, title: jobs.title, location: sql`coalesce(${jobs.location}, '')`,
-    liveFor: sql`greatest(0, floor(extract(epoch from (case when ${jobs.status} = 'closed' then coalesce(${jobs.closedAt}, ${now}) else ${now} end - (${liveStart}))) / 86400))`,
-  };
-  const order = filters.sort === 'status'
-    ? [sql`${sorts.status} ${direction}`, sql`${userJobs.fitScore} ${filters.dir === 'asc' ? sql`desc nulls last` : sql`asc nulls first`}`, sql`${jobs.firstSeenAt} ${filters.dir === 'asc' ? sql`desc` : sql`asc`}`, jobs.id]
-    : [sql`${sorts[filters.sort]} ${direction} nulls last`, jobs.id];
-  // Summary rows: nothing on this page renders the stored description, and 50 of them is up to
-  // 1.5 MB read and serialised on every render and every pagination click.
-  const visible = await baseRolesSelect(userId, true).where(conditions).orderBy(...order).limit(50).offset((page - 1) * 50);
+  const visible = await fetchRoleRows(userId, filters, archived, { offset: (page - 1) * 50, limit: 50, now });
   console.info(JSON.stringify({ event: 'role_page', durationMs: Date.now() - started, rows: visible.length, total, page }));
-  return { visible: visible.map(row => ({ ...row, events: [] as RoleEvent[] })), hidden: [] as RoleRow[], total, hiddenTotal, page, pageCount };
+  return { visible, hidden: [] as RoleRow[], total, hiddenTotal, page, pageCount };
 }
 
 

@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { createAiEngine, decisionDigest, extractJsonBlock, CANCELLED_ERROR, OUTPUT_LIMIT_ERROR, STREAM_CEILING_MS, type AiClientLike, type AiUsageRecord, type DecisionForDigest, type ParseResponse } from "./engine";
 import { APIConnectionError, APIConnectionTimeoutError, APIError, AuthenticationError, BadRequestError, InternalServerError, NotFoundError, PermissionDeniedError, RateLimitError } from "@anthropic-ai/sdk";
-import { estimateCostUsd, estimateCvBuildUsd, serverToolCostUsd, SERVER_TOOL_USD } from "./pricing";
+import { estimateCostUsd, estimateCvBuildUsd, estimateLibraryReviewUsd, serverToolCostUsd, SERVER_TOOL_USD } from "./pricing";
+import type { CvLibrary } from "@christopher/core";
 
 interface Captured {
   params: Record<string, unknown>;
@@ -359,6 +360,24 @@ describe("helpers", () => {
     // Fable 5.1 prices cache reads at $0.25/MTok, a quarter of the tenth-of-input rule.
     expect(estimateCostUsd("claude-fable-5-1", { inputTokens: 0, outputTokens: 0, cacheReadTokens: 1_000_000, cacheWriteTokens: 0 })).toBeCloseTo(0.25, 6);
     expect(estimateCostUsd("claude-fable-5-1", { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 1_000_000 })).toBeCloseTo(12.5, 6);
+  });
+
+  it("prices a library evidence review below a CV build, per pass rather than per entry", () => {
+    const library = { libraryBytes: 45_000, entryCount: 10 };
+    // A whole 45 KB library of ten entries: two batches, the library cached once and read back.
+    expect(estimateLibraryReviewUsd("claude-fable-5-1", library)).toBeCloseTo(0.434375, 6);
+    // Well under a dollar, and an order of magnitude below the build it saves people from guessing at.
+    expect(estimateLibraryReviewUsd("claude-fable-5-1", library)).toBeLessThan(1);
+    expect(estimateLibraryReviewUsd("claude-fable-5-1", library)).toBeLessThan(
+      estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 }) / 5);
+    // A single changed entry is one batch, and is dominated by putting the library in front of the
+    // model at all — which is why a burst of saves dedupes into one pass over the whole library.
+    expect(estimateLibraryReviewUsd("claude-fable-5-1", { ...library, entryCount: 1 })).toBeCloseTo(0.23825, 6);
+    // Batches of eight: the ninth entry is what adds the second batch and its cache read.
+    expect(estimateLibraryReviewUsd("claude-fable-5-1", { ...library, entryCount: 9 })).toBeGreaterThan(
+      estimateLibraryReviewUsd("claude-fable-5-1", { ...library, entryCount: 8 }) + 400 * 50 / 1_000_000);
+    // Nothing to review is nothing to hold: no call is made, so no budget is taken.
+    expect(estimateLibraryReviewUsd("claude-fable-5-1", { ...library, entryCount: 0 })).toBe(0);
   });
 
   it("builds a newest-first decision digest within budget", () => {
@@ -833,5 +852,188 @@ describe("assessment batch hooks", () => {
     expect(await engine.analyseCvJob("Lead operations for a growing team.")).toBeNull();
     expect(await engine.buildCv({ library: { name: "A", contact: "", profile: "", entries: [] }, jobTitle: "Ops", company: "Acme", description: "Lead" })).toBeNull();
     expect(calls).toHaveLength(3);
+  });
+});
+
+/**
+ * The evidence review of a library (A12).
+ *
+ * What is under test is the boundary, not the model: the whole library is written to the cache
+ * once and read back by every later batch, the person's rows stay the unit whatever the answer
+ * says, and a score is never taken from the model. `validateLibraryReview` in core owns the
+ * scoring rules; these are the engine's own guarantees about how it is fed and post-checked.
+ */
+describe("library evidence review (A12)", () => {
+  const ROWS = [
+    "Ran the UK warehouse team of 30 through a move to a new site",
+    "Cut handover time from two days to four hours",
+  ];
+  const libraryOf = (count: number): CvLibrary => ({
+    name: "Test Candidate",
+    contact: "London",
+    profile: "Operations leader with delivery experience",
+    employment: Array.from({ length: count }, (_, index) => ({
+      id: `job${index}`, company: `Acme ${index}`, jobTitle: "Director of Operations",
+      startDate: "2020-01", endDate: "2022-01", current: false,
+    })),
+    entries: Array.from({ length: count }, (_, index) => ({
+      id: `entry${index}`, kind: "experience" as const, heading: `Director of Operations · Acme ${index}`,
+      details: ROWS.join("\n"), employmentId: `job${index}`,
+    })),
+  });
+  const ref = { userId: "user-1", refType: "library" as const, refId: "library:user-1:3" };
+  /** What the model was asked about, read back out of the batch block the engine built. */
+  const entryIdsIn = (params: Record<string, unknown>) =>
+    [...userBlocks(params)[1]!.text.matchAll(/^Entry \[([^\]]+)\]/gmu)].map(match => match[1]!);
+  /** A clean answer: every row quoted verbatim, one facet each. */
+  const answerFor = (params: Record<string, unknown>, over: (entryId: string) => Partial<{
+    rows: Array<{ row: string; facet: string; specific: boolean; quantified: boolean; outcomeLinked: boolean; quote: string | null }>;
+    prompts: string[];
+  }> = () => ({})) => ({
+    entries: entryIdsIn(params).map(entryId => ({
+      entryId,
+      rows: ROWS.map((row, index) => ({
+        row, facet: index === 0 ? "responsibility" : "outcome",
+        specific: true, quantified: true, outcomeLinked: index === 1, quote: row,
+      })),
+      prompts: ["What problem were you brought in to solve?"],
+      ...over(entryId),
+    })),
+  });
+
+  it("reviews ten entries in two batches, reading the cached library back for the second", async () => {
+    const library = libraryOf(10);
+    const usage: AiUsageRecord[] = [];
+    const calls: Captured[] = [];
+    const engine = createAiEngine({
+      getModel: () => "claude-sonnet-5",
+      onUsage: record => { usage.push(record); },
+      client: { messages: { create: async params => {
+        calls.push({ params });
+        return { parsed_output: answerFor(params), usage: { input_tokens: 800, output_tokens: 400, cache_read_input_tokens: calls.length > 1 ? 4000 : 0, cache_creation_input_tokens: calls.length > 1 ? 0 : 4000 } };
+      } } },
+    });
+
+    const reviews = await engine.reviewLibraryEntries({ library, entries: library.entries, model: "claude-fable-5-1" }, ref);
+
+    expect(calls).toHaveLength(2);
+    expect(entryIdsIn(calls[0]!.params)).toHaveLength(8);
+    expect(entryIdsIn(calls[1]!.params)).toHaveLength(2);
+    expect(reviews.map(review => review.entryId)).toEqual(library.entries.map(entry => entry.id));
+    // The score is code's: all six facets are not covered by two rows, so this is not a 100.
+    expect(reviews[0]!.rows.every(row => row.verified)).toBe(true);
+    expect(reviews[0]!.score).toBe(Math.round(50 * 3 / 8 + 50));
+    expect(reviews[0]!.rating).toBe("good");
+    expect(reviews[0]!.missing).toEqual(["metric", "problem", "milestone", "style"]);
+
+    // One library, written to the cache once: the first block is byte for byte the same in both
+    // calls and carries the cache marker, and only the batch block after it varies.
+    const blocks = calls.map(call => userBlocks(call.params));
+    expect(blocks.map(content => content.length)).toEqual([2, 2]);
+    expect(blocks[1]![0]!.text).toBe(blocks[0]![0]!.text);
+    expect(blocks.every(content => content[0]!.cache_control)).toEqual(true);
+    expect(blocks.every(content => !content[1]!.cache_control)).toEqual(true);
+    expect(blocks[0]![0]!.text).toContain("<library>");
+    // The whole library is context, including the jobs and the entries the batch is not about.
+    expect(blocks[0]![0]!.text).toContain("Director of Operations · Acme 9");
+    expect(blocks[0]![1]!.text).toContain("<entries_under_review>");
+    expect(blocks[1]![1]!.text).toContain("Company: Acme 9");
+    expect(usage.map(record => record.cacheReadTokens)).toEqual([0, 4000]);
+
+    // Recorded against the account, under its own call site, with the model the caller chose.
+    expect(usage).toHaveLength(2);
+    expect(usage.every(record => record.callSite === "A12" && record.stage === "review" &&
+      record.userId === "user-1" && record.refType === "library" && record.costUsd > 0)).toBe(true);
+    expect(calls.every(call => call.params.model === "claude-fable-5-1")).toBe(true);
+    expect((calls[0]!.params.output_config as { effort: string }).effort).toBe("low");
+  });
+
+  it("keeps a row whose quote the model altered, marked unverified, and drops one it invented", async () => {
+    const library = libraryOf(1);
+    const engine = createAiEngine({ getModel: () => "claude-sonnet-5", client: { messages: { create: async () => {
+      return { parsed_output: {
+        entries: [{
+          entryId: "entry0",
+          rows: [
+            // Tidied on the way back: the quote is no longer anything the person wrote.
+            { row: ROWS[0]!, facet: "responsibility", specific: true, quantified: true, outcomeLinked: false,
+              quote: "Ran the UK warehouse team of thirty through a relocation" },
+            { row: ROWS[1]!, facet: "outcome", specific: true, quantified: true, outcomeLinked: true, quote: ROWS[1]! },
+            // Never written by anybody: it is not one of the entry's rows.
+            { row: "Grew revenue by 40%", facet: "metric", specific: true, quantified: true, outcomeLinked: true, quote: "Grew revenue by 40%" },
+          ],
+          prompts: ["What changed as a result?"],
+        }],
+      }, usage: { input_tokens: 10, output_tokens: 10 } };
+    } } } });
+
+    const [review] = await engine.reviewLibraryEntries({ library, entries: library.entries }, ref);
+
+    expect(review!.rows.map(row => row.row)).toEqual(ROWS);
+    expect(review!.rows[0]).toMatchObject({ verified: false, facet: "unclear", specific: false, quantified: false, quote: null });
+    expect(review!.rows[1]).toMatchObject({ verified: true, facet: "outcome", quote: ROWS[1] });
+    // An unverified row counts in the denominator and in neither numerator, so it lowers the score.
+    expect(review!.score).toBe(Math.round(50 * 2 / 8 + 25 * 0.5 + 25 * 0.5));
+  });
+
+  it("refuses an answer that asks the person about a demographic attribute", async () => {
+    const library = libraryOf(1);
+    const { client } = fakeClient({
+      entries: [{ entryId: "entry0", rows: [], prompts: ["What is your date of birth?"] }],
+    });
+    const engine = createAiEngine({ getModel: () => "claude-sonnet-5", client });
+    await expect(engine.reviewLibraryEntries({ library, entries: library.entries }, ref))
+      .rejects.toThrow("Demographic attributes cannot be evidence prompts.");
+  });
+
+  it("asks once more for an entry left out, and marks what is still uncovered unread", async () => {
+    const library = libraryOf(2);
+    const calls: Captured[] = [];
+    const events: Array<{ phase: string; uncovered?: number }> = [];
+    const engine = createAiEngine({ getModel: () => "claude-sonnet-5", client: { messages: { create: async params => {
+      calls.push({ params });
+      // Both answers cover the first entry only, so the second is never read.
+      const answered = answerFor(params);
+      return { parsed_output: { entries: answered.entries.filter(entry => entry.entryId === "entry0") }, usage: { input_tokens: 10, output_tokens: 10 } };
+    } } } });
+
+    const reviews = await engine.reviewLibraryEntries({ library, entries: library.entries }, ref, {
+      onBatch: event => { events.push({ phase: event.phase, uncovered: event.uncovered }); },
+    });
+
+    expect(calls).toHaveLength(2);
+    expect(userBlocks(calls[1]!.params)[1]!.text).toContain("left these entries out");
+    expect(events).toEqual([{ phase: "start", uncovered: undefined }, { phase: "retry", uncovered: 1 }, { phase: "done", uncovered: 1 }]);
+    expect(reviews[0]!.rows.every(row => row.verified)).toBe(true);
+    expect(reviews[1]!.rows.every(row => !row.verified)).toBe(true);
+    expect(reviews[1]!.score).toBe(0);
+    expect(reviews[1]!.prompts).toEqual([]);
+  });
+
+  it("fails the pass rather than scoring zero when a batch returns nothing usable", async () => {
+    const library = libraryOf(1);
+    const engine = createAiEngine({ getModel: () => "claude-sonnet-5", client: { messages: {
+      create: () => Promise.reject(new Error("Request timed out.")),
+    } } });
+    await expect(engine.reviewLibraryEntries({ library, entries: library.entries }, ref))
+      .rejects.toThrow("returned nothing usable");
+  });
+
+  it("stops the batches in flight when the caller's signal is aborted", async () => {
+    const library = libraryOf(17);
+    const stop = new AbortController();
+    const { client, calls, events } = streamingClient((params, index, signal) => {
+      if (index === 0) return Promise.resolve({ parsed_output: answerFor(params) });
+      return new Promise((_, reject) => signal!.addEventListener("abort", () => reject(new Error("Request was aborted."))));
+    });
+    const usage: AiUsageRecord[] = [];
+    const engine = createAiEngine({ client, getModel: () => "claude-sonnet-5", onUsage: record => { usage.push(record); } });
+    const pass = engine.reviewLibraryEntries({ library, entries: library.entries }, ref, { signal: stop.signal });
+    for (let tick = 0; tick < 50 && calls.length < 3; tick++) await new Promise(resolve => setTimeout(resolve, 5));
+    expect(calls).toHaveLength(3);
+    stop.abort();
+    await expect(pass).rejects.toThrow("returned nothing usable");
+    expect(events.filter(event => event.startsWith("cancel:")).length).toBeGreaterThan(0);
+    expect(usage.some(record => record.error === CANCELLED_ERROR)).toBe(true);
   });
 });

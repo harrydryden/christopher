@@ -10,6 +10,8 @@ import {
   type CvContent,
 } from "@christopher/core/cv";
 import { saveCvDraft } from "@/app/actions/cv";
+import { formatUsd } from "@/lib/format";
+import type { CvEditCosts } from "@/lib/cv-quote";
 import { CvWorkspacePanel } from "./CvWorkspace";
 import { CvDisclosure } from "./CvDisclosure";
 import { Button } from "./Button";
@@ -42,6 +44,8 @@ export function CvDraftEditor({
   assessment,
   tracking,
   buildLog,
+  costs,
+  blocked = null,
 }: {
   id: string;
   content: CvContent;
@@ -49,6 +53,10 @@ export function CvDraftEditor({
   tracking?: ReactNode;
   /** The motions this revision was built from, kept at the foot of the Content tab. */
   buildLog?: ReactNode;
+  /** What each of the two saves is expected to cost, from `cvEditCosts` on the server. */
+  costs?: CvEditCosts;
+  /** Why these actions are unavailable — an unverified account — or null when they are not. */
+  blocked?: string | null;
 }) {
   const formId = `cv-edit-${id}`;
   const [summary, setSummary] = useState(content.summary);
@@ -133,33 +141,49 @@ export function CvDraftEditor({
   }
   return (
     <>
-      <SettingsForm
-        id={formId}
-        action={saveCvDraft.bind(null, id)}
-        submitLabel="Save Direct Edits"
-        secondaryActions={<RebuildButton />}
-      >
-        {dirty && <p className="text-12 text-muted" role="status">Unsaved changes</p>}
-        {theme && (
-          <input type="hidden" name="theme" value={JSON.stringify(theme)} />
-        )}
-      </SettingsForm>
+      {/* A disabled fieldset disables every control inside it, which is how the unverified wall
+          reaches a submit button this component does not own. */}
+      <fieldset disabled={!!blocked} className="min-w-0">
+        <SettingsForm
+          id={formId}
+          action={saveCvDraft.bind(null, id)}
+          submitLabel="Save Direct Edits"
+          secondaryActions={<RebuildButton />}
+        >
+          {dirty && <p className="text-12 text-muted" role="status">Unsaved changes</p>}
+          {theme && (
+            <input type="hidden" name="theme" value={JSON.stringify(theme)} />
+          )}
+        </SettingsForm>
+      </fieldset>
+      {/* What the two actions differ by, where they are chosen: what each keeps, what each
+          re-runs, and what each is expected to cost. */}
+      <dl className="mt-2 space-y-1 text-12 text-muted">
+        <div>
+          <dt className="inline font-semibold text-fg">Save Direct Edits</dt>
+          <dd className="inline">
+            {" · keeps your wording, re-checks it"}
+            {costs && ` · about ${formatUsd(costs.assessmentUsd)}`}
+          </dd>
+        </div>
+        <div>
+          <dt className="inline font-semibold text-fg">Rebuild from Library</dt>
+          <dd className="inline">
+            {" · rewrites from the latest Library"}
+            {costs && ` · about ${formatUsd(costs.allUsd)}`}
+          </dd>
+        </div>
+      </dl>
+      {blocked && (
+        <p role="status" className="mt-2 border border-warn p-3 text-14 text-warn">
+          {blocked}
+        </p>
+      )}
       <CvWorkspacePanel tab="appearance">
         <section className="border border-line-muted p-4">
           <h2 className="ds-pixel text-12">Appearance and settings</h2>
           <div className="mt-4 space-y-4">
             <CvAppearance value={theme} onChange={setTheme} />
-
-            <label className="block text-14">
-              <input
-                form={formId}
-                type="checkbox"
-                name="rememberWording"
-                defaultChecked
-              />{" "}
-              Remember wording corrections
-            </label>
-
           </div>
         </section>
       </CvWorkspacePanel>
@@ -210,6 +234,22 @@ export function CvDraftEditor({
               className={input}
             />
           </label>
+          {/* Beside the words it remembers, not two tabs away: it applies to whichever of the two
+              saves is used, and posts into the edit form above. The hint is a sibling, not part of
+              the label, so the control's name stays the four words it is called by. */}
+          <label className="block text-14">
+            <input
+              form={formId}
+              type="checkbox"
+              name="rememberWording"
+              defaultChecked
+            />{" "}
+            Remember wording corrections
+          </label>
+          <p className="text-12 text-muted">
+            Changed profile and bullet wording is kept as saved phrasing for the next CV. It adds no
+            facts to your Library.
+          </p>
           {cvDisplaySections(content).map(({ section, index }) => (
             <label key={section.entryId} className="block text-14">
               <span className="font-semibold">

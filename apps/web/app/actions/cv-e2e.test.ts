@@ -311,6 +311,14 @@ describe("the CV pipeline end to end, against a scripted model", () => {
     save.set("library", JSON.stringify(libraryFixture()));
     save.set("version", "0");
     expect(await saveCvLibrary({ ok: true }, save)).toEqual({ ok: true });
+    // The save queues the evidence review of the version it just wrote, keyed by the account so a
+    // burst of saves runs once.
+    const [review] = await database
+      .select()
+      .from(schema.tasks)
+      .where(eq(schema.tasks.type, "review_library"));
+    expect(review?.payload).toEqual({ userId: user.id, libraryVersion: 1 });
+    expect(review?.dedupeKey).toBe(`review_library:${user.id}`);
 
     const preferences = new FormData();
     preferences.set("stylePreferences", STYLE_PREFERENCES);
@@ -635,5 +643,54 @@ describe("the CV pipeline end to end, against a scripted model", () => {
     expect(fake.events.filter((event) => event.startsWith("cancel:"))).toHaveLength(0);
     expect(fake.events.filter((event) => event.startsWith("abort:"))).toHaveLength(0);
     expect((await aiCalls()).every((row) => row.ok)).toBe(true);
+  });
+  /**
+   * The price is answered before the button is pressed, so a build the month cannot afford is
+   * refused where it was asked for rather than on a CV page after the redirect. The worker's
+   * admission is still the authority; this is the same sentence, reached earlier.
+   */
+  it("refuses a build the account's budget cannot admit, before a draft, a task or an application exists", async () => {
+    const save = new FormData();
+    save.set("library", JSON.stringify(libraryFixture()));
+    save.set("version", "0");
+    expect(await saveCvLibrary({ ok: true }, save)).toEqual({ ok: true });
+    const { job } = await visibleRole();
+
+    // A budget with almost nothing left: most of it spent, and a live hold on the rest.
+    await database.insert(schema.userSettings).values({ userId: user.id, key: "aiBudgetUsd", value: 4 });
+    await database.insert(schema.aiCalls).values({
+      userId: user.id, callSite: "CV", model: CV_MODEL, costUsd: 2.5,
+      at: new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)),
+    });
+    await database.insert(schema.aiReservations).values({
+      userId: user.id, callSite: "CV", amount: 0.5, expiresAt: new Date(Date.now() + 600_000),
+    });
+
+    const request = new FormData();
+    request.set("jobId", job.id);
+    const refused = await requestCv({ ok: true }, request);
+    expect(refused.ok).toBe(false);
+    expect((refused as { error: string }).error).toContain("of AI budget");
+    expect((refused as { error: string }).error).toContain(
+      "your budget of $4 has $1.00 left this month after $0.50 held by calls in flight",
+    );
+    expect((refused as { error: string }).error).toContain("Raise it on Settings, or ask an administrator.");
+
+    // Nothing was created for a build that was never admitted.
+    expect(await database.select().from(schema.cvDrafts)).toHaveLength(0);
+    expect(await database.select().from(schema.applications)).toHaveLength(0);
+    expect(
+      await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv")),
+    ).toHaveLength(0);
+
+    // Raise the budget and the same request is admitted, which is what the refusal promised.
+    await database
+      .update(schema.userSettings)
+      .set({ value: 100 })
+      .where(and(eq(schema.userSettings.userId, user.id), eq(schema.userSettings.key, "aiBudgetUsd")));
+    const again = new FormData();
+    again.set("jobId", job.id);
+    await expect(requestCv({ ok: true }, again)).rejects.toThrow("redirect:/cv/");
+    expect(await database.select().from(schema.cvDrafts)).toHaveLength(1);
   });
 });

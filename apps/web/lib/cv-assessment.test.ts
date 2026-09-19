@@ -141,3 +141,75 @@ it("retains finalisation for supported current assessments only", () => {
   expect(render(true, false, 3)).toContain("Finalise this CV");
   expect(render(true, false, 4)).not.toContain("Finalise this CV");
 });
+
+it("says why finalising is unavailable instead of hiding the control", () => {
+  const description = "Own a budget";
+  const rubric = rubricFixture(description);
+  const review = reviewFixture({
+    rubric,
+    cv: cvTextItems(content),
+    claims: cvClaimItems(content),
+    evidence: cvEvidenceItems(library),
+  });
+  const assessment = createCvAssessment({
+    content,
+    description,
+    library,
+    rubric,
+    review,
+    model: "test",
+    pageCount: 4,
+  });
+  // The page computes the sentence with `assertCvFinalisable` and passes it in; the panel prints
+  // it rather than leaving an absent button to be interpreted.
+  const overPages = renderToStaticMarkup(
+    createElement(CvAssessmentPanel, {
+      id: "test",
+      assessment,
+      current: true,
+      finalised: false,
+      busy: false,
+      hasContent: true,
+      content,
+      finaliseReason: "Fit this CV to 3 pages before finalising it.",
+    }),
+  );
+  expect(overPages).toContain("Finalise is not available yet: Fit this CV to 3 pages before finalising it.");
+  expect(overPages).toContain("This revision measures 4 pages");
+  expect(overPages).not.toContain("Finalise this CV");
+
+  // A stale assessment reaches the panel before any table does: the same sentence, beside the
+  // control that clears it.
+  const stale = renderToStaticMarkup(
+    createElement(CvAssessmentPanel, {
+      id: "test",
+      assessment: null,
+      current: false,
+      finalised: false,
+      busy: false,
+      hasContent: true,
+      content,
+      finaliseReason: "Assess this saved revision against the job description before finalising it.",
+    }),
+  );
+  expect(stale).toContain("Assess this saved revision against the job description before finalising it.");
+  expect(stale).toContain("Fit and assess saved revision");
+});
+
+it("disables the actions that spend money until the address is confirmed, and says why", () => {
+  const sentence = "Confirm your email address to add companies, run discovery and build CVs.";
+  const html = renderToStaticMarkup(
+    createElement(CvAssessmentPanel, {
+      id: "test",
+      assessment: null,
+      current: false,
+      finalised: false,
+      busy: false,
+      hasContent: true,
+      content,
+      blocked: sentence,
+    }),
+  );
+  expect(html).toContain(sentence);
+  expect(html).toMatch(/<fieldset disabled=""[\s\S]*Fit and assess saved revision/);
+});

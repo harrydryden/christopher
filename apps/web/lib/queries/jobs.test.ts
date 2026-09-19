@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createDb, schema, type Db } from "@christopher/db";
 import { runMigrations } from "@christopher/db/migrate";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { ROLE_TABS, type RoleStatus } from "@christopher/core";
 import { ensureTestUser } from "@/test/auth";
 import type { User } from "@christopher/db/schema";
@@ -9,7 +9,7 @@ import type { User } from "@christopher/db/schema";
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { sortRoleRows, parseRolesFilters, applyRolesFilters, buildRoleRowVM, fetchRolePage, filtersToQueryString, resolveRoleView, roleTabFor, type RoleRow } from "./jobs";
+import { sortRoleRows, parseRolesFilters, applyRolesFilters, buildRoleRowVM, fetchRolePage, fetchRoleRows, filtersToQueryString, locationReasonText, parseSince, resolveRoleView, roleTabFor, type RoleRow } from "./jobs";
 
 beforeAll(async () => {
   const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
@@ -127,5 +127,111 @@ describe("the stage a row carries", () => {
     expect(stages.get(justShortlisted!.id)!.stage).toBe("shortlisted");
     expect(stages.get(justShortlisted!.id)!.applicationStatus).toBeNull();
     expect(buildRoleRowVM(stages.get(interviewing!.id)!).stage).toBe("in_process");
+  });
+});
+
+describe("finding what I decided", () => {
+  it("reads a since window from the URL and writes it back", () => {
+    expect(parseSince("7d")).toBe(7);
+    expect(parseSince("30d")).toBe(30);
+    // Anything that is not a plain number of days, and anything silly, names no window at all.
+    for (const raw of [undefined, "", "7", "d", "-7d", "0d", "999d", "7 days"]) expect(parseSince(raw)).toBeNull();
+    expect(parseRolesFilters({ since: "7d" }).sinceDays).toBe(7);
+    expect(parseRolesFilters({ since: "nonsense" }).sinceDays).toBeNull();
+    expect(filtersToQueryString(parseRolesFilters({ since: "7d" }))).toContain("since=7d");
+    expect(filtersToQueryString(parseRolesFilters({}))).not.toContain("since");
+  });
+
+  it("keeps undecided rows out of a since window and sorts the decided ones newest first", () => {
+    const now = new Date("2026-09-19T00:00:00Z");
+    const decidedOn = (at: string | null) => ({
+      ...row(50),
+      decision: at ? { decision: "apply", createdAt: new Date(at) } : null,
+    }) as RoleRow;
+    const old = decidedOn("2026-09-01T00:00:00Z");
+    const recent = decidedOn("2026-09-18T00:00:00Z");
+    const undecided = decidedOn(null);
+    const rows = [old, recent, undecided];
+    const filters = parseRolesFilters({ view: "user-shortlisted", since: "7d" });
+    expect(applyRolesFilters(rows, filters, now)).toEqual([recent]);
+    expect(sortRoleRows([old, recent], "decided", "desc", now)).toEqual([recent, old]);
+    expect(sortRoleRows([recent, old], "decided", "asc", now)).toEqual([old, recent]);
+  });
+
+  /** The two the Shortlisted and Dismissed tabs offer, read at the database rather than in JS. */
+  it("sorts and filters by decision date in SQL", async () => {
+    await database.execute(sql`truncate users, companies restart identity cascade`);
+    const user: User = await ensureTestUser(database, "decided-sort@example.com");
+    const [company] = await database.insert(schema.companies).values({ name: "Acme", domain: "acme.test", homepageUrl: "https://acme.test" }).returning();
+    const [source] = await database.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://acme.test/jobs" }).returning();
+    const inserted = await database.insert(schema.jobs).values([
+      { companyId: company!.id, sourceId: source!.id, externalKey: "id:old", title: "Old call", normalizedTitle: "old call", url: "https://acme.test/jobs/old" },
+      { companyId: company!.id, sourceId: source!.id, externalKey: "id:new", title: "Recent call", normalizedTitle: "recent call", url: "https://acme.test/jobs/new" },
+      { companyId: company!.id, sourceId: source!.id, externalKey: "id:none", title: "Undecided", normalizedTitle: "undecided", url: "https://acme.test/jobs/none" },
+    ]).returning();
+    const [older, newer, undecided] = inserted as [typeof inserted[number], typeof inserted[number], typeof inserted[number]];
+    for (const job of [older, newer, undecided]) {
+      await database.insert(schema.userJobs).values({ userId: user.id, jobId: job.id, keywordMatched: true, locationOk: true, inTable: true });
+    }
+    const days = (n: number) => new Date(Date.now() - n * 86400000);
+    for (const [job, at] of [[older, days(20)], [newer, days(2)]] as const) {
+      const [decision] = await database.insert(schema.decisions)
+        .values({ userId: user.id, jobId: job.id, decision: "apply", jobTitle: job.title, companyName: "Acme" }).returning();
+      await database.update(schema.decisions).set({ createdAt: at }).where(eq(schema.decisions.id, decision!.id));
+    }
+
+    const shortlisted = parseRolesFilters({ view: "user-shortlisted", sort: "decided" });
+    const newestFirst = await fetchRolePage(user.id, shortlisted, false, null, 1);
+    expect(newestFirst.total).toBe(2);
+    expect(newestFirst.visible.map(r => r.job.id)).toEqual([newer.id, older.id]);
+    const oldestFirst = await fetchRolePage(user.id, { ...shortlisted, dir: "asc" }, false, null, 1);
+    expect(oldestFirst.visible.map(r => r.job.id)).toEqual([older.id, newer.id]);
+
+    // "This week" is a window on the decision, so the undecided role is never in it.
+    const thisWeek = await fetchRolePage(user.id, parseRolesFilters({ view: "user-shortlisted", sort: "decided", since: "7d" }), false, null, 1);
+    expect(thisWeek.total).toBe(1);
+    expect(thisWeek.visible.map(r => r.job.id)).toEqual([newer.id]);
+    // Matched is untouched by either: it is the tab with no decisions on it.
+    expect((await fetchRolePage(user.id, parseRolesFilters({ view: "auto-matched" }), false, null, 1)).visible.map(r => r.job.id)).toEqual([undecided.id]);
+  });
+
+  /** R-7.5: the export reads the table's own SQL, so the file cannot disagree with the screen. */
+  it("gives the export the same rows, in the same order, as the page it exports", async () => {
+    await database.execute(sql`truncate users, companies restart identity cascade`);
+    const user: User = await ensureTestUser(database, "csv-parity@example.com");
+    const [company] = await database.insert(schema.companies).values({ name: "Acme", domain: "acme.test", homepageUrl: "https://acme.test" }).returning();
+    const [source] = await database.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://acme.test/jobs" }).returning();
+    const jobRows = await database.insert(schema.jobs).values(Array.from({ length: 12 }, (_, i) => ({
+      companyId: company!.id, sourceId: source!.id, externalKey: `id:${i}`, title: `Role ${String(i).padStart(2, "0")}`,
+      normalizedTitle: `role ${i}`, url: `https://acme.test/jobs/${i}`, location: i % 2 ? "London" : "Leeds",
+    }))).returning();
+    await database.insert(schema.userJobs).values(jobRows.map((job, i) => ({
+      userId: user.id, jobId: job.id, keywordMatched: true, locationOk: true, inTable: true, fitScore: i * 5,
+    })));
+
+    for (const filters of [parseRolesFilters({ sort: "title" }), parseRolesFilters({ sort: "fit", dir: "desc" }), parseRolesFilters({ q: "role 0", sort: "company" })]) {
+      const page = await fetchRolePage(user.id, filters, false, null, 1);
+      // Read it the way the export does — in blocks — and the two must line up exactly.
+      const blocks: string[] = [];
+      for (let offset = 0; ; offset += 5) {
+        const block = await fetchRoleRows(user.id, filters, false, { offset, limit: 5 });
+        blocks.push(...block.map(r => r.job.id));
+        if (block.length < 5) break;
+      }
+      expect(blocks).toEqual(page.visible.map(r => r.job.id));
+      expect(blocks).toHaveLength(page.total);
+    }
+  });
+});
+
+describe("why a role is in the table", () => {
+  it("names the term that admitted it, or remote, or the filter that names no location", () => {
+    expect(locationReasonText({ ok: true, terms: ["London"], remote: false }, true, false)).toBe('Matches your location filter: London.');
+    expect(locationReasonText({ ok: true, terms: ["remote"], remote: true }, true, false)).toBe("Remote, and your filter allows remote roles.");
+    expect(locationReasonText({ ok: true, terms: [], remote: false }, false, false)).toBe("Your filter names no location, so every location passes.");
+    expect(locationReasonText({ ok: true, terms: [], remote: true }, false, false)).toContain("Remote");
+    // A role can sit in the table against the filter: because you added it, or because you decided on it.
+    expect(locationReasonText({ ok: false, terms: [], remote: false }, true, true)).toContain("added it by its URL");
+    expect(locationReasonText({ ok: false, terms: [], remote: false }, true, false)).toContain("decided on it");
   });
 });

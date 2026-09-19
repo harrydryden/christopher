@@ -1,11 +1,27 @@
 import Link from "next/link";
-import { ROLE_STATUS_LABELS, ROLE_TABS, type RoleStatus } from "@christopher/core";
+import { ROLE_STAGES, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS, ROLE_STATUS_LABELS, ROLE_TABS, type RoleStatus } from "@christopher/core";
 import { Card } from "./Card";
 import { EmptyState } from "./EmptyState";
 import { RolesTable } from "./RolesTable";
 import { RolesFilterBar } from "./RolesFilterBar";
-import { attachEvents, buildRoleRowVM, fetchRecentEventsFor, fetchRolePage, fetchRoleCounts, filtersToQueryString, parseRolesFilters, resolveRoleView, type RawSearchParams } from "@/lib/queries/jobs";
+import { attachEvents, buildRoleRowVM, DEFAULT_SORT_DIR, fetchRecentEventsFor, fetchRolePage, fetchRoleCounts, filtersToQueryString, parseRolesFilters, resolveRoleView, type RawSearchParams, type RolesFilters, type SortKey } from "@/lib/queries/jobs";
 import { listCompanyOptions } from "@/lib/queries/companies";
+
+/** The columns that sort (R-7.1), and the key each one sorts by. */
+const SORTABLE_COLUMNS = ["company", "title", "location", "fit"] as const;
+
+/**
+ * One href per sortable column head, carrying the filters in hand: sorting a column never drops a
+ * search, a company or an availability choice. Clicking the column already sorted turns it round.
+ */
+function sortLinksFor(path: string, view: RoleStatus, filters: RolesFilters): Partial<Record<SortKey, string>> {
+  const links: Partial<Record<SortKey, string>> = {};
+  for (const key of SORTABLE_COLUMNS) {
+    const dir = filters.sort === key ? (filters.dir === "asc" ? "desc" : "asc") : DEFAULT_SORT_DIR[key];
+    links[key] = `${path}?${filtersToQueryString({ ...filters, sort: key, dir })}&view=${view}#roles`;
+  }
+  return links;
+}
 
 export async function RoleWorkspace({ userId, searchParams, companyId }: { userId: string; searchParams: RawSearchParams; companyId?: string }) {
   const sp = searchParams;
@@ -43,6 +59,7 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
       exportHref={`/api/export.csv?${query}`} path={path} view={view} companyScoped={!!companyId} />
     <p className="mb-3 text-12 text-muted">Showing {result.total} of {counts[view]} {ROLE_STATUS_LABELS[view].toLowerCase()} {counts[view] === 1 ? "role" : "roles"}</p>
     <RolesTable key={`${query}:${result.page}`} rows={rows} keyboard hideCompany={!!companyId}
+      sortLinks={sortLinksFor(path, view, filters)} sort={filters.sort} dir={filters.dir}
       emptyState={<EmptyState title={counts[view] ? "No roles match these filters" : view === "auto-matched" ? "No roles awaiting review" : `No ${ROLE_STATUS_LABELS[view].toLowerCase()} roles`}
         description={counts[view] ? "Clear the filters to see the other roles in this view." : undefined} />} />
     {result.pageCount > 1 && <nav aria-label="Role pages" className="my-4 flex items-center gap-4 text-13">
@@ -50,6 +67,19 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
       <span>Page {result.page} of {result.pageCount}</span>
       {result.page < result.pageCount && <Link className="underline" href={href(result.page + 1)}>Next</Link>}
     </nav>}
+    {/* The same legend the Applications page carries, so a stage badge on a row is explained where
+        the badge is, not one page away. */}
+    <details className="mt-4 text-13 text-muted">
+      <summary className="cursor-pointer">What the stages mean</summary>
+      <dl className="mt-2 space-y-1">
+        {ROLE_STAGES.map(stage => (
+          <div key={stage} className="flex flex-wrap gap-2">
+            <dt className="ds-pixel text-10 text-fg">{ROLE_STAGE_LABELS[stage]}</dt>
+            <dd>{ROLE_STAGE_DESCRIPTIONS[stage]}</dd>
+          </div>
+        ))}
+      </dl>
+    </details>
     {archivedResult && <div id="archived" className="mt-6">
       <Card title="Archived" actions={<span className="text-12 text-muted tabular-nums">{counts.archived}</span>}>
         <p className="mb-3 text-12 text-muted">Showing {archivedResult.total} of {counts.archived} archived {counts.archived === 1 ? "role" : "roles"}</p>

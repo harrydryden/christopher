@@ -27,6 +27,15 @@ function anchored(value: string, full: string) {
   return normalise(full).includes(normalise(value));
 }
 export { anchored as cvQuoteIsAnchored };
+/**
+ * Attributes a recruitment judgement may never rest on, however a page or a model phrases it.
+ * One list, so the rubric validator and the evidence review refuse the same things.
+ */
+const DEMOGRAPHIC_ATTRIBUTES =
+  /\b(gender|ethnicity|race|religion|marital status|sexual orientation|date of birth)\b/i;
+export function mentionsDemographicAttribute(text: string): boolean {
+  return DEMOGRAPHIC_ATTRIBUTES.test(text);
+}
 export function validateCvRubric(
   description: string,
   value: unknown,
@@ -45,11 +54,7 @@ export function validateCvRubric(
         "Scoring requirements must be distinct, without duplicate weighting.",
       );
     // Never build a recruitment score from demographic attributes, even if a page requests it.
-    if (
-      /\b(gender|ethnicity|race|religion|marital status|sexual orientation|date of birth)\b/i.test(
-        requirement.label,
-      )
-    )
+    if (mentionsDemographicAttribute(requirement.label))
       throw new Error("Demographic attributes cannot be scoring criteria.");
     ids.add(requirement.id);
     quotes.add(key);

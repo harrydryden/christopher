@@ -1,6 +1,7 @@
-import { roleStatusSql } from "@christopher/db";
-import { and, asc, desc, eq, inArray, ne, sql, getTableColumns, ilike, or } from "drizzle-orm";
+import { latestApplicationFor, roleStageSql, roleStatusSql } from "@christopher/db";
+import { and, asc, desc, eq, inArray, isNotNull, ne, sql, getTableColumns, ilike, or } from "drizzle-orm";
 import {
+  cvDrafts,
   decisions,
   careerSources,
   companies,
@@ -29,8 +30,12 @@ export interface CompanyListRow {
   /** This account's relationship with the shared company: its own status and notes. */
   subscription: CompanySubscription;
   lastScan: { status: Scan["status"]; startedAt: Date } | null;
+  /** Postings this account's gate admitted that are still open: what following the company is worth. */
+  openRoles: number;
   reviewRoles: number;
   shortlistedRoles: number;
+  /** The type of the source a scan reads, `active` preferred over `failing`; null when there is none. */
+  sourceType: CareerSource["type"] | null;
   /** How many accounts follow the company: a shared catalogue entry is scanned once for all of them. */
   followers: number;
   discovering: boolean;
@@ -62,6 +67,7 @@ export async function listCompanies(userId: string, page = 1, q = ""): Promise<C
     db()
       .select({
         companyId: jobs.companyId,
+        openRoles: sql<number>`count(*) filter (where ${userJobs.inTable} and ${userJobs.archivedAt} is null and ${jobs.status} = 'open')::int`,
         reviewRoles: sql<number>`count(*) filter (where ${roleStatusSql} = 'auto-matched')::int`,
         shortlistedRoles: sql<number>`count(*) filter (where ${roleStatusSql} = 'user-shortlisted')::int`,
       })
@@ -85,9 +91,10 @@ export async function listCompanies(userId: string, page = 1, q = ""): Promise<C
       .from(tasks)
       .where(and(inArray(tasks.type, ["discover", "scan_company"]), sql`coalesce(${tasks.payload}->>'logoOnly', 'false') != 'true'`, inArray(tasks.status, ["queued", "running"]), inArray(sql`${tasks.payload}->>'companyId'`, ids))),
     db()
-      .select({ companyId: careerSources.companyId })
+      .select({ companyId: careerSources.companyId, type: careerSources.type, status: careerSources.status })
       .from(careerSources)
-      .where(and(inArray(careerSources.companyId, ids), inArray(careerSources.status, ["active", "failing"]))),
+      .where(and(inArray(careerSources.companyId, ids), inArray(careerSources.status, ["active", "failing"])))
+      .orderBy(asc(careerSources.createdAt)),
     db()
       .selectDistinctOn([discoveryRuns.companyId], { companyId: discoveryRuns.companyId, status: discoveryRuns.status })
       .from(discoveryRuns)
@@ -101,6 +108,14 @@ export async function listCompanies(userId: string, page = 1, q = ""): Promise<C
   ]);
 
   const withSource = new Set(sourceRows.map((r) => r.companyId));
+  // The oldest `active` source names the row; a `failing` one only when nothing active is left,
+  // so a board that has started refusing still says which board it is.
+  const sourceTypeByCompany = new Map<string, { type: CareerSource["type"]; active: boolean }>();
+  for (const row of sourceRows) {
+    const current = sourceTypeByCompany.get(row.companyId);
+    const active = row.status === "active";
+    if (!current || (active && !current.active)) sourceTypeByCompany.set(row.companyId, { type: row.type, active });
+  }
   const lastDiscoveryByCompany = new Map(discoveryRows.map((r) => [r.companyId, r.status]));
   const countsByCompany = new Map(counts.map((c) => [c.companyId, c]));
   const lastScanByCompany = new Map(lastScans.map((s) => [s.companyId, { status: s.status, startedAt: s.startedAt }]));
@@ -113,8 +128,10 @@ export async function listCompanies(userId: string, page = 1, q = ""): Promise<C
     company,
     subscription,
     lastScan: lastScanByCompany.get(company.id) ?? null,
+    openRoles: countsByCompany.get(company.id)?.openRoles ?? 0,
     reviewRoles: countsByCompany.get(company.id)?.reviewRoles ?? 0,
     shortlistedRoles: countsByCompany.get(company.id)?.shortlistedRoles ?? 0,
+    sourceType: sourceTypeByCompany.get(company.id)?.type ?? null,
     followers: followersByCompany.get(company.id) ?? 0,
     discovering: discoveringSet.has(company.id),
     discoveryState: discoveringRows.some(r => (r.payload as { companyId?: string }).companyId === company.id && r.status === "running") ? "running"
@@ -208,6 +225,77 @@ export async function getLatestScanRun(): Promise<
 > {
   const rows = await db().select().from(scanRuns).orderBy(desc(scanRuns.startedAt)).limit(1);
   return rows[0] ?? null;
+}
+
+/**
+ * How many roles at one company this account is pursuing — the figure the company page links into
+ * Applications with. The rule is `listPipeline`'s, so the two cannot disagree: everything past
+ * Matched, and a dismissed role only when something was done about it (an application row, or a CV
+ * whether archived or not). Records with no posting behind them have no company to count against
+ * and are the Applications page's business alone.
+ */
+export async function companyApplicationCount(userId: string, companyId: string): Promise<number> {
+  const latest = latestApplicationFor(userId);
+  const stage = roleStageSql(latest, userId);
+  const [row] = await db()
+    .select({ n: sql<number>`count(*)::int` })
+    .from(userJobs)
+    .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
+    .leftJoin(decisions, and(eq(decisions.userId, userId), eq(decisions.jobId, jobs.id), eq(decisions.superseded, false)))
+    .leftJoin(latest, eq(latest.jobId, jobs.id))
+    .where(and(
+      eq(userJobs.userId, userId),
+      eq(jobs.companyId, companyId),
+      ne(stage, "matched"),
+      or(
+        ne(stage, "dismissed"),
+        isNotNull(latest.id),
+        sql`exists (select 1 from ${cvDrafts} pursued where pursued.user_id = ${userId} and pursued.job_id = ${jobs.id})`,
+      ),
+    ));
+  return row?.n ?? 0;
+}
+
+/** What the company header can say about scanning: when it last read the board, and whether the
+ *  last rescan anyone asked for was served from that reading instead of running again. */
+export interface CompanyScanTiming {
+  /** The newest scan a rescan would be served from: `ok` or `partial`, whichever source ran it. */
+  lastGoodScanAt: Date | null;
+  /** When the newest finished `scan_company` task returned `skipped: "scanned recently"`. */
+  rescanSkippedAt: Date | null;
+}
+
+/**
+ * A scan is shared, so a follower's Rescan can finish having done nothing: the worker serves it
+ * from a scan made in the last half hour and says so in the task's result. Both readings are of
+ * the catalogue, not of one account — the company is scanned once for everyone.
+ */
+export async function companyScanTiming(companyId: string): Promise<CompanyScanTiming> {
+  const [scanRow, taskRow] = await Promise.all([
+    db()
+      .select({ startedAt: scans.startedAt })
+      .from(scans)
+      .innerJoin(careerSources, eq(scans.sourceId, careerSources.id))
+      .where(and(eq(careerSources.companyId, companyId), inArray(scans.status, ["ok", "partial"])))
+      .orderBy(desc(scans.startedAt))
+      .limit(1),
+    db()
+      .select({ finishedAt: tasks.finishedAt, result: tasks.result })
+      .from(tasks)
+      .where(and(
+        eq(tasks.type, "scan_company"),
+        eq(tasks.status, "done"),
+        sql`${tasks.payload}->>'companyId' = ${companyId}`,
+      ))
+      .orderBy(sql`coalesce(${tasks.finishedAt}, ${tasks.createdAt}) desc`)
+      .limit(1),
+  ]);
+  const result = taskRow[0]?.result as { skipped?: unknown } | null | undefined;
+  const skipped = !!result && typeof result === "object" && result.skipped === "scanned recently";
+  return {
+    lastGoodScanAt: scanRow[0]?.startedAt ?? null,
+    rescanSkippedAt: skipped ? taskRow[0]?.finishedAt ?? null : null,
+  };
 }
 
 /** How many other accounts follow a company: shown before someone edits its shared details. */

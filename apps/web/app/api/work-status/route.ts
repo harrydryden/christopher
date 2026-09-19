@@ -1,4 +1,4 @@
-import { getCompanyWorkStatus } from "@/lib/work-status";
+import { getAccountWorkStatus } from "@/lib/work-status";
 import { requireUser } from '@/lib/auth';
 import { zUuid } from '@/lib/validation';
 import { cvWorkVersionFor, getOwnCvWorkRow } from '@/lib/queries/cv';
@@ -14,5 +14,7 @@ export async function GET(request: Request) {
     // its narrative and its "running 46 s" all keep counting without a second timer on the client.
     return Response.json({ active: row?.status === 'queued' || row?.status === 'generating', version: row ? await cvWorkVersionFor(row) : 'missing' }, { headers: { 'cache-control': 'no-store' } });
   }
-  return Response.json(await getCompanyWorkStatus(user.id), { headers: { 'cache-control': 'no-store' } });
+  // No `cv` asked for: everything this account is waiting on — its companies' scans and discovery,
+  // and any CV of its own still queued or building, which is what the applications table watches.
+  return Response.json(await getAccountWorkStatus(user.id), { headers: { 'cache-control': 'no-store' } });
 }

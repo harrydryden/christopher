@@ -13,7 +13,16 @@ const SORT_LABELS: Record<(typeof SORT_KEYS)[number], string> = {
   firstSeen: "First seen",
   title: "Title",
   location: "Location",
+  decided: "Decided",
 };
+
+/** A checkbox that reads as a chip: the control stays a control, the border says it is on. */
+const chipClass = "flex items-center gap-2 border-2 border-line-muted px-2 py-1 text-13 text-muted has-[:checked]:border-line has-[:checked]:text-fg";
+
+/** Sorting and filtering by decision date only answer a question on the two decided tabs. */
+function decidedTab(view: string): boolean {
+  return view === "user-shortlisted" || view === "user-dismissed";
+}
 
 export function RolesFilterBar({
   path = "/", view = "auto-matched", companyScoped = false,
@@ -26,6 +35,8 @@ export function RolesFilterBar({
   companyOptions: Array<{ id: string; name: string }>;
   exportHref: string;
 }) {
+  const decided = decidedTab(view);
+  const sortKeys = SORT_KEYS.filter(key => key !== "decided" || decided);
   return (
     <SearchForm action={path} className="mb-4 flex flex-wrap items-end gap-3 border-2 border-line-muted p-3">
       <input type="hidden" name="view" value={view} />
@@ -46,7 +57,7 @@ export function RolesFilterBar({
         <input type="text" name="q" defaultValue={filters.q} placeholder="Search…" className={`w-50 ${inputClass}`} />
       </label>
       <div className="ml-auto flex flex-wrap items-center gap-3">
-        <a href={exportHref} className="text-13 text-muted underline hover:text-fg">
+        <a href={exportHref} className="text-13 text-muted underline hover:text-fg" title="Every role in this view, with these filters and this sort">
           Export CSV
         </a>
         <SearchPending />
@@ -57,15 +68,20 @@ export function RolesFilterBar({
           Reset
         </a>
       </div>
+      {/* Availability is the filter people reach for, so it sits in the open as chips. */}
+      <fieldset className="flex w-full flex-wrap items-center gap-2">
+        <legend className="sr-only">Vacancy availability</legend>
+        <span className={labelClass}>Availability</span>
+        {STATUS_VALUES.map(status => <label key={status} className={chipClass}>
+          <input type="checkbox" name="status" value={status} defaultChecked={filters.status.includes(status)} className="h-4 w-4" />{STATUS_LABELS[status]}
+        </label>)}
+        {decided && <label className={chipClass} title="Only roles you decided on in the last seven days">
+          <input type="checkbox" name="since" value="7d" defaultChecked={filters.sinceDays !== null} className="h-4 w-4" />This week
+        </label>}
+      </fieldset>
       <details className="w-full">
         <summary className="cursor-pointer text-12 text-muted">More filters and sorting</summary>
         <div className="mt-3 flex flex-wrap items-end gap-3">
-      <fieldset className="flex flex-col gap-1.5">
-        <legend className={labelClass}>Vacancy availability</legend>
-        <div className="flex gap-3">{STATUS_VALUES.map(status => <label key={status} className="flex items-center gap-2 text-14">
-          <input type="checkbox" name="status" value={status} defaultChecked={filters.status.includes(status)} className="h-4 w-4" />{STATUS_LABELS[status]}
-        </label>)}</div>
-      </fieldset>
       <label className="flex flex-col gap-1.5">
         <span className={labelClass}>Location contains</span>
         <input type="text" name="location" defaultValue={filters.location} placeholder="e.g. London" className={`w-36 ${inputClass}`} />
@@ -81,7 +97,7 @@ export function RolesFilterBar({
       <label className="flex flex-col gap-1.5">
         <span className={labelClass}>Sort by</span>
         <select name="sort" defaultValue={filters.sort} className={selectClass}>
-          {SORT_KEYS.map((s) => (
+          {sortKeys.map((s) => (
             <option key={s} value={s}>
               {SORT_LABELS[s]}
             </option>

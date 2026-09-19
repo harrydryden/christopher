@@ -291,7 +291,7 @@ track of an interview or discovering two pages disagree.
 
 **Today (after PR #70).** One table, eight stages with a legend, a status control that creates or
 updates the single application row per role, the CV in the row, and two rules that keep the pages
-agreeing (Withdrawn records a skip; a skip withdraws a live application). Still missing: a date per
+agreeing (Withdrawn records a skip; a skip withdraws a live application). Still missing at the time of the audit, and built since (6.1 to 6.5): a date per
 stage (only `applied_on` exists; an interview date cannot be recorded as a date), a next action,
 outcomes reaching the preference profile (the synthesiser reads only decisions), a guard on backwards
 transitions, and a per-company view.
@@ -321,6 +321,8 @@ Evidence score, history); 6.1, 6.2 (stage dates, outcomes to the profile); 3.5 a
 
 **Wave 3: new surfaces (a spec amendment and two new call sites).** 1.5 (document import into the
 Library) and 4.7 (the share link with comments).
+
+**Status (19 September 2026).** Wave 1 and Wave 2 are built. In Wave 2: the checklist is `components/SetupChecklist.tsx` over `lib/setup.ts` and `lib/queries/setup.ts`; the gate block is `components/GateSetup.tsx` saving through `saveGate`; the seed profile is on Settings at `#seed-profile`; the company timeline is `lib/company-timeline.ts`; Health's items and their resolutions are `healthItems` in `lib/queries/health.ts`; the missing-score states are `scoreStateText` in `lib/queries/jobs.ts`; the Library's facets, Evidence score, poller and versions are `lib/cv-library-evidence.ts`, `lib/cv-library-reviews.ts`, `lib/cv-library-diff.ts` and `/api/cv/library/reviews`; stage dates and next steps are `lib/application-dates.ts`. Choices made while building: in 6.6, *applied* counts applied, in process, accepted and rejected, because an employer's answer does not unsend an application; 2.7 also gave the CSV export a `score_state` column; 1.2 blocks following a new company, from the form and from a recommendation, until the gate has been saved once, which an existing account that never touched Settings will meet on its next add. Left from Wave 2: evidence badges for education and skill blocks (the six-facet rubric does not fit them; a two-facet path in core comes first), restoring an old Library version (the history is read, never rewritten), and the "Scoring N roles" line of the company timeline, which does not tick to "Scored" on its own because the shared poll deliberately ignores score tasks. Wave 3's data layer (migrations 0032 and 0033: `library_imports`, `cv_shares`, `cv_share_comments`) is in place; its two surfaces follow.
 
 ## What I would not do
 

@@ -4,8 +4,9 @@ import { Card } from "./Card";
 import { EmptyState } from "./EmptyState";
 import { RolesTable } from "./RolesTable";
 import { RolesFilterBar } from "./RolesFilterBar";
-import { attachEvents, buildRoleRowVM, DEFAULT_SORT_DIR, fetchRecentEventsFor, fetchRolePage, fetchRoleCounts, filtersToQueryString, parseRolesFilters, resolveRoleView, type RawSearchParams, type RolesFilters, type SortKey } from "@/lib/queries/jobs";
+import { appliedRoleCount, attachEvents, buildRoleRowVM, DEFAULT_SORT_DIR, fetchRecentEventsFor, fetchRolePage, fetchRoleCounts, filtersToQueryString, parseRolesFilters, resolveRoleView, type RawSearchParams, type RolesFilters, type SortKey } from "@/lib/queries/jobs";
 import { listCompanyOptions } from "@/lib/queries/companies";
+import { pipelineCompany, pipelineStageCounts } from "@/lib/queries/applications";
 
 /** The columns that sort (R-7.1), and the key each one sorts by. */
 const SORTABLE_COLUMNS = ["company", "title", "location", "fit"] as const;
@@ -34,12 +35,19 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
   const filters = parseRolesFilters({ ...sp, view, ...scoped });
   const archivedFilters = parseRolesFilters({ ...sp, view: "archived", ...scoped });
   const path = companyId ? `/companies/${companyId}` : "/";
-  const [result, archivedResult, options] = await Promise.all([
+  const [result, archivedResult, options, stageCounts] = await Promise.all([
     fetchRolePage(userId, filters, false, null, Number(sp.page)),
     // The archived section is only rendered under Dismissed, so nothing else pays for the read.
     dismissed ? fetchRolePage(userId, archivedFilters, true, null, Number(sp.archivedPage)) : null,
     companyId ? Promise.resolve([]) : listCompanyOptions(userId),
+    // How far the shortlist has got, from the one reading of the lifecycle the Applications page
+    // uses, scoped to this company when the strip is a company's own.
+    companyId
+      ? pipelineCompany(companyId).then(company => pipelineStageCounts(userId, company ? { company } : {}))
+      : pipelineStageCounts(userId),
   ]);
+  // "Shortlisted 12 · 3 applied": of the roles you chose to pursue, the ones actually sent.
+  const applied = appliedRoleCount(stageCounts);
   const pageRows = [...result.visible, ...(archivedResult?.visible ?? [])];
   const events = await fetchRecentEventsFor(userId, pageRows.map(row => row.job.id));
   const rows = attachEvents(result.visible, events).map(row => buildRoleRowVM(row, new Date(), userId));
@@ -53,6 +61,7 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
       {ROLE_TABS.map(status => <Link key={status} href={viewHref(status)} aria-current={status === view ? "page" : undefined}
         className={`ds-pixel border-2 px-3 py-2 text-11 no-underline ${status === view ? "border-fg bg-fg text-bg" : "border-transparent text-muted hover:bg-sunken hover:text-fg"}`}>
         {ROLE_STATUS_LABELS[status]}{" "}<span className="ml-1 tabular-nums">{counts[status]}</span>
+        {status === "user-shortlisted" && counts[status] > 0 && applied > 0 && <span className="ml-1 tabular-nums">· {applied} applied</span>}
       </Link>)}
     </nav>
     <RolesFilterBar key={query} filters={filters} companyOptions={options}

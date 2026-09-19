@@ -11,7 +11,7 @@ import {
   rubricFixture,
   reviewFixture,
 } from "../../../packages/core/test/cv-review-fixture";
-import { cvEvaluationRows } from "./cv-evaluation";
+import { cvEvaluationRows, libraryDriftSentence } from "./cv-evaluation";
 const library: CvLibrary = {
   name: "Example",
   contact: "",
@@ -132,5 +132,81 @@ describe("unified CV evaluation", () => {
     const assessment = fixture();
     assessment.review.matches[0]!.libraryEvidence = [];
     expect(cvEvaluationRows(assessment, content)[0]!.evidence).toBe("None");
+  });
+});
+
+/**
+ * A gap names what is missing; these are the rows that also offer the way to supply it (4.3). The
+ * link is the Library with the need quoted, and the job it belongs to when the row cites one.
+ */
+describe("closing a gap from the evaluation table", () => {
+  const employed: CvLibrary = {
+    name: "Example",
+    contact: "",
+    profile: "Operations leader",
+    employment: [
+      { id: "emp-1", company: "Northwind", jobTitle: "Head of Operations", industryDescriptions: "", startDate: "2020-01", endDate: "", current: true },
+    ],
+    entries: [
+      {
+        id: "job",
+        kind: "experience",
+        employmentId: "emp-1",
+        heading: "Head of Operations · Northwind",
+        details: "Led a team",
+        confirmedResponsibilities: ["Led a team"],
+      },
+    ],
+  };
+  const employedContent = materialiseCv(employed, {
+    summary: "Operations leader",
+    sections: [{ entryId: "job", bullets: ["Led a team"] }],
+    gaps: [],
+  });
+
+  it("offers the Library on gaps and on thin evidence, and nowhere else", () => {
+    for (const [status, libraryStatus, offered] of [
+      ["partial", "partial", true],      // Gap
+      ["unknown", "unknown", true],      // Weak library evidence
+      ["demonstrated", "demonstrated", false], // Nothing missing
+      ["missing", "demonstrated", false],      // The writer's job, not the Library's
+    ] as const) {
+      const assessment = fixture();
+      Object.assign(assessment.review.matches[0]!, { status, libraryStatus });
+      const row = cvEvaluationRows(assessment, content, library)[0]!;
+      expect(!!row.libraryHref).toBe(offered);
+      if (offered) expect(row.libraryHref).toBe("/library?need=Relevant%20operations%20experience");
+    }
+  });
+
+  it("names the Library job when the row cites one, and no job when it cites none", () => {
+    const assessment = fixture();
+    Object.assign(assessment.review.matches[0]!, { status: "partial", libraryStatus: "partial" });
+    const cited = cvEvaluationRows(assessment, employedContent, employed)[0]!;
+    expect(cited.libraryHref).toBe("/library?need=Relevant%20operations%20experience&job=emp-1");
+    // The same row against a Library whose entries belong to no employment record: need only.
+    expect(cvEvaluationRows(assessment, content, library)[0]!.libraryHref).not.toContain("&job=");
+    // And with no Library to resolve against at all.
+    expect(cvEvaluationRows(assessment, employedContent)[0]!.libraryHref).not.toContain("&job=");
+  });
+
+  it("quotes the writer's own gap, encoded and cut to 300 characters", () => {
+    const assessment = fixture();
+    const gap = `${"Evidence of board-level reporting. ".repeat(20)}`;
+    const rows = cvEvaluationRows(assessment, { ...content, gaps: [gap] }, library);
+    const written = rows.at(-1)!;
+    expect(written.change).toBe("Gap");
+    const need = new URL(written.libraryHref!, "https://example.test").searchParams.get("need");
+    expect(need).toBe(gap.slice(0, 300));
+    expect(need!.length).toBe(300);
+    expect(written.libraryHref).not.toContain(" ");
+  });
+
+  it("says when the Library has moved on since the build, and stays quiet when it has not", () => {
+    expect(libraryDriftSentence(7, 9)).toBe("Your Library changed since this build (v7 → v9).");
+    expect(libraryDriftSentence(9, 9)).toBeNull();
+    expect(libraryDriftSentence(9, 7)).toBeNull();
+    expect(libraryDriftSentence(null, 9)).toBeNull();
+    expect(libraryDriftSentence(4, undefined)).toBeNull();
   });
 });

@@ -42,6 +42,7 @@ import {
   roleStageRank,
   type RoleStage,
 } from "@christopher/core";
+import { DUE_WITHIN_DAYS, todayDay } from "@/lib/application-dates";
 import { companyIcon } from "@/lib/company-icon";
 import { cvBuildQuote, cvEditCosts, type CvBuildQuote } from "@/lib/cv-quote";
 import { db } from "@/lib/db";
@@ -85,7 +86,11 @@ export interface PipelineApplication {
   appliedOn: string;
   cvId: string | null;
   notes: string;
-  history: Array<{ status: string; at: string; notes: string }>;
+  /** `at` is when the entry was saved; `on` is the day it is about, when the person gave one. */
+  history: Array<{ status: string; at: string; notes: string; on?: string }>;
+  /** What the person owes this application next, in their own words, and the day it is due. */
+  nextAction: string | null;
+  nextActionOn: string | null;
   /** Whether the row stores the submitted PDF, which is what makes it downloadable. */
   hasPdf: boolean;
 }
@@ -114,6 +119,8 @@ export interface PipelinePage {
   pageCount: number;
   total: number;
   counts: Record<PipelineFilter, number>;
+  /** The same reading one stage at a time, for the strip in the page's header. */
+  stages: Record<RoleStage, number>;
 }
 
 /** The catalogue company a `?company=` link names: shared data, so it is read without an account. */
@@ -333,6 +340,44 @@ export async function pipelineStageCounts(
   return counts;
 }
 
+/** The statuses an application is finished at, read from the lifecycle rather than listed again. */
+const SETTLED_STATUSES = APPLICATION_STATUSES.filter((status) =>
+  (CLOSED_ROLE_STAGES as readonly RoleStage[]).includes(applicationStage(status)),
+);
+
+/**
+ * How many next steps this account owes in the coming week, for the line under the stage strip.
+ *
+ * Overdue ones are counted too: a step whose day has gone by is the most due thing on the page,
+ * and the row it belongs to says so in its own words. A settled application — accepted, rejected,
+ * withdrawn — owes nothing however old its note is. One indexed count, scoped to the same company
+ * a `?company=` link scopes the table to: by its catalogue id for a role with a posting behind it,
+ * and by name for a record without one, exactly as the table's own filter reads it.
+ */
+export async function pipelineDueCount(
+  userId: string,
+  options: { company?: PipelineCompany; now?: Date } = {},
+): Promise<number> {
+  const now = options.now ?? new Date();
+  const horizon = new Date(Date.parse(`${todayDay(now)}T00:00:00.000Z`) + DUE_WITHIN_DAYS * 86_400_000).toISOString().slice(0, 10);
+  const settled = sql.raw(SETTLED_STATUSES.map((status) => `'${status}'`).join(", "));
+  const company = options.company;
+  const [row] = await db()
+    .select({ n: sql<number>`count(*)::int` })
+    .from(applications)
+    .where(and(
+      eq(applications.userId, userId),
+      sql`btrim(coalesce(${applications.nextAction}, '')) <> ''`,
+      sql`${applications.nextActionOn} is not null and ${applications.nextActionOn} <= ${horizon}`,
+      sql`${applications.status} not in (${settled})`,
+      company
+        ? sql`(exists (select 1 from ${jobs} due_job where due_job.id = ${applications.jobId} and due_job.company_id = ${company.id})
+            or (${withoutRoleView(userId, applications.jobId)} and ${sameCompanyName(applications.companyName, company.name)}))`
+        : undefined,
+    ));
+  return Number(row?.n ?? 0);
+}
+
 /** Rows this account is pursuing that the catalogue still knows about: the ordinary case. */
 async function roleRows(userId: string, only: { jobId?: string; jobIds?: string[] } = {}): Promise<PipelineRow[]> {
   if (only.jobIds?.length === 0) return [];
@@ -359,6 +404,8 @@ async function roleRows(userId: string, only: { jobId?: string; jobIds?: string[
       applicationCreatedAt: latest.createdAt,
       notes: applications.notes,
       history: applications.history,
+      nextAction: applications.nextAction,
+      nextActionOn: applications.nextActionOn,
       hasPdf: sql<boolean>`${applications.pdfBase64} is not null`,
       cvId: currentCv.id,
       cvStatus: currentCv.status,
@@ -398,6 +445,8 @@ async function roleRows(userId: string, only: { jobId?: string; jobIds?: string[
           cvId: row.applicationCvId,
           notes: row.notes ?? "",
           history: row.history ?? [],
+          nextAction: row.nextAction,
+          nextActionOn: row.nextActionOn,
           hasPdf: !!row.hasPdf,
         }
       : null;
@@ -447,6 +496,8 @@ async function legacyRows(userId: string, only: { keys?: string[] } = {}): Promi
         cvId: applications.cvId,
         notes: applications.notes,
         history: applications.history,
+        nextAction: applications.nextAction,
+        nextActionOn: applications.nextActionOn,
         hasPdf: sql<boolean>`${applications.pdfBase64} is not null`,
         companyName: applications.companyName,
         jobTitle: applications.jobTitle,
@@ -497,7 +548,8 @@ async function legacyRows(userId: string, only: { keys?: string[] } = {}): Promi
     if (entry.application) continue;
     entry.application = {
       id: row.id, status: row.status, appliedOn: row.appliedOn, cvId: row.cvId,
-      notes: row.notes, history: row.history, hasPdf: !!row.hasPdf,
+      notes: row.notes, history: row.history, nextAction: row.nextAction, nextActionOn: row.nextActionOn,
+      hasPdf: !!row.hasPdf,
     };
     entry.stage = applicationStage(row.status);
     entry.updatedAt = newest(entry.updatedAt, applicationMovedAt(row))!;
@@ -550,7 +602,7 @@ export async function listPipeline(
   const total = wanted.reduce((sum, stage) => sum + stageCounts[stage], 0);
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const page = Math.min(pageNumber(options.page === undefined ? undefined : String(options.page)), pageCount);
-  if (total === 0) return { rows: [], page, pageCount, total, counts };
+  if (total === 0) return { rows: [], page, pageCount, total, counts, stages: stageCounts };
   const wantedList = sql.raw(wanted.map((stage) => `'${stage}'`).join(", "));
   const keys = await db().execute<{ source: string; key: string }>(sql`
     select source, key from (${pipelineIndex(userId, options.company)}) idx
@@ -566,7 +618,7 @@ export async function listPipeline(
   // The index decided the order; a key it listed that hydration cannot find changed underneath
   // this read and is left out rather than rendered half-empty.
   const rows = order.flatMap((key) => (hydrated.has(key) ? [hydrated.get(key)!] : []));
-  return { rows, page, pageCount, total, counts };
+  return { rows, page, pageCount, total, counts, stages: stageCounts };
 }
 
 /**

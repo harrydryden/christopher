@@ -87,6 +87,15 @@ export const EVIDENCE_FACET_LABELS: Readonly<Record<EvidenceFacet, string>> = {
   milestone: "Milestone",
   style: "Working style",
 };
+/**
+ * The facets in the order a Library asks for them: what a reviewer weighs most, first.
+ *
+ * It is the order `LIBRARY_FACET_WEIGHTS` scores them in, written out here because the editor
+ * needs it and the scoring module cannot be loaded in a browser. `rulesLibraryReview` reports its
+ * missing facets in exactly this order, and a test in `library-review.test.ts` holds the two
+ * together so they cannot drift.
+ */
+export const EVIDENCE_FACETS_BY_NEED: readonly EvidenceFacet[] = ["outcome", "metric", "responsibility", "problem", "milestone", "style"];
 /** One question per facet, answerable in a line. This is what a missing facet is shown as. */
 export const EVIDENCE_FACET_PROMPTS: Readonly<Record<EvidenceFacet, string>> = {
   responsibility: "What were you responsible for, and for whom?",
@@ -287,6 +296,16 @@ export function evidenceHeading(library: CvLibrary, entry: CvLibrary["entries"][
 /** A single canonical text representation also serves existing scoring and CV consumers. */
 export function responsibilityRows(details: string): string[] {
   return details.split(/\r?\n/).map(line => line.replace(/^\s*[•*\-]\s+/, "").trim()).filter(Boolean);
+}
+
+/**
+ * The rows of an entry that are evidence, rather than the subsidiary labels
+ * `consolidateExperience` inserts to head a merged block. A label supports no claim on its own —
+ * `eligibleCvEvidence` already treats it that way — so it is not scored, not prompted for and not
+ * counted against the person.
+ */
+export function evidenceRows(entry: CvLibrary["entries"][number]): string[] {
+  return responsibilityRows(entry.details).filter(row => !row.endsWith(":"));
 }
 
 /** Which facet a row serves, as the person tagged it. Null when they have not said. */

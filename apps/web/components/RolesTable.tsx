@@ -3,12 +3,14 @@
 import { Fragment, startTransition, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { decide, decideRoles, archiveRoles, roleDetails } from "@/app/actions/decisions";
+import { requestCv } from "@/app/actions/cv";
 import { Badge, decisionTone, fitVerdictTone, stageTone, FIT_VERDICT_LABELS } from "@/components/Badge";
 import { CompanyFavicon } from "@/components/CompanyFavicon";
 import { FitBar, Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { Button, buttonClass } from "@/components/Button";
 import { Mark } from "@/components/brand/Mark";
 import { SafeMarkdown } from "@/components/SafeMarkdown";
+import { SettingsForm } from "@/components/SettingsForm";
 import type { RoleDetailsVM, RoleRowVM, SortDir, SortKey } from "@/lib/queries/jobs";
 
 import { APPLICATION_STATUS_LABELS, ROLE_STAGE_LABELS, ROLE_STATUS_LABELS, roleStageRank } from "@christopher/core/role-workflow";
@@ -58,6 +60,38 @@ type DetailState =
   | { state: "loading" }
   | { state: "ready"; details: RoleDetailsVM }
   | { state: "error"; error: string };
+
+/**
+ * The build offered where the role was shortlisted, priced before it is pressed (3.5).
+ *
+ * The quote rides in on the panel's own round trip, so this costs no extra request. A budget that
+ * will not take the build says so here instead of on a CV page after the redirect, an account with
+ * nothing in its Library is sent to the Library rather than to a price, and an unconfirmed address
+ * disables the button with the sentence the rest of the product uses. `requestCv` redirects to the
+ * new CV on success, which is the one click this recommendation is about.
+ */
+function BuildCvOffer({ jobId, details }: { jobId: string; details: RoleDetailsVM }) {
+  if (!details.cvQuote)
+    return (
+      <p className="text-12 text-muted">
+        Save your Library first: a CV is written from what is in it. <a href="/library" className="underline">Open Library</a>
+      </p>
+    );
+  if (details.cvQuote.refusal) return <p className="text-12 text-warn" role="status">{details.cvQuote.refusal}</p>;
+  const label = `Build a CV for this role · ${details.cvQuote.line}`;
+  if (details.cvBlocked)
+    return (
+      <div className="flex flex-col gap-2">
+        <div><Button size="sm" variant="primary" disabled aria-describedby={`cv-blocked-${jobId}`}>{label}</Button></div>
+        <p id={`cv-blocked-${jobId}`} className="text-12 text-warn">{details.cvBlocked}</p>
+      </div>
+    );
+  return (
+    <SettingsForm action={requestCv} submitLabel={label}>
+      <input type="hidden" name="jobId" value={jobId} />
+    </SettingsForm>
+  );
+}
 
 interface ReasonBoxState {
   jobId: string;
@@ -408,6 +442,9 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
           {rows.map((row, index) => {
             const boxed = reasonBox?.jobId === row.id ? reasonBox : null;
             const detail = details[row.id];
+            // The build replaces the link only once its price is in hand: a panel that is still
+            // loading, or that could not load, keeps the link rather than offering nothing.
+            const buildHere = row.stage === "shortlisted" && detail?.state === "ready";
             return (
               <Fragment key={row.id}>
                 <TR highlighted={index === highlightIndex} className={selected.has(row.id) ? "bg-sunken" : ""}>
@@ -450,7 +487,8 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                     </div>
                   </TD>
                   <TD className="whitespace-nowrap">
-                    <FitBar score={row.fitScore} title={fitTitle(row)} />
+                    {/* A blank score says which of its five causes it is, rather than one dash. */}
+                    <FitBar score={row.fitScore} title={fitTitle(row)} state={row.scoreStateText} />
                   </TD>
                   <TD className="text-right">
                     {row.workflowStatus === "user-shortlisted" ? <a href={`/applications?job=${row.id}`} className={buttonClass("secondary", "sm", "whitespace-nowrap no-underline")}>{applicationLabel(row)}</a>
@@ -484,11 +522,12 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                             )}
                             {detail?.state === "ready" && <p className="text-13 text-muted">{detail.details.locationReason}</p>}
                           </div>
-                          {row.fitScore !== null && (
+                          {(row.fitScore !== null || row.scoreStateText) && (
                             <div>
                               <h3 className="ds-label mb-1">Fit</h3>
                               <div className="flex flex-wrap items-center gap-2">
-                                <FitBar score={row.fitScore} title={fitTitle(row)} />
+                                {/* The same words as the cell above, beside the verdict rather than instead of it. */}
+                                <FitBar score={row.fitScore} title={fitTitle(row)} state={row.scoreStateText} />
                                 {row.fitVerdict && <Badge tone={fitVerdictTone(row.fitVerdict)}>{FIT_VERDICT_LABELS[row.fitVerdict]}</Badge>}
                               </div>
                               {row.fitRationale && <p className="mt-1 max-w-3xl text-14 text-fg">{row.fitRationale}</p>}
@@ -518,8 +557,11 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                             ))}
                           </div>
                           {row.events.filter(event => event.label.includes("archiv")).map(event => <p key={event.id} className="text-12 text-muted">{event.label}</p>)}
+                          {/* A shortlisted role with no CV yet is built from here; everything else
+                              keeps the link to the application that holds its CV. */}
+                          {buildHere && detail?.state === "ready" && <BuildCvOffer jobId={row.id} details={detail.details} />}
                           <div className="flex flex-wrap items-center gap-4 text-12">
-                            <a href={`/applications?job=${row.id}`} className="font-semibold underline">{applicationLabel(row)}</a>
+                            {!buildHere && <a href={`/applications?job=${row.id}`} className="font-semibold underline">{applicationLabel(row)}</a>}
                             <a href={row.url} target="_blank" rel="noopener noreferrer" className="text-muted underline">View vacancy ↗</a>
                             <a href={row.companyHomepageUrl} target="_blank" rel="noopener noreferrer" className="text-muted underline">Company website ↗</a>
                           </div>

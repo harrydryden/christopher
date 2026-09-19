@@ -16,9 +16,11 @@ import { assertCvFinalisable, cvAssessmentCurrent } from "@christopher/core/cv-r
 import type { CvContent, CvLibrary } from "@christopher/core/cv";
 import type { CvAssessment } from "@christopher/core/cv-assessment";
 import { CvDraftEditor } from "@/components/CvDraftEditor";
+import { cvEditFormId } from "@/lib/cv-content-links";
+import { libraryDriftSentence } from "@/lib/cv-evaluation";
 import Link from "next/link";
-import { and, eq } from "drizzle-orm";
-import { applications } from "@christopher/db";
+import { and, desc, eq } from "drizzle-orm";
+import { applications, cvLibraries } from "@christopher/db";
 import { db } from "@/lib/db";
 import { notFound } from "next/navigation";
 import { zUuid } from "@/lib/validation";
@@ -74,12 +76,20 @@ export default async function CvDraftPage({
   // A build that has stopped moving is indistinguishable from a slow one without the queue row
   // behind it: which attempt this is, whether anything still holds it, and what the last one left.
   const now = new Date();
-  const [buildTask, steps, system, admin] = await Promise.all([
+  const [buildTask, steps, system, admin, latestLibrary] = await Promise.all([
     busy || failed ? getOwnCvBuildTask(user.id, id) : null,
     // The ledger of motions: the narrative while it builds, the build log afterwards.
     getOwnCvBuildSteps(user.id, id),
     getSystemSettings(),
     isAdmin(),
+    // This account's newest Library version, so the panel can say when the evidence behind this
+    // revision has moved on. The content is not read: only the number the two are compared by.
+    db()
+      .select({ version: cvLibraries.version })
+      .from(cvLibraries)
+      .where(eq(cvLibraries.userId, user.id))
+      .orderBy(desc(cvLibraries.version))
+      .limit(1),
   ]);
   const build = busy || failed ? cvBuildState(draft, buildTask, now, system.timezone) : null;
   const narrativeContext = { timeZone: system.timezone, versionLabel: version };
@@ -98,6 +108,9 @@ export default async function CvDraftPage({
   const finaliseReason = finaliseObstacle(draft);
   // What the whole build came to, once there is nothing left running to change it.
   const totals = !busy && steps.length ? cvBuildTotalsLine(cvBuildTotals(steps, now)) : null;
+  // The Library this revision was written from, and what has been saved over it since: the
+  // sentence is only offered where there is an editor to rebuild from.
+  const drift = libraryDriftSentence(draft.libraryVersion, latestLibrary[0]?.version);
   // The same panel whichever tab holds it: one set of props, written once.
   const assessment = (
     <CvAssessmentPanel
@@ -108,6 +121,9 @@ export default async function CvDraftPage({
       busy={busy}
       hasContent={!!content}
       content={content}
+      library={draft.librarySnapshot}
+      libraryDrift={drift}
+      rebuildFormId={content && !busy && !blocked ? cvEditFormId(id) : null}
       finaliseReason={finaliseReason}
       blocked={blocked}
     />

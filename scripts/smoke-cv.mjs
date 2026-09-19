@@ -152,7 +152,8 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     const educationTab = page.getByRole("tab", { name: "Education, skills and interests", exact: true });
     const introTab = page.getByRole("tab", { name: "Intro", exact: true });
     assert.equal(await introTab.getAttribute("aria-selected"), "true");
-    assert.equal(await page.getByRole("textbox", { name: "Writing style", exact: true }).count(), 0);
+    // Writing preferences live on the Library, beside the wording they shape (SPEC: version history and writing preferences on the Library page).
+    assert.equal(await page.getByRole("textbox", { name: "Writing style", exact: true }).count(), 1);
     // The save bar says what is at stake before anything has been typed, and the moment it has.
     assert.equal(await page.getByText("Not saved yet", { exact: true }).count(), 1);
     await page.getByRole("textbox", { name: "Website", exact: true }).fill("https://example.com/portfolio");
@@ -224,17 +225,23 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await page.reload();
     await appearance.waitFor();
     assert.equal(await appearance.getByRole("button", { name: "Gold", exact: true }).getAttribute("aria-pressed"), "true");
+    // Writing preferences are written on the Library, beside the wording they shape; Settings only points there.
+    assert.equal(await page.getByRole("textbox", { name: "Writing style", exact: true }).count(), 0);
+    await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Library", exact: true }).click();
+    await page.getByRole("heading", { name: "Library", exact: true }).waitFor();
     const writingStyle = page.getByRole("textbox", { name: "Writing style", exact: true });
     await writingStyle.fill("Use concise UK English.");
     await page.getByRole("textbox", { name: "Saved phrasing", exact: true }).fill("Led the team");
     await Promise.all([
-      page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/settings"),
+      page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/library"),
       page.locator("form").filter({ has: writingStyle }).getByRole("button", { name: "Save", exact: true }).click(),
     ]);
     await page.reload();
     await writingStyle.waitFor();
     assert.equal(await writingStyle.inputValue(), "Use concise UK English.");
     assert.equal((await setting("cvWritingPreferences")).value.preferredWording, "Led the team");
+    await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Settings", exact: true }).click();
+    await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
     const cvModel = page.getByRole("combobox", { name: "CV model", exact: true });
     await cvModel.waitFor();
     const currentModel = await cvModel.inputValue();

@@ -1,9 +1,27 @@
-import { cvMaxPages, type CvContent } from "@christopher/core/cv";
+import { cvMaxPages, type CvContent, type CvLibrary } from "@christopher/core/cv";
 import type { CvAssessment } from "@christopher/core/cv-assessment";
 import { assessCvDraft, finaliseCvDraft } from "@/app/actions/cv";
 import { cvEvaluationRows } from "@/lib/cv-evaluation";
 import { CvEvaluationTable } from "./CvEvaluationTable";
+import { RebuildButton } from "./CvDraftEditor";
 import { SettingsForm } from "./SettingsForm";
+
+/**
+ * The Library moved on after this revision was written, said where its evidence is judged.
+ *
+ * The control beside it is the editor's own Rebuild from Library, submitting the editor's form by
+ * name: one rebuild in the product, offered in a second place rather than written twice. It is
+ * absent when there is no editor on the page, because there is then nothing to rebuild from.
+ */
+function LibraryDrift({ sentence, formId }: { sentence: string | null; formId: string | null }) {
+  if (!sentence) return null;
+  return (
+    <div role="status" className="flex flex-wrap items-center gap-3 border border-warn p-3 text-14">
+      <p className="text-warn">{sentence}</p>
+      {formId && <RebuildButton form={formId} />}
+    </div>
+  );
+}
 
 export function CvAssessmentPanel({
   id,
@@ -13,6 +31,9 @@ export function CvAssessmentPanel({
   busy,
   hasContent,
   content,
+  library = null,
+  libraryDrift = null,
+  rebuildFormId = null,
   finaliseReason = null,
   blocked = null,
 }: {
@@ -23,6 +44,12 @@ export function CvAssessmentPanel({
   busy: boolean;
   hasContent: boolean;
   content: CvContent | null;
+  /** This revision's own Library snapshot: what a gap row's "Add evidence" link is resolved against. */
+  library?: Pick<CvLibrary, "entries"> | null;
+  /** "Your Library changed since this build (v7 → v9).", or null while the build is up to date. */
+  libraryDrift?: string | null;
+  /** The editor form the Rebuild control submits, or null when this page has no editor. */
+  rebuildFormId?: string | null;
   /**
    * Why this revision cannot be finalised, in the sentence `assertCvFinalisable` would throw, or
    * null when it can be. Computed on the page with the same function the action re-runs, so the
@@ -44,6 +71,7 @@ export function CvAssessmentPanel({
         {!busy && finaliseReason && (
           <p className="text-14 text-warn">{finaliseReason}</p>
         )}
+        <LibraryDrift sentence={libraryDrift} formId={rebuildFormId} />
         {!busy && !finalised && (
           <>
             <fieldset disabled={!!blocked} className="min-w-0">
@@ -67,7 +95,7 @@ export function CvAssessmentPanel({
   // What this panel can see for itself, so a caller that passes no reason still never offers a
   // finalisation the action would refuse.
   const overPages = assessment.pageCount > cvMaxPages(content?.theme);
-  const rows = cvEvaluationRows(assessment, content);
+  const rows = cvEvaluationRows(assessment, content, library);
   const essentialGaps = rows.filter(
     (row) => row.importance === "essential" && row.experience !== "Strong",
   ).length;
@@ -100,6 +128,7 @@ export function CvAssessmentPanel({
         {flagged.length} factual {flagged.length === 1 ? "concern" : "concerns"}
 
       </p>
+      <LibraryDrift sentence={libraryDrift} formId={rebuildFormId} />
       <CvEvaluationTable rows={rows} />
       <div className="flex flex-wrap items-center gap-3 text-14">
         <a className="font-medium text-fg underline" href="/library">

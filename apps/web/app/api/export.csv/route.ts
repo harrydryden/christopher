@@ -5,8 +5,7 @@ import { csvRow } from "@/lib/csv";
 import {
   fetchRoleRows,
   parseRolesFilters,
-  type RawSearchParams,
-} from "@/lib/queries/jobs";
+  type RawSearchParams, scoreStateText } from "@/lib/queries/jobs";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +19,7 @@ function rawParamsFrom(sp: URLSearchParams): RawSearchParams {
 }
 
 /** `status` is the tab a role sits under; `stage` is how far it has got (R-7.10). */
-const HEADER = ["company", "website", "role", "location", "url", "live_for_days", "availability", "fit", "status", "stage", "reason", "first_seen", "posted_at", "closed_at"];
+const HEADER = ["company", "website", "role", "location", "url", "live_for_days", "availability", "fit", "score_state", "status", "stage", "reason", "first_seen", "posted_at", "closed_at"];
 
 /**
  * A spreadsheet's worth of roles, not a database dump: the read is bounded so one export can never
@@ -67,6 +66,7 @@ export async function GET(request: NextRequest) {
           liveFor(r.job, now).days,
           r.job.status,
           r.job.fitScore ?? "",
+          scoreStateText(r.job, now) ?? "",
           roleStatus(r.job, r.decision),
           r.stage,
           r.decision?.reason ?? "",

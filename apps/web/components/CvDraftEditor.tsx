@@ -1,5 +1,5 @@
 "use client";
-import { CV_PROFILE_ID, cvSectionBlockId } from "@/lib/cv-content-links";
+import { CV_PROFILE_ID, cvEditFormId, cvSectionBlockId } from "@/lib/cv-content-links";
 import { useFormStatus } from "react-dom";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
@@ -20,12 +20,22 @@ import { SettingsForm } from "./SettingsForm";
 import { buttonClass } from "@/components/Button";
 import { inputClass, labelClass } from "@/components/Field";
 
-/** Writes a new revision from the latest Library against the same rubric; direct edits are not carried over. */
-function RebuildButton() {
+/** The editor's own form, which a control elsewhere on the page can submit by name. */
+
+/**
+ * Writes a new revision from the latest Library against the same rubric; direct edits are not
+ * carried over.
+ *
+ * `form` is for the one copy of this control that sits outside the editor's form — beside the
+ * assessment panel's "your Library changed" sentence. It submits the same form, to the same
+ * action, with the same intent, so there is one rebuild in the product and not two.
+ */
+export function RebuildButton({ form }: { form?: string } = {}) {
   const { pending } = useFormStatus();
   return (
     <Button
       type="submit"
+      form={form}
       name="intent"
       value="improve"
       disabled={pending}

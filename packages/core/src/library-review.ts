@@ -21,6 +21,7 @@ import { z } from "zod";
 import {
   EVIDENCE_FACETS,
   EVIDENCE_FACET_PROMPTS,
+  evidenceRows,
   responsibilityRows,
   rowFacet,
   type CvLibrary,
@@ -151,6 +152,20 @@ function promptsForMissing(missing: EvidenceFacet[]): string[] {
 }
 
 /**
+ * Which facet a prompt is asking for, when the review says so, and null when it does not.
+ *
+ * The baseline's prompts are the facet questions themselves, so the Library can tag the row it
+ * offers to add. A model writes its own wording, and a prompt that is not one of the six questions
+ * is left untagged rather than guessed at: the person picks the facet, as they do for every other
+ * row.
+ */
+export function facetForPrompt(prompt: string): EvidenceFacet | null {
+  const asked = prompt.normalize("NFKC").replace(/\s+/gu, " ").trim().toLowerCase();
+  return EVIDENCE_FACETS.find(facet =>
+    EVIDENCE_FACET_PROMPTS[facet].normalize("NFKC").replace(/\s+/gu, " ").trim().toLowerCase() === asked) ?? null;
+}
+
+/**
  * A number, a percentage or an amount of money anywhere in the row.
  *
  * Deliberately crude: a year in "Shipped in 2024" counts, and so it should — a row that names a
@@ -189,7 +204,7 @@ function looksSpecific(row: string): boolean {
  * a merge they did not make.
  */
 export function reviewableRows(entry: CvEntry): string[] {
-  return responsibilityRows(entry.details).filter(row => !row.endsWith(":"));
+  return evidenceRows(entry);
 }
 
 /** The review must belong to the library version it will be stored against. */

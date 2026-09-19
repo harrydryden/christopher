@@ -14,7 +14,7 @@ let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 let user: User;
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { applicationStaleHint, listPipeline, pipelineCompany, pipelineCvQuotes, pipelineFilter, pipelineStageCounts } from "./applications";
+import { applicationStaleHint, listPipeline, pipelineCompany, pipelineCvQuotes, pipelineDueCount, pipelineFilter, pipelineStageCounts } from "./applications";
 
 const LIBRARY = {
   name: "Test Candidate",
@@ -192,12 +192,56 @@ it("counts every stage for this account, in SQL, and never counts a matched role
   expect(await pipelineStageCounts(user.id)).toEqual({
     matched: 0, shortlisted: 1, applying: 1, applied: 0, in_process: 1, accepted: 1, rejected: 1, dismissed: 0,
   });
-  // The segments the page shows are the same numbers added up.
-  expect((await listPipeline(user.id)).counts).toEqual({ active: 3, closed: 2, all: 5 });
+  // The segments the page shows are the same numbers added up, and the strip in its header is
+  // the same reading again rather than a second count of the lifecycle.
+  const page = await listPipeline(user.id);
+  expect(page.counts).toEqual({ active: 3, closed: 2, all: 5 });
+  expect(page.stages).toEqual(await pipelineStageCounts(user.id));
   const other = await ensureTestUser(database, "other-counts@example.com", "member");
   expect(await pipelineStageCounts(other.id)).toEqual({
     matched: 0, shortlisted: 0, applying: 0, applied: 0, in_process: 0, accepted: 0, rejected: 0, dismissed: 0,
   });
+});
+
+it("counts the next steps due in the coming week, and never another account's", async () => {
+  const now = new Date("2026-09-19T12:00:00.000Z");
+  const { job: soon, company } = await role("Head of Delivery");
+  await shortlist(soon.id);
+  await record(soon.id, "interview", { nextAction: "Send references", nextActionOn: "2026-09-23" });
+  // A step whose day has gone by is the most due thing on the page, so it is counted too.
+  const { job: overdue } = await role("Operations Lead");
+  await shortlist(overdue.id);
+  await record(overdue.id, "interview", { nextAction: "Second interview", nextActionOn: "2026-09-15" });
+  // Next month is not this week, and a step with no day is not due on any of them.
+  const { job: later } = await role("Head of Ops");
+  await shortlist(later.id);
+  await record(later.id, "applied", { nextAction: "Chase the recruiter", nextActionOn: "2026-10-30" });
+  const { job: undated } = await role("Delivery Lead");
+  await shortlist(undated.id);
+  await record(undated.id, "applied", { nextAction: "Chase the recruiter" });
+  // A settled application owes nothing, however recent the note left on it.
+  const { job: done } = await role("Programme Lead");
+  await shortlist(done.id);
+  await record(done.id, "rejected", { nextAction: "Ask for feedback", nextActionOn: "2026-09-20" });
+
+  expect(await pipelineDueCount(user.id, { now })).toBe(2);
+  // Scoped to a company the way the table is: by its catalogue id for a role with a posting
+  // behind it, and by name for a record without one.
+  await record(null, "applied", { companyName: "  acme ", jobTitle: "Legacy at Acme", nextAction: "Send the portfolio", nextActionOn: "2026-09-20" });
+  expect(await pipelineDueCount(user.id, { now })).toBe(3);
+  expect(await pipelineDueCount(user.id, { company: { id: company.id, name: "Acme" }, now })).toBe(2);
+  const other = await ensureTestUser(database, "other-due@example.com", "member");
+  expect(await pipelineDueCount(other.id, { now })).toBe(0);
+});
+
+it("hands each row the next step stored on it", async () => {
+  const { job } = await role();
+  await shortlist(job.id);
+  await record(job.id, "interview", { nextAction: "Send references", nextActionOn: "2026-09-23" });
+  await record(null, "applied", { jobTitle: "Legacy role", nextAction: "Chase the recruiter" });
+  const rows = (await listPipeline(user.id, { filter: "all" })).rows;
+  expect(rows.find((row) => row.jobId === job.id)!.application).toMatchObject({ nextAction: "Send references", nextActionOn: "2026-09-23" });
+  expect(rows.find((row) => row.jobTitle === "Legacy role")!.application).toMatchObject({ nextAction: "Chase the recruiter", nextActionOn: null });
 });
 
 it("filters to one company, by its id for a posting and by its name for a record without one", async () => {

@@ -40,8 +40,17 @@ beforeEach(async () => {
   await database.execute(sql`truncate companies, tasks, settings, users restart identity cascade`);
   ({ user: first, cookie: firstCookie } = await signInTestUser(database, process.env.SESSION_SECRET!, "one@example.com"));
   ({ user: second, cookie: secondCookie } = await signInTestUser(database, process.env.SESSION_SECRET!, "two@example.com", "member"));
+  // Filters first: `addCompanies` refuses an account that has never chosen its gate, so both
+  // accounts start with one saved, exactly as a person reaches the form through setup.
+  await chooseGate(first.id);
+  await chooseGate(second.id);
   session = firstCookie;
 });
+
+/** The gate this account chose. Its presence, not its contents, is what unlocks following a company. */
+const chooseGate = (userId: string) =>
+  database.insert(schema.userSettings).values({ userId, key: "gate", value: { includeKeywords: ["operations"], excludeKeywords: [], matchFields: ["title"], locationTerms: [], includeRemote: true } })
+    .onConflictDoNothing();
 
 const urls = (value: string) => { const form = new FormData(); form.set("urls", value); return form; };
 const tasksOfType = (type: "scan_company" | "discover" | "reevaluate_gate" | "import_posting") =>
@@ -94,6 +103,23 @@ it("follows a company already in the catalogue instead of adding or scanning a s
   const scans = await tasksOfType("scan_company");
   expect(scans).toHaveLength(1);
   expect(scans[0]!.payload).toMatchObject({ companyId: company.id, trigger: "manual" });
+});
+
+it("refuses to follow a company until this account has chosen its keywords and locations", async () => {
+  // Existing accounts that never saved a gate are in exactly this position: one save frees them.
+  await database.delete(schema.userSettings).where(eq(schema.userSettings.userId, first.id));
+  await expect(addCompanies(urls("https://acme.example"))).rejects.toThrow("Choose your keywords and locations first, so the first scan runs against your filters.");
+  expect(await database.select().from(schema.companies)).toHaveLength(0);
+  expect(await database.select().from(schema.companySubscriptions)).toHaveLength(0);
+  expect(await tasksOfType("discover")).toHaveLength(0);
+
+  // Adding a role by its URL is deliberately not held back: it bypasses the gate by design.
+  await chooseGate(first.id);
+  await expect(addCompanies(urls("https://acme.example"))).rejects.toThrow("redirect:/companies?added=1");
+  const [company] = await database.select().from(schema.companies);
+  await database.delete(schema.userSettings).where(eq(schema.userSettings.userId, first.id));
+  await importPosting(company!.id, urlForm("https://acme.example/jobs/1"));
+  expect(await tasksOfType("import_posting")).toHaveLength(1);
 });
 
 it("leaves the shared company and the other follower alone when one account stops following", async () => {

@@ -119,6 +119,8 @@ beforeEach(async () => {
     sql`truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users restart identity cascade`,
   );
   ({ user, cookie: session } = await signInTestUser(database, process.env.SESSION_SECRET!));
+  // Filters first: `addCompanies` refuses an account that has never chosen its gate.
+  await database.insert(schema.userSettings).values({ userId: user.id, key: "gate", value: DEFAULT_SETTINGS.gate });
 });
 async function fixture() {
   const [company] = await database
@@ -772,7 +774,7 @@ describe("CSV export", () => {
     expect(response.headers.get("content-type")).toBe("text/csv; charset=utf-8");
     const csv = await response.text();
     const lines = csv.trim().split("\r\n");
-    expect(lines[0]).toBe("company,website,role,location,url,live_for_days,availability,fit,status,stage,reason,first_seen,posted_at,closed_at");
+    expect(lines[0]).toBe("company,website,role,location,url,live_for_days,availability,fit,score_state,status,stage,reason,first_seen,posted_at,closed_at");
     // Every row, in blocks, and not one character of the stored descriptions.
     expect(lines).toHaveLength(122);
     expect(csv).not.toContain("xxxx");

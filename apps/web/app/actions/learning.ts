@@ -52,13 +52,35 @@ export async function answerOpenQuestion(questionId: string, formData: FormData)
   revalidatePath("/learning");
 }
 
-export async function saveSeedProfile(formData: FormData): Promise<void> {
-  const user = await requireUser();
-  const text = String(formData.get("seedProfile") ?? "");
-  await setUserSetting(user.id, "seedProfile", text);
-  await enqueue("synthesize_profile", { userId: user.id, force: true });
+/** A few sentences, not a document: long enough for deal-breakers, short enough to stay readable. */
+const SEED_PROFILE_LIMIT = 5_000;
+
+/**
+ * The one write behind both seed-profile cards (R-6.3). Settings is where setup asks for it and
+ * Learning is where it stays editable, so the two forms differ only in what they return.
+ */
+async function writeSeedProfile(userId: string, raw: string): Promise<string | null> {
+  const text = String(raw ?? "");
+  if (text.length > SEED_PROFILE_LIMIT) return `Keep your seed profile under ${SEED_PROFILE_LIMIT.toLocaleString("en-GB")} characters. A few sentences is plenty.`;
+  await setUserSetting(userId, "seedProfile", text);
+  await enqueue("synthesize_profile", { userId, force: true });
   revalidatePath("/learning");
   revalidatePath("/settings");
+  revalidatePath("/");
+  return null;
+}
+
+export async function saveSeedProfile(formData: FormData): Promise<void> {
+  const user = await requireUser();
+  const error = await writeSeedProfile(user.id, String(formData.get("seedProfile") ?? ""));
+  if (error) throw new UserFacingError(error);
+}
+
+/** The Settings card's twin, for a `SettingsForm` that shows its errors inline. */
+export async function saveSeedProfileSetting(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
+  const user = await requireUser();
+  const error = await writeSeedProfile(user.id, String(formData.get("seedProfile") ?? ""));
+  return error ? fail(error) : { ok: true };
 }
 
 /**

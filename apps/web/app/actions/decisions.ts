@@ -1,6 +1,6 @@
 "use server";
 
-import { requireUser } from "@/lib/auth";
+import { needsEmailConfirmation, requireUser } from "@/lib/auth";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { companies, decisions, jobEvents, jobs, tagVocabulary, userJobs } from "@christopher/db/schema";
@@ -9,7 +9,9 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { enqueue, enqueueMany } from "@/lib/enqueue";
-import { fetchRoleDetails, locationReasonText, type RoleDetailsVM } from "@/lib/queries/jobs";
+import { cvBuildQuote, cvQuoteButtonLine } from "@/lib/cv-quote";
+import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
+import { fetchRoleDetails, locationReasonText, type CvQuoteVM, type RoleDetailsVM } from "@/lib/queries/jobs";
 import { getSettingsFor } from "@/lib/settings";
 import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
 
@@ -39,9 +41,23 @@ export type RoleDetailsResult = { ok: true; details: RoleDetailsVM } | { ok: fal
 const ROLE_DETAILS_FAILED = "Could not load this role. Please try again.";
 
 /**
+ * What building a CV for this role would cost this account, for the panel's own button.
+ *
+ * Only a shortlisted role with no CV yet is offered a build in the panel, so only that role pays
+ * for the quote; everything else is a link to the application it already has. An account with no
+ * Library gets no price, because its next step is the Library rather than the budget.
+ */
+async function panelCvQuote(userId: string, row: { stage: string; job: { id: string } }): Promise<CvQuoteVM | null> {
+  if (row.stage !== "shortlisted") return null;
+  const quote = await cvBuildQuote(userId, row.job.id);
+  return quote.hasLibrary ? { line: cvQuoteButtonLine(quote), refusal: quote.refusal } : null;
+}
+
+/**
  * The evidence the review panel needs, for one role this account can see: the stored description
  * the page read deliberately leaves behind, the gate hits behind "why is this here", and the
- * verdict and rationale stored beside the fit score. One round trip, taken when a row expands.
+ * verdict and rationale stored beside the fit score. One round trip, taken when a row expands,
+ * which is also where the price of a CV for a shortlisted role comes from.
  */
 export async function roleDetails(jobId: string): Promise<RoleDetailsResult> {
   const user = await requireUser();
@@ -50,7 +66,9 @@ export async function roleDetails(jobId: string): Promise<RoleDetailsResult> {
   try {
     const [row] = await fetchRoleDetails(user.id, [parsed.data]);
     if (!row) return { ok: false, error: "Role not found." };
-    const settings = await getSettingsFor(user.id);
+    // The gate's own terms and the price of a build are independent reads, so the panel waits for
+    // the slower of the two rather than for both in turn.
+    const [settings, cvQuote] = await Promise.all([getSettingsFor(user.id), panelCvQuote(user.id, row)]);
     // The same rule the gate itself ran: `user_jobs` keeps the verdict, not the terms behind it.
     const evaluated = evaluateLocation(
       { title: row.job.title, location: row.job.location, locations: row.job.locations, remote: row.job.remote },
@@ -73,6 +91,10 @@ export async function roleDetails(jobId: string): Promise<RoleDetailsResult> {
           hasLocationFilter,
           row.job.origin === "user" && row.job.addedBy === user.id,
         ),
+        cvQuote,
+        // `requireVerifiedUser()` in `requestCv` stays the authority; this only stops the button
+        // being pressed before the wall is discovered.
+        cvBlocked: needsEmailConfirmation(user) ? VERIFY_SENTENCE : null,
       },
     };
   } catch (error) {

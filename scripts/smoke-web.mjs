@@ -71,15 +71,19 @@ function run(cmd, args, opts = {}) {
 const PAGES = [
   // The three tabs are the whole role workflow; archived roles are a section inside Dismissed.
   // The smoke account has nothing matched, which is exactly when the table opens on Shortlisted.
-  ["/", ["Roles", "Location", "Shortlisted", "Matched", "Dismissed"], "Shortlisted"],
+  // The setup checklist explains the blank table: the smoke account has confirmed its address and
+  // follows one company, and nothing else, so it reads "1 of 5 done" and cannot be hidden.
+  ["/", ["Roles", "Location", "Shortlisted", "Matched", "Dismissed", "Start here", "Choose keywords and locations", "Fill the Library", "1 of 5 done"], "Shortlisted"],
   // The header carries the shared schedule: one scan a day for every follower.
-  ["/companies", ["Companies", "next scheduled scan"]],
+  // Filters first: an account that has not chosen its gate is asked for it above the add form.
+  ["/companies", ["Companies", "next scheduled scan", "Choose your filters first"]],
   ["/suggestions", ["Discover companies", "Companies to review"]],
   ["/suggestions?view=sources", ["Add a source"]],
   ["/suggestions?view=history", ["Recently reviewed"]],
   ["/learning", ["Learning"]],
-  ["/health", ["Health"]],
-  ["/settings", ["Settings"]],
+  // Health's attention list and the resolution on the item the smoke company raises: no source yet.
+  ["/health", ["Health", "Needs you", "No careers page to scan", "Re-discover"]],
+  ["/settings", ["Settings", "Seed profile", "Writing preferences and version history are on the"]],
   ["/account", ["Account", "Sign-in methods"]],
   ["/admin", ["Admin", "Registration", "Accounts"]],
   ["/admin/settings", ["System settings", "Schedule"]],
@@ -87,8 +91,10 @@ const PAGES = [
   ["/admin/health", ["Operations", "Background worker"]],
   // The CV list has gone: `/cv` is a redirect into the applications table, which holds the CVs.
   ["/cv", { redirectsTo: "/applications" }],
-  ["/library", ["Library", "Intro", "Website", "Experience", "Education, skills and interests"]],
-  ["/applications", ["Applications", "Active", "Closed", "What the stages mean"]],
+  ["/library", ["Library", "Intro", "Website", "Experience", "Education, skills and interests",
+    "Versions", "Nothing saved yet. Your first save becomes version 1.",
+    "Writing preferences", "Writing style", "Saved phrasing", "No library saved yet"]],
+  ["/applications", ["Applications", "Active", "Closed", "Roles by stage", "What the stages mean"]],
   ["/?archive=1", ["Roles", "Archived"], "Dismissed"],
   ["/?view=auto-matched", ["Roles"], "Matched"],
   ["/?view=user-shortlisted", ["Roles"], "Shortlisted"],
@@ -175,7 +181,7 @@ async function main() {
   const companyId = await followCompany(pool, userId);
   // The company with no source shows the setup card; the header says when it was last scanned,
   // when the next scan is due, and how many roles here this account is pursuing.
-  const pages = [...PAGES, [`/companies/${companyId}`, ["Roles", "Add a role", "Notepad", "Set up this company", "next scheduled scan", "applications"]]];
+  const pages = [...PAGES, [`/companies/${companyId}`, ["Roles", "Add a role", "Notepad", "Set up this company", "next scheduled scan", "applications", "What has happened so far", "Nobody has looked for this"]]];
 
   for (const [path, expected, selectedStatus] of pages) {
     let res;

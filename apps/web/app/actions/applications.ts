@@ -6,23 +6,77 @@ import { pipelineRowForJob, type PipelineRow } from "@/lib/queries/applications"
 import { APPLICATION_STATUSES, APPLICATION_STATUS_LABELS, CvContentSchema, applicationStage, roleStageRank } from "@christopher/core";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
+import { isRecordableDay, todayDay } from "@/lib/application-dates";
 import { renderCvPdf } from "@/lib/cv-pdf";
 import { decide } from "@/app/actions/decisions";
 import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
 import { revalidatePath } from "next/cache";
 
 type Transaction = Parameters<Parameters<ReturnType<typeof db>["transaction"]>[0]>[0];
-type HistoryEntry = { status: string; at: string; notes: string };
+type HistoryEntry = { status: string; at: string; notes: string; on?: string };
 
 const statuses: readonly ApplicationStatus[] = APPLICATION_STATUSES;
 
-/** A calendar day the browser's date input produces, and nothing else. */
-function isCalendarDay(value: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
+/** What the person owes this application next, in their own words: a note, not a workflow. */
+const NEXT_ACTION_MAX = 200;
+
+/**
+ * Everything the status control sends, validated once for both the role that has a posting behind
+ * it and the record that has not.
+ *
+ * Three fields carry a day and they mean different things. `appliedOn` is when the application
+ * went in. `on` is the day *this entry* is about — the interview, the offer, the rejection — which
+ * the save time cannot express and which is the thing people actually track. `nextActionOn` is
+ * when the next step is due.
+ */
+interface StageFields {
+  status: ApplicationStatus;
+  notes: string;
+  appliedOn: string;
+  on: string;
+  nextAction: string;
+  nextActionOn: string;
 }
 
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
+type StageForm = { ok: true; fields: StageFields } | { ok: false; error: string };
+
+/** A refusal in the shape both call sites return straight back to the form. */
+const refuse = (error: string): StageForm => ({ ok: false, error });
+
+function readStageForm(form: FormData, options: { insistOnAppliedOn?: boolean } = {}): StageForm {
+  const status = String(form.get("status") ?? "") as ApplicationStatus;
+  if (!statuses.includes(status)) return refuse("Choose a status from the list.");
+  const notes = String(form.get("notes") ?? "").trim();
+  if (notes.length > 4000) return refuse("Keep notes under 4,000 characters.");
+  const appliedOn = String(form.get("appliedOn") ?? "").trim();
+  // The date only means anything once something was submitted; before that there is nothing to
+  // date, so "Applying" leaves the field out and the row carries today as a placeholder.
+  if (appliedOn && !isRecordableDay(appliedOn)) return refuse("Enter a valid application date.");
+  if (options.insistOnAppliedOn && !appliedOn && status !== "applying" && form.has("appliedOn"))
+    return refuse("Enter a valid application date.");
+  const on = String(form.get("on") ?? "").trim();
+  if (on && !isRecordableDay(on)) return refuse("Enter a valid date for this update.");
+  const nextAction = String(form.get("nextAction") ?? "").trim();
+  if (nextAction.length > NEXT_ACTION_MAX) return refuse(`Keep the next step under ${NEXT_ACTION_MAX} characters.`);
+  const nextActionOn = String(form.get("nextActionOn") ?? "").trim();
+  if (nextActionOn && !isRecordableDay(nextActionOn)) return refuse("Enter a valid date for the next step.");
+  return { ok: true, fields: { status, notes, appliedOn, on, nextAction, nextActionOn } };
+}
+
+/** The next step as the row stores it: the text and its day, or neither once the text is blank. */
+function nextActionColumns(fields: StageFields): { nextAction: string | null; nextActionOn: string | null } {
+  if (!fields.nextAction) return { nextAction: null, nextActionOn: null };
+  return { nextAction: fields.nextAction, nextActionOn: fields.nextActionOn || null };
+}
+
+/**
+ * One history entry, dated twice: `at` is when it was saved and `on` is the day it is about.
+ * Applied is the one status whose day the row already carries — the application date — so the
+ * form does not ask for it twice and this reads it from there.
+ */
+function historyEntry(fields: StageFields, at: string, appliedOn: string): HistoryEntry {
+  const on = fields.on || (fields.status === "applied" ? appliedOn : "");
+  return { status: fields.status, at, notes: fields.notes, ...(on ? { on } : {}) };
 }
 
 /**
@@ -51,16 +105,35 @@ function confirmBackwards(form: FormData, from: ApplicationStatus, to: Applicati
   return `Confirm the move from ${APPLICATION_STATUS_LABELS[from]} back to ${APPLICATION_STATUS_LABELS[to]} before saving it.`;
 }
 
+/** As much of a stored row as a save is compared against. */
+type StoredStage = { status: ApplicationStatus; notes: string; appliedOn: string; nextAction: string | null; nextActionOn: string | null };
+
 /**
  * A save that changes nothing is not an event. Re-reading a row and pressing Save used to append a
  * history entry, so the history of a role somebody checked on weekly read as a weekly status
- * change. An unsupplied date is not a change either: the field is hidden while a role is Applying.
+ * change. An unsupplied date is not a change either: the field is hidden while a role is Applying,
+ * and the day an entry is about is asked for fresh every time rather than carried forward.
  */
-function unchanged(
-  existing: { status: ApplicationStatus; notes: string; appliedOn: string },
-  next: { status: ApplicationStatus; notes: string; appliedOn: string },
-): boolean {
-  return existing.status === next.status && existing.notes === next.notes && (!next.appliedOn || existing.appliedOn === next.appliedOn);
+function unchanged(existing: StoredStage, next: StageFields): boolean {
+  return (
+    !recordsEvent(existing, next) &&
+    (existing.nextAction ?? "") === next.nextAction &&
+    (existing.nextActionOn ?? "") === (next.nextAction ? next.nextActionOn : "")
+  );
+}
+
+/**
+ * Whether something happened to the application, as against the person rewriting what they owe it
+ * next. Only an event is appended to the history: a next step is a note somebody revises as the
+ * week goes on, and a history of revised reminders is not a history of an application.
+ */
+function recordsEvent(existing: Pick<StoredStage, "status" | "notes" | "appliedOn">, next: StageFields): boolean {
+  return (
+    existing.status !== next.status ||
+    existing.notes !== next.notes ||
+    (!!next.appliedOn && existing.appliedOn !== next.appliedOn) ||
+    !!next.on
+  );
 }
 
 /** The account's newest application for a posting, locked, or null when it has none. */
@@ -93,15 +166,10 @@ export async function setRoleStage(jobId: string, _prev: ActionResult, form: For
   let settled = false;
   try {
     zUuid().parse(jobId);
-    const status = String(form.get("status") ?? "") as ApplicationStatus;
-    if (!statuses.includes(status)) return fail("Choose a status from the list.");
-    const notes = String(form.get("notes") ?? "").trim();
-    if (notes.length > 4000) return fail("Keep notes under 4,000 characters.");
-    const supplied = String(form.get("appliedOn") ?? "").trim();
-    // The date only means anything once something was submitted; before that there is nothing to
-    // date, so "Applying" leaves the field out and the row carries today as a placeholder.
-    if (supplied && !isCalendarDay(supplied)) return fail("Enter a valid application date.");
-    if (!supplied && status !== "applying" && form.has("appliedOn")) return fail("Enter a valid application date.");
+    const read = readStageForm(form, { insistOnAppliedOn: true });
+    if (!read.ok) return fail(read.error);
+    const fields = read.fields;
+    const { status, notes, appliedOn: supplied } = fields;
     withdrawn = status === "withdrawn";
     await db().transaction(async (tx) => {
       // The same lock `decide` takes, in the same order, so a stage change and a decision on one
@@ -131,27 +199,31 @@ export async function setRoleStage(jobId: string, _prev: ActionResult, form: For
           .where(and(eq(cvDrafts.userId, user.id), eq(cvDrafts.jobId, jobId), eq(cvDrafts.status, "ready"), isNull(cvDrafts.archivedAt)))
           .orderBy(desc(cvDrafts.createdAt), desc(cvDrafts.id))
           .limit(1);
+        const appliedOn = supplied || todayDay();
         await tx.insert(applications).values({
           userId: user.id, jobId, cvId: draft?.id ?? null, pdfBase64: null,
           jobTitle: role.title, companyName: role.companyName,
-          appliedOn: supplied || today(), status, notes,
-          history: [{ status, at, notes }] satisfies HistoryEntry[],
+          appliedOn, status, notes,
+          ...nextActionColumns(fields),
+          history: [historyEntry(fields, at, appliedOn)] satisfies HistoryEntry[],
         });
         return;
       }
       const refusal = confirmBackwards(form, existing.status, status);
       if (refusal) throw new UserFacingError(refusal);
-      if (unchanged(existing, { status, notes, appliedOn: supplied })) {
+      if (unchanged(existing, fields)) {
         settled = true;
         return;
       }
+      const appliedOn = supplied || existing.appliedOn;
       await tx
         .update(applications)
         .set({
           status,
           notes,
           ...(supplied ? { appliedOn: supplied } : {}),
-          history: [...existing.history, { status, at, notes }],
+          ...nextActionColumns(fields),
+          ...(recordsEvent(existing, fields) ? { history: [...existing.history, historyEntry(fields, at, appliedOn)] } : {}),
         })
         .where(eq(applications.id, existing.id));
     });
@@ -184,7 +256,7 @@ export async function recordApplication(cvId: string, _prev: ActionResult, form:
   try {
     zUuid().parse(cvId);
     const appliedOn = String(form.get("appliedOn") ?? "");
-    if (!isCalendarDay(appliedOn)) return fail("Enter a valid application date.");
+    if (!isRecordableDay(appliedOn)) return fail("Enter a valid application date.");
     const notes = String(form.get("notes") ?? "").trim();
     if (notes.length > 4000) return fail("Keep notes under 4,000 characters.");
     await db().transaction(async (tx) => {
@@ -216,15 +288,18 @@ export async function recordApplication(cvId: string, _prev: ActionResult, form:
         // A role already at interview or already closed does not go back to "applied" because the
         // CV that was sent has now been recorded against it.
         const status = beyondApplied(existing.status) ? existing.status : "applied";
+        // An Applied entry is about the day the application went in, which this form asks for; a
+        // row already past Applied keeps its own status, and this is not the day that one is about.
+        const entry: HistoryEntry = { status, at, notes, ...(status === "applied" ? { on: appliedOn } : {}) };
         await tx
           .update(applications)
-          .set({ cvId, pdfBase64: pdf.toString("base64"), appliedOn, status, notes, history: [...existing.history, { status, at, notes }] })
+          .set({ cvId, pdfBase64: pdf.toString("base64"), appliedOn, status, notes, history: [...existing.history, entry] })
           .where(eq(applications.id, existing.id));
         return;
       }
       await tx.insert(applications).values({
         userId: user.id, cvId, jobId, jobTitle: draft.jobTitle, companyName: draft.companyName, appliedOn, notes,
-        pdfBase64: pdf.toString("base64"), status: "applied", history: [{ status: "applied", at, notes }],
+        pdfBase64: pdf.toString("base64"), status: "applied", history: [{ status: "applied", at, notes, on: appliedOn }],
       });
     });
   } catch (error) { return actionError(error, "Could not record application. Please try again."); }
@@ -245,14 +320,10 @@ export async function updateApplication(
   const user = await requireUser();
   try {
     zUuid().parse(id);
-    const status = String(form.get("status") ?? "") as ApplicationStatus;
-    const notes = String(form.get("notes") ?? "").trim();
-    if (!statuses.includes(status) || notes.length > 4000)
-      return fail(
-        "Choose a valid status and keep notes under 4,000 characters.",
-      );
-    const supplied = String(form.get("appliedOn") ?? "").trim();
-    if (supplied && !isCalendarDay(supplied)) return fail("Enter a valid application date.");
+    const read = readStageForm(form);
+    if (!read.ok) return fail(read.error);
+    const fields = read.fields;
+    const { status, notes, appliedOn: supplied } = fields;
     await db().transaction(async (tx) => {
       const [row] = await tx
         .select()
@@ -264,17 +335,18 @@ export async function updateApplication(
       // the row asking first, and a save that changes nothing appends nothing.
       const refusal = confirmBackwards(form, row.status, status);
       if (refusal) throw new UserFacingError(refusal);
-      if (unchanged(row, { status, notes, appliedOn: supplied })) return;
+      if (unchanged(row, fields)) return;
+      const appliedOn = supplied || row.appliedOn;
       await tx
         .update(applications)
         .set({
           status,
           notes,
           ...(supplied ? { appliedOn: supplied } : {}),
-          history: [
-            ...row.history,
-            { status, notes, at: new Date().toISOString() },
-          ],
+          ...nextActionColumns(fields),
+          ...(recordsEvent(row, fields)
+            ? { history: [...row.history, historyEntry(fields, new Date().toISOString(), appliedOn)] }
+            : {}),
         })
         .where(eq(applications.id, id));
     });

@@ -24,6 +24,7 @@ import {
   type Task,
 } from "@christopher/db/schema";
 import { db } from "@/lib/db";
+import type { CompanySetupRows, TimelineCandidate, TimelineTask } from "@/lib/company-timeline";
 
 export interface CompanyListRow {
   company: Company;
@@ -295,6 +296,105 @@ export async function companyScanTiming(companyId: string): Promise<CompanyScanT
   return {
     lastGoodScanAt: scanRow[0]?.startedAt ?? null,
     rescanSkippedAt: skipped ? taskRow[0]?.finishedAt ?? null : null,
+  };
+}
+
+/**
+ * Everything the setup timeline says, gathered for one company and one account.
+ *
+ * The catalogue half — the discovery run, the work in flight, the source a scan reads and that
+ * source's newest scan — is shared by every follower. The last figure is not: what a board came to
+ * is this account's own `user_jobs`, which is why the read carries a `userId` like every other
+ * per-account read. The rows go to `narrateCompanySetup`, which turns them into lines.
+ */
+export async function companySetupRows(userId: string, companyId: string): Promise<CompanySetupRows> {
+  const [run, taskRows, sourceRows, counts] = await Promise.all([
+    getLatestDiscoveryRun(companyId),
+    // Logo captures ride the `discover` task and say nothing about a careers page, so they are
+    // left out here exactly as `companyDiscoveryState` leaves them out.
+    db()
+      .select({ type: tasks.type, status: tasks.status, startedAt: tasks.startedAt })
+      .from(tasks)
+      .where(and(
+        inArray(tasks.type, ["discover", "scan_company"]),
+        sql`coalesce(${tasks.payload}->>'logoOnly', 'false') != 'true'`,
+        inArray(tasks.status, ["queued", "running"]),
+        sql`${tasks.payload}->>'companyId' = ${companyId}`,
+      )),
+    db()
+      .select({
+        id: careerSources.id,
+        type: careerSources.type,
+        url: careerSources.url,
+        status: careerSources.status,
+        confidence: careerSources.confidence,
+        confirmedByUser: careerSources.confirmedByUser,
+        consecutiveFailures: careerSources.consecutiveFailures,
+      })
+      .from(careerSources)
+      .where(and(eq(careerSources.companyId, companyId), inArray(careerSources.status, ["active", "failing"])))
+      .orderBy(asc(careerSources.createdAt)),
+    db()
+      .select({
+        inTable: sql<number>`count(*) filter (where ${userJobs.inTable} and ${userJobs.archivedAt} is null and ${jobs.status} = 'open')::int`,
+        scoring: sql<number>`count(*) filter (where ${userJobs.scoreState} = 'queued' and ${userJobs.archivedAt} is null)::int`,
+        scored: sql<number>`count(*) filter (where ${userJobs.inTable} and ${userJobs.archivedAt} is null and ${jobs.status} = 'open' and ${userJobs.fitScore} is not null)::int`,
+      })
+      .from(userJobs)
+      .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
+      .where(and(eq(userJobs.userId, userId), eq(jobs.companyId, companyId))),
+  ]);
+
+  // The oldest `active` source names the timeline; a `failing` one only when nothing active is
+  // left, which is the rule the companies list already follows.
+  const source = sourceRows.find((row) => row.status === "active") ?? sourceRows[0] ?? null;
+  const [scan] = source
+    ? await db()
+        .select({
+          status: scans.status,
+          startedAt: scans.startedAt,
+          postingsFound: scans.postingsFound,
+          error: scans.error,
+          durationMs: scans.durationMs,
+        })
+        .from(scans)
+        .where(eq(scans.sourceId, source.id))
+        .orderBy(desc(scans.startedAt))
+        .limit(1)
+    : [];
+
+  const task = (type: Task["type"]): TimelineTask | null => {
+    const rows = taskRows.filter((row) => row.type === type);
+    const active = rows.find((row) => row.status === "running") ?? rows[0];
+    return active ? { state: active.status === "running" ? "running" : "queued", startedAt: active.startedAt } : null;
+  };
+
+  return {
+    run: run
+      ? {
+          status: run.status,
+          startedAt: run.startedAt,
+          finishedAt: run.finishedAt,
+          candidates: (run.candidates ?? []).map(readCandidate),
+          chosenSourceId: run.chosenSourceId,
+          error: run.error,
+        }
+      : null,
+    discoveryTask: task("discover"),
+    source,
+    scan: scan ?? null,
+    scanTask: task("scan_company"),
+    table: { inTable: counts[0]?.inTable ?? 0, scoring: counts[0]?.scoring ?? 0, scored: counts[0]?.scored ?? 0 },
+  };
+}
+
+/** One stored candidate, read defensively: the column is jsonb written by an older release. */
+function readCandidate(value: unknown): TimelineCandidate {
+  const candidate = (value && typeof value === "object" ? value : {}) as { spec?: { type?: unknown; url?: unknown }; confidence?: unknown };
+  return {
+    type: typeof candidate.spec?.type === "string" ? candidate.spec.type : null,
+    url: typeof candidate.spec?.url === "string" ? candidate.spec.url : null,
+    confidence: typeof candidate.confidence === "number" && Number.isFinite(candidate.confidence) ? candidate.confidence : null,
   };
 }
 

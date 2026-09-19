@@ -19,11 +19,12 @@ import { SettingsForm } from "@/components/SettingsForm";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { manageRoleCv, setRoleStage, updateApplication } from "@/app/actions/applications";
 import { requestCv } from "@/app/actions/cv";
+import { historyLine, type NextStepNote } from "@/lib/application-dates";
 import { relativeTime } from "@/lib/format";
 import type { PipelineCvQuote, PipelineRow } from "@/lib/queries/applications";
 
 /** The one sentence the product uses for work an unconfirmed account cannot start. */
-const UNVERIFIED = "Confirm your email address to add companies, run discovery and build CVs.";
+import { VERIFY_SENTENCE as UNVERIFIED } from "@/components/VerifyNotice";
 
 
 /** "In process · Interview": the stage, and — for the three steps it collapses — which one. */
@@ -78,6 +79,9 @@ function StatusPanel({ row }: { row: PipelineRow }) {
     current && roleStageRank(applicationStage(status)) < roleStageRank(applicationStage(current))
       ? `Move this application from ${APPLICATION_STATUS_LABELS[current]} back to ${APPLICATION_STATUS_LABELS[status]}?`
       : null;
+  // Applied is dated by the application date and Applying has nothing to date; every other status
+  // is about a day of its own.
+  const datesTheEntry = status !== "applying" && status !== "applied";
   useEffect(() => {
     const form = document.getElementById(formId);
     if (!(form instanceof HTMLFormElement)) return;
@@ -100,19 +104,31 @@ function StatusPanel({ row }: { row: PipelineRow }) {
       {action ? (
         <SettingsForm id={formId} action={action} submitLabel="Save">
           <input type="hidden" name="confirm" defaultValue="" ref={confirmField} />
-          <label className="grid gap-1.5">
-            <span className={labelClass}>Where it stands</span>
-            <select
-              name="status"
-              value={status}
-              onChange={(event) => setStatus(event.target.value as ApplicationStatus)}
-              className={selectClass}
-            >
-              {APPLICATION_STATUSES.map((value) => (
-                <option key={value} value={value}>{APPLICATION_STATUS_LABELS[value]}</option>
-              ))}
-            </select>
-          </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="grid gap-1.5">
+              <span className={labelClass}>Where it stands</span>
+              <select
+                name="status"
+                value={status}
+                onChange={(event) => setStatus(event.target.value as ApplicationStatus)}
+                className={selectClass}
+              >
+                {APPLICATION_STATUSES.map((value) => (
+                  <option key={value} value={value}>{APPLICATION_STATUS_LABELS[value]}</option>
+                ))}
+              </select>
+            </label>
+            {/* The day this entry is about — the interview, the offer, the rejection — which the
+                save time cannot express. Applied has one already, the application date, and
+                Applying has nothing to date yet, so neither is asked twice. */}
+            {datesTheEntry && (
+              <label className="grid gap-1.5">
+                <span className={labelClass}>On</span>
+                <input type="date" name="on" defaultValue="" className={inputClass} />
+                <span className="text-12 text-muted">Optional. The day it happened.</span>
+              </label>
+            )}
+          </div>
           {/* Outside the label on purpose: inside it, the sentence becomes part of the select's accessible name. */}
           <p className="text-12 text-muted">Withdrawn dismisses the role, as passing on it from Roles does.</p>
           {/* Nothing has been submitted while a CV is still being written, so there is no date to
@@ -129,6 +145,26 @@ function StatusPanel({ row }: { row: PipelineRow }) {
               />
             </label>
           )}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="grid gap-1.5">
+              <span className={labelClass}>Next step</span>
+              <input
+                type="text"
+                name="nextAction"
+                maxLength={200}
+                defaultValue={row.application?.nextAction ?? ""}
+                placeholder="Optional. Send references, chase the recruiter…"
+                className={inputClass}
+              />
+            </label>
+            <label className="grid gap-1.5">
+              <span className={labelClass}>Due by</span>
+              <input type="date" name="nextActionOn" defaultValue={row.application?.nextActionOn ?? ""} className={inputClass} />
+            </label>
+          </div>
+          <p className="text-12 text-muted">
+            Nothing is sent. The row reads it back to you under the stage, and clearing the text clears the date.
+          </p>
           <label className="grid gap-1.5">
             <span className={labelClass}>Notes</span>
             <textarea name="notes" defaultValue={row.application?.notes ?? ""} maxLength={4000} rows={3} className={`resize-y ${inputClass}`} />
@@ -144,10 +180,10 @@ function StatusPanel({ row }: { row: PipelineRow }) {
           <h4 className="ds-label">Status history</h4>
           <ul className="mt-1 space-y-1 text-13">
             {history.map((entry, index) => (
-              <li key={`${entry.at}-${index}`}>
-                <time dateTime={entry.at} title={entry.at}>{entry.at.slice(0, 10)}</time>
-                {" · "}
-                {APPLICATION_STATUS_LABELS[entry.status as ApplicationStatus] ?? entry.status}
+              // "Interview · on 12 Sep · saved 10 Sep": the day it was about beside the day it was
+              // recorded. The exact instant stays on the line, one hover away.
+              <li key={`${entry.at}-${index}`} title={entry.at}>
+                {historyLine(entry)}
                 {entry.notes && ` — ${entry.notes}`}
               </li>
             ))}
@@ -277,6 +313,7 @@ export function ApplicationsTable({
   rows: inputRows,
   openKey,
   quotes = {},
+  nextSteps = {},
   staleHints = {},
   unverified = false,
   emptyState,
@@ -286,6 +323,8 @@ export function ApplicationsTable({
   openKey?: string;
   /** What a build would cost, per posting id, priced on the server for the rows on this page. */
   quotes?: Record<string, PipelineCvQuote>;
+  /** "Next: send references · by Tue 23 Sep", per row key, written on the server against its clock. */
+  nextSteps?: Record<string, NextStepNote>;
   /** "No update for 3 weeks", per row key, for the rows that have been quiet a fortnight. */
   staleHints?: Record<string, string>;
   /** Whether this account has still to confirm its address, which holds every build back. */
@@ -345,8 +384,15 @@ export function ApplicationsTable({
                     </p>
                   )}
                 </TD>
-                <TD>
+                <TD className="max-w-[18rem]">
                   <Badge tone={stageTone(row.stage)}>{stageLabel(row)}</Badge>
+                  {/* What the person owes this row next, in their own words. Past its day it stops
+                      being a plan and asks for the outcome, which is why it reads in warning ink. */}
+                  {nextSteps[row.key] && (
+                    <span className={`mt-1 block text-12 ${nextSteps[row.key]!.overdue ? "text-warn" : "text-muted"}`}>
+                      {nextSteps[row.key]!.line}
+                    </span>
+                  )}
                 </TD>
                 <TD className="max-w-[14rem]">
                   {row.cv ? (

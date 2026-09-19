@@ -32,6 +32,7 @@ import {
   type RawPosting,
   type SourceSpec,
   type SystemSettings,
+  SOURCE_FAILING_AFTER,
 } from "@christopher/core";
 import { and, desc, eq, inArray, sql, or, isNull } from "drizzle-orm";
 import type { CareerSource } from "@christopher/db";
@@ -698,7 +699,7 @@ async function scanSource(
     .set({
       consecutiveFailures: failures,
       nextScanAt: failures ? new Date(deps.now().getTime() + Math.min(7, 2 ** Math.min(failures - 1, 3)) * 86400000) : null,
-      status: blocked ? "blocked" : failures >= 3 ? "failing" : source.status === "failing" && status === "ok" ? "active" : source.status,
+      status: blocked ? "blocked" : failures >= SOURCE_FAILING_AFTER ? "failing" : source.status === "failing" && status === "ok" ? "active" : source.status,
       lastOkScanAt: status === "ok" ? deps.now() : source.lastOkScanAt,
       lastPostingsCount: status === "ok" ? postings.length : source.lastPostingsCount,
       contentHash,
@@ -711,7 +712,7 @@ async function scanSource(
   const persistentlyShrunk = shrunk && (await deps.db.select({ error: schema.scans.error, status: schema.scans.status }).from(schema.scans)
     .where(eq(schema.scans.sourceId, source.id)).orderBy(desc(schema.scans.startedAt)).limit(3))
     .filter((scan) => scan.status === "partial" && /shrank/.test(scan.error ?? "")).length >= 3;
-  if (failures >= 3 || status === "suspect_empty" || persistentlyShrunk) {
+  if (failures >= SOURCE_FAILING_AFTER || status === "suspect_empty" || persistentlyShrunk) {
     await enqueueTask(deps.db, "discover", { companyId: company.id, reason: status === "suspect_empty" ? "suspect_empty" : persistentlyShrunk ? "shrunk" : "failing" }, {
       dedupeKey: dedupeKeyFor("discover", { companyId: company.id }),
       priority: priorityFor("discover"),

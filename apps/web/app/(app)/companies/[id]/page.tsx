@@ -18,6 +18,7 @@ import {
 import { CompanyFavicon } from "@/components/CompanyFavicon";
 import { CompanyNotepad } from "@/components/CompanyNotepad";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { CompanySetupSummary, CompanySetupTimeline } from "@/components/CompanySetupTimeline";
 import { Badge, companyStatusTone, discoveryStatusTone, scanStatusTone, sourceStatusTone } from "@/components/Badge";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
@@ -28,11 +29,13 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { companyIcon } from "@/lib/company-icon";
 import { relativeTime } from "@/lib/format";
 import { getCompanyWorkStatus } from "@/lib/work-status";
+import { narrateCompanySetup } from "@/lib/company-timeline";
 import {
   companyApplicationCount,
   companyDiscoveryState,
   companyFollowerCount,
   companyScanTiming,
+  companySetupRows,
   getCompany,
   getCompanyProfile,
   getCompanyScans,
@@ -46,7 +49,7 @@ import {
 import { getSystemSettings } from "@/lib/settings";
 import { needsEmailConfirmation, requireUser } from "@/lib/auth";
 import { CompanyControls } from "../CompanyControls";
-import { scanTimingLine } from "../scan-line";
+import { nextScanSentence, scanTimingLine } from "../scan-line";
 import { VERIFY_SENTENCE, VerifyNotice } from "@/components/VerifyNotice";
 
 export const dynamic = "force-dynamic";
@@ -106,7 +109,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
   if (!company) notFound();
   const admin = user.role === "admin";
 
-  const [sources, latestRun, scans, profile, followers, discoveryState, imports, ungated, suggestion, work, timing, applications, system] = await Promise.all([
+  const [sources, latestRun, scans, profile, followers, discoveryState, imports, ungated, suggestion, work, timing, applications, system, setup] = await Promise.all([
     getCompanySources(id),
     getLatestDiscoveryRun(id),
     getCompanyScans(id, 20),
@@ -120,6 +123,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
     companyScanTiming(id),
     companyApplicationCount(user.id, id),
     getSystemSettings(),
+    companySetupRows(user.id, id),
   ]);
 
   const now = new Date();
@@ -130,6 +134,12 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
   // address. Saying so here is cheaper than saying it after the form was filled in.
   const unverified = needsEmailConfirmation(user);
   const scanLine = scanTimingLine(timing, system.scanTime, system.timezone, now);
+  /**
+   * What has happened to this company so far, as lines rather than as a spinner: discovery, the
+   * source it chose, the scan it read and what this account's gate made of it. Every figure comes
+   * from a row, and the elapsed one on an open step keeps moving on the client.
+   */
+  const setupSteps = narrateCompanySetup(setup, now, { nextScan: nextScanSentence(system.scanTime, system.timezone) });
   /**
    * Nobody has a working careers page for this company yet. Everything needed to fix that is in
    * one card, and the card is gone the moment a source works — a discovery run that stopped and
@@ -226,6 +236,14 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
       )}
 
       {work.active && <AutoRefresh message="Work is pending for your companies. Status updates automatically." />}
+
+      {needsSetup ? (
+        <Card title="What has happened so far">
+          <CompanySetupTimeline steps={setupSteps} />
+        </Card>
+      ) : (
+        <CompanySetupSummary steps={setupSteps} />
+      )}
 
       {needsSetup && (
         <div id="careers-url">

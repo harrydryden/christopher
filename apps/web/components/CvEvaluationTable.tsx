@@ -163,6 +163,16 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
                       ) : (
                         <CvContentBlockLink>Open Content</CvContentBlockLink>
                       )}
+                      {/* The way out of a gap: the Library, with this need quoted and the job it
+                          belongs to opened. Ordinary navigation, in this tab. */}
+                      {row.libraryHref && (
+                        <a
+                          href={row.libraryHref}
+                          className="block text-12 font-medium text-fg underline underline-offset-2"
+                        >
+                          Add evidence for this
+                        </a>
+                      )}
                     </div>
                     <CvDisclosure label={`evidence for item ${row.number}`}>
                       {!row.suggestion.includes(row.reason) && (

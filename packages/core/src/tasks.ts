@@ -156,6 +156,13 @@ export const TASK_DEADLINES_MS: Partial<Record<TaskType, number>> & { default: n
  */
 export const MANUAL_RESCAN_INTERVAL_MS = 30 * 60_000;
 
+/**
+ * A source is marked `failing`, and re-discovery queued, after this many consecutive failed scans
+ * (`apps/worker/src/handlers/scan.ts`). It lives here beside the rescan window because Health names
+ * the figure and `apps/web` may not import `apps/worker`.
+ */
+export const SOURCE_FAILING_AFTER = 3;
+
 export type TaskDeadlines = Partial<Record<TaskType | "default", number>>;
 
 /** The deadline for one type: the caller's override first, then the table above. */

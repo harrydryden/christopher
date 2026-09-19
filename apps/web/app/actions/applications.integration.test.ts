@@ -118,6 +118,56 @@ it("creates the role's application row on the first status set from the table, t
   expect(await applicationsOf()).toHaveLength(1);
 });
 
+it("dates each entry and keeps what the role owes next on the row", async () => {
+  const { job } = await fixture();
+  // Applied is dated by the application date, so the panel does not ask for the day twice.
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "applied", appliedOn: "2026-09-03", notes: "", nextAction: "Send references", nextActionOn: "2026-09-23" }))).toEqual({ ok: true });
+  let [row] = await applicationsOf();
+  expect(row).toMatchObject({ status: "applied", nextAction: "Send references", nextActionOn: "2026-09-23" });
+  expect(row!.history).toHaveLength(1);
+  expect(row!.history[0]).toMatchObject({ status: "applied", on: "2026-09-03" });
+
+  // An interview is about a day of its own, which the save time cannot express.
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "interview", appliedOn: "2026-09-03", notes: "First round", on: "2026-09-12", nextAction: "Send references", nextActionOn: "2026-09-23" }))).toEqual({ ok: true });
+  [row] = await applicationsOf();
+  expect(row!.history.at(-1)).toMatchObject({ status: "interview", notes: "First round", on: "2026-09-12" });
+
+  // Reopening the row and pressing Save with nothing typed into it writes nothing at all: the day
+  // an entry is about is asked for fresh each time rather than carried forward.
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "interview", appliedOn: "2026-09-03", notes: "First round", on: "", nextAction: "Send references", nextActionOn: "2026-09-23" }))).toEqual({ ok: true });
+  expect((await applicationsOf())[0]!.history).toHaveLength(2);
+
+  // Rewriting what is owed next is not an event: the row keeps it, the history does not grow.
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "interview", appliedOn: "2026-09-03", notes: "First round", nextAction: "Chase the recruiter", nextActionOn: "" }))).toEqual({ ok: true });
+  [row] = await applicationsOf();
+  expect(row).toMatchObject({ nextAction: "Chase the recruiter", nextActionOn: null });
+  expect(row!.history).toHaveLength(2);
+
+  // Clearing the text clears the date with it; there is no date for a step nobody owes.
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "interview", appliedOn: "2026-09-03", notes: "First round", nextAction: "  ", nextActionOn: "2026-09-23" }))).toEqual({ ok: true });
+  [row] = await applicationsOf();
+  expect(row).toMatchObject({ nextAction: null, nextActionOn: null });
+  expect(row!.history).toHaveLength(2);
+});
+
+it("refuses a day the person could not have meant, whichever of the three it is", async () => {
+  const { job } = await fixture();
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "interview", appliedOn: "2026-09-03", on: "1999-12-31" }))).toEqual({
+    ok: false, error: "Enter a valid date for this update.",
+  });
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "interview", appliedOn: "2026-09-03", nextAction: "Send references", nextActionOn: "2099-01-01" }))).toEqual({
+    ok: false, error: "Enter a valid date for the next step.",
+  });
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "interview", appliedOn: "1999-12-31" }))).toEqual({
+    ok: false, error: "Enter a valid application date.",
+  });
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "interview", appliedOn: "2026-09-03", nextAction: "x".repeat(201) }))).toEqual({
+    ok: false, error: "Keep the next step under 200 characters.",
+  });
+  // Nothing was written by any of them.
+  expect(await applicationsOf()).toHaveLength(0);
+});
+
 it("asks before walking a row backwards, and writes nothing when nothing changed", async () => {
   const { job } = await fixture();
   expect(await setRoleStage(job.id, { ok: true }, form({ status: "offer", appliedOn: "2026-09-03", notes: "Offer made" }))).toEqual({ ok: true });
@@ -252,6 +302,8 @@ it("upgrades the role's existing application when the submitted CV is recorded, 
   expect(rows[0]!.appliedOn).toBe("2026-09-06");
   expect(Buffer.from(rows[0]!.pdfBase64!, "base64").subarray(0, 5).toString()).toBe("%PDF-");
   expect(rows[0]!.history.map((entry) => entry.status)).toEqual(["applying", "applied"]);
+  // The Applied entry is about the day the application went in, which this form asked for.
+  expect(rows[0]!.history.at(-1)).toMatchObject({ status: "applied", on: "2026-09-06" });
 
   // Only a row that already stores the bytes is a duplicate.
   expect((await recordApplication(draft!.id, { ok: true }, form({ appliedOn: "2026-09-06" })))).toEqual({
@@ -275,6 +327,36 @@ it("keeps a row with no posting behind it editable by id", async () => {
   const [row] = await applicationsOf();
   expect(row).toMatchObject({ status: "screening", notes: "Call booked", appliedOn: "2026-08-02" });
   expect(row!.history.map((entry) => entry.status)).toEqual(["applied", "screening"]);
+});
+
+it("dates the entry and records the next step for a row with no posting behind it too", async () => {
+  const [legacy] = await database.insert(schema.applications).values({
+    userId: user.id, jobId: null, jobTitle: "Legacy Role", companyName: "Legacy Co", appliedOn: "2026-08-01",
+    status: "applied", notes: "Booked", history: [{ status: "applied", at: "2026-08-01T09:00:00.000Z", notes: "Booked" }],
+  }).returning();
+  expect(await updateApplication(legacy!.id, { ok: true }, form({
+    status: "interview", appliedOn: "2026-08-01", notes: "Booked", on: "2026-08-14",
+    nextAction: "Prepare for the panel", nextActionOn: "2026-08-13",
+  }))).toEqual({ ok: true });
+  let [row] = await applicationsOf();
+  expect(row).toMatchObject({ status: "interview", nextAction: "Prepare for the panel", nextActionOn: "2026-08-13" });
+  expect(row!.history.at(-1)).toMatchObject({ status: "interview", on: "2026-08-14" });
+
+  // The same two rules as the role that has a posting: nothing new, nothing written.
+  expect(await updateApplication(legacy!.id, { ok: true }, form({
+    status: "interview", appliedOn: "2026-08-01", notes: "Booked", nextAction: "Prepare for the panel", nextActionOn: "2026-08-13",
+  }))).toEqual({ ok: true });
+  expect((await applicationsOf())[0]!.history).toHaveLength(2);
+
+  // And a backwards move is still asked about, whatever else the form is carrying.
+  expect(await updateApplication(legacy!.id, { ok: true }, form({ status: "applied", appliedOn: "2026-08-01", notes: "Booked", nextAction: "" }))).toEqual({
+    ok: false, error: "Confirm the move from Interview back to Applied before saving it.",
+  });
+  [row] = await applicationsOf();
+  expect(row!.nextAction).toBe("Prepare for the panel");
+  expect(await updateApplication(legacy!.id, { ok: true }, form({ status: "hired", appliedOn: "2026-08-01" }))).toEqual({
+    ok: false, error: "Choose a status from the list.",
+  });
 });
 
 it("tells the applications table that one of its CVs is still being written", async () => {

@@ -443,3 +443,147 @@ it("counts build motions and failure kinds, and reads nothing from a database wi
     await database.execute(sql`alter table cv_build_steps_hidden rename to cv_build_steps`);
   }
 });
+
+/* ---------------------------------------------------------------------------------------------
+ * The attention list (R-9.1) and the resolution each item carries (R-9.2)
+ *
+ * One item per company, only for the companies this account follows and has not paused, and one
+ * for the account's own budget. The sidebar's count and the page's list are two readings of the
+ * same union, so they are asserted against each other.
+ * ------------------------------------------------------------------------------------------- */
+
+import { countHealthItems, healthItemDetail, healthItemHeadline, healthItems, SOURCE_FAILING_AFTER } from "./health";
+import { formatUsd } from "@/lib/format";
+import { subscribeToCompany } from "@christopher/db";
+
+async function resetAttention() {
+  await database.execute(sql`truncate companies, ai_calls, user_settings, users restart identity cascade`);
+}
+
+/** A company in the shared catalogue, followed by `account` unless told otherwise. */
+async function company(name: string, account?: User, status: "active" | "paused" = "active") {
+  const [row] = await database.insert(schema.companies)
+    .values({ name, domain: `${name.toLowerCase().replace(/[^a-z]/g, "")}.example`, homepageUrl: `https://${name.toLowerCase().replace(/[^a-z]/g, "")}.example` })
+    .returning();
+  if (account) {
+    await subscribeToCompany(database, account.id, row!.id);
+    if (status === "paused") {
+      await database.update(schema.companySubscriptions).set({ status })
+        .where(sql`user_id = ${account.id} and company_id = ${row!.id}`);
+    }
+  }
+  return row!;
+}
+
+const CANDIDATES = [
+  { spec: { type: "greenhouse", url: "https://boards.greenhouse.io/moved" }, confidence: 0.98, method: "ats_guess" },
+  { spec: { type: "html", url: "https://moved.example/careers" }, confidence: 0.4, method: "heuristic" },
+];
+
+it("raises one item per company, for what this account follows and has not paused", async () => {
+  await resetAttention();
+  const account = await ensureTestUser(database, "attention@example.com");
+  const stranger = await ensureTestUser(database, "stranger@example.com", "member");
+
+  const asking = await company("Asking", account);
+  const blocked = await company("Blocked Co", account);
+  const failing = await company("Failing Co", account);
+  const nothing = await company("Nothing Co", account);
+  const moved = await company("Moved Co", account);
+  const quiet = await company("Quiet Co", account);
+  const paused = await company("Paused Co", account, "paused");
+  const theirs = await company("Someone Elses", stranger);
+
+  const [blockedSource, failingSource, movedSource, quietSource] = await database.insert(schema.careerSources).values([
+    { companyId: blocked.id, type: "html", url: "https://blocked.example/jobs", status: "blocked" },
+    { companyId: failing.id, type: "greenhouse", url: "https://boards.greenhouse.io/failing", status: "failing", consecutiveFailures: 4 },
+    { companyId: moved.id, type: "lever", url: "https://jobs.lever.co/moved", status: "active", confidence: 0.8 },
+    { companyId: quiet.id, type: "ashby", url: "https://jobs.ashbyhq.com/quiet", status: "active" },
+  ]).returning();
+  // A company nobody follows still has its problems; they are nobody's to see here.
+  await database.insert(schema.careerSources).values({ companyId: theirs.id, type: "html", url: "https://theirs.example/jobs", status: "blocked" });
+
+  await database.insert(schema.scans).values([
+    { sourceId: blockedSource!.id, status: "failed", error: "403 from the board", startedAt: new Date(Date.now() - 60_000) },
+    // Older than the one above: the item quotes what happened last, not what happened first.
+    { sourceId: blockedSource!.id, status: "failed", error: "an older error", startedAt: new Date(Date.now() - 600_000) },
+    { sourceId: failingSource!.id, status: "failed", error: "the feed timed out", startedAt: new Date(Date.now() - 60_000) },
+  ]);
+
+  await database.insert(schema.discoveryRuns).values([
+    { companyId: asking.id, status: "needs_confirmation", candidates: CANDIDATES, startedAt: new Date(Date.now() - 60_000) },
+    // An earlier run for the same company that found nothing: only the newest one is read.
+    { companyId: asking.id, status: "not_found", candidates: [], startedAt: new Date(Date.now() - 600_000) },
+    // A source is already scanning, so this one is a proposal rather than a setup step.
+    { companyId: moved.id, status: "needs_confirmation", candidates: CANDIDATES, startedAt: new Date(Date.now() - 60_000) },
+    { companyId: quiet.id, status: "resolved", candidates: CANDIDATES, chosenSourceId: quietSource!.id, startedAt: new Date(Date.now() - 60_000) },
+    { companyId: paused.id, status: "needs_confirmation", candidates: CANDIDATES, startedAt: new Date(Date.now() - 60_000) },
+  ]);
+
+  const items = await healthItems(account.id);
+  expect(items.map((item) => [item.kind, item.company?.name])).toEqual([
+    ["needs_confirmation", "Asking"],
+    ["blocked", "Blocked Co"],
+    ["failing", "Failing Co"],
+    ["no_source", "Nothing Co"],
+    ["rediscovery", "Moved Co"],
+  ]);
+  // The sidebar counts the same union in one statement; the two must never disagree.
+  expect(await countHealthItems(account.id)).toBe(items.length);
+  expect(await healthItems(stranger.id)).toHaveLength(1);
+  expect(await countHealthItems(stranger.id)).toBe(1);
+
+  const [asked, blockedItem, failingItem, noSource, proposal] = items;
+  // Candidates arrive with the position `useDiscoveryCandidate` takes, so "Use this" resolves them.
+  expect(asked!.runId).not.toBeNull();
+  expect(asked!.candidates.map((c) => [c.index, c.type, c.confidence])).toEqual([[0, "greenhouse", 0.98], [1, "html", 0.4]]);
+  expect(healthItemHeadline(asked!)).toBe("Discovery found 2 candidates; nobody has picked one");
+
+  expect(healthItemHeadline(blockedItem!)).toBe("The board is refusing our requests");
+  expect(healthItemDetail(blockedItem!)).toBe("403 from the board");
+  expect(blockedItem!.source).toMatchObject({ id: blockedSource!.id, type: "html" });
+
+  // Named as what it is, with the figure from the source's own counter.
+  expect(healthItemHeadline(failingItem!)).toBe("Failed 4 scans in a row");
+  expect(healthItemDetail(failingItem!)).toBe("the feed timed out");
+  expect(healthItemDetail({ ...failingItem!, reason: null })).toBe(`A source is marked failing after ${SOURCE_FAILING_AFTER} failed scans in a row.`);
+
+  expect(healthItemHeadline(noSource!)).toBe("No careers page to scan");
+  expect(noSource!.source).toBeNull();
+
+  expect(healthItemHeadline(proposal!)).toBe("Discovery found another careers page");
+  expect(proposal!.candidates).toHaveLength(2);
+  expect(proposal!.source).toBeNull();
+
+  // Pausing a company is a resolution: it stops being asked about.
+  await database.update(schema.companySubscriptions).set({ status: "paused" })
+    .where(sql`user_id = ${account.id} and company_id = ${failing.id}`);
+  expect((await healthItems(account.id)).map((item) => item.company?.name)).not.toContain("Failing Co");
+  expect(await countHealthItems(account.id)).toBe(4);
+  expect(movedSource!.id).toBeTruthy();
+});
+
+it("puts a spent AI budget first, and says what stops until it resets", async () => {
+  await resetAttention();
+  const account = await ensureTestUser(database, "spent@example.com");
+  const empty = await healthItems(account.id);
+  expect(empty).toEqual([]);
+
+  await database.insert(schema.userSettings).values({ userId: account.id, key: "aiBudgetUsd", value: 5 });
+  await database.insert(schema.aiCalls).values([
+    { userId: account.id, callSite: "CV", model: "test-model", costUsd: 3 },
+    { userId: account.id, callSite: "A5", model: "test-model", costUsd: 2 },
+  ]);
+
+  const items = await healthItems(account.id);
+  expect(items.map((item) => item.kind)).toEqual(["budget"]);
+  expect(items[0]!.company).toBeNull();
+  expect(healthItemHeadline(items[0]!)).toBe(`AI budget spent · ${formatUsd(5)} of ${formatUsd(5)} this month`);
+  expect(healthItemDetail(items[0]!)).toBe("Scoring, suggestions and CV builds stop for this account until the budget resets on the 1st.");
+  expect(await countHealthItems(account.id)).toBe(1);
+
+  // Raising the budget resolves it, which is what the item's link leads to.
+  await database.update(schema.userSettings).set({ value: 20 }).where(sql`user_id = ${account.id} and key = 'aiBudgetUsd'`);
+  expect(await healthItems(account.id)).toEqual([]);
+  expect(await countHealthItems(account.id)).toBe(0);
+});

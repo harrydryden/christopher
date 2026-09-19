@@ -99,6 +99,15 @@ describe("resolveSettings", () => {
     expect(merged.aiBudgetResetAt).toBe("2026-09-17T09:00:00.000Z");
   });
 
+  it("starts every account with the setup checklist showing, and keeps the marker it hides it with", () => {
+    // The checklist is derived from rows; this is its only stored state, and it belongs to one
+    // account, so it must never be read from the administrator's table.
+    expect(resolveSettings([]).setupDismissedAt).toBeNull();
+    expect(resolveUserSettings([{ key: "setupDismissedAt", value: "2026-09-19T08:00:00.000Z" }]).setupDismissedAt).toBe("2026-09-19T08:00:00.000Z");
+    expect(resolveSettings([{ key: "setupDismissedAt", value: "2026-09-19T08:00:00.000Z" }]).setupDismissedAt).toBeNull();
+    expect(Object.keys(DEFAULT_SYSTEM_SETTINGS)).not.toContain("setupDismissedAt");
+  });
+
   it("does not mutate the defaults", () => {
     resolveSettings([], [{ key: "gate", value: { locationTerms: ["London"] } }]);
     expect(DEFAULT_SETTINGS.gate.locationTerms).toEqual([]);

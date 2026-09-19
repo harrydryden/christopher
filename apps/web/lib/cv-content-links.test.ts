@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { CvContent } from "@christopher/core/cv";
-import { cvContentLinks, cvSectionBlockId } from "./cv-content-links";
+import { cvContentLinks, cvLibraryJobFor, cvSectionBlockId, cvSectionEntryId } from "./cv-content-links";
 const content: CvContent = {
   name: "Candidate",
   contact: "",
@@ -55,4 +55,35 @@ it("does not invent targets for absent source blocks", () => {
     cvContentLinks(content, ["entry:omitted", "section:unknown:0"]),
   ).toEqual([]);
   expect(cvContentLinks(null, ["profile"])).toEqual([]);
+});
+
+it("reads the entry a block belongs to back out of its id, and nothing else", () => {
+  for (const entryId of ["job", "job:skills / β", "emp/one?two"]) {
+    expect(cvSectionEntryId(cvSectionBlockId(entryId))).toBe(entryId);
+  }
+  expect(cvSectionEntryId("cv-content-profile")).toBeNull();
+  expect(cvSectionEntryId("cv-panel-content")).toBeNull();
+  expect(cvSectionEntryId("cv-content-section-")).toBeNull();
+  // A hand-edited fragment that is not valid encoding answers nothing rather than throwing.
+  expect(cvSectionEntryId("cv-content-section-%E0%A4%A")).toBeNull();
+});
+
+it("names one Library job when the links agree on one, and none when they do not", () => {
+  const entries = [
+    { id: "job", kind: "experience" as const, employmentId: "emp-1", heading: "Director", details: "Led a team" },
+    { id: "second", kind: "experience" as const, employmentId: "emp-1", heading: "Manager", details: "Ran a team" },
+    { id: "other", kind: "experience" as const, employmentId: "emp-2", heading: "Analyst", details: "Modelled" },
+    { id: "education", kind: "education" as const, heading: "University", details: "Degree" },
+  ];
+  const link = (entryId: string) => ({ id: cvSectionBlockId(entryId), label: entryId });
+
+  expect(cvLibraryJobFor([link("job")], { entries })).toBe("emp-1");
+  // Two blocks of the same job are still that job.
+  expect(cvLibraryJobFor([link("job"), link("second")], { entries })).toBe("emp-1");
+  // Two jobs, or none, send the reader to the Library's own list rather than to the wrong one.
+  expect(cvLibraryJobFor([link("job"), link("other")], { entries })).toBeNull();
+  expect(cvLibraryJobFor([link("education")], { entries })).toBeNull();
+  expect(cvLibraryJobFor([{ id: "cv-content-profile", label: "Profile" }], { entries })).toBeNull();
+  expect(cvLibraryJobFor([link("job")], null)).toBeNull();
+  expect(cvLibraryJobFor([], { entries })).toBeNull();
 });

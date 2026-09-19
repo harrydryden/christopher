@@ -46,6 +46,12 @@ export interface CvBuildQuote {
   refusal: string | null;
   /** The measured size of the evidence the build would be written from. */
   libraryBytes: number;
+  /**
+   * Whether this account has a Library at all. A price is not the answer for an account that has
+   * saved nothing to write from: its first step is the Library, not the budget, and a caller that
+   * offers a build needs to tell the two apart.
+   */
+  hasLibrary: boolean;
 }
 
 /**
@@ -129,12 +135,18 @@ export async function cvBuildQuote(userId: string, jobId: string, now: Date = ne
           held: heldUsd,
         }),
     libraryBytes: size.libraryBytes,
+    hasLibrary: !!library,
   };
 }
 
 /** The price beside the button: "about $3.10 of your $18.40 left this month". */
 export function cvQuoteLine(quote: CvBuildQuote): string {
   return `about ${formatUsd(quote.estimateUsd)} of your ${formatUsd(quote.leftUsd)} left this month`;
+}
+
+/** The same price inside a button's own label, where the sentence has to be short: "about $3.10 of $18.40 left". */
+export function cvQuoteButtonLine(quote: CvBuildQuote): string {
+  return `about ${formatUsd(quote.estimateUsd)} of ${formatUsd(quote.leftUsd)} left`;
 }
 
 /** What each of the editor's two actions is expected to cost for one saved revision. */

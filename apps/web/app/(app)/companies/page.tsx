@@ -15,7 +15,10 @@ import { relativeTime, scanStatusLabel } from "@/lib/format";
 import { Pagination, pageNumber } from "@/components/Pagination";
 import { listCompanies, companyCount } from "@/lib/queries/companies";
 import { SearchForm, SearchPending } from "@/components/SearchForm";
+import { GateSetup } from "@/components/GateSetup";
 import { getSystemSettings } from "@/lib/settings";
+import { hasChosenGate } from "@/lib/queries/setup";
+import { CHOOSE_GATE_SENTENCE } from "@/lib/setup";
 import { needsEmailConfirmation, requireUser } from "@/lib/auth";
 import { CompanyControls } from "./CompanyControls";
 import { nextScanSentence } from "./scan-line";
@@ -29,10 +32,13 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
   const q = (sp.q ?? "").slice(0, 200);
   const total = await companyCount(user.id, q);
   const page = Math.min(pageNumber(sp.page), Math.max(1, Math.ceil(total / 50)));
-  const [rows, work, system] = await Promise.all([listCompanies(user.id, page, q), getCompanyWorkStatus(user.id), getSystemSettings()]);
+  const [rows, work, system, gateChosen] = await Promise.all([listCompanies(user.id, page, q), getCompanyWorkStatus(user.id), getSystemSettings(), hasChosenGate(user.id)]);
   const now = new Date();
   // The wall is on the form, not on the action: `addCompanies` still asks for itself.
   const unverified = needsEmailConfirmation(user);
+  // Filters first: following a company starts scanning it, so the gate is chosen before the form
+  // will send. `addCompanies` refuses on the same rule.
+  const blocked = unverified || !gateChosen;
 
   return (
     <div>
@@ -49,6 +55,14 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
         </div>
       )}
 
+      {!gateChosen && (
+        <div className="mb-6">
+          {/* Nothing to prefill: an unchosen gate shows the example, never the default nobody picked. */}
+          <GateSetup gate={null} chosen={false} title="Choose your filters first" />
+        </div>
+      )}
+
+      <div id="add">
       <Card title="Add companies" className="mb-6">
         <form action={addCompanies} className="flex flex-col gap-2">
           <label htmlFor="urls" className="text-14 text-muted">
@@ -59,18 +73,20 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
             name="urls"
             rows={3}
             required
-            disabled={unverified}
+            disabled={blocked}
             placeholder={"acme.com\nhttps://example.org"}
             className={`resize-y ${inputClass}`}
           />
           <div className="flex flex-wrap items-center gap-3">
-            <Button type="submit" variant="primary" disabled={unverified}>
+            <Button type="submit" variant="primary" disabled={blocked}>
               Add companies
             </Button>
             {unverified && <VerifyNotice />}
+            {!unverified && !gateChosen && <p className="text-12 text-warn" role="status">{CHOOSE_GATE_SENTENCE}</p>}
           </div>
         </form>
       </Card>
+      </div>
 
       <SearchForm action="/companies" className="mb-4 flex flex-wrap items-end gap-3"><label className="grid gap-1.5"><span className={labelClass}>Search companies</span><input name="q" defaultValue={q} maxLength={200} className={`h-11 w-80 ${inputClass}`} /></label><Button type="submit" className="h-11">Search</Button><SearchPending />{q && <a className="self-center text-13 underline" href="/companies">Clear</a>}</SearchForm>
       <Pagination page={page} total={total} path="/companies" params={{ q }}/>

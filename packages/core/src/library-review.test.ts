@@ -7,6 +7,7 @@ import {
   LIBRARY_FACET_WEIGHTS,
   LibraryReviewPlanSchema,
   evidenceRatingFor,
+  facetForPrompt,
   libraryEntryInputHash,
   reviewableRows,
   rulesLibraryReview,
@@ -15,7 +16,7 @@ import {
   type LibraryReviewPlanEntry,
   type LibraryRowReview,
 } from "./library-review";
-import { EVIDENCE_FACETS, consolidateExperience, setRowFacet, type CvLibrary, type Employment, type EvidenceFacet } from "./cv";
+import { EVIDENCE_FACETS, EVIDENCE_FACETS_BY_NEED, EVIDENCE_FACET_PROMPTS, consolidateExperience, setRowFacet, type CvLibrary, type Employment, type EvidenceFacet } from "./cv";
 
 const row = (over: Partial<LibraryRowReview> = {}): LibraryRowReview => ({
   row: over.row ?? "A row",
@@ -250,5 +251,22 @@ describe("libraryEntryInputHash", () => {
     const consolidated = consolidateExperience(subject);
     expect(consolidated.facetedRows).toBe(true);
     expect(libraryEntryInputHash(consolidated.entries[0]!, job)).toBe(hash);
+  });
+});
+
+it("reports missing facets in the order the editor asks for them", () => {
+  // `EVIDENCE_FACETS_BY_NEED` is written out in cv.ts so the editor can order its hints without
+  // loading the scorer; this is what holds it to the weights the scorer actually uses.
+  expect(rulesLibraryReview(library("A row with nothing tagged on it").entries[0]!, library("A row with nothing tagged on it")).missing)
+    .toEqual([...EVIDENCE_FACETS_BY_NEED]);
+});
+
+describe("facetForPrompt", () => {
+  it("names the facet behind each baseline question and refuses to guess at any other", () => {
+    for (const facet of EVIDENCE_FACETS) expect(facetForPrompt(EVIDENCE_FACET_PROMPTS[facet])).toBe(facet);
+    // Whitespace and case are the model's to get wrong; the question is still the same question.
+    expect(facetForPrompt("  what changed as a  result?  ")).toBe("outcome");
+    expect(facetForPrompt("What did the board say about the migration?")).toBeNull();
+    expect(facetForPrompt("")).toBeNull();
   });
 });

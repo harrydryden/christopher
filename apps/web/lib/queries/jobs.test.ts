@@ -2,14 +2,14 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createDb, schema, type Db } from "@christopher/db";
 import { runMigrations } from "@christopher/db/migrate";
 import { eq, sql } from "drizzle-orm";
-import { ROLE_TABS, type RoleStatus } from "@christopher/core";
+import { deadlineFor, ROLE_TABS, type RoleStatus } from "@christopher/core";
 import { ensureTestUser } from "@/test/auth";
 import type { User } from "@christopher/db/schema";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { sortRoleRows, parseRolesFilters, applyRolesFilters, buildRoleRowVM, fetchRolePage, fetchRoleRows, filtersToQueryString, locationReasonText, parseSince, resolveRoleView, roleTabFor, type RoleRow } from "./jobs";
+import { appliedRoleCount, sortRoleRows, parseRolesFilters, applyRolesFilters, buildRoleRowVM, fetchRolePage, fetchRoleRows, filtersToQueryString, locationReasonText, parseSince, resolveRoleView, roleTabFor, scoreStateText, type RoleRow } from "./jobs";
 
 beforeAll(async () => {
   const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
@@ -233,5 +233,71 @@ describe("why a role is in the table", () => {
     // A role can sit in the table against the filter: because you added it, or because you decided on it.
     expect(locationReasonText({ ok: false, terms: [], remote: false }, true, true)).toContain("added it by its URL");
     expect(locationReasonText({ ok: false, terms: [], remote: false }, true, false)).toContain("decided on it");
+  });
+});
+
+describe("what a blank score means", () => {
+  const scored = { fitScore: 72, scoreState: "scored" as const, scoreStateAt: new Date() };
+  const now = new Date("2026-09-19T12:00:00Z");
+  const queuedAt = (msAgo: number) => ({ fitScore: null, scoreState: "queued" as const, scoreStateAt: new Date(now.getTime() - msAgo) });
+
+  it("names each of the five states instead of one dash", () => {
+    // A score is its own answer; the sentence is only for a blank one.
+    expect(scoreStateText(scored, now)).toBeNull();
+    expect(scoreStateText({ ...scored, scoreState: null, scoreStateAt: null }, now)).toBeNull();
+
+    expect(scoreStateText(queuedAt(5_000), now)).toBe("scoring…");
+    // A queue entry older than the score task's own deadline has stopped meaning "any moment now".
+    expect(scoreStateText(queuedAt(deadlineFor("score_job") + 1), now)).toBe("not scored yet");
+    expect(scoreStateText({ fitScore: null, scoreState: "queued", scoreStateAt: null }, now)).toBe("not scored yet");
+
+    expect(scoreStateText({ fitScore: null, scoreState: "budget", scoreStateAt: now }, now)).toBe("not scored: budget spent");
+    expect(scoreStateText({ fitScore: null, scoreState: "closed", scoreStateAt: now }, now)).toBe("closed");
+    expect(scoreStateText({ fitScore: null, scoreState: "ineligible", scoreStateAt: now }, now)).toBe("not scored: outside your filters");
+    // Rows from before the column existed have nothing recorded, which is not the same as waiting.
+    expect(scoreStateText({ fitScore: null, scoreState: null, scoreStateAt: null }, now)).toBe("not scored yet");
+  });
+
+  it("carries the state and its words into the view model", () => {
+    const base = {
+      job: { id: "job-1", title: "Operations Director", url: "https://acme.test/jobs/1", location: "London", locations: ["London"], remote: false, department: null, employmentType: null, salaryText: null, keywordTerms: [], fitScore: null, fitVerdict: null, fitRationale: null, status: "open", postedAt: null, firstSeenAt: new Date("2026-09-18T00:00:00Z"), closedAt: null, seeded: false, origin: "scan", addedBy: null, scoreState: "budget", scoreStateAt: now },
+      company: { id: "company-1", name: "Acme", faviconUrl: null, logoFetchedAt: null, homepageUrl: "https://acme.test", domain: "acme.test" },
+      sourceType: "html", decision: null, stage: "matched", applicationStatus: null, events: [],
+    } as unknown as RoleRow;
+    const vm = buildRoleRowVM(base, now);
+    expect(vm.scoreState).toBe("budget");
+    expect(vm.scoreStateText).toBe("not scored: budget spent");
+    const withScore = buildRoleRowVM({ ...base, job: { ...base.job, fitScore: 61, scoreState: "scored" } } as RoleRow, now);
+    expect(withScore.scoreStateText).toBeNull();
+  });
+
+  /** The column is on this account's own view of the role, so the table's read has to carry it. */
+  it("reads the state from the account's view of the role", async () => {
+    await database.execute(sql`truncate users, companies restart identity cascade`);
+    const user: User = await ensureTestUser(database, "score-state@example.com");
+    const [company] = await database.insert(schema.companies).values({ name: "Acme", domain: "acme.test", homepageUrl: "https://acme.test" }).returning();
+    const [source] = await database.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://acme.test/jobs" }).returning();
+    const [job] = await database.insert(schema.jobs).values({
+      companyId: company!.id, sourceId: source!.id, externalKey: "id:1", title: "Operations Director",
+      normalizedTitle: "operations director", url: "https://acme.test/jobs/1",
+    }).returning();
+    await database.insert(schema.userJobs).values({
+      userId: user.id, jobId: job!.id, keywordMatched: true, locationOk: true, inTable: true,
+      scoreState: "budget", scoreStateAt: new Date(),
+    });
+
+    const page = await fetchRolePage(user.id, parseRolesFilters({}), false, null, 1);
+    expect(page.visible[0]!.job.scoreState).toBe("budget");
+    expect(buildRoleRowVM(page.visible[0]!).scoreStateText).toBe("not scored: budget spent");
+  });
+});
+
+describe("the shortlist's own breakdown", () => {
+  it("counts every stage that means an application was sent, and no other", () => {
+    // "Shortlisted 12 · 3 applied": applying is a CV being written, not an application.
+    expect(appliedRoleCount({ applied: 2, in_process: 1 })).toBe(3);
+    expect(appliedRoleCount({ applied: 1, in_process: 1, accepted: 1, rejected: 1 })).toBe(4);
+    expect(appliedRoleCount({ matched: 9, shortlisted: 12, applying: 4, dismissed: 3 })).toBe(0);
+    expect(appliedRoleCount({})).toBe(0);
   });
 });

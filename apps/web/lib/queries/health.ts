@@ -16,6 +16,7 @@ import {
 import {
   cvBuildSteps,
   cvDrafts,
+  discoveryRuns,
   jobs,
   settings,
   careerSources,
@@ -34,6 +35,8 @@ import {
 // left without importing the worker.
 import { deadlineFor } from "@christopher/core";
 import { groupAiUsage, type AiUsageGroup } from "@/lib/ai-usage";
+import { accountAiBudget } from "@/lib/queries/accounts";
+import { formatUsd } from "@/lib/format";
 import { foldOutboundTraffic, type HostTraffic } from "@/lib/outbound-traffic";
 import { db } from "@/lib/db";
 import { deriveWorkerStatus, type WorkerHeartbeat, type WorkerStatus, type WorkerVitals } from "@/lib/worker-status";
@@ -649,3 +652,248 @@ export async function listLargestScanInputs(days = 7, limit = 10): Promise<ScanI
 }
 
 export { companySubscriptions as _companySubscriptions, workerEvents as _workerEvents };
+
+/* ---------------------------------------------------------------------------------------------
+ * The attention list, and the resolution each item carries
+ *
+ * R-9.1: "anything that needs you appears here and nowhere else". R-9.2: "each item has a
+ * one-click resolution path". One item per company, because a company with a blocked source and a
+ * failing one is one problem to a person, and one item for the account's own budget.
+ *
+ * Every read carries the `userId`: the catalogue is shared, but which part of it needs *you*
+ * depends on what you follow, and a company you have paused is not asking for anything.
+ * ------------------------------------------------------------------------------------------- */
+
+/** The worker's threshold, named here so Health says the same figure the scan handler acts on. */
+import { SOURCE_FAILING_AFTER } from "@christopher/core";
+export { SOURCE_FAILING_AFTER };
+
+export type HealthItemKind = "budget" | "needs_confirmation" | "no_source" | "blocked" | "failing" | "rediscovery";
+
+/** Where each kind sits in the list: what stops everything first, proposals last. */
+const KIND_ORDER: Record<HealthItemKind, number> = {
+  budget: 0,
+  needs_confirmation: 1,
+  blocked: 2,
+  failing: 3,
+  no_source: 4,
+  rediscovery: 5,
+};
+
+export interface HealthCandidate {
+  /** Its position in the run's `candidates`, which is what `useDiscoveryCandidate` takes. */
+  index: number;
+  type: string | null;
+  url: string | null;
+  confidence: number | null;
+  method: string | null;
+}
+
+export interface HealthItem {
+  /** Stable across refreshes, so a row does not lose its place while a form is open. */
+  key: string;
+  kind: HealthItemKind;
+  company: { id: string; name: string } | null;
+  source: { id: string; type: CareerSource["type"]; url: string; status: CareerSource["status"]; consecutiveFailures: number } | null;
+  /** The discovery run whose candidates the item offers, when it offers any. */
+  runId: string | null;
+  candidates: HealthCandidate[];
+  /** What the worker recorded the last time it read this board. */
+  reason: string | null;
+  /** The account's own spend against its own budget, for the budget item. */
+  budget: { spentUsd: number; limitUsd: number } | null;
+}
+
+/** The item's own line: what is wrong, in the fewest words that are still true. */
+export function healthItemHeadline(item: HealthItem): string {
+  switch (item.kind) {
+    case "budget":
+      return `AI budget spent · ${formatUsd(item.budget?.spentUsd ?? 0)} of ${formatUsd(item.budget?.limitUsd ?? 0)} this month`;
+    case "needs_confirmation":
+      return item.candidates.length
+        ? `Discovery found ${item.candidates.length} ${item.candidates.length === 1 ? "candidate" : "candidates"}; nobody has picked one`
+        : "This careers page has never been confirmed";
+    case "no_source":
+      return "No careers page to scan";
+    case "blocked":
+      return "The board is refusing our requests";
+    case "failing":
+      return `Failed ${item.source?.consecutiveFailures ?? 0} ${item.source?.consecutiveFailures === 1 ? "scan" : "scans"} in a row`;
+    case "rediscovery":
+      return "Discovery found another careers page";
+  }
+}
+
+/** The sentence under the line: what it costs you, or what the worker recorded. */
+export function healthItemDetail(item: HealthItem): string {
+  switch (item.kind) {
+    case "budget":
+      return "Scoring, suggestions and CV builds stop for this account until the budget resets on the 1st.";
+    case "needs_confirmation":
+      return "Nothing is scanned for this company until one of them is confirmed.";
+    case "no_source":
+      return "Nothing is scanned for this company until a careers page is found.";
+    case "blocked":
+      return item.reason ?? "The site refused our requests, which no retry undoes.";
+    case "failing":
+      return item.reason ?? `A source is marked failing after ${SOURCE_FAILING_AFTER} failed scans in a row.`;
+    case "rediscovery":
+      return "A source is already scanning, so this one waits for a follower to judge it. Any of them can.";
+  }
+}
+
+function readHealthCandidates(value: unknown): HealthCandidate[] {
+  const list = Array.isArray(value) ? value : [];
+  return list.map((entry, index) => {
+    const candidate = (entry && typeof entry === "object" ? entry : {}) as { spec?: { type?: unknown; url?: unknown }; confidence?: unknown; method?: unknown };
+    return {
+      index,
+      type: typeof candidate.spec?.type === "string" ? candidate.spec.type : null,
+      url: typeof candidate.spec?.url === "string" ? candidate.spec.url : null,
+      confidence: typeof candidate.confidence === "number" && Number.isFinite(candidate.confidence) ? candidate.confidence : null,
+      method: typeof candidate.method === "string" ? candidate.method : null,
+    };
+  });
+}
+
+/** The most items one page will render. The count beside the heading is the true total. */
+export const HEALTH_ITEM_LIMIT = 100;
+
+/**
+ * Everything that needs this account, each with the rows its resolution is posted against.
+ *
+ * One item per company: a company is one subject, however many of its sources are unhappy. The
+ * order of the tests below is the order of the resolutions — candidates somebody can pick beat a
+ * board that is refusing us, which beats one that has no source at all — and it is the same union
+ * `countHealthItems` counts in SQL, so the sidebar and the page cannot disagree.
+ */
+export async function healthItems(userId: string, now: Date = new Date()): Promise<HealthItem[]> {
+  const [followed, budget] = await Promise.all([
+    db()
+      .select({ id: companies.id, name: companies.name })
+      .from(companySubscriptions)
+      .innerJoin(companies, eq(companies.id, companySubscriptions.companyId))
+      .where(and(
+        eq(companySubscriptions.userId, userId),
+        eq(companySubscriptions.status, "active"),
+        ne(companies.status, "archived"),
+      ))
+      .orderBy(asc(companies.name), companies.id),
+    accountAiBudget(userId, now),
+  ]);
+
+  const items: HealthItem[] = [];
+  // The account's own budget: not a company's problem, and the one item that stops every other
+  // account's work too if it is not seen.
+  if (budget.spentUsd >= budget.limitUsd) {
+    items.push({
+      key: "budget",
+      kind: "budget",
+      company: null,
+      source: null,
+      runId: null,
+      candidates: [],
+      reason: null,
+      budget: { spentUsd: budget.spentUsd, limitUsd: budget.limitUsd },
+    });
+  }
+
+  const ids = followed.map((company) => company.id);
+  if (ids.length) {
+    const [sourceRows, runRows] = await Promise.all([
+      db()
+        .select({
+          id: careerSources.id,
+          companyId: careerSources.companyId,
+          type: careerSources.type,
+          url: careerSources.url,
+          status: careerSources.status,
+          consecutiveFailures: careerSources.consecutiveFailures,
+        })
+        .from(careerSources)
+        .where(inArray(careerSources.companyId, ids))
+        .orderBy(asc(careerSources.createdAt)),
+      db()
+        .selectDistinctOn([discoveryRuns.companyId], {
+          companyId: discoveryRuns.companyId,
+          id: discoveryRuns.id,
+          status: discoveryRuns.status,
+          candidates: discoveryRuns.candidates,
+        })
+        .from(discoveryRuns)
+        .where(inArray(discoveryRuns.companyId, ids))
+        .orderBy(discoveryRuns.companyId, desc(discoveryRuns.startedAt)),
+    ]);
+
+    const runByCompany = new Map(runRows.map((row) => [row.companyId, row]));
+    const found: Array<HealthItem & { sortName: string }> = [];
+    for (const company of followed) {
+      const sources = sourceRows.filter((source) => source.companyId === company.id);
+      const unconfirmed = sources.find((source) => source.status === "needs_confirmation");
+      const blocked = sources.find((source) => source.status === "blocked");
+      const failing = sources.find((source) => source.status === "failing");
+      const working = sources.some((source) => source.status === "active" || source.status === "failing");
+      const run = runByCompany.get(company.id);
+      const candidates = run?.status === "needs_confirmation" ? readHealthCandidates(run.candidates) : [];
+      const proposal = candidates.length ? run : undefined;
+
+      const base = { company: { id: company.id, name: company.name }, runId: null, candidates: [], reason: null, budget: null };
+      const add = (kind: HealthItemKind, rest: Partial<HealthItem>) =>
+        found.push({ key: `${kind}:${company.id}`, kind, source: null, ...base, ...rest, sortName: company.name });
+
+      if (unconfirmed) add("needs_confirmation", { source: unconfirmed, runId: proposal?.id ?? null, candidates });
+      else if (proposal && !working) add("needs_confirmation", { runId: proposal.id, candidates });
+      else if (blocked) add("blocked", { source: blocked });
+      else if (failing) add("failing", { source: failing });
+      else if (!working) add("no_source", {});
+      else if (proposal) add("rediscovery", { runId: proposal.id, candidates });
+    }
+
+    // What the worker last recorded about a board that is refusing us or failing, so the item
+    // carries the reason rather than sending the reader to the scan history for it.
+    const needReason = found.filter((item) => item.kind === "blocked" || item.kind === "failing").map((item) => item.source!.id);
+    if (needReason.length) {
+      const reasons = await db()
+        .selectDistinctOn([scans.sourceId], { sourceId: scans.sourceId, error: scans.error })
+        .from(scans)
+        .where(inArray(scans.sourceId, needReason))
+        .orderBy(scans.sourceId, desc(scans.startedAt));
+      const bySource = new Map(reasons.map((row) => [row.sourceId, row.error]));
+      for (const item of found) if (item.source) item.reason = bySource.get(item.source.id) ?? null;
+    }
+
+    found.sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || a.sortName.localeCompare(b.sortName));
+    for (const { sortName: _sortName, ...item } of found) items.push(item);
+  }
+
+  return items.slice(0, HEALTH_ITEM_LIMIT);
+}
+
+/**
+ * How many items there are, for the sidebar. One statement, because every page in the interface
+ * renders the sidebar: the union below is the same one `healthItems` walks company by company.
+ */
+export async function countHealthItems(userId: string, now: Date = new Date()): Promise<number> {
+  const [rows, budget] = await Promise.all([
+    db().execute(sql`
+      select count(*)::int as n
+      from company_subscriptions cs
+      join companies c on c.id = cs.company_id
+      where cs.user_id = ${userId}
+        and cs.status = 'active'
+        and c.status <> 'archived'
+        and (
+          exists (select 1 from career_sources s where s.company_id = c.id and s.status in ('needs_confirmation', 'blocked', 'failing'))
+          or not exists (select 1 from career_sources s where s.company_id = c.id and s.status in ('active', 'failing'))
+          or exists (
+            select 1 from discovery_runs r
+            where r.company_id = c.id
+              and r.status = 'needs_confirmation'
+              and jsonb_array_length(r.candidates) > 0
+              and r.started_at = (select max(r2.started_at) from discovery_runs r2 where r2.company_id = c.id)
+          )
+        )`),
+    accountAiBudget(userId, now),
+  ]);
+  return Number(rows.rows[0]?.n ?? 0) + (budget.spentUsd >= budget.limitUsd ? 1 : 0);
+}

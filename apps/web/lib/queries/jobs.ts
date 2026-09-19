@@ -1,7 +1,7 @@
 import { latestApplicationFor, roleStageSql, roleStatusSql, type LatestApplication } from "@christopher/db";
-import { defaultRoleTab, roleStatus, ROLE_STATUSES, ROLE_TABS, type ApplicationStatus, type RoleStage, type RoleStatus, type RoleTab } from "@christopher/core";
+import { deadlineFor, defaultRoleTab, roleStatus, ROLE_STATUSES, ROLE_TABS, type ApplicationStatus, type RoleStage, type RoleStatus, type RoleTab } from "@christopher/core";
 import { getTableColumns, and, desc, eq, inArray, ne, isNull, or, sql, lte } from "drizzle-orm";
-import { careerSources, companies, decisions, jobEvents, jobs, userJobs, type Job, type SourceType, type UserJob } from "@christopher/db/schema";
+import { careerSources, companies, decisions, jobEvents, jobs, userJobs, type Job, type ScoreState, type SourceType, type UserJob } from "@christopher/db/schema";
 import { displayStatus, formatDuration, liveFor, type DisplayStatus } from "@christopher/core";
 import { db } from "@/lib/db";
 import { companyLogoUrl } from "@/lib/company-icon";
@@ -33,7 +33,7 @@ export interface RoleEvent {
 }
 
 /** A shared posting seen through one account: the job's fields plus that account's gate, fit and archive state. */
-export type RoleJob = Job & Pick<UserJob, "keywordMatched" | "keywordTerms" | "excluded" | "locationOk" | "inTable" | "fitScore" | "fitVerdict" | "fitRationale" | "fitProfileVersion" | "fitScoredAt" | "archivedAt">;
+export type RoleJob = Job & Pick<UserJob, "keywordMatched" | "keywordTerms" | "excluded" | "locationOk" | "inTable" | "fitScore" | "fitVerdict" | "fitRationale" | "fitProfileVersion" | "fitScoredAt" | "scoreState" | "scoreStateAt" | "archivedAt">;
 
 export interface RoleRow {
   job: RoleJob;
@@ -58,6 +58,9 @@ const viewColumns = {
   fitRationale: userJobs.fitRationale,
   fitProfileVersion: userJobs.fitProfileVersion,
   fitScoredAt: userJobs.fitScoredAt,
+  // Why a blank score is blank: what the score handler last decided about this role, and when.
+  scoreState: userJobs.scoreState,
+  scoreStateAt: userJobs.scoreStateAt,
   archivedAt: userJobs.archivedAt,
   // New to this account, whether or not the shared scan had seen it before.
   seeded: userJobs.seeded,
@@ -405,6 +408,42 @@ export interface RoleEventVM {
   title: string;
 }
 
+/**
+ * What a missing fit score means, in the words the table shows instead of one em dash.
+ *
+ * A blank score covers five situations and the row could not tell them apart. The score handler
+ * records which one it decided on this account's view of the role (`user_jobs.score_state`); this
+ * is the only place that turns those five words into English, so the cell, the review panel and
+ * anything else that reads a row say the same thing.
+ *
+ * `queued` is the one state that goes stale: the task may have been abandoned, so a queue entry
+ * older than the score task's own deadline stops claiming that something is working on it. A score
+ * that is present needs no sentence — the bar is the answer — and a row from before the column
+ * existed has nothing recorded, which reads as never scored.
+ */
+export function scoreStateText(
+  view: { fitScore: number | null; scoreState: ScoreState | null; scoreStateAt: Date | null },
+  now: Date = new Date(),
+): string | null {
+  if (view.fitScore !== null) return null;
+  switch (view.scoreState) {
+    case "queued": {
+      const fresh = view.scoreStateAt !== null && now.getTime() - view.scoreStateAt.getTime() < deadlineFor("score_job");
+      return fresh ? "scoring…" : "not scored yet";
+    }
+    case "budget":
+      return "not scored: budget spent";
+    case "closed":
+      return "closed";
+    // The handler's own words: the role neither matches your filters nor is shortlisted, so it was
+    // not worth a model call. Widening the gate or shortlisting it queues one.
+    case "ineligible":
+      return "not scored: outside your filters";
+    default:
+      return "not scored yet";
+  }
+}
+
 export interface RoleRowVM {
   id: string;
   companyId: string;
@@ -432,6 +471,10 @@ export interface RoleRowVM {
   liveForTitle: string;
   seeded: boolean;
   fitScore: number | null;
+  /** What the score handler last decided about this role, or null for a row that predates it. */
+  scoreState: ScoreState | null;
+  /** That state in English, shown where the score would be, or null when there is a score. */
+  scoreStateText: string | null;
   /** The A5 verdict stored beside the score (R-6.6): shown beside it, never instead of it. */
   fitVerdict: "strong" | "possible" | "unlikely" | null;
   fitRationale: string | null;
@@ -489,6 +532,8 @@ export function buildRoleRowVM(row: RoleRow, now: Date = new Date(), viewerId?: 
     liveForTitle,
     seeded: row.job.seeded,
     fitScore: row.job.fitScore,
+    scoreState: row.job.scoreState,
+    scoreStateText: scoreStateText(row.job, now),
     fitVerdict: row.job.fitVerdict,
     fitRationale: row.job.fitRationale,
     keywordTerms: row.job.keywordTerms,
@@ -559,6 +604,14 @@ export async function fetchRoleRows(userId: string, filters: RolesFilters, archi
  * What the review panel loads on expand: the evidence a decision needs that the page read leaves in
  * the database (the description) or that no column on the row can carry. One round trip per row.
  */
+/** What a CV build for this role would cost, as the panel's button says it. */
+export interface CvQuoteVM {
+  /** "about $3.10 of $18.40 left", for the button's own label. */
+  line: string;
+  /** The budget's refusal, or null when the estimate fits. */
+  refusal: string | null;
+}
+
 export interface RoleDetailsVM {
   jobId: string;
   /** The stored description, as the extractor cleaned it. Null when no scan has fetched one yet. */
@@ -572,6 +625,14 @@ export interface RoleDetailsVM {
   fitRationale: string | null;
   /** One line on why this role passed the location filter. */
   locationReason: string;
+  /**
+   * The price of building a CV for this role, for the button the panel offers a shortlisted role.
+   * Null when there is nothing to quote: the role has not been shortlisted, or the account has no
+   * Library to write from yet, which is the Library's own first step rather than a price.
+   */
+  cvQuote: CvQuoteVM | null;
+  /** Why that build cannot be asked for yet — an unconfirmed address — or null when it can. */
+  cvBlocked: string | null;
 }
 
 /**
@@ -607,6 +668,21 @@ export async function fetchRolePage(userId: string, filters: RolesFilters, archi
   return { visible, hidden: [] as RoleRow[], total, hiddenTotal, page, pageCount };
 }
 
+
+/**
+ * How many of the roles in hand have actually been applied for, from the pipeline's stage counts:
+ * the breakdown behind "Shortlisted 12 · 3 applied".
+ *
+ * Every stage that means an application was sent counts — applied, in process, and the two
+ * outcomes, because an employer's answer does not unsend the application. `applying` does not: a
+ * CV is being built and nothing has gone anywhere. `dismissed` does not either: a withdrawal can
+ * come from either side of that line, so it is not evidence of an application.
+ */
+export const APPLIED_ROLE_STAGES = ["applied", "in_process", "accepted", "rejected"] as const;
+
+export function appliedRoleCount(stageCounts: Partial<Record<RoleStage, number>>): number {
+  return APPLIED_ROLE_STAGES.reduce((total, stage) => total + (stageCounts[stage] ?? 0), 0);
+}
 
 export async function fetchRoleCounts(userId: string, companyId?: string): Promise<Record<RoleStatus, number>> {
   const rows = await db().select({ status: roleStatusSql, n: sql<number>`count(*)::int` }).from(userJobs)

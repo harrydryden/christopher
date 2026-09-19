@@ -143,12 +143,15 @@ export async function saveCvWritingPreferences(_prev: ActionResult, form: FormDa
       const [stored] = await tx.select().from(userSettingsTable).where(and(eq(userSettingsTable.userId, user.id), eq(userSettingsTable.key, "cvWritingPreferences")));
       const latest = await latestLibrary(tx, user.id);
       const current = resolveCvWritingPreferences(stored?.value, latest?.content);
-      if (JSON.stringify(current) !== String(form.get("previousPreferences"))) throw new UserFacingError("Writing preferences changed. Reload Settings before saving.");
+      if (JSON.stringify(current) !== String(form.get("previousPreferences"))) throw new UserFacingError("Writing preferences changed. Reload the page before saving.");
       await upsertUserSetting(tx, user.id, "cvWritingPreferences", parsed.data);
     });
   } catch (error) {
     return actionError(error, "Could not save writing preferences. Try again.");
   }
+  // Written on the Library, where the wording they shape is written; still read on Settings and
+  // by every build, so all three are revalidated.
+  revalidatePath("/library");
   revalidatePath("/settings");
   revalidatePath("/cv");
   return ok();

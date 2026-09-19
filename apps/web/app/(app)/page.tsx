@@ -2,11 +2,14 @@ import { AutoRefresh } from "@/components/AutoRefresh";
 import { getCompanyWorkStatus } from "@/lib/work-status";
 import { PageHeader } from "@/components/PageHeader";
 import { RoleWorkspace } from "@/components/RoleWorkspace";
+import { SetupChecklist } from "@/components/SetupChecklist";
 import { SuggestionsStrip, type SuggestionChip } from "@/components/SuggestionsStrip";
 import { describeFilterSuggestion, extractSuggestionValue } from "@/lib/filterSuggestions";
 import { listPendingFilterSuggestionsResolved } from "@/lib/queries/learning";
+import { setupStatus } from "@/lib/queries/setup";
+import { buildSetupChecklist } from "@/lib/setup";
 import { requireUser } from "@/lib/auth";
-import type { RawSearchParams } from "@/lib/queries/jobs";
+import { fetchRoleCounts, type RawSearchParams } from "@/lib/queries/jobs";
 import { Suspense } from "react";
 export const dynamic = "force-dynamic";
 
@@ -18,6 +21,19 @@ async function WorkNotice({ userId }: { userId: string }) {
 
 /** At most this many terms on one line; the Learning card carries the rest with their evidence. */
 const STRIP_LIMIT = 5;
+
+/**
+ * What to do next, derived from rows and streamed like the notice above it. An account with nothing
+ * in its table gets the checklist as the page's explanation, because there the blank table is the
+ * question; an account with roles gets a card it can hide. Finished setup shows nothing.
+ */
+async function Setup({ userId }: { userId: string }) {
+  const checklist = buildSetupChecklist(await setupStatus(userId));
+  if (checklist.complete) return null;
+  const counts = await fetchRoleCounts(userId);
+  if (Object.values(counts).every((n) => n === 0)) return <SetupChecklist checklist={checklist} variant="explanation" />;
+  return checklist.dismissed ? null : <SetupChecklist checklist={checklist} variant="card" />;
+}
 
 /** The pending filter suggestions, on the page whose table they would change. Streamed like the notice. */
 async function Suggestions({ userId }: { userId: string }) {
@@ -41,6 +57,7 @@ export default async function RolesPage({ searchParams }: { searchParams: Promis
   return <div>
     <Suspense><WorkNotice userId={user.id} /></Suspense>
     <PageHeader title="Roles" />
+    <Suspense><Setup userId={user.id} /></Suspense>
     <Suspense><Suggestions userId={user.id} /></Suspense>
     <RoleWorkspace userId={user.id} searchParams={await searchParams} />
   </div>;

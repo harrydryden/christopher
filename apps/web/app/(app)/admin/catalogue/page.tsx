@@ -1,4 +1,4 @@
-import { removeCatalogueCompany, removeCatalogueSource, saveCatalogueCompany } from "@/app/actions/admin";
+import { applyNameSuggestion, dismissNameSuggestion, removeCatalogueCompany, removeCatalogueSource, saveCatalogueCompany } from "@/app/actions/admin";
 import { Badge, companyStatusTone, scanStatusTone, sourceStatusTone } from "@/components/Badge";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
@@ -12,7 +12,8 @@ import { SettingsForm } from "@/components/SettingsForm";
 import { inputClass, labelClass } from "@/components/Field";
 import { requireAdmin } from "@/lib/auth";
 import { relativeTime, scanStatusLabel } from "@/lib/format";
-import { catalogueCount, listCatalogue } from "@/lib/queries/companies";
+import { catalogueCount, listCatalogue, pendingNameSuggestionsFor } from "@/lib/queries/companies";
+import { companyIcon } from "@/lib/company-icon";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +24,7 @@ export default async function AdminCataloguePage({ searchParams }: { searchParam
   const total = await catalogueCount(q);
   const page = Math.min(pageNumber(sp.page), Math.max(1, Math.ceil(total / 50)));
   const rows = await listCatalogue(admin.id, page, q);
+  const suggestions = await pendingNameSuggestionsFor(rows.map(row => row.company.id));
   const now = new Date();
 
   return (
@@ -45,7 +47,7 @@ export default async function AdminCataloguePage({ searchParams }: { searchParam
             key={company.id}
             title={
               <span className="flex items-center gap-2">
-                <CompanyFavicon src={company.faviconUrl} domain={company.domain} />
+                <CompanyFavicon {...companyIcon(company)} />
                 {company.name}
                 <Badge tone={companyStatusTone(company.status)}>{company.status}</Badge>
               </span>
@@ -88,6 +90,17 @@ export default async function AdminCataloguePage({ searchParams }: { searchParam
                     ))}
                   </ul>
                 )}
+                {suggestions.filter(suggestion => suggestion.companyId === company.id).map(suggestion => (
+                  <div key={suggestion.id} className="flex flex-wrap items-center gap-2 border-2 border-line-muted p-2 text-13">
+                    <span className="min-w-0 flex-1">Suggested name «{suggestion.name}» by {suggestion.email} · {relativeTime(suggestion.createdAt, now)}</span>
+                    <form action={applyNameSuggestion.bind(null, suggestion.id)}>
+                      <Button type="submit" variant="primary" size="sm">Apply</Button>
+                    </form>
+                    <form action={dismissNameSuggestion.bind(null, suggestion.id)}>
+                      <Button type="submit" size="sm">Dismiss</Button>
+                    </form>
+                  </div>
+                ))}
                 <form action={removeCatalogueCompany.bind(null, company.id)} className="pt-2">
                   <ConfirmSubmitButton variant="danger" confirmMessage={`Delete ${company.name} for all ${followers} ${followers === 1 ? "follower" : "followers"}, with its sources and postings? Decision snapshots are retained. This cannot be undone.`}>Delete for everyone</ConfirmSubmitButton>
                 </form>

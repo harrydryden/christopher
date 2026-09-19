@@ -387,6 +387,23 @@ A CV build has its own view of the same thing: while it is building, its page sh
 started, the stage it reached, how long since it last advanced and which attempt it is on, and
 says plainly when it has stopped rather than turning a wheel indefinitely.
 
+### Captured logos, roles added by URL and name suggestions (migration 0029)
+
+Migration 0029 adds `company_logos`, the logo retry columns on `companies`, `jobs.origin` /
+`jobs.added_by` and `company_name_suggestions`. Apply it before deploying the web app and worker;
+the interface tolerates running ahead of it in the usual way — a company with no captured logo
+simply falls back to the browser's icon chain.
+
+Existing companies have no stored logo on the day the migration lands. They are captured by the
+worker's daily sweep, which takes **up to 200 companies a day**, oldest attempt first, so a
+deployment of a few hundred companies is fully captured within a day or two and a large one within
+a week. Anything urgent is captured on demand: **Refresh logo** in Catalogue diagnostics on the
+company page queues that one company immediately. A site that refuses is retried with a widening
+backoff rather than every day, and a stored logo is re-captured after 90 days.
+
+Nothing else needs doing. Roles added by URL and name suggestions are ordinary rows created by
+people using the interface; no backfill applies to them.
+
 ### External company discovery and emailed newsletters
 
 Apply the database migrations before deploying the web app and worker. Suggestions now has a

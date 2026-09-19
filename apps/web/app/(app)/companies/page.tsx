@@ -1,5 +1,6 @@
 import { RefreshCompanyButton } from "@/components/RefreshCompanyButton";
 import { CompanyFavicon } from "@/components/CompanyFavicon";
+import { companyIcon } from "@/lib/company-icon";
 import { getCompanyWorkStatus } from "@/lib/work-status";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { addCompanies, archiveCompany, pauseCompany, resumeCompany } from "@/app/actions/companies";
@@ -81,7 +82,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
               <TR key={company.id}>
                 <TD>
                   <a href={`/companies/${company.id}`} className="flex items-center gap-2 no-underline hover:underline">
-                    <CompanyFavicon src={company.faviconUrl} domain={company.domain} />
+                    <CompanyFavicon {...companyIcon(company)} />
                     <span className="font-semibold text-fg">{company.name}</span>
                   </a>
                   <a href={company.homepageUrl} target="_blank" rel="noopener noreferrer" className="block text-12 text-muted no-underline hover:underline">

@@ -1,15 +1,18 @@
 import { roleStatusSql } from "@christopher/db";
-import { roleStatus, ROLE_STATUSES, type RoleStatus } from "@christopher/core";
+import { roleStatus, ROLE_STATUSES, ROLE_TABS, type RoleStatus } from "@christopher/core";
 import { getTableColumns, and, desc, eq, inArray, ne, isNull, or, sql, lte } from "drizzle-orm";
 import { careerSources, companies, decisions, jobEvents, jobs, userJobs, type Job, type SourceType, type UserJob } from "@christopher/db/schema";
 import { displayStatus, formatDuration, liveFor, type DisplayStatus } from "@christopher/core";
 import { db } from "@/lib/db";
+import { companyLogoUrl } from "@/lib/company-icon";
 import { eventTypeLabel, relativeTime } from "@/lib/format";
 
 export interface RoleCompany {
   id: string;
   name: string;
   faviconUrl: string | null;
+  /** When the worker captured this company's logo; the interface serves and versions it by this. */
+  logoFetchedAt: Date | null;
   homepageUrl: string;
   domain: string;
 }
@@ -61,6 +64,7 @@ const roleRowSelection = {
     id: companies.id,
     name: companies.name,
     faviconUrl: companies.faviconUrl,
+    logoFetchedAt: companies.logoFetchedAt,
     homepageUrl: companies.homepageUrl,
     domain: companies.domain,
   },
@@ -168,6 +172,9 @@ export interface RolesFilters {
 
 export type RawSearchParams = Record<string, string | string[] | undefined>;
 
+/** The three statuses the tab strip shows. Archived is a section inside Dismissed, not a tab. */
+export type RoleTab = (typeof ROLE_TABS)[number];
+
 function first(v: string | string[] | undefined): string | undefined {
   return Array.isArray(v) ? v[0] : v;
 }
@@ -179,6 +186,20 @@ function toList(v: string | string[] | undefined): string[] {
     .flatMap((s) => s.split(","))
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+/**
+ * Which role tab a request is asking for. Archived is not one of them: a link that still says
+ * `view=archived` or `archive=1` — a bookmark, a CSV export, an older page — lands on Dismissed,
+ * where the archived roles now live, rather than on a tab that no longer exists.
+ */
+export function roleTabFor(sp: RawSearchParams): RoleTab {
+  const raw = first(sp.view);
+  if ((ROLE_TABS as readonly string[]).includes(raw ?? "")) return raw as RoleTab;
+  if (raw === "archived" || first(sp.archive) === "1" || first(sp.decision) === "skip") return "user-dismissed";
+  if (first(sp.decision) === "apply") return "user-shortlisted";
+  // An unknown view falls back the way a bare request does: the daily inbox.
+  return "auto-matched";
 }
 
 export function parseRolesFilters(sp: RawSearchParams): RolesFilters {
@@ -335,6 +356,9 @@ export interface RoleRowVM {
   companyId: string;
   companyName: string;
   companyFaviconUrl: string | null;
+  /** The interface's own URL for the captured logo, or null while nothing is stored. */
+  companyLogoUrl: string | null;
+  companyDomain: string;
   companyHomepageUrl: string;
   title: string;
   url: string;
@@ -359,11 +383,17 @@ export interface RoleRowVM {
   postedTitle: string | null;
   closedLabel: string | null;
   closedTitle: string | null;
+  /** This account pasted this posting's URL: it is in the table whatever its gate said. */
+  addedByYou: boolean;
   decision: RoleDecisionVM | null;
   events: RoleEventVM[];
 }
 
-export function buildRoleRowVM(row: RoleRow, now: Date = new Date()): RoleRowVM {
+/**
+ * `viewerId` decides one thing only: whether this account is the one that added the posting by
+ * URL. A row is built for exactly one reader, so it is the reader's id, never the job's owner.
+ */
+export function buildRoleRowVM(row: RoleRow, now: Date = new Date(), viewerId?: string): RoleRowVM {
   const status = displayStatus(row.job, now);
   const { days, basis } = liveFor(row.job, now);
   let liveForTitle =
@@ -378,6 +408,8 @@ export function buildRoleRowVM(row: RoleRow, now: Date = new Date()): RoleRowVM 
     companyId: row.company.id,
     companyName: row.company.name,
     companyFaviconUrl: row.company.faviconUrl,
+    companyLogoUrl: companyLogoUrl(row.company.id, row.company.logoFetchedAt),
+    companyDomain: row.company.domain,
     companyHomepageUrl: row.company.homepageUrl,
     title: row.job.title,
     url: row.job.url,
@@ -402,6 +434,7 @@ export function buildRoleRowVM(row: RoleRow, now: Date = new Date()): RoleRowVM 
     postedTitle: row.job.postedAt ? row.job.postedAt.toISOString() : null,
     closedLabel: row.job.closedAt ? relativeTime(row.job.closedAt, now) : null,
     closedTitle: row.job.closedAt ? row.job.closedAt.toISOString() : null,
+    addedByYou: row.job.origin === "user" && !!viewerId && row.job.addedBy === viewerId,
     decision: row.decision
       ? { id: row.decision.id, decision: row.decision.decision, reason: row.decision.reason, createdLabel: relativeTime(row.decision.createdAt, now) }
       : null,

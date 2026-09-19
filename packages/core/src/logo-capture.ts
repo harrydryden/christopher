@@ -1,12 +1,12 @@
 /**
  * Capturing a company's logo as bytes.
  *
- * `discoverCompanyLogo` finds an icon's address; this reads the icon itself, so the worker can
- * store it once and every page serve the same image. A URL alone was not enough: some sites hand
- * an icon to a browser and refuse ours, others 404 a month later, so what a page showed depended
- * on who was asking and when — the roles table and the company page disagreed about the same
- * company. Here nothing is trusted: not the server's content-type (a 404 HTML page is served as
- * `image/png` often enough), not the size, not the declared link.
+ * The worker used to keep an icon's address and let every page load it for itself. That was not
+ * enough: some sites hand an icon to a browser and refuse ours, others 404 a month later, so what
+ * a page showed depended on who was asking and when — the roles table and the company page
+ * disagreed about the same company. This reads the icon itself, so the worker stores it once and
+ * every page serves the same image. Here nothing is trusted: not the server's content-type (a 404
+ * HTML page is served as `image/png` often enough), not the size, not the declared link.
  *
  * Pure and network-free: the fetchers arrive on the `FetchContext`.
  */

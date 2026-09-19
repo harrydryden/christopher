@@ -155,6 +155,7 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
 export function makeFetchContext(deps: WorkerDeps): FetchContext {
   return {
     fetchText: (url, init) => deps.fetcher.fetchText(url, init),
+    fetchBytes: (url, init) => deps.fetcher.fetchBytes(url, init),
     render: deps.browser ? (url, opts) => deps.browser!.render(url, opts) : undefined,
     log: (msg, data) => log.debug(msg, data),
     now: deps.now,

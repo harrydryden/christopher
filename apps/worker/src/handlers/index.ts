@@ -4,6 +4,7 @@ import { handleDiscover } from "./discover";
 import { handleRunDaily } from "./daily";
 import { handleScanCompany } from "./scan";
 import { handleFetchDescription } from "./description";
+import { handleImportPosting } from "./import-posting";
 import { handleProfileCompany, handleSuggestCompanies } from "./companies";
 import {
   handleReevaluateGate,
@@ -26,6 +27,7 @@ export const handlers: HandlerMap = {
   run_daily: handleRunDaily,
   scan_company: handleScanCompany,
   fetch_description: handleFetchDescription,
+  import_posting: handleImportPosting,
   score_job: handleScoreJob,
   tag_reason: handleTagReason,
   synthesize_profile: handleSynthesizeProfile,
@@ -37,7 +39,7 @@ export const handlers: HandlerMap = {
   reevaluate_gate: handleReevaluateGate,
 };
 
-export { handleDiscover, handleRunDaily, handleScanCompany, handleFetchDescription };
+export { handleDiscover, handleRunDaily, handleScanCompany, handleFetchDescription, handleImportPosting };
 
 // Kept in a module of its own so that importing "what to do when a task is abandoned" does not
 // drag every handler in with it: the scheduler needs the hooks and nothing else here.

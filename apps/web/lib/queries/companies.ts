@@ -4,6 +4,7 @@ import {
   decisions,
   careerSources,
   companies,
+  companyNameSuggestions,
   companyProfiles,
   companySubscriptions,
   discoveryRuns,
@@ -12,12 +13,14 @@ import {
   scans,
   tasks,
   userJobs,
+  users,
   type CareerSource,
   type Company,
   type CompanyProfile,
   type CompanySubscription,
   type DiscoveryRun,
   type Scan,
+  type Task,
 } from "@christopher/db/schema";
 import { db } from "@/lib/db";
 
@@ -154,6 +157,25 @@ export async function getLatestDiscoveryRun(companyId: string): Promise<Discover
   return rows[0] ?? null;
 }
 
+/**
+ * Shared discovery queued or running for one company — the same task lookup the companies list
+ * makes for a page of them, narrowed to one. Logo captures are excluded: they ride the discover
+ * task but say nothing about whether a careers page is being looked for.
+ */
+export async function companyDiscoveryState(companyId: string): Promise<"queued" | "running" | null> {
+  const rows = await db()
+    .select({ status: tasks.status })
+    .from(tasks)
+    .where(and(
+      eq(tasks.type, "discover"),
+      sql`coalesce(${tasks.payload}->>'logoOnly', 'false') != 'true'`,
+      inArray(tasks.status, ["queued", "running"]),
+      sql`${tasks.payload}->>'companyId' = ${companyId}`,
+    ));
+  if (!rows.length) return null;
+  return rows.some(row => row.status === "running") ? "running" : "queued";
+}
+
 export interface CompanyScanRow extends Omit<Scan, "rawSnapshot"> {
   sourceType: CareerSource["type"];
   sourceUrl: string;
@@ -193,6 +215,121 @@ export async function companyFollowerCount(companyId: string): Promise<number> {
   const [row] = await db().select({ n: sql<number>`count(*)::int` }).from(companySubscriptions)
     .where(and(eq(companySubscriptions.companyId, companyId), ne(companySubscriptions.status, "archived")));
   return row?.n ?? 0;
+}
+
+
+// ---------------------------------------------------------------------------
+// Roles a follower added by URL, and the imports still in flight
+// ---------------------------------------------------------------------------
+
+/** What the worker hands back for an `import_posting` task. Data, checked before it is read. */
+export interface ImportPostingResult {
+  ok: boolean;
+  reason?: string;
+  jobId?: string;
+  title?: string;
+  existing?: boolean;
+  gate?: { inTable: boolean; keywordMatched: boolean; locationOk: boolean; excluded: boolean; keywordTerms: string[] };
+}
+
+export interface PostingImportRow {
+  id: string;
+  status: Task["status"];
+  url: string;
+  createdAt: Date;
+  error: string | null;
+  result: ImportPostingResult | null;
+}
+
+const IMPORT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * This account's recent imports for one company, newest first. Tasks are pruned, so this is the
+ * short-lived report on work in flight; the roles themselves outlive it (see `ungatedUserPostings`).
+ */
+export async function recentPostingImports(userId: string, companyId: string, limit = 5, now = new Date()): Promise<PostingImportRow[]> {
+  const rows = await db()
+    .select({ id: tasks.id, status: tasks.status, payload: tasks.payload, createdAt: tasks.createdAt, error: tasks.error, result: tasks.result })
+    .from(tasks)
+    .where(and(
+      eq(tasks.type, "import_posting"),
+      sql`${tasks.payload}->>'userId' = ${userId}`,
+      sql`${tasks.payload}->>'companyId' = ${companyId}`,
+      sql`${tasks.createdAt} >= ${new Date(now.getTime() - IMPORT_WINDOW_MS)}`,
+    ))
+    .orderBy(desc(tasks.createdAt))
+    .limit(limit);
+  return rows.map(row => ({
+    id: row.id,
+    status: row.status,
+    url: String((row.payload as { url?: unknown }).url ?? ""),
+    createdAt: row.createdAt,
+    error: row.error,
+    result: row.result && typeof row.result === "object" ? (row.result as ImportPostingResult) : null,
+  }));
+}
+
+export interface UserAddedRole {
+  jobId: string;
+  title: string;
+  url: string;
+  keywordMatched: boolean;
+  locationOk: boolean;
+  excluded: boolean;
+}
+
+/**
+ * Roles this account added by URL that its own gate would have refused. They are in the table
+ * because they were asked for, and they are listed apart so the prompt to widen the keywords
+ * outlives the task that first showed it.
+ */
+export async function ungatedUserPostings(userId: string, companyId: string): Promise<UserAddedRole[]> {
+  return db()
+    .select({ jobId: jobs.id, title: jobs.title, url: jobs.url, keywordMatched: userJobs.keywordMatched, locationOk: userJobs.locationOk, excluded: userJobs.excluded })
+    .from(jobs)
+    .innerJoin(userJobs, and(eq(userJobs.jobId, jobs.id), eq(userJobs.userId, userId)))
+    .where(and(
+      eq(jobs.companyId, companyId),
+      eq(jobs.origin, "user"),
+      eq(jobs.addedBy, userId),
+      eq(jobs.status, "open"),
+      or(eq(userJobs.keywordMatched, false), eq(userJobs.locationOk, false), eq(userJobs.excluded, true)),
+    ))
+    .orderBy(desc(jobs.firstSeenAt), jobs.id)
+    .limit(50);
+}
+
+// ---------------------------------------------------------------------------
+// Name suggestions
+// ---------------------------------------------------------------------------
+
+/** This account's own pending proposal for a company's name, if it made one. */
+export async function pendingNameSuggestion(userId: string, companyId: string): Promise<{ id: string; name: string } | null> {
+  const [row] = await db()
+    .select({ id: companyNameSuggestions.id, name: companyNameSuggestions.name })
+    .from(companyNameSuggestions)
+    .where(and(eq(companyNameSuggestions.userId, userId), eq(companyNameSuggestions.companyId, companyId), eq(companyNameSuggestions.status, "pending")))
+    .limit(1);
+  return row ?? null;
+}
+
+export interface NameSuggestionRow {
+  id: string;
+  companyId: string;
+  name: string;
+  email: string;
+  createdAt: Date;
+}
+
+/** Every pending proposal for a page of the catalogue, for the administrator who resolves them. */
+export async function pendingNameSuggestionsFor(companyIds: string[]): Promise<NameSuggestionRow[]> {
+  if (!companyIds.length) return [];
+  return db()
+    .select({ id: companyNameSuggestions.id, companyId: companyNameSuggestions.companyId, name: companyNameSuggestions.name, email: users.email, createdAt: companyNameSuggestions.createdAt })
+    .from(companyNameSuggestions)
+    .innerJoin(users, eq(users.id, companyNameSuggestions.userId))
+    .where(and(inArray(companyNameSuggestions.companyId, companyIds), eq(companyNameSuggestions.status, "pending")))
+    .orderBy(desc(companyNameSuggestions.createdAt));
 }
 
 /** The whole shared catalogue, for the administrator's section. */

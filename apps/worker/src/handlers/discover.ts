@@ -1,6 +1,6 @@
 import { withResourceLease } from "../lease";
-import { schema, enqueueTask, type Db, type Task } from "@christopher/db";
-import { dedupeKeyFor, discovery, priorityFor, type TaskPayloads, type DiscoveryCandidate, type DiscoveryResult } from "@christopher/core";
+import { schema, enqueueTask, noteLogoFailure, storeCompanyLogo, type Db, type Task } from "@christopher/db";
+import { captureCompanyLogo, dedupeKeyFor, discovery, LogoCaptureError, priorityFor, type TaskPayloads, type DiscoveryCandidate, type DiscoveryResult } from "@christopher/core";
 import { and, eq, ne } from "drizzle-orm";
 import { makeFetchContext, makeDiscoveryContext, type WorkerDeps } from "../context";
 import { log } from "../log";
@@ -20,12 +20,7 @@ async function discoverCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
 
   if (payload.logoOnly) {
     if (payload.homepageUrl !== company.homepageUrl) return { skipped: "homepage changed" };
-    const faviconUrl = await discovery.discoverCompanyLogo(company.homepageUrl, makeFetchContext(deps));
-    if (faviconUrl) await deps.db.transaction(async tx => {
-      await deps.assertOwnership?.(tx as unknown as Db);
-      await tx.update(schema.companies).set({ faviconUrl }).where(and(eq(schema.companies.id, company.id), eq(schema.companies.homepageUrl, company.homepageUrl)));
-    });
-    return { faviconUrl };
+    return captureLogo(company, deps);
   }
   // A direct ATS result must not skip branding. The separate task keeps image failures out of scans.
   const logoPayload = { companyId: company.id, logoOnly: true, homepageUrl: company.homepageUrl };
@@ -89,6 +84,46 @@ async function discoverCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
   log.info("discovery finished", { company: company.name, outcome: status, fetches: result.fetches, best: result.best?.method });
   return { outcome: status, candidates: candidates.length, fetches: result.fetches, sourceId: chosenSourceId };
   });
+}
+
+/**
+ * Read this company's logo and store the bytes.
+ *
+ * Every outcome finishes the task `done`, a failure included: the retry policy for a logo is the
+ * backoff written beside the company (an hour, six, a day, …), not the queue's three attempts.
+ * Failing the task would ask again within minutes and give up for good by teatime, which for a
+ * site that is merely down for the afternoon is exactly backwards.
+ */
+async function captureLogo(company: typeof schema.companies.$inferSelect, deps: WorkerDeps): Promise<unknown> {
+  /**
+   * Apply a write only while the homepage is still the one this capture was made from: an
+   * administrator can correct a company's URL while its icon is in flight, and the bytes of the
+   * old site must not land on the new one.
+   */
+  const ifUnchanged = async <T>(write: (tx: Db) => Promise<T>): Promise<{ applied: true; value: T } | { applied: false }> =>
+    deps.db.transaction(async tx => {
+      await deps.assertOwnership?.(tx as unknown as Db);
+      const [current] = await tx.select({ homepageUrl: schema.companies.homepageUrl })
+        .from(schema.companies).where(eq(schema.companies.id, company.id)).limit(1);
+      if (!current || current.homepageUrl !== company.homepageUrl) return { applied: false };
+      return { applied: true, value: await write(tx as unknown as Db) };
+    });
+
+  try {
+    const logo = await captureCompanyLogo(company.homepageUrl, company.domain, makeFetchContext(deps), { previousUrl: company.faviconUrl });
+    const stored = await ifUnchanged(tx => storeCompanyLogo(tx, company.id, logo, deps.now()));
+    if (!stored.applied) return { skipped: "homepage changed" };
+    log.info("logo captured", { company: company.name, source: logo.source, sourceUrl: logo.sourceUrl, bytes: logo.bytes.length, contentType: logo.contentType });
+    return { captured: true, source: logo.source, sourceUrl: logo.sourceUrl, bytes: logo.bytes.length, contentType: logo.contentType };
+  } catch (err) {
+    const error = (err as Error).message;
+    const tried = err instanceof LogoCaptureError ? err.tried : [];
+    const noted = await ifUnchanged(tx => noteLogoFailure(tx, company.id, error, deps.now()));
+    if (!noted.applied) return { skipped: "homepage changed" };
+    const { attempts, nextAttemptAt } = noted.value;
+    log.info("logo capture failed", { company: company.name, error, tried: tried.length, attempts, nextAttemptAt });
+    return { captured: false, error, attempts, nextAttemptAt, tried: tried.length };
+  }
 }
 
 export function serialiseCandidate(candidate: DiscoveryCandidate) {

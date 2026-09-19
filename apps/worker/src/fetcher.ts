@@ -6,7 +6,7 @@
  *  - maps 403 and challenge pages to SourceFetchError("blocked"), 429/503 to "rate_limited"
  *  - counts every outcome per host per day into `http_host_daily`
  */
-import { sha1, SourceFetchError, type FetchContext, type FetchInit, type FetchResponse } from "@christopher/core";
+import { sha1, SourceFetchError, type FetchBytesResponse, type FetchContext, type FetchInit, type FetchResponse } from "@christopher/core";
 import { ats } from "@christopher/core";
 import { addHttpHostDaily, emptyHttpCounters, latencyBucketIndex, type Db, type HttpHostDailyDelta, type HttpVia } from "@christopher/db";
 import { log } from "./log";
@@ -35,6 +35,34 @@ interface RequestOutcome {
 
 /** A reason counter recorded beside the status mix: why a request that arrived was not usable. */
 type HttpReason = "rateLimited" | "blocked" | "robotsDenied";
+
+/** The platform's `Response`, named so the shared request can talk about one without the DOM lib. */
+type HttpResponse = Awaited<ReturnType<typeof fetch>>;
+
+/** One request's counters, filled in as it resolves and recorded once, whatever became of it. */
+interface RequestCounters {
+  status: number | null;
+  bytes: number;
+  failure?: RequestOutcome["failure"];
+}
+
+/** What the shared request hands a body reader once the response and its bytes are in. */
+interface ReadBody {
+  res: HttpResponse;
+  chunks: Uint8Array[];
+  /** Bytes read off the wire. The text path re-counts them after decoding. */
+  size: number;
+  headers: Record<string, string>;
+  /** The final URL after redirects, un-mapped back to the logical host. */
+  finalUrl: string;
+  started: number;
+  originalHost: string;
+  counted: RequestCounters;
+}
+
+const TEXT_ACCEPT = "text/html,application/xhtml+xml,application/json;q=0.9,application/xml;q=0.8,*/*;q=0.7";
+/** An icon fetch says what it is after: some hosts serve an HTML error page to anything else. */
+const BINARY_ACCEPT = "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8";
 
 /**
  * The in-process half of `http_host_daily`: one cell per (UTC day, logical host, path), added to at
@@ -172,6 +200,14 @@ export function hostDelayMs(host: string, defaultMs: number = DEFAULT_HOST_DELAY
 const DEFAULT_BACKOFF_MS = 60_000;
 const MAX_BACKOFF_MS = 3600_000;
 
+/** How long a 429 or a 503 asks us to leave its host alone, bounded at both ends. */
+function retryAfterMs(headers: Record<string, string>): number {
+  const retry = headers["retry-after"];
+  const seconds = Number(retry);
+  const delay = retry ? Number.isFinite(seconds) ? seconds * 1000 : Date.parse(retry) - Date.now() : DEFAULT_BACKOFF_MS;
+  return Math.min(Number.isFinite(delay) && delay > 0 ? delay : DEFAULT_BACKOFF_MS, MAX_BACKOFF_MS);
+}
+
 const CHALLENGE_MARKERS = [/cf-browser-verification/i, /just a moment/i, /attention required!\s*\|\s*cloudflare/i, /captcha/i, /access denied/i, /perimeterx/i, /_incapsula_/i];
 
 export class PoliteFetcher {
@@ -274,7 +310,26 @@ export class PoliteFetcher {
     return a.length >= d.length;
   }
 
-  private async rawFetch(url: string, init: FetchInit = {}): Promise<FetchResponse> {
+  /**
+   * One outbound request, with everything a text body and a binary body share: the host map, the
+   * per-host pacing, the timeout, the size cap, the redirect un-mapping, the traffic counters and
+   * the error mapping. The body arrives as bytes; only the text path decodes it.
+   *
+   * `short` answers before any body is read — the 304 the text path serves from its own cache,
+   * where there is no body to read at all.
+   */
+  private async request<T>(
+    url: string,
+    init: FetchInit,
+    hooks: {
+      /** What this body asks for. `init.headers` still overrides it. */
+      accept?: string;
+      /** Applied after `init.headers`: the conditional request the text path makes. */
+      headers?: Record<string, string>;
+      short?: (res: HttpResponse, started: number, originalHost: string) => T | undefined;
+      body: (read: ReadBody) => T;
+    },
+  ): Promise<T> {
     const { target, originalHost, unmapped } = this.mapUrl(url);
     if (unmapped) {
       // Only reachable under a test host map. Failing here keeps a test hermetic: without it a
@@ -286,31 +341,16 @@ export class PoliteFetcher {
     const timeout = setTimeout(() => controller.abort(), init.timeoutMs ?? this.opts.defaultTimeoutMs ?? 20_000);
     const headers: Record<string, string> = {
       "user-agent": this.opts.userAgent,
-      accept: "text/html,application/xhtml+xml,application/json;q=0.9,application/xml;q=0.8,*/*;q=0.7",
+      accept: hooks.accept ?? TEXT_ACCEPT,
       "accept-language": "en-GB,en;q=0.9",
       ...(init.headers ?? {}),
     };
     if (target !== url) headers["x-forwarded-host"] = originalHost;
-    const cacheKey = JSON.stringify([url, init.headers ?? {}, init.maxBodyBytes ?? null]);
-    const cacheable = (init.method ?? "GET") === "GET" && !init.body;
-    const cached = cacheable ? this.responses.get(cacheKey) : undefined;
-    const usable = cached && Date.now() - cached.at < REVALIDATE_TTL_MS ? cached : undefined;
-    // A large listing is never in the body cache, so without this it is re-downloaded and re-parsed
-    // every day however little it moved. The caller opts in because only it can supply the listing
-    // a 304 does not carry.
-    const wantsLargeRevalidation = cacheable && init.revalidateLargeBody === true && !headers.authorization && !headers.cookie;
-    const storedValidator = wantsLargeRevalidation ? this.validators.get(cacheKey) : undefined;
-    const validator = storedValidator && Date.now() - storedValidator.at < REVALIDATE_TTL_MS ? storedValidator : undefined;
-    if (usable?.response.headers.etag) headers["if-none-match"] = usable.response.headers.etag;
-    else if (usable?.response.headers["last-modified"]) headers["if-modified-since"] = usable.response.headers["last-modified"];
-    else if (validator?.etag) headers["if-none-match"] = validator.etag;
-    else if (validator?.lastModified) headers["if-modified-since"] = validator.lastModified;
+    Object.assign(headers, hooks.headers ?? {});
     const started = Date.now();
     // Filled in as the request resolves and recorded once, in the `finally` below, so that every
     // exit — a 304, a body over the cap, a timeout, a dead socket — lands in the same counters.
-    let status: number | null = null;
-    let bytes = 0;
-    let failure: RequestOutcome["failure"];
+    const counted: RequestCounters = { status: null, bytes: 0 };
     try {
       const res = await fetch(target, {
         method: init.method ?? "GET",
@@ -319,44 +359,29 @@ export class PoliteFetcher {
         redirect: "follow",
         signal: controller.signal,
       });
-      status = res.status;
-      if (res.status === 304 && usable) {
-        log.info("http revalidated", { host: originalHost, durationMs: Date.now() - started, bytes: 0 });
-        // A fresh object: the caller learns nothing was transferred without the cached entry
-        // acquiring the marker for every later reader of it.
-        return { ...usable.response, revalidated: true };
-      }
-      if (res.status === 304 && validator) {
-        log.info("http revalidated", { host: originalHost, durationMs: Date.now() - started, bytes: 0, validatorOnly: true });
-        // Nothing was kept of this body but its hash, so there is nothing to return: the caller
-        // asked for `revalidateLargeBody` precisely because it can produce the listing itself.
-        this.rememberValidator(cacheKey, { ...validator, at: Date.now() });
-        const notModifiedHeaders: Record<string, string> = {};
-        res.headers.forEach((v, k) => (notModifiedHeaders[k] = v));
-        return { status: 304, url, headers: notModifiedHeaders, body: "", revalidated: true, unchanged: true, contentHash: validator.hash };
-      }
+      counted.status = res.status;
+      const short = hooks.short?.(res, started, originalHost);
+      if (short !== undefined) return short;
       // The per-request cap wins: each adapter asks for what its feed needs, and the fetcher-wide
       // option is only the default for callers that ask for nothing. `HARD_MAX_BODY_BYTES` is the
       // ceiling neither can raise.
       const max = Math.min(init.maxBodyBytes ?? this.opts.maxBodyBytes ?? 5_000_000, HARD_MAX_BODY_BYTES);
-      let body = "";
+      const chunks: Uint8Array[] = [];
+      let size = 0;
       if (init.method !== "HEAD") {
         const reader = res.body?.getReader();
-        const chunks: Uint8Array[] = [];
-        let size = 0;
         if (reader) {
           try {
             while (true) {
               const { done, value } = await reader.read();
               if (done) break;
               size += value.byteLength;
-              bytes = size;
-              if (size > max) { await reader.cancel(); failure = "capRejected"; throw new SourceFetchError(`Response exceeds ${max} bytes; refusing truncated content`, "parse"); }
+              counted.bytes = size;
+              if (size > max) { await reader.cancel(); counted.failure = "capRejected"; throw new SourceFetchError(`Response exceeds ${max} bytes; refusing truncated content`, "parse"); }
               chunks.push(value);
             }
           } finally { reader.releaseLock(); }
         }
-        body = Buffer.concat(chunks).toString("utf8");
       }
       const outHeaders: Record<string, string> = {};
       res.headers.forEach((v, k) => (outHeaders[k] = v));
@@ -374,43 +399,107 @@ export class PoliteFetcher {
           finalUrl = url;
         }
       }
-      const response: FetchResponse = { status: res.status, url: finalUrl, headers: outHeaders, body };
-      bytes = Buffer.byteLength(body);
-      if (res.status === 200 && bytes > MAX_CACHED_BODY_BYTES && this.responses.has(cacheKey)) {
-        // The body outgrew the cache. Leaving the old one there would keep sending its validator
-        // for ever, and a 304 against it would hand a caller a listing that is months out of date.
-        this.responseBytes -= Buffer.byteLength(this.responses.get(cacheKey)!.response.body);
-        this.responses.delete(cacheKey);
-      }
-      // Whether a vendor sends validators at all is not something this codebase can assume, so the
-      // hash stands on its own: an identical body still spares the parse and everything after it.
-      if (wantsLargeRevalidation && res.status === 200 && bytes > MAX_CACHED_BODY_BYTES && !/no-store|private/i.test(outHeaders["cache-control"] ?? "")) {
-        const hash = sha1(body);
-        response.contentHash = hash;
-        if (validator?.hash === hash) response.unchanged = true;
-        this.rememberValidator(cacheKey, { etag: outHeaders.etag, lastModified: outHeaders["last-modified"], hash, bytes, at: Date.now() });
-      }
-      if ((init.method ?? "GET") === "GET" && !init.body && res.status === 200 && bytes <= MAX_CACHED_BODY_BYTES && !/no-store|private/i.test(outHeaders["cache-control"] ?? "") && !outHeaders["set-cookie"] && !headers.authorization && !headers.cookie && (outHeaders.etag || outHeaders["last-modified"])) {
-        const old = this.responses.get(cacheKey);
-        if (old) { this.responseBytes -= Buffer.byteLength(old.response.body); this.responses.delete(cacheKey); }
-        this.responses.set(cacheKey, { response, at: Date.now() }); this.responseBytes += bytes;
-        // Map iteration is insertion order, so this evicts the oldest entry first.
-        while (this.responseBytes > MAX_CACHE_BYTES || this.responses.size > MAX_CACHE_ENTRIES) {
-          const key = this.responses.keys().next().value!;
-          this.responseBytes -= Buffer.byteLength(this.responses.get(key)!.response.body); this.responses.delete(key);
-        }
-      }
-      log.info("http fetched", { host: originalHost, status: res.status, durationMs: Date.now() - started, bytes });
-      return response;
+      return hooks.body({ res, chunks, size, headers: outHeaders, finalUrl, started, originalHost, counted });
     } catch (err) {
       if (err instanceof SourceFetchError) throw err;
-      if ((err as Error).name === "AbortError") { failure = "timeouts"; throw new SourceFetchError(`timeout fetching ${url}`, "timeout"); }
-      failure = "networkErrors";
+      if ((err as Error).name === "AbortError") { counted.failure = "timeouts"; throw new SourceFetchError(`timeout fetching ${url}`, "timeout"); }
+      counted.failure = "networkErrors";
       throw new SourceFetchError(`network error fetching ${url}: ${(err as Error).message}`, "network");
     } finally {
       clearTimeout(timeout);
-      this.opts.traffic?.request(originalHost, "http", { status, bytes, durationMs: Date.now() - started, failure });
+      this.opts.traffic?.request(originalHost, "http", { status: counted.status, bytes: counted.bytes, durationMs: Date.now() - started, failure: counted.failure });
     }
+  }
+
+  private async rawFetch(url: string, init: FetchInit = {}): Promise<FetchResponse> {
+    const reqHeaders = init.headers ?? {};
+    const cacheKey = JSON.stringify([url, reqHeaders, init.maxBodyBytes ?? null]);
+    const cacheable = (init.method ?? "GET") === "GET" && !init.body;
+    const cached = cacheable ? this.responses.get(cacheKey) : undefined;
+    const usable = cached && Date.now() - cached.at < REVALIDATE_TTL_MS ? cached : undefined;
+    // A large listing is never in the body cache, so without this it is re-downloaded and re-parsed
+    // every day however little it moved. The caller opts in because only it can supply the listing
+    // a 304 does not carry.
+    const wantsLargeRevalidation = cacheable && init.revalidateLargeBody === true && !reqHeaders.authorization && !reqHeaders.cookie;
+    const storedValidator = wantsLargeRevalidation ? this.validators.get(cacheKey) : undefined;
+    const validator = storedValidator && Date.now() - storedValidator.at < REVALIDATE_TTL_MS ? storedValidator : undefined;
+    const conditional: Record<string, string> = {};
+    if (usable?.response.headers.etag) conditional["if-none-match"] = usable.response.headers.etag;
+    else if (usable?.response.headers["last-modified"]) conditional["if-modified-since"] = usable.response.headers["last-modified"];
+    else if (validator?.etag) conditional["if-none-match"] = validator.etag;
+    else if (validator?.lastModified) conditional["if-modified-since"] = validator.lastModified;
+
+    return this.request<FetchResponse>(url, init, {
+      headers: conditional,
+      short: (res, started, originalHost) => {
+        if (res.status === 304 && usable) {
+          log.info("http revalidated", { host: originalHost, durationMs: Date.now() - started, bytes: 0 });
+          // A fresh object: the caller learns nothing was transferred without the cached entry
+          // acquiring the marker for every later reader of it.
+          return { ...usable.response, revalidated: true };
+        }
+        if (res.status === 304 && validator) {
+          log.info("http revalidated", { host: originalHost, durationMs: Date.now() - started, bytes: 0, validatorOnly: true });
+          // Nothing was kept of this body but its hash, so there is nothing to return: the caller
+          // asked for `revalidateLargeBody` precisely because it can produce the listing itself.
+          this.rememberValidator(cacheKey, { ...validator, at: Date.now() });
+          const notModifiedHeaders: Record<string, string> = {};
+          res.headers.forEach((v, k) => (notModifiedHeaders[k] = v));
+          return { status: 304, url, headers: notModifiedHeaders, body: "", revalidated: true, unchanged: true, contentHash: validator.hash };
+        }
+        return undefined;
+      },
+      body: ({ res, chunks, headers: outHeaders, finalUrl, started, originalHost, counted }) => {
+        const body = Buffer.concat(chunks).toString("utf8");
+        const response: FetchResponse = { status: res.status, url: finalUrl, headers: outHeaders, body };
+        const bytes = Buffer.byteLength(body);
+        counted.bytes = bytes;
+        if (res.status === 200 && bytes > MAX_CACHED_BODY_BYTES && this.responses.has(cacheKey)) {
+          // The body outgrew the cache. Leaving the old one there would keep sending its validator
+          // for ever, and a 304 against it would hand a caller a listing that is months out of date.
+          this.responseBytes -= Buffer.byteLength(this.responses.get(cacheKey)!.response.body);
+          this.responses.delete(cacheKey);
+        }
+        // Whether a vendor sends validators at all is not something this codebase can assume, so the
+        // hash stands on its own: an identical body still spares the parse and everything after it.
+        if (wantsLargeRevalidation && res.status === 200 && bytes > MAX_CACHED_BODY_BYTES && !/no-store|private/i.test(outHeaders["cache-control"] ?? "")) {
+          const hash = sha1(body);
+          response.contentHash = hash;
+          if (validator?.hash === hash) response.unchanged = true;
+          this.rememberValidator(cacheKey, { etag: outHeaders.etag, lastModified: outHeaders["last-modified"], hash, bytes, at: Date.now() });
+        }
+        if ((init.method ?? "GET") === "GET" && !init.body && res.status === 200 && bytes <= MAX_CACHED_BODY_BYTES && !/no-store|private/i.test(outHeaders["cache-control"] ?? "") && !outHeaders["set-cookie"] && !reqHeaders.authorization && !reqHeaders.cookie && (outHeaders.etag || outHeaders["last-modified"])) {
+          const old = this.responses.get(cacheKey);
+          if (old) { this.responseBytes -= Buffer.byteLength(old.response.body); this.responses.delete(cacheKey); }
+          this.responses.set(cacheKey, { response, at: Date.now() }); this.responseBytes += bytes;
+          // Map iteration is insertion order, so this evicts the oldest entry first.
+          while (this.responseBytes > MAX_CACHE_BYTES || this.responses.size > MAX_CACHE_ENTRIES) {
+            const key = this.responses.keys().next().value!;
+            this.responseBytes -= Buffer.byteLength(this.responses.get(key)!.response.body); this.responses.delete(key);
+          }
+        }
+        log.info("http fetched", { host: originalHost, status: res.status, durationMs: Date.now() - started, bytes });
+        return response;
+      },
+    });
+  }
+
+  /**
+   * The same request as `rawFetch`, kept as bytes. No body cache and no validators: an icon is
+   * read once every few months, and what is stored of it is the image itself.
+   */
+  private async rawFetchBytes(url: string, init: FetchInit = {}): Promise<FetchBytesResponse> {
+    return this.request<FetchBytesResponse>(url, init, {
+      accept: BINARY_ACCEPT,
+      body: ({ res, chunks, headers, finalUrl, started, originalHost }) => {
+        const joined = Buffer.concat(chunks);
+        // A view rather than a copy, and a plain Uint8Array rather than a Buffer, so that what a
+        // caller hashes or sniffs is exactly what came off the wire.
+        const bytes = new Uint8Array(joined.buffer, joined.byteOffset, joined.byteLength);
+        log.info("http fetched", { host: originalHost, status: res.status, durationMs: Date.now() - started, bytes: bytes.length, binary: true });
+        return { status: res.status, url: finalUrl, headers, bytes };
+      },
+    });
   }
 
   /** Keep the validators for one large URL, newest last, and drop the oldest past the bound. */
@@ -434,10 +523,7 @@ export class PoliteFetcher {
     const res = await this.rawFetch(url, init);
     const challenge = () => CHALLENGE_MARKERS.some((re) => re.test(res.body.slice(0, 20_000)));
     if (res.status === 429 || res.status === 503) {
-      const retry = res.headers["retry-after"];
-      const seconds = Number(retry);
-      const delay = retry ? Number.isFinite(seconds) ? seconds * 1000 : Date.parse(retry) - Date.now() : DEFAULT_BACKOFF_MS;
-      await this.opts.deferHost?.(u.hostname, Math.min(Number.isFinite(delay) && delay > 0 ? delay : DEFAULT_BACKOFF_MS, MAX_BACKOFF_MS));
+      await this.opts.deferHost?.(u.hostname, retryAfterMs(res.headers));
       // A host serving a challenge under a 503 is protecting itself from us, not pacing us, and
       // no amount of waiting fixes that. Everything else is a back-off: a failed scan that
       // retries on the normal schedule, never a source disabled until someone intervenes.
@@ -460,8 +546,43 @@ export class PoliteFetcher {
     return res;
   }
 
-  asContext(): Pick<FetchContext, "fetchText"> {
-    return { fetchText: (url, init) => this.fetchText(url, init) };
+  /**
+   * A body read as bytes — an icon, an image — under the same politeness as `fetchText`: robots,
+   * the host's pacing, the timeout, the size cap and the same reading of a 429, a 503 or a 403.
+   *
+   * No challenge-marker sniffing: the body is binary, and a challenge page dressed as an image is
+   * caught where it matters, by the caller refusing bytes that are not an image.
+   */
+  async fetchBytes(url: string, init: FetchInit = {}): Promise<FetchBytesResponse> {
+    const u = new URL(url);
+    const isFeedHost = ats.isAtsHost(u.hostname);
+    if (!isFeedHost && this.opts.respectRobots && (await this.opts.respectRobots())) {
+      if (!(await this.robotsAllows(url))) {
+        // No request is made, so this is counted as a denial rather than as traffic.
+        this.opts.traffic?.reason(u.hostname, "http", "robotsDenied");
+        log.info("http robots denied", { host: u.hostname, url });
+        throw new SourceFetchError(`robots.txt disallows ${url}`, "blocked", 999);
+      }
+    }
+    const res = await this.rawFetchBytes(url, init);
+    if (res.status === 429 || res.status === 503) {
+      await this.opts.deferHost?.(u.hostname, retryAfterMs(res.headers));
+      this.opts.traffic?.reason(u.hostname, "http", "rateLimited");
+      throw new SourceFetchError(`rate limited (${res.status}) fetching ${url}`, "rate_limited", res.status);
+    }
+    if (res.status === 403) {
+      this.opts.traffic?.reason(u.hostname, "http", "blocked");
+      throw new SourceFetchError(`blocked (${res.status}) fetching ${url}`, "blocked", res.status);
+    }
+    log.debug("fetch bytes", { url, status: res.status, bytes: res.bytes.length });
+    return res;
+  }
+
+  asContext(): Pick<FetchContext, "fetchText" | "fetchBytes"> {
+    return {
+      fetchText: (url, init) => this.fetchText(url, init),
+      fetchBytes: (url, init) => this.fetchBytes(url, init),
+    };
   }
 
   /** Write the traffic counters now. A no-op without a ledger (tests, the CLI probe). */

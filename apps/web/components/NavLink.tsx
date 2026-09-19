@@ -6,7 +6,8 @@ import type { ReactNode } from "react";
 
 export function NavLink({ href, children }: { href: string; children: ReactNode }) {
   const pathname = usePathname();
-  const active = href === "/" ? pathname === "/" : pathname.startsWith(href) || (href === "/companies" && pathname === "/suggestions") || (href === "/settings" && ["/learning", "/health", "/account"].includes(pathname));
+  // A sidebar entry owns the pages its section tabs reach, so the CV builder keeps Applications lit.
+  const active = href === "/" ? pathname === "/" : pathname.startsWith(href) || (href === "/companies" && pathname === "/suggestions") || (href === "/applications" && pathname.startsWith("/cv")) || (href === "/settings" && ["/learning", "/health", "/account"].includes(pathname));
   return (
     <Link
       href={href}

@@ -6,7 +6,7 @@
  * Requires a database: set TEST_DATABASE_URL (defaults to the local christopher_test database).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import {createDb, schema, enqueueTask, reevaluateGate, subscribeToCompany, type Db, type User} from "@christopher/db";
+import {createDb, readCompanyLogo, schema, enqueueTask, reevaluateGate, subscribeToCompany, type Db, type User} from "@christopher/db";
 import { ensureTestUser } from "./test-users";
 import { runMigrations } from "@christopher/db/migrate";
 import { ats, dedupeKeyFor, displayStatus, liveFor, priorityFor, sha1 } from "@christopher/core";
@@ -23,10 +23,18 @@ import { startTestServer, type RouteTable, type TestServer } from "./test-server
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test";
 const HOSTS = ["www.acme.example", "acme.example", "boards-api.greenhouse.io", "job-boards.greenhouse.io", "www.orbital.example", "orbital.example", "api.smartrecruiters.com", "pager.example"];
 
+/** A real PNG, because the logo capture sniffs the bytes and refuses anything that is not one. */
+function pngBytes(length = 400): Buffer {
+  const bytes = Buffer.alloc(length);
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  for (let i = 8; i < length; i++) bytes[i] = i % 251;
+  return bytes;
+}
+
 /** An Anthropic-style site: homepage -> careers landing -> listing backed by a Greenhouse board. */
 function acmeRoutes(): RouteTable[string] {
   return {
-    "/favicon.png": { body: "test icon", contentType: "image/png" },
+    "/favicon.png": { body: pngBytes(), contentType: "image/png" },
     "/": {
       body: `<!doctype html><html><head><title>Acme Robotics | Building the future</title>
         <meta property="og:site_name" content="Acme Robotics"><link rel="icon" href="/favicon.png"></head>
@@ -231,6 +239,12 @@ describe("end to end", () => {
     await queue.drain();
     const [updated] = await db.select().from(schema.companies).where(eq(schema.companies.id, company!.id));
     expect(updated!.faviconUrl).toBe("https://www.acme.example/favicon.png");
+    // The image itself is stored, not just its address: every page then serves the same bytes.
+    const stored = await readCompanyLogo(db, company!.id);
+    expect(stored?.contentType).toBe("image/png");
+    expect(stored?.bytes).toEqual(pngBytes());
+    expect(updated!.logoFetchedAt).toBeInstanceOf(Date);
+    expect(updated!.logoAttempts).toBe(0);
     expect(await db.select().from(schema.careerSources)).toHaveLength(0);
     expect(await db.select().from(schema.discoveryRuns)).toHaveLength(0);
     expect(await db.select().from(schema.jobs)).toHaveLength(0);

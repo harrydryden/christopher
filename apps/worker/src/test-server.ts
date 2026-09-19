@@ -6,7 +6,8 @@ import http from "node:http";
 
 export interface Route {
   status?: number;
-  body: string | object;
+  /** A string is served as HTML, an object as JSON, and a Buffer byte for byte (an icon, an image). */
+  body: string | Buffer | object;
   contentType?: string;
   headers?: Record<string, string>;
 }
@@ -41,8 +42,9 @@ export async function startTestServer(routes: RouteTable, hosts: string[]): Prom
         return;
       }
       const route = typeof entry === "function" ? entry(req, body) : entry;
-      const payload = typeof route.body === "string" ? route.body : JSON.stringify(route.body);
-      res.writeHead(route.status ?? 200, { ...route.headers, "content-type": route.contentType ?? (typeof route.body === "string" ? "text/html" : "application/json") });
+      const binary = Buffer.isBuffer(route.body);
+      const payload = binary || typeof route.body === "string" ? (route.body as string | Buffer) : JSON.stringify(route.body);
+      res.writeHead(route.status ?? 200, { ...route.headers, "content-type": route.contentType ?? (binary ? "application/octet-stream" : typeof route.body === "string" ? "text/html" : "application/json") });
       res.end(payload);
     });
   });

@@ -13,6 +13,8 @@ export interface GateScope {
 interface GateRow extends Record<string, unknown> {
   id: string;
   title: string;
+  /** The account that added this posting by pasting its URL, when one did. */
+  addedBy: string | null;
   department: string | null;
   descriptionText: string | null;
   location: string | null;
@@ -32,7 +34,8 @@ interface GateRow extends Record<string, unknown> {
 /**
  * Re-run one account's keyword and location gate over the shared postings of the companies it
  * follows. A posting that passes gets a `user_jobs` row if it had none (store matching roles only,
- * per account); a row that stops passing is archived unless it carries a decision or a saved CV.
+ * per account); a row that stops passing is archived unless it carries a decision or a saved CV,
+ * or the account added the posting itself by pasting its URL.
  * Shared by synchronous settings saves, new subscriptions and the background `reevaluate_gate` task.
  */
 export async function reevaluateGate(db: Db, userId: string, settings: AppSettings, now = new Date(), scope: GateScope = {}) {
@@ -47,7 +50,7 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
   let queuedForScoring = 0;
   while (true) {
     const page = await db.execute<GateRow>(sql`
-      select j.id, j.title, j.department, ${matchesDescription ? sql`j.description_text` : sql`null::text`} as "descriptionText", j.location, j.locations, j.remote, j.status,
+      select j.id, j.title, j.added_by as "addedBy", j.department, ${matchesDescription ? sql`j.description_text` : sql`null::text`} as "descriptionText", j.location, j.locations, j.remote, j.status,
         (uj.job_id is not null) as viewed, uj.keyword_matched as "keywordMatched", uj.keyword_terms as "keywordTerms",
         uj.excluded, uj.location_ok as "locationOk", uj.in_table as "inTable", uj.hidden, uj.fit_score as "fitScore"
       from jobs j
@@ -65,18 +68,22 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
     const scoring: Array<typeof schema.tasks.$inferInsert> = [];
     for (const job of rows) {
       const gate = evaluateGate({ title: job.title, department: job.department, description: job.descriptionText, location: job.location, locations: job.locations, remote: job.remote }, settings.gate);
-      const values = { keywordMatched: gate.keywordMatched, keywordTerms: gate.keywordTerms, excluded: gate.excluded, locationOk: gate.locationOk, inTable: gate.inTable, hidden: false };
+      // A role this account added by pasting its URL stays in their table whatever the gate says:
+      // they asked for that one by name. The same exemption `archiveNonMatches` already makes for
+      // a role they decided on or wrote a CV for — work the person did on that role.
+      const inTable = gate.inTable || job.addedBy === userId;
+      const values = { keywordMatched: gate.keywordMatched, keywordTerms: gate.keywordTerms, excluded: gate.excluded, locationOk: gate.locationOk, inTable, hidden: false };
       if (job.viewed) {
         if (Object.entries(values).some(([k, v]) => JSON.stringify(v) !== JSON.stringify(job[k as keyof GateRow]))) {
           updates.push({ jobId: job.id, ...values });
           changed++;
         }
-      } else if (gate.inTable) {
+      } else if (inTable) {
         // The scan had already seen this posting: new to this account, not a new vacancy.
         inserts.push({ userId, jobId: job.id, ...values, seeded: true, createdAt: now, updatedAt: now });
         created++;
       } else continue;
-      if (gate.inTable && job.fitScore === null && job.status === "open") {
+      if (inTable && job.fitScore === null && job.status === "open") {
         const payload = { userId, jobId: job.id };
         scoring.push({ type: "score_job", payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") });
       }

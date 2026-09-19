@@ -8,11 +8,12 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { careerSources, companies, companySubscriptions, discoveryRuns, jobs, tasks, SOURCE_TYPES, type CompanySubscription } from "@christopher/db/schema";
-import { discovery, ensureHttpUrl, extractDomain } from "@christopher/core";
+import { discovery, ensureHttpUrl, extractDomain, normalisePostingUrl } from "@christopher/core";
+import { applySuggestedName, normaliseCompanyName, upsertNameSuggestion } from "@/lib/company-names";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { getSettingsFor } from "@/lib/settings";
-import { UserFacingError, zUrlString, zUuid, type ActionResult } from "@/lib/validation";
+import { actionError, fail, UserFacingError, zUrlString, zUuid, type ActionResult } from "@/lib/validation";
 
 const CompanyStatusSchema = z.enum(["active", "paused", "archived"]);
 
@@ -164,17 +165,74 @@ export async function rediscoverCompany(companyId: string): Promise<void> {
   revalidatePath(`/companies/${id}`);
 }
 
-/** Notes are the follower's own. The shared name and website are edited in the administrator's catalogue. */
-export async function updateCompanyDetails(companyId: string, _previous: ActionResult, formData: FormData): Promise<ActionResult> {
-  const user = await requireUser();
+/** The notepad's text. Notes are the follower's own; the shared name is an administrator's. */
+export async function saveCompanyNotes(companyId: string, notes: string): Promise<ActionResult> {
+  try {
+    const user = await requireUser();
+    const id = zUuid().parse(companyId);
+    await requireFollowed(user.id, id);
+    const text = String(notes ?? "");
+    // Long enough for years of notes on one company, short enough that nothing can be parked here.
+    if (text.length > 20_000) return fail("These notes are too long. Keep them under 20,000 characters.");
+    await db().update(companySubscriptions).set({ notes: text.trim() === "" ? null : text })
+      .where(and(eq(companySubscriptions.userId, user.id), eq(companySubscriptions.companyId, id)));
+    revalidatePath(`/companies/${id}`);
+    revalidatePath("/companies");
+    return { ok: true };
+  } catch (error) {
+    return actionError(error, "Could not save your notes.", "save_company_notes_failed");
+  }
+}
+
+/**
+ * One posting a follower pasted the URL of. The worker fetches and extracts it; the row it stores
+ * is shared like any other, and this account gets a view of it whatever its gate says — a role you
+ * went and found is one you meant to see. The URL is canonicalised first, so the same posting
+ * pasted twice, from a newsletter and from the board, collapses onto one dedupe key.
+ */
+export async function importPosting(companyId: string, formData: FormData): Promise<void> {
+  const user = await requireVerifiedUser();
   const id = zUuid().parse(companyId);
   await requireFollowed(user.id, id);
-  const notes = String(formData.get("notes") ?? "");
-  await db().update(companySubscriptions).set({ notes: notes.trim() === "" ? null : notes })
-    .where(and(eq(companySubscriptions.userId, user.id), eq(companySubscriptions.companyId, id)));
+  const url = normalisePostingUrl(zUrlString().parse(String(formData.get("url") ?? "")));
+  await enqueue("import_posting", { userId: user.id, companyId: id, url });
   revalidatePath(`/companies/${id}`);
-  revalidatePath("/companies");
-  return { ok: true };
+}
+
+/**
+ * Propose a name for a shared company. A member's proposal waits for an administrator; an
+ * administrator proposing one is simply renaming it, so it is applied on the spot and recorded
+ * as resolved by them.
+ */
+export async function suggestCompanyName(companyId: string, _previous: ActionResult, formData: FormData): Promise<ActionResult> {
+  try {
+    const user = await requireUser();
+    const id = zUuid().parse(companyId);
+    await requireFollowed(user.id, id);
+    const name = normaliseCompanyName(String(formData.get("name") ?? ""));
+    if (!name) return fail("Enter the company's name.");
+    const applied = await db().transaction(async tx => {
+      const suggestionId = await upsertNameSuggestion(tx, id, user.id, name);
+      return user.role === "admin" ? await applySuggestedName(tx, suggestionId, user.id) : null;
+    });
+    revalidatePath(`/companies/${id}`);
+    revalidatePath("/companies");
+    revalidatePath("/admin/catalogue");
+    return applied ? { ok: true, message: `Renamed to «${applied.name}».` } : { ok: true, message: "An administrator will review your suggestion." };
+  } catch (error) {
+    return actionError(error, "Could not save your suggestion.", "suggest_company_name_failed");
+  }
+}
+
+/** Capture this company's logo again: the same shared task the daily sweep queues. */
+export async function refreshCompanyLogo(companyId: string): Promise<void> {
+  const user = await requireVerifiedUser();
+  const id = zUuid().parse(companyId);
+  await requireFollowed(user.id, id);
+  const [company] = await db().select({ homepageUrl: companies.homepageUrl }).from(companies).where(eq(companies.id, id)).limit(1);
+  if (!company) return;
+  await enqueue("discover", { companyId: id, logoOnly: true, homepageUrl: company.homepageUrl });
+  revalidatePath(`/companies/${id}`);
 }
 
 async function sourceCompanyId(sourceId: string): Promise<string | null> {

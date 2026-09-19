@@ -25,6 +25,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
 import { recordApplication, setRoleStage, updateApplication } from "./applications";
+import { decide } from "./decisions";
 import { finaliseCvDraft, requestCv, saveCvLibrary } from "./cv";
 import { GET as cvRedirect } from "@/app/(app)/cv/route";
 
@@ -125,6 +126,24 @@ it("records a skip decision when a role is withdrawn, so it leaves the shortlist
   expect(active.map((row) => [row.decision, row.reason])).toEqual([["skip", "Withdrawn from application"]]);
   const [row] = await applicationsOf();
   expect(row!.status).toBe("withdrawn");
+});
+
+it("withdraws a live application when the role is dismissed from Roles, and leaves an outcome alone", async () => {
+  const { job } = await fixture();
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "interview", appliedOn: "2026-09-03", notes: "" }))).toEqual({ ok: true });
+  expect(await decide(job.id, "skip", "Not for me after all")).toEqual({ ok: true });
+  const [live] = await applicationsOf();
+  expect(live!.status).toBe("withdrawn");
+  expect(live!.history.map((entry) => entry.status)).toEqual(["interview", "withdrawn"]);
+  expect(live!.history.at(-1)!.at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+
+  // An outcome already reached is history: dismissing the role afterwards does not rewrite it.
+  await database.update(schema.applications).set({ status: "accepted" }).where(eq(schema.applications.id, live!.id));
+  expect(await decide(job.id, "apply", "")).toEqual({ ok: true });
+  expect(await decide(job.id, "skip", "Changed my mind")).toEqual({ ok: true });
+  const [settled] = await applicationsOf();
+  expect(settled!.status).toBe("accepted");
+  expect(settled!.history).toHaveLength(2);
 });
 
 it("upgrades the role's existing application when the submitted CV is recorded, rather than adding one", async () => {

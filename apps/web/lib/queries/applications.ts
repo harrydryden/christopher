@@ -13,7 +13,7 @@
  * Both sides are merged, counted and paged in JS, like `fetchRolePage` does for the roles table:
  * the set is one account's pursued roles, and the columns read are small.
  */
-import { and, desc, eq, isNotNull, isNull, ne, sql, type AnyColumn } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, ne, or, sql, type AnyColumn } from "drizzle-orm";
 import { QueryBuilder } from "drizzle-orm/pg-core";
 import {
   applications,
@@ -199,7 +199,14 @@ async function roleRows(userId: string): Promise<PipelineRow[]> {
     // beyond the stage. The PDF is asked about, never read: the bytes belong to the download route.
     .leftJoin(applications, eq(applications.id, latest.id))
     .leftJoin(currentCv, eq(currentCv.jobId, jobs.id))
-    .where(and(eq(userJobs.userId, userId), ne(stage, "matched")));
+    // A role merely passed on from Roles was never pursued and has no business here; a dismissed
+    // role is listed only when something was done about it — an application row (withdrawn, or
+    // dismissed after applying) or a CV, archived or not.
+    .where(and(
+      eq(userJobs.userId, userId),
+      ne(stage, "matched"),
+      or(ne(stage, "dismissed"), isNotNull(latest.id), sql`exists (select 1 from ${cvDrafts} pursued where pursued.user_id = ${userId} and pursued.job_id = ${jobs.id})`),
+    ));
 
   return rows.map((row) => {
     const application: PipelineApplication | null = row.applicationId

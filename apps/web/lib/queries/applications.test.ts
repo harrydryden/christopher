@@ -97,14 +97,23 @@ it("reads one row per pursued role, at the stage the decision, the CV and the ap
   expect(inProcess.rows[0]!.application!.history).toHaveLength(1);
 });
 
-it("keeps a dismissed role out of Active and shows it under Closed", async () => {
+it("lists a dismissed role under Closed only when it was pursued, never one merely passed on", async () => {
   const { job } = await role();
   await shortlist(job.id, "skip");
+  // Passed on from Roles, nothing else: not an application, so not here at all.
+  for (const filter of ["active", "closed", "all"] as const) expect((await listPipeline(user.id, { filter })).rows).toHaveLength(0);
+  expect((await listPipeline(user.id, { filter: "closed" })).counts).toEqual({ active: 0, closed: 0, all: 0 });
+  // Withdrawn after applying: dismissed, and a closed application.
+  await record(job.id, "withdrawn");
   expect((await listPipeline(user.id)).rows).toHaveLength(0);
   const closed = await listPipeline(user.id, { filter: "closed" });
   expect(closed.rows.map((row) => row.stage)).toEqual(["dismissed"]);
   expect(closed.counts).toEqual({ active: 0, closed: 1, all: 1 });
-  expect((await listPipeline(user.id, { filter: "all" })).rows).toHaveLength(1);
+  // A CV alone is also a pursuit: dismissed after building one still shows as closed.
+  const { job: other } = await role("Head of Ops");
+  await shortlist(other.id, "skip");
+  await buildCv(other.id, { archivedAt: new Date() });
+  expect((await listPipeline(user.id, { filter: "closed" })).rows.map((row) => row.jobId).sort()).toEqual([job.id, other.id].sort());
 });
 
 it("gathers records with no posting behind them into one row per company and role", async () => {

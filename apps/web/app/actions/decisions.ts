@@ -97,6 +97,7 @@ export async function decide(jobId: string, decision: "apply" | "skip" | null, r
         payload: { decision: input.decision, reason: trimmedReason },
       });
       if (input.decision === "apply") await enqueue("score_job", { userId: user.id, jobId: input.jobId }, tx);
+      if (input.decision === "skip") await withdrawLiveApplications(tx, user.id, [input.jobId]);
       if (decisionId && trimmedReason) await enqueue("tag_reason", { decisionId }, tx);
       await enqueue("synthesize_profile", { userId: user.id, force: false }, tx);
       await enqueue("suggest_filters", { userId: user.id }, tx);
@@ -248,6 +249,7 @@ export async function decideRoles(jobIds: string[], decision: "apply" | "skip" |
         where v.user_id = ${user.id}::uuid and v.job_id in (${idList})`);
 
       if (input.decision === "apply") await enqueueMany("score_job", ids.map(jobId => ({ userId: user.id, jobId })), tx);
+      if (input.decision === "skip") await withdrawLiveApplications(tx, user.id, ids);
       if (trimmedReason) await enqueueMany("tag_reason", insertedRows.map(row => ({ decisionId: row.id })), tx);
       await enqueue("synthesize_profile", { userId: user.id, force: false }, tx);
       await enqueue("suggest_filters", { userId: user.id }, tx);
@@ -258,4 +260,23 @@ export async function decideRoles(jobIds: string[], decision: "apply" | "skip" |
 
   revalidatePath("/", "layout");
   return ok();
+}
+
+/**
+ * Dismissing a role is also the end of any application still open for it, the mirror of
+ * Withdrawn on the applications table recording a skip: the two pages must not disagree about a
+ * role the person has passed on. Only the newest application of each role moves, only while it
+ * is live — an accepted or rejected outcome is history, and stands whatever is decided later.
+ */
+async function withdrawLiveApplications(tx: { execute: (query: ReturnType<typeof sql>) => Promise<unknown> }, userId: string, jobIds: string[]): Promise<void> {
+  if (!jobIds.length) return;
+  const idList = sql.join(jobIds.map(id => sql`${id}::uuid`), sql`, `);
+  await tx.execute(sql`update applications set status = 'withdrawn',
+      history = history || jsonb_build_array(jsonb_build_object('status', 'withdrawn',
+        'at', to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'notes', 'Dismissed from Roles'))
+    where id in (
+      select distinct on (job_id) id from applications
+      where user_id = ${userId}::uuid and job_id in (${idList})
+      order by job_id, created_at desc, id desc)
+      and status not in ('accepted', 'rejected', 'withdrawn')`);
 }

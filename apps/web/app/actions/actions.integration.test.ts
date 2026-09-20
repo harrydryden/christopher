@@ -98,7 +98,7 @@ import {
   refreshCompany,
 } from "./companies";
 import { removeCatalogueCompany, saveCatalogueCompany } from "./admin";
-import { listAccounts, resetAccountAiSpend, setAccountAiBudget } from "./account";
+import { listAccounts, resetAccountAiSpend, setAccountAiBudget, setUserRole } from "./account";
 import { accountAiBudgets } from "@/lib/queries/accounts";
 
 beforeAll(async () => {
@@ -1976,6 +1976,19 @@ describe("administering accounts", () => {
     expect(await stored(member.id, "aiBudgetUsd")).toBe(40);
     session = undefined;
     await expect(setAccountAiBudget(member.id, budgetForm("60"))).rejects.toThrow("Unauthorised");
+  });
+
+  it("serialises administrator demotions so concurrent requests cannot remove every administrator", async () => {
+    const otherAdmin = await ensureTestUser(database, "other-admin@example.com", "admin");
+    const outcomes = await Promise.allSettled([
+      setUserRole(user.id, "member"),
+      setUserRole(otherAdmin.id, "member"),
+    ]);
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(1);
+    const remaining = await database.select({ id: schema.users.id }).from(schema.users)
+      .where(and(eq(schema.users.role, "admin"), sql`${schema.users.claimedAt} is not null`));
+    expect(remaining).toHaveLength(1);
   });
 
   it("lets any account set its own monthly AI budget, within bounds", async () => {

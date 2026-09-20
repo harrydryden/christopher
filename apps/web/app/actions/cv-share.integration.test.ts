@@ -38,6 +38,7 @@ import { sharedCvByToken, getOwnCvSharing } from "@/lib/queries/cv-shares";
 import { cvEvaluationRows } from "@/lib/cv-evaluation";
 import { CV_PROFILE_ID, cvSectionBlockId } from "@/lib/cv-content-links";
 import {
+  CV_SHARE_COMMENT_REQUEST_MAX_BYTES,
   CV_SHARE_GONE_SENTENCE,
   CV_SHARE_BUSY_SENTENCE,
   CV_SHARE_THANKS_SENTENCE,
@@ -256,6 +257,39 @@ it("refuses a note on a read-only link, on a block this CV does not have, and on
   expect(await ended.text()).toBe(CV_SHARE_GONE_SENTENCE);
 
   expect(await database.select().from(schema.cvShareComments)).toEqual([]);
+});
+
+it("refuses an oversized public comment before parsing its multipart body", async () => {
+  const response = await postComment(
+    new Request("https://christopher.test/share/AAAAAAAAAAAAAAAAAAAAAA/comments", {
+      method: "POST",
+      body: "not parsed",
+      headers: { "content-length": String(CV_SHARE_COMMENT_REQUEST_MAX_BYTES + 1) },
+    }),
+    { params: Promise.resolve({ token: "AAAAAAAAAAAAAAAAAAAAAA" }) },
+  );
+  expect(response.status).toBe(413);
+  expect(await response.text()).toMatch(/too large/i);
+
+  const headerless = await postComment(
+    new Request("https://christopher.test/share/AAAAAAAAAAAAAAAAAAAAAA/comments", {
+      method: "POST",
+      body: "x".repeat(CV_SHARE_COMMENT_REQUEST_MAX_BYTES + 1),
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+    }),
+    { params: Promise.resolve({ token: "AAAAAAAAAAAAAAAAAAAAAA" }) },
+  );
+  expect(headerless.status).toBe(413);
+
+  const malformed = await postComment(
+    new Request("https://christopher.test/share/AAAAAAAAAAAAAAAAAAAAAA/comments", {
+      method: "POST",
+      body: "not multipart",
+      headers: { "content-type": "multipart/form-data; boundary=missing" },
+    }),
+    { params: Promise.resolve({ token: "AAAAAAAAAAAAAAAAAAAAAA" }) },
+  );
+  expect(malformed.status).toBe(400);
 });
 
 it("stops answering once the throttle is reached, for reading and for writing", async () => {

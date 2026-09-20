@@ -96,10 +96,12 @@ Set these on the service:
 | `ANTHROPIC_API_KEY` | your key. Without it, scanning still works and scoring is skipped |
 | `SCRAPER_CONTACT_EMAIL` | an address you read; it goes in the user agent |
 | `TZ` | e.g. `Europe/London` |
-| `WORKER_CONCURRENCY` | `6` — six task slots: three for work someone is waiting for (CV builds, discovery, re-tagging), two for the daily scan, one for background jobs, and every slot takes from the rest of the queue when its own lane is empty. The database pool follows it, at `2 × concurrency + 4` connections (16 here), so raise it only as far as your Postgres instance's connection limit allows |
+| `WORKER_CONCURRENCY` | `3` — the supported value for the 512 MB Starter instance shared with Chromium. It gives a database pool of `2 × concurrency + 4` = 10 connections. Six slots caused an observed ten-hour out-of-memory restart loop on a 41 MB listing; use six only after increasing the instance size and proving memory and database headroom under a representative soak |
 
-The worker runs migrations on boot, so a redeploy is always safe. Check `/healthz` returns
-`{"ok":true,…}` and the logs show `worker starting`.
+The worker runs migrations on boot under an advisory lock. That makes concurrent migration attempts
+safe; it does not by itself prove that an older release can run against every newer schema. Follow
+the rollout and recovery checklist below. Check `/healthz` returns `{"ok":true,…}` and the logs show
+`worker starting`.
 
 ### The interface
 
@@ -326,6 +328,79 @@ one interface, a table queried by a page is less to run and easier to reason abo
 target. Product analytics (PostHog or similar) and an error tracker (Sentry or similar) are
 separate, later additions: they answer what people do and which exceptions are thrown, which
 neither of these ledgers claims to.
+
+## Production rollout and recovery checklist
+
+Use this for every production release. Record the release commit, operator, start/end time and a
+link to the evidence. Provider dashboard configuration is not proven by files in this repository:
+capture the effective Render, Vercel and PostgreSQL settings during the rollout.
+
+### Before release
+
+- [ ] Name the release operator and the operational alert owner. Record a second contact for times
+  when the owner is unavailable.
+- [ ] Have the service owner supply the required recovery point objective (**RPO**) and recovery
+  time objective (**RTO**). Do not invent them from the provider plan.
+- [ ] In Render, confirm the worker plan, region, `/healthz` path, database link, auto-deploy setting,
+  `WORKER_CONCURRENCY=3`, timezone and required secrets. Compare them with `render.yaml`; resolve any
+  drift deliberately.
+- [ ] In Vercel, confirm the production branch, region, root directory, database URL, session secret,
+  application URL and any Google, Resend, cron or newsletter credentials in use.
+- [ ] In PostgreSQL, confirm the plan's connection limit, storage headroom, backup/PITR settings,
+  retention and restore destination. **These provider settings and their adequacy are unverified
+  until an operator records them.**
+- [ ] Review every migration since the deployed commit. State whether it is backwards-compatible
+  with the previous web and worker releases. If it is not, write the roll-forward steps and the
+  exact point after which application rollback is unsafe.
+- [ ] Confirm CI is green for the exact commit. Take a pre-release backup or provider restore point
+  consistent with the supplied RPO.
+
+### Roll out
+
+- [ ] Deploy the worker and web in the order allowed by the migration review. Do not infer web
+  success from the worker release check: verify both deployed commit identities separately.
+- [ ] Confirm `/healthz` names the intended commit, three slots, browser availability and expected AI
+  configuration; confirm Operations shows a healthy worker without a restart loop.
+- [ ] Sign in through the production origin and exercise the minimum journey: read roles and a
+  company, enqueue one safe task, observe it leave the queue, and confirm Health/Operations records
+  the result. Use a designated test account and fixture company so the action is reversible.
+- [ ] Check database connections, worker heap/RSS, oldest ready task, failed/retrying tasks and
+  overdue companies. Keep the release under observation through at least one representative
+  background-task burst.
+
+### Stop, roll back or roll forward
+
+- [ ] Stop the rollout for repeated worker restarts, database connection exhaustion, rising queue age,
+  authentication failure, widespread page errors, incorrect cross-account data, lost tasks or any
+  scan that incorrectly closes roles.
+- [ ] If the schema remains compatible, redeploy the last known-good worker and web commits, then
+  verify both commit identities and the minimum journey above.
+- [ ] If a migration is not backwards-compatible, do not put old application code against it. Apply
+  the documented forward fix. Restore the database only when the release owner accepts the data loss
+  bounded by the supplied RPO.
+- [ ] After recovery, verify task leases/retries, budget holds, role open/closed state and account
+  isolation before reopening ordinary use. Preserve incident evidence before retention cleanup.
+
+### Backup restoration drill
+
+- [ ] Restore a provider backup into an isolated database; never test restoration over production.
+- [ ] Record the backup timestamp, achieved RPO, restore start/end time and achieved RTO.
+- [ ] Point an isolated web/worker pair at the restored database, apply only the migration plan being
+  tested, and run authenticated reads plus one reversible queue journey.
+- [ ] Check representative row counts and relationships for accounts, subscriptions, jobs,
+  `user_jobs`, decisions, CV libraries/drafts, applications and queued/running tasks.
+- [ ] Destroy the isolated copy according to the provider's data-handling process after evidence is
+  retained. **No completed recovery drill is evidenced in this repository yet.**
+
+### Alert ownership
+
+There is no external alerting stack in this repository. Before unattended production use, the named
+owner must either configure provider/external alerts or adopt a staffed inspection schedule. At a
+minimum, cover: worker stopped for over two minutes, two or more crash recoveries in an hour, heap at
+or above 85%, oldest ready task beyond its service target, overdue daily scans, failed tasks,
+database storage/connections near the provider limit, and unexpected AI spend. Record the delivery
+channel, primary/backup owner, acknowledgement target and escalation action for each signal. An
+Admin › Operations page that nobody is assigned to inspect is evidence, not an alert.
 
 ## When something is wrong
 

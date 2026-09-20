@@ -18,7 +18,8 @@
     "db:migrate": "pnpm --filter @christopher/db migrate",
     "smoke:web": "node scripts/smoke-web.mjs",
     "seed:demo": "pnpm --filter @christopher/worker exec tsx src/seed-demo.ts",
-    "benchmark:scale": "pnpm --filter @christopher/worker exec tsx src/benchmark-scale.ts"
+    "benchmark:scale": "pnpm --filter @christopher/worker exec tsx src/benchmark-scale.ts",
+    "benchmark:users": "node scripts/benchmark-users.mjs"
   },
   "devDependencies": {
     "@types/node": "latest",

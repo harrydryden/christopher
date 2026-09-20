@@ -1,0 +1,24 @@
+{
+  "scope": "Disposable local PostgreSQL 16 logical backup and restore; does not verify managed production backup settings, retention, encryption, RPO or RTO.",
+  "elapsedSeconds": 2.42,
+  "source": {
+    "users": 100,
+    "jobs": 1000,
+    "user_jobs": 100000,
+    "subscriptions": 2000,
+    "sessions": 100,
+    "constraints": 105,
+    "orphan_views": 0
+  },
+  "restored": {
+    "users": 100,
+    "jobs": 1000,
+    "user_jobs": 100000,
+    "subscriptions": 2000,
+    "sessions": 100,
+    "constraints": 105,
+    "orphan_views": 0
+  },
+  "passed": true,
+  "restoredApplicationSmoke": "Passed authenticated route checks and Chromium CV/Library/applications/share workflow on the restored local database."
+}

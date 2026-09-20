@@ -14,9 +14,10 @@
 import { NextResponse } from "next/server";
 import { addCvShareComment, CvShareClosedError } from "@christopher/db";
 import { db } from "@/lib/db";
-import { isRateLimited, LIMITS, recordAttempt } from "@/lib/rate-limit";
+import { consumeRateLimit, LIMITS } from "@/lib/rate-limit";
 import {
   CV_SHARE_COMMENT_BUSY_SENTENCE,
+  CV_SHARE_COMMENT_REQUEST_MAX_BYTES,
   CV_SHARE_GONE_SENTENCE,
   cvShareCommentKeys,
   cvShareCommentProblem,
@@ -55,21 +56,58 @@ function plain(sentence: string, status: number): NextResponse {
   });
 }
 
+/** Read a public multipart request with a real byte cap, including chunked or dishonest bodies. */
+async function boundedFormData(request: Request): Promise<FormData | NextResponse> {
+  const stated = request.headers.get("content-length");
+  if (stated !== null) {
+    const bytes = Number(stated);
+    if (!Number.isSafeInteger(bytes) || bytes < 0) return plain("That note could not be read.", 400);
+    if (bytes > CV_SHARE_COMMENT_REQUEST_MAX_BYTES) return plain("That note is too large to send.", 413);
+  }
+  const reader = request.body?.getReader();
+  if (!reader) return plain("That note could not be read.", 400);
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > CV_SHARE_COMMENT_REQUEST_MAX_BYTES) {
+        await reader.cancel();
+        return plain("That note is too large to send.", 413);
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return plain("That note could not be read.", 400);
+  } finally {
+    reader.releaseLock();
+  }
+  const contentType = request.headers.get("content-type");
+  if (!contentType) return plain("That note could not be read.", 400);
+  try {
+    return await new Response(Buffer.concat(chunks), { headers: { "content-type": contentType } }).formData();
+  } catch {
+    return plain("That note could not be read.", 400);
+  }
+}
+
 export async function POST(request: Request, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   if (!token || !isCvShareToken(token)) return plain(CV_SHARE_GONE_SENTENCE, 404);
 
+  const parsed = await boundedFormData(request);
+  if (parsed instanceof NextResponse) return parsed;
+
   const keys = cvShareCommentKeys(hashCvShareToken(token), shareClientAddress(request.headers));
-  for (const key of keys) {
-    if (await isRateLimited(key, LIMITS.shareComment)) return plain(CV_SHARE_COMMENT_BUSY_SENTENCE, 429);
-  }
-  for (const key of keys) await recordAttempt(key);
+  if (!(await consumeRateLimit(keys, LIMITS.shareComment))) return plain(CV_SHARE_COMMENT_BUSY_SENTENCE, 429);
 
   const shared = await sharedCvByToken(token);
   if (!shared) return plain(CV_SHARE_GONE_SENTENCE, 404);
   if (!shared.allowComments) return back(token, { error: "comments_off" });
 
-  const form = await request.formData();
+  const form = parsed;
   const anchor = String(form.get("anchor") ?? "");
   const authorName = String(form.get("authorName") ?? "");
   const body = String(form.get("body") ?? "");

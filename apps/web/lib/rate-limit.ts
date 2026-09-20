@@ -2,7 +2,7 @@
  * Sign-in throttling backed by the database, so every instance of the interface shares one view
  * of the attempts. Keys are `login:email:<address>`, `login:ip:<address>` and so on.
  */
-import { and, eq, gt, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, sql } from "drizzle-orm";
 import { loginAttempts } from "@christopher/db/schema";
 import { db } from "./db";
 
@@ -40,6 +40,50 @@ export async function isRateLimited(key: string, limit: RateLimit, now: Date = n
 
 export async function recordAttempt(key: string, now: Date = new Date()): Promise<void> {
   await db().insert(loginAttempts).values({ key, at: now });
+}
+
+export interface RateLimitReservation {
+  id: string;
+  key: string;
+}
+
+/**
+ * Atomically reserve capacity against keys that may have different policies. The returned row ids
+ * let a caller release this request alone when it turns out not to be a countable failure.
+ */
+export async function reserveRateLimits(
+  entries: Array<{ key: string; limit: RateLimit }>,
+  now: Date = new Date(),
+): Promise<RateLimitReservation[] | null> {
+  const byKey = new Map<string, RateLimit>();
+  for (const { key, limit } of entries) if (!byKey.has(key)) byKey.set(key, limit);
+  const ordered = [...byKey].sort(([a], [b]) => a.localeCompare(b));
+  if (!ordered.length) return [];
+  return db().transaction(async tx => {
+    // Stable ordering prevents deadlocks when a link and caller share overlapping limits.
+    // Transaction locks also work when no attempt row exists yet.
+    for (const [key] of ordered) {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 731409))`);
+    }
+    for (const [key, limit] of ordered) {
+      const [row] = await tx.select({ n: sql<number>`count(*)::int` }).from(loginAttempts)
+        .where(and(eq(loginAttempts.key, key), gt(loginAttempts.at, new Date(now.getTime() - limit.windowMs))));
+      if ((row?.n ?? 0) >= limit.max) return null;
+    }
+    return tx.insert(loginAttempts).values(ordered.map(([key]) => ({ key, at: now })))
+      .returning({ id: loginAttempts.id, key: loginAttempts.key });
+  });
+}
+
+/** Admit and count a public request atomically across every web instance. */
+export async function consumeRateLimit(keys: string[], limit: RateLimit, now: Date = new Date()): Promise<boolean> {
+  return (await reserveRateLimits(keys.map(key => ({ key, limit })), now)) !== null;
+}
+
+/** Release only rows reserved by this request, leaving concurrent failures untouched. */
+export async function releaseRateLimitReservations(reservations: RateLimitReservation[]): Promise<void> {
+  const ids = reservations.map(({ id }) => id);
+  if (ids.length) await db().delete(loginAttempts).where(inArray(loginAttempts.id, ids));
 }
 
 export async function clearAttempts(key: string): Promise<void> {

@@ -339,3 +339,19 @@ it("does nothing for an import that is gone, or one that belongs to somebody els
     .toEqual({ skipped: "import belongs to another account" });
   expect((await getLibraryImport(db, userId, mine.id))!.processedAt).toBeNull();
 });
+
+it("does not publish a result after the queue lease has been lost", async () => {
+  const row = await createLibraryImport(db, { userId, kind: "paste", content: DOCUMENT }, now);
+  deps.aiClient = scriptedClient().client;
+  const leaseLost = new Error("Task lease lost; refusing stale writes");
+
+  await expect(handleImportLibraryDocument(task({ userId, importId: row.id }), {
+    ...deps,
+    assertOwnership: async () => { throw leaseLost; },
+  })).rejects.toThrow(leaseLost);
+
+  const stored = await getLibraryImport(db, userId, row.id);
+  expect(stored).toMatchObject({ proposal: null, error: null, processedAt: null });
+  const [raw] = await db.select().from(schema.libraryImports).where(sql`${schema.libraryImports.id} = ${row.id}`);
+  expect(raw!.content).toBe(DOCUMENT);
+});

@@ -6,7 +6,7 @@ import { authenticateWithPassword, emailProblem, registerWithPassword, registrat
 import { clientAddress, endSession, startSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { emailLinkOrigin, withParams } from "@/lib/origin";
-import { clearAttempts, isRateLimited, LIMITS, recordAttempt } from "@/lib/rate-limit";
+import { clearAttempts, LIMITS, releaseRateLimitReservations, reserveRateLimits } from "@/lib/rate-limit";
 import { sanitizeNextPath } from "@/lib/session";
 import { passwordProblem } from "@christopher/core";
 import { users } from "@christopher/db/schema";
@@ -21,16 +21,23 @@ export async function login(formData: FormData): Promise<void> {
   if (!process.env.SESSION_SECRET) back("not_configured");
   if (emailProblem(email) || !password) back("invalid");
   const address = await clientAddress();
-  if (await isRateLimited(`login:email:${email}`, LIMITS.loginEmail) || await isRateLimited(`login:ip:${address}`, LIMITS.loginAddress)) back("rate_limited");
+  const emailKey = `login:email:${email}`;
+  const addressKey = `login:ip:${address}`;
+  const reservation = await reserveRateLimits([
+    { key: emailKey, limit: LIMITS.loginEmail },
+    { key: addressKey, limit: LIMITS.loginAddress },
+  ]);
+  if (!reservation) back("rate_limited");
 
   const result = await authenticateWithPassword(email, password);
   if (result.status !== "ok") {
-    await recordAttempt(`login:email:${email}`);
-    await recordAttempt(`login:ip:${address}`);
     back(result.status === "unconfirmed" ? "unconfirmed" : "invalid");
     return;
   }
-  await clearAttempts(`login:email:${email}`);
+  // A successful password clears this account's failures. The address is shared, so remove only
+  // this request's reservation and preserve failures from other concurrent sign-in attempts.
+  await releaseRateLimitReservations(reservation!.filter(({ key }) => key === addressKey));
+  await clearAttempts(emailKey);
   await startSession(result.user.id);
   redirect(next);
 }
@@ -47,8 +54,7 @@ export async function signup(formData: FormData): Promise<void> {
   if (!(await registrationAllowed(email))) back("closed");
   if (passwordProblem(password)) back("weak_password");
   const address = await clientAddress();
-  if (await isRateLimited(`signup:ip:${address}`, LIMITS.signupAddress)) back("rate_limited");
-  await recordAttempt(`signup:ip:${address}`);
+  if (!(await reserveRateLimits([{ key: `signup:ip:${address}`, limit: LIMITS.signupAddress }]))) back("rate_limited");
 
   let userId: string;
   let pending: boolean;
@@ -72,11 +78,12 @@ export async function resendConfirmation(formData: FormData): Promise<void> {
   const email = normaliseEmail(String(formData.get("email") ?? ""));
   if (emailProblem(email)) redirect(withParams("/signup", { error: "invalid_email" }));
   const address = await clientAddress();
-  if (await isRateLimited(`reset:email:${email}`, LIMITS.resetEmail) || await isRateLimited(`reset:ip:${address}`, LIMITS.resetAddress)) {
+  if (!(await reserveRateLimits([
+    { key: `reset:email:${email}`, limit: LIMITS.resetEmail },
+    { key: `reset:ip:${address}`, limit: LIMITS.resetAddress },
+  ]))) {
     redirect(withParams("/signup", { pending: "1", email, error: "rate_limited" }));
   }
-  await recordAttempt(`reset:email:${email}`);
-  await recordAttempt(`reset:ip:${address}`);
   const [user] = await db().select().from(users).where(eq(users.email, email)).limit(1);
   // Silent about whether the address is known, like the reset form.
   if (user && !user.emailVerifiedAt) await sendVerificationEmail(user, await emailLinkOrigin());
@@ -92,11 +99,12 @@ export async function requestReset(formData: FormData): Promise<void> {
   const email = normaliseEmail(String(formData.get("email") ?? ""));
   if (emailProblem(email)) redirect(withParams("/forgot-password", { error: "invalid" }));
   const address = await clientAddress();
-  if (await isRateLimited(`reset:email:${email}`, LIMITS.resetEmail) || await isRateLimited(`reset:ip:${address}`, LIMITS.resetAddress)) {
+  if (!(await reserveRateLimits([
+    { key: `reset:email:${email}`, limit: LIMITS.resetEmail },
+    { key: `reset:ip:${address}`, limit: LIMITS.resetAddress },
+  ]))) {
     redirect(withParams("/forgot-password", { error: "rate_limited" }));
   }
-  await recordAttempt(`reset:email:${email}`);
-  await recordAttempt(`reset:ip:${address}`);
   await requestPasswordReset(email, await emailLinkOrigin());
   redirect(withParams("/forgot-password", { sent: "1" }));
 }

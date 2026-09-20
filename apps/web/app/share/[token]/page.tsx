@@ -15,7 +15,7 @@
 import { headers } from "next/headers";
 import { recordCvShareView } from "@christopher/db";
 import { db } from "@/lib/db";
-import { isRateLimited, LIMITS, recordAttempt } from "@/lib/rate-limit";
+import { consumeRateLimit, LIMITS } from "@/lib/rate-limit";
 import {
   CV_SHARE_BUSY_SENTENCE,
   CV_SHARE_ERROR_SENTENCES,
@@ -63,10 +63,7 @@ export default async function SharedCvPage({
   const tokenHash = hashCvShareToken(token);
   const address = shareClientAddress(await headers());
   const keys = cvShareViewKeys(tokenHash, address);
-  for (const key of keys) {
-    if (await isRateLimited(key, LIMITS.shareView)) return <Closed sentence={CV_SHARE_BUSY_SENTENCE} />;
-  }
-  for (const key of keys) await recordAttempt(key);
+  if (!(await consumeRateLimit(keys, LIMITS.shareView))) return <Closed sentence={CV_SHARE_BUSY_SENTENCE} />;
 
   const shared: SharedCv | null = await sharedCvByToken(token);
   if (!shared) return <Closed sentence={CV_SHARE_GONE_SENTENCE} />;

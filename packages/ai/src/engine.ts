@@ -5,6 +5,7 @@ import {
   CvPlanSchema,
   CV_PAGE_LIMITS,
   LIBRARY_REVIEW_BATCH,
+  LibraryProposalSchema,
   LibraryReviewPlanSchema,
   employmentHeading,
   responsibilityRows,
@@ -15,6 +16,7 @@ import {
   type CvPlan,
   type CvLibrary,
   type LibraryEntryReview,
+  type LibraryProposalPlan,
   type LibraryReviewPlan,
 } from "@christopher/core";
 import Anthropic, {
@@ -1058,6 +1060,44 @@ export class AiEngine {
       });
     }
     return out.slice(0, input.limit);
+  }
+
+  // A11 --------------------------------------------------------------------
+  /**
+   * Read one document someone brought to their Library and propose what it says.
+   *
+   * One call over one document, because a CV is small and the proposal is only ever a proposal:
+   * the person ticks through it, and `validateLibraryProposal` has already dropped anything the
+   * document does not support. `effort: "low"` for the same reason the evidence review uses it —
+   * this is reading and copying, not judgement — and the document goes in the user turn in a
+   * tagged block, never in the system prompt, because it is text the product did not write.
+   *
+   * Nothing is cached: a document is read once and then lives in the import row as text, so a
+   * cache write would be paid for and never read.
+   */
+  async extractLibrary(
+    input: { document: string; model?: string },
+    ref: Ref = {},
+  ): Promise<LibraryProposalPlan | null> {
+    const document = input.document.trim();
+    if (!document) return null;
+    return this.run<LibraryProposalPlan>(
+      "A11",
+      {
+        system: P.A11_EXTRACT_LIBRARY,
+        // The most an import row stores (`LIBRARY_IMPORT_MAX_CHARS`); the text arrives capped,
+        // and this is the backstop for a row written before that cap existed.
+        user: P.wrap("document", P.truncate(document, 40_000)),
+        schema: LibraryProposalSchema,
+        effort: "low",
+        ...(input.model ? { model: input.model } : {}),
+        // A long career is twenty jobs of twenty rows, each row copied twice (the row and its
+        // quote); an answer cut off at the cap is recorded as an output limit, not as a proposal.
+        maxTokens: 16000,
+        timeoutMs: 120_000,
+      },
+      ref,
+    );
   }
 
   // A12 --------------------------------------------------------------------

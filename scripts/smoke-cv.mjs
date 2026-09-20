@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { mkdir } from "node:fs/promises";
 const require = createRequire(import.meta.url);
@@ -822,9 +822,35 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       0,
     );
 
+    // 4.7: the one page that renders without a session. The link is one revision, read-only,
+    // and a note left on it reaches the owner; a token nobody issued gets the same sentence as an
+    // expired one. cv_shares cascades from cv_drafts, so the cleanup below takes the row with it.
+    const shareToken = randomBytes(32).toString("base64url");
+    await pool.query(
+      `insert into cv_shares (user_id, draft_id, token_hash, allow_comments, expires_at)
+       values ($1, $2, $3, true, now() + interval '14 days')`,
+      [userId, readyId, createHash("sha256").update(shareToken).digest("hex")],
+    );
+    const shared = await fetch(`${baseUrl}/share/${shareToken}`, { redirect: "manual" });
+    assert.equal(shared.status, 200, "the share page must render without a session");
+    assert.match(shared.headers.get("cache-control") ?? "", /no-store/);
+    const sharedHtml = await shared.text();
+    for (const needle of ["Shared CV", "Example Candidate", "Comment on this", "This page shows one saved revision"])
+      assert.ok(sharedHtml.includes(needle), `the share page does not say "${needle}"`);
+    const posted = await fetch(`${baseUrl}/share/${shareToken}/comments`, {
+      method: "POST", redirect: "manual",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ anchor: "cv-content-profile", authorName: "Smoke Reader", body: "A note from the smoke." }),
+    });
+    assert.equal(posted.status, 303, "a note must be accepted and answered with a redirect");
+    assert.match(posted.headers.get("location") ?? "", /thanks=1/);
+    const gone = await fetch(`${baseUrl}/share/${randomBytes(32).toString("base64url")}`, { redirect: "manual" });
+    assert.equal(gone.status, 200);
+    assert.ok((await gone.text()).includes("This link has expired or was withdrawn."));
+
     assert.deepEqual(errors, []);
     console.log(
-      "  CV browser flow passed: tabs, unified evaluation, keyboard navigation, full sidebar collapse, saved edits, mobile layout, real progress updates, the build narrative and its log, what the two saves cost, why finalising is unavailable, a failed build's way forward, the Library's ready-to-build line, Confirm all, its unsaved-changes bar and guard, and the applications table's stage, CV cell and archive/restore/delete",
+      "  CV browser flow passed: tabs, unified evaluation, keyboard navigation, full sidebar collapse, saved edits, mobile layout, real progress updates, the build narrative and its log, what the two saves cost, why finalising is unavailable, a failed build's way forward, the Library's ready-to-build line, Confirm all, its unsaved-changes bar and guard, and the applications table's stage, CV cell and archive/restore/delete, and a share link read without a session with a note left on it",
     );
   } finally {
     await browser?.close();

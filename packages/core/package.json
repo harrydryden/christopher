@@ -39,6 +39,10 @@
     "./library-review": {
       "types": "./src/library-review.ts",
       "default": "./src/library-review.ts"
+    },
+    "./library-import": {
+      "types": "./src/library-import.ts",
+      "default": "./src/library-import.ts"
     }
   },
   "scripts": {

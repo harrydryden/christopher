@@ -19,6 +19,15 @@ export const LIMITS = {
   signupAddress: { max: 10, windowMs: 60 * 60 * 1000 },
   resetEmail: { max: 3, windowMs: 60 * 60 * 1000 },
   resetAddress: { max: 20, windowMs: 60 * 60 * 1000 },
+  /**
+   * Opening a shared CV preview, counted per link and per caller. A reviewer reads a CV, reloads
+   * it, and comes back to it; a crawler that found the link in a forwarded email does not. The
+   * window is generous because the page is the whole point of the link — the limit is here so one
+   * leaked token cannot be turned into a scraping endpoint, not to ration reading.
+   */
+  shareView: { max: 240, windowMs: 60 * 60 * 1000 },
+  /** Notes left through one link, per link and per caller: enough for a thorough read-through. */
+  shareComment: { max: 20, windowMs: 60 * 60 * 1000 },
 } as const satisfies Record<string, RateLimit>;
 
 export async function isRateLimited(key: string, limit: RateLimit, now: Date = new Date()): Promise<boolean> {

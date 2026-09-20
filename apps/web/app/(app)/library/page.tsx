@@ -4,6 +4,9 @@ import { SettingsForm } from "@/components/SettingsForm";
 import { inputClass, labelClass } from "@/components/Field";
 import { CvLibraryEditor } from "@/components/CvLibraryEditor";
 import { LibraryEvidencePoller } from "@/components/LibraryEvidencePoller";
+import { LibraryImportCard } from "@/components/LibraryImportCard";
+import { LibraryImportPoller } from "@/components/LibraryImportPoller";
+import { LibraryImportProposals } from "@/components/LibraryImportProposals";
 import { LibraryVersions } from "@/components/LibraryVersions";
 import { saveCvWritingPreferences } from "@/app/actions/cv";
 import { getCvWritingPreferences } from "@/lib/cv-writing-preferences";
@@ -15,6 +18,7 @@ import {
   libraryReviewSignature,
   listLibraryVersions,
 } from "@/lib/queries/cv";
+import { listLibraryImports } from "@/lib/queries/library-imports";
 import { requireUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -28,12 +32,16 @@ export default async function LibraryPage({ searchParams }: {
   const user = await requireUser();
   const params = await searchParams;
   const library = await getOwnCvLibrary(user.id);
-  const [evidence, versions, writing, signature] = await Promise.all([
+  const [evidence, versions, writing, signature, imports] = await Promise.all([
     getLibraryEvidence(user.id, library),
     listLibraryVersions(user.id),
     getCvWritingPreferences(user.id),
     library ? libraryReviewSignature(user.id, library.version) : Promise.resolve(""),
+    listLibraryImports(user.id),
   ]);
+  // Documents still being read. The page watches for them below, and stops watching when the
+  // refresh that lands the last proposal re-renders this without any.
+  const reading = imports.filter(item => item.state === "reading").length;
 
   // Two of this account's own versions, compared. Anything else in the URL is not a request.
   const wanted = requestedDiff(params, versions.map(row => row.version));
@@ -55,6 +63,8 @@ export default async function LibraryPage({ searchParams }: {
         title="Library"
         description="The evidence every CV is written from. A block is used only once it is Active and its rows are confirmed."
       />
+      <LibraryImportProposals imports={imports} version={library?.version ?? 0} />
+      {reading > 0 && <LibraryImportPoller pending={reading} />}
       <CvLibraryEditor
         library={library?.content ?? null}
         version={library?.version ?? 0}
@@ -68,6 +78,7 @@ export default async function LibraryPage({ searchParams }: {
         <LibraryEvidencePoller version={library.version} signature={signature} />
       )}
       <LibraryVersions versions={versions} current={library?.version ?? 0} diff={diff} />
+      <LibraryImportCard />
       <Card title="Writing preferences">
         <SettingsForm
           action={saveCvWritingPreferences}

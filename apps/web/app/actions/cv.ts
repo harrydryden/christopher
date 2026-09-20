@@ -8,7 +8,7 @@ import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { actionCvs, applications, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, userJobs, enqueueTask } from "@christopher/db";
 import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvWritingPreferences,
   createCvWritingBudget, CvLibrarySchema, consolidateExperience, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel,
-  type CvContent, type CvWritingPreferences } from "@christopher/core";
+  type CvContent, type CvLibrary, type CvWritingPreferences } from "@christopher/core";
 import { requireUser, requireVerifiedUser } from "@/lib/auth";
 import { cvLibraryIssues } from "@/lib/cv-library-issues";
 import { cvBuildQuote } from "@/lib/cv-quote";
@@ -102,6 +102,38 @@ async function rememberWording(tx: Tx, userId: string, before: CvContent, after:
   return updated;
 }
 
+/**
+ * One saved version of a Library, written the way every save writes one.
+ *
+ * Extracted from `saveCvLibrary` so that the document import can land accepted items through the
+ * same path rather than a parallel one: the same advisory lock, the same obsolete-edit rejection,
+ * the same archived-evidence retention, the same two tasks queued behind it. `build` is given the
+ * version it is writing over — the import needs it, to add to what is there rather than replace
+ * it — and returns the library to store.
+ *
+ * It takes the caller's transaction and is not a form action: everything it writes is decided by
+ * `build`, which only a server action holding a live transaction can supply.
+ */
+export async function writeCvLibraryVersion(
+  tx: Tx,
+  userId: string,
+  expectedVersion: number,
+  build: (current: CvLibrary | null) => CvLibrary,
+): Promise<number> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`cv:library:${userId}`}))`);
+  const latest = await latestLibrary(tx, userId);
+  if ((latest?.version ?? 0) !== expectedVersion) throw new UserFacingError("The library changed. Reload before saving.");
+  const version = (latest?.version ?? 0) + 1;
+  const content = CvLibrarySchema.parse(consolidateExperience(build(latest?.content ?? null)));
+  await tx.insert(cvLibraries).values({ userId, version, content: CvLibrarySchema.parse(retainArchivedEvidence(latest?.content, content)) });
+  await enqueueTask(tx, "rescore_all", { userId, onlyInTable: true }, { dedupeKey: `rescore_all:${userId}`, priority: 5 });
+  // The evidence review of the version this save just wrote. Its dedupe key is the account,
+  // not the version, so a person typing through five saves queues one pass; the handler reads
+  // the newest library when it runs.
+  await enqueue("review_library", { userId, libraryVersion: version }, tx);
+  return version;
+}
+
 export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promise<ActionResult> {
   const user = await requireUser();
   // Held outside the try so a refusal can name the job or the block it is about, rather than the
@@ -112,18 +144,9 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
     if (raw.length > 150_000) return fail("Library is too large. Keep it under 150,000 characters.");
     submitted = JSON.parse(raw);
     const parsed = CvLibrarySchema.parse(submitted);
-    const content = CvLibrarySchema.parse(consolidateExperience({ ...parsed, theme: parsed.theme ?? DEFAULT_CV_THEME }));
+    const content = { ...parsed, theme: parsed.theme ?? DEFAULT_CV_THEME };
     await db().transaction(async (tx) => {
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`cv:library:${user.id}`}))`);
-      const latest = await latestLibrary(tx, user.id);
-      if ((latest?.version ?? 0) !== Number(form.get("version"))) throw new UserFacingError("The library changed. Reload before saving.");
-      const version = (latest?.version ?? 0) + 1;
-      await tx.insert(cvLibraries).values({ userId: user.id, version, content: CvLibrarySchema.parse(retainArchivedEvidence(latest?.content, content)) });
-      await enqueueTask(tx, "rescore_all", { userId: user.id, onlyInTable: true }, { dedupeKey: `rescore_all:${user.id}`, priority: 5 });
-      // The evidence review of the version this save just wrote. Its dedupe key is the account,
-      // not the version, so a person typing through five saves queues one pass; the handler reads
-      // the newest library when it runs.
-      await enqueue("review_library", { userId: user.id, libraryVersion: version }, tx);
+      await writeCvLibraryVersion(tx, user.id, Number(form.get("version")), () => content);
     });
   } catch (error) {
     if (error instanceof z.ZodError) return fail(cvLibraryIssues(error, submitted));

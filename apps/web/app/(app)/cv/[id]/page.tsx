@@ -12,6 +12,10 @@ import { CvBuildFailureNotice } from "@/components/CvBuildFailureNotice";
 import { getSystemSettings } from "@/lib/settings";
 import { CvAppearance } from "@/components/CvAppearance";
 import { CvAssessmentPanel } from "@/components/CvAssessmentPanel";
+import { CvShareCard } from "@/components/CvShareCard";
+import { CvShareComments } from "@/components/CvShareComments";
+import { getOwnCvSharing } from "@/lib/queries/cv-shares";
+import { openCommentCounts } from "@/lib/cv-share";
 import { assertCvFinalisable, cvAssessmentCurrent } from "@christopher/core/cv-review";
 import type { CvContent, CvLibrary } from "@christopher/core/cv";
 import type { CvAssessment } from "@christopher/core/cv-assessment";
@@ -76,7 +80,7 @@ export default async function CvDraftPage({
   // A build that has stopped moving is indistinguishable from a slow one without the queue row
   // behind it: which attempt this is, whether anything still holds it, and what the last one left.
   const now = new Date();
-  const [buildTask, steps, system, admin, latestLibrary] = await Promise.all([
+  const [buildTask, steps, system, admin, latestLibrary, sharing] = await Promise.all([
     busy || failed ? getOwnCvBuildTask(user.id, id) : null,
     // The ledger of motions: the narrative while it builds, the build log afterwards.
     getOwnCvBuildSteps(user.id, id),
@@ -90,6 +94,9 @@ export default async function CvDraftPage({
       .where(eq(cvLibraries.userId, user.id))
       .orderBy(desc(cvLibraries.version))
       .limit(1),
+    // The links this account has opened onto this revision, and the notes left through them.
+    // Both are scoped by the account and the draft, as every per-account read is.
+    getOwnCvSharing(user.id, id),
   ]);
   const build = busy || failed ? cvBuildState(draft, buildTask, now, system.timezone) : null;
   const narrativeContext = { timeZone: system.timezone, versionLabel: version };
@@ -111,22 +118,35 @@ export default async function CvDraftPage({
   // The Library this revision was written from, and what has been saved over it since: the
   // sentence is only offered where there is an editor to rebuild from.
   const drift = libraryDriftSentence(draft.libraryVersion, latestLibrary[0]?.version);
+  // What a reader said, where the reviewer's findings are read. Notes never change a rating; they
+  // become their own rows, and a count beside the block they are about.
+  const commentCounts = openCommentCounts(sharing.comments);
   // The same panel whichever tab holds it: one set of props, written once.
   const assessment = (
-    <CvAssessmentPanel
-      id={id}
-      assessment={draft.assessment}
-      current={current}
-      finalised={!!draft.finalisedAt}
-      busy={busy}
-      hasContent={!!content}
-      content={content}
-      library={draft.librarySnapshot}
-      libraryDrift={drift}
-      rebuildFormId={content && !busy && !blocked ? cvEditFormId(id) : null}
-      finaliseReason={finaliseReason}
-      blocked={blocked}
-    />
+    <>
+      <CvAssessmentPanel
+        id={id}
+        assessment={draft.assessment}
+        current={current}
+        finalised={!!draft.finalisedAt}
+        busy={busy}
+        hasContent={!!content}
+        content={content}
+        library={draft.librarySnapshot}
+        libraryDrift={drift}
+        rebuildFormId={content && !busy && !blocked ? cvEditFormId(id) : null}
+        finaliseReason={finaliseReason}
+        blocked={blocked}
+        comments={sharing.comments}
+      />
+      <CvShareComments
+        draftId={id}
+        comments={sharing.comments}
+        openCount={sharing.openCount}
+        content={content}
+        now={now}
+      />
+    </>
   );
   const [application] = await db()
     .select({ id: applications.id })
@@ -293,6 +313,8 @@ export default async function CvDraftPage({
             // evidence and advert with the estimator the worker admits builds against.
             costs={cvEditCosts(draft.model, cvDraftSize(draft))}
             blocked={blocked}
+            commentCounts={commentCounts}
+            share={<CvShareCard draftId={id} shares={sharing.shares} now={now} />}
             buildLog={
               <CvBuildLog steps={steps} now={now} maxAttempts={maxAttempts} context={narrativeContext} />
             }

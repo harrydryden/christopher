@@ -1,4 +1,5 @@
 import { cvContentLinks, cvLibraryJobFor, type CvContentLink } from "./cv-content-links";
+import { cvShareAnchorLabel, type CvShareCommentLike } from "./cv-share";
 import type { CvContent, CvLibrary } from "@christopher/core/cv";
 import {
   cvClaimItems,
@@ -12,6 +13,9 @@ export const CV_CHANGE_TYPES = [
   "Gap",
   "Improvement",
   "Uncertain",
+  // Not the reviewer's finding but a person's: a note left through a share link, filed against
+  // the same block ids the assessment cites, so the two sit in one table.
+  "Comment",
 ] as const;
 export type CvChange = (typeof CV_CHANGE_TYPES)[number];
 export type CvEvaluationRow = {
@@ -40,6 +44,9 @@ const NEED_CHARACTERS = 300;
 
 /** A row is worth a trip to the Library when something is missing rather than merely rewritable. */
 function needsLibraryEvidence(row: Pick<CvEvaluationRow, "change" | "evidence">): boolean {
+  // A reader's note rates nothing, so its empty Evidence cell must not be read as a gap and sent
+  // to the Library. What to do about a comment is the comment's to say.
+  if (row.change === "Comment") return false;
   return row.change === "Gap" || row.evidence === "None" || row.evidence === "Weak";
 }
 
@@ -81,16 +88,67 @@ export function libraryDriftSentence(
   return `Your Library changed since this build (v${draftVersion} → v${latestVersion}).`;
 }
 
+
+/** One reader's note, as the owner's table needs it. */
+export interface CvCommentInput extends CvShareCommentLike {
+  id: string;
+  authorName: string;
+  body: string;
+  createdAt: Date;
+}
+
+/**
+ * Open notes, one row per block, newest block first.
+ *
+ * A note is not a finding: it rates nothing, it cites no requirement, and it cannot be closed by
+ * writing something in the Library. So the row carries the count, the latest note as its guidance
+ * and a link to the block, and is shown unrated in the two strength columns — the reader is a
+ * person with an opinion, not a second assessment.
+ */
+export function cvCommentRows(comments: CvCommentInput[], content: CvContent | null): CvEvaluationRow[] {
+  const open = comments.filter((comment) => !comment.resolvedAt);
+  const byAnchor = new Map<string, CvCommentInput[]>();
+  for (const comment of open) byAnchor.set(comment.anchor, [...(byAnchor.get(comment.anchor) ?? []), comment]);
+  return [...byAnchor.entries()]
+    .map(([anchor, notes]) => {
+      const ordered = [...notes].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      const latest = ordered[0]!;
+      const label = cvShareAnchorLabel(anchor, content);
+      return {
+        row: {
+          id: `comment:${anchor}`,
+          requirement: label,
+          currentText: [],
+          change: "Comment" as const,
+          suggestion: `${ordered.length} open ${ordered.length === 1 ? "note" : "notes"} from readers of your shared link. ${latest.authorName}: ${latest.body}`,
+          contentLinks: [{ id: anchor, label }],
+          evidence: "None" as const,
+          experience: "None" as const,
+          reason: "Left by a reader on a shared preview of this revision. Resolve it under Comments from readers.",
+          sources: ordered.slice(1).map((note) => `${note.authorName}: ${note.body}`),
+        },
+        at: latest.createdAt.getTime(),
+      };
+    })
+    .sort((a, b) => b.at - a.at)
+    .map((entry) => entry.row);
+}
+
 /**
  * Presentation of the saved assessment only; never generates new claims or changes its score.
  *
  * `library` is the revision's own snapshot, and is used for one thing: deciding which job in
  * employment history a row's gap belongs to, so "Add evidence for this" can open it.
+ *
+ * `comments` are the notes left through this CV's share links. They are appended rather than
+ * merged: a reader's opinion sits in the same table as the reviewer's findings, and is never
+ * allowed to change one.
  */
 export function cvEvaluationRows(
   assessment: CvAssessment,
   content: CvContent | null,
   library?: Pick<CvLibrary, "entries"> | null,
+  comments: CvCommentInput[] = [],
 ): CvEvaluationRow[] {
   const claims = new Map(
     assessment.review.claims.map((claim) => [claim.claimId, claim]),
@@ -227,7 +285,7 @@ export function cvEvaluationRows(
     });
   }
   // The way out of every gap, added once the rows are built so each kind is judged the same way.
-  return rows.map((row) => {
+  return [...rows, ...cvCommentRows(comments, content)].map((row) => {
     const libraryHref = cvLibraryHref(row, library);
     return libraryHref ? { ...row, libraryHref } : row;
   });

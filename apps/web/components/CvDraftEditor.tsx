@@ -48,11 +48,26 @@ export function RebuildButton({ form }: { form?: string } = {}) {
 }
 
 const input = `mt-1 ${inputClass}`;
+
+/**
+ * "2 open comments" beside a block someone has written about. Silent when nobody has: a count of
+ * zero is noise, and the Evaluation tab already says when there is nothing to answer.
+ */
+function CommentCount({ n }: { n: number }) {
+  if (!n) return null;
+  return (
+    <span className="ml-2 border border-info px-1.5 py-0.5 text-10 text-info">
+      {n} open {n === 1 ? "comment" : "comments"}
+    </span>
+  );
+}
 export function CvDraftEditor({
   id,
   content,
   assessment,
   tracking,
+  share,
+  commentCounts = {},
   buildLog,
   costs,
   blocked = null,
@@ -61,6 +76,14 @@ export function CvDraftEditor({
   content: CvContent;
   assessment?: ReactNode;
   tracking?: ReactNode;
+  /** Share links and their notes, rendered on the server beside the PDF controls. */
+  share?: ReactNode;
+  /**
+   * How many open reader notes sit on each block, keyed by the same anchor the share page files
+   * them against. A count here is the shortest route from "someone commented" to the words they
+   * commented on.
+   */
+  commentCounts?: Record<string, number>;
   /** The motions this revision was built from, kept at the foot of the Content tab. */
   buildLog?: ReactNode;
   /** What each of the two saves is expected to cost, from `cvEditCosts` on the server. */
@@ -233,6 +256,7 @@ export function CvDraftEditor({
 
           <label className="block text-14">
             <span className={labelClass}>Profile</span>
+            <CommentCount n={commentCounts[CV_PROFILE_ID] ?? 0} />
             <textarea
               form={formId}
               id={CV_PROFILE_ID}
@@ -275,6 +299,7 @@ export function CvDraftEditor({
                   {section.industryDescriptions.join(" · ")}
                 </span>
               )}
+              <CommentCount n={commentCounts[cvSectionBlockId(section.entryId)] ?? 0} />
               <textarea
                 form={formId}
                 id={cvSectionBlockId(section.entryId)}
@@ -348,6 +373,7 @@ export function CvDraftEditor({
             )}
           </CvDisclosure>
         </section>
+        {share}
         {tracking}
         {buildLog}
       </CvWorkspacePanel>

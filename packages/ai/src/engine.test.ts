@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createAiEngine, decisionDigest, extractJsonBlock, CANCELLED_ERROR, OUTPUT_LIMIT_ERROR, STREAM_CEILING_MS, type AiClientLike, type AiUsageRecord, type DecisionForDigest, type ParseResponse } from "./engine";
 import { APIConnectionError, APIConnectionTimeoutError, APIError, AuthenticationError, BadRequestError, InternalServerError, NotFoundError, PermissionDeniedError, RateLimitError } from "@anthropic-ai/sdk";
-import { estimateCostUsd, estimateCvBuildUsd, estimateLibraryReviewUsd, serverToolCostUsd, SERVER_TOOL_USD } from "./pricing";
+import { estimateCostUsd, estimateCvBuildUsd, estimateLibraryImportUsd, estimateLibraryReviewUsd, serverToolCostUsd, SERVER_TOOL_USD } from "./pricing";
 import type { CvLibrary } from "@christopher/core";
 
 interface Captured {
@@ -1035,5 +1035,89 @@ describe("library evidence review (A12)", () => {
     await expect(pass).rejects.toThrow("returned nothing usable");
     expect(events.filter(event => event.startsWith("cancel:")).length).toBeGreaterThan(0);
     expect(usage.some(record => record.error === CANCELLED_ERROR)).toBe(true);
+  });
+});
+
+/**
+ * Reading one document into a Library proposal (A11).
+ *
+ * The engine's own guarantees: the document is data in the user turn and never in the system
+ * prompt, the call is cheap by construction, and what comes back is only ever a proposal —
+ * `validateLibraryProposal` in core owns the anchoring that decides what survives it.
+ */
+describe("library document import (A11)", () => {
+  const DOCUMENT = [
+    "Jane Okafor — Operations leader",
+    "Director of Operations, Acme Logistics, Mar 2020 – Jun 2022",
+    "• Cut handover time from two days to four hours",
+  ].join("\n");
+  /** The user turn as the model reads it: this call site sends one block, so it is a plain string. */
+  const userText = (params: Record<string, unknown>) =>
+    (params.messages as Array<{ content: string }>)[0]!.content;
+  const PROPOSAL = {
+    employment: [{
+      company: "Acme Logistics", title: "Director of Operations", startDate: "2020-03", endDate: "2022-06", current: false,
+      quote: "Director of Operations, Acme Logistics, Mar 2020 – Jun 2022",
+      responsibilities: [{ text: "Cut handover time from two days to four hours", quote: "from two days to four hours" }],
+    }],
+    education: [],
+    skills: [{ text: "Warehouse management" }],
+  };
+
+  it("sends the document as data in the user turn, on a low-effort call, and records the call site", async () => {
+    const { client, calls } = fakeClient(PROPOSAL);
+    const usage: AiUsageRecord[] = [];
+    const engine = createAiEngine({ client, getModel: () => "claude-sonnet-5", onUsage: record => { usage.push(record); } });
+
+    const proposal = await engine.extractLibrary({ document: DOCUMENT, model: "claude-fable-5-1" },
+      { userId: "user-1", refType: "library_import", refId: "import-1" });
+
+    expect(proposal).toEqual(PROPOSAL);
+    const params = calls[0]!.params;
+    expect(params.model).toBe("claude-fable-5-1");
+    expect((params.output_config as { effort: string }).effort).toBe("low");
+    const system = (params.system as Array<{ text: string }>)[0]!.text;
+    expect(system).toContain("You propose. You never decide");
+    // The document is in the user turn, and nowhere near the cached instructions.
+    expect(system).not.toContain("Acme Logistics");
+    expect(userText(params)).toBe(`<document>\n${DOCUMENT}\n</document>`);
+    expect(usage.map(record => [record.callSite, record.userId, record.refId])).toEqual([["A11", "user-1", "import-1"]]);
+  });
+
+  it("truncates a document longer than an import row can hold", async () => {
+    const { client, calls } = fakeClient(PROPOSAL);
+    const engine = createAiEngine({ client, getModel: () => "claude-sonnet-5" });
+
+    await engine.extractLibrary({ document: "Ran operations. ".repeat(4000) });
+
+    expect(userText(calls[0]!.params)).toContain("…truncated…");
+    expect(userText(calls[0]!.params).length).toBeLessThan(41_000);
+  });
+
+  it("asks nothing of a model for an empty document, and answers null when the call gives nothing", async () => {
+    const { client, calls } = fakeClient(null, { parsed_output: undefined, content: [{ type: "text", text: "no" }] });
+    const engine = createAiEngine({ client, getModel: () => "claude-sonnet-5" });
+
+    expect(await engine.extractLibrary({ document: "   " })).toBeNull();
+    expect(calls).toHaveLength(0);
+    expect(await engine.extractLibrary({ document: DOCUMENT })).toBeNull();
+    expect(calls).toHaveLength(1);
+  });
+
+  it("refuses output that is not the proposal shape", async () => {
+    const { client } = fakeClient({ employment: [{ company: 7 }] });
+    const engine = createAiEngine({ client, getModel: () => "claude-sonnet-5" });
+
+    expect(await engine.extractLibrary({ document: DOCUMENT })).toBeNull();
+  });
+
+  it("prices a document import under a CV build of the same library, and never at zero", () => {
+    const small = estimateLibraryImportUsd("claude-fable-5-1", { documentBytes: 6_000 });
+    const large = estimateLibraryImportUsd("claude-fable-5-1", { documentBytes: 40_000 });
+
+    expect(small).toBeGreaterThan(0);
+    expect(large).toBeGreaterThan(small);
+    expect(large).toBeLessThan(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 40_000, descriptionBytes: 7_700 }));
+    expect(estimateLibraryImportUsd("claude-fable-5-1", { documentBytes: 0 })).toBeGreaterThan(0);
   });
 });

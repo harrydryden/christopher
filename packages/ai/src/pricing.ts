@@ -107,6 +107,28 @@ export function estimateCvBuildUsd(model: string, size: CvBuildSize, parts: CvBu
   return estimateCostUsd(model, cvBuildUsage(size, parts));
 }
 
+/**
+ * What reading one document into a Library proposal is expected to cost, for admitting it against
+ * the budget.
+ *
+ * One call, nothing cached: the document goes in whole and the answer copies the parts of it that
+ * are employment, responsibilities, qualifications and skills. The output is therefore a fraction
+ * of the input rather than a multiple of it — a two-page CV of about 6 KB proposes a few hundred
+ * tokens of rows, and the 40 KB ceiling an import row stores is roughly 13k tokens in and at most
+ * the call's own cap out. Held at that cap rather than at the expected answer, because a budget
+ * that refuses after the call has been made has refused nothing.
+ */
+export function estimateLibraryImportUsd(model: string, size: { documentBytes: number }): number {
+  const document = Math.max(0, size.documentBytes) / 3;
+  return estimateCostUsd(model, {
+    inputTokens: document + 1_200,
+    // A long career copied twice — each row and the quote behind it — under the call's ceiling.
+    outputTokens: Math.min(16_000, Math.max(1_500, document / 2)),
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+  });
+}
+
 /** Entries per A12 batch. Mirrors `LIBRARY_REVIEW_BATCH` in @christopher/core. */
 const LIBRARY_REVIEW_BATCH = 8;
 

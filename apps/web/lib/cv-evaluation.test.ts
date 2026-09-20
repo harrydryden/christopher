@@ -11,7 +11,8 @@ import {
   rubricFixture,
   reviewFixture,
 } from "../../../packages/core/test/cv-review-fixture";
-import { cvEvaluationRows, libraryDriftSentence } from "./cv-evaluation";
+import { CV_CHANGE_TYPES, cvCommentRows, cvEvaluationRows, libraryDriftSentence } from "./cv-evaluation";
+import { CV_PROFILE_ID, cvSectionBlockId } from "./cv-content-links";
 const library: CvLibrary = {
   name: "Example",
   contact: "",
@@ -208,5 +209,69 @@ describe("closing a gap from the evaluation table", () => {
     expect(libraryDriftSentence(9, 7)).toBeNull();
     expect(libraryDriftSentence(null, 9)).toBeNull();
     expect(libraryDriftSentence(4, undefined)).toBeNull();
+  });
+});
+
+/**
+ * A reader's note in the reviewer's table. It is the only row type that is not the assessment's:
+ * it rates nothing, it closes nothing, and it must not be mistaken for a gap.
+ */
+describe("reader comments as rows", () => {
+  const at = (iso: string) => new Date(iso);
+  const note = (over: Partial<Parameters<typeof cvCommentRows>[0][number]> = {}) => ({
+    id: "note-1",
+    anchor: CV_PROFILE_ID,
+    authorName: "Sam",
+    body: "The profile buries the operations work.",
+    createdAt: at("2026-09-18T10:00:00.000Z"),
+    resolvedAt: null,
+    ...over,
+  });
+
+  it("is one of the change types the table filters by", () => {
+    expect(CV_CHANGE_TYPES).toContain("Comment");
+  });
+
+  it("makes one row per block, carrying the count and the latest note", () => {
+    const rows = cvCommentRows(
+      [
+        note(),
+        note({ id: "note-2", body: "And say what it delivered.", createdAt: at("2026-09-19T09:00:00.000Z") }),
+        note({ id: "note-3", anchor: cvSectionBlockId("job"), authorName: "Jo", body: "Name the team size.", createdAt: at("2026-09-17T10:00:00.000Z") }),
+      ],
+      content,
+    );
+    expect(rows.map((row) => row.id)).toEqual([`comment:${CV_PROFILE_ID}`, `comment:${cvSectionBlockId("job")}`]);
+    const profile = rows[0]!;
+    expect(profile.change).toBe("Comment");
+    expect(profile.requirement).toBe("Profile");
+    expect(profile.suggestion).toContain("2 open notes");
+    expect(profile.suggestion).toContain("Sam: And say what it delivered.");
+    // The earlier note is still readable, under the row's own disclosure.
+    expect(profile.sources).toEqual(["Sam: The profile buries the operations work."]);
+    expect(profile.contentLinks).toEqual([{ id: CV_PROFILE_ID, label: "Profile" }]);
+  });
+
+  it("leaves out the notes the owner has dealt with", () => {
+    expect(cvCommentRows([note({ resolvedAt: at("2026-09-19T12:00:00.000Z") })], content)).toEqual([]);
+    expect(cvCommentRows([], content)).toEqual([]);
+  });
+
+  it("never sends a comment to the Library, however empty its ratings are", () => {
+    const [row] = cvCommentRows([note()], content);
+    expect(row!.evidence).toBe("None");
+    expect(row!.experience).toBe("None");
+    expect(row!.libraryHref).toBeUndefined();
+  });
+
+  it("appends comments to the assessment's own rows without disturbing them", () => {
+    const assessment = fixture();
+    const before = cvEvaluationRows(assessment, content, library);
+    const after = cvEvaluationRows(assessment, content, library, [note()]);
+    expect(after).toHaveLength(before.length + 1);
+    expect(after.slice(0, before.length)).toEqual(before);
+    expect(after.at(-1)!.change).toBe("Comment");
+    // The row survives the "way out of a gap" pass that every other row goes through.
+    expect(after.at(-1)!.libraryHref).toBeUndefined();
   });
 });

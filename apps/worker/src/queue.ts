@@ -91,7 +91,7 @@ export function backoffMs(attempts: number): number {
 }
 
 export const scanTypes = ["scan_company", "run_daily"];
-export const interactiveTypes = ["generate_cv", "discover", "tag_reason", "reevaluate_gate", "import_posting"];
+export const interactiveTypes = ["generate_cv", "discover", "tag_reason", "reevaluate_gate", "import_posting", "review_library", "import_library_document"];
 export type QueueLane = "all" | "scan" | "interactive" | "background";
 
 export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all"): Promise<Task | null> {

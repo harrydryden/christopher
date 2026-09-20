@@ -1,7 +1,7 @@
 import { cvMaxPages, type CvContent, type CvLibrary } from "@christopher/core/cv";
 import type { CvAssessment } from "@christopher/core/cv-assessment";
 import { assessCvDraft, finaliseCvDraft } from "@/app/actions/cv";
-import { cvEvaluationRows } from "@/lib/cv-evaluation";
+import { cvEvaluationRows, type CvCommentInput } from "@/lib/cv-evaluation";
 import { CvEvaluationTable } from "./CvEvaluationTable";
 import { RebuildButton } from "./CvDraftEditor";
 import { SettingsForm } from "./SettingsForm";
@@ -36,6 +36,7 @@ export function CvAssessmentPanel({
   rebuildFormId = null,
   finaliseReason = null,
   blocked = null,
+  comments = [],
 }: {
   id: string;
   assessment: CvAssessment | null;
@@ -58,6 +59,11 @@ export function CvAssessmentPanel({
   finaliseReason?: string | null;
   /** Why assessing is unavailable — an unverified account — or null when it is not. */
   blocked?: string | null;
+  /**
+   * Notes left through this CV's share links. They become their own rows in the table — a reader's
+   * opinion beside the reviewer's findings — and never change a score, a status or a rating.
+   */
+  comments?: CvCommentInput[];
 }) {
   if (!assessment || !current)
     return (
@@ -95,7 +101,7 @@ export function CvAssessmentPanel({
   // What this panel can see for itself, so a caller that passes no reason still never offers a
   // finalisation the action would refuse.
   const overPages = assessment.pageCount > cvMaxPages(content?.theme);
-  const rows = cvEvaluationRows(assessment, content, library);
+  const rows = cvEvaluationRows(assessment, content, library, comments);
   const essentialGaps = rows.filter(
     (row) => row.importance === "essential" && row.experience !== "Strong",
   ).length;

@@ -11,7 +11,8 @@ export const TOKEN_TTL_MS: Record<TokenPurpose, number> = {
   email_verification: 24 * 60 * 60 * 1000,
 };
 
-function hashToken(raw: string): string {
+/** sha256, hex. Exported so the share links hash their tokens the one way this product hashes a token. */
+export function hashToken(raw: string): string {
   return createHash("sha256").update(raw).digest("hex");
 }
 

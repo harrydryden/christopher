@@ -9,6 +9,6 @@ export {
   APIConnectionError, APIConnectionTimeoutError, APIError, AuthenticationError, BadRequestError,
   InternalServerError, NotFoundError, PermissionDeniedError, RateLimitError,
 } from "@anthropic-ai/sdk";
-export { PRICING, SERVER_TOOL_USD, estimateCostUsd, estimateCvBuildUsd, estimateLibraryReviewUsd, priceFor, serverToolCostUsd, type LibraryReviewSize, type TokenUsage } from "./pricing";
+export { PRICING, SERVER_TOOL_USD, estimateCostUsd, estimateCvBuildUsd, estimateLibraryImportUsd, estimateLibraryReviewUsd, priceFor, serverToolCostUsd, type LibraryReviewSize, type TokenUsage } from "./pricing";
 export * as schemas from "./schemas";
 export * as prompts from "./prompts";

@@ -1,12 +1,15 @@
 "use client";
 import { useState } from "react";
 import type { CvChange, CvEvaluationRow } from "@/lib/cv-evaluation";
+// Repeated rather than imported: the lib module this type comes from is server-side, and a
+// client bundle should not pull it in for a list of labels.
 const CV_CHANGE_TYPES: readonly CvChange[] = [
   "None",
   "Fact",
   "Gap",
   "Improvement",
   "Uncertain",
+  "Comment",
 ];
 import { CvContentBlockLink } from "./CvWorkspace";
 import { CvDisclosure } from "./CvDisclosure";
@@ -14,8 +17,14 @@ import { CvDisclosure } from "./CvDisclosure";
 const colours = {
   Red: "border-danger text-danger",
   Amber: "border-warn text-warn",
+  // A reader's note is information, not a finding against the CV.
+  Blue: "border-info text-info",
 };
 const strengths = { None: 0, Weak: 1, Good: 2, Strong: 3 };
+/** A reader's note rates nothing, so the two strength columns say so instead of reading as a gap. */
+function NotRated() {
+  return <span className="text-12 text-muted">Not rated</span>;
+}
 function Strength({ value }: { value: keyof typeof strengths }) {
   return (
     <div className="whitespace-nowrap text-12 font-semibold">
@@ -146,7 +155,7 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
                   </td>
                   <td className="px-2 py-4">
                     <span
-                      className={`inline-flex items-center justify-center border px-1.5 py-1 text-center text-11 font-medium ${row.change === "Fact" ? colours.Red : row.change === "Uncertain" ? colours.Amber : "border-line-muted bg-raised text-fg"}`}
+                      className={`inline-flex items-center justify-center border px-1.5 py-1 text-center text-11 font-medium ${row.change === "Fact" ? colours.Red : row.change === "Uncertain" ? colours.Amber : row.change === "Comment" ? colours.Blue : "border-line-muted bg-raised text-fg"}`}
                     >
                       {row.change}
                     </span>
@@ -186,16 +195,17 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
                       )}
                       {row.sources.map((source, index) => (
                         <p key={index} className="text-12 text-muted">
-                          <strong>Saved evidence:</strong> {source}
+                          <strong>{row.change === "Comment" ? "Also said:" : "Saved evidence:"}</strong>{" "}
+                          {source}
                         </p>
                       ))}
                     </CvDisclosure>
                   </td>
                   <td className="px-2 py-4">
-                    <Strength value={row.evidence} />
+                    {row.change === "Comment" ? <NotRated /> : <Strength value={row.evidence} />}
                   </td>
                   <td className="px-2 py-4">
-                    <Strength value={row.experience} />
+                    {row.change === "Comment" ? <NotRated /> : <Strength value={row.experience} />}
                   </td>
                 </tr>
               ))}

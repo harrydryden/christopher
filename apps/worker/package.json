@@ -16,10 +16,12 @@
     "@christopher/ai": "workspace:*",
     "@christopher/core": "workspace:*",
     "@christopher/db": "workspace:*",
+    "drizzle-orm": "latest",
+    "mammoth": "^1.12.3",
+    "pdf-parse": "^2.4.5",
     "pg": "latest",
     "playwright": "1.56.1",
-    "tsx": "latest",
-    "drizzle-orm": "latest"
+    "tsx": "latest"
   },
   "devDependencies": {
     "@types/node": "latest",

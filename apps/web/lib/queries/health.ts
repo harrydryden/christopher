@@ -298,6 +298,7 @@ export interface SubjectRef {
 const SUBJECT_FIELDS: Partial<Record<Task["type"], { kind: SubjectKind; field: string }>> = {
   generate_cv: { kind: "cv", field: "draftId" },
   review_library: { kind: "user", field: "userId" },
+  import_library_document: { kind: "user", field: "userId" },
   scan_company: { kind: "company", field: "companyId" },
   discover: { kind: "company", field: "companyId" },
   profile_company: { kind: "company", field: "companyId" },

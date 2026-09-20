@@ -1,4 +1,4 @@
-import { ats, discovery, type SourceSpec, type SourceType } from "@christopher/core";
+import { ats, discovery, type DiscoveryAiHooks, type SourceSpec, type SourceType } from "@christopher/core";
 import { PoliteFetcher, userAgentFor } from "./fetcher";
 import type { BrowserRenderer } from "./browser";
 
@@ -67,6 +67,17 @@ export interface LiveAcceptanceMetrics {
 }
 
 export type LiveAcceptanceVerdict = "pass" | "fail" | "blocked";
+
+export function resolveLiveAcceptanceConcurrency(raw: string | undefined, browserEnabled: boolean, aiEnabled: boolean): { value: number; source: "explicit" | "production_serial_default" | "http_default" } {
+  if (raw !== undefined) {
+    const value = Number.parseInt(raw, 10);
+    if (!/^[1-3]$/.test(raw) || !Number.isInteger(value)) throw new Error("--concurrency must be 1, 2 or 3");
+    return { value, source: "explicit" };
+  }
+  return browserEnabled || aiEnabled
+    ? { value: 1, source: "production_serial_default" }
+    : { value: 3, source: "http_default" };
+}
 
 function normaliseSourceUrl(value: string): string {
   const url = new URL(value);
@@ -153,7 +164,7 @@ function extractionErrorCode(error: unknown): NonNullable<LiveAcceptanceResult["
   return "extraction_error";
 }
 
-export async function runLiveAcceptanceCase(item: LiveAcceptanceCase, options: { discoveryOnly?: boolean; maxFetches?: number; fetcher?: PoliteFetcher; browser?: BrowserRenderer } = {}): Promise<LiveAcceptanceResult> {
+export async function runLiveAcceptanceCase(item: LiveAcceptanceCase, options: { discoveryOnly?: boolean; maxFetches?: number; fetcher?: PoliteFetcher; browser?: BrowserRenderer; ai?: DiscoveryAiHooks } = {}): Promise<LiveAcceptanceResult> {
   const started = Date.now();
   const fetcher = options.fetcher ?? new PoliteFetcher({
     userAgent: userAgentFor(process.env.CONTACT_EMAIL ?? "christopher-live-acceptance@example.invalid"),
@@ -187,6 +198,7 @@ export async function runLiveAcceptanceCase(item: LiveAcceptanceCase, options: {
     findSpecsInText: ats.findAtsSpecsInText,
     verifySpec: (spec: SourceSpec) => ats.getAdapter(spec.type).verify(spec, fetchContext),
     extractFromHtml: ats.extractPostingsFromHtml,
+    ai: options.ai,
     maxFetches: options.maxFetches ?? 16,
     maxDurationMs: 45_000,
   };

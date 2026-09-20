@@ -149,12 +149,29 @@ import {
   listLargestScanInputs,
   outboundTraffic,
   listRecentWorkerEvents,
+  normaliseCvBuildCosts,
+  operationDate,
+  requiredOperationDate,
   listRetryingTasks,
   listRunningTasks,
   taskSubjectRef,
 } from "./health";
 
 const MINUTE = 60_000;
+
+it("normalises timestamps returned as strings by a pooled serverless query", () => {
+  const raw = JSON.parse('{"at":"2026-09-20T13:52:12.128Z"}') as { at: unknown };
+  expect(operationDate(raw.at)).toEqual(new Date("2026-09-20T13:52:12.128Z"));
+  expect(operationDate(new Date("2026-09-20T13:52:12.128Z"))).toEqual(new Date("2026-09-20T13:52:12.128Z"));
+  expect(operationDate("not-a-timestamp")).toBeNull();
+  expect(requiredOperationDate(raw.at, "CV build").toISOString()).toBe("2026-09-20T13:52:12.128Z");
+  expect(() => requiredOperationDate("not-a-timestamp", "CV build")).toThrow("invalid CV build timestamp");
+  const costs = normaliseCvBuildCosts({
+    builds: [{ draftId: "draft-1", calls: 1, costUsd: 1, byStage: { author: 1 }, unattributedUsd: 0, at: raw.at as Date }],
+    medianUsd: 1, worstUsd: 1, stages: ["author"],
+  });
+  expect(costs.builds[0]!.at.toISOString()).toBe("2026-09-20T13:52:12.128Z");
+});
 async function resetWorkerFixtures() {
   await database.execute(sql`truncate companies, tasks, worker_events, settings, users restart identity cascade`);
 }

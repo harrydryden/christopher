@@ -102,6 +102,80 @@ describe("discovery: an Anduril-style JavaScript shell", () => {
 });
 
 describe("discovery: other shapes", () => {
+  it("does not auto-accept careers-content calls to action as job postings", async () => {
+    const contentLinks = [
+      ["Learn about remote working", "/careers/company-culture/remote-work"],
+      ["Learn about our company culture", "/careers/company-culture"],
+      ["Read our diversity statement", "/careers/company-culture/identity"],
+      ["Read about career progression", "/careers/company-culture/progression"],
+    ].map(([title, href]) => `<article><a href="${href}">${title} ›</a></article>`).join("");
+    const ctx = createFakeDiscoveryContext({
+      routes: {
+        "https://www.acme.example/": { body: '<html><head><title>Acme</title></head><body><a href="/careers/hiring-process">Hiring process</a><a href="/careers">Careers</a></body></html>' },
+        "https://www.acme.example/careers/hiring-process": { body: `<main>${contentLinks}</main>` },
+        "https://www.acme.example/careers": { body: '<main><a href="https://jobs.ashbyhq.com/acme/role-1">Open roles</a></main>' },
+      },
+      verify: { "ashby:acme": { ok: true, count: 4, sample: [], companyName: "Acme" } },
+    });
+    const result = await discoverCareersSources("https://www.acme.example/", ctx);
+    expect(result.outcome).toBe("resolved");
+    expect(result.best?.spec.type).toBe("ashby");
+    expect(result.candidates.some(candidate => candidate.spec.url.endsWith("/careers/hiring-process"))).toBe(false);
+  });
+
+  it("interleaves independent jobs hosts before the same-origin path budget is exhausted", async () => {
+    const jobs = Array.from({ length: 4 }, (_, i) => `<article><a href="/jobs/role-${i}">Role ${i}</a></article>`).join("");
+    const ctx = createFakeDiscoveryContext({
+      routes: {
+        "https://jobs.acme.example/": { body: `<main>${jobs}</main>` },
+      },
+      maxFetches: 5,
+    });
+    const result = await discoverCareersSources("https://www.acme.example/", ctx);
+    expect(result.outcome).toBe("resolved");
+    expect(result.best?.spec.url).toBe("https://jobs.acme.example/");
+    expect(result.fetches).toBeLessThanOrEqual(5);
+    expect(ctx.requestLog.some(request => request.url === "https://jobs.acme.example/")).toBe(true);
+  });
+
+  it("does not follow off-domain job URLs promoted by a first-party sitemap", async () => {
+    const ctx = createFakeDiscoveryContext({
+      routes: {
+        "https://www.acme.example/": { body: "<html><head><title>Acme</title></head><body><p>Company homepage</p></body></html>" },
+        "https://www.acme.example/robots.txt": { body: "Sitemap: https://www.acme.example/sitemap.xml" },
+        "https://www.acme.example/sitemap.xml": { body: `<urlset>
+          <url><loc>https://jobs.unrelated.example/jobs/one</loc></url>
+          <url><loc>https://jobs.unrelated.example/jobs/two</loc></url>
+          <url><loc>https://jobs.unrelated.example/jobs/three</loc></url>
+        </urlset>` },
+        "https://jobs.unrelated.example/jobs": { body: '<a href="https://jobs.ashbyhq.com/unrelated/role">Engineer</a>' },
+      },
+    });
+    const result = await discoverCareersSources("https://www.acme.example/", ctx);
+    expect(result.outcome).toBe("not_found");
+    expect(ctx.requestLog.some(request => request.url === "https://jobs.unrelated.example/jobs")).toBe(false);
+  });
+
+  it("holds an ATS reached only through sitemap redirects for confirmation", async () => {
+    const ctx = createFakeDiscoveryContext({
+      routes: {
+        "https://www.acme.example/": { body: "<html><head><title>Acme</title></head><body><p>Company homepage</p></body></html>" },
+        "https://www.acme.example/robots.txt": { body: "Sitemap: https://www.acme.example/sitemap.xml" },
+        "https://www.acme.example/sitemap.xml": { body: `<urlset>
+          <url><loc>https://www.acme.example/vacancies/open/one</loc></url>
+          <url><loc>https://www.acme.example/vacancies/open/two</loc></url>
+          <url><loc>https://www.acme.example/vacancies/open/three</loc></url>
+        </urlset>` },
+        "https://www.acme.example/vacancies/open": { url: "https://recruiting.example.net/search", body: '<a href="https://jobs.ashbyhq.com/acme/role">Engineer</a>' },
+      },
+      verify: { "ashby:acme": { ok: true, count: 3, sample: [], companyName: "Acme" } },
+    });
+    const result = await discoverCareersSources("https://www.acme.example/", ctx);
+    expect(result.outcome).toBe("needs_confirmation");
+    expect(result.best?.method).toBe("ats_sitemap");
+    expect(result.best?.confidence).toBeLessThan(0.85);
+  });
+
   it("resolves a first-party jobs page with an explicit zero-opening state", async () => {
     const ctx = createFakeDiscoveryContext({ routes: {
       "https://www.acme.example/": { body: '<html><head><title>Acme</title></head><body><a href="/jobs">Jobs</a></body></html>' },
@@ -311,6 +385,48 @@ describe("discovery: other shapes", () => {
     expect(result.outcome).toBe("resolved");
     expect(result.best?.spec.url).toBe("https://www.acme.example/careers/listings");
     expect(result.best?.confidence).toBe(0.85);
+  });
+
+  it("checks a complete listing beyond the first two careers links on a landing page", async () => {
+    const jobs = Array.from({ length: 4 }, (_, i) => `<article><a href="/positions/role-${i}">Role ${i}</a></article>`).join("");
+    const ctx = createFakeDiscoveryContext({ routes: {
+      "https://www.acme.example/": { body: '<html><head><title>Acme</title></head><body><a href="/careers">Careers</a></body></html>' },
+      "https://www.acme.example/careers": { body: `<main>
+        <a href="/careers/teams">Careers by team</a>
+        <a href="/careers/locations">Careers by location</a>
+        <a href="/careers/early-careers">Early careers</a>
+        <a href="/all-jobs">View all jobs</a>
+      </main>` },
+      "https://www.acme.example/careers/teams": { body: "<main>Teams</main>" },
+      "https://www.acme.example/careers/locations": { body: "<main>Locations</main>" },
+      "https://www.acme.example/careers/early-careers": { body: "<main>Early careers</main>" },
+      "https://www.acme.example/all-jobs": { body: `<main>${jobs}</main>` },
+    } });
+    const result = await discoverCareersSources("https://www.acme.example/", ctx);
+    expect(result.outcome).toBe("resolved");
+    expect(result.best?.spec.url).toBe("https://www.acme.example/all-jobs");
+    expect(result.fetches).toBeLessThanOrEqual(40);
+  });
+
+  it("continues bounded path probes after finding only a weak landing page", async () => {
+    const jobs = Array.from({ length: 4 }, (_, i) => `<article><a href="/jobs/role-${i}">Role ${i}</a></article>`).join("");
+    const ctx = createFakeDiscoveryContext({ routes: {
+      "https://www.acme.example/": { body: '<html><head><title>Acme</title></head><body><a href="/work-with-us">Work with us</a></body></html>' },
+      "https://www.acme.example/work-with-us": { body: '<main><a href="/careers/culture">Careers and culture</a></main>' },
+      "https://www.acme.example/careers/culture": { body: "<main>Our culture</main>" },
+      "https://www.acme.example/careers": { status: 404, body: "missing" },
+      "https://www.acme.example/careers/": { status: 404, body: "missing" },
+      "https://www.acme.example/careers/jobs": { status: 404, body: "missing" },
+      "https://www.acme.example/careers/open-roles": { status: 404, body: "missing" },
+      "https://www.acme.example/careers/openings": { status: 404, body: "missing" },
+      "https://www.acme.example/career": { status: 404, body: "missing" },
+      "https://www.acme.example/jobs": { body: `<main>${jobs}</main>` },
+    } });
+    const result = await discoverCareersSources("https://www.acme.example/", ctx);
+    expect(result.outcome).toBe("resolved");
+    expect(result.best?.spec.url).toBe("https://www.acme.example/jobs");
+    expect(result.candidates.some(candidate => candidate.method === "landing")).toBe(true);
+    expect(result.fetches).toBeLessThanOrEqual(40);
   });
 
   it("does not treat an external all-jobs link as the company's complete listing", async () => {

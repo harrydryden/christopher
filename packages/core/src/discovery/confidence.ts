@@ -16,6 +16,8 @@ const BASE: Record<string, number> = {
   listing_empty: 0.85,
   pasted_listing: 0.85,
   ai_listing: 0.75,
+  ats_sitemap: 0.7,
+  ats_probe: 0.7,
   ats_guess: 0.7,
   landing: 0.5,
 };

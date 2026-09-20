@@ -131,7 +131,16 @@ export async function getAiUsage(since: Date): Promise<AiUsageGroup[]> {
  * account's drafts, so the page behind it calls `requireAdmin` and it is never used per account.
  */
 export async function getCvBuildCosts(limit = 20): Promise<CvBuildCosts> {
-  return ifLedger(() => costPerCvBuild(db(), limit), { builds: [], medianUsd: null, worstUsd: null, stages: [] });
+  const costs = await ifLedger(() => costPerCvBuild(db(), limit), { builds: [], medianUsd: null, worstUsd: null, stages: [] });
+  return normaliseCvBuildCosts(costs);
+}
+
+/** Decode raw aggregate timestamps before the Operations page formats them. */
+export function normaliseCvBuildCosts(costs: CvBuildCosts): CvBuildCosts {
+  return {
+    ...costs,
+    builds: costs.builds.map(build => ({ ...build, at: requiredOperationDate(build.at, "CV build") })),
+  };
 }
 
 /**
@@ -199,8 +208,17 @@ export async function listRecentScanRuns(limit = 10, userId?: string) {
   return scanRunReports(runs, userId);
 }
 
-const isoDate = (value: unknown): Date | null =>
-  typeof value === "string" && Number.isFinite(Date.parse(value)) ? new Date(value) : null;
+/** PostgreSQL timestamps may cross a pooled/serverless boundary as ISO strings rather than Dates. */
+export const operationDate = (value: unknown): Date | null => {
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value : null;
+  return typeof value === "string" && Number.isFinite(Date.parse(value)) ? new Date(value) : null;
+};
+export const requiredOperationDate = (value: unknown, field: string): Date => {
+  const parsed = operationDate(value);
+  if (!parsed) throw new Error(`Operations received an invalid ${field} timestamp.`);
+  return parsed;
+};
+const isoDate = operationDate;
 const finite = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
 
 /** The vitals block, or null for a heartbeat written before the worker reported one. */
@@ -507,15 +525,18 @@ export async function listRecentWorkerEvents(limit = 30): Promise<WorkerEventRow
   const rows = await ifLedger(() => listWorkerEvents(db(), { limit }), [] as Awaited<ReturnType<typeof listWorkerEvents>>);
   const refs = rows.map((row) => eventRef(row));
   const names = await resolveSubjects(refs);
-  return rows.map((row, i) => ({
-    id: row.id,
-    at: row.at,
-    kind: row.kind,
-    workerId: row.workerId,
-    taskType: row.taskType,
-    subject: subjectName(refs[i] ?? null, names),
-    detail: eventDetailLine(row.kind, row.detail ?? {}),
-  }));
+  return rows.map((row, i) => {
+    const at = requiredOperationDate(row.at, "worker event");
+    return {
+      id: row.id,
+      at,
+      kind: row.kind,
+      workerId: row.workerId,
+      taskType: row.taskType,
+      subject: subjectName(refs[i] ?? null, names),
+      detail: eventDetailLine(row.kind, row.detail ?? {}),
+    };
+  });
 }
 
 /** The most recent crash recovery, with the tasks the dead process was holding. */
@@ -525,9 +546,11 @@ export async function getLastCrashRecovery(): Promise<CrashRecovery | null> {
     [] as Awaited<ReturnType<typeof listWorkerEvents>>,
   );
   if (!row) return null;
+  const at = operationDate(row.at);
+  if (!at) return null;
   const detail = row.detail ?? {};
   const names = await resolveSubjects(crashSuspectRefs(detail));
-  return { at: row.at, workerId: row.workerId, suspects: readSuspects(detail, names) };
+  return { at, workerId: row.workerId, suspects: readSuspects(detail, names) };
 }
 
 /* ---------------------------------------------------------------------------------------------
@@ -556,7 +579,7 @@ export async function listRunningTasks(limit = 25): Promise<RunningTaskRow[]> {
     id: row.id,
     type: row.type,
     subject: subjectName(refs[i] ?? null, names),
-    startedAt: row.startedAt,
+    startedAt: operationDate(row.startedAt),
     lockedBy: row.lockedBy,
     attempts: row.attempts,
     maxAttempts: row.maxAttempts,
@@ -585,15 +608,18 @@ export async function listRetryingTasks(limit = 25): Promise<RetryingTaskRow[]> 
     .orderBy(desc(tasks.attempts), asc(tasks.runAfter)).limit(limit);
   const refs = rows.map((row) => taskSubjectRef(row.type, row.payload));
   const names = await resolveSubjects(refs);
-  return rows.map((row, i) => ({
-    id: row.id,
-    type: row.type,
-    subject: subjectName(refs[i] ?? null, names),
-    attempts: row.attempts,
-    maxAttempts: row.maxAttempts,
-    error: row.error,
-    runAfter: row.runAfter,
-  }));
+  return rows.map((row, i) => {
+    const runAfter = requiredOperationDate(row.runAfter, "task retry");
+    return {
+      id: row.id,
+      type: row.type,
+      subject: subjectName(refs[i] ?? null, names),
+      attempts: row.attempts,
+      maxAttempts: row.maxAttempts,
+      error: row.error,
+      runAfter,
+    };
+  });
 }
 
 export interface ScanInputRow {
@@ -639,17 +665,20 @@ export async function listLargestScanInputs(days = 7, limit = 10): Promise<ScanI
     .orderBy(scans.sourceId, desc(scans.fetchedBytes))
     .as("largest");
   const rows = await db().select().from(largest).orderBy(desc(largest.bytes)).limit(limit);
-  return rows.map((row) => ({
-    sourceId: row.sourceId,
-    companyId: row.companyId,
-    companyName: row.companyName,
-    sourceType: row.sourceType,
-    bytes: Number(row.bytes ?? 0),
-    fetchMethod: row.fetchMethod,
-    requests: row.requests === null ? null : Number(row.requests),
-    revalidated: row.revalidated === null ? null : Number(row.revalidated),
-    at: row.at,
-  }));
+  return rows.map((row) => {
+    const at = requiredOperationDate(row.at, "scan input");
+    return {
+      sourceId: row.sourceId,
+      companyId: row.companyId,
+      companyName: row.companyName,
+      sourceType: row.sourceType,
+      bytes: Number(row.bytes ?? 0),
+      fetchMethod: row.fetchMethod,
+      requests: row.requests === null ? null : Number(row.requests),
+      revalidated: row.revalidated === null ? null : Number(row.revalidated),
+      at,
+    };
+  });
 }
 
 export { companySubscriptions as _companySubscriptions, workerEvents as _workerEvents };

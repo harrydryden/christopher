@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { liveAcceptanceVerdict, runLiveAcceptanceCase, sourceMatches, summariseLiveAcceptance, type LiveAcceptanceCase, type LiveAcceptanceResult } from "./live-acceptance";
+import { liveAcceptanceVerdict, resolveLiveAcceptanceConcurrency, runLiveAcceptanceCase, sourceMatches, summariseLiveAcceptance, type LiveAcceptanceCase, type LiveAcceptanceResult } from "./live-acceptance";
+import { createLiveAcceptanceAiBudget } from "./live-acceptance-ai";
 
 const labelled: LiveAcceptanceCase = { id: "a", company: "A", homepageUrl: "https://a.test", expectedSource: { type: "greenhouse", url: "https://boards.greenhouse.io/acme" }, expectedRoleCount: null, labelStatus: "source_independently_checked", labelNote: "checked" };
 const unverified: LiveAcceptanceCase = { ...labelled, id: "b", labelStatus: "unverified" };
@@ -9,6 +10,39 @@ function result(id: string, matches: boolean): LiveAcceptanceResult {
 }
 
 describe("live acceptance reporting", () => {
+  it("admits AI calls against a conservative run cap and reports actual usage", async () => {
+    const budget = createLiveAcceptanceAiBudget("claude-sonnet-5", 1);
+    const release = await budget.reserve("A1", 0.02);
+    expect(release).toBeTypeOf("function");
+    budget.onUsage({ callSite: "A1", model: "claude-sonnet-5", inputTokens: 100, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0.003, durationMs: 10, ok: true });
+    expect(budget.snapshot()).toMatchObject({ capUsd: 1, spentUsd: 0.003, heldUsd: 0.3, conservativeFactor: 15, refusedReservations: 0, uncertainHeldUsd: 0 });
+    await release!();
+    expect(budget.snapshot().heldUsd).toBe(0);
+    expect(await budget.reserve("A2", 0.07)).toBeNull();
+    expect(budget.snapshot().refusedReservations).toBe(1);
+  });
+
+  it("retains the conservative hold when a failed provider call has no usage snapshot", async () => {
+    const budget = createLiveAcceptanceAiBudget("claude-sonnet-5", 1);
+    const release = await budget.reserve("A1", 0.02);
+    budget.onUsage({ callSite: "A1", model: "claude-sonnet-5", inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, durationMs: 10, ok: false, error: "connection ended" });
+    await release!();
+    expect(budget.snapshot()).toMatchObject({ spentUsd: 0, heldUsd: 0.3, uncertainHeldUsd: 0.3 });
+    expect(await budget.reserve("A2", 0.05)).toBeNull();
+  });
+
+  it("defaults browser and AI runs to the serial production shape but preserves explicit stress concurrency", () => {
+    expect(resolveLiveAcceptanceConcurrency(undefined, true, false)).toEqual({ value: 1, source: "production_serial_default" });
+    expect(resolveLiveAcceptanceConcurrency(undefined, false, true)).toEqual({ value: 1, source: "production_serial_default" });
+    expect(resolveLiveAcceptanceConcurrency(undefined, false, false)).toEqual({ value: 3, source: "http_default" });
+    expect(resolveLiveAcceptanceConcurrency("3", true, false)).toEqual({ value: 3, source: "explicit" });
+    expect(() => resolveLiveAcceptanceConcurrency("4", false, false)).toThrow(/1, 2 or 3/);
+  });
+
+  it("rejects unpriced AI models rather than inventing a cost ceiling", () => {
+    expect(() => createLiveAcceptanceAiBudget("unknown-model", 1)).toThrow(/No checked pricing/);
+  });
+
   it("matches ATS identity rather than cosmetic board URL variants", () => {
     expect(sourceMatches(labelled.expectedSource, { type: "greenhouse", url: "https://job-boards.greenhouse.io/acme/", atsSlug: "acme" })).toBe(true);
   });

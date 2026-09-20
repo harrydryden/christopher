@@ -119,6 +119,8 @@ beforeEach(async () => {
     sql`truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users restart identity cascade`,
   );
   ({ user, cookie: session } = await signInTestUser(database, process.env.SESSION_SECRET!));
+  // Filters first: `addCompanies` refuses an account that has never chosen its gate.
+  await database.insert(schema.userSettings).values({ userId: user.id, key: "gate", value: DEFAULT_SETTINGS.gate });
 });
 async function fixture() {
   const [company] = await database
@@ -522,8 +524,9 @@ describe("priority workflows", () => {
     expect(decisions).toHaveLength(2);
     expect(decisions.every((d) => d.reason === "Too junior")).toBe(true);
     expect(decisions.every((d) => d.jobTitle && d.companyName === "Acme")).toBe(true);
+    // Two standing decisions is not a fifth, so the filter-suggestion call is not queued yet.
     expect((await database.select().from(schema.tasks)).some(
-        (t) => t.type === "suggest_filters")).toBe(true);
+        (t) => t.type === "suggest_filters")).toBe(false);
   });
   it("rolls back a decision when its learning task cannot be persisted, and reports no SQL", async () => {
     const { job } = await fixture();
@@ -601,7 +604,9 @@ describe("priority workflows", () => {
     generate.set("description", "Lead a business operations team, develop the annual operating plan and work with finance and commercial leaders.");
     await expect(requestCv({ ok: true }, generate)).rejects.toThrow("redirect:/cv/");
     const [draft] = await database.select().from(schema.cvDrafts);
-    expect(draft!.librarySnapshot).toEqual({ ...content, theme: DEFAULT_CV_THEME, structuredExperience: true, entries: [{ ...content.entries[0], heading: "Director · Acme · Aug 2023 – Present", status: "active", details: "Led an operations team" }] }); expect(draft!.model).toBe("claude-fable-5-1");
+    // `toMatchObject`, so a normalisation marker the library gains later (`facetedRows` and its
+    // like) does not fail a test about what the snapshot carries.
+    expect(draft!.librarySnapshot).toMatchObject({ ...content, theme: DEFAULT_CV_THEME, structuredExperience: true, entries: [{ ...content.entries[0], heading: "Director · Acme · Aug 2023 – Present", status: "active", details: "Led an operations team" }] }); expect(draft!.model).toBe("claude-fable-5-1");
     expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(1);
     await database.update(schema.cvDrafts).set({ status: "ready", revision: 1, content: { name: content.name, contact: content.contact, summary: "Original", sections: [{ entryId: "one", kind: "experience", heading: "Director · Acme", industryDescriptions: ["SaaS"], bullets: ["Led a team"] }], gaps: [] } }).where(eq(schema.cvDrafts.id, draft!.id));
     const edit = new FormData(); edit.set("summary", "Edited summary"); edit.set("section-0", "Led the operations team"); edit.set("rememberWording", "on");
@@ -769,12 +774,94 @@ describe("CSV export", () => {
     expect(response.headers.get("content-type")).toBe("text/csv; charset=utf-8");
     const csv = await response.text();
     const lines = csv.trim().split("\r\n");
-    expect(lines[0]).toBe("company,website,role,location,url,live_for_days,availability,fit,status,stage,reason,first_seen,posted_at,closed_at");
+    expect(lines[0]).toBe("company,website,role,location,url,live_for_days,availability,fit,score_state,status,stage,reason,first_seen,posted_at,closed_at");
     // Every row, in blocks, and not one character of the stored descriptions.
     expect(lines).toHaveLength(122);
     expect(csv).not.toContain("xxxx");
     expect(csv).not.toContain("yyyy");
     expect(csv).toContain("Operations Manager");
+    // Nothing was left out, so nothing claims it was.
+    expect(csv).not.toContain("Truncated");
+  }, 120_000);
+
+  /** R-7.5: the file is the view the screen shows — the same filters, the same order. */
+  it("exports the page the table shows, filtered and sorted the same way", async () => {
+    const { GET: exportCsv } = await import("@/app/api/export.csv/route");
+    const { NextRequest } = await import("next/server");
+    const { company, source } = await fixture();
+    const inserted = await database.insert(schema.jobs).values(Array.from({ length: 6 }, (_, i) => ({
+      companyId: company.id, sourceId: source.id, externalKey: `sorted-${i}`, title: `Operations ${String(i).padStart(2, "0")}`,
+      normalizedTitle: `operations ${i}`, url: `https://acme.example/sorted/${i}`, location: "London",
+    }))).returning({ id: schema.jobs.id });
+    await follow(company.id, ...inserted.map(row => row.id));
+    await database.update(schema.userJobs).set({ fitScore: 80 }).where(eq(schema.userJobs.jobId, inserted[3]!.id));
+
+    const query = "decision=all&q=operations&sort=fit&dir=desc";
+    const csv = await (await exportCsv(new NextRequest(`https://example.test/api/export.csv?${query}`))).text();
+    const roles = csv.trim().split("\r\n").slice(1).map(line => line.split(",")[2]);
+    const page = await fetchRolePage(user.id, parseRolesFilters({ decision: "all", q: "operations", sort: "fit", dir: "desc" }), false, null, 1);
+    expect(roles).toEqual(page.visible.map(row => row.job.title));
+    expect(roles[0]).toBe("Operations 03");
+  }, 120_000);
+
+  it("stops at the 20,000-row cap and says so on the last line", async () => {
+    const { GET: exportCsv } = await import("@/app/api/export.csv/route");
+    const { NextRequest } = await import("next/server");
+    const { company, source } = await fixture();
+    // 20,000 more than the fixture's one, so the cap leaves exactly one role out.
+    await database.execute(sql`insert into jobs (company_id, source_id, external_key, title, normalized_title, url)
+      select ${company.id}::uuid, ${source.id}::uuid, 'cap-' || g, 'Role ' || g, 'role ' || g, 'https://acme.example/cap/' || g
+      from generate_series(1, 20000) g`);
+    await database.execute(sql`insert into user_jobs (user_id, job_id, keyword_matched, location_ok, in_table)
+      select ${user.id}::uuid, j.id, true, true, true from jobs j where j.external_key like 'cap-%'
+      on conflict do nothing`);
+
+    const csv = await (await exportCsv(new NextRequest("https://example.test/api/export.csv?decision=all"))).text();
+    const lines = csv.trim().split("\r\n");
+    expect(lines).toHaveLength(20_002); // the header, the cap, and one line saying so
+    expect(lines.at(-1)).toContain("Truncated at 20,000 rows");
+  }, 180_000);
+});
+
+describe("the decision fan-out", () => {
+  /**
+   * R-6.9 asks for a weekly filter-suggestion call; the scheduler owns that. Deciding used to queue
+   * one every single time, deduped only by the account, so a review session became a model call per
+   * role. Now it is queued on every fifth standing decision.
+   */
+  it("queues the filter-suggestion call on every fifth decision, not on every one", async () => {
+    const { company, source } = await fixture();
+    const inserted = await database.insert(schema.jobs).values(Array.from({ length: 10 }, (_, i) => ({
+      companyId: company.id, sourceId: source.id, externalKey: `fan-${i}`, title: `Role ${i}`,
+      normalizedTitle: `role ${i}`, url: `https://acme.example/fan/${i}`,
+    }))).returning({ id: schema.jobs.id });
+    const ids = inserted.map(row => row.id);
+    await follow(company.id, ...ids);
+    const suggestTasks = async () => database.select().from(schema.tasks).where(eq(schema.tasks.type, "suggest_filters"));
+
+    for (const id of ids.slice(0, 4)) expect((await decide(id, "apply", "")).ok).toBe(true);
+    expect(await suggestTasks()).toHaveLength(0);
+    // Profile synthesis is unchanged: it is queued every time and its handler holds its own threshold.
+    expect((await database.select().from(schema.tasks)).filter(task => task.type === "synthesize_profile")).toHaveLength(1);
+
+    expect((await decide(ids[4]!, "apply", "")).ok).toBe(true);
+    const queued = await suggestTasks();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]!.dedupeKey).toBe(`suggest_filters:${user.id}`);
+
+    // A sixth decision does not queue a second call, and the tenth does — once the first is done,
+    // since the dedupe key is the account.
+    expect((await decide(ids[5]!, "apply", "")).ok).toBe(true);
+    expect(await suggestTasks()).toHaveLength(1);
+    await database.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.id, queued[0]!.id));
+    for (const id of ids.slice(6, 10)) expect((await decide(id, "apply", "")).ok).toBe(true);
+    expect(await suggestTasks()).toHaveLength(2);
+
+    // Undoing four of them leaves six standing, so the next decision is not a fifth either.
+    expect((await decideRoles(ids.slice(0, 4), null, "")).ok).toBe(true);
+    await database.execute(sql`delete from tasks where type = 'suggest_filters'`);
+    expect((await decide(ids[0]!, "apply", "")).ok).toBe(true);
+    expect(await suggestTasks()).toHaveLength(0);
   }, 120_000);
 });
 
@@ -797,6 +884,25 @@ describe("retired filter suggestions", () => {
     const { getSettingsFor } = await import("@/lib/settings");
     expect((await getSettingsFor(user.id)).gate.includeKeywords).toContain("chief of staff");
   });
+
+  it("reports how many roles accepting a term admitted", async () => {
+    const { acceptFilterSuggestionWithReport } = await import("./learning");
+    const { company, source } = await fixture();
+    // Two postings the default gate ("operations" in the title) turns away, stored but unseen.
+    await database.insert(schema.jobs).values([
+      { companyId: company.id, sourceId: source.id, externalKey: "cos-1", title: "Chief of Staff", normalizedTitle: "chief of staff", url: "https://acme.example/cos/1" },
+      { companyId: company.id, sourceId: source.id, externalKey: "cos-2", title: "Chief of Staff, Europe", normalizedTitle: "chief of staff, europe", url: "https://acme.example/cos/2" },
+    ]);
+    const [suggestion] = await database.insert(schema.filterSuggestions)
+      .values({ userId: user.id, type: "keyword_include", value: { term: "chief of staff", source: "scans" }, rationale: "two applies" }).returning();
+
+    const result = await acceptFilterSuggestionWithReport(suggestion!.id);
+    expect(result).toEqual({ ok: true, message: expect.stringContaining("Admitted 2 roles") });
+    expect((await database.select().from(schema.userJobs)).filter(view => view.inTable)).toHaveLength(3);
+    // A second Accept on a stale page settles rather than counting twice.
+    expect(await acceptFilterSuggestionWithReport(suggestion!.id)).toEqual({ ok: false, error: expect.stringContaining("already been settled") });
+    expect(await acceptFilterSuggestionWithReport("not-a-uuid")).toEqual({ ok: false, error: "Suggestion not found." });
+  }, 120_000);
 
   it("describes a stored hide-threshold row as retired", async () => {
     const { describeFilterSuggestion } = await import("@/lib/filterSuggestions");
@@ -860,7 +966,8 @@ describe("bulk decisions", () => {
     // The baseline: one role decided on its own, and the tasks that decision leaves behind.
     expect((await decide(first, "apply", "Shared reason")).ok).toBe(true);
     const singleTaskTypes = [...new Set((await taskKeys()).map((task) => task.type))].sort();
-    expect(singleTaskTypes).toEqual(["score_job", "suggest_filters", "synthesize_profile", "tag_reason"]);
+    // One decision is not a fifth: A8 is queued every fifth decision, never on every one.
+    expect(singleTaskTypes).toEqual(["score_job", "synthesize_profile", "tag_reason"]);
     // Clear what the baseline wrote, so what follows is the group's own work alone.
     await database.execute(sql`delete from tasks`);
     await database.execute(sql`delete from job_events`);
@@ -886,7 +993,9 @@ describe("bulk decisions", () => {
     // Exactly the tasks the same roles decided one at a time would queue: one per role where the
     // dedupe key names a role or a decision, one per account where it names the account.
     const tasks = await taskKeys();
-    expect([...new Set(tasks.map((task) => task.type))].sort()).toEqual(singleTaskTypes);
+    // The hundredth standing decision is a fifth, so the group queues the one A8 call those
+    // hundred decisions taken one at a time would have queued (deduped by the account).
+    expect([...new Set(tasks.map((task) => task.type))].sort()).toEqual([...singleTaskTypes, "suggest_filters"].sort());
     expect(new Set(tasks.filter((task) => task.type === "score_job").map((task) => task.dedupeKey)))
       .toEqual(new Set(ids.map((id) => `score_job:${user.id}:${id}`)));
     expect(new Set(tasks.filter((task) => task.type === "tag_reason").map((task) => task.dedupeKey)))

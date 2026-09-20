@@ -1,5 +1,5 @@
 "use client";
-import { CV_PROFILE_ID, cvSectionBlockId } from "@/lib/cv-content-links";
+import { CV_PROFILE_ID, cvEditFormId, cvSectionBlockId } from "@/lib/cv-content-links";
 import { useFormStatus } from "react-dom";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
@@ -10,6 +10,8 @@ import {
   type CvContent,
 } from "@christopher/core/cv";
 import { saveCvDraft } from "@/app/actions/cv";
+import { formatUsd } from "@/lib/format";
+import type { CvEditCosts } from "@/lib/cv-quote";
 import { CvWorkspacePanel } from "./CvWorkspace";
 import { CvDisclosure } from "./CvDisclosure";
 import { Button } from "./Button";
@@ -18,12 +20,22 @@ import { SettingsForm } from "./SettingsForm";
 import { buttonClass } from "@/components/Button";
 import { inputClass, labelClass } from "@/components/Field";
 
-/** Writes a new revision from the latest Library against the same rubric; direct edits are not carried over. */
-function RebuildButton() {
+/** The editor's own form, which a control elsewhere on the page can submit by name. */
+
+/**
+ * Writes a new revision from the latest Library against the same rubric; direct edits are not
+ * carried over.
+ *
+ * `form` is for the one copy of this control that sits outside the editor's form — beside the
+ * assessment panel's "your Library changed" sentence. It submits the same form, to the same
+ * action, with the same intent, so there is one rebuild in the product and not two.
+ */
+export function RebuildButton({ form }: { form?: string } = {}) {
   const { pending } = useFormStatus();
   return (
     <Button
       type="submit"
+      form={form}
       name="intent"
       value="improve"
       disabled={pending}
@@ -36,19 +48,48 @@ function RebuildButton() {
 }
 
 const input = `mt-1 ${inputClass}`;
+
+/**
+ * "2 open comments" beside a block someone has written about. Silent when nobody has: a count of
+ * zero is noise, and the Evaluation tab already says when there is nothing to answer.
+ */
+function CommentCount({ n }: { n: number }) {
+  if (!n) return null;
+  return (
+    <span className="ml-2 border border-info px-1.5 py-0.5 text-10 text-info">
+      {n} open {n === 1 ? "comment" : "comments"}
+    </span>
+  );
+}
 export function CvDraftEditor({
   id,
   content,
   assessment,
   tracking,
+  share,
+  commentCounts = {},
   buildLog,
+  costs,
+  blocked = null,
 }: {
   id: string;
   content: CvContent;
   assessment?: ReactNode;
   tracking?: ReactNode;
+  /** Share links and their notes, rendered on the server beside the PDF controls. */
+  share?: ReactNode;
+  /**
+   * How many open reader notes sit on each block, keyed by the same anchor the share page files
+   * them against. A count here is the shortest route from "someone commented" to the words they
+   * commented on.
+   */
+  commentCounts?: Record<string, number>;
   /** The motions this revision was built from, kept at the foot of the Content tab. */
   buildLog?: ReactNode;
+  /** What each of the two saves is expected to cost, from `cvEditCosts` on the server. */
+  costs?: CvEditCosts;
+  /** Why these actions are unavailable — an unverified account — or null when they are not. */
+  blocked?: string | null;
 }) {
   const formId = `cv-edit-${id}`;
   const [summary, setSummary] = useState(content.summary);
@@ -133,33 +174,49 @@ export function CvDraftEditor({
   }
   return (
     <>
-      <SettingsForm
-        id={formId}
-        action={saveCvDraft.bind(null, id)}
-        submitLabel="Save Direct Edits"
-        secondaryActions={<RebuildButton />}
-      >
-        {dirty && <p className="text-12 text-muted" role="status">Unsaved changes</p>}
-        {theme && (
-          <input type="hidden" name="theme" value={JSON.stringify(theme)} />
-        )}
-      </SettingsForm>
+      {/* A disabled fieldset disables every control inside it, which is how the unverified wall
+          reaches a submit button this component does not own. */}
+      <fieldset disabled={!!blocked} className="min-w-0">
+        <SettingsForm
+          id={formId}
+          action={saveCvDraft.bind(null, id)}
+          submitLabel="Save Direct Edits"
+          secondaryActions={<RebuildButton />}
+        >
+          {dirty && <p className="text-12 text-muted" role="status">Unsaved changes</p>}
+          {theme && (
+            <input type="hidden" name="theme" value={JSON.stringify(theme)} />
+          )}
+        </SettingsForm>
+      </fieldset>
+      {/* What the two actions differ by, where they are chosen: what each keeps, what each
+          re-runs, and what each is expected to cost. */}
+      <dl className="mt-2 space-y-1 text-12 text-muted">
+        <div>
+          <dt className="inline font-semibold text-fg">Save Direct Edits</dt>
+          <dd className="inline">
+            {" · keeps your wording, re-checks it"}
+            {costs && ` · about ${formatUsd(costs.assessmentUsd)}`}
+          </dd>
+        </div>
+        <div>
+          <dt className="inline font-semibold text-fg">Rebuild from Library</dt>
+          <dd className="inline">
+            {" · rewrites from the latest Library"}
+            {costs && ` · about ${formatUsd(costs.allUsd)}`}
+          </dd>
+        </div>
+      </dl>
+      {blocked && (
+        <p role="status" className="mt-2 border border-warn p-3 text-14 text-warn">
+          {blocked}
+        </p>
+      )}
       <CvWorkspacePanel tab="appearance">
         <section className="border border-line-muted p-4">
           <h2 className="ds-pixel text-12">Appearance and settings</h2>
           <div className="mt-4 space-y-4">
             <CvAppearance value={theme} onChange={setTheme} />
-
-            <label className="block text-14">
-              <input
-                form={formId}
-                type="checkbox"
-                name="rememberWording"
-                defaultChecked
-              />{" "}
-              Remember wording corrections
-            </label>
-
           </div>
         </section>
       </CvWorkspacePanel>
@@ -199,6 +256,7 @@ export function CvDraftEditor({
 
           <label className="block text-14">
             <span className={labelClass}>Profile</span>
+            <CommentCount n={commentCounts[CV_PROFILE_ID] ?? 0} />
             <textarea
               form={formId}
               id={CV_PROFILE_ID}
@@ -210,6 +268,22 @@ export function CvDraftEditor({
               className={input}
             />
           </label>
+          {/* Beside the words it remembers, not two tabs away: it applies to whichever of the two
+              saves is used, and posts into the edit form above. The hint is a sibling, not part of
+              the label, so the control's name stays the four words it is called by. */}
+          <label className="block text-14">
+            <input
+              form={formId}
+              type="checkbox"
+              name="rememberWording"
+              defaultChecked
+            />{" "}
+            Remember wording corrections
+          </label>
+          <p className="text-12 text-muted">
+            Changed profile and bullet wording is kept as saved phrasing for the next CV. It adds no
+            facts to your Library.
+          </p>
           {cvDisplaySections(content).map(({ section, index }) => (
             <label key={section.entryId} className="block text-14">
               <span className="font-semibold">
@@ -225,6 +299,7 @@ export function CvDraftEditor({
                   {section.industryDescriptions.join(" · ")}
                 </span>
               )}
+              <CommentCount n={commentCounts[cvSectionBlockId(section.entryId)] ?? 0} />
               <textarea
                 form={formId}
                 id={cvSectionBlockId(section.entryId)}
@@ -298,6 +373,7 @@ export function CvDraftEditor({
             )}
           </CvDisclosure>
         </section>
+        {share}
         {tracking}
         {buildLog}
       </CvWorkspacePanel>

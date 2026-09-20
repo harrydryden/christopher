@@ -1,19 +1,30 @@
 import { cvVersionLabel } from "@/lib/cv-version";
+import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
 import { dailyCvVersions, getOwnCvBuildSteps, getOwnCvBuildTask, getOwnCvDraft } from "@/lib/queries/cv";
 import { cvBuildState, cvStepsSignature, cvWorkVersion } from "@/lib/cv-build-state";
+import { cvDraftSize, cvEditCosts } from "@/lib/cv-quote";
 import { CvDisclosure } from "@/components/CvDisclosure";
 import { CvWorkspace, CvWorkspacePanel } from "@/components/CvWorkspace";
 import { CvBuildProgress } from "@/components/CvBuildProgress";
 import { CvBuildLog, CvBuildNarrative } from "@/components/CvBuildNarrative";
+import { cvBuildTotals, cvBuildTotalsLine } from "@/lib/cv-build-narrative";
 import { CvBuildFailureNotice } from "@/components/CvBuildFailureNotice";
 import { getSystemSettings } from "@/lib/settings";
 import { CvAppearance } from "@/components/CvAppearance";
 import { CvAssessmentPanel } from "@/components/CvAssessmentPanel";
-import { cvAssessmentCurrent } from "@christopher/core/cv-review";
+import { CvShareCard } from "@/components/CvShareCard";
+import { CvShareComments } from "@/components/CvShareComments";
+import { getOwnCvSharing } from "@/lib/queries/cv-shares";
+import { openCommentCounts } from "@/lib/cv-share";
+import { assertCvFinalisable, cvAssessmentCurrent } from "@christopher/core/cv-review";
+import type { CvContent, CvLibrary } from "@christopher/core/cv";
+import type { CvAssessment } from "@christopher/core/cv-assessment";
 import { CvDraftEditor } from "@/components/CvDraftEditor";
+import { cvEditFormId } from "@/lib/cv-content-links";
+import { libraryDriftSentence } from "@/lib/cv-evaluation";
 import Link from "next/link";
-import { and, eq } from "drizzle-orm";
-import { applications } from "@christopher/db";
+import { and, desc, eq } from "drizzle-orm";
+import { applications, cvLibraries } from "@christopher/db";
 import { db } from "@/lib/db";
 import { notFound } from "next/navigation";
 import { zUuid } from "@/lib/validation";
@@ -23,7 +34,33 @@ import { inputClass } from "@/components/Field";
 import { PageHeader } from "@/components/PageHeader";
 import { SettingsForm } from "@/components/SettingsForm";
 import { AutoRefresh } from "@/components/AutoRefresh";
-import { isAdmin, requireUser } from "@/lib/auth";
+import { isAdmin, needsEmailConfirmation, requireUser } from "@/lib/auth";
+
+/**
+ * Why the actions that spend money are unavailable to an unverified account, in the sentence the
+ * banner above the page already uses. `requireVerifiedUser()` refuses these actions anyway; saying
+ * so at the control is what stops a revision being typed before the wall is discovered.
+ */
+
+/**
+ * Why Finalise is unavailable, in the words `assertCvFinalisable` would have thrown, or null when
+ * nothing is in the way. The same function the action, the download route and `recordApplication`
+ * all re-run, so the page and the three gates can never disagree about this revision.
+ */
+function finaliseObstacle(draft: {
+  content: CvContent | null;
+  jobDescription: string;
+  librarySnapshot: CvLibrary;
+  assessment: CvAssessment | null;
+}): string | null {
+  if (!draft.content) return null;
+  try {
+    assertCvFinalisable({ ...draft, content: draft.content });
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : "This CV cannot be finalised yet.";
+  }
+}
 export const dynamic = "force-dynamic";
 export default async function CvDraftPage({
   params,
@@ -43,12 +80,23 @@ export default async function CvDraftPage({
   // A build that has stopped moving is indistinguishable from a slow one without the queue row
   // behind it: which attempt this is, whether anything still holds it, and what the last one left.
   const now = new Date();
-  const [buildTask, steps, system, admin] = await Promise.all([
+  const [buildTask, steps, system, admin, latestLibrary, sharing] = await Promise.all([
     busy || failed ? getOwnCvBuildTask(user.id, id) : null,
     // The ledger of motions: the narrative while it builds, the build log afterwards.
     getOwnCvBuildSteps(user.id, id),
     getSystemSettings(),
     isAdmin(),
+    // This account's newest Library version, so the panel can say when the evidence behind this
+    // revision has moved on. The content is not read: only the number the two are compared by.
+    db()
+      .select({ version: cvLibraries.version })
+      .from(cvLibraries)
+      .where(eq(cvLibraries.userId, user.id))
+      .orderBy(desc(cvLibraries.version))
+      .limit(1),
+    // The links this account has opened onto this revision, and the notes left through them.
+    // Both are scoped by the account and the draft, as every per-account read is.
+    getOwnCvSharing(user.id, id),
   ]);
   const build = busy || failed ? cvBuildState(draft, buildTask, now, system.timezone) : null;
   const narrativeContext = { timeZone: system.timezone, versionLabel: version };
@@ -61,17 +109,44 @@ export default async function CvDraftPage({
       draft.jobDescription,
       draft.librarySnapshot,
     );
+  // Work that calls a model is held back until the address is confirmed, so the controls that ask
+  // for one say why rather than refusing after the wording has been typed.
+  const blocked = needsEmailConfirmation(user) ? VERIFY_SENTENCE : null;
+  const finaliseReason = finaliseObstacle(draft);
+  // What the whole build came to, once there is nothing left running to change it.
+  const totals = !busy && steps.length ? cvBuildTotalsLine(cvBuildTotals(steps, now)) : null;
+  // The Library this revision was written from, and what has been saved over it since: the
+  // sentence is only offered where there is an editor to rebuild from.
+  const drift = libraryDriftSentence(draft.libraryVersion, latestLibrary[0]?.version);
+  // What a reader said, where the reviewer's findings are read. Notes never change a rating; they
+  // become their own rows, and a count beside the block they are about.
+  const commentCounts = openCommentCounts(sharing.comments);
   // The same panel whichever tab holds it: one set of props, written once.
   const assessment = (
-    <CvAssessmentPanel
-      id={id}
-      assessment={draft.assessment}
-      current={current}
-      finalised={!!draft.finalisedAt}
-      busy={busy}
-      hasContent={!!content}
-      content={content}
-    />
+    <>
+      <CvAssessmentPanel
+        id={id}
+        assessment={draft.assessment}
+        current={current}
+        finalised={!!draft.finalisedAt}
+        busy={busy}
+        hasContent={!!content}
+        content={content}
+        library={draft.librarySnapshot}
+        libraryDrift={drift}
+        rebuildFormId={content && !busy && !blocked ? cvEditFormId(id) : null}
+        finaliseReason={finaliseReason}
+        blocked={blocked}
+        comments={sharing.comments}
+      />
+      <CvShareComments
+        draftId={id}
+        comments={sharing.comments}
+        openCount={sharing.openCount}
+        content={content}
+        now={now}
+      />
+    </>
   );
   const [application] = await db()
     .select({ id: applications.id })
@@ -90,7 +165,13 @@ export default async function CvDraftPage({
       </nav>
       <PageHeader
         title={`${draft.companyName} · ${draft.jobTitle}`}
-        description={`Version ${version}`}
+        description={
+          <>
+            Version {version}
+            {/* What this revision cost, beside its name, rather than only inside the build log. */}
+            {totals && <> · {totals}</>}
+          </>
+        }
         actions={
           content &&
           !busy && (
@@ -159,6 +240,7 @@ export default async function CvDraftPage({
             jobId={draft.jobId}
             admin={admin}
             canRetry={!draft.finalisedAt}
+            blocked={blocked}
             footnote={`Retry or edit this attempt now. Only the newest failed attempt for a company and role is kept, so the next revision you start for ${draft.jobTitle} replaces it, and a revision that builds successfully removes it.`}
           />
         )}
@@ -227,6 +309,12 @@ export default async function CvDraftPage({
             key={id}
             id={id}
             content={content}
+            // What each of the two saves is expected to cost, measured on this revision's own
+            // evidence and advert with the estimator the worker admits builds against.
+            costs={cvEditCosts(draft.model, cvDraftSize(draft))}
+            blocked={blocked}
+            commentCounts={commentCounts}
+            share={<CvShareCard draftId={id} shares={sharing.shares} now={now} />}
             buildLog={
               <CvBuildLog steps={steps} now={now} maxAttempts={maxAttempts} context={narrativeContext} />
             }

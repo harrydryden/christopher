@@ -12,6 +12,7 @@ import { discovery, ensureHttpUrl, extractDomain, normalisePostingUrl } from "@c
 import { applySuggestedName, normaliseCompanyName, upsertNameSuggestion } from "@/lib/company-names";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
+import { requireChosenGate } from "@/lib/queries/setup";
 import { getSettingsFor } from "@/lib/settings";
 import { actionError, fail, UserFacingError, zUrlString, zUuid, type ActionResult } from "@/lib/validation";
 
@@ -37,6 +38,9 @@ async function admitExistingRoles(userId: string, companyId: string, writer: Ret
 
 export async function addCompanies(formData: FormData): Promise<void> {
   const user = await requireVerifiedUser();
+  // Filters first: a company's first scan is never run against a gate nobody chose. The form says
+  // so too, but the form is a courtesy and this is the rule.
+  await requireChosenGate(user.id);
   const raw = String(formData.get("urls") ?? "");
   const lines = [...new Set(raw.split(/[\n,]/).map((s) => s.trim()).filter(Boolean))];
 
@@ -185,7 +189,8 @@ export async function saveCompanyNotes(companyId: string, notes: string): Promis
 }
 
 /**
- * One posting a follower pasted the URL of. The worker fetches and extracts it; the row it stores
+ * One posting a follower pasted the URL of. Unlike following a company, this is not held back until
+ * the gate is chosen: a role added by its URL is in the table whatever the gate says (R-5.3). The worker fetches and extracts it; the row it stores
  * is shared like any other, and this account gets a view of it whatever its gate says — a role you
  * went and found is one you meant to see. The URL is canonicalised first, so the same posting
  * pasted twice, from a newsletter and from the board, collapses onto one dedupe key.

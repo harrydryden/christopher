@@ -14,7 +14,7 @@ let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 let user: User;
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { listPipeline, pipelineFilter } from "./applications";
+import { applicationStaleHint, listPipeline, pipelineCompany, pipelineCvQuotes, pipelineDueCount, pipelineFilter, pipelineStageCounts } from "./applications";
 
 const LIBRARY = {
   name: "Test Candidate",
@@ -36,12 +36,13 @@ beforeEach(async () => {
 });
 
 /** A followed company with one posting in this account's table. */
-async function role(title = "Operations Manager") {
-  const [company] = await database.insert(schema.companies).values({ name: "Acme", domain: `acme-${title.length}.example`, homepageUrl: "https://acme.example" }).returning();
-  const [source] = await database.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://acme.example/jobs" }).returning();
+async function role(title = "Operations Manager", companyName = "Acme") {
+  const slug = `${companyName.toLowerCase().replace(/\W+/g, "-")}-${title.length}`;
+  const [company] = await database.insert(schema.companies).values({ name: companyName, domain: `${slug}.example`, homepageUrl: `https://${slug}.example` }).returning();
+  const [source] = await database.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: `https://${slug}.example/jobs` }).returning();
   const [job] = await database.insert(schema.jobs).values({
     companyId: company!.id, sourceId: source!.id, title, normalizedTitle: title.toLowerCase(),
-    externalKey: title, url: `https://acme.example/jobs/${title.length}`,
+    externalKey: title, url: `https://${slug}.example/jobs/${title.length}`,
   }).returning();
   await subscribeToCompany(database, user.id, company!.id);
   await database.insert(schema.userJobs).values({ userId: user.id, jobId: job!.id, inTable: true, keywordMatched: true });
@@ -161,8 +162,146 @@ it("orders by how far a role has got, then by what moved last, and pages at fift
   const second = await listPipeline(user.id, { page: "2" });
   expect(second.page).toBe(2);
   expect(second.rows).toHaveLength(2);
+  // The order runs across the page boundary: the second page continues where the first stopped,
+  // which is the thing paging in SQL rather than in JS has to keep true.
+  expect(first.rows.at(-1)!.jobTitle).toBe("Legacy role 2");
+  expect(second.rows.map((row) => row.jobTitle)).toEqual(["Legacy role 1", "Legacy role 0"]);
+  // Every row is on exactly one page, and the counts are the whole set, not the page.
+  const keys = [...first.rows, ...second.rows].map((row) => row.key);
+  expect(new Set(keys).size).toBe(52);
+  expect(second.counts).toEqual({ active: 52, closed: 0, all: 52 });
   // A page beyond the end clamps rather than showing nothing.
   expect((await listPipeline(user.id, { page: "99" })).page).toBe(2);
+});
+
+it("counts every stage for this account, in SQL, and never counts a matched role", async () => {
+  const { job: shortlisted } = await role("Head of Delivery");
+  await shortlist(shortlisted.id);
+  const { job: applying } = await role("Operations Lead");
+  await shortlist(applying.id);
+  await buildCv(applying.id);
+  const { job: closed } = await role("Head of Ops");
+  await shortlist(closed.id);
+  await record(closed.id, "rejected");
+  // Matched, decided on by nobody: in the roles table, never in this count.
+  await role("Analyst");
+  // Two records with no posting behind them, at one stage each.
+  await record(null, "interview", { jobTitle: "Legacy interview" });
+  await record(null, "accepted", { jobTitle: "Legacy accepted" });
+
+  expect(await pipelineStageCounts(user.id)).toEqual({
+    matched: 0, shortlisted: 1, applying: 1, applied: 0, in_process: 1, accepted: 1, rejected: 1, dismissed: 0,
+  });
+  // The segments the page shows are the same numbers added up, and the strip in its header is
+  // the same reading again rather than a second count of the lifecycle.
+  const page = await listPipeline(user.id);
+  expect(page.counts).toEqual({ active: 3, closed: 2, all: 5 });
+  expect(page.stages).toEqual(await pipelineStageCounts(user.id));
+  const other = await ensureTestUser(database, "other-counts@example.com", "member");
+  expect(await pipelineStageCounts(other.id)).toEqual({
+    matched: 0, shortlisted: 0, applying: 0, applied: 0, in_process: 0, accepted: 0, rejected: 0, dismissed: 0,
+  });
+});
+
+it("counts the next steps due in the coming week, and never another account's", async () => {
+  const now = new Date("2026-09-19T12:00:00.000Z");
+  const { job: soon, company } = await role("Head of Delivery");
+  await shortlist(soon.id);
+  await record(soon.id, "interview", { nextAction: "Send references", nextActionOn: "2026-09-23" });
+  // A step whose day has gone by is the most due thing on the page, so it is counted too.
+  const { job: overdue } = await role("Operations Lead");
+  await shortlist(overdue.id);
+  await record(overdue.id, "interview", { nextAction: "Second interview", nextActionOn: "2026-09-15" });
+  // Next month is not this week, and a step with no day is not due on any of them.
+  const { job: later } = await role("Head of Ops");
+  await shortlist(later.id);
+  await record(later.id, "applied", { nextAction: "Chase the recruiter", nextActionOn: "2026-10-30" });
+  const { job: undated } = await role("Delivery Lead");
+  await shortlist(undated.id);
+  await record(undated.id, "applied", { nextAction: "Chase the recruiter" });
+  // A settled application owes nothing, however recent the note left on it.
+  const { job: done } = await role("Programme Lead");
+  await shortlist(done.id);
+  await record(done.id, "rejected", { nextAction: "Ask for feedback", nextActionOn: "2026-09-20" });
+
+  expect(await pipelineDueCount(user.id, { now })).toBe(2);
+  // Scoped to a company the way the table is: by its catalogue id for a role with a posting
+  // behind it, and by name for a record without one.
+  await record(null, "applied", { companyName: "  acme ", jobTitle: "Legacy at Acme", nextAction: "Send the portfolio", nextActionOn: "2026-09-20" });
+  expect(await pipelineDueCount(user.id, { now })).toBe(3);
+  expect(await pipelineDueCount(user.id, { company: { id: company.id, name: "Acme" }, now })).toBe(2);
+  const other = await ensureTestUser(database, "other-due@example.com", "member");
+  expect(await pipelineDueCount(other.id, { now })).toBe(0);
+});
+
+it("hands each row the next step stored on it", async () => {
+  const { job } = await role();
+  await shortlist(job.id);
+  await record(job.id, "interview", { nextAction: "Send references", nextActionOn: "2026-09-23" });
+  await record(null, "applied", { jobTitle: "Legacy role", nextAction: "Chase the recruiter" });
+  const rows = (await listPipeline(user.id, { filter: "all" })).rows;
+  expect(rows.find((row) => row.jobId === job.id)!.application).toMatchObject({ nextAction: "Send references", nextActionOn: "2026-09-23" });
+  expect(rows.find((row) => row.jobTitle === "Legacy role")!.application).toMatchObject({ nextAction: "Chase the recruiter", nextActionOn: null });
+});
+
+it("filters to one company, by its id for a posting and by its name for a record without one", async () => {
+  const { job: acme, company } = await role("Head of Delivery");
+  await shortlist(acme.id);
+  const { job: other } = await role("Head of Delivery", "Globex");
+  await shortlist(other.id);
+  // A record with no posting behind it belongs to the company whose name it carries — the same
+  // case- and whitespace-insensitive reading the CV retention key uses.
+  await record(null, "applied", { companyName: "  acme ", jobTitle: "Legacy at Acme" });
+  await record(null, "applied", { companyName: "Globex", jobTitle: "Legacy at Globex" });
+
+  expect(await pipelineCompany(company.id)).toEqual({ id: company.id, name: "Acme" });
+  const filtered = await listPipeline(user.id, { filter: "all", company: { id: company.id, name: "Acme" } });
+  expect(filtered.rows.map((row) => row.jobTitle).sort()).toEqual(["Head of Delivery", "Legacy at Acme"]);
+  expect(filtered.counts).toEqual({ active: 2, closed: 0, all: 2 });
+  expect(filtered.total).toBe(2);
+  // Unfiltered, all four are there; an id the catalogue does not know is no company at all.
+  expect((await listPipeline(user.id, { filter: "all" })).total).toBe(4);
+  expect(await pipelineCompany(crypto.randomUUID())).toBeNull();
+});
+
+it("prices a build for every role on the page, and refuses the ones the budget will not admit", async () => {
+  const { job: cheap } = await role("Head of Delivery");
+  await shortlist(cheap.id);
+  const { job: dear } = await role("Operations Lead");
+  await shortlist(dear.id);
+  await database.update(schema.jobs).set({ descriptionText: "Lead a team. " }).where(eq(schema.jobs.id, cheap.id));
+  await database.update(schema.jobs).set({ descriptionText: "Lead a team. ".repeat(2_000) }).where(eq(schema.jobs.id, dear.id));
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: LIBRARY });
+  // A record with no posting behind it has nothing to build from, so it is never quoted.
+  await record(null, "applied", { jobTitle: "Legacy role" });
+
+  const rows = (await listPipeline(user.id, { filter: "all" })).rows;
+  const quotes = await pipelineCvQuotes(user.id, rows);
+  expect(Object.keys(quotes).sort()).toEqual([cheap.id, dear.id].sort());
+  // One Library, measured once; the description is what makes one role dearer than another.
+  expect(quotes[cheap.id]!.libraryBytes).toBe(quotes[dear.id]!.libraryBytes);
+  expect(quotes[dear.id]!.estimateUsd).toBeGreaterThan(quotes[cheap.id]!.estimateUsd);
+  expect(quotes[cheap.id]!.refusal).toBeNull();
+  expect(quotes[cheap.id]!.leftUsd).toBe(quotes[cheap.id]!.limitUsd);
+
+  // A budget with cents left refuses both, in the worker's own words.
+  await database.insert(schema.userSettings).values({ userId: user.id, key: "aiBudgetUsd", value: 0.01 });
+  const broke = await pipelineCvQuotes(user.id, rows);
+  expect(broke[cheap.id]!.refusal).toMatch(/^This build needs about \$\d+\.\d\d of AI budget; your budget of \$0\.01 has \$0\.01 left this month/);
+  expect(broke[dear.id]!.refusal).not.toBeNull();
+  // Nothing to price is no query at all.
+  expect(await pipelineCvQuotes(user.id, [{ jobId: null }])).toEqual({});
+});
+
+it("hints at a row nobody has touched for a fortnight, and only where silence means something", () => {
+  const now = new Date("2026-09-19T12:00:00Z");
+  const at = (days: number) => new Date(now.getTime() - days * 86_400_000);
+  expect(applicationStaleHint({ stage: "applied", updatedAt: at(13) }, now)).toBeNull();
+  expect(applicationStaleHint({ stage: "applied", updatedAt: at(14) }, now)).toBe("No update for 2 weeks");
+  expect(applicationStaleHint({ stage: "in_process", updatedAt: at(25) }, now)).toBe("No update for 3 weeks");
+  // A shortlist nobody has acted on is untouched, not stale; an outcome is not waiting on anyone.
+  for (const stage of ["shortlisted", "applying", "accepted", "rejected", "dismissed"] as const)
+    expect(applicationStaleHint({ stage, updatedAt: at(90) }, now)).toBeNull();
 });
 
 it("never shows one account's roles to another", async () => {

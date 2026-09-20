@@ -1,9 +1,27 @@
-import { cvMaxPages, type CvContent } from "@christopher/core/cv";
+import { cvMaxPages, type CvContent, type CvLibrary } from "@christopher/core/cv";
 import type { CvAssessment } from "@christopher/core/cv-assessment";
 import { assessCvDraft, finaliseCvDraft } from "@/app/actions/cv";
-import { cvEvaluationRows } from "@/lib/cv-evaluation";
+import { cvEvaluationRows, type CvCommentInput } from "@/lib/cv-evaluation";
 import { CvEvaluationTable } from "./CvEvaluationTable";
+import { RebuildButton } from "./CvDraftEditor";
 import { SettingsForm } from "./SettingsForm";
+
+/**
+ * The Library moved on after this revision was written, said where its evidence is judged.
+ *
+ * The control beside it is the editor's own Rebuild from Library, submitting the editor's form by
+ * name: one rebuild in the product, offered in a second place rather than written twice. It is
+ * absent when there is no editor on the page, because there is then nothing to rebuild from.
+ */
+function LibraryDrift({ sentence, formId }: { sentence: string | null; formId: string | null }) {
+  if (!sentence) return null;
+  return (
+    <div role="status" className="flex flex-wrap items-center gap-3 border border-warn p-3 text-14">
+      <p className="text-warn">{sentence}</p>
+      {formId && <RebuildButton form={formId} />}
+    </div>
+  );
+}
 
 export function CvAssessmentPanel({
   id,
@@ -13,6 +31,12 @@ export function CvAssessmentPanel({
   busy,
   hasContent,
   content,
+  library = null,
+  libraryDrift = null,
+  rebuildFormId = null,
+  finaliseReason = null,
+  blocked = null,
+  comments = [],
 }: {
   id: string;
   assessment: CvAssessment | null;
@@ -21,6 +45,25 @@ export function CvAssessmentPanel({
   busy: boolean;
   hasContent: boolean;
   content: CvContent | null;
+  /** This revision's own Library snapshot: what a gap row's "Add evidence" link is resolved against. */
+  library?: Pick<CvLibrary, "entries"> | null;
+  /** "Your Library changed since this build (v7 → v9).", or null while the build is up to date. */
+  libraryDrift?: string | null;
+  /** The editor form the Rebuild control submits, or null when this page has no editor. */
+  rebuildFormId?: string | null;
+  /**
+   * Why this revision cannot be finalised, in the sentence `assertCvFinalisable` would throw, or
+   * null when it can be. Computed on the page with the same function the action re-runs, so the
+   * control's absence is explained rather than silent.
+   */
+  finaliseReason?: string | null;
+  /** Why assessing is unavailable — an unverified account — or null when it is not. */
+  blocked?: string | null;
+  /**
+   * Notes left through this CV's share links. They become their own rows in the table — a reader's
+   * opinion beside the reviewer's findings — and never change a score, a status or a rating.
+   */
+  comments?: CvCommentInput[];
 }) {
   if (!assessment || !current)
     return (
@@ -31,22 +74,34 @@ export function CvAssessmentPanel({
             ? "Assessment pending"
             : "Assessment required"}
         </p>
+        {!busy && finaliseReason && (
+          <p className="text-14 text-warn">{finaliseReason}</p>
+        )}
+        <LibraryDrift sentence={libraryDrift} formId={rebuildFormId} />
         {!busy && !finalised && (
-          <SettingsForm
-            action={assessCvDraft.bind(null, id)}
-            submitLabel={
-              hasContent ? "Fit and assess saved revision" : "Retry generation"
-            }
-          >
-            <></>
-          </SettingsForm>
+          <>
+            <fieldset disabled={!!blocked} className="min-w-0">
+              <SettingsForm
+                action={assessCvDraft.bind(null, id)}
+                submitLabel={
+                  hasContent ? "Fit and assess saved revision" : "Retry generation"
+                }
+              >
+                <></>
+              </SettingsForm>
+            </fieldset>
+            {blocked && <p role="status" className="text-14 text-warn">{blocked}</p>}
+          </>
         )}
       </section>
     );
   const flagged = assessment.review.claims.filter(
     (claim) => claim.status !== "supported",
   );
-  const rows = cvEvaluationRows(assessment, content);
+  // What this panel can see for itself, so a caller that passes no reason still never offers a
+  // finalisation the action would refuse.
+  const overPages = assessment.pageCount > cvMaxPages(content?.theme);
+  const rows = cvEvaluationRows(assessment, content, library, comments);
   const essentialGaps = rows.filter(
     (row) => row.importance === "essential" && row.experience !== "Strong",
   ).length;
@@ -79,6 +134,7 @@ export function CvAssessmentPanel({
         {flagged.length} factual {flagged.length === 1 ? "concern" : "concerns"}
 
       </p>
+      <LibraryDrift sentence={libraryDrift} formId={rebuildFormId} />
       <CvEvaluationTable rows={rows} />
       <div className="flex flex-wrap items-center gap-3 text-14">
         <a className="font-medium text-fg underline" href="/library">
@@ -86,18 +142,35 @@ export function CvAssessmentPanel({
         </a>
 
       </div>
-      {flagged.length > 0 && !finalised && (
-        <p className="border border-warn p-3 text-14 text-warn">
-          Resolve the Fact and Uncertain claims in the table, then save and
-          reassess before finalising.
-        </p>
-      )}
       {finalised ? (
         <p className="border border-ok p-3 text-14">
           Finalised. Download this saved revision or create a new revision to
           make changes.
         </p>
-      ) : !busy && !flagged.length && assessment.pageCount <= cvMaxPages(content?.theme) ? (
+      ) : busy ? null : finaliseReason || overPages || flagged.length ? (
+        // The three reasons `assertCvFinalisable` refuses on, said here rather than shown by the
+        // absence of a button: the assessment is stale, the CV is over its page limit, or a claim
+        // is still flagged. The sentence is the one that function would have thrown, computed on
+        // the page; what the panel can see for itself keeps the control closed either way.
+        <div role="status" className="space-y-1 border border-warn p-3 text-14">
+          {finaliseReason && (
+            <p className="text-warn">Finalise is not available yet: {finaliseReason}</p>
+          )}
+          {flagged.length > 0 && (
+            <p className={finaliseReason ? "" : "text-warn"}>
+              Resolve the Fact and Uncertain claims in the table, then save and reassess before
+              finalising.
+            </p>
+          )}
+          {overPages && (
+            <p className={finaliseReason ? "" : "text-warn"}>
+              This revision measures {assessment.pageCount}{" "}
+              {assessment.pageCount === 1 ? "page" : "pages"}. Raise the page limit on the
+              Appearance tab, or shorten the wording and save again.
+            </p>
+          )}
+        </div>
+      ) : (
         <SettingsForm
           action={finaliseCvDraft.bind(null, id)}
           submitLabel="Finalise this CV"
@@ -107,7 +180,7 @@ export function CvAssessmentPanel({
             the wording, score and evidence gaps for this revision.
           </label>
         </SettingsForm>
-      ) : null}
+      )}
     </section>
   );
 }

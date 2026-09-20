@@ -3,29 +3,25 @@ import type { RawSearchParams } from "@/lib/queries/jobs";
 import { SettingsForm } from "@/components/SettingsForm";
 import { notFound } from "next/navigation";
 import {
-  archiveCompany,
   disableSource,
   enableSource,
   importPosting,
   markSourceConfirmed,
   pasteDiscoveryUrl,
-  pauseCompany,
   refreshCompanyLogo,
   refreshCompanyProfile,
   rediscoverCompany,
   rescanCompany,
-  resumeCompany,
   suggestCompanyName,
-  unfollowCompany,
   useDiscoveryCandidate,
 } from "@/app/actions/companies";
 import { CompanyFavicon } from "@/components/CompanyFavicon";
 import { CompanyNotepad } from "@/components/CompanyNotepad";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { CompanySetupSummary, CompanySetupTimeline } from "@/components/CompanySetupTimeline";
 import { Badge, companyStatusTone, discoveryStatusTone, scanStatusTone, sourceStatusTone } from "@/components/Badge";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
-import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { inputClass, labelClass } from "@/components/Field";
@@ -33,9 +29,13 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { companyIcon } from "@/lib/company-icon";
 import { relativeTime } from "@/lib/format";
 import { getCompanyWorkStatus } from "@/lib/work-status";
+import { narrateCompanySetup } from "@/lib/company-timeline";
 import {
+  companyApplicationCount,
   companyDiscoveryState,
   companyFollowerCount,
+  companyScanTiming,
+  companySetupRows,
   getCompany,
   getCompanyProfile,
   getCompanyScans,
@@ -46,7 +46,11 @@ import {
   ungatedUserPostings,
   type PostingImportRow,
 } from "@/lib/queries/companies";
-import { requireUser } from "@/lib/auth";
+import { getSystemSettings } from "@/lib/settings";
+import { needsEmailConfirmation, requireUser } from "@/lib/auth";
+import { CompanyControls } from "../CompanyControls";
+import { nextScanSentence, scanTimingLine } from "../scan-line";
+import { VERIFY_SENTENCE, VerifyNotice } from "@/components/VerifyNotice";
 
 export const dynamic = "force-dynamic";
 
@@ -105,7 +109,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
   if (!company) notFound();
   const admin = user.role === "admin";
 
-  const [sources, latestRun, scans, profile, followers, discoveryState, imports, ungated, suggestion, work] = await Promise.all([
+  const [sources, latestRun, scans, profile, followers, discoveryState, imports, ungated, suggestion, work, timing, applications, system, setup] = await Promise.all([
     getCompanySources(id),
     getLatestDiscoveryRun(id),
     getCompanyScans(id, 20),
@@ -116,21 +120,50 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
     ungatedUserPostings(user.id, id),
     pendingNameSuggestion(user.id, id),
     getCompanyWorkStatus(user.id),
+    companyScanTiming(id),
+    companyApplicationCount(user.id, id),
+    getSystemSettings(),
+    companySetupRows(user.id, id),
   ]);
 
   const now = new Date();
   const candidates = (latestRun?.candidates ?? []) as DiscoveryCandidateView[];
   const subscription = company.subscription;
   const icon = companyIcon(company);
+  // Adding, discovering and scanning spend the deployment's money, so they wait for a confirmed
+  // address. Saying so here is cheaper than saying it after the form was filled in.
+  const unverified = needsEmailConfirmation(user);
+  const scanLine = scanTimingLine(timing, system.scanTime, system.timezone, now);
   /**
-   * Nobody has a working careers page for this company yet: either no source a scan would use, or
-   * a discovery run that stopped and asked. Everything needed to fix that is in one card, and the
-   * card is gone the moment it is fixed.
+   * What has happened to this company so far, as lines rather than as a spinner: discovery, the
+   * source it chose, the scan it read and what this account's gate made of it. Every figure comes
+   * from a row, and the elapsed one on an open step keeps moving on the client.
    */
-  const needsSetup =
-    !sources.some(source => source.status === "active" || source.status === "failing") ||
-    latestRun?.status === "needs_confirmation" ||
-    latestRun?.status === "not_found";
+  const setupSteps = narrateCompanySetup(setup, now, { nextScan: nextScanSentence(system.scanTime, system.timezone) });
+  /**
+   * Nobody has a working careers page for this company yet. Everything needed to fix that is in
+   * one card, and the card is gone the moment a source works — a discovery run that stopped and
+   * asked while a source is already scanning is a proposal, not a setup step, and is one line
+   * under the header instead.
+   */
+  const workingSource = sources.some(source => source.status === "active" || source.status === "failing");
+  const needsSetup = !workingSource;
+  /**
+   * A candidate discovery is still asking about although a source works: an ATS migration, most
+   * often. Every follower sees it, because any of them can confirm it.
+   */
+  const sourceUrls = new Set(sources.map(source => source.url));
+  const competing = !needsSetup && latestRun?.status === "needs_confirmation"
+    ? candidates.map((candidate, index) => ({ candidate, index })).find(({ candidate }) => candidate.spec?.url && !sourceUrls.has(candidate.spec.url))
+    : undefined;
+  const profileFacts = profile
+    ? [
+      profile.sector && `Sector: ${profile.sector}`,
+      profile.stage && `Stage: ${profile.stage}`,
+      profile.sizeBand && `Size: ${profile.sizeBand}`,
+      profile.hqCountry && `HQ: ${profile.hqCountry}`,
+    ].filter((fact): fact is string => !!fact)
+    : [];
 
   return (
     <div className="space-y-6">
@@ -148,67 +181,100 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
               {company.homepageUrl}
             </a>
             <span className="block text-12 text-faint">Shared catalogue entry · followed by {followers} {followers === 1 ? "account" : "accounts"} · scanned once a day for all of them</span>
+            {/* The A9 profile, for every follower: it is what the company suggestions they are
+                asked to judge are built from. Refresh profile stays an administrator's. */}
+            {profile && (profile.oneLiner || profileFacts.length > 0 || profile.tags.length > 0) && (
+              <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-12 text-muted">
+                {profile.oneLiner && <span className="text-fg">{profile.oneLiner}</span>}
+                {profileFacts.length > 0 && <span>{profileFacts.join(" · ")}</span>}
+                {profile.tags.slice(0, 6).map((tag) => <Badge key={tag} tone="neutral">{tag}</Badge>)}
+              </span>
+            )}
+            <span className="block text-12">
+              {applications > 0 ? (
+                <a href={`/applications?company=${company.id}&filter=all`} className="text-fg underline">
+                  {applications} {applications === 1 ? "application" : "applications"}
+                </a>
+              ) : (
+                <span className="text-muted">No applications here yet</span>
+              )}
+            </span>
           </>
         }
         actions={<>
           <form action={rescanCompany.bind(null, company.id)}>
-            <Button type="submit" size="sm" title="A scan made in the last half hour is reused rather than repeated">
+            <Button type="submit" size="sm" disabled={unverified} title={unverified ? VERIFY_SENTENCE : "A scan made in the last half hour is reused rather than repeated"}>
               Rescan
             </Button>
           </form>
           <form action={rediscoverCompany.bind(null, company.id)}>
-            <Button type="submit" size="sm">
+            <Button type="submit" size="sm" disabled={unverified} title={unverified ? VERIFY_SENTENCE : undefined}>
               Re-discover
             </Button>
           </form>
-          {subscription.status === "active" ? (
-            <form action={pauseCompany.bind(null, company.id)}>
-              <Button type="submit" size="sm">
-                Pause
-              </Button>
-            </form>
-          ) : subscription.status === "paused" ? (
-            <form action={resumeCompany.bind(null, company.id)}>
-              <Button type="submit" size="sm">
-                Resume
-              </Button>
-            </form>
-          ) : (
-            <form action={resumeCompany.bind(null, company.id)}>
-              <Button type="submit" size="sm">
-                Follow again
-              </Button>
-            </form>
-          )}
-          {subscription.status !== "archived" && (
-            <form action={archiveCompany.bind(null, company.id)}>
-              <ConfirmSubmitButton variant="ghost" confirmMessage={`Archive ${company.name}? It leaves your inbox; other followers are unaffected.`}>Archive</ConfirmSubmitButton>
-            </form>
-          )}
-          <form action={unfollowCompany.bind(null, company.id)}>
-            <ConfirmSubmitButton variant="ghost" confirmMessage={`Stop following ${company.name}? Its roles leave your table. Your decision snapshots are retained.`}>Stop following</ConfirmSubmitButton>
-          </form>
+          <CompanyControls companyId={company.id} companyName={company.name} status={subscription.status} />
+          {/* Beside Rescan, because it is the answer to "did that do anything?" */}
+          <p className="w-full text-12 text-muted">{scanLine}</p>
+          {unverified && <VerifyNotice className="w-full" />}
         </>}
       />
 
+      {competing && latestRun && (
+        <div className="flex flex-wrap items-center gap-2 border-2 border-line-muted px-3 py-2 text-12 text-muted">
+          <span>
+            Discovery also found{" "}
+            <a href={competing.candidate.spec!.url} target="_blank" rel="noopener noreferrer" className="text-fg no-underline hover:underline">
+              {competing.candidate.spec!.url} ↗
+            </a>{" "}
+            {competing.candidate.spec?.type && <Badge tone="neutral">{competing.candidate.spec.type}</Badge>}{" "}
+            {Math.round((competing.candidate.confidence ?? 0) * 100)}% · {competing.candidate.method}. A source is already scanning, so this one waits for a follower to confirm it.
+          </span>
+          <form action={useDiscoveryCandidate.bind(null, latestRun.id, competing.index)}>
+            <Button type="submit" size="sm" disabled={unverified} title={unverified ? VERIFY_SENTENCE : undefined}>Use this</Button>
+          </form>
+        </div>
+      )}
+
       {work.active && <AutoRefresh message="Work is pending for your companies. Status updates automatically." />}
+
+      {needsSetup ? (
+        <Card title="What has happened so far">
+          <CompanySetupTimeline steps={setupSteps} />
+        </Card>
+      ) : (
+        <CompanySetupSummary steps={setupSteps} />
+      )}
 
       {needsSetup && (
         <div id="careers-url">
           <Card title="Set up this company">
             <div className="space-y-5">
-              <p className="text-14 text-muted">
-                {discoveryState
-                  ? "Discovery is looking for this company's careers page. Paste the URL if you know it."
-                  : "Nobody has confirmed a careers page for this company yet. Paste its careers or board URL, or pick a candidate discovery found."}
-              </p>
+              {/* Three different situations used to read as one sentence: still looking, found
+                  nothing, and found candidates nobody has picked. */}
+              <div className="space-y-2">
+                <p className="text-14 text-muted">
+                  {discoveryState
+                    ? "Discovery is looking for this company's careers page. Paste the URL if you know it."
+                    : latestRun?.status === "needs_confirmation" && candidates.length > 0
+                      ? `Discovery found ${candidates.length} ${candidates.length === 1 ? "candidate" : "candidates"}; pick one below or paste the URL.`
+                      : latestRun?.status === "not_found"
+                        ? "Discovery found no careers page for this company. Paste its careers or board URL, or run discovery again."
+                        : "Nobody has confirmed a careers page for this company yet. Paste its careers or board URL, or pick a candidate discovery found."}
+                </p>
+                {latestRun?.status === "not_found" && !discoveryState && (
+                  <form action={rediscoverCompany.bind(null, company.id)}>
+                    <Button type="submit" size="sm" disabled={unverified} title={unverified ? VERIFY_SENTENCE : undefined}>Re-discover</Button>
+                  </form>
+                )}
+                {unverified && <VerifyNotice />}
+              </div>
 
               <form action={pasteDiscoveryUrl.bind(null, company.id)} className="flex flex-wrap items-end gap-3">
                 <label className="flex flex-1 flex-col gap-1.5">
                   <span className={labelClass}>Careers or board URL</span>
-                  <input name="url" type="text" required maxLength={2048} placeholder="https://boards.greenhouse.io/acme" className={inputClass} />
+                  <input name="url" type="text" required maxLength={2048} disabled={unverified} placeholder="https://boards.greenhouse.io/acme" className={inputClass} />
                 </label>
-                <Button type="submit" size="sm">Try this URL</Button>
+                <Button type="submit" size="sm" disabled={unverified}>Try this URL</Button>
               </form>
 
               {candidates.length > 0 && (
@@ -236,7 +302,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
                         </ul>
                       )}
                       <form action={useDiscoveryCandidate.bind(null, latestRun!.id, index)} className="mt-2">
-                        <Button type="submit" variant="primary" size="sm">Use this</Button>
+                        <Button type="submit" variant="primary" size="sm" disabled={unverified} title={unverified ? VERIFY_SENTENCE : undefined}>Use this</Button>
                       </form>
                     </div>
                   ))}
@@ -275,13 +341,15 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
                 type="url"
                 required
                 maxLength={2048}
+                disabled={unverified}
                 placeholder="https://job-boards.greenhouse.io/acme/jobs/1234567"
                 className={inputClass}
               />
               <span className="text-12 text-muted">Paste the full link to one posting the scan has not collected. It is checked, stored and added to your table.</span>
             </label>
-            <Button type="submit" variant="primary" size="sm">Add role</Button>
+            <Button type="submit" variant="primary" size="sm" disabled={unverified}>Add role</Button>
           </form>
+          {unverified && <VerifyNotice />}
 
           {imports.length > 0 && (
             <ul className="space-y-2 border-t-2 border-line-faint pt-4">

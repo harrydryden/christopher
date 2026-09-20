@@ -23,6 +23,7 @@ export function CvBuildFailureNotice({
   admin,
   canRetry,
   footnote,
+  blocked = null,
 }: {
   id: string;
   build: CvBuildState;
@@ -31,6 +32,8 @@ export function CvBuildFailureNotice({
   canRetry: boolean;
   /** What the page already said about this draft's place in the table. */
   footnote?: string;
+  /** Why the retry is unavailable — an unverified account — or null when it is not. */
+  blocked?: string | null;
 }) {
   const way = failureWayForward(build.action, { jobId, admin, canRetry });
   return (
@@ -58,9 +61,14 @@ export function CvBuildFailureNotice({
       {way.retry && (
         <div className="space-y-2">
           {way.retryNote && <p className="text-14 text-muted">{way.retryNote}</p>}
-          <SettingsForm action={assessCvDraft.bind(null, id)} submitLabel="Retry generation">
-            <></>
-          </SettingsForm>
+          {/* A retry calls a model, so an account that has not confirmed its address is told
+              here rather than at the redirect the action would make. */}
+          <fieldset disabled={!!blocked} className="min-w-0">
+            <SettingsForm action={assessCvDraft.bind(null, id)} submitLabel="Retry generation">
+              <></>
+            </SettingsForm>
+          </fieldset>
+          {blocked && <p className="text-14 text-warn">{blocked}</p>}
         </div>
       )}
       {footnote && <p className="text-14 text-muted">{footnote}</p>}

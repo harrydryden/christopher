@@ -21,7 +21,7 @@ beforeEach(async () => { vi.restoreAllMocks();
   );
   vi.spyOn(AiEngine.prototype, "assessCv").mockImplementation(async (input) =>
     reviewFixture(input),
-  ); await client.db.execute(sql`truncate applications, cv_build_steps, cv_drafts, ai_calls, ai_reservations`); });
+  ); await client.db.execute(sql`truncate applications, cv_build_steps, cv_share_comments, cv_shares, cv_drafts, ai_calls, ai_reservations`); });
 afterAll(async () => { vi.restoreAllMocks(); await client.pool.end(); });
 async function setup(apiKey: string | undefined = "fixture-key") {
   const [draft] = await client.db.insert(schema.cvDrafts).values({ userId, jobTitle: "Operations Director", companyName: "Acme", jobDescription: "Lead a team", libraryVersion: 1, librarySnapshot: library, model: "claude-sonnet-5" }).returning();

@@ -77,7 +77,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.execute(sql`truncate companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, tasks, settings, ai_calls restart identity cascade`);
+  await db.execute(sql`truncate companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, tasks, settings, ai_calls, users restart identity cascade`);
 });
 
 function call(secret?: string) {

@@ -24,6 +24,8 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
 import { addCompanies, importPosting, refreshCompanyLogo, rescanCompany, saveCompanyNotes, suggestCompanyName, unfollowCompany } from "./companies";
+import { companyApplicationCount, companyScanTiming, listCompanies } from "@/lib/queries/companies";
+import { scanTimingLine } from "@/app/(app)/companies/scan-line";
 
 beforeAll(async () => {
   const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
@@ -38,8 +40,17 @@ beforeEach(async () => {
   await database.execute(sql`truncate companies, tasks, settings, users restart identity cascade`);
   ({ user: first, cookie: firstCookie } = await signInTestUser(database, process.env.SESSION_SECRET!, "one@example.com"));
   ({ user: second, cookie: secondCookie } = await signInTestUser(database, process.env.SESSION_SECRET!, "two@example.com", "member"));
+  // Filters first: `addCompanies` refuses an account that has never chosen its gate, so both
+  // accounts start with one saved, exactly as a person reaches the form through setup.
+  await chooseGate(first.id);
+  await chooseGate(second.id);
   session = firstCookie;
 });
+
+/** The gate this account chose. Its presence, not its contents, is what unlocks following a company. */
+const chooseGate = (userId: string) =>
+  database.insert(schema.userSettings).values({ userId, key: "gate", value: { includeKeywords: ["operations"], excludeKeywords: [], matchFields: ["title"], locationTerms: [], includeRemote: true } })
+    .onConflictDoNothing();
 
 const urls = (value: string) => { const form = new FormData(); form.set("urls", value); return form; };
 const tasksOfType = (type: "scan_company" | "discover" | "reevaluate_gate" | "import_posting") =>
@@ -92,6 +103,23 @@ it("follows a company already in the catalogue instead of adding or scanning a s
   const scans = await tasksOfType("scan_company");
   expect(scans).toHaveLength(1);
   expect(scans[0]!.payload).toMatchObject({ companyId: company.id, trigger: "manual" });
+});
+
+it("refuses to follow a company until this account has chosen its keywords and locations", async () => {
+  // Existing accounts that never saved a gate are in exactly this position: one save frees them.
+  await database.delete(schema.userSettings).where(eq(schema.userSettings.userId, first.id));
+  await expect(addCompanies(urls("https://acme.example"))).rejects.toThrow("Choose your keywords and locations first, so the first scan runs against your filters.");
+  expect(await database.select().from(schema.companies)).toHaveLength(0);
+  expect(await database.select().from(schema.companySubscriptions)).toHaveLength(0);
+  expect(await tasksOfType("discover")).toHaveLength(0);
+
+  // Adding a role by its URL is deliberately not held back: it bypasses the gate by design.
+  await chooseGate(first.id);
+  await expect(addCompanies(urls("https://acme.example"))).rejects.toThrow("redirect:/companies?added=1");
+  const [company] = await database.select().from(schema.companies);
+  await database.delete(schema.userSettings).where(eq(schema.userSettings.userId, first.id));
+  await importPosting(company!.id, urlForm("https://acme.example/jobs/1"));
+  expect(await tasksOfType("import_posting")).toHaveLength(1);
 });
 
 it("leaves the shared company and the other follower alone when one account stops following", async () => {
@@ -202,4 +230,116 @@ it("queues a logo capture for one company without disturbing its scan", async ()
   await refreshCompanyLogo(company.id);
   expect(await tasksOfType("discover")).toHaveLength(2);
   expect(await tasksOfType("scan_company")).toHaveLength(0);
+});
+
+// ---------------------------------------------------------------------------
+// What the company page reads: the scan schedule line, the per-company
+// applications link, and the counts the companies list shows per row.
+// ---------------------------------------------------------------------------
+
+/** One posting of the shared company, with this account's view of it. */
+async function posting(companyId: string, sourceId: string, key: string, userId = first.id, jobStatus: "open" | "closed" = "open") {
+  const [job] = await database.insert(schema.jobs).values({
+    companyId, sourceId, externalKey: key, title: `Role ${key}`, normalizedTitle: `role ${key}`,
+    url: `https://acme.example/jobs/${key}`, status: jobStatus,
+  }).returning();
+  await database.insert(schema.userJobs).values({ userId, jobId: job!.id, inTable: true, keywordMatched: true });
+  return job!;
+}
+
+async function decideOn(jobId: string, decision: "apply" | "skip", userId = first.id) {
+  await database.insert(schema.decisions).values({ userId, jobId, decision, reason: "because", jobTitle: "Role", companyName: "Acme" });
+}
+
+it("counts the roles at one company this account is pursuing, by the Applications page's own rule", async () => {
+  const company = await followedCompany();
+  const [source] = await database.insert(schema.careerSources)
+    .values({ companyId: company.id, type: "greenhouse", url: "https://boards.greenhouse.io/acme", status: "active" }).returning();
+
+  const matched = await posting(company.id, source!.id, "1");
+  const shortlisted = await posting(company.id, source!.id, "2");
+  const passedOn = await posting(company.id, source!.id, "3");
+  const withdrawn = await posting(company.id, source!.id, "4");
+  const dismissedWithCv = await posting(company.id, source!.id, "5");
+  await decideOn(shortlisted.id, "apply");
+  await decideOn(passedOn.id, "skip");
+  await decideOn(withdrawn.id, "skip");
+  await decideOn(dismissedWithCv.id, "skip");
+  await database.insert(schema.applications).values({
+    userId: first.id, jobId: withdrawn.id, jobTitle: "Role 4", companyName: "Acme", appliedOn: "2026-09-01",
+    status: "withdrawn", history: [],
+  });
+  await database.insert(schema.cvDrafts).values({
+    userId: first.id, jobId: dismissedWithCv.id, jobTitle: "Role 5", companyName: "Acme", jobDescription: "text",
+    libraryVersion: 1, librarySnapshot: { name: "", contact: "", profile: "", employment: [], entries: [] }, model: "test",
+  });
+
+  // Matched is not an application; a role merely passed on is not either. A withdrawal and a
+  // dismissed role that carries a CV were both pursued, so they count.
+  expect(await companyApplicationCount(first.id, company.id)).toBe(3);
+  expect(matched.id).toBeTruthy();
+
+  // Another account's pursuit of the same shared postings is not this account's count.
+  await database.insert(schema.userJobs).values({ userId: second.id, jobId: shortlisted.id, inTable: true, keywordMatched: true });
+  await decideOn(shortlisted.id, "apply", second.id);
+  expect(await companyApplicationCount(first.id, company.id)).toBe(3);
+  expect(await companyApplicationCount(second.id, company.id)).toBe(1);
+});
+
+it("reads when a company was last scanned and whether the last rescan was served from that scan", async () => {
+  const company = await followedCompany();
+  const [source] = await database.insert(schema.careerSources)
+    .values({ companyId: company.id, type: "html", url: "https://acme.example/jobs", status: "active" }).returning();
+
+  expect(await companyScanTiming(company.id)).toEqual({ lastGoodScanAt: null, rescanSkippedAt: null });
+
+  // A failed scan is not one a rescan could be served from; the newest ok or partial one is.
+  const scanned = new Date(Date.now() - 12 * 60_000);
+  await database.insert(schema.scans).values([
+    { sourceId: source!.id, status: "ok", startedAt: scanned },
+    { sourceId: source!.id, status: "failed", startedAt: new Date(Date.now() - 60_000) },
+  ]);
+  expect((await companyScanTiming(company.id)).lastGoodScanAt?.getTime()).toBe(scanned.getTime());
+  expect((await companyScanTiming(company.id)).rescanSkippedAt).toBeNull();
+
+  // The worker finishes a manual rescan inside the reuse window by saying it did nothing.
+  const skippedAt = new Date(Date.now() - 30_000);
+  await database.insert(schema.tasks).values({
+    type: "scan_company", payload: { companyId: company.id, trigger: "manual" }, status: "done",
+    result: { skipped: "scanned recently", sources: 1 }, finishedAt: skippedAt,
+  });
+  expect((await companyScanTiming(company.id)).rescanSkippedAt?.getTime()).toBe(skippedAt.getTime());
+  expect(scanTimingLine(await companyScanTiming(company.id), "06:00", "Europe/London"))
+    .toBe("Rescan skipped: scanned 12m ago; a scan made in the last half hour is reused.");
+
+  // A later scan that really ran is the newest finished task, so nothing claims a skip any more.
+  await database.insert(schema.tasks).values({
+    type: "scan_company", payload: { companyId: company.id, trigger: "manual" }, status: "done",
+    result: { sources: 1, new: 2, closed: 0 }, finishedAt: new Date(),
+  });
+  expect((await companyScanTiming(company.id)).rescanSkippedAt).toBeNull();
+  expect(scanTimingLine(await companyScanTiming(company.id), "06:00", "Europe/London"))
+    .toBe("Scanned 12m ago · next scheduled scan at 06:00 Europe/London");
+});
+
+it("gives each companies-list row its open, review and shortlisted counts and the source a scan reads", async () => {
+  const company = await followedCompany();
+  const [failing] = await database.insert(schema.careerSources)
+    .values({ companyId: company.id, type: "html", url: "https://acme.example/jobs", status: "failing" }).returning();
+  const [row] = await listCompanies(first.id);
+  expect([row!.sourceType, row!.openRoles, row!.reviewRoles, row!.shortlistedRoles]).toEqual(["html", 0, 0, 0]);
+
+  const open = await posting(company.id, failing!.id, "1");
+  const closed = await posting(company.id, failing!.id, "2", first.id, "closed");
+  const shortlisted = await posting(company.id, failing!.id, "3");
+  await decideOn(shortlisted.id, "apply");
+  const [counted] = await listCompanies(first.id);
+  // Open counts what is still live in this account's table; Review is what it has not decided on.
+  expect([counted!.openRoles, counted!.reviewRoles, counted!.shortlistedRoles]).toEqual([2, 2, 1]);
+  expect([open.status, closed.status]).toEqual(["open", "closed"]);
+
+  // An active source names the row even when a failing one was created first.
+  await database.insert(schema.careerSources)
+    .values({ companyId: company.id, type: "greenhouse", url: "https://boards.greenhouse.io/acme", status: "active" });
+  expect((await listCompanies(first.id))[0]!.sourceType).toBe("greenhouse");
 });

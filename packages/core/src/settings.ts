@@ -38,6 +38,12 @@ export interface UserSettings {
   aiBudgetResetAt: string | null;
   /** Free text written by the user at setup; never overwritten by the model. */
   seedProfile: string;
+  /**
+   * When this account hid the setup checklist (ISO), or null while it has never hidden it. The
+   * checklist is derived from rows — a confirmed address, a chosen gate, a seed profile, followed
+   * companies, a filled Library — so this is the only state it needs of its own.
+   */
+  setupDismissedAt: string | null;
   cvModel: string;
   cvTheme?: CvTheme;
   cvWritingPreferences?: CvWritingPreferences;
@@ -77,6 +83,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   aiBudgetUsd: DEFAULT_ACCOUNT_AI_BUDGET_USD,
   aiBudgetResetAt: null,
   seedProfile: "",
+  setupDismissedAt: null,
   cvModel: "claude-fable-5-1",
   cvTheme: undefined,
   cvWritingPreferences: undefined,

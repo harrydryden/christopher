@@ -1,13 +1,14 @@
 import Link from "next/link";
-import { Badge, scanStatusTone, sourceStatusTone } from "@/components/Badge";
+import { Badge, scanStatusTone } from "@/components/Badge";
 import { Card } from "@/components/Card";
 import { EmptyState } from "@/components/EmptyState";
+import { HealthItems } from "@/components/HealthItems";
 import { PageHeader } from "@/components/PageHeader";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { relativeTime } from "@/lib/format";
 import { workerStatusSentence } from "@/lib/worker-status";
-import { getWorkerStatus, listCompaniesWithNoSource, listRecentProblemScans, listRecentScanRuns, listSourcesNeedingAttention } from "@/lib/queries/health";
-import { requireUser } from "@/lib/auth";
+import { countHealthItems, getWorkerStatus, healthItems, listRecentProblemScans, listRecentScanRuns } from "@/lib/queries/health";
+import { needsEmailConfirmation, requireUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -15,9 +16,9 @@ export const dynamic = "force-dynamic";
 export default async function HealthPage() {
   const user = await requireUser();
   const now = new Date();
-  const [attentionSources, noSourceCompanies, problemScans, scanRuns, status] = await Promise.all([
-    listSourcesNeedingAttention(user.id),
-    listCompaniesWithNoSource(user.id),
+  const [items, itemCount, problemScans, scanRuns, status] = await Promise.all([
+    healthItems(user.id, now),
+    countHealthItems(user.id, now),
     listRecentProblemScans(user.id, 7),
     listRecentScanRuns(10, user.id),
     getWorkerStatus(now),
@@ -25,42 +26,38 @@ export default async function HealthPage() {
   // A heartbeat is rewritten on every boot, so "reported a minute ago" is true of a worker that
   // has crashed a hundred times today. When it has, say so instead.
   const trouble = workerStatusSentence(status);
+  // Confirming a candidate, pasting a URL and re-discovering all spend the deployment's money, so
+  // they wait for a confirmed address. Saying so here beats saying it after the click.
+  const unverified = needsEmailConfirmation(user);
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Health"
-        description="Sources and scans for the companies you follow."
+        description="Everything that needs you, and how the companies you follow are being read."
         actions={user.role === "admin" ? <Link href="/admin/health" className="text-13 underline">Operations for the whole deployment</Link> : undefined}
       />
+
+      <Card title={`Needs you (${itemCount})`}>
+        {items.length === 0 ? (
+          <EmptyState title="Nothing needs you" description="Every company you follow has a careers page that is being read, and your AI budget has room in it." />
+        ) : (
+          <div className="space-y-3">
+            <HealthItems items={items} unverified={unverified} />
+            {itemCount > items.length && (
+              <p className="text-12 text-muted">
+                Showing the first {items.length} of {itemCount}. Resolve some, or browse the rest from{" "}
+                <Link href="/companies" className="text-fg underline">Companies</Link>.
+              </p>
+            )}
+          </div>
+        )}
+      </Card>
 
       <Card title="Background worker">
         <p className="text-14">
           {trouble ?? (status.heartbeat ? `Worker reported ${relativeTime(status.heartbeat.at, now)}.` : "No worker report.")}
         </p>
-      </Card>
-
-      <p className="text-14 text-muted">Attention lists show up to 100 items each. Use Companies to browse the full list.</p>
-      <Card title={`Sources needing attention (${attentionSources.length + noSourceCompanies.length})`}>
-        {attentionSources.length === 0 && noSourceCompanies.length === 0 ? (
-          <EmptyState title="Nothing needs attention" description="Every source is active and every company has one." />
-        ) : (
-          <ul className="space-y-2 text-14">
-            {attentionSources.map((s) => (
-              <li key={s.id} className="flex flex-wrap items-center gap-2">
-                <Badge tone={sourceStatusTone(s.status)}>{s.status === "needs_confirmation" ? "needs confirmation" : s.status}</Badge>
-                <Link href={`/companies/${s.companyId}`} className="font-medium text-fg hover:underline">{s.companyName}</Link>
-                <span className="text-12 text-muted">{s.type}</span>
-              </li>
-            ))}
-            {noSourceCompanies.map((c) => (
-              <li key={c.id} className="flex flex-wrap items-center gap-2">
-                <Badge tone="red">no source</Badge>
-                <Link href={`/companies/${c.id}`} className="font-medium text-fg hover:underline">{c.name}</Link>
-              </li>
-            ))}
-          </ul>
-        )}
       </Card>
 
       <Card title={`Recent problem scans (last 7 days, ${problemScans.length})`}>

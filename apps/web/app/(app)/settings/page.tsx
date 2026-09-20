@@ -1,10 +1,9 @@
 import { MAX_ACCOUNT_AI_BUDGET_USD } from "@christopher/core";
-import { getCvWritingPreferences } from "@/lib/cv-writing-preferences";
 import { CvAppearance } from "@/components/CvAppearance";
 import { getDefaultCvAppearance } from "@/lib/cv-appearance";
-import { saveCvModel, saveCvAppearance, saveCvWritingPreferences } from "@/app/actions/cv";
+import { saveCvModel, saveCvAppearance } from "@/app/actions/cv";
 import { saveAiBudget, saveKeywords, saveLocationFilter, saveMatchFields, saveSuggestionSettings, saveTableSettings } from "@/app/actions/settings";
-import { rescoreAllRoles } from "@/app/actions/learning";
+import { rescoreAllRoles, saveSeedProfileSetting } from "@/app/actions/learning";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
@@ -12,6 +11,8 @@ import { SettingsForm } from "@/components/SettingsForm";
 import { ModelSelect } from "@/components/ModelSelect";
 import { inputClass as fieldClass, labelClass as fieldLabelClass, selectClass } from "@/components/Field";
 import { getSettings } from "@/lib/settings";
+import { hasChosenGate } from "@/lib/queries/setup";
+import { GATE_EXAMPLE, GATE_SENTENCE } from "@/lib/setup";
 import { accountAiBudget } from "@/lib/queries/accounts";
 import { formatUsd, shortDate } from "@/lib/format";
 import { requireUser } from "@/lib/auth";
@@ -26,7 +27,7 @@ const checkboxClass = "flex items-center gap-2 text-14";
 export default async function SettingsPage() {
   const user = await requireUser();
   const admin = user.role === "admin";
-  const [settings, appearance, writing, budget] = await Promise.all([getSettings(), getDefaultCvAppearance(user.id), getCvWritingPreferences(user.id), accountAiBudget(user.id)]);
+  const [settings, appearance, budget, gateChosen] = await Promise.all([getSettings(), getDefaultCvAppearance(user.id), accountAiBudget(user.id), hasChosenGate(user.id)]);
 
   return (
     <div className="space-y-6">
@@ -42,6 +43,9 @@ export default async function SettingsPage() {
 
       <div id="keywords">
       <Card title="Keywords">
+        {/* Filters first: an account that has never saved its gate is shown the example, not the
+            word the defaults happen to carry, so nothing is ever scanned against a choice nobody made. */}
+        <p className="mb-3 text-14 text-muted">{GATE_SENTENCE}</p>
         <SettingsForm action={saveKeywords}>
           <label className={labelClass}>
             <span className={fieldLabelClass}>Seniority keywords (title only)</span>
@@ -50,12 +54,12 @@ export default async function SettingsPage() {
           </label>
           <label className={labelClass}>
             <span className={fieldLabelClass}>Include keywords</span>
-            <textarea name="includeKeywords" rows={2} defaultValue={settings.gate.includeKeywords.join("\n")} placeholder={'Operations, Strateg*, "Chief of Staff"'} className={inputClass} />
+            <textarea name="includeKeywords" rows={2} defaultValue={gateChosen ? settings.gate.includeKeywords.join("\n") : ""} placeholder={gateChosen ? 'Operations, Strateg*, "Chief of Staff"' : GATE_EXAMPLE} className={inputClass} />
             <span className="text-12 text-muted">Whole words, any field you choose below. <code>strateg*</code> also matches Strategic; Learning suggests such wildcards from recent scans.</span>
           </label>
           <label className={labelClass}>
             <span className={fieldLabelClass}>Exclude keywords</span>
-            <textarea name="excludeKeywords" rows={2} defaultValue={settings.gate.excludeKeywords.join("\n")} className={inputClass} />
+            <textarea name="excludeKeywords" rows={2} defaultValue={gateChosen ? settings.gate.excludeKeywords.join("\n") : ""} className={inputClass} />
           </label>
         </SettingsForm>
       </Card>
@@ -74,11 +78,12 @@ export default async function SettingsPage() {
         </SettingsForm>
       </Card>
 
+      <div id="location">
       <Card title="Location filter">
         <SettingsForm action={saveLocationFilter}>
           <label className={labelClass}>
             <span className={fieldLabelClass}>Allowed locations</span>
-            <textarea name="locationTerms" rows={2} defaultValue={settings.gate.locationTerms.join("\n")} placeholder="London, UK" className={inputClass} />
+            <textarea name="locationTerms" rows={2} defaultValue={gateChosen ? settings.gate.locationTerms.join("\n") : ""} placeholder="London, UK" className={inputClass} />
           </label>
           <label className={checkboxClass}>
             <input type="checkbox" name="includeRemote" value="1" defaultChecked={settings.gate.includeRemote} className="h-4 w-4" />
@@ -86,6 +91,22 @@ export default async function SettingsPage() {
           </label>
         </SettingsForm>
       </Card>
+      </div>
+
+      <div id="seed-profile">
+      <Card title="Seed profile">
+        <p className="mb-2 text-14 text-muted">
+          A few sentences about what you are looking for: seniority, sectors, locations, compensation floor, deal-breakers. It is the starting point for
+          your preference profile and the model never overwrites it. You can edit it here or on <a href="/learning" className="text-fg underline">Learning</a>.
+        </p>
+        <SettingsForm action={saveSeedProfileSetting}>
+          <label className={labelClass}>
+            <span className={fieldLabelClass}>What you are looking for</span>
+            <textarea name="seedProfile" rows={5} maxLength={5000} defaultValue={settings.seedProfile} placeholder="e.g. Operations leadership in London or remote, at a company past Series B. Nothing below £90k, nothing that needs five days in an office." className={inputClass} />
+          </label>
+        </SettingsForm>
+      </Card>
+      </div>
 
       <Card title="Table">
         <SettingsForm action={saveTableSettings}>
@@ -112,13 +133,7 @@ export default async function SettingsPage() {
         <CvAppearance key={JSON.stringify(appearance)} name="theme" value={appearance} />
       </SettingsForm>
 
-      <Card title="Writing preferences">
-        <SettingsForm action={saveCvWritingPreferences} key={JSON.stringify(writing)}>
-          <input type="hidden" name="previousPreferences" value={JSON.stringify(writing)} />
-          <label className={labelClass}>Writing style<textarea name="stylePreferences" rows={4} maxLength={4000} defaultValue={writing.stylePreferences} className={inputClass} /></label>
-          <label className={labelClass}>Saved phrasing<textarea name="preferredWording" rows={5} maxLength={12000} defaultValue={writing.preferredWording} className={inputClass} /></label>
-        </SettingsForm>
-      </Card>
+      <p className="text-14 text-muted">Writing preferences and version history are on the <a href="/library" className="text-fg underline">Library</a> page.</p>
 
       <Card title="CV model">
         <SettingsForm action={saveCvModel}>
@@ -129,6 +144,7 @@ export default async function SettingsPage() {
         </SettingsForm>
       </Card>
 
+      <div id="ai-budget">
       <Card title="AI budget">
         <p className="text-14">
           You have used {formatUsd(budget.spentUsd)} of your {formatUsd(budget.limitUsd)} this month; it resets on the 1st.
@@ -146,6 +162,7 @@ export default async function SettingsPage() {
           {admin && <> Set any account&apos;s budget in <a href="/admin" className="text-fg underline">Admin › Accounts</a>, and change the model in <a href="/admin/settings" className="text-fg underline">System settings</a>.</>}
         </p>
       </Card>
+      </div>
     </div>
   );
 }

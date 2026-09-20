@@ -1,5 +1,5 @@
 import { withResourceLease } from "../lease";
-import { schema, enqueueTask, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, type Task } from "@christopher/db";
+import { schema, enqueueTask, latestApplicationFor, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, type ScoreState, type Task } from "@christopher/db";
 import { decisionDigest } from "@christopher/ai";
 import { eligibleCvEvidence, evidenceHeading, sha1, dedupeKeyFor, modelForCallSite, priorityFor, type TaskPayloads } from "@christopher/core";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
@@ -45,22 +45,44 @@ export async function handleTagReason(task: Task, deps: WorkerDeps): Promise<unk
   return { tags: result.tags, proposed: result.proposedNewTags.length };
 }
 
+/**
+ * Why this account's view of a role carries the score it carries, recorded where the table reads
+ * it. A blank score covered five situations and the row could not say which; every outcome of
+ * this handler now names its own. Silent when the account has no view of the role: there is no
+ * row to say it on, which is itself the `ineligible` case.
+ */
+async function markScoreState(deps: WorkerDeps, userId: string, jobId: string, state: ScoreState) {
+  await deps.db.update(schema.userJobs).set({ scoreState: state, scoreStateAt: deps.now() })
+    .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId),
+      sql`${schema.userJobs.scoreState} is distinct from ${state}`));
+}
+
 export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { userId, jobId } = task.payload as unknown as TaskPayloads["score_job"];
   if (!userId) return { skipped: "no account on task" };
   const [job] = await deps.db.select().from(schema.jobs).where(eq(schema.jobs.id, jobId)).limit(1);
   if (!job) return { skipped: "job not found" };
-  if (job.status !== "open") return { skipped: "job is closed" };
+  if (job.status !== "open") {
+    // Never scored, because the vacancy went before its turn came round — not "waiting".
+    await markScoreState(deps, userId, jobId, "closed");
+    return { skipped: "job is closed" };
+  }
   const [view] = await deps.db.select().from(schema.userJobs).where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId))).limit(1);
   if (!view) return { skipped: "role is not in this account's table" };
   const settings = await deps.userSettings(userId);
   const [choice] = await deps.db.select({ decision: schema.decisions.decision }).from(schema.decisions)
     .where(and(eq(schema.decisions.userId, userId), eq(schema.decisions.jobId, jobId), eq(schema.decisions.superseded, false))).limit(1);
-  if (!view.inTable && choice?.decision !== "apply") return { skipped: "role does not match and is not shortlisted" };
+  if (!view.inTable && choice?.decision !== "apply") {
+    await markScoreState(deps, userId, jobId, "ineligible");
+    return { skipped: "role does not match and is not shortlisted" };
+  }
   // Asked before any of the scoring evidence is gathered: an account with nothing left to spend
   // skips this role, and the task finishes done rather than failing at the hold and retrying.
   const scoreStop = await aiBudgetStop(deps, userId);
-  if (scoreStop) return { skipped: scoreStop };
+  if (scoreStop) {
+    await markScoreState(deps, userId, jobId, "budget");
+    return { skipped: scoreStop };
+  }
 
   const [company] = await deps.db.select().from(schema.companies).where(eq(schema.companies.id, job.companyId)).limit(1);
   const profile = await latestProfileFor(deps.db, userId);
@@ -92,7 +114,12 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
   // What the score was computed from. It is kept on this account's own view of the role, so an
   // unchanged rerun costs one row read rather than a row per (account, role) accumulating forever.
   const fingerprint = sha1(JSON.stringify([input, modelForCallSite(settings, "A5")]));
-  if (view.fitScore !== null && view.scoreInputHash === fingerprint) return { skipped: "scoring inputs unchanged" };
+  if (view.fitScore !== null && view.scoreInputHash === fingerprint) {
+    // The stored score still stands, so the row is scored: say so, which also repairs a row that
+    // predates the column and one queued by a scan that found nothing to re-read.
+    await markScoreState(deps, userId, jobId, "scored");
+    return { skipped: "scoring inputs unchanged" };
+  }
   const result = await deps.ai.scoreJob(input,
     { refType: "job", refId: job.id, userId },
   );
@@ -109,6 +136,8 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
       fitProfileVersion: profile?.version ?? null,
       fitScoredAt: deps.now(),
       scoreInputHash: fingerprint,
+      scoreState: "scored",
+      scoreStateAt: deps.now(),
       hidden: false,
       updatedAt: deps.now(),
     })
@@ -152,6 +181,35 @@ async function buildDigest(deps: WorkerDeps, userId: string): Promise<string> {
 
 const RESYNTHESIS_THRESHOLD = 5;
 
+/** How many outcomes reach one synthesis. Newest first, so a long history keeps its recent half. */
+const OUTCOME_LIMIT = 50;
+
+/**
+ * Where this account's applications actually ended up: the newest row per role, kept to the two
+ * statuses that are outcomes rather than progress.
+ *
+ * The synthesiser reads decisions, which are what someone hoped for at the moment they looked at a
+ * role. An acceptance is what they chose in the end and a rejection is evidence about fit, so the
+ * two are given to it apart from the decisions rather than mixed in among them.
+ */
+async function accountOutcomes(deps: WorkerDeps, userId: string) {
+  const latest = latestApplicationFor(userId);
+  const rows = await deps.db
+    .select({
+      title: schema.applications.jobTitle,
+      company: schema.applications.companyName,
+      status: latest.status,
+      appliedOn: latest.appliedOn,
+      at: latest.createdAt,
+    })
+    .from(latest)
+    .innerJoin(schema.applications, eq(schema.applications.id, latest.id))
+    .where(inArray(latest.status, ["accepted", "rejected"]))
+    .orderBy(desc(latest.createdAt))
+    .limit(OUTCOME_LIMIT);
+  return rows.map(({ at: _at, ...row }) => row);
+}
+
 export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { userId, force } = (task.payload ?? {}) as TaskPayloads["synthesize_profile"];
   if (!userId) return { skipped: "no account on task" };
@@ -175,6 +233,8 @@ export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Pro
     .where(and(eq(schema.companySuggestions.userId, userId), eq(schema.companySuggestions.status, "rejected")))
     .limit(30);
 
+  const outcomes = await accountOutcomes(deps, userId);
+
   const result = await deps.ai.synthesizeProfile({
     seedProfile: settings.seedProfile,
     pinnedStatements: current?.pinnedStatements ?? [],
@@ -193,6 +253,7 @@ export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Pro
     })),
     disagreements,
     rejectedCompanySuggestions: rejected.filter((r) => r.reason).map((r) => ({ name: r.name, reason: r.reason ?? "" })),
+    outcomes,
   }, { refType: "profile", refId: userId, userId });
   if (!result) return { skipped: "no ai result" };
 
@@ -213,6 +274,21 @@ export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Pro
   return { version, decisions: decisions.length };
 }
 
+/**
+ * How long a rejected suggestion stays rejected (R-6.9).
+ *
+ * Rejecting a term means "not now", not "never": the gate that made it wrong two months ago may
+ * have moved, and until this existed a single rejection stood for the life of the account. After
+ * the window the term may be proposed again — which is a proposal, not a change: accepting one is
+ * still the person's.
+ */
+export const REJECTED_SUGGESTION_TTL_MS = 60 * 86_400_000;
+
+/** A rejection this recent still counts as taken; anything older has expired. */
+export function rejectionCutoff(now: Date): Date {
+  return new Date(now.getTime() - REJECTED_SUGGESTION_TTL_MS);
+}
+
 export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { userId } = (task.payload ?? {}) as TaskPayloads["suggest_filters"];
   if (!userId) return { skipped: "no account on task" };
@@ -222,10 +298,14 @@ export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promis
   const decisions = await decisionRows(deps, userId, 300);
   if (decisions.length === 0) return { skipped: "no decisions" };
 
+  // A rejection older than its window is no longer evidence of anything: the term is not named as
+  // off-limits, and the duplicate check below lets it be filed again.
+  const cutoff = rejectionCutoff(deps.now());
+  const liveRejection = sql`coalesce(${schema.filterSuggestions.resolvedAt}, ${schema.filterSuggestions.createdAt}) >= ${cutoff}`;
   const previouslyRejected = await deps.db
     .select({ type: schema.filterSuggestions.type, value: schema.filterSuggestions.value })
     .from(schema.filterSuggestions)
-    .where(and(eq(schema.filterSuggestions.userId, userId), eq(schema.filterSuggestions.status, "rejected")));
+    .where(and(eq(schema.filterSuggestions.userId, userId), eq(schema.filterSuggestions.status, "rejected"), liveRejection));
 
   const map = (d: (typeof decisions)[number]) => ({
     title: d.jobTitle,
@@ -254,7 +334,11 @@ export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promis
     const duplicate = await deps.db
       .select({ id: schema.filterSuggestions.id })
       .from(schema.filterSuggestions)
-      .where(and(eq(schema.filterSuggestions.userId, userId), eq(schema.filterSuggestions.type, s.type), sql`${schema.filterSuggestions.value}::text = ${JSON.stringify(s.value)}`, inArray(schema.filterSuggestions.status, ["pending", "rejected"])))
+      .where(and(eq(schema.filterSuggestions.userId, userId), eq(schema.filterSuggestions.type, s.type), // Compared as jsonb, not as text: `{"term":"x"}::text` renders with a space after the
+        // colon, so a text comparison against compact JSON never matched and every duplicate was
+        // filed again.
+        sql`${schema.filterSuggestions.value} = ${JSON.stringify(s.value)}::jsonb`,
+        sql`(${schema.filterSuggestions.status} = 'pending' or (${schema.filterSuggestions.status} = 'rejected' and ${liveRejection}))`))
       .limit(1);
     if (duplicate.length) continue;
     await deps.db.insert(schema.filterSuggestions).values({ userId, type: s.type, value: s.value, evidence: s.evidence, rationale: s.rationale });
@@ -298,12 +382,16 @@ export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<un
     .where(and(eq(schema.userJobs.userId, userId), eq(schema.jobs.status, "open"), sql`(${schema.userJobs.inTable} or ${shortlisted})`)).orderBy(desc(shortlisted));
   let queued = 0;
   for (let offset = 0; offset < rows.length; offset += 250) {
-    const values = rows.slice(offset, offset + 250).map(row => {
+    const batch = rows.slice(offset, offset + 250);
+    const values = batch.map(row => {
       const payload = { userId, jobId: row.id };
       return { type: 'score_job' as const, payload, dedupeKey: dedupeKeyFor('score_job', payload), priority: row.shortlisted ? 1 : priorityFor('score_job') };
     });
     const inserted = await deps.db.insert(schema.tasks).values(values).onConflictDoNothing().returning({ id: schema.tasks.id });
     queued += inserted.length;
+    // Every role a new profile version will re-score reads "scoring" until its turn comes.
+    await deps.db.update(schema.userJobs).set({ scoreState: "queued", scoreStateAt: deps.now() })
+      .where(and(eq(schema.userJobs.userId, userId), inArray(schema.userJobs.jobId, batch.map(row => row.id))));
   }
   return { queued };
 }

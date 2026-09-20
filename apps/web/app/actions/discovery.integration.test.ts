@@ -22,6 +22,8 @@ beforeEach(async () => {
   auth.requireSession.mockReset(); auth.requireSession.mockImplementation(async () => user);
   auth.requireVerifiedUser.mockReset(); auth.requireVerifiedUser.mockImplementation(async () => auth.requireUser());
   await database.execute(sql`truncate discovery_sources, company_suggestions, companies, tasks, settings, user_settings restart identity cascade`);
+  // Filters first: following a recommended company waits on a gate this account chose.
+  await database.insert(schema.userSettings).values({ userId: user.id, key: "gate", value: { includeKeywords: ["operations"], excludeKeywords: [], matchFields: ["title"], locationTerms: [], includeRemote: true } });
 });
 async function source() {
   const [row] = await database.insert(schema.discoverySources).values({ userId: user.id, name: "Weekly newsletter", kind: "email", nextRunAt: new Date("2030-01-01") }).returning(); return row!;

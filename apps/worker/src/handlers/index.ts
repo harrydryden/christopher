@@ -1,4 +1,6 @@
 import { handleGenerateCv } from "./cv";
+import { handleImportLibraryDocument } from "./library-import";
+import { handleReviewLibrary } from "./library-review";
 import type { HandlerMap } from "../queue";
 import { handleDiscover } from "./discover";
 import { handleRunDaily } from "./daily";
@@ -37,6 +39,8 @@ export const handlers: HandlerMap = {
   suggest_companies: handleSuggestCompanies,
   rescore_all: handleRescoreAll,
   reevaluate_gate: handleReevaluateGate,
+  review_library: handleReviewLibrary,
+  import_library_document: handleImportLibraryDocument,
 };
 
 export { handleDiscover, handleRunDaily, handleScanCompany, handleFetchDescription, handleImportPosting };

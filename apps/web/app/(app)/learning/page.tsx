@@ -153,7 +153,8 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
 
       <Card title="Seed profile">
         <p className="mb-2 text-12 text-muted">
-          What you wrote at setup: seniority, sectors, locations, compensation floor, deal-breakers. Never overwritten by the model.
+          What you wrote at setup: seniority, sectors, locations, compensation floor, deal-breakers. Never overwritten by the model, and editable
+          here or on <a href="/settings#seed-profile" className="text-fg underline">Settings</a>.
         </p>
         <form action={saveSeedProfile} className="flex flex-col gap-2">
           <textarea

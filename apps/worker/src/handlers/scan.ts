@@ -15,6 +15,7 @@ import {
   evaluateGate,
   keyPostings,
   looksRemote,
+  MANUAL_RESCAN_INTERVAL_MS,
   modeForScanStatus,
   normalisePostingUrl,
   normalizeTitle,
@@ -31,6 +32,7 @@ import {
   type RawPosting,
   type SourceSpec,
   type SystemSettings,
+  SOURCE_FAILING_AFTER,
 } from "@christopher/core";
 import { and, desc, eq, inArray, sql, or, isNull } from "drizzle-orm";
 import type { CareerSource } from "@christopher/db";
@@ -43,8 +45,12 @@ import { log } from "../log";
 
 type ScanStatus = "ok" | "partial" | "suspect_empty" | "failed";
 
-/** A manual rescan of a company that was scanned this recently is served by the existing result. */
-export const MANUAL_RESCAN_INTERVAL_MS = 30 * 60_000;
+/**
+ * A manual rescan of a company that was scanned this recently is served by the existing result.
+ * Re-exported from core, where the interface reads it too: it writes the same sentence into the
+ * Refresh control, and `apps/web` may not import `apps/worker`.
+ */
+export { MANUAL_RESCAN_INTERVAL_MS };
 
 /**
  * The most outbound requests one scan of one source may make.
@@ -693,7 +699,7 @@ async function scanSource(
     .set({
       consecutiveFailures: failures,
       nextScanAt: failures ? new Date(deps.now().getTime() + Math.min(7, 2 ** Math.min(failures - 1, 3)) * 86400000) : null,
-      status: blocked ? "blocked" : failures >= 3 ? "failing" : source.status === "failing" && status === "ok" ? "active" : source.status,
+      status: blocked ? "blocked" : failures >= SOURCE_FAILING_AFTER ? "failing" : source.status === "failing" && status === "ok" ? "active" : source.status,
       lastOkScanAt: status === "ok" ? deps.now() : source.lastOkScanAt,
       lastPostingsCount: status === "ok" ? postings.length : source.lastPostingsCount,
       contentHash,
@@ -706,7 +712,7 @@ async function scanSource(
   const persistentlyShrunk = shrunk && (await deps.db.select({ error: schema.scans.error, status: schema.scans.status }).from(schema.scans)
     .where(eq(schema.scans.sourceId, source.id)).orderBy(desc(schema.scans.startedAt)).limit(3))
     .filter((scan) => scan.status === "partial" && /shrank/.test(scan.error ?? "")).length >= 3;
-  if (failures >= 3 || status === "suspect_empty" || persistentlyShrunk) {
+  if (failures >= SOURCE_FAILING_AFTER || status === "suspect_empty" || persistentlyShrunk) {
     await enqueueTask(deps.db, "discover", { companyId: company.id, reason: status === "suspect_empty" ? "suspect_empty" : persistentlyShrunk ? "shrunk" : "failing" }, {
       dedupeKey: dedupeKeyFor("discover", { companyId: company.id }),
       priority: priorityFor("discover"),
@@ -714,9 +720,17 @@ async function scanSource(
   }
 
   const queued: Array<typeof schema.tasks.$inferInsert> = [];
-  for (const payload of scoreQueue) if (scorable.has(payload.userId)) queued.push({ type: "score_job", payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") });
+  const scoring = scoreQueue.filter(payload => scorable.has(payload.userId));
+  for (const payload of scoring) queued.push({ type: "score_job", payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") });
   for (const jobId of descriptionQueue) queued.push({ type: "fetch_description", payload: { jobId }, dedupeKey: dedupeKeyFor("fetch_description", { jobId }), priority: priorityFor("fetch_description") });
   for (let offset = 0; offset < queued.length; offset += 250) await deps.db.insert(schema.tasks).values(queued.slice(offset, offset + 250)).onConflictDoNothing();
+  // A role whose score is on its way says so on the view, so the table can tell waiting from
+  // refused instead of showing one em dash for five different situations.
+  for (let offset = 0; offset < scoring.length; offset += 250) {
+    await deps.db.execute(sql`update user_jobs uj set score_state = 'queued', score_state_at = ${deps.now()}
+      from jsonb_to_recordset(${JSON.stringify(scoring.slice(offset, offset + 250))}::jsonb) as v("userId" uuid, "jobId" uuid)
+      where uj.user_id = v."userId" and uj.job_id = v."jobId"`);
+  }
 
   log.info("source scanned", {
     company: company.name,

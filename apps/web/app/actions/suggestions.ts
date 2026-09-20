@@ -6,12 +6,17 @@ import { reevaluateGate, subscribeToCompany } from "@christopher/db";
 import { careerSources, companies, companySubscriptions, companySuggestions, jobs, tasks } from "@christopher/db/schema";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
+import { hasChosenGate } from "@/lib/queries/setup";
 import { getSettings, getSettingsFor } from "@/lib/settings";
+import { CHOOSE_GATE_SENTENCE } from "@/lib/setup";
 import { UserFacingError, zUuid } from "@/lib/validation";
 import type { DiscoveryActionResult } from "@/lib/discovery-ux";
 
 export async function acceptSuggestion(suggestionId: string): Promise<DiscoveryActionResult> {
   const user = await requireVerifiedUser();
+  // Following a recommended company starts scanning it, so it waits on the gate exactly as the
+  // Add companies form does.
+  if (!(await hasChosenGate(user.id))) return { ok: false, error: CHOOSE_GATE_SENTENCE };
   const id = zUuid().parse(suggestionId);
   const result = await db().transaction(async tx => {
     const [suggestion] = await tx.select().from(companySuggestions).where(and(eq(companySuggestions.id, id), eq(companySuggestions.userId, user.id))).for("update");

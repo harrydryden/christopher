@@ -243,6 +243,8 @@ export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise
       keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms,
       excluded: verdict.excluded, locationOk: verdict.locationOk,
       inTable: true, nearMiss: false, seeded: false, createdAt: now, updatedAt: now,
+      // The score is queued in the same transaction, so the view says so from the moment it exists.
+      scoreState: "queued", scoreStateAt: now,
     }).onConflictDoNothing();
     const scorePayload = { userId, jobId: created.id };
     await enqueueTask(tx, "score_job", scorePayload, { dedupeKey: dedupeKeyFor("score_job", scorePayload), priority: 1 });
@@ -291,6 +293,7 @@ async function adoptExistingView(
       keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms,
       excluded: verdict.excluded, locationOk: verdict.locationOk,
       inTable: true, nearMiss: false, seeded: false, createdAt: now, updatedAt: now,
+      scoreState: "queued", scoreStateAt: now,
     }).onConflictDoNothing().returning({ userId: schema.userJobs.userId });
     if (inserted.length) {
       const payload = { userId, jobId };

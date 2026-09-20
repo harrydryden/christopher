@@ -8,8 +8,11 @@ import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { actionCvs, applications, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, userJobs, enqueueTask } from "@christopher/db";
 import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvWritingPreferences,
   createCvWritingBudget, CvLibrarySchema, consolidateExperience, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel,
-  type CvContent, type CvWritingPreferences } from "@christopher/core";
+  type CvContent, type CvLibrary, type CvWritingPreferences } from "@christopher/core";
 import { requireUser, requireVerifiedUser } from "@/lib/auth";
+import { cvLibraryIssues } from "@/lib/cv-library-issues";
+import { cvBuildQuote } from "@/lib/cv-quote";
+import { enqueue } from "@/lib/enqueue";
 import { db } from "@/lib/db";
 import { userSettings as userSettingsTable } from "@christopher/db/schema";
 import { getSettings, getSettingsFor, setUserSetting } from "@/lib/settings";
@@ -99,26 +102,54 @@ async function rememberWording(tx: Tx, userId: string, before: CvContent, after:
   return updated;
 }
 
+/**
+ * One saved version of a Library, written the way every save writes one.
+ *
+ * Extracted from `saveCvLibrary` so that the document import can land accepted items through the
+ * same path rather than a parallel one: the same advisory lock, the same obsolete-edit rejection,
+ * the same archived-evidence retention, the same two tasks queued behind it. `build` is given the
+ * version it is writing over — the import needs it, to add to what is there rather than replace
+ * it — and returns the library to store.
+ *
+ * It takes the caller's transaction and is not a form action: everything it writes is decided by
+ * `build`, which only a server action holding a live transaction can supply.
+ */
+export async function writeCvLibraryVersion(
+  tx: Tx,
+  userId: string,
+  expectedVersion: number,
+  build: (current: CvLibrary | null) => CvLibrary,
+): Promise<number> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`cv:library:${userId}`}))`);
+  const latest = await latestLibrary(tx, userId);
+  if ((latest?.version ?? 0) !== expectedVersion) throw new UserFacingError("The library changed. Reload before saving.");
+  const version = (latest?.version ?? 0) + 1;
+  const content = CvLibrarySchema.parse(consolidateExperience(build(latest?.content ?? null)));
+  await tx.insert(cvLibraries).values({ userId, version, content: CvLibrarySchema.parse(retainArchivedEvidence(latest?.content, content)) });
+  await enqueueTask(tx, "rescore_all", { userId, onlyInTable: true }, { dedupeKey: `rescore_all:${userId}`, priority: 5 });
+  // The evidence review of the version this save just wrote. Its dedupe key is the account,
+  // not the version, so a person typing through five saves queues one pass; the handler reads
+  // the newest library when it runs.
+  await enqueue("review_library", { userId, libraryVersion: version }, tx);
+  return version;
+}
+
 export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promise<ActionResult> {
   const user = await requireUser();
+  // Held outside the try so a refusal can name the job or the block it is about, rather than the
+  // array index the schema reports.
+  let submitted: unknown;
   try {
     const raw = String(form.get("library") ?? "");
     if (raw.length > 150_000) return fail("Library is too large. Keep it under 150,000 characters.");
-    const parsed = CvLibrarySchema.parse(JSON.parse(raw));
-    const content = CvLibrarySchema.parse(consolidateExperience({ ...parsed, theme: parsed.theme ?? DEFAULT_CV_THEME }));
+    submitted = JSON.parse(raw);
+    const parsed = CvLibrarySchema.parse(submitted);
+    const content = { ...parsed, theme: parsed.theme ?? DEFAULT_CV_THEME };
     await db().transaction(async (tx) => {
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`cv:library:${user.id}`}))`);
-      const latest = await latestLibrary(tx, user.id);
-      if ((latest?.version ?? 0) !== Number(form.get("version"))) throw new UserFacingError("The library changed. Reload before saving.");
-      await tx.insert(cvLibraries).values({ userId: user.id, version: (latest?.version ?? 0) + 1, content: CvLibrarySchema.parse(retainArchivedEvidence(latest?.content, content)) });
-      await enqueueTask(tx, "rescore_all", { userId: user.id, onlyInTable: true }, { dedupeKey: `rescore_all:${user.id}`, priority: 5 });
+      await writeCvLibraryVersion(tx, user.id, Number(form.get("version")), () => content);
     });
   } catch (error) {
-    if (error instanceof z.ZodError) return fail(error.issues.map((issue) => {
-      const [section, index, field] = issue.path;
-      const label = typeof index === "number" ? `${section === "employment" ? "Job" : "Evidence"} ${index + 1}${field ? ` (${String(field)})` : ""}: ` : "";
-      return label + issue.message;
-    }).join(" "));
+    if (error instanceof z.ZodError) return fail(cvLibraryIssues(error, submitted));
     return actionError(error, "Could not save the library. Please try again.");
   }
   revalidatePath("/library");
@@ -135,12 +166,15 @@ export async function saveCvWritingPreferences(_prev: ActionResult, form: FormDa
       const [stored] = await tx.select().from(userSettingsTable).where(and(eq(userSettingsTable.userId, user.id), eq(userSettingsTable.key, "cvWritingPreferences")));
       const latest = await latestLibrary(tx, user.id);
       const current = resolveCvWritingPreferences(stored?.value, latest?.content);
-      if (JSON.stringify(current) !== String(form.get("previousPreferences"))) throw new UserFacingError("Writing preferences changed. Reload Settings before saving.");
+      if (JSON.stringify(current) !== String(form.get("previousPreferences"))) throw new UserFacingError("Writing preferences changed. Reload the page before saving.");
       await upsertUserSetting(tx, user.id, "cvWritingPreferences", parsed.data);
     });
   } catch (error) {
     return actionError(error, "Could not save writing preferences. Try again.");
   }
+  // Written on the Library, where the wording they shape is written; still read on Settings and
+  // by every build, so all three are revalidated.
+  revalidatePath("/library");
   revalidatePath("/settings");
   revalidatePath("/cv");
   return ok();
@@ -245,6 +279,12 @@ export async function requestCv(
     } catch (error) {
       throw new UserFacingError(error instanceof Error ? error.message : "This library cannot be fitted onto a CV.");
     }
+    // What this build will cost, answered here rather than on a CV page after the redirect. The
+    // worker's admission is still the authority — it holds the capacity inside the budget lock and
+    // knows the operator's caps — but a build this account plainly cannot afford is refused before
+    // a draft, a task and an application row exist for it.
+    const quote = await cvBuildQuote(user.id, id);
+    if (quote.refusal) return fail(quote.refusal);
     draftId = await db().transaction(async (tx) => {
       const revision = await nextCvRevision(tx, { userId: user.id, companyName: row.company, jobTitle: row.job.title });
       // Two clicks on Generate are two of these transactions, one behind the other. The second

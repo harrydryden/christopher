@@ -1,7 +1,18 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
-import { companies, decisions, filterSuggestions, preferenceProfiles, tagVocabulary, type FilterSuggestion, type PreferenceProfile } from "@christopher/db/schema";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { companies, decisions, filterSuggestions, preferenceProfiles, tagVocabulary, userJobs, type FilterSuggestion, type PreferenceProfile } from "@christopher/db/schema";
 import { db } from "@/lib/db";
 import { extractSuggestionValue } from "@/lib/filterSuggestions";
+
+/**
+ * How many roles this account's table holds right now. Taken either side of a widened gate, it is
+ * what "Admitted 9 roles" counts: `saveSettingsAndGate` runs the re-evaluation but returns nothing,
+ * and the number a person cares about is what appeared in their table, not what was written.
+ */
+export async function countRolesInTable(userId: string): Promise<number> {
+  const [row] = await db().select({ n: sql<number>`count(*)::int` }).from(userJobs)
+    .where(and(eq(userJobs.userId, userId), eq(userJobs.inTable, true), isNull(userJobs.archivedAt)));
+  return row?.n ?? 0;
+}
 
 export async function getPreferenceProfile(userId: string, version?: number): Promise<PreferenceProfile | null> {
   if (version !== undefined) {

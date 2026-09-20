@@ -1,7 +1,23 @@
 import { and, desc, eq, inArray, isNull, isNotNull, sql } from "drizzle-orm";
-import { cvBuildStepsSignature, cvDrafts, cvVersions, listCvBuildSteps, tasks } from "@christopher/db";
-import type { CvBuildFailure, CvBuildStepView } from "@christopher/core";
+import {
+  cvBuildStepsSignature,
+  cvDrafts,
+  cvLibraries,
+  cvVersions,
+  latestLibraryReviews,
+  libraryReviewsSignature,
+  listCvBuildSteps,
+  tasks,
+} from "@christopher/db";
+import type { CvBuildFailure, CvBuildStepView, CvLibrary } from "@christopher/core";
+import { libraryEntryInputHash } from "@christopher/core/library-review";
 import { cvWorkVersion, normaliseCvStepsSignature } from "@/lib/cv-build-state";
+import type { LibraryEvidence } from "@/lib/cv-library-evidence";
+import {
+  libraryEvidence,
+  type LibraryReviewRun,
+  type StoredLibraryReview,
+} from "@/lib/cv-library-reviews";
 import { db, type Db } from "@/lib/db";
 import { pageNumber } from "@/components/Pagination";
 
@@ -233,4 +249,115 @@ export async function cvWorkVersionFor(
     // No ledger yet: the version still moves on the draft's own state and the minute tick.
   }
   return cvWorkVersion(draft, now, signature);
+}
+
+/**
+ * The account's latest saved Library: the version the editor writes over and the content it opens.
+ */
+export async function getOwnCvLibrary(userId: string) {
+  const [library] = await db()
+    .select({ version: cvLibraries.version, content: cvLibraries.content, createdAt: cvLibraries.createdAt })
+    .from(cvLibraries)
+    .where(eq(cvLibraries.userId, userId))
+    .orderBy(desc(cvLibraries.version))
+    .limit(1);
+  return library ?? null;
+}
+
+/** The account's saved versions, newest first. A history is read, not scrolled: twenty is plenty. */
+export async function listLibraryVersions(userId: string, limit = 20) {
+  return db()
+    .select({ version: cvLibraries.version, createdAt: cvLibraries.createdAt })
+    .from(cvLibraries)
+    .where(eq(cvLibraries.userId, userId))
+    .orderBy(desc(cvLibraries.version))
+    .limit(Math.max(1, Math.min(100, limit)));
+}
+
+/** Two of this account's versions by number, for a diff. Never read without the account. */
+export async function getLibraryVersionContents(userId: string, versions: number[]): Promise<Map<number, CvLibrary>> {
+  const wanted = [...new Set(versions.filter(version => Number.isInteger(version)))];
+  if (!wanted.length) return new Map();
+  const rows = await db()
+    .select({ version: cvLibraries.version, content: cvLibraries.content })
+    .from(cvLibraries)
+    .where(and(eq(cvLibraries.userId, userId), inArray(cvLibraries.version, wanted)));
+  return new Map(rows.map(row => [row.version, row.content]));
+}
+
+/** Whether a version number names one of this account's own saved libraries. */
+export async function ownsLibraryVersion(userId: string, version: number): Promise<boolean> {
+  if (!Number.isInteger(version) || version < 1) return false;
+  const [row] = await db()
+    .select({ version: cvLibraries.version })
+    .from(cvLibraries)
+    .where(and(eq(cvLibraries.userId, userId), eq(cvLibraries.version, version)))
+    .limit(1);
+  return !!row;
+}
+
+/**
+ * Whether an evidence pass is in flight for this account, and the sentence that refused the last
+ * one.
+ *
+ * The dedupe key is the account, so there is one row worth reading: the newest. A pass the budget
+ * refused finishes rather than fails — retrying work the month cannot pay for would fill Health
+ * with nothing — and records the refusal in its result, which is the sentence the Library shows
+ * instead of "Evaluating…". It is the worker's own wording, taken as it was written.
+ */
+async function libraryReviewRun(userId: string): Promise<LibraryReviewRun> {
+  const [newest] = await db()
+    .select({ status: tasks.status, result: tasks.result })
+    .from(tasks)
+    .where(and(eq(tasks.type, "review_library"), sql`${tasks.payload}->>'userId' = ${userId}`))
+    .orderBy(desc(tasks.createdAt))
+    .limit(1);
+  if (!newest) return { pending: false, refusal: null };
+  if (newest.status === "queued" || newest.status === "running") return { pending: true, refusal: null };
+  const result = (newest.result ?? null) as { skipped?: unknown; message?: unknown } | null;
+  const refused = result?.skipped === "budget" && typeof result.message === "string" ? result.message : null;
+  return { pending: false, refusal: refused };
+}
+
+/**
+ * The stored reviews that still describe the library as it is saved now.
+ *
+ * `cv_library_reviews` arrived with the worker's migration and the interface deploys separately,
+ * so a release serving ahead of it reads as "nothing reviewed yet" — every entry falls back to the
+ * baseline computed from the person's own tags — rather than an error page over the Library.
+ */
+async function readLibraryReviews(userId: string, content: CvLibrary): Promise<Map<string, StoredLibraryReview>> {
+  const wanted = content.entries.map(entry => ({
+    entryId: entry.id,
+    inputHash: libraryEntryInputHash(entry, content.employment?.find(job => job.id === entry.employmentId) ?? null),
+  }));
+  try {
+    const rows = await latestLibraryReviews(db(), userId, wanted);
+    return new Map([...rows].map(([entryId, row]) => [entryId, { entryId, source: row.source, review: row.review }]));
+  } catch {
+    return new Map();
+  }
+}
+
+/** Everything the Library page shows about how well it is evidenced. One call, one account. */
+export async function getLibraryEvidence(
+  userId: string,
+  library: { content: CvLibrary } | null,
+): Promise<LibraryEvidence> {
+  if (!library) return libraryEvidence(null, new Map());
+  const [stored, run] = await Promise.all([readLibraryReviews(userId, library.content), libraryReviewRun(userId)]);
+  return libraryEvidence(library.content, stored, run);
+}
+
+/**
+ * The poll token for one version's reviews: it moves when a review is added, replaced, rescored or
+ * reclassified, and not otherwise. Empty for a database that has not been migrated for them yet,
+ * which the poller reads as "nothing has landed" rather than as a failure.
+ */
+export async function libraryReviewSignature(userId: string, version: number): Promise<string> {
+  try {
+    return await libraryReviewsSignature(db(), userId, version);
+  } catch {
+    return "";
+  }
 }

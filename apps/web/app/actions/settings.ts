@@ -4,23 +4,55 @@ import { requireAdmin, requireUser } from "@/lib/auth";
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { isKnownModel, isValidScanTime, isValidTimezone, MAX_ACCOUNT_AI_BUDGET_USD, parseTermList, type MatchField } from "@christopher/core";
+import { isKnownModel, isValidScanTime, isValidTimezone, MAX_ACCOUNT_AI_BUDGET_USD, parseTermList, type GateSettings, type MatchField } from "@christopher/core";
 import { enqueue } from "@/lib/enqueue";
+import { GATE_NEEDS_KEYWORD_SENTENCE } from "@/lib/setup";
 import { getSettings, setSystemSetting, setUserSetting, saveSettingsAndGate } from "@/lib/settings";
 import { fail, ok, type ActionResult } from "@/lib/validation";
 
 const MATCH_FIELDS: MatchField[] = ["title", "department", "description"];
 
-export async function saveKeywords(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
+/**
+ * One reading of the gate fields, whichever form carried them: the Keywords card, the Location
+ * filter card and the one GateSetup block all parse and validate here rather than three times.
+ * A field the form does not carry is left as it is, so saving one card never clears another.
+ */
+function gateFromForm(formData: FormData, current: GateSettings): { ok: true; gate: GateSettings } | { ok: false; error: string } {
+  const gate: GateSettings = { ...current };
+  const terms = (name: string) => parseTermList(String(formData.get(name) ?? ""));
+  if (formData.has("includeKeywords")) gate.includeKeywords = terms("includeKeywords");
+  if (formData.has("excludeKeywords")) gate.excludeKeywords = terms("excludeKeywords");
+  if (formData.has("seniorityKeywords")) gate.seniorityKeywords = terms("seniorityKeywords");
+  // An unticked checkbox sends nothing, so the location field beside it is what says the form
+  // carried this pair at all.
+  if (formData.has("locationTerms")) {
+    gate.locationTerms = terms("locationTerms");
+    gate.includeRemote = formData.get("includeRemote") === "1";
+  }
+  // `evaluateGate` treats an empty include list as "everything matches", so a form that carries the
+  // field must leave at least one keyword in it.
+  if (formData.has("includeKeywords") && gate.includeKeywords.filter((keyword) => keyword.trim()).length === 0) {
+    return { ok: false, error: GATE_NEEDS_KEYWORD_SENTENCE };
+  }
+  return { ok: true, gate };
+}
+
+/** The whole gate from one form: what the setup block and the Companies page save. */
+export async function saveGate(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const user = await requireUser();
   const settings = await getSettings();
-  const includeKeywords = parseTermList(String(formData.get("includeKeywords") ?? ""));
-  const excludeKeywords = parseTermList(String(formData.get("excludeKeywords") ?? ""));
-  const seniorityKeywords = formData.has("seniorityKeywords") ? parseTermList(String(formData.get("seniorityKeywords") ?? "")) : settings.gate.seniorityKeywords ?? [];
-  await saveSettingsAndGate(user.id, { gate: { ...settings.gate, includeKeywords, excludeKeywords, seniorityKeywords } });
+  const parsed = gateFromForm(formData, settings.gate);
+  if (!parsed.ok) return fail(parsed.error);
+  await saveSettingsAndGate(user.id, { gate: parsed.gate });
   revalidatePath("/settings");
+  revalidatePath("/companies");
   revalidatePath("/");
   return ok();
+}
+
+/** The Keywords card: the same save, with only the keyword fields on the form. */
+export async function saveKeywords(prev: ActionResult, formData: FormData): Promise<ActionResult> {
+  return saveGate(prev, formData);
 }
 
 export async function saveMatchFields(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
@@ -34,15 +66,9 @@ export async function saveMatchFields(_prev: ActionResult, formData: FormData): 
   return ok();
 }
 
-export async function saveLocationFilter(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
-  const user = await requireUser();
-  const settings = await getSettings();
-  const locationTerms = parseTermList(String(formData.get("locationTerms") ?? ""));
-  const includeRemote = formData.get("includeRemote") === "1";
-  await saveSettingsAndGate(user.id, { gate: { ...settings.gate, locationTerms, includeRemote } });
-  revalidatePath("/settings");
-  revalidatePath("/");
-  return ok();
+/** The Location filter card: the same save, with only the location fields on the form. */
+export async function saveLocationFilter(prev: ActionResult, formData: FormData): Promise<ActionResult> {
+  return saveGate(prev, formData);
 }
 
 /** Automatic score hiding is retired: a stored `hideThreshold` is left where it is and ignored. */

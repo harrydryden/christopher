@@ -2,11 +2,14 @@ import { WorkspaceShell } from "@/components/WorkspaceShell";
 import { NavigationMetrics } from "@/components/NavigationMetrics";
 import { ScanStatusBanner } from "@/components/ScanStatusBanner";
 import { getScanStatus } from "@/lib/scan-status";
+import { countHealthItems } from "@/lib/queries/health";
 import { getCurrentUser, needsEmailConfirmation } from "@/lib/auth";
 import { Suspense, type ReactNode } from "react";
 import { logout } from "@/app/login/actions";
 import { resendVerification } from "@/app/actions/account";
 import { WorkspaceNav } from "@/components/WorkspaceNav";
+// The banner and every control it disables say one sentence, from one place.
+import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
 import { NavLink } from "@/components/NavLink";
 import { Mark } from "@/components/brand";
 import Link from "next/link";
@@ -14,12 +17,15 @@ import { redirect } from "next/navigation";
 export const dynamic = "force-dynamic";
 
 /** One entry for applications and CVs: the two are one job, on one page, under one heading. */
-const NAV_ITEMS = [
+const NAV_ITEMS: Array<{ href: string; label: string; indent?: boolean }> = [
   { href: "/", label: "Roles" },
   { href: "/companies", label: "Companies" },
   { href: "/applications", label: "Applications" },
   { href: "/library", label: "Library" },
   { href: "/settings", label: "Settings" },
+  // Health belongs to the Settings section and is shown under it, because an attention item
+  // nobody can see is an attention item nobody resolves (R-9.1).
+  { href: "/health", label: "Health", indent: true },
 ];
 
 async function ScanBanner({ userId }: { userId: string }) {
@@ -32,6 +38,8 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   const current = await getCurrentUser();
   if (!current) redirect("/login?error=signed_out");
   const { user } = current;
+  // What Health would show: on the entry itself, so the number is seen from wherever you are.
+  const healthCount = await countHealthItems(user.id);
 
   return (
     <WorkspaceShell><NavigationMetrics />
@@ -41,7 +49,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       </div>
       {needsEmailConfirmation(user) && (
         <div className="flex flex-wrap items-center gap-3 border-b-2 border-line bg-sunken px-4 py-2 text-13" role="status">
-          <span>Confirm your email address to add companies, run discovery and build CVs. The link asks for your password.</span>
+          <span>{VERIFY_SENTENCE} The link asks for your password.</span>
           <form action={resendVerification}>
             <button type="submit" className="underline">Send the link again</button>
           </form>
@@ -54,7 +62,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           </Link>
           <nav aria-label="Main navigation" className="flex flex-wrap gap-0.5 md:block md:space-y-0.5">
             {[...NAV_ITEMS, ...(user.role === "admin" ? [{ href: "/admin", label: "Admin" }] : [])].map((item) => (
-              <NavLink key={item.href} href={item.href}>
+              <NavLink key={item.href} href={item.href} indent={item.indent} count={item.href === "/health" ? healthCount : null}>
                 {item.label}
               </NavLink>
             ))}

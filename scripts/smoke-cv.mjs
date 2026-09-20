@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { mkdir } from "node:fs/promises";
 const require = createRequire(import.meta.url);
@@ -152,8 +152,12 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     const educationTab = page.getByRole("tab", { name: "Education, skills and interests", exact: true });
     const introTab = page.getByRole("tab", { name: "Intro", exact: true });
     assert.equal(await introTab.getAttribute("aria-selected"), "true");
-    assert.equal(await page.getByRole("textbox", { name: "Writing style", exact: true }).count(), 0);
+    // Writing preferences live on the Library, beside the wording they shape (SPEC: version history and writing preferences on the Library page).
+    assert.equal(await page.getByRole("textbox", { name: "Writing style", exact: true }).count(), 1);
+    // The save bar says what is at stake before anything has been typed, and the moment it has.
+    assert.equal(await page.getByText("Not saved yet", { exact: true }).count(), 1);
     await page.getByRole("textbox", { name: "Website", exact: true }).fill("https://example.com/portfolio");
+    await page.getByText("Unsaved changes", { exact: true }).waitFor();
     await experienceTab.click();
     await educationTab.click();
     assert.equal(await page.getByRole("heading", { name: "Employment history", exact: true }).isVisible(), false);
@@ -168,13 +172,49 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await introTab.click();
     assert.equal(await page.getByRole("textbox", { name: "Website", exact: true }).inputValue(), "https://example.com/portfolio");
     await experienceTab.click();
+
+    // What a CV can be built from, said on the Library by the rule generation itself applies: a
+    // job, one responsibility, confirmation, and an active block, each answered in turn.
+    const readyLine = page.getByText(/^Ready to build:/);
+    assert.match(await readyLine.innerText(), /^Ready to build: no — add a job/);
+    await page.getByRole("button", { name: "Add job", exact: true }).click();
+    // The employment grid is a table here and stacked cards on a phone, so both copies of each
+    // field exist in the DOM and only the one for this viewport is visible.
+    await page.locator('input[aria-label="Job 1 company"]:visible').fill("Smoke Co");
+    await page.locator('input[aria-label="Job 1 title"]:visible').fill("Operations Lead");
+    const smokeJob = page.locator("fieldset").filter({ hasText: "Operations Lead · Smoke Co" });
+    await smokeJob.getByRole("button", { name: "Add new responsibility or outcome", exact: true }).click();
+    // The row that was just added takes the caret, so it can be typed into straight away.
+    assert.match(await page.evaluate(() => document.activeElement?.id ?? ""), /^responsibility-/);
+    await page
+      .getByRole("textbox", { name: "Smoke Co Operations Lead responsibility 1", exact: true })
+      .fill("Ran the smoke estate end to end every morning.");
+    assert.match(await smokeJob.innerText(), /0 of 1 row confirmed · draft/);
+    await smokeJob.getByRole("button", { name: "Confirm all", exact: true }).click();
+    assert.match(await smokeJob.innerText(), /1 of 1 row confirmed · draft/);
+    assert.equal(await readyLine.innerText(), "Ready to build: no — activate Smoke Co");
+    await smokeJob.getByRole("combobox", { name: /^Status:/ }).selectOption("active");
+    assert.equal(await readyLine.innerText(), "Ready to build: yes");
+
     // An incomplete field in the other tab must be revealed when saving.
     await page.getByRole("button", { name: "Save library", exact: true }).click();
     assert.equal(await educationTab.getAttribute("aria-selected"), "true");
+
+    // Nothing typed here leaves by accident: an in-app link asks first, and declining stays put.
+    const declined = new Promise((resolve) =>
+      page.once("dialog", (dialog) => { dialog.dismiss().then(() => resolve(dialog.message())); }),
+    );
+    await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Settings", exact: true }).click();
+    assert.match(await declined, /unsaved Library changes/i);
+    assert.equal(new URL(page.url()).pathname, "/library");
+    // Leaving on purpose: the same prompt, accepted. The edits above are never saved.
+    const leaving = (dialog) => dialog.accept();
+    page.on("dialog", leaving);
     await page.goto(`${baseUrl}/cv/library`);
     await page.getByRole("heading", { name: "Library", exact: true }).waitFor();
     assert.equal(new URL(page.url()).pathname, "/library");
     await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Settings", exact: true }).click();
+    page.off("dialog", leaving);
     const appearance = page.getByRole("group", { name: "Appearance", exact: true });
     await appearance.getByRole("button", { name: "Gold", exact: true }).click();
     await Promise.all([
@@ -185,17 +225,23 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await page.reload();
     await appearance.waitFor();
     assert.equal(await appearance.getByRole("button", { name: "Gold", exact: true }).getAttribute("aria-pressed"), "true");
+    // Writing preferences are written on the Library, beside the wording they shape; Settings only points there.
+    assert.equal(await page.getByRole("textbox", { name: "Writing style", exact: true }).count(), 0);
+    await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Library", exact: true }).click();
+    await page.getByRole("heading", { name: "Library", exact: true }).waitFor();
     const writingStyle = page.getByRole("textbox", { name: "Writing style", exact: true });
     await writingStyle.fill("Use concise UK English.");
     await page.getByRole("textbox", { name: "Saved phrasing", exact: true }).fill("Led the team");
     await Promise.all([
-      page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/settings"),
+      page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/library"),
       page.locator("form").filter({ has: writingStyle }).getByRole("button", { name: "Save", exact: true }).click(),
     ]);
     await page.reload();
     await writingStyle.waitFor();
     assert.equal(await writingStyle.inputValue(), "Use concise UK English.");
     assert.equal((await setting("cvWritingPreferences")).value.preferredWording, "Led the team");
+    await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Settings", exact: true }).click();
+    await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
     const cvModel = page.getByRole("combobox", { name: "CV model", exact: true });
     await cvModel.waitFor();
     const currentModel = await cvModel.inputValue();
@@ -237,15 +283,31 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     );
     const main = page.locator("[data-cv-main]");
     const openWidth = (await main.boundingBox()).width;
+
+    // The two saves differ by more than their labels: what each keeps, what each re-runs, and
+    // what each is expected to cost, stated under the buttons that choose between them.
+    const actions = await page.locator("dl").filter({ hasText: "Rebuild from Library" }).innerText();
+    const priced = (line) => Number(/about .{0,3}\$(\d+\.\d\d)/.exec(line)[1]);
+    const [direct, rebuild] = actions.split("\n");
+    assert.match(direct, /^Save Direct Edits · keeps your wording, re-checks it · about .{0,3}\$\d+\.\d\d$/);
+    assert.match(rebuild, /^Rebuild from Library · rewrites from the latest Library · about .{0,3}\$\d+\.\d\d$/);
+    assert.ok(
+      priced(direct) < priced(rebuild),
+      `keeping the wording must cost less than writing it again: ${actions}`,
+    );
+
+    // The wording option sits with the words it remembers, on the Content tab, and is still
+    // called by its own four words rather than its hint.
+    await page
+      .getByRole("checkbox", {
+        name: "Remember wording corrections",
+        exact: true,
+      })
+      .uncheck();
     await page
       .getByRole("tab", { name: "Appearance and settings", exact: true })
       .click();
     await page.getByRole("button", { name: "Gold", exact: true }).click();
-    await page
-      .getByRole("checkbox", {
-        name: "Remember wording corrections",
-      })
-      .uncheck();
     await page.getByRole("tab", { name: "Evaluation", exact: true }).click();
     await page.getByRole("table").waitFor();
     assert.deepEqual(await page.getByRole("columnheader").allTextContents(), [
@@ -311,6 +373,11 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
         .getByRole("button", { name: "Finalise this CV", exact: true })
         .count(),
       0,
+    );
+    // Why it is not offered, in the words `assertCvFinalisable` would have thrown.
+    assert.match(
+      await page.getByText(/^Finalise is not available yet:/).innerText(),
+      /Finalise is not available yet: Resolve the flagged factual claims, then reassess before finalising\./,
     );
     await page
       .getByRole("button", { name: "Uncertain 1", exact: true })
@@ -584,7 +651,15 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     const log = await page.getByRole("list", { name: "Build narrative", exact: true }).innerText();
     assert.match(log, /Saved as version \d{2}-[A-Z][a-z]{2}-V\d+/);
     assert.match(log, /Extracted 12 requirements/);
-    assert.match(await page.getByText(/5 motions in /).innerText(), /5 motions in .+costing .{0,3}\$0\.28\./);
+    assert.match(
+      await page.getByText(/5 motions in /).last().innerText(),
+      /5 motions in .+costing .{0,3}\$0\.28\./,
+    );
+    // What the build cost is beside the revision's name, not only inside the collapsed log.
+    assert.match(
+      await page.locator("p").filter({ hasText: /^Version \d{2}-[A-Z][a-z]{2}-V\d+ · / }).first().innerText(),
+      /^Version \d{2}-[A-Z][a-z]{2}-V\d+ · 5 motions in .+costing .{0,3}\$0\.28\.$/,
+    );
 
     // A build that stopped on something only the person can fix: what it was, and the way forward.
     const budgetFailure = {
@@ -747,9 +822,35 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       0,
     );
 
+    // 4.7: the one page that renders without a session. The link is one revision, read-only,
+    // and a note left on it reaches the owner; a token nobody issued gets the same sentence as an
+    // expired one. cv_shares cascades from cv_drafts, so the cleanup below takes the row with it.
+    const shareToken = randomBytes(32).toString("base64url");
+    await pool.query(
+      `insert into cv_shares (user_id, draft_id, token_hash, allow_comments, expires_at)
+       values ($1, $2, $3, true, now() + interval '14 days')`,
+      [userId, readyId, createHash("sha256").update(shareToken).digest("hex")],
+    );
+    const shared = await fetch(`${baseUrl}/share/${shareToken}`, { redirect: "manual" });
+    assert.equal(shared.status, 200, "the share page must render without a session");
+    assert.match(shared.headers.get("cache-control") ?? "", /no-store/);
+    const sharedHtml = await shared.text();
+    for (const needle of ["Shared CV", "Example Candidate", "Comment on this", "This page shows one saved revision"])
+      assert.ok(sharedHtml.includes(needle), `the share page does not say "${needle}"`);
+    const posted = await fetch(`${baseUrl}/share/${shareToken}/comments`, {
+      method: "POST", redirect: "manual",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ anchor: "cv-content-profile", authorName: "Smoke Reader", body: "A note from the smoke." }),
+    });
+    assert.equal(posted.status, 303, "a note must be accepted and answered with a redirect");
+    assert.match(posted.headers.get("location") ?? "", /thanks=1/);
+    const gone = await fetch(`${baseUrl}/share/${randomBytes(32).toString("base64url")}`, { redirect: "manual" });
+    assert.equal(gone.status, 200);
+    assert.ok((await gone.text()).includes("This link has expired or was withdrawn."));
+
     assert.deepEqual(errors, []);
     console.log(
-      "  CV browser flow passed: tabs, unified evaluation, keyboard navigation, full sidebar collapse, saved edits, mobile layout, real progress updates, the build narrative and its log, a failed build's way forward, and the applications table's stage, CV cell and archive/restore/delete",
+      "  CV browser flow passed: tabs, unified evaluation, keyboard navigation, full sidebar collapse, saved edits, mobile layout, real progress updates, the build narrative and its log, what the two saves cost, why finalising is unavailable, a failed build's way forward, the Library's ready-to-build line, Confirm all, its unsaved-changes bar and guard, and the applications table's stage, CV cell and archive/restore/delete, and a share link read without a session with a note left on it",
     );
   } finally {
     await browser?.close();

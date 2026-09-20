@@ -10,7 +10,7 @@
  *    follows which company, `user_jobs` holds one person's gate result, fit score and archive
  *    marker for a shared posting, and decisions, profiles, CVs and settings all carry a `user_id`.
  */
-import type { CvLibrary, CvContent } from "@christopher/core";
+import type { CvLibrary, CvContent, LibraryEntryReview } from "@christopher/core";
 import type { CvAssessment, CvJobSource } from "@christopher/core/cv-assessment";
 import type { CvBuildCheckpoint, CvBuildFailure, CvBuildMotion, CvBuildStage, CvBuildStepStatus } from "@christopher/core";
 import { sql } from "drizzle-orm";
@@ -18,6 +18,7 @@ import { cvRoleKey } from "./cv-role-key";
 import {
   bigint,
   boolean,
+  customType,
   index,
   integer,
   jsonb,
@@ -46,6 +47,16 @@ export const FETCH_METHODS = ["api", "http", "browser"] as const;
 export const JOB_STATUSES = ["open", "closed"] as const;
 /** Where a posting came from: the daily scan of a source, or a follower who pasted its URL. */
 export const JOB_ORIGINS = ["scan", "user"] as const;
+/**
+ * Why one account's view of a posting carries the fit score it carries — or none.
+ *
+ * A blank score covered five different situations and the table could not tell them apart:
+ * waiting, scored, never scored because the posting closed first, skipped because the account had
+ * nothing left to spend, and not eligible (neither in the table nor shortlisted) when the task
+ * ran. The score handler already decides all five; this records which one it decided.
+ */
+export const SCORE_STATES = ["queued", "scored", "closed", "budget", "ineligible"] as const;
+export type ScoreState = (typeof SCORE_STATES)[number];
 /** Where captured logo bytes came from. Mirrors `LOGO_SOURCES` in @christopher/core. */
 export const LOGO_SOURCES = ["site_icon", "icon_service"] as const;
 export const NAME_SUGGESTION_STATUSES = ["pending", "applied", "dismissed"] as const;
@@ -64,7 +75,7 @@ export const AUTH_TOKEN_PURPOSES = ["password_reset", "email_verification"] as c
 export const TASK_TYPES = [
   "extract_document", "verify_company", "monitor_source", "discover", "scan_company", "run_daily", "fetch_description", "score_job", "tag_reason",
   "synthesize_profile", "suggest_filters", "suggest_from_scans", "profile_company", "suggest_companies", "rescore_all",
-  "reevaluate_gate", "generate_cv", "import_posting",
+  "reevaluate_gate", "generate_cv", "import_posting", "review_library", "import_library_document",
 ] as const;
 export const TASK_STATUSES = ["queued", "running", "done", "failed"] as const;
 
@@ -406,6 +417,14 @@ export const userJobs = pgTable(
      * so the call is skipped. Null means "never scored, or scored before this column existed".
      */
     scoreInputHash: text("score_input_hash"),
+    /**
+     * What happened to the last score attempt, so a blank score can say which of its five causes
+     * it is. Null means "nothing recorded yet", which is how every row that predates the column
+     * reads; the interface falls back to the score itself, exactly as R-9.6 requires.
+     */
+    scoreState: text("score_state", { enum: SCORE_STATES }).$type<ScoreState>(),
+    /** When `scoreState` was last set. A `queued` state older than the task deadline is stale. */
+    scoreStateAt: ts("score_state_at"),
     hidden: boolean("hidden").notNull().default(false),
     /** True when the row was created for a posting the scan had already seen (day-one of a subscription). */
     seeded: boolean("seeded").notNull().default(false),
@@ -691,6 +710,52 @@ export const cvLibraries = pgTable("cv_libraries", {
   content: jsonb("content").$type<CvLibrary>().notNull(),
   createdAt: tsNow("created_at"),
 }, t => [uniqueIndex("cv_libraries_user_version_uidx").on(t.userId, t.version)]);
+
+/** How much evidence an entry carries. Mirrors `EVIDENCE_RATINGS` in @christopher/core. */
+export const EVIDENCE_RATINGS = ["none", "weak", "good", "strong"] as const;
+export type EvidenceRating = (typeof EVIDENCE_RATINGS)[number];
+/**
+ * Who produced a review. `rules` is the deterministic baseline computed from the person's own
+ * facet tags, written the moment a library is saved; `model` is the A12 review, which lands when
+ * the task has run. Mirrors `LIBRARY_REVIEW_SOURCES` in @christopher/core.
+ */
+export const LIBRARY_REVIEW_SOURCES = ["rules", "model"] as const;
+export type LibraryReviewSource = (typeof LIBRARY_REVIEW_SOURCES)[number];
+
+/**
+ * The evidence review of one library entry: what each row was classified as, which facets are
+ * covered, what to ask for next, and the score code computed from all of it.
+ *
+ * It is a separate table rather than a column on `cv_libraries` because a library version is
+ * immutable and a review is not part of what the person wrote: the review arrives after the save,
+ * can be recomputed, and is derived rather than authored. `input_hash` is what makes that cheap —
+ * it covers the entry's rows, its facets and the job it belongs to, so a typo fix re-reviews one
+ * entry and every unchanged entry carries its review forward to the new version untouched.
+ *
+ * A score here gates nothing. It informs the person, exactly as the fit score ranks a role
+ * without ever removing it from the table.
+ */
+export const cvLibraryReviews = pgTable("cv_library_reviews", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  libraryVersion: integer("library_version").notNull(),
+  entryId: text("entry_id").notNull(),
+  /** Fingerprint of everything the review was computed from; see `libraryEntryInputHash` in core. */
+  inputHash: text("input_hash").notNull(),
+  score: integer("score").notNull(),
+  rating: text("rating", { enum: EVIDENCE_RATINGS }).$type<EvidenceRating>().notNull(),
+  source: text("source", { enum: LIBRARY_REVIEW_SOURCES }).$type<LibraryReviewSource>().notNull(),
+  review: jsonb("review").$type<LibraryEntryReview>().notNull(),
+  /** The model that produced a `model` review; null for the rules baseline. */
+  model: text("model"),
+  createdAt: tsNow("created_at"),
+}, t => [
+  uniqueIndex("cv_library_reviews_version_entry_uidx").on(t.userId, t.libraryVersion, t.entryId),
+  index("cv_library_reviews_entry_idx").on(t.userId, t.entryId, t.createdAt.desc()),
+]);
+export type CvLibraryReview = typeof cvLibraryReviews.$inferSelect;
+export type NewCvLibraryReview = typeof cvLibraryReviews.$inferInsert;
+
 export const cvDrafts = pgTable("cv_drafts", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
@@ -746,7 +811,17 @@ export const applications = pgTable("applications", {
   pdfBase64: text("pdf_base64"),
   status: text("status", { enum: APPLICATION_STATUSES }).notNull().default("applied"),
   notes: text("notes").notNull().default(""),
-  history: jsonb("history").$type<Array<{ status: string; at: string; notes: string }>>().notNull(),
+  /** What the person owes this application next, in their own words. The interface caps it at 200 characters. */
+  nextAction: text("next_action"),
+  /** The day that next action is due, as YYYY-MM-DD. A day, not an instant: "Tuesday" is not a timestamp. */
+  nextActionOn: text("next_action_on"),
+  /**
+   * One entry per recorded stage change. `at` is when it was saved; `on` is the day the entry is
+   * *about* — an interview date, a rejection date — which is the thing people actually track and
+   * which the save time cannot express. Optional, because every entry written before it existed
+   * has only its save time.
+   */
+  history: jsonb("history").$type<Array<{ status: string; at: string; notes: string; on?: string }>>().notNull(),
   createdAt: tsNow("created_at"),
 }, t => [
   index("applications_user_idx").on(t.userId, t.appliedOn),
@@ -900,3 +975,135 @@ export const cvBuildSteps = pgTable("cv_build_steps", {
   // draft, and this is what makes two attempts unable to claim the same place regardless.
 }, (t) => [uniqueIndex("cv_build_steps_draft_seq_uniq").on(t.draftId, t.seq), index("cv_build_steps_started_idx").on(t.startedAt)]);
 export type CvBuildStep = typeof cvBuildSteps.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Documents imported into the Library, and CV previews shared for comment
+// ---------------------------------------------------------------------------
+
+/** Postgres `bytea`, which drizzle has no column builder for. The pg driver reads and writes it as a Buffer. */
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => "bytea" });
+
+export const LIBRARY_IMPORT_KINDS = ["cv", "linkedin", "website", "paste"] as const;
+export type LibraryImportKind = (typeof LIBRARY_IMPORT_KINDS)[number];
+
+/** The most extracted text one import keeps; the column's check constraint repeats the number. */
+export const LIBRARY_IMPORT_MAX_CHARS = 40_000;
+/** The largest upload an import may carry, in bytes; the column's check constraint repeats the number. */
+export const LIBRARY_IMPORT_MAX_BYTES = 5 * 1024 * 1024;
+
+/**
+ * One document a person brought to the Library: a past CV, LinkedIn's own PDF of their profile,
+ * their personal website, or text they pasted.
+ *
+ * The row is the whole of an import's life. An upload arrives as `source_bytes`, because the
+ * conversion belongs in the worker, which already owns every parser; the worker converts it,
+ * writes the text into `content` and clears the bytes, so nothing binary outlives the conversion.
+ * A paste arrives with its `content` already. A website arrives as a `url` and is fetched
+ * politely, because it is the person's own site — the product never crawls LinkedIn for this, and
+ * asks for LinkedIn's own PDF instead.
+ *
+ * `fingerprint` is what stops the same document being imported twice: sha256 of the bytes for an
+ * upload, of the stored text for a paste, of the normalised URL for a website, unique per account.
+ * A second attempt reads the first import back rather than making another.
+ *
+ * `proposal` is deliberately untyped jsonb here: what the extraction proposes is the engine's
+ * schema, validated where it is produced, and the database is not the place for a second copy of
+ * it. It is only ever a proposal — every item is accepted or dismissed by the person before
+ * anything reaches the Library, which is what `resolved_at` records, and what takes an import off
+ * the Library page.
+ */
+export const libraryImports = pgTable("library_imports", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  kind: text("kind", { enum: LIBRARY_IMPORT_KINDS }).$type<LibraryImportKind>().notNull(),
+  /** What the upload was called, so the person recognises it. Null for a paste or a website. */
+  filename: text("filename"),
+  /** The person's own site, for a `website` import; null otherwise. */
+  url: text("url"),
+  /** The extracted text, capped at `LIBRARY_IMPORT_MAX_CHARS`. Null until the worker has converted an upload or fetched a page. */
+  content: text("content"),
+  /** The uploaded PDF or DOCX, capped at `LIBRARY_IMPORT_MAX_BYTES`, kept only until the worker has converted it. */
+  sourceBytes: bytea("source_bytes"),
+  /** The upload's media type, so the worker knows which parser to use. Cleared with the bytes. */
+  sourceMime: text("source_mime"),
+  fingerprint: text("fingerprint").notNull(),
+  proposal: jsonb("proposal").$type<unknown>(),
+  error: text("error"),
+  /** When the worker finished with it, whether it produced a proposal or an error. */
+  processedAt: ts("processed_at"),
+  /** When the person accepted or dismissed the proposal, which is what takes the import off the page. */
+  resolvedAt: ts("resolved_at"),
+  createdAt: tsNow("created_at"),
+}, t => [
+  index("library_imports_user_idx").on(t.userId, t.createdAt.desc()),
+  uniqueIndex("library_imports_user_fingerprint_uidx").on(t.userId, t.fingerprint),
+]);
+export type LibraryImport = typeof libraryImports.$inferSelect;
+export type NewLibraryImport = typeof libraryImports.$inferInsert;
+
+/**
+ * A link that shows one CV preview to someone the person chose, for as long as they choose.
+ *
+ * Modelled on `auth_tokens`: only a hash of the token is stored, so the link sitting in a
+ * reviewer's inbox cannot be recovered from the database. It differs in being multi-use — a
+ * reviewer opens it as often as they like — which is why it carries `revoked_at`, `expires_at`
+ * and a view count rather than `used_at`: the owner can see that it was read and can end it at
+ * any moment.
+ *
+ * The row is also how "never read per-account data without a `userId`" survives a route with no
+ * session. The owner's `user_id` is on the share, so a token lookup yields the account the read
+ * must be scoped by, and the reader gets one revision of one document and no reach into anything
+ * else in the account.
+ */
+export const cvShares = pgTable("cv_shares", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  /** The owner: the account every read made through this link is scoped by. */
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  draftId: uuid("draft_id").notNull().references(() => cvDrafts.id, { onDelete: "cascade" }),
+  /** sha256 of the token in the link. The token itself is never stored. */
+  tokenHash: text("token_hash").notNull().unique(),
+  allowComments: boolean("allow_comments").notNull().default(true),
+  expiresAt: ts("expires_at").notNull(),
+  revokedAt: ts("revoked_at"),
+  viewCount: integer("view_count").notNull().default(0),
+  lastViewedAt: ts("last_viewed_at"),
+  createdAt: tsNow("created_at"),
+}, t => [index("cv_shares_user_draft_idx").on(t.userId, t.draftId)]);
+export type CvShare = typeof cvShares.$inferSelect;
+export type NewCvShare = typeof cvShares.$inferInsert;
+
+/** The longest anchor, name and note a comment may carry; the column check constraints repeat the numbers. */
+export const CV_SHARE_ANCHOR_MAX_CHARS = 120;
+export const CV_SHARE_AUTHOR_NAME_MAX_CHARS = 80;
+export const CV_SHARE_BODY_MAX_CHARS = 2_000;
+
+/**
+ * A note a reader left against one block of a shared CV.
+ *
+ * `anchor` is an id the assessment already cites — the profile block, or a section block — so a
+ * reader's note and the reviewer's finding sit beside the same text. `user_id` is the owner's,
+ * denormalised from the share, so that every read of a comment is scoped by account without
+ * depending on anyone remembering the join.
+ *
+ * Nothing written here reaches a model call unless the owner copies it there themselves: a
+ * comment is data, exactly as an imported document is, never an instruction.
+ */
+export const cvShareComments = pgTable("cv_share_comments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  shareId: uuid("share_id").notNull().references(() => cvShares.id, { onDelete: "cascade" }),
+  /** The owner of the CV, copied from the share; never the reader, who has no account. */
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  /** The block the note is about: free text here, an assessment anchor in practice. */
+  anchor: text("anchor").notNull(),
+  /** What the reader called themselves. Unverified, and shown as such. */
+  authorName: text("author_name").notNull(),
+  body: text("body").notNull(),
+  createdAt: tsNow("created_at"),
+  /** When the owner marked the note dealt with. Null while it is still open. */
+  resolvedAt: ts("resolved_at"),
+}, t => [
+  index("cv_share_comments_share_idx").on(t.shareId, t.createdAt),
+  index("cv_share_comments_user_open_idx").on(t.userId, t.resolvedAt),
+]);
+export type CvShareComment = typeof cvShareComments.$inferSelect;
+export type NewCvShareComment = typeof cvShareComments.$inferInsert;

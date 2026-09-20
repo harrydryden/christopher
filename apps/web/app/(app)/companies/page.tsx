@@ -3,11 +3,10 @@ import { CompanyFavicon } from "@/components/CompanyFavicon";
 import { companyIcon } from "@/lib/company-icon";
 import { getCompanyWorkStatus } from "@/lib/work-status";
 import { AutoRefresh } from "@/components/AutoRefresh";
-import { addCompanies, archiveCompany, pauseCompany, resumeCompany } from "@/app/actions/companies";
+import { addCompanies } from "@/app/actions/companies";
 import { Badge, companyStatusTone, scanStatusTone, toneText } from "@/components/Badge";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
-import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { inputClass, labelClass } from "@/components/Field";
@@ -16,7 +15,14 @@ import { relativeTime, scanStatusLabel } from "@/lib/format";
 import { Pagination, pageNumber } from "@/components/Pagination";
 import { listCompanies, companyCount } from "@/lib/queries/companies";
 import { SearchForm, SearchPending } from "@/components/SearchForm";
-import { requireUser } from "@/lib/auth";
+import { GateSetup } from "@/components/GateSetup";
+import { getSystemSettings } from "@/lib/settings";
+import { hasChosenGate } from "@/lib/queries/setup";
+import { CHOOSE_GATE_SENTENCE } from "@/lib/setup";
+import { needsEmailConfirmation, requireUser } from "@/lib/auth";
+import { CompanyControls } from "./CompanyControls";
+import { nextScanSentence } from "./scan-line";
+import { VERIFY_SENTENCE, VerifyNotice } from "@/components/VerifyNotice";
 
 export const dynamic = "force-dynamic";
 
@@ -26,12 +32,20 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
   const q = (sp.q ?? "").slice(0, 200);
   const total = await companyCount(user.id, q);
   const page = Math.min(pageNumber(sp.page), Math.max(1, Math.ceil(total / 50)));
-  const [rows, work] = await Promise.all([listCompanies(user.id, page, q), getCompanyWorkStatus(user.id)]);
+  const [rows, work, system, gateChosen] = await Promise.all([listCompanies(user.id, page, q), getCompanyWorkStatus(user.id), getSystemSettings(), hasChosenGate(user.id)]);
   const now = new Date();
+  // The wall is on the form, not on the action: `addCompanies` still asks for itself.
+  const unverified = needsEmailConfirmation(user);
+  // Filters first: following a company starts scanning it, so the gate is chosen before the form
+  // will send. `addCompanies` refuses on the same rule.
+  const blocked = unverified || !gateChosen;
 
   return (
     <div>
-      <PageHeader title="Companies" description="Companies are shared across every account and scanned once a day. Following one gives you its roles through your own filters." />
+      <PageHeader
+        title="Companies"
+        description={`Companies are shared across every account and scanned once a day — ${nextScanSentence(system.scanTime, system.timezone)}. Following one gives you its roles through your own filters.`}
+      />
 
       {sp.added !== undefined && (
         <div className="mb-4 border-2 border-ok px-3 py-2 text-14 text-ok">
@@ -41,6 +55,14 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
         </div>
       )}
 
+      {!gateChosen && (
+        <div className="mb-6">
+          {/* Nothing to prefill: an unchosen gate shows the example, never the default nobody picked. */}
+          <GateSetup gate={null} chosen={false} title="Choose your filters first" />
+        </div>
+      )}
+
+      <div id="add">
       <Card title="Add companies" className="mb-6">
         <form action={addCompanies} className="flex flex-col gap-2">
           <label htmlFor="urls" className="text-14 text-muted">
@@ -51,16 +73,20 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
             name="urls"
             rows={3}
             required
+            disabled={blocked}
             placeholder={"acme.com\nhttps://example.org"}
             className={`resize-y ${inputClass}`}
           />
-          <div>
-            <Button type="submit" variant="primary">
+          <div className="flex flex-wrap items-center gap-3">
+            <Button type="submit" variant="primary" disabled={blocked}>
               Add companies
             </Button>
+            {unverified && <VerifyNotice />}
+            {!unverified && !gateChosen && <p className="text-12 text-warn" role="status">{CHOOSE_GATE_SENTENCE}</p>}
           </div>
         </form>
       </Card>
+      </div>
 
       <SearchForm action="/companies" className="mb-4 flex flex-wrap items-end gap-3"><label className="grid gap-1.5"><span className={labelClass}>Search companies</span><input name="q" defaultValue={q} maxLength={200} className={`h-11 w-80 ${inputClass}`} /></label><Button type="submit" className="h-11">Search</Button><SearchPending />{q && <a className="self-center text-13 underline" href="/companies">Clear</a>}</SearchForm>
       <Pagination page={page} total={total} path="/companies" params={{ q }}/>
@@ -72,13 +98,16 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
           <THead>
             <tr>
               <TH>Company</TH>
+              <TH>Source</TH>
               <TH>Status</TH>
-              <TH>Review</TH>
+              <TH title="Roles your filters admitted that are still open">Open</TH>
+              <TH title="Matched roles you have not decided on">Review</TH>
+              <TH title="Roles here you chose to pursue">Shortlisted</TH>
               <TH>Actions</TH>
             </tr>
           </THead>
           <TBody>
-            {rows.map(({ company, subscription, lastScan, reviewRoles, followers, discovering, discoveryState, needsSource, lastDiscovery }) => (
+            {rows.map(({ company, subscription, lastScan, openRoles, reviewRoles, shortlistedRoles, sourceType, followers, discovering, discoveryState, needsSource, lastDiscovery }) => (
               <TR key={company.id}>
                 <TD>
                   <a href={`/companies/${company.id}`} className="flex items-center gap-2 no-underline hover:underline">
@@ -89,6 +118,11 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                     {company.domain}
                   </a>
                   {followers > 1 && <span className="block text-12 text-faint">Followed by {followers} accounts</span>}
+                </TD>
+                <TD>
+                  {/* What a scan reads: a feed is worth knowing about, because an HTML fallback is
+                      the shakiest of them. */}
+                  {sourceType ? <Badge tone="neutral">{sourceType}</Badge> : <span className="text-12 text-muted">none</span>}
                 </TD>
                 <TD>
                   {/* Status leads; the last scan is the sub-line under it, so the health of
@@ -119,6 +153,13 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                   {discovering && <p className="mt-1 text-12 text-info">{discoveryState === "running" ? "Discovering…" : "Discovery queued"}</p>}
                 </TD>
                 <TD>
+                  {openRoles > 0 ? (
+                    <a className="no-underline hover:underline" href={`/companies/${company.id}#roles`}>{openRoles}</a>
+                  ) : (
+                    <span className="text-muted">0</span>
+                  )}
+                </TD>
+                <TD>
                   {reviewRoles > 0 ? (
                     <a className="no-underline hover:underline" href={`/companies/${company.id}?view=auto-matched#roles`}>{reviewRoles}</a>
                   ) : (
@@ -126,26 +167,22 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                   )}
                 </TD>
                 <TD>
-                  <div className="flex flex-wrap gap-2">
-                    {subscription.status === "active" && <RefreshCompanyButton companyId={company.id} running={discoveryState === "running"} />}
-                    {subscription.status === "active" ? (
-                      <form action={pauseCompany.bind(null, company.id)}>
-                        <Button type="submit" size="sm">
-                          Pause
-                        </Button>
-                      </form>
-                    ) : subscription.status === "paused" ? (
-                      <form action={resumeCompany.bind(null, company.id)}>
-                        <Button type="submit" size="sm">
-                          Resume
-                        </Button>
-                      </form>
-                    ) : null}
-                    {subscription.status !== "archived" && (
-                      <form action={archiveCompany.bind(null, company.id)}>
-                        <ConfirmSubmitButton variant="ghost" confirmMessage={`Archive ${company.name}? It leaves your inbox; other followers are unaffected.`}>Archive</ConfirmSubmitButton>
-                      </form>
+                  {shortlistedRoles > 0 ? (
+                    <a className="no-underline hover:underline" href={`/companies/${company.id}?view=user-shortlisted#roles`}>{shortlistedRoles}</a>
+                  ) : (
+                    <span className="text-muted">0</span>
+                  )}
+                </TD>
+                <TD>
+                  <div className="flex flex-wrap items-start gap-2">
+                    {subscription.status === "active" && (
+                      <RefreshCompanyButton
+                        companyId={company.id}
+                        running={discoveryState === "running"}
+                        blockedReason={unverified ? VERIFY_SENTENCE : undefined}
+                      />
                     )}
+                    <CompanyControls companyId={company.id} companyName={company.name} status={subscription.status} />
                   </div>
                 </TD>
               </TR>

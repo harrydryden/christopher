@@ -79,8 +79,11 @@ The web package now pins Node 22.x to match those checks and CI; production stil
 
 Harry confirmed operational ownership and RPO 24h/RTO 4h. Stable GitHub health URL variables were
 set and verified. Render's inherited failure-notification setting was inspected, without sending
-a test alert. A separate managed recovery copy and the missing worker health-check setting are
-prepared and await approval; no deployment or production-data change has been made.
+a test alert. Harry subsequently approved both prepared operations. The managed recovery copy was created at
+08:59:50 UTC, and `/healthz` was saved as Render’s health check at 09:00 UTC. Render’s resulting
+configuration rollout completed at 09:00:40 UTC on the existing `6a0ad4a` revision and returned healthy.
+The local release candidate remains undeployed and production data is unchanged. See
+[the current operational record](RELEASE-GATES.md) for the recovery outcome.
 
 ## Gates still requiring evidence
 
@@ -89,8 +92,8 @@ prepared and await approval; no deployment or production-data change has been ma
 | Hosted capacity/configuration | Run the representative workload alongside real scans in a safe production-like environment; confirm pooled endpoint use and client limits. | Read-only Render/Vercel inspection completed. Worker is 512 MiB, database is 256 MiB with PgBouncer, and actual web requests execute in Frankfurt. An unclean worker exit during parallel verification needs mitigation and a hosted repeat. See [hosted evidence](HOSTED-CAPACITY-2026-09-20.md). |
 | Real discovery/extraction accuracy | Complete independent source labels and dated posting-identity snapshots; demonstrate the specification's automatic resolution, zero wrong accepts, one-confirmation recovery and Tier-1/Tier-3 precision/recall thresholds, including browser/AI cases. | The live diagnostic run lacks the independent golden denominator and paid/browser paths. No accuracy certificate is inferred from role counts. |
 | Provider/CV quality | Run real generation and assessment for the intended production models, record costs and inspect the resulting PDF. | A provider credential must be configured securely outside chat; none is available to this execution. |
-| Managed recovery | Restore an actual managed backup into isolation, measure time and integrity, then exercise rollback/roll-forward. | Harry confirmed RPO 24h/RTO 4h. Render shows a three-day point-in-time recovery window; an isolated managed restore is prepared, awaiting approval for the additional billed database. Retention alone does not prove either objective. |
-| Operations | Prove notification delivery to Harry; cover persistent failures, provider/spend and longer-window restart history. | Both stable health URL repository variables are set and verified. Render inherits workspace failure notifications. Scheduled workflow activation still requires merge; neither notification delivery nor the missing Render `/healthz` service setting is proven/configured. |
+| Managed recovery | Restore an actual managed backup into isolation, measure time and integrity, then exercise rollback/roll-forward. | Harry confirmed RPO 24h/RTO 4h. Render shows a three-day point-in-time recovery window; the approved isolated managed restore passed read-only integrity checks after 315.35 seconds. Full application recovery and rollback remain untested; see [managed recovery](benchmarks/managed-recovery-2026-09-20.json). Retention alone does not prove either objective. |
+| Operations | Prove notification delivery to Harry; cover persistent failures, provider/spend and longer-window restart history. | Both stable health URL repository variables are set and verified. Render inherits workspace failure notifications. Scheduled workflow activation still requires merge; notification delivery is unproven. Render’s `/healthz` setting is now saved and its existing-version rollout is healthy. |
 | Live release | Review changes, run hosted CI, obtain release approval, merge/deploy, verify both exact revisions and complete an authenticated hosted journey. | The user's audit instructions require explicit approval before live deployment. Changes remain local to avoid triggering hosted preview/release automation. |
 
 [Release controls](RELEASE-GATES.md), [deployment/recovery checklist](DEPLOY.md) and the [updated requirements matrix](PRODUCTION-REQUIREMENTS-2026-09-20.md) provide the hand-off. The original [audit report](PRODUCTION-AUDIT-2026-09-20.md) remains the record of earlier race-condition, authentication and request-bound fixes.

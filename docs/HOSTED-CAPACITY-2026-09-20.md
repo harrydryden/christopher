@@ -6,14 +6,14 @@
 
 This is still not evidence that the target workload of **100 registered users and about 10 active at once** is safe. No representative hosted workload was run, the 24-hour window contains little ordinary traffic, the worker had one unclean exit while three live verification tasks were running, and Vercel function fan-out through PgBouncer has not been measured. The candidate at `dd8925d` is not deployed: live worker health reports `6a0ad4a`.
 
-The inspection was read-only. It used Render's API, aggregate PostgreSQL statistics, sanitised operational logs and the public worker health endpoint. It did not read table rows, credentials or connection strings, and did not generate load or change hosted configuration.
+The initial inspection was read-only. The subsequently approved health-check configuration change is recorded below. It used Render's API, aggregate PostgreSQL statistics, sanitised operational logs and the public worker health endpoint. It did not read table rows, credentials or connection strings, and did not generate load or change hosted configuration.
 
 ## Authoritative hosted configuration
 
 | Resource | Live setting | Gate implication |
 | --- | --- | --- |
 | Worker | `christopher-worker`, Starter, Frankfurt, one instance, Docker | One 0.5 CPU / 512 MiB process is the only persistent queue consumer. There is no instance redundancy. |
-| Worker health check | Render service setting is empty | This conflicts with the deployment guide's required `/healthz` check. Render cannot use the application health endpoint for deploy/runtime health decisions until this is configured. |
+| Worker health check | `/healthz`, saved with explicit approval at 09:00 UTC | Render API confirmed the setting; configuration-triggered rollout of the existing base became live at 09:00:40 UTC and the endpoint returned HTTP 200/healthy. |
 | Worker concurrency | Live boot log: 3; browser enabled; AI configured | Matches the supported small-instance setting. The code creates a pool of `2 × concurrency + 4`, therefore 10 connections at concurrency 3. |
 | Database | `christopher-db`, PostgreSQL 16, Frankfurt, `basic_256mb`, 256 MiB RAM, 1 GB disk | Smallest paid database tier; disk autoscaling is off. |
 | Database resilience | No HA, no read replicas | A database or plan event is an availability outage; capacity headroom is not redundancy. |
@@ -71,13 +71,13 @@ The release budget should reserve backend capacity for Render administration, mi
 
 ## Required evidence before passing
 
-1. Configure and verify Render's service health check path as `/healthz`; this is a production setting change and was deliberately not made during this read-only review.
+1. **Completed after explicit approval:** Render’s service health check is `/healthz`; the API, successful configuration rollout and public HTTP 200 response confirm it. The local candidate remains undeployed.
 2. Retain the verified Frankfurt Vercel function override and re-check it during the representative workload; resolve the separate Node 24 versus intended Node 22 runtime drift.
 3. Confirm PgBouncer pool mode, maximum client connections and whether Vercel uses the pooled endpoint. Record these alongside `max_connections=103`.
 4. Run a safe production-like workload for about ten active users with populated CVs, representative writes and three worker slots performing real scan/browser work. Capture worker and database CPU/memory at one-minute or finer resolution, PgBouncer client counts, PostgreSQL backends, connection timeouts, application pool waiting and request p95/p99.
 5. Reproduce the 06:11 verification shape in a controlled environment and explain the unclean exit. Treat absence of a five-minute metric limit breach as inconclusive; correlate platform lifecycle events with per-task heap/RSS and Chromium use.
 6. Decide whether the single-instance worker and non-HA 256 MiB database meet the agreed availability objective. That is an availability gate even if the capacity run passes.
-7. Agree the storage growth response: the signed-in database dashboard showed 14.95% of its 1 GB disk used and autoscaling disabled. A three-day PITR window is configured; managed restore and recovery readiness remain unproven. Harry confirmed RPO 24 hours/RTO four hours.
+7. Agree the storage growth response: the signed-in database dashboard showed 14.95% of its 1 GB disk used and autoscaling disabled. A three-day PITR window is configured; the approved managed copy subsequently passed read-only integrity checks after 315.35 seconds. Full application recovery/rollback remains unproven. Harry confirmed RPO 24 hours/RTO four hours.
 
 ## Evidence boundary
 

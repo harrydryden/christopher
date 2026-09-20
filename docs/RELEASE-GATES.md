@@ -92,13 +92,23 @@ pass the candidate's release check yet. These variables do not activate unmerged
 
 Render's service notifications inherit the workspace default, **Only failure notifications**. This
 is configuration evidence, not evidence that Harry received an alert. The service health-check path
-is empty; changing it to `/healthz` is prepared and awaiting approval. No notification was sent.
+was changed to `/healthz` with Harry’s explicit approval at 09:00 UTC. Render’s API confirms the
+saved setting. Its configuration-triggered rollout `dep-danq15h42hec73fb3u0g` became live at
+09:00:40 UTC on the existing `6a0ad4a` revision; the public endpoint returned HTTP 200 and `ok: true`.
+The local release candidate has not been deployed. No test notification was sent.
 
 The managed database dashboard reports a **three-day point-in-time recovery window** and 14.95% use
 of its 1 GB disk. An isolated restore at the available 20 September 08:28 UTC recovery point is
-prepared as `christopher-recovery-drill-20260920`, with a displayed $7.50/month charge prorated by the
-second. It has not been created. Approval for the billed copy and successful restoration/integrity
-checks remain outstanding. The recovery objectives are requirements, not achieved measurements.
+created with Harry’s explicit approval as `christopher-recovery-drill-20260920`
+(`dpg-danq11ijnfac739fekdg-a`) at 08:59:50 UTC, with an approved $7.50/month charge prorated by the
+second. The API confirms 5 GB storage and the 0.1 CPU/256 MB plan. It was initially
+`recovery_in_progress` initially, then became available. The first successful read-only aggregate
+check at 09:05:06 UTC was 315.35 seconds after creation. All four checked orphan counts and the
+unvalidated constraint count were zero; 34 migrations were present. [Managed recovery evidence](benchmarks/managed-recovery-2026-09-20.json)
+records the complete aggregates. This passes the managed-restore/internal-consistency sub-check,
+not the full recovery gate: no historical baseline, application recovery or rollback was verified. The copy has
+not been connected to an application or worker. Production data has not been changed. The recovery
+objectives remain requirements until the full recovery journey is demonstrated.
 
 Vercel's request log for the production health request at 08:35:12 UTC shows routing from London
 (`lhr1`) to **Frankfurt (`fra1`)**, matching `apps/web/vercel.json`. Its 126 ms execution and 228 MB

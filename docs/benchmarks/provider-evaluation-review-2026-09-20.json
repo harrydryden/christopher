@@ -1,0 +1,48 @@
+{
+  "reviewedAt": "2026-09-20T09:18:32.422643+00:00",
+  "model": "claude-fable-5-1",
+  "scope": "one synthetic three-requirement CV and five labelled semantic cases; no production database or deployment",
+  "initialRun": "provider-evaluation-live-2026-09-20.json",
+  "fixedRun": "provider-evaluation-grounding-fix-2026-09-20.json",
+  "initialOutcome": "failed: writer added unsupported quality/outcome/purpose clauses; assessor flagged them",
+  "fixedOutcome": "automated_checks_passed",
+  "codeChange": "packages/ai/src/cv-prompts.ts: require clause-level grounding; prohibit inferred purposes/outcomes/quality and advert commentary",
+  "gradingChanged": false,
+  "semanticCasesPassed": true,
+  "generatedCvPassed": true,
+  "visualReview": {
+    "reviewer": "Astra agent",
+    "passed": true,
+    "pages": 1,
+    "paper": "A4",
+    "findings": "All text readable; no visible clipping or overlap; section hierarchy and page number intact. Large blank area reflects deliberately sparse evidence, not a layout-fill requirement."
+  },
+  "textualReview": {
+    "reviewers": [
+      "Astra agent",
+      "Sol agent"
+    ],
+    "passed": true,
+    "findings": "Summary combines only the sourced role title and three evidence clauses. All three bullets restate supplied facts; no unsupported additions found."
+  },
+  "humanSignOffRecorded": false,
+  "applicationReleaseAccepted": false,
+  "totalEstimatedTokenCostUsd": 0.927517,
+  "costBasis": "Provider-reported token usage multiplied by repository prices; no invoice reconciliation. Both runs retained.",
+  "limitations": [
+    "Prompt hardening is not deterministic prevention of unsupported claims.",
+    "The same model extracts, writes and assesses; separate agent review was therefore performed.",
+    "Sparse single-role evidence does not cover long/multi-role CVs, complex qualification histories, prompt injection or repeated-run reliability.",
+    "No hosted end-to-end build, production account configuration or release deployment was verified."
+  ],
+  "pdfs": [
+    {
+      "path": "output/pdf/provider-evaluation-initial-2026-09-20.pdf",
+      "sha256": "971d0aa37f64163188d8a5aec52f52b4fe12f75b843510a5f57e6a497f3a496c"
+    },
+    {
+      "path": "output/pdf/provider-evaluation-grounding-fix-2026-09-20.pdf",
+      "sha256": "d4413cb16600be8db54af862fc993d80c0e9bcc9fab7e027440b5d72d752bd07"
+    }
+  ]
+}

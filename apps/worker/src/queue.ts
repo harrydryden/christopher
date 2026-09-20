@@ -94,11 +94,14 @@ export const scanTypes = ["scan_company", "run_daily"];
 export const interactiveTypes = ["generate_cv", "discover", "tag_reason", "reevaluate_gate", "import_posting", "review_library", "import_library_document"];
 export type QueueLane = "all" | "scan" | "interactive" | "background";
 
-export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all"): Promise<Task | null> {
+export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all", excludedTypes: Task["type"][] = []): Promise<Task | null> {
   const types = lane === "scan" ? scanTypes : interactiveTypes;
   const laneFilter = lane === "all" ? sql`true` : lane === "background"
     ? sql`type not in (${sql.join([...scanTypes, ...interactiveTypes].map(t => sql`${t}`), sql`, `)})`
     : sql`type in (${sql.join(types.map(t => sql`${t}`), sql`, `)})`;
+  const exclusionFilter = excludedTypes.length
+    ? sql`type not in (${sql.join(excludedTypes.map(t => sql`${t}`), sql`, `)})`
+    : sql`true`;
   // Ordered by the columns the ready-lane indexes carry, so a claim reads the first matching row
   // from the index instead of sorting every queued task. Ageing is a periodic sweep that lowers
   // `priority` itself (see `agePriorities`), which keeps waiting work moving up without putting an
@@ -111,7 +114,7 @@ export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all
     // the task is claimed again. A task already at its limit is failed by `requeueStale`, never
     // claimed. The column is read from the same index rows the lane filter walks.
     .where(sql`${schema.tasks.id} = (
-      select id from tasks where status = 'queued' and run_after <= now() and attempts < max_attempts and ${laneFilter}
+      select id from tasks where status = 'queued' and run_after <= now() and attempts < max_attempts and ${laneFilter} and ${exclusionFilter}
       order by priority asc, run_after asc, created_at asc
       limit 1 for update skip locked
     )`)
@@ -430,6 +433,11 @@ export class TaskQueue {
   private turn = 0;
   /** Tasks this worker has claimed and not yet finished, so a shutdown can hand them back. */
   private readonly running = new Map<string, Task>();
+  private readonly activeByType = new Map<Task["type"], number>();
+  /** A timed-out handler can outlive its queue attempt; its type stays reserved until it settles. */
+  private readonly pendingSettlements = new Map<string, Promise<void>>();
+  /** Serialises eligibility check + claim + reservation, so two loops cannot both admit a verification. */
+  private claimTurn: Promise<void> = Promise.resolve();
   private readonly lanes: QueueLane[] | null;
 
   constructor(
@@ -516,9 +524,7 @@ export class TaskQueue {
         // rotates classes instead. Every slot then falls through to the whole queue, so no slot
         // sits idle on an empty lane while another lane is backed up — at the deployed size that
         // is the difference between the daily scan owning one slot and owning every free one.
-        const lane: QueueLane = this.lanes ? this.lanes[slot % this.lanes.length]! : LANES[this.turn++ % LANES.length]!;
-        const workerId = `${this.opts.workerId}#${slot}`;
-        task = (await claimTask(this.deps.db, workerId, lane)) ?? (await claimTask(this.deps.db, workerId));
+        task = await this.claimForSlot(slot);
       } catch (err) {
         log.error("claim failed", err);
         await sleep(poll * 2);
@@ -528,8 +534,51 @@ export class TaskQueue {
         await sleep(poll);
         continue;
       }
-      await this.runTask(task);
+      try { await this.runTaskReserved(task); }
+      finally { this.releaseTypeWhenSettled(task); }
     }
+  }
+
+  /**
+   * Admit at most one browser-capable company verification in this process while leaving every
+   * other task eligible. The short local critical section closes the gap between checking the
+   * active count and reserving the type; the database claim remains the cross-process lease.
+   */
+  private async claimForSlot(slot: number): Promise<Task | null> {
+    const previous = this.claimTurn;
+    let release!: () => void;
+    this.claimTurn = new Promise<void>(resolve => { release = resolve; });
+    await previous;
+    try {
+      if (this.stopping) return null;
+      const excluded: Task["type"][] = (this.activeByType.get("verify_company") ?? 0) > 0 ? ["verify_company"] : [];
+      const lane: QueueLane = this.lanes ? this.lanes[slot % this.lanes.length]! : LANES[this.turn++ % LANES.length]!;
+      const workerId = `${this.opts.workerId}#${slot}`;
+      const task = (await claimTask(this.deps.db, workerId, lane, excluded))
+        ?? (await claimTask(this.deps.db, workerId, "all", excluded));
+      if (task) this.reserveType(task.type);
+      return task;
+    } finally {
+      release();
+    }
+  }
+
+  private reserveType(type: Task["type"]): void {
+    this.activeByType.set(type, (this.activeByType.get(type) ?? 0) + 1);
+  }
+
+  private releaseType(type: Task["type"]): void {
+    const next = (this.activeByType.get(type) ?? 1) - 1;
+    if (next > 0) this.activeByType.set(type, next); else this.activeByType.delete(type);
+  }
+
+  private releaseTypeWhenSettled(task: Task): void {
+    const pending = this.pendingSettlements.get(task.id);
+    if (!pending) { this.releaseType(task.type); return; }
+    void pending.finally(() => {
+      this.pendingSettlements.delete(task.id);
+      this.releaseType(task.type);
+    });
   }
 
   /**
@@ -539,11 +588,20 @@ export class TaskQueue {
   private heapReport(before: ReturnType<typeof vitals>): Record<string, number> {
     const after = vitals();
     if (after.heapFraction > HEAP_PRESSURE_FRACTION) log.warn("heap pressure", { workerId: this.opts.workerId, ...after });
-    return { heapUsedMb: after.heapUsedMb, heapDeltaMb: after.heapUsedMb - before.heapUsedMb, heapLimitMb: after.heapLimitMb };
+    return {
+      heapUsedMb: after.heapUsedMb, heapDeltaMb: after.heapUsedMb - before.heapUsedMb, heapLimitMb: after.heapLimitMb,
+      rssMb: after.rssMb, rssDeltaMb: after.rssMb - before.rssMb,
+    };
   }
 
   /** Every line emitted while a task runs — at any depth — carries its id and type. */
   async runTask(task: Task): Promise<void> {
+    this.reserveType(task.type);
+    try { return await this.runTaskReserved(task); }
+    finally { this.releaseTypeWhenSettled(task); }
+  }
+
+  private async runTaskReserved(task: Task): Promise<void> {
     return withLogContext({ taskId: task.id, taskType: task.type }, () => this.runTaskInContext(task));
   }
 
@@ -581,17 +639,20 @@ export class TaskQueue {
       // The heap at both ends of every task: an out-of-memory kills the process without reaching
       // any catch, so the last "task start" line before a restart is the only evidence of which
       // task was holding what, and the delta is what says which type grows the heap.
-      log.info("task start", { id: task.id, type: task.type, attempt: task.attempts, workerId: this.opts.workerId, commit: process.env.RENDER_GIT_COMMIT ?? null, readyWaitMs: readyWaitMs(task), heapUsedMb: before.heapUsedMb, heapLimitMb: before.heapLimitMb });
+      log.info("task start", { id: task.id, type: task.type, attempt: task.attempts, workerId: this.opts.workerId, commit: process.env.RENDER_GIT_COMMIT ?? null, readyWaitMs: readyWaitMs(task), heapUsedMb: before.heapUsedMb, heapLimitMb: before.heapLimitMb, rssMb: before.rssMb });
       const deadlineMs = deadlineMsFor(task.type, this.opts.deadlines);
       const work = handler(task, { ...this.deps, assertOwnership: db => assertTaskOwnership(db, task) }, { signal: stop.signal });
       const result = await withDeadline(work, deadlineMs, task.type, started, stop).catch(err => {
         // The handler is told to stop, but it settles in its own time: its outcome is logged
         // rather than left unobserved, and its writes are refused by the lease fence, because
         // failing the task has already given the lease to someone else.
-        if (err instanceof TimeoutError) void work.then(
-          () => log.warn("abandoned task finished after its deadline", { id: task.id, type: task.type }),
-          (e: unknown) => log.warn("abandoned task failed after its deadline", { id: task.id, type: task.type, error: (e as Error)?.message }),
-        );
+        if (err instanceof TimeoutError) {
+          const settlement = work.then(
+            () => log.warn("abandoned task finished after its deadline", { id: task.id, type: task.type }),
+            (e: unknown) => log.warn("abandoned task failed after its deadline", { id: task.id, type: task.type, error: (e as Error)?.message }),
+          );
+          this.pendingSettlements.set(task.id, settlement);
+        }
         throw err;
       });
       if (!await completeTask(this.deps.db, task, result)) { log.warn("task completion discarded: lease lost", { id: task.id }); return; }

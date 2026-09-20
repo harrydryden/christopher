@@ -1,0 +1,57 @@
+{
+  "at": "2026-09-20T07:42:54.906Z",
+  "environment": {
+    "node": "v22.18.0",
+    "cpu": "Apple M4",
+    "memoryGiB": 24
+  },
+  "companies": 1000,
+  "jobsPerCompany": 100,
+  "consumers": 3,
+  "queueMode": "production",
+  "aiCalls": 0,
+  "syntheticHttp": true,
+  "results": [
+    {
+      "stage": "onboarding",
+      "seconds": 73.92,
+      "requests": 8000,
+      "jobs": 100000,
+      "sources": 1000,
+      "failed_tasks": 0,
+      "pending": 0
+    },
+    {
+      "stage": "steady-state",
+      "seconds": 18.5,
+      "requests": 3000,
+      "jobs": 100000,
+      "sources": 1000,
+      "failed_tasks": 0,
+      "pending": 0
+    },
+    {
+      "stage": "disruption",
+      "seconds": 16.06,
+      "requests": 2960,
+      "jobs": 100000,
+      "sources": 1000,
+      "failed_tasks": 0,
+      "pending": 0
+    },
+    {
+      "stage": "recovery",
+      "seconds": 22.29,
+      "requests": 3000,
+      "jobs": 100000,
+      "sources": 1000,
+      "failed_tasks": 0,
+      "pending": 0
+    }
+  ],
+  "peakWorkerRssMiB": 311,
+  "pageQuerySamples": 1309,
+  "pageQueryP95Ms": 7.03,
+  "limitations": "Local synthetic ATS responses; production queue with one interactive, one scan and one background slot; default 3-second polling and graceful shutdown included. Excludes real provider pacing, browser memory, model cost and remote database latency.",
+  "concurrentHostActivity": "Regression tests and, during part of the worker run, browser smoke checks used separate databases on the same host/container. Results are observations, not isolated hardware capacity limits."
+}

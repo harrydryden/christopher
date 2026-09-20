@@ -45,6 +45,7 @@ vi.mock("next/navigation", () => ({
 
 import {
   finaliseCvDraft,
+  answerCvGapQuiz,
   requestCv,
   saveCvAppearance,
   saveCvDraft,
@@ -295,7 +296,7 @@ describe("the CV pipeline end to end, against a scripted model", () => {
       const [task] = await database
         .select()
         .from(schema.tasks)
-        .where(and(eq(schema.tasks.type, "generate_cv"), sql`payload->>'draftId' = ${draftId}`))
+        .where(and(eq(schema.tasks.type, "generate_cv"), sql`payload->>'draftId' = ${draftId}`, sql`${schema.tasks.status} in ('queued', 'running')`))
         .orderBy(schema.tasks.createdAt);
       expect(task, `a generate_cv task for ${draftId}`).toBeTruthy();
       const result = await handleGenerateCv(task!, deps);
@@ -349,6 +350,15 @@ describe("the CV pipeline end to end, against a scripted model", () => {
 
     // 3. The build.
     markCalls();
+    expect(await runHandler(first.id)).toMatchObject({ draftId: first.id, awaitingEvidence: true });
+    const paused = await draftRow(first.id);
+    expect(paused).toMatchObject({ status: "awaiting_evidence", gapQuiz: { status: "awaiting_answers" } });
+    const skipQuiz = new FormData();
+    skipQuiz.set("decision", "skip");
+    expect(await answerCvGapQuiz(first.id, { ok: true }, skipQuiz)).toEqual({
+      ok: true,
+      message: `cv-gap-destination:/cv/${first.id}`,
+    });
     expect(await runHandler(first.id)).toMatchObject({ draftId: first.id, ready: true });
     const built = await draftRow(first.id);
     expect(built.error).toBeNull();
@@ -403,8 +413,8 @@ describe("the CV pipeline end to end, against a scripted model", () => {
     expect(rubricCalls).toHaveLength(1);
     expect(rubricCalls[0]!.payload.description).toBe(DESCRIPTION);
     expect(rubricCalls[0]!.options?.timeout).toBe(120_000);
-    // A plan that obeys the supplied allocations is written once; every retry is another 16k call.
-    expect(authorCalls).toHaveLength(1);
+    // The initial author and the single optional evidence-backed improvement each write once.
+    expect(authorCalls).toHaveLength(2);
     expect(content.fitNotes).toEqual([]);
     // The account's chosen model, and no advert or personal data in any system prompt.
     expect(build.every((call) => call.params.model === CV_MODEL)).toBe(true);
@@ -448,40 +458,41 @@ describe("the CV pipeline end to end, against a scripted model", () => {
       Math.max(assessment.rubric.requirements.length, claimCount) / REVIEW_BATCH_SIZE,
     );
     expect(expectedBatches).toBeGreaterThan(1);
-    expect(reviewCalls).toHaveLength(expectedBatches);
-    expect(reviewCalls.every((call) => call.payload.corrections === undefined)).toBe(true);
+    expect(reviewCalls).toHaveLength(expectedBatches * 2);
+    const baselineReviewCalls = reviewCalls.slice(0, expectedBatches);
+    expect(baselineReviewCalls.every((call) => call.payload.corrections === undefined)).toBe(true);
     // The evidence and rubric outlive a revision, so they are cached ahead of the CV, itself cached
     // ahead of the batch; every batch sends both shared blocks byte for byte.
     for (const cached of [0, 1]) {
-      const shared = reviewCalls.map((call) => call.blocks[cached]!);
+      const shared = baselineReviewCalls.map((call) => call.blocks[cached]!);
       expect(new Set(shared.map((block) => block.text)).size).toBe(1);
       expect(shared.every((block) => !!block.cache_control)).toBe(true);
     }
-    expect(JSON.parse(reviewCalls[0]!.blocks[0]!.text)).toEqual({
+    expect(JSON.parse(baselineReviewCalls[0]!.blocks[0]!.text)).toEqual({
       evidence: expect.any(Array),
       rubric: { caveats: assessment.rubric.caveats },
     });
-    expect(JSON.parse(reviewCalls[0]!.blocks[1]!.text)).toEqual({ cv: expect.any(Array) });
-    const varying = reviewCalls.map((call) => call.blocks[2]!);
+    expect(JSON.parse(baselineReviewCalls[0]!.blocks[1]!.text)).toEqual({ cv: expect.any(Array) });
+    const varying = baselineReviewCalls.map((call) => call.blocks[2]!);
     expect(new Set(varying.map((block) => block.text)).size).toBe(expectedBatches);
     expect(varying.every((block) => !block.cache_control)).toBe(true);
-    expect(reviewCalls.every((call) => call.options?.timeout === 240_000)).toBe(true);
-    expect(reviewCalls.every((call) => call.options?.signal instanceof AbortSignal)).toBe(true);
+    expect(baselineReviewCalls.every((call) => call.options?.timeout === 240_000)).toBe(true);
+    expect(baselineReviewCalls.every((call) => call.options?.signal instanceof AbortSignal)).toBe(true);
     // Each batch's requirements and claims are disjoint and cover the whole audit exactly once.
-    expect(reviewCalls.flatMap((call) => call.payload.requirements.map((item) => item.id))).toEqual(
+    expect(baselineReviewCalls.flatMap((call) => call.payload.requirements.map((item) => item.id))).toEqual(
       assessment.rubric.requirements.map((item) => item.id),
     );
-    expect(reviewCalls.flatMap((call) => call.payload.claims.map((item) => item.id))).toEqual(
+    expect(baselineReviewCalls.flatMap((call) => call.payload.claims.map((item) => item.id))).toEqual(
       cvClaimItems(content).map((item) => item.id),
     );
 
     // The later batches went out while the first was still streaming, and only once it had begun.
-    const leader = reviewCalls[0]!.index;
-    const last = reviewCalls[reviewCalls.length - 1]!.index;
+    const leader = baselineReviewCalls[0]!.index;
+    const last = baselineReviewCalls[baselineReviewCalls.length - 1]!.index;
     expect(fake.events).not.toContain(`barrier-timeout:${leader}`);
     expect(fake.events).not.toContain("create-attempted");
     expect(fake.events.indexOf(`start:review:${leader}`)).toBeLessThan(
-      fake.events.indexOf(`issue:review:${reviewCalls[1]!.index}`),
+      fake.events.indexOf(`issue:review:${baselineReviewCalls[1]!.index}`),
     );
     expect(fake.events.indexOf(`issue:review:${last}`)).toBeLessThan(
       fake.events.indexOf(`end:review:${leader}`),
@@ -545,8 +556,8 @@ describe("the CV pipeline end to end, against a scripted model", () => {
     );
     // The library and rubric block is byte-identical to the build's, so the re-audit reads it from
     // cache; only the CV block changed.
-    expect(callsOf(editCalls, "review")[0]!.blocks[0]!.text).toBe(reviewCalls[0]!.blocks[0]!.text);
-    expect(callsOf(editCalls, "review")[0]!.blocks[1]!.text).not.toBe(reviewCalls[0]!.blocks[1]!.text);
+    expect(callsOf(editCalls, "review")[0]!.blocks[0]!.text).toBe(baselineReviewCalls[0]!.blocks[0]!.text);
+    expect(callsOf(editCalls, "review")[0]!.blocks[1]!.text).not.toBe(baselineReviewCalls[0]!.blocks[1]!.text);
 
     const [remembered] = await database
       .select()
@@ -589,13 +600,13 @@ describe("the CV pipeline end to end, against a scripted model", () => {
     expect(callsOf(rebuildCalls, "rubric")).toHaveLength(0);
     expect((await aiCalls()).filter((row) => row.refType === "cv-rubric")).toHaveLength(1);
     const rebuildAuthors = callsOf(rebuildCalls, "author");
-    expect(rebuildAuthors).toHaveLength(1);
+    expect(rebuildAuthors).toHaveLength(2);
     expect(rebuilt.content!.fitNotes).toEqual([]);
     expect(callsOf(rebuildCalls, "review")).toHaveLength(
       Math.ceil(
         Math.max(assessment.rubric.requirements.length, cvClaimItems(rebuilt.content!).length) /
           REVIEW_BATCH_SIZE,
-      ),
+      ) * 2,
     );
     const rewritten = rebuildAuthors[0]!.payload;
     // Written afresh: no saved plan is seeded as layout feedback.

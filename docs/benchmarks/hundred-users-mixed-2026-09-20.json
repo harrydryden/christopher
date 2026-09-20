@@ -1,0 +1,419 @@
+{
+  "at": "2026-09-20T08:04:58.435Z",
+  "passed": false,
+  "failures": [
+    "hundred-user authenticated read burst: p95 2035ms > 2000ms"
+  ],
+  "environment": {
+    "node": "v22.18.0",
+    "cpu": "Apple M4",
+    "cpuCount": 10,
+    "hostMemoryMiB": 24576,
+    "database": "christopher_users_benchmark"
+  },
+  "target": {
+    "registeredUsers": 100,
+    "simultaneouslyActiveUsers": 10
+  },
+  "counts": {
+    "users": 100,
+    "user_jobs": 100000,
+    "libraries": 110,
+    "cvs": 100,
+    "applications": 100,
+    "decisions": 100,
+    "queued_tasks": 30
+  },
+  "thresholds": {
+    "readP95Ms": 2000,
+    "writeP95Ms": 4000,
+    "maxErrors": 0,
+    "maxPhaseSeconds": 120
+  },
+  "phases": [
+    {
+      "label": "ten-active authenticated reads",
+      "concurrency": 10,
+      "seconds": 8.1,
+      "requestsPerSecond": 74.12,
+      "requests": 600,
+      "errors": 0,
+      "p50Ms": 127,
+      "p95Ms": 267,
+      "maxMs": 441,
+      "routes": {
+        "/?view=auto-matched": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 145,
+          "p95Ms": 219,
+          "maxMs": 289
+        },
+        "/companies": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 226,
+          "p95Ms": 366,
+          "maxMs": 441
+        },
+        "/applications": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 142,
+          "p95Ms": 209,
+          "maxMs": 287
+        },
+        "/library": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 127,
+          "p95Ms": 212,
+          "maxMs": 291
+        },
+        "/health": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 94,
+          "p95Ms": 139,
+          "maxMs": 196
+        },
+        "/api/work-status": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 42,
+          "p95Ms": 60,
+          "maxMs": 87
+        }
+      },
+      "failures": []
+    },
+    {
+      "label": "ten-active decisions, Library saves and queue admission",
+      "concurrency": 10,
+      "seconds": 0.02,
+      "operations": {
+        "decisions": 100,
+        "librarySaves": 10,
+        "queuedTasks": 30
+      },
+      "requests": 10,
+      "errors": 0,
+      "p50Ms": 9,
+      "p95Ms": 11,
+      "maxMs": 11,
+      "failures": []
+    },
+    {
+      "label": "hundred-user authenticated read burst",
+      "concurrency": 100,
+      "seconds": 6.92,
+      "requestsPerSecond": 86.75,
+      "requests": 600,
+      "errors": 0,
+      "p50Ms": 1072,
+      "p95Ms": 2035,
+      "maxMs": 2293,
+      "routes": {
+        "/?view=auto-matched": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 1265,
+          "p95Ms": 1518,
+          "maxMs": 1613
+        },
+        "/companies": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 1105,
+          "p95Ms": 1396,
+          "maxMs": 1566
+        },
+        "/applications": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 1962,
+          "p95Ms": 2160,
+          "maxMs": 2293
+        },
+        "/library": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 1014,
+          "p95Ms": 1261,
+          "maxMs": 1414
+        },
+        "/health": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 987,
+          "p95Ms": 1208,
+          "maxMs": 1316
+        },
+        "/api/work-status": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 489,
+          "p95Ms": 614,
+          "maxMs": 676
+        }
+      },
+      "failures": []
+    }
+  ],
+  "resources": [
+    {
+      "at": "2026-09-20T08:04:43.096Z",
+      "serverRssMiB": 256,
+      "benchmarkRssMiB": 59,
+      "hostFreeMiB": 185,
+      "dbConnections": 1,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:04:43.595Z",
+      "serverRssMiB": 283,
+      "benchmarkRssMiB": 83,
+      "hostFreeMiB": 185,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:04:44.096Z",
+      "serverRssMiB": 303,
+      "benchmarkRssMiB": 90,
+      "hostFreeMiB": 172,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:04:44.595Z",
+      "serverRssMiB": 328,
+      "benchmarkRssMiB": 101,
+      "hostFreeMiB": 168,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:04:45.095Z",
+      "serverRssMiB": 353,
+      "benchmarkRssMiB": 106,
+      "hostFreeMiB": 159,
+      "dbConnections": 4,
+      "dbActive": 2
+    },
+    {
+      "at": "2026-09-20T08:04:45.596Z",
+      "serverRssMiB": 380,
+      "benchmarkRssMiB": 113,
+      "hostFreeMiB": 144,
+      "dbConnections": 4,
+      "dbActive": 2
+    },
+    {
+      "at": "2026-09-20T08:04:46.097Z",
+      "serverRssMiB": 406,
+      "benchmarkRssMiB": 109,
+      "hostFreeMiB": 144,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:04:46.600Z",
+      "serverRssMiB": 423,
+      "benchmarkRssMiB": 109,
+      "hostFreeMiB": 111,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:04:47.098Z",
+      "serverRssMiB": 441,
+      "benchmarkRssMiB": 111,
+      "hostFreeMiB": 334,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:04:47.607Z",
+      "serverRssMiB": 465,
+      "benchmarkRssMiB": 114,
+      "hostFreeMiB": 134,
+      "dbConnections": 4,
+      "dbActive": 3
+    },
+    {
+      "at": "2026-09-20T08:04:48.100Z",
+      "serverRssMiB": 483,
+      "benchmarkRssMiB": 116,
+      "hostFreeMiB": 139,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:04:48.600Z",
+      "serverRssMiB": 509,
+      "benchmarkRssMiB": 112,
+      "hostFreeMiB": 245,
+      "dbConnections": 4,
+      "dbActive": 2
+    },
+    {
+      "at": "2026-09-20T08:04:49.096Z",
+      "serverRssMiB": 517,
+      "benchmarkRssMiB": 114,
+      "hostFreeMiB": 198,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:04:49.598Z",
+      "serverRssMiB": 518,
+      "benchmarkRssMiB": 117,
+      "hostFreeMiB": 198,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:04:50.095Z",
+      "serverRssMiB": 519,
+      "benchmarkRssMiB": 115,
+      "hostFreeMiB": 236,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:04:50.596Z",
+      "serverRssMiB": 521,
+      "benchmarkRssMiB": 113,
+      "hostFreeMiB": 181,
+      "dbConnections": 4,
+      "dbActive": 2
+    },
+    {
+      "at": "2026-09-20T08:04:51.100Z",
+      "serverRssMiB": 522,
+      "benchmarkRssMiB": 118,
+      "hostFreeMiB": 168,
+      "dbConnections": 4,
+      "dbActive": 2
+    },
+    {
+      "at": "2026-09-20T08:04:51.598Z",
+      "serverRssMiB": 522,
+      "benchmarkRssMiB": 115,
+      "hostFreeMiB": 208,
+      "dbConnections": 13,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:04:52.098Z",
+      "serverRssMiB": 524,
+      "benchmarkRssMiB": 120,
+      "hostFreeMiB": 174,
+      "dbConnections": 13,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:04:52.599Z",
+      "serverRssMiB": 525,
+      "benchmarkRssMiB": 121,
+      "hostFreeMiB": 142,
+      "dbConnections": 13,
+      "dbActive": 3
+    },
+    {
+      "at": "2026-09-20T08:04:53.097Z",
+      "serverRssMiB": 524,
+      "benchmarkRssMiB": 125,
+      "hostFreeMiB": 138,
+      "dbConnections": 13,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:04:53.599Z",
+      "serverRssMiB": 517,
+      "benchmarkRssMiB": 128,
+      "hostFreeMiB": 109,
+      "dbConnections": 13,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:04:54.097Z",
+      "serverRssMiB": 515,
+      "benchmarkRssMiB": 125,
+      "hostFreeMiB": 113,
+      "dbConnections": 13,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:04:54.598Z",
+      "serverRssMiB": 513,
+      "benchmarkRssMiB": 129,
+      "hostFreeMiB": 111,
+      "dbConnections": 13,
+      "dbActive": 2
+    },
+    {
+      "at": "2026-09-20T08:04:55.099Z",
+      "serverRssMiB": 540,
+      "benchmarkRssMiB": 118,
+      "hostFreeMiB": 94,
+      "dbConnections": 13,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:04:55.599Z",
+      "serverRssMiB": 574,
+      "benchmarkRssMiB": 122,
+      "hostFreeMiB": 103,
+      "dbConnections": 13,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:04:56.100Z",
+      "serverRssMiB": 614,
+      "benchmarkRssMiB": 120,
+      "hostFreeMiB": 106,
+      "dbConnections": 13,
+      "dbActive": 2
+    },
+    {
+      "at": "2026-09-20T08:04:56.600Z",
+      "serverRssMiB": 654,
+      "benchmarkRssMiB": 124,
+      "hostFreeMiB": 98,
+      "dbConnections": 13,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:04:57.099Z",
+      "serverRssMiB": 695,
+      "benchmarkRssMiB": 120,
+      "hostFreeMiB": 98,
+      "dbConnections": 13,
+      "dbActive": 2
+    },
+    {
+      "at": "2026-09-20T08:04:57.599Z",
+      "serverRssMiB": 735,
+      "benchmarkRssMiB": 117,
+      "hostFreeMiB": 97,
+      "dbConnections": 13,
+      "dbActive": 2
+    },
+    {
+      "at": "2026-09-20T08:04:58.100Z",
+      "serverRssMiB": 745,
+      "benchmarkRssMiB": 117,
+      "hostFreeMiB": 134,
+      "dbConnections": 13,
+      "dbActive": 3
+    }
+  ],
+  "limitations": [
+    "Local single Next.js process and local PostgreSQL; short warm workload with no think time.",
+    "Writes use production tables and queue payload shapes directly; browser form handling, queue-start latency and completed worker/model work are not measured.",
+    "Synthetic populated CV/Library/application data is smaller than p95 documents. No imports, public shares, Chromium, external providers or paid models run.",
+    "This does not establish hosted connection, memory, network, serverless fan-out or sustained-soak headroom."
+  ]
+}

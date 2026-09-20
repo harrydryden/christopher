@@ -1,4 +1,5 @@
 import type { CvRubric } from "./cv-assessment";
+import type { CvTailoringPlan } from "./cv-tailoring";
 
 /**
  * The motions of a CV build, in the order they run, and how each is spoken of to the person
@@ -13,6 +14,10 @@ export const CV_BUILD_MOTIONS = {
   load_inputs: { stage: "preparing", title: "Reading your Library and the role" },
   admit_budget: { stage: "preparing", title: "Reserving this build's share of your AI budget" },
   rubric: { stage: "analysing", title: "Extracting the role's requirements" },
+  plan_evidence: { stage: "analysing", title: "Matching the role to your strongest confirmed evidence" },
+  gap_quiz: { stage: "analysing", title: "Preparing a few optional evidence questions" },
+  improve_content: { stage: "assessing", title: "Strengthening important evidence the first draft missed" },
+  compare_content: { stage: "assessing", title: "Checking the revision improves coverage without weakening your CV" },
   write: { stage: "writing", title: "Writing the CV" },
   check_plan: { stage: "writing", title: "Checking the writer kept every role and qualification" },
   measure: { stage: "fitting", title: "Measuring the PDF against your page limit" },
@@ -57,6 +62,10 @@ export type CvBuildStepDetails = {
     reused?: "checkpoint" | "parent" | "assessment";
     requirements?: number; essential?: number; desirable?: number; responsibilities?: number;
   };
+  plan_evidence: CvStepCost & { requirements?: number; supported?: number; questions?: number; reused?: boolean };
+  gap_quiz: { questions?: number; skipped?: boolean };
+  improve_content: CvStepCost & { opportunities?: number; skipped?: boolean; reason?: string };
+  compare_content: { accepted?: boolean; reasons?: string[] };
   write: CvWritingDetail;
   /** A second or third writing attempt against a smaller budget; the same figures as `write`. */
   rewrite: CvWritingDetail;
@@ -188,6 +197,12 @@ export function cvBuildFailure(
  * fits its page limit skips writing and re-runs only the assessment.
  */
 export interface CvBuildCheckpoint {
+  /** New builds opt into planned shaping; legacy checkpoints remain readable. */
+  tailoringEnabled?: boolean;
+  tailoringPlan?: CvTailoringPlan;
+  quizCompleted?: boolean;
+  /** Set before spending on the single optional revision, so retries never repeat it. */
+  improvementAttempted?: boolean;
   rubric?: CvRubric;
   rubricAt?: string;
   contentAt?: string;

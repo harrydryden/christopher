@@ -316,11 +316,13 @@ export async function releaseOrphanedCvHolds(db: Db, graceMinutes = 2): Promise<
       and case when r.ref_id is not null
         then not exists (
           select 1 from tasks t
-          where t.dedupe_key = 'generate_cv:' || r.ref_id and t.status in ('queued', 'running')
+          where t.type = 'generate_cv'
+            and t.payload->>'draftId' = r.ref_id
+            and t.status in ('queued', 'running')
         )
         else not exists (
           select 1 from tasks t
-          join cv_drafts d on t.dedupe_key = 'generate_cv:' || d.id::text
+          join cv_drafts d on t.type = 'generate_cv' and t.payload->>'draftId' = d.id::text
           where d.user_id = r.user_id and t.status in ('queued', 'running')
         )
       end

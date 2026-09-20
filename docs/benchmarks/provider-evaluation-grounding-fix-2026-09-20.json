@@ -1,0 +1,897 @@
+{
+  "at": "2026-09-20T09:15:01.472Z",
+  "status": "automated_checks_passed",
+  "model": "claude-fable-5-1",
+  "priceSource": "https://platform.claude.com/docs/en/about-claude/pricing",
+  "pricesCheckedAt": "2026-09-20",
+  "syntheticCandidate": true,
+  "releaseAccepted": false,
+  "budgetGuardrail": "The USD limit is a conservative admission estimate. Actual provider usage is recorded and can exceed the estimate; it is not an exact billing guarantee.",
+  "provider": {
+    "status": "passed",
+    "models": [
+      {
+        "model": "claude-fable-5-1",
+        "passed": true,
+        "providerId": "claude-fable-5-1",
+        "price": {
+          "input": 10,
+          "output": 50,
+          "cacheRead": 0.25
+        }
+      }
+    ],
+    "limitations": "Model metadata access only; generation quality, streaming behaviour and billing are separate checks."
+  },
+  "results": [
+    {
+      "name": "direct-evidence",
+      "expected": "high",
+      "passed": true,
+      "assessment": {
+        "version": "2026-09-12.1",
+        "inputHash": "4f2197dfe80dcb6fbbbeb94f7b22cb64436a600e01bea8c0f4605b8df3101f01",
+        "model": "claude-fable-5-1",
+        "assessedAt": "2026-09-20T09:15:19.557Z",
+        "pageCount": 1,
+        "rubric": {
+          "requirements": [
+            {
+              "id": "r1",
+              "label": "Lead a team of at least ten people",
+              "quote": "lead a team of at least ten people",
+              "importance": "essential",
+              "category": "experience"
+            },
+            {
+              "id": "r2",
+              "label": "Use SQL in production reporting",
+              "quote": "use SQL in production reporting",
+              "importance": "essential",
+              "category": "skills"
+            },
+            {
+              "id": "r3",
+              "label": "Python (preferred)",
+              "quote": "Preferred: Python",
+              "importance": "desirable",
+              "category": "skills"
+            }
+          ],
+          "caveats": [
+            "The description is very brief and lacks role title, domain context, education requirements, logistics (location, hours, salary) and outcomes.",
+            "The 'lead a team of at least ten people' requirement does not specify whether this is prior experience or a future responsibility; it is treated as an essential experience requirement.",
+            "No detail is given on the expected level of SQL or Python proficiency.",
+            "Benefits (flexible working, pension) were excluded from the rubric as instructed."
+          ]
+        },
+        "review": {
+          "matches": [
+            {
+              "requirementId": "r1",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:role:0",
+                  "quote": "Led a team of 12 people"
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:role",
+                  "quote": "Led a team of 12 people"
+                }
+              ],
+              "reason": "CV and evidence library both state explicit leadership of a team of 12, which meets the threshold of at least ten people. No dates or scope are given, but the numeric threshold is explicitly satisfied.",
+              "improvement": "Add the period and context of the team leadership (e.g. duration, whether direct line management, what the team delivered) to strengthen the evidence."
+            },
+            {
+              "requirementId": "r2",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:role:0",
+                  "quote": "used SQL in production reporting"
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:role",
+                  "quote": "used SQL in production reporting"
+                }
+              ],
+              "reason": "The CV and confirmed evidence explicitly state SQL was used in production reporting, matching the requirement's scope. No proficiency level is specified, but the rubric does not define one.",
+              "improvement": "Add concrete detail such as the reporting tools or databases used, the scale or frequency of reports, and any measurable outcomes."
+            },
+            {
+              "requirementId": "r3",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:role:0",
+                  "quote": "Used Python for analysis"
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:role",
+                  "quote": "Used Python for analysis"
+                }
+              ],
+              "reason": "Python is a desirable skill with no stated proficiency level; both CV and evidence library explicitly state Python was used for analysis, which satisfies the requirement as written.",
+              "improvement": "Specify the kind of analysis, libraries used and any outcomes to show depth beyond basic use."
+            }
+          ],
+          "claims": [
+            {
+              "claimId": "profile",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "source:profile",
+                  "quote": "Reporting professional"
+                }
+              ],
+              "reason": "The profile text is identical to the confirmed profile evidence."
+            },
+            {
+              "claimId": "section:role:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:role",
+                  "quote": "Led a team of 12 people and used SQL in production reporting. Used Python for analysis."
+                }
+              ],
+              "reason": "The claim matches the required source entry:role verbatim, including team size, SQL scope and Python use."
+            }
+          ]
+        },
+        "score": 100,
+        "availableEvidenceScore": 100
+      }
+    },
+    {
+      "name": "partial-scope",
+      "expected": "below-high",
+      "passed": true,
+      "assessment": {
+        "version": "2026-09-12.1",
+        "inputHash": "d23b0aa29259cd4605523491b2f53a3b0b2d1051607e58c750e8f353dbf2ccb9",
+        "model": "claude-fable-5-1",
+        "assessedAt": "2026-09-20T09:15:32.078Z",
+        "pageCount": 1,
+        "rubric": {
+          "requirements": [
+            {
+              "id": "r1",
+              "label": "Lead a team of at least ten people",
+              "quote": "lead a team of at least ten people",
+              "importance": "essential",
+              "category": "experience"
+            },
+            {
+              "id": "r2",
+              "label": "Use SQL in production reporting",
+              "quote": "use SQL in production reporting",
+              "importance": "essential",
+              "category": "skills"
+            },
+            {
+              "id": "r3",
+              "label": "Python (preferred)",
+              "quote": "Preferred: Python",
+              "importance": "desirable",
+              "category": "skills"
+            }
+          ],
+          "caveats": [
+            "The description is very brief and lacks role title, domain context, education requirements, logistics (location, hours, salary) and outcomes.",
+            "The 'lead a team of at least ten people' requirement does not specify whether this is prior experience or a future responsibility; it is treated as an essential experience requirement.",
+            "No detail is given on the expected level of SQL or Python proficiency.",
+            "Benefits (flexible working, pension) were excluded from the rubric as instructed."
+          ]
+        },
+        "review": {
+          "matches": [
+            {
+              "requirementId": "r1",
+              "status": "partial",
+              "libraryStatus": "partial",
+              "cvEvidence": [
+                {
+                  "id": "section:role:0",
+                  "quote": "Led a team of three people."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:role",
+                  "quote": "Led a team of three people."
+                }
+              ],
+              "reason": "The CV and evidence library show team leadership, but only of three people, which falls short of the stated threshold of at least ten. Leadership experience is credible and transferable, but the scale requirement is not met.",
+              "improvement": "If you have led larger teams (ten or more, including indirect reports or project teams), state the team size, your role and the period. Otherwise, clarify the scope of the three-person team leadership (responsibilities, duration, outcomes)."
+            },
+            {
+              "requirementId": "r2",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:role:0",
+                  "quote": "Used SQL in production reporting."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:role",
+                  "quote": "Used SQL in production reporting."
+                }
+              ],
+              "reason": "The CV explicitly states use of SQL in production reporting, matching the requirement wording exactly; the evidence library confirms this. The rubric notes no proficiency level is specified, so the literal requirement is satisfied.",
+              "improvement": "Add specifics on the reporting produced (tools, data volumes, frequency, audience) and any measurable outcomes to strengthen the SQL evidence beyond a single statement."
+            },
+            {
+              "requirementId": "r3",
+              "status": "missing",
+              "libraryStatus": "missing",
+              "cvEvidence": [],
+              "libraryEvidence": [],
+              "reason": "Neither the CV nor the evidence library mentions Python or related tooling. This does not establish that the candidate lacks Python skills; there is simply no supporting text.",
+              "improvement": "If you have used Python (e.g. for data analysis, automation or reporting), add it with brief context on where and how it was applied. If not, no action is required as this is a desirable requirement."
+            }
+          ],
+          "claims": [
+            {
+              "claimId": "profile",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "source:profile",
+                  "quote": "Reporting professional"
+                }
+              ],
+              "reason": "The profile claim matches the profile source verbatim and is consistent with the role evidence describing production reporting work."
+            },
+            {
+              "claimId": "section:role:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:role",
+                  "quote": "Led a team of three people. Used SQL in production reporting."
+                }
+              ],
+              "reason": "The claim is reproduced verbatim from the required source entry:role, including the team size of three and the use of SQL in production reporting; no exaggeration or transfer of achievements."
+            }
+          ]
+        },
+        "score": 60,
+        "availableEvidenceScore": 60
+      }
+    },
+    {
+      "name": "unsupported-inflation",
+      "expected": "flagged",
+      "passed": true,
+      "assessment": {
+        "version": "2026-09-12.1",
+        "inputHash": "8934c1cc77ab15e64ee74401f57c81cb451e4aeed5c629ffded977ac7752d20d",
+        "model": "claude-fable-5-1",
+        "assessedAt": "2026-09-20T09:15:43.435Z",
+        "pageCount": 1,
+        "rubric": {
+          "requirements": [
+            {
+              "id": "r1",
+              "label": "Lead a team of at least ten people",
+              "quote": "lead a team of at least ten people",
+              "importance": "essential",
+              "category": "experience"
+            },
+            {
+              "id": "r2",
+              "label": "Use SQL in production reporting",
+              "quote": "use SQL in production reporting",
+              "importance": "essential",
+              "category": "skills"
+            },
+            {
+              "id": "r3",
+              "label": "Python (preferred)",
+              "quote": "Preferred: Python",
+              "importance": "desirable",
+              "category": "skills"
+            }
+          ],
+          "caveats": [
+            "The description is very brief and lacks role title, domain context, education requirements, logistics (location, hours, salary) and outcomes.",
+            "The 'lead a team of at least ten people' requirement does not specify whether this is prior experience or a future responsibility; it is treated as an essential experience requirement.",
+            "No detail is given on the expected level of SQL or Python proficiency.",
+            "Benefits (flexible working, pension) were excluded from the rubric as instructed."
+          ]
+        },
+        "review": {
+          "matches": [
+            {
+              "requirementId": "r1",
+              "status": "demonstrated",
+              "libraryStatus": "missing",
+              "cvEvidence": [
+                {
+                  "id": "section:role:0",
+                  "quote": "Led a team of 12 people"
+                }
+              ],
+              "libraryEvidence": [],
+              "reason": "The CV explicitly states leading a team of 12, meeting the ten-person threshold. However, the confirmed evidence library only says the candidate 'Assisted with reporting in Excel' with no mention of team leadership, so the CV claim is not grounded in confirmed evidence.",
+              "improvement": "Confirm whether the candidate led a team: ask for team size, duration, whether they had line-management or delivery ownership, and in which role this occurred, so the claim can be evidenced."
+            },
+            {
+              "requirementId": "r2",
+              "status": "demonstrated",
+              "libraryStatus": "missing",
+              "cvEvidence": [
+                {
+                  "id": "section:role:0",
+                  "quote": "used SQL in production reporting"
+                }
+              ],
+              "libraryEvidence": [],
+              "reason": "The CV text directly states use of SQL in production reporting. The evidence library mentions only Excel-based reporting assistance and never mentions SQL, so the CV claim lacks confirmed support.",
+              "improvement": "Ask the candidate whether they have used SQL in production reporting, with which databases/tools, on which reports or pipelines, and how regularly, and add confirmed detail to the evidence library."
+            },
+            {
+              "requirementId": "r3",
+              "status": "missing",
+              "libraryStatus": "missing",
+              "cvEvidence": [],
+              "libraryEvidence": [],
+              "reason": "Neither the CV nor the evidence library mentions Python.",
+              "improvement": "If the candidate has any Python experience (scripting, data analysis, automation), ask for the context, libraries used and what was delivered; otherwise omit rather than add an unsupported skill label."
+            }
+          ],
+          "claims": [
+            {
+              "claimId": "profile",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "source:profile",
+                  "quote": "Reporting professional"
+                }
+              ],
+              "reason": "The profile claim matches the confirmed profile source verbatim."
+            },
+            {
+              "claimId": "section:role:0",
+              "status": "unsupported",
+              "evidence": [],
+              "reason": "The required source entry:role states only 'Analyst / Assisted with reporting in Excel.' It contains no mention of leading a team, a team of 12, SQL, or production reporting. The claim inflates an assisting role into leadership and introduces an unevidenced skill, contradicting the confirmed evidence."
+            }
+          ]
+        },
+        "score": 0,
+        "availableEvidenceScore": 0
+      }
+    },
+    {
+      "name": "keyword-repetition",
+      "expected": "below-high",
+      "passed": true,
+      "assessment": {
+        "version": "2026-09-12.1",
+        "inputHash": "41917e2765d0994861b42a3da3c4a616d7529b876f6c9f59c9bd64f65e422c2a",
+        "model": "claude-fable-5-1",
+        "assessedAt": "2026-09-20T09:16:00.604Z",
+        "pageCount": 1,
+        "rubric": {
+          "requirements": [
+            {
+              "id": "r1",
+              "label": "Lead a team of at least ten people",
+              "quote": "lead a team of at least ten people",
+              "importance": "essential",
+              "category": "experience"
+            },
+            {
+              "id": "r2",
+              "label": "Use SQL in production reporting",
+              "quote": "use SQL in production reporting",
+              "importance": "essential",
+              "category": "skills"
+            },
+            {
+              "id": "r3",
+              "label": "Python (preferred)",
+              "quote": "Preferred: Python",
+              "importance": "desirable",
+              "category": "skills"
+            }
+          ],
+          "caveats": [
+            "The description is very brief and lacks role title, domain context, education requirements, logistics (location, hours, salary) and outcomes.",
+            "The 'lead a team of at least ten people' requirement does not specify whether this is prior experience or a future responsibility; it is treated as an essential experience requirement.",
+            "No detail is given on the expected level of SQL or Python proficiency.",
+            "Benefits (flexible working, pension) were excluded from the rubric as instructed."
+          ]
+        },
+        "review": {
+          "matches": [
+            {
+              "requirementId": "r1",
+              "status": "missing",
+              "libraryStatus": "missing",
+              "cvEvidence": [],
+              "libraryEvidence": [],
+              "reason": "Neither the CV nor the evidence library mentions leading, managing or supervising any team, let alone one of ten or more people. Absence of evidence does not prove the candidate lacks this experience.",
+              "improvement": "If the candidate has led teams, add a role bullet stating the team size, duration and scope of leadership responsibility (e.g. line management, delivery ownership). Evidence question: have you led a team of ten or more people, and in which role and dates?"
+            },
+            {
+              "requirementId": "r2",
+              "status": "partial",
+              "libraryStatus": "partial",
+              "cvEvidence": [
+                {
+                  "id": "section:role:0",
+                  "quote": "SQL SQL SQL SQL SQL SQL SQL SQL SQL SQL."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:role",
+                  "quote": "Completed introductory SQL training."
+                }
+              ],
+              "reason": "The CV lists SQL as a bare keyword under the Analyst role; repetition adds no coverage and does not show production reporting use. The library confirms only introductory SQL training, which indicates familiarity but not use of SQL in production reporting.",
+              "improvement": "Replace the repeated keyword with one concrete bullet describing how SQL was actually used (e.g. writing queries for recurring reports, data sources, frequency, audience). Evidence question: have you written or maintained SQL queries for live/production reports, and in what context?"
+            },
+            {
+              "requirementId": "r3",
+              "status": "missing",
+              "libraryStatus": "missing",
+              "cvEvidence": [],
+              "libraryEvidence": [],
+              "reason": "Python is not mentioned anywhere in the CV or the evidence library.",
+              "improvement": "If the candidate has any Python experience, add it to a skills or role section with a brief note of what it was used for. Evidence question: have you used Python, and for what tasks or projects?"
+            }
+          ],
+          "claims": [
+            {
+              "claimId": "profile",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "source:profile",
+                  "quote": "Reporting professional"
+                }
+              ],
+              "reason": "The profile text is reproduced verbatim from the confirmed profile source."
+            },
+            {
+              "claimId": "section:role:0",
+              "status": "uncertain",
+              "evidence": [
+                {
+                  "id": "entry:role",
+                  "quote": "Completed introductory SQL training."
+                }
+              ],
+              "reason": "The required source confirms only introductory SQL training. The CV line repeats 'SQL' ten times as a bare keyword, which is ambiguous: it does not state a false fact, but the emphasis implies a level of SQL competence beyond the introductory training the evidence supports. It also reads as keyword stuffing rather than a factual statement."
+            }
+          ]
+        },
+        "score": 0,
+        "availableEvidenceScore": 20
+      }
+    },
+    {
+      "name": "negation",
+      "expected": "below-high",
+      "passed": true,
+      "assessment": {
+        "version": "2026-09-12.1",
+        "inputHash": "b33d964d4654ca15302a101de1402eda3f2eba7a61846063de9f3a9d1c859c5a",
+        "model": "claude-fable-5-1",
+        "assessedAt": "2026-09-20T09:16:22.196Z",
+        "pageCount": 1,
+        "rubric": {
+          "requirements": [
+            {
+              "id": "r1",
+              "label": "Lead a team of at least ten people",
+              "quote": "lead a team of at least ten people",
+              "importance": "essential",
+              "category": "experience"
+            },
+            {
+              "id": "r2",
+              "label": "Use SQL in production reporting",
+              "quote": "use SQL in production reporting",
+              "importance": "essential",
+              "category": "skills"
+            },
+            {
+              "id": "r3",
+              "label": "Python (preferred)",
+              "quote": "Preferred: Python",
+              "importance": "desirable",
+              "category": "skills"
+            }
+          ],
+          "caveats": [
+            "The description is very brief and lacks role title, domain context, education requirements, logistics (location, hours, salary) and outcomes.",
+            "The 'lead a team of at least ten people' requirement does not specify whether this is prior experience or a future responsibility; it is treated as an essential experience requirement.",
+            "No detail is given on the expected level of SQL or Python proficiency.",
+            "Benefits (flexible working, pension) were excluded from the rubric as instructed."
+          ]
+        },
+        "review": {
+          "matches": [
+            {
+              "requirementId": "r1",
+              "status": "partial",
+              "libraryStatus": "partial",
+              "cvEvidence": [
+                {
+                  "id": "section:role:0",
+                  "quote": "Assisted a team of 12 without managing them."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:role",
+                  "quote": "Assisted a team of 12 without managing them."
+                }
+              ],
+              "reason": "The CV shows exposure to a team of 12 (meeting the size threshold) but explicitly states the candidate assisted rather than managed or led it, so the leadership requirement is not met; only transferable team experience is evidenced. The evidence library states the same.",
+              "improvement": "If the candidate has ever led, supervised or coordinated a team (formally or informally), state the team size, duration, scope of responsibility and any outcomes. Otherwise, describe concrete coordination or ownership within the 12-person team (e.g. workstreams owned, deliverables driven) without overstating authority."
+            },
+            {
+              "requirementId": "r2",
+              "status": "missing",
+              "libraryStatus": "missing",
+              "cvEvidence": [
+                {
+                  "id": "section:role:0",
+                  "quote": "Have not used SQL in production."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:role",
+                  "quote": "Have not used SQL in production."
+                }
+              ],
+              "reason": "The CV explicitly states SQL has not been used in production, and no other text evidences SQL skills. 'Reporting professional' indicates reporting work but not SQL use, so the requirement is not supported.",
+              "improvement": "Ask whether the candidate has used SQL in any non-production, training or ad-hoc reporting context, and which tools were used for production reporting; if genuine SQL experience exists, describe the environment, query types and reporting outputs. Do not claim production SQL use if it did not occur."
+            },
+            {
+              "requirementId": "r3",
+              "status": "missing",
+              "libraryStatus": "missing",
+              "cvEvidence": [],
+              "libraryEvidence": [],
+              "reason": "Neither the CV nor the evidence library mentions Python or any related tooling.",
+              "improvement": "Ask whether the candidate has any Python experience (scripts, automation, data analysis, coursework) and, if so, add a brief factual note of what was built or used and in what context."
+            }
+          ],
+          "claims": [
+            {
+              "claimId": "profile",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "source:profile",
+                  "quote": "Reporting professional"
+                }
+              ],
+              "reason": "The profile claim matches the confirmed profile source verbatim."
+            },
+            {
+              "claimId": "section:role:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:role",
+                  "quote": "Have not used SQL in production. Assisted a team of 12 without managing them."
+                }
+              ],
+              "reason": "The role claim is reproduced verbatim from the required source entry:role, including the disclaimers about SQL and management scope; nothing is exaggerated."
+            }
+          ]
+        },
+        "score": 20,
+        "availableEvidenceScore": 20
+      }
+    }
+  ],
+  "generatedCv": {
+    "passed": true,
+    "pageCount": 1,
+    "pdfPath": "/tmp/christopher-provider-evaluation-grounding-fix-2026-09-20.pdf",
+    "content": {
+      "theme": {
+        "version": 1,
+        "primary": "#000000",
+        "background": "#ffffff",
+        "surface": "#f2f2f2",
+        "pill": "#e6e6e6",
+        "introPanel": true,
+        "skillPills": true,
+        "font": "Christopher",
+        "maxPages": 3
+      },
+      "name": "Synthetic Candidate",
+      "contact": "London",
+      "summary": "Operations Lead who led a team of 12 people, used SQL in production reporting and used Python for analysis.",
+      "sections": [
+        {
+          "entryId": "role",
+          "kind": "experience",
+          "heading": "Operations Lead",
+          "bullets": [
+            "Led a team of 12 people.",
+            "Used SQL in production reporting.",
+            "Used Python for analysis."
+          ]
+        }
+      ],
+      "gaps": [
+        "No education or qualification evidence is present in the library, so no Education subsection could be included.",
+        "No dates, employer name, industry descriptions or domain context are stored for the Operations Lead role.",
+        "Evidence does not state the level of SQL or Python proficiency, the type of reporting or the analysis performed, so bullets are kept deliberately sparse.",
+        "No skills blocks were allocated, so no Skills subsection was produced; SQL and Python appear only as experience bullets.",
+        "No writingBudget was supplied; bullets and summary were kept minimal to reflect the sparse evidence."
+      ]
+    },
+    "assessment": {
+      "version": "2026-09-12.1",
+      "inputHash": "0f612a67873835e5ffa3f3890504416b563bab8b29fb6a2c2fac17cbf0da37f0",
+      "model": "claude-fable-5-1",
+      "assessedAt": "2026-09-20T09:16:44.567Z",
+      "pageCount": 1,
+      "rubric": {
+        "requirements": [
+          {
+            "id": "r1",
+            "label": "Lead a team of at least ten people",
+            "quote": "lead a team of at least ten people",
+            "importance": "essential",
+            "category": "experience"
+          },
+          {
+            "id": "r2",
+            "label": "Use SQL in production reporting",
+            "quote": "use SQL in production reporting",
+            "importance": "essential",
+            "category": "skills"
+          },
+          {
+            "id": "r3",
+            "label": "Python (preferred)",
+            "quote": "Preferred: Python",
+            "importance": "desirable",
+            "category": "skills"
+          }
+        ],
+        "caveats": [
+          "The description is very brief and lacks role title, domain context, education requirements, logistics (location, hours, salary) and outcomes.",
+          "The 'lead a team of at least ten people' requirement does not specify whether this is prior experience or a future responsibility; it is treated as an essential experience requirement.",
+          "No detail is given on the expected level of SQL or Python proficiency.",
+          "Benefits (flexible working, pension) were excluded from the rubric as instructed."
+        ]
+      },
+      "review": {
+        "matches": [
+          {
+            "requirementId": "r1",
+            "status": "demonstrated",
+            "libraryStatus": "demonstrated",
+            "cvEvidence": [
+              {
+                "id": "section:role:0",
+                "quote": "Led a team of 12 people."
+              }
+            ],
+            "libraryEvidence": [
+              {
+                "id": "entry:role",
+                "quote": "Led a team of 12 people"
+              }
+            ],
+            "reason": "CV and confirmed evidence both state explicitly that the candidate led a team of 12, meeting the threshold of at least ten.",
+            "improvement": "Add dates, duration of the leadership role and context (e.g. team function, direct vs indirect reports) to strengthen the evidence."
+          },
+          {
+            "requirementId": "r2",
+            "status": "demonstrated",
+            "libraryStatus": "demonstrated",
+            "cvEvidence": [
+              {
+                "id": "section:role:1",
+                "quote": "Used SQL in production reporting."
+              }
+            ],
+            "libraryEvidence": [
+              {
+                "id": "entry:role",
+                "quote": "used SQL in production reporting"
+              }
+            ],
+            "reason": "Both the CV and the evidence library explicitly state SQL was used in production reporting, matching the requirement wording; no proficiency level is specified by the rubric.",
+            "improvement": "Describe the scope of the reporting (tools, data volume, frequency, audience) and any measurable outcomes to show depth beyond usage."
+          },
+          {
+            "requirementId": "r3",
+            "status": "demonstrated",
+            "libraryStatus": "demonstrated",
+            "cvEvidence": [
+              {
+                "id": "section:role:2",
+                "quote": "Used Python for analysis."
+              }
+            ],
+            "libraryEvidence": [
+              {
+                "id": "entry:role",
+                "quote": "Used Python for analysis."
+              }
+            ],
+            "reason": "The desirable requirement only names Python; both documents state Python was used for analysis, which satisfies familiarity. Proficiency level is not specified by the rubric.",
+            "improvement": "Mention the type of analysis and libraries or techniques used to indicate proficiency level."
+          }
+        ],
+        "claims": [
+          {
+            "claimId": "profile",
+            "status": "supported",
+            "evidence": [
+              {
+                "id": "entry:role",
+                "quote": "Operations Lead\nLed a team of 12 people and used SQL in production reporting. Used Python for analysis."
+              }
+            ],
+            "reason": "Every element of the profile statement (title, team of 12, SQL in production reporting, Python for analysis) is stated verbatim in the confirmed role entry."
+          },
+          {
+            "claimId": "section:role:0",
+            "status": "supported",
+            "evidence": [
+              {
+                "id": "entry:role",
+                "quote": "Led a team of 12 people"
+              }
+            ],
+            "reason": "The required source explicitly states the candidate led a team of 12 people."
+          },
+          {
+            "claimId": "section:role:1",
+            "status": "supported",
+            "evidence": [
+              {
+                "id": "entry:role",
+                "quote": "used SQL in production reporting"
+              }
+            ],
+            "reason": "The required source explicitly states SQL was used in production reporting."
+          },
+          {
+            "claimId": "section:role:2",
+            "status": "supported",
+            "evidence": [
+              {
+                "id": "entry:role",
+                "quote": "Used Python for analysis."
+              }
+            ],
+            "reason": "The required source explicitly states Python was used for analysis."
+          }
+        ]
+      },
+      "score": 100,
+      "availableEvidenceScore": 100
+    },
+    "humanReview": "required: inspect the generated PDF and confirm factual grounding before release"
+  },
+  "budget": {
+    "capUsd": 9.5,
+    "spentUsd": 0.436173,
+    "heldUsd": 0,
+    "records": [
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 61,
+        "outputTokens": 309,
+        "cacheReadTokens": 1098,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.016335,
+        "durationMs": 6147,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 304,
+        "outputTokens": 830,
+        "cacheReadTokens": 2263,
+        "cacheWriteTokens": 330,
+        "costUsd": 0.049231,
+        "durationMs": 11509,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 284,
+        "outputTokens": 877,
+        "cacheReadTokens": 2263,
+        "cacheWriteTokens": 310,
+        "costUsd": 0.051131,
+        "durationMs": 12520,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 279,
+        "outputTokens": 805,
+        "cacheReadTokens": 2263,
+        "cacheWriteTokens": 305,
+        "costUsd": 0.047418,
+        "durationMs": 11356,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 289,
+        "outputTokens": 1270,
+        "cacheReadTokens": 2263,
+        "cacheWriteTokens": 315,
+        "costUsd": 0.070893,
+        "durationMs": 17169,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 296,
+        "outputTokens": 1517,
+        "cacheReadTokens": 2263,
+        "cacheWriteTokens": 322,
+        "costUsd": 0.083401,
+        "durationMs": 21590,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 528,
+        "outputTokens": 513,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 2275,
+        "costUsd": 0.059368,
+        "durationMs": 10024,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 398,
+        "outputTokens": 979,
+        "cacheReadTokens": 2263,
+        "cacheWriteTokens": 392,
+        "costUsd": 0.058396,
+        "durationMs": 12338,
+        "ok": true
+      }
+    ],
+    "exceeded": false
+  }
+}

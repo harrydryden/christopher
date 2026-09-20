@@ -82,7 +82,7 @@ export async function createCvShareLink(
  */
 export async function revokeCvShareLink(id: string, draftId: string): Promise<void> {
   const user = await requireUser();
-  if (!zUuid().safeParse(id).success) return;
+  if (!zUuid().safeParse(id).success || !zUuid().safeParse(draftId).success) return;
   await revokeCvShare(db(), user.id, id);
   revalidatePath(`/cv/${draftId}`);
 }
@@ -90,7 +90,7 @@ export async function revokeCvShareLink(id: string, draftId: string): Promise<vo
 /** Mark one reader's note dealt with. Scoped by account in the query, so it needs no other check. */
 export async function resolveCvShareComment(id: string, draftId: string): Promise<void> {
   const user = await requireUser();
-  if (!zUuid().safeParse(id).success) return;
+  if (!zUuid().safeParse(id).success || !zUuid().safeParse(draftId).success) return;
   await resolveCommentRow(db(), user.id, id);
   revalidatePath(`/cv/${draftId}`);
 }

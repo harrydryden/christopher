@@ -1,0 +1,1301 @@
+{
+  "at": "2026-09-20T13:00:22.738Z",
+  "status": "automated_checks_passed",
+  "syntheticCandidate": true,
+  "model": "claude-fable-5-1",
+  "capUsd": 3.5,
+  "priorSpendUsd": 0.679097,
+  "paidCallsAuthorised": true,
+  "humanReview": "Blinded pack prepared with blank preference fields; no human judgement has been recorded.",
+  "baselineControl": "Literal Library profile and evidence rows; not output from the previous production authoring engine and not an old-versus-new engine comparison.",
+  "flow": "fixed rubric → semantic evidence plan → provenance-validated author → deterministic semantic fit → factual assessment",
+  "reproducibility": {
+    "gitHead": "7f4c08dc91d91bead43b41183f2cd40cbfa20503",
+    "gitDirty": true,
+    "scriptSha256": "037486a2a42c063156613a21c763171bc674e4d382ab3405dd0b66dfd183c123"
+  },
+  "cases": [
+    {
+      "roleId": "strategy-director",
+      "title": "Strategy Director",
+      "status": "passed",
+      "callStart": 0,
+      "pageCount": 1,
+      "allCareersPreserved": true,
+      "claimsSupported": true,
+      "score": 100,
+      "availableEvidenceScore": 100,
+      "tailoringPlan": {
+        "requirements": [
+          {
+            "requirementId": "r1",
+            "status": "demonstrated",
+            "evidence": [
+              {
+                "sourceId": "entry:growth:row:0",
+                "quote": "Set portfolio priorities and investment cases across five markets."
+              }
+            ],
+            "reason": "The evidence explicitly states the candidate set portfolio priorities and investment cases across five markets, which directly and specifically satisfies the full requirement of setting priorities and building investment cases across multiple markets."
+          },
+          {
+            "requirementId": "r2",
+            "status": "partial",
+            "evidence": [
+              {
+                "sourceId": "entry:growth:row:1",
+                "quote": "Launched a new channel with product, sales and local operations."
+              }
+            ],
+            "reason": "The evidence shows one new channel launch carried out with product and sales (commercial) teams, a concrete component of the requirement. It does not state that the candidate led the launch, that the channel was a growth channel, or that multiple launches were led, so the complete requirement is not established."
+          }
+        ],
+        "gapQuestions": [
+          {
+            "id": "q1",
+            "requirementId": "r2",
+            "requirement": "New growth channel launches",
+            "prompt": "For the new channel launch at Synthetic Growth Co, what was your specific role and scope (e.g. did you lead it), what type of channel was it, and when did it launch?",
+            "suggestedDestination": {
+              "kind": "employment",
+              "employmentId": "growth-job"
+            }
+          }
+        ]
+      },
+      "gapQuestions": [
+        {
+          "id": "q1",
+          "requirementId": "r2",
+          "requirement": "New growth channel launches",
+          "prompt": "For the new channel launch at Synthetic Growth Co, what was your specific role and scope (e.g. did you lead it), what type of channel was it, and when did it launch?",
+          "suggestedDestination": {
+            "kind": "employment",
+            "employmentId": "growth-job"
+          }
+        }
+      ],
+      "selectedEvidenceIds": [
+        "portfolio",
+        "launch"
+      ],
+      "leadingEvidenceId": "portfolio",
+      "callEnd": 3,
+      "calls": [
+        {
+          "callSite": "CV",
+          "model": "claude-fable-5-1",
+          "inputTokens": 677,
+          "outputTokens": 828,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 1812,
+          "costUsd": 0.07082,
+          "durationMs": 12496,
+          "ok": true,
+          "refType": "synthetic-cv-evaluation",
+          "refId": "strategy-director",
+          "stage": "planning"
+        },
+        {
+          "callSite": "CV",
+          "model": "claude-fable-5-1",
+          "inputTokens": 1816,
+          "outputTokens": 855,
+          "cacheReadTokens": 2715,
+          "cacheWriteTokens": 0,
+          "costUsd": 0.061589,
+          "durationMs": 10867,
+          "ok": true,
+          "refType": "synthetic-cv-evaluation",
+          "refId": "strategy-director",
+          "stage": "author"
+        },
+        {
+          "callSite": "CV",
+          "model": "claude-fable-5-1",
+          "inputTokens": 698,
+          "outputTokens": 1170,
+          "cacheReadTokens": 2830,
+          "cacheWriteTokens": 421,
+          "costUsd": 0.07145,
+          "durationMs": 15896,
+          "ok": true,
+          "refType": "synthetic-cv-evaluation",
+          "refId": "strategy-director",
+          "stage": "assessment"
+        }
+      ],
+      "content": {
+        "theme": {
+          "version": 1,
+          "primary": "#000000",
+          "background": "#ffffff",
+          "surface": "#f2f2f2",
+          "pill": "#e6e6e6",
+          "introPanel": true,
+          "skillPills": true,
+          "font": "Christopher",
+          "maxPages": 3
+        },
+        "name": "Synthetic Candidate",
+        "contact": "London · synthetic@example.invalid",
+        "summary": "Commercial, operations and analytics leader. Set portfolio priorities and investment cases across five markets, and launched a new channel with product, sales and local operations. Previously led and coached a multidisciplinary team of 14 people and introduced governance and risk reviews for a regulated programme.",
+        "summarySources": [
+          {
+            "sourceId": "source:profile",
+            "quote": "Commercial, operations and analytics leader."
+          },
+          {
+            "sourceId": "entry:growth:row:0",
+            "quote": "Set portfolio priorities and investment cases across five markets."
+          },
+          {
+            "sourceId": "entry:growth:row:1",
+            "quote": "Launched a new channel with product, sales and local operations."
+          },
+          {
+            "sourceId": "entry:operations:row:0",
+            "quote": "Led and coached a multidisciplinary team of 14 people."
+          },
+          {
+            "sourceId": "entry:operations:row:1",
+            "quote": "Introduced governance and risk reviews for a regulated programme."
+          }
+        ],
+        "sections": [
+          {
+            "entryId": "growth",
+            "kind": "experience",
+            "heading": "Growth Director · Synthetic Growth Co · 2022 – Present",
+            "bullets": [
+              "Set portfolio priorities and investment cases across five markets.",
+              "Launched a new channel with product, sales and local operations."
+            ],
+            "bulletSources": [
+              [
+                {
+                  "sourceId": "entry:growth:row:0",
+                  "quote": "Set portfolio priorities and investment cases across five markets."
+                }
+              ],
+              [
+                {
+                  "sourceId": "entry:growth:row:1",
+                  "quote": "Launched a new channel with product, sales and local operations."
+                }
+              ]
+            ]
+          },
+          {
+            "entryId": "operations",
+            "kind": "experience",
+            "heading": "Operations Lead · Synthetic Operations Co · 2019 – 2022",
+            "bullets": [
+              "Led and coached a multidisciplinary team of 14 people.",
+              "Introduced governance and risk reviews for a regulated programme."
+            ],
+            "bulletSources": [
+              [
+                {
+                  "sourceId": "entry:operations:row:0",
+                  "quote": "Led and coached a multidisciplinary team of 14 people."
+                }
+              ],
+              [
+                {
+                  "sourceId": "entry:operations:row:1",
+                  "quote": "Introduced governance and risk reviews for a regulated programme."
+                }
+              ]
+            ]
+          },
+          {
+            "entryId": "analytics",
+            "kind": "experience",
+            "heading": "Senior Analyst · Synthetic Data Co · 2016 – 2019",
+            "bullets": [
+              "Built SQL reporting that shortened weekly decisions by two days."
+            ],
+            "bulletSources": [
+              [
+                {
+                  "sourceId": "entry:analytics:row:0",
+                  "quote": "Built SQL reporting that shortened weekly decisions by two days."
+                }
+              ]
+            ]
+          }
+        ],
+        "gaps": [
+          "New growth channel launches (r2) only partially evidenced: the library records one channel launch with product, sales and local operations but does not state that the candidate led it, that it was a growth channel, or that multiple launches were led.",
+          "No education, qualifications or skills evidence is present in the library, so no Education or Skills subsections could be written.",
+          "No industry descriptions are stored for any employer, so industryDescriptions were omitted."
+        ],
+        "fitNotes": []
+      },
+      "assessment": {
+        "version": "2026-09-12.1",
+        "inputHash": "99d45b87f57b465ec19b37478bd69bd0ebe09dff4dd0ce702f92b846610ead4e",
+        "model": "claude-fable-5-1",
+        "assessedAt": "2026-09-20T13:01:02.495Z",
+        "pageCount": 1,
+        "rubric": {
+          "requirements": [
+            {
+              "id": "r1",
+              "label": "Portfolio priorities and investment cases",
+              "quote": "set portfolio priorities and build investment cases across multiple markets",
+              "importance": "essential",
+              "category": "delivery"
+            },
+            {
+              "id": "r2",
+              "label": "New growth channel launches",
+              "quote": "lead launches of new growth channels with product and commercial teams",
+              "importance": "essential",
+              "category": "delivery"
+            }
+          ],
+          "caveats": []
+        },
+        "review": {
+          "matches": [
+            {
+              "requirementId": "r1",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:growth:0",
+                  "quote": "Set portfolio priorities and investment cases across five markets."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:growth",
+                  "quote": "Set portfolio priorities and investment cases across five markets."
+                }
+              ],
+              "reason": "The CV and the confirmed evidence both state explicitly that the candidate set portfolio priorities and investment cases across five markets, covering the multi-market scope of the requirement.",
+              "improvement": "Optionally add the scale of the portfolio or investment decisions (e.g. budget range or number of cases) and one outcome, if these are known and verifiable."
+            },
+            {
+              "requirementId": "r2",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:growth:1",
+                  "quote": "Launched a new channel with product, sales and local operations."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:growth",
+                  "quote": "Launched a new channel with product, sales and local operations."
+                }
+              ],
+              "reason": "Both the CV and the evidence library confirm launching a new channel in collaboration with product, sales and local operations teams, matching the requirement to lead launches with product and commercial teams.",
+              "improvement": "Consider stating the channel type and a measurable launch result (e.g. adoption, revenue contribution) if available, and clarify whether the candidate owned the launch end to end."
+            }
+          ],
+          "claims": [
+            {
+              "claimId": "profile",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "source:profile",
+                  "quote": "Commercial, operations and analytics leader."
+                },
+                {
+                  "id": "entry:growth",
+                  "quote": "Set portfolio priorities and investment cases across five markets.\nLaunched a new channel with product, sales and local operations."
+                },
+                {
+                  "id": "entry:operations",
+                  "quote": "Led and coached a multidisciplinary team of 14 people.\nIntroduced governance and risk reviews for a regulated programme."
+                }
+              ],
+              "reason": "Each sentence of the profile is reproduced from the confirmed profile, growth and operations evidence blocks without added numbers, seniority or causality."
+            },
+            {
+              "claimId": "section:growth:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:growth",
+                  "quote": "Set portfolio priorities and investment cases across five markets."
+                }
+              ],
+              "reason": "The required source entry:growth contains this statement verbatim."
+            },
+            {
+              "claimId": "section:growth:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:growth",
+                  "quote": "Launched a new channel with product, sales and local operations."
+                }
+              ],
+              "reason": "The required source entry:growth contains this statement verbatim."
+            },
+            {
+              "claimId": "section:operations:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:operations",
+                  "quote": "Led and coached a multidisciplinary team of 14 people."
+                }
+              ],
+              "reason": "The required source entry:operations contains this statement verbatim, including the team size of 14."
+            },
+            {
+              "claimId": "section:operations:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:operations",
+                  "quote": "Introduced governance and risk reviews for a regulated programme."
+                }
+              ],
+              "reason": "The required source entry:operations contains this statement verbatim."
+            },
+            {
+              "claimId": "section:analytics:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:analytics",
+                  "quote": "Built SQL reporting that shortened weekly decisions by two days."
+                }
+              ],
+              "reason": "The required source entry:analytics contains this statement verbatim, including the two-day outcome."
+            }
+          ]
+        },
+        "score": 100,
+        "availableEvidenceScore": 100
+      },
+      "pdfPath": "/Users/h_dryden/Documents/New project/christopher-production-review/docs/evaluations/cv-tailoring-contrast/strategy-director.pdf"
+    },
+    {
+      "roleId": "operations-director",
+      "title": "Operations Director",
+      "status": "passed",
+      "callStart": 3,
+      "pageCount": 1,
+      "allCareersPreserved": true,
+      "claimsSupported": true,
+      "score": 100,
+      "availableEvidenceScore": 100,
+      "tailoringPlan": {
+        "requirements": [
+          {
+            "requirementId": "r1",
+            "status": "demonstrated",
+            "evidence": [
+              {
+                "sourceId": "entry:operations:row:0",
+                "quote": "Led and coached a multidisciplinary team of 14 people."
+              }
+            ],
+            "reason": "The candidate explicitly states they led and coached a multidisciplinary team of 14 people, which directly satisfies the requirement to lead and coach a multidisciplinary team."
+          },
+          {
+            "requirementId": "r2",
+            "status": "demonstrated",
+            "evidence": [
+              {
+                "sourceId": "entry:operations:row:1",
+                "quote": "Introduced governance and risk reviews for a regulated programme."
+              }
+            ],
+            "reason": "The candidate introduced governance and risk reviews for a regulated programme, which matches establishing governance and risk reviews for regulated delivery."
+          },
+          {
+            "requirementId": "r3",
+            "status": "demonstrated",
+            "evidence": [
+              {
+                "sourceId": "entry:growth:row:1",
+                "quote": "Launched a new channel with product, sales and local operations."
+              }
+            ],
+            "reason": "The candidate launched a new channel working with product, sales and local operations, which directly covers coordinating launches with sales and local operations."
+          }
+        ],
+        "gapQuestions": []
+      },
+      "gapQuestions": [],
+      "selectedEvidenceIds": [
+        "people",
+        "risk",
+        "launch"
+      ],
+      "leadingEvidenceId": "people",
+      "callEnd": 6,
+      "calls": [
+        {
+          "callSite": "CV",
+          "model": "claude-fable-5-1",
+          "inputTokens": 722,
+          "outputTokens": 617,
+          "cacheReadTokens": 1812,
+          "cacheWriteTokens": 0,
+          "costUsd": 0.038523,
+          "durationMs": 8354,
+          "ok": true,
+          "refType": "synthetic-cv-evaluation",
+          "refId": "operations-director",
+          "stage": "planning"
+        },
+        {
+          "callSite": "CV",
+          "model": "claude-fable-5-1",
+          "inputTokens": 1818,
+          "outputTokens": 1060,
+          "cacheReadTokens": 2715,
+          "cacheWriteTokens": 0,
+          "costUsd": 0.071859,
+          "durationMs": 11820,
+          "ok": true,
+          "refType": "synthetic-cv-evaluation",
+          "refId": "operations-director",
+          "stage": "author"
+        },
+        {
+          "callSite": "CV",
+          "model": "claude-fable-5-1",
+          "inputTokens": 722,
+          "outputTokens": 1376,
+          "cacheReadTokens": 2830,
+          "cacheWriteTokens": 400,
+          "costUsd": 0.081728,
+          "durationMs": 14853,
+          "ok": true,
+          "refType": "synthetic-cv-evaluation",
+          "refId": "operations-director",
+          "stage": "assessment"
+        }
+      ],
+      "content": {
+        "theme": {
+          "version": 1,
+          "primary": "#000000",
+          "background": "#ffffff",
+          "surface": "#f2f2f2",
+          "pill": "#e6e6e6",
+          "introPanel": true,
+          "skillPills": true,
+          "font": "Christopher",
+          "maxPages": 3
+        },
+        "name": "Synthetic Candidate",
+        "contact": "London · synthetic@example.invalid",
+        "summary": "Commercial, operations and analytics leader. Led and coached a multidisciplinary team of 14 people, introduced governance and risk reviews for a regulated programme, and launched a new channel with product, sales and local operations.",
+        "summarySources": [
+          {
+            "sourceId": "source:profile",
+            "quote": "Commercial, operations and analytics leader."
+          },
+          {
+            "sourceId": "entry:operations:row:0",
+            "quote": "Led and coached a multidisciplinary team of 14 people."
+          },
+          {
+            "sourceId": "entry:operations:row:1",
+            "quote": "Introduced governance and risk reviews for a regulated programme."
+          },
+          {
+            "sourceId": "entry:growth:row:1",
+            "quote": "Launched a new channel with product, sales and local operations."
+          }
+        ],
+        "sections": [
+          {
+            "entryId": "growth",
+            "kind": "experience",
+            "heading": "Growth Director · Synthetic Growth Co · 2022 – Present",
+            "bullets": [
+              "Launched a new channel with product, sales and local operations.",
+              "Set portfolio priorities and investment cases across five markets."
+            ],
+            "bulletSources": [
+              [
+                {
+                  "sourceId": "entry:growth:row:1",
+                  "quote": "Launched a new channel with product, sales and local operations."
+                }
+              ],
+              [
+                {
+                  "sourceId": "entry:growth:row:0",
+                  "quote": "Set portfolio priorities and investment cases across five markets."
+                }
+              ]
+            ]
+          },
+          {
+            "entryId": "operations",
+            "kind": "experience",
+            "heading": "Operations Lead · Synthetic Operations Co · 2019 – 2022",
+            "bullets": [
+              "Led and coached a multidisciplinary team of 14 people.",
+              "Introduced governance and risk reviews for a regulated programme."
+            ],
+            "bulletSources": [
+              [
+                {
+                  "sourceId": "entry:operations:row:0",
+                  "quote": "Led and coached a multidisciplinary team of 14 people."
+                }
+              ],
+              [
+                {
+                  "sourceId": "entry:operations:row:1",
+                  "quote": "Introduced governance and risk reviews for a regulated programme."
+                }
+              ]
+            ]
+          },
+          {
+            "entryId": "analytics",
+            "kind": "experience",
+            "heading": "Senior Analyst · Synthetic Data Co · 2016 – 2019",
+            "bullets": [
+              "Built SQL reporting that shortened weekly decisions by two days."
+            ],
+            "bulletSources": [
+              [
+                {
+                  "sourceId": "entry:analytics:row:0",
+                  "quote": "Built SQL reporting that shortened weekly decisions by two days."
+                }
+              ]
+            ]
+          }
+        ],
+        "gaps": [
+          "No education, qualification or structured skills evidence is present in the library, so the CV contains no Education or Skills subsection.",
+          "Evidence for each role is limited to one or two confirmed lines; no further detail (team outcomes, launch results, programme scale) is available to expand bullets."
+        ],
+        "fitNotes": []
+      },
+      "assessment": {
+        "version": "2026-09-12.1",
+        "inputHash": "1eb3c003b3225a46e3335366c16a7f67f59dcf36389cb0ff4f116a0bf6e43bc4",
+        "model": "claude-fable-5-1",
+        "assessedAt": "2026-09-20T13:01:37.536Z",
+        "pageCount": 1,
+        "rubric": {
+          "requirements": [
+            {
+              "id": "r1",
+              "label": "Multidisciplinary team leadership",
+              "quote": "lead and coach a multidisciplinary team",
+              "importance": "essential",
+              "category": "experience"
+            },
+            {
+              "id": "r2",
+              "label": "Governance and risk",
+              "quote": "establish governance and risk reviews for regulated delivery",
+              "importance": "essential",
+              "category": "delivery"
+            },
+            {
+              "id": "r3",
+              "label": "Cross-functional launches",
+              "quote": "coordinate launches with sales and local operations",
+              "importance": "responsibility",
+              "category": "delivery"
+            }
+          ],
+          "caveats": []
+        },
+        "review": {
+          "matches": [
+            {
+              "requirementId": "r1",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:operations:0",
+                  "quote": "Led and coached a multidisciplinary team of 14 people."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:operations",
+                  "quote": "Led and coached a multidisciplinary team of 14 people."
+                }
+              ],
+              "reason": "The CV and the confirmed Operations Lead entry both state explicit leadership and coaching of a 14-person multidisciplinary team, satisfying the full requirement.",
+              "improvement": "Optionally name the disciplines represented and any coaching outcomes (e.g. promotions, capability uplift) to strengthen the evidence."
+            },
+            {
+              "requirementId": "r2",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:operations:1",
+                  "quote": "Introduced governance and risk reviews for a regulated programme."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:operations",
+                  "quote": "Introduced governance and risk reviews for a regulated programme."
+                }
+              ],
+              "reason": "Introducing governance and risk reviews for a regulated programme directly matches establishing governance and risk reviews for regulated delivery; the confirmed evidence supports it.",
+              "improvement": "Consider stating the regulatory regime and the effect of the reviews (e.g. audit findings, issues surfaced) if such outcomes exist."
+            },
+            {
+              "requirementId": "r3",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:growth:0",
+                  "quote": "Launched a new channel with product, sales and local operations."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:growth",
+                  "quote": "Launched a new channel with product, sales and local operations."
+                }
+              ],
+              "reason": "The CV and confirmed Growth Director entry describe launching a new channel jointly with sales and local operations, meeting the cross-functional launch coordination requirement.",
+              "improvement": "Optionally clarify your coordinating role and the launch result (markets, timeline) where known."
+            }
+          ],
+          "claims": [
+            {
+              "claimId": "profile",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "source:profile",
+                  "quote": "Commercial, operations and analytics leader."
+                },
+                {
+                  "id": "entry:operations",
+                  "quote": "Led and coached a multidisciplinary team of 14 people.\nIntroduced governance and risk reviews for a regulated programme."
+                },
+                {
+                  "id": "entry:growth",
+                  "quote": "Launched a new channel with product, sales and local operations."
+                }
+              ],
+              "reason": "Each component of the profile is grounded in confirmed evidence: the leader descriptor in the profile source, team leadership and governance in the Operations Lead entry, and the channel launch in the Growth Director entry."
+            },
+            {
+              "claimId": "section:growth:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:growth",
+                  "quote": "Launched a new channel with product, sales and local operations."
+                }
+              ],
+              "reason": "The required Growth Director source states the claim verbatim."
+            },
+            {
+              "claimId": "section:growth:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:growth",
+                  "quote": "Set portfolio priorities and investment cases across five markets."
+                }
+              ],
+              "reason": "The required Growth Director source states the claim verbatim, including the five-market scope."
+            },
+            {
+              "claimId": "section:operations:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:operations",
+                  "quote": "Led and coached a multidisciplinary team of 14 people."
+                }
+              ],
+              "reason": "The required Operations Lead source states the claim verbatim, including the team size."
+            },
+            {
+              "claimId": "section:operations:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:operations",
+                  "quote": "Introduced governance and risk reviews for a regulated programme."
+                }
+              ],
+              "reason": "The required Operations Lead source states the claim verbatim."
+            },
+            {
+              "claimId": "section:analytics:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:analytics",
+                  "quote": "Built SQL reporting that shortened weekly decisions by two days."
+                }
+              ],
+              "reason": "The required Senior Analyst source states the claim verbatim, including the two-day outcome."
+            }
+          ]
+        },
+        "score": 100,
+        "availableEvidenceScore": 100
+      },
+      "pdfPath": "/Users/h_dryden/Documents/New project/christopher-production-review/docs/evaluations/cv-tailoring-contrast/operations-director.pdf"
+    },
+    {
+      "roleId": "analytics-lead",
+      "title": "Analytics Lead",
+      "status": "passed",
+      "callStart": 6,
+      "pageCount": 1,
+      "allCareersPreserved": true,
+      "claimsSupported": true,
+      "score": 100,
+      "availableEvidenceScore": 100,
+      "tailoringPlan": {
+        "requirements": [
+          {
+            "requirementId": "r1",
+            "status": "demonstrated",
+            "evidence": [
+              {
+                "sourceId": "entry:analytics:row:0",
+                "quote": "Built SQL reporting that shortened weekly decisions by two days."
+              }
+            ],
+            "reason": "The candidate explicitly states they built SQL reporting, and that it was tied to weekly decisions, which satisfies building SQL reporting used for timely business decisions."
+          },
+          {
+            "requirementId": "r2",
+            "status": "demonstrated",
+            "evidence": [
+              {
+                "sourceId": "entry:analytics:row:0",
+                "quote": "Built SQL reporting that shortened weekly decisions by two days."
+              }
+            ],
+            "reason": "A specific, measurable improvement in decision speed is stated: weekly decisions shortened by two days as a result of the SQL reporting."
+          }
+        ],
+        "gapQuestions": []
+      },
+      "gapQuestions": [],
+      "selectedEvidenceIds": [
+        "analytics"
+      ],
+      "leadingEvidenceId": "analytics",
+      "callEnd": 9,
+      "calls": [
+        {
+          "callSite": "CV",
+          "model": "claude-fable-5-1",
+          "inputTokens": 670,
+          "outputTokens": 273,
+          "cacheReadTokens": 1812,
+          "cacheWriteTokens": 0,
+          "costUsd": 0.020803,
+          "durationMs": 6434,
+          "ok": true,
+          "refType": "synthetic-cv-evaluation",
+          "refId": "analytics-lead",
+          "stage": "planning"
+        },
+        {
+          "callSite": "CV",
+          "model": "claude-fable-5-1",
+          "inputTokens": 1640,
+          "outputTokens": 809,
+          "cacheReadTokens": 2715,
+          "cacheWriteTokens": 0,
+          "costUsd": 0.057529,
+          "durationMs": 11036,
+          "ok": true,
+          "refType": "synthetic-cv-evaluation",
+          "refId": "analytics-lead",
+          "stage": "author"
+        },
+        {
+          "callSite": "CV",
+          "model": "claude-fable-5-1",
+          "inputTokens": 674,
+          "outputTokens": 1154,
+          "cacheReadTokens": 2830,
+          "cacheWriteTokens": 404,
+          "costUsd": 0.070197,
+          "durationMs": 23342,
+          "ok": true,
+          "refType": "synthetic-cv-evaluation",
+          "refId": "analytics-lead",
+          "stage": "assessment"
+        }
+      ],
+      "content": {
+        "theme": {
+          "version": 1,
+          "primary": "#000000",
+          "background": "#ffffff",
+          "surface": "#f2f2f2",
+          "pill": "#e6e6e6",
+          "introPanel": true,
+          "skillPills": true,
+          "font": "Christopher",
+          "maxPages": 3
+        },
+        "name": "Synthetic Candidate",
+        "contact": "London · synthetic@example.invalid",
+        "summary": "Commercial, operations and analytics leader. Built SQL reporting that shortened weekly decisions by two days, led and coached a multidisciplinary team of 14 people, and set portfolio priorities and investment cases across five markets.",
+        "summarySources": [
+          {
+            "sourceId": "source:profile",
+            "quote": "Commercial, operations and analytics leader."
+          },
+          {
+            "sourceId": "entry:analytics:row:0",
+            "quote": "Built SQL reporting that shortened weekly decisions by two days."
+          },
+          {
+            "sourceId": "entry:operations:row:0",
+            "quote": "Led and coached a multidisciplinary team of 14 people."
+          },
+          {
+            "sourceId": "entry:growth:row:0",
+            "quote": "Set portfolio priorities and investment cases across five markets."
+          }
+        ],
+        "sections": [
+          {
+            "entryId": "growth",
+            "kind": "experience",
+            "heading": "Growth Director · Synthetic Growth Co · 2022 – Present",
+            "bullets": [
+              "Set portfolio priorities and investment cases across five markets.",
+              "Launched a new channel with product, sales and local operations."
+            ],
+            "bulletSources": [
+              [
+                {
+                  "sourceId": "entry:growth:row:0",
+                  "quote": "Set portfolio priorities and investment cases across five markets."
+                }
+              ],
+              [
+                {
+                  "sourceId": "entry:growth:row:1",
+                  "quote": "Launched a new channel with product, sales and local operations."
+                }
+              ]
+            ]
+          },
+          {
+            "entryId": "operations",
+            "kind": "experience",
+            "heading": "Operations Lead · Synthetic Operations Co · 2019 – 2022",
+            "bullets": [
+              "Led and coached a multidisciplinary team of 14 people.",
+              "Introduced governance and risk reviews for a regulated programme."
+            ],
+            "bulletSources": [
+              [
+                {
+                  "sourceId": "entry:operations:row:0",
+                  "quote": "Led and coached a multidisciplinary team of 14 people."
+                }
+              ],
+              [
+                {
+                  "sourceId": "entry:operations:row:1",
+                  "quote": "Introduced governance and risk reviews for a regulated programme."
+                }
+              ]
+            ]
+          },
+          {
+            "entryId": "analytics",
+            "kind": "experience",
+            "heading": "Senior Analyst · Synthetic Data Co · 2016 – 2019",
+            "bullets": [
+              "Built SQL reporting that shortened weekly decisions by two days."
+            ],
+            "bulletSources": [
+              [
+                {
+                  "sourceId": "entry:analytics:row:0",
+                  "quote": "Built SQL reporting that shortened weekly decisions by two days."
+                }
+              ]
+            ]
+          }
+        ],
+        "gaps": [
+          "No education or qualification entries are present in the library, so no Education section could be included.",
+          "No skills block is supplied, so no Skills subsection could be included.",
+          "The only SQL reporting evidence dates from the 2016–2019 Senior Analyst role; no recent hands-on analytics or SQL evidence is recorded for the 2019 onwards roles.",
+          "No industry descriptions are stored for any employer, so industryDescriptions were omitted."
+        ],
+        "fitNotes": []
+      },
+      "assessment": {
+        "version": "2026-09-12.1",
+        "inputHash": "9e574823e96a2e505948c6f51763d1e042df4f6128c4d46b3b5c1b793d09d7a3",
+        "model": "claude-fable-5-1",
+        "assessedAt": "2026-09-20T13:02:18.359Z",
+        "pageCount": 1,
+        "rubric": {
+          "requirements": [
+            {
+              "id": "r1",
+              "label": "SQL reporting for decisions",
+              "quote": "build SQL reporting used for timely business decisions",
+              "importance": "essential",
+              "category": "skills"
+            },
+            {
+              "id": "r2",
+              "label": "Measurable reporting improvement",
+              "quote": "show a measurable improvement in reporting or decision speed",
+              "importance": "essential",
+              "category": "delivery"
+            }
+          ],
+          "caveats": []
+        },
+        "review": {
+          "matches": [
+            {
+              "requirementId": "r1",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:analytics:0",
+                  "quote": "Built SQL reporting that shortened weekly decisions by two days."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:analytics",
+                  "quote": "Built SQL reporting that shortened weekly decisions by two days."
+                }
+              ],
+              "reason": "The CV and the confirmed library both state the candidate built SQL reporting that directly accelerated weekly business decisions, satisfying the requirement to build SQL reporting used for timely decisions.",
+              "improvement": "Optionally add the reporting scope (data volume, tools alongside SQL, decision-makers served) to strengthen the evidence."
+            },
+            {
+              "requirementId": "r2",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:analytics:0",
+                  "quote": "Built SQL reporting that shortened weekly decisions by two days."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:analytics",
+                  "quote": "Built SQL reporting that shortened weekly decisions by two days."
+                }
+              ],
+              "reason": "A quantified decision-speed improvement (two days per weekly cycle) is stated in both the CV and the confirmed library, meeting the requirement for a measurable improvement in decision speed.",
+              "improvement": "Consider stating the baseline (e.g. previous decision cycle length) so the two-day reduction is contextualised."
+            }
+          ],
+          "claims": [
+            {
+              "claimId": "profile",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "source:profile",
+                  "quote": "Commercial, operations and analytics leader."
+                },
+                {
+                  "id": "entry:analytics",
+                  "quote": "Built SQL reporting that shortened weekly decisions by two days."
+                },
+                {
+                  "id": "entry:operations",
+                  "quote": "Led and coached a multidisciplinary team of 14 people."
+                },
+                {
+                  "id": "entry:growth",
+                  "quote": "Set portfolio priorities and investment cases across five markets."
+                }
+              ],
+              "reason": "Each component of the profile summary is matched verbatim by the confirmed profile source and the respective role entries, with no added seniority, numbers or scope."
+            },
+            {
+              "claimId": "section:growth:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:growth",
+                  "quote": "Set portfolio priorities and investment cases across five markets."
+                }
+              ],
+              "reason": "The required source entry:growth contains the identical statement."
+            },
+            {
+              "claimId": "section:growth:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:growth",
+                  "quote": "Launched a new channel with product, sales and local operations."
+                }
+              ],
+              "reason": "The required source entry:growth contains the identical statement."
+            },
+            {
+              "claimId": "section:operations:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:operations",
+                  "quote": "Led and coached a multidisciplinary team of 14 people."
+                }
+              ],
+              "reason": "The required source entry:operations contains the identical statement including the team size."
+            },
+            {
+              "claimId": "section:operations:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:operations",
+                  "quote": "Introduced governance and risk reviews for a regulated programme."
+                }
+              ],
+              "reason": "The required source entry:operations contains the identical statement."
+            },
+            {
+              "claimId": "section:analytics:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:analytics",
+                  "quote": "Built SQL reporting that shortened weekly decisions by two days."
+                }
+              ],
+              "reason": "The required source entry:analytics contains the identical statement including the two-day outcome."
+            }
+          ]
+        },
+        "score": 100,
+        "availableEvidenceScore": 100
+      },
+      "pdfPath": "/Users/h_dryden/Documents/New project/christopher-production-review/docs/evaluations/cv-tailoring-contrast/analytics-lead.pdf"
+    }
+  ],
+  "provider": {
+    "status": "passed",
+    "models": [
+      {
+        "model": "claude-fable-5-1",
+        "passed": true,
+        "providerId": "claude-fable-5-1",
+        "price": {
+          "input": 10,
+          "output": 50,
+          "cacheRead": 0.25
+        }
+      }
+    ],
+    "limitations": "Model metadata access only; generation quality, streaming behaviour and billing are separate checks."
+  },
+  "contrast": {
+    "passed": true,
+    "distinctPlans": true,
+    "rows": [
+      {
+        "roleId": "strategy-director",
+        "ownHits": 3,
+        "otherHits": 4,
+        "vocabularyContrast": false,
+        "provenanceUseful": true,
+        "missingExpected": [],
+        "leadingEvidenceId": "portfolio",
+        "selectedEvidenceIds": [
+          "portfolio",
+          "launch"
+        ]
+      },
+      {
+        "roleId": "operations-director",
+        "ownHits": 3,
+        "otherHits": 1,
+        "vocabularyContrast": true,
+        "provenanceUseful": true,
+        "missingExpected": [],
+        "leadingEvidenceId": "people",
+        "selectedEvidenceIds": [
+          "people",
+          "risk",
+          "launch"
+        ]
+      },
+      {
+        "roleId": "analytics-lead",
+        "ownHits": 4,
+        "otherHits": 5,
+        "vocabularyContrast": false,
+        "provenanceUseful": true,
+        "missingExpected": [],
+        "leadingEvidenceId": "analytics",
+        "selectedEvidenceIds": [
+          "analytics"
+        ]
+      }
+    ]
+  },
+  "budget": {
+    "capUsd": 3.5,
+    "spentUsd": 1.2235949999999998,
+    "heldUsd": 0,
+    "remainingUsd": 2.2764050000000005,
+    "calls": [
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 677,
+        "outputTokens": 828,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 1812,
+        "costUsd": 0.07082,
+        "durationMs": 12496,
+        "ok": true,
+        "refType": "synthetic-cv-evaluation",
+        "refId": "strategy-director",
+        "stage": "planning"
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 1816,
+        "outputTokens": 855,
+        "cacheReadTokens": 2715,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.061589,
+        "durationMs": 10867,
+        "ok": true,
+        "refType": "synthetic-cv-evaluation",
+        "refId": "strategy-director",
+        "stage": "author"
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 698,
+        "outputTokens": 1170,
+        "cacheReadTokens": 2830,
+        "cacheWriteTokens": 421,
+        "costUsd": 0.07145,
+        "durationMs": 15896,
+        "ok": true,
+        "refType": "synthetic-cv-evaluation",
+        "refId": "strategy-director",
+        "stage": "assessment"
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 722,
+        "outputTokens": 617,
+        "cacheReadTokens": 1812,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.038523,
+        "durationMs": 8354,
+        "ok": true,
+        "refType": "synthetic-cv-evaluation",
+        "refId": "operations-director",
+        "stage": "planning"
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 1818,
+        "outputTokens": 1060,
+        "cacheReadTokens": 2715,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.071859,
+        "durationMs": 11820,
+        "ok": true,
+        "refType": "synthetic-cv-evaluation",
+        "refId": "operations-director",
+        "stage": "author"
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 722,
+        "outputTokens": 1376,
+        "cacheReadTokens": 2830,
+        "cacheWriteTokens": 400,
+        "costUsd": 0.081728,
+        "durationMs": 14853,
+        "ok": true,
+        "refType": "synthetic-cv-evaluation",
+        "refId": "operations-director",
+        "stage": "assessment"
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 670,
+        "outputTokens": 273,
+        "cacheReadTokens": 1812,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.020803,
+        "durationMs": 6434,
+        "ok": true,
+        "refType": "synthetic-cv-evaluation",
+        "refId": "analytics-lead",
+        "stage": "planning"
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 1640,
+        "outputTokens": 809,
+        "cacheReadTokens": 2715,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.057529,
+        "durationMs": 11036,
+        "ok": true,
+        "refType": "synthetic-cv-evaluation",
+        "refId": "analytics-lead",
+        "stage": "author"
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 674,
+        "outputTokens": 1154,
+        "cacheReadTokens": 2830,
+        "cacheWriteTokens": 404,
+        "costUsd": 0.070197,
+        "durationMs": 23342,
+        "ok": true,
+        "refType": "synthetic-cv-evaluation",
+        "refId": "analytics-lead",
+        "stage": "assessment"
+      }
+    ]
+  }
+}

@@ -221,6 +221,20 @@ export class PoliteFetcher {
 
   constructor(private readonly opts: FetcherOptions) {}
 
+  /** Enforce the configured robots policy before a browser top-level navigation. */
+  async assertRobotsAllowed(url: string): Promise<void> {
+    return this.assertRobotsAllowedFor(url, "browser");
+  }
+
+  private async assertRobotsAllowedFor(url: string, via: "http" | "browser"): Promise<void> {
+    const u = new URL(url);
+    if (ats.isAtsHost(u.hostname) || !this.opts.respectRobots || !(await this.opts.respectRobots())) return;
+    if (await this.robotsAllows(url)) return;
+    this.opts.traffic?.reason(u.hostname, via, "robotsDenied");
+    log.info(`${via} robots denied`, { host: u.hostname, url });
+    throw new SourceFetchError(`robots.txt disallows ${url}`, "blocked", 999);
+  }
+
   /**
    * Apply the host map (tests only) and return the URL to actually request plus the Host header
    * to present. When a map is configured it is exhaustive: a host it does not name is reported as
@@ -511,15 +525,7 @@ export class PoliteFetcher {
 
   async fetchText(url: string, init: FetchInit = {}): Promise<FetchResponse> {
     const u = new URL(url);
-    const isFeedHost = ats.isAtsHost(u.hostname);
-    if (!isFeedHost && this.opts.respectRobots && (await this.opts.respectRobots())) {
-      if (!(await this.robotsAllows(url))) {
-        // No request is made, so this is counted as a denial rather than as traffic.
-        this.opts.traffic?.reason(u.hostname, "http", "robotsDenied");
-        log.info("http robots denied", { host: u.hostname, url });
-        throw new SourceFetchError(`robots.txt disallows ${url}`, "blocked", 999);
-      }
-    }
+    await this.assertRobotsAllowedFor(url, "http");
     const res = await this.rawFetch(url, init);
     const challenge = () => CHALLENGE_MARKERS.some((re) => re.test(res.body.slice(0, 20_000)));
     if (res.status === 429 || res.status === 503) {
@@ -555,15 +561,7 @@ export class PoliteFetcher {
    */
   async fetchBytes(url: string, init: FetchInit = {}): Promise<FetchBytesResponse> {
     const u = new URL(url);
-    const isFeedHost = ats.isAtsHost(u.hostname);
-    if (!isFeedHost && this.opts.respectRobots && (await this.opts.respectRobots())) {
-      if (!(await this.robotsAllows(url))) {
-        // No request is made, so this is counted as a denial rather than as traffic.
-        this.opts.traffic?.reason(u.hostname, "http", "robotsDenied");
-        log.info("http robots denied", { host: u.hostname, url });
-        throw new SourceFetchError(`robots.txt disallows ${url}`, "blocked", 999);
-      }
-    }
+    await this.assertRobotsAllowedFor(url, "http");
     const res = await this.rawFetchBytes(url, init);
     if (res.status === 429 || res.status === 503) {
       await this.opts.deferHost?.(u.hostname, retryAfterMs(res.headers));

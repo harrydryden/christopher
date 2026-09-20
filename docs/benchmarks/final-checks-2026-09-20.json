@@ -1,0 +1,36 @@
+{
+  "at": "2026-09-20T09:55:48.700382+00:00",
+  "node": "22.18.0",
+  "sourceBase": "519fbc6",
+  "branch": "codex/production-review-20260920",
+  "tests": {
+    "worker": {
+      "passed": 281,
+      "failed": 0,
+      "files": 26,
+      "includesChromium": true
+    },
+    "web": {
+      "passed": 494,
+      "failed": 0,
+      "files": 62
+    },
+    "releaseScripts": {
+      "passed": 33,
+      "failed": 0
+    }
+  },
+  "allPackageTypechecks": "passed",
+  "productionWebBuild": "passed",
+  "restoredAppSmoke": "passed",
+  "revokedSessionHttpStatus": 401,
+  "localWorker512MiBHeadroom": "failed",
+  "localWorker1024MiBHeadroom": "passed",
+  "hostedCapacityGate": "open",
+  "productionReleaseAccepted": false,
+  "limitations": [
+    "Full core/AI suites were not rerun in this final follow-up; their implementations were unchanged.",
+    "Local capacity is a bounded synthetic workload, not hosted acceptance.",
+    "Managed application recovery, runtime rollback, broad independently labelled accuracy, alert delivery and hosted release verification remain open."
+  ]
+}

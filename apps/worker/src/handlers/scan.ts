@@ -924,12 +924,19 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
     const captures = rendered.listingPages?.length ? rendered.listingPages : [{ html: rendered.html, url: rendered.finalUrl }];
     const outcomes: HtmlScanOutcome[] = [];
     let incomplete = rendered.incomplete ?? false;
+    let incompleteReason = incomplete ? "Browser pagination could not complete; a control was blocked, did not advance, or reached its limit." : undefined;
     for (const capture of captures) {
-      try { outcomes.push(await scanHtmlPage(deps, spec, source, ctx, captures.length === 1 ? cached : undefined, capture)); }
+      try {
+        const outcome = await scanHtmlPage(deps, spec, source, ctx, captures.length === 1 ? cached : undefined, capture);
+        outcomes.push(outcome);
+        incomplete ||= outcome.incomplete ?? false;
+        incompleteReason ??= outcome.incompleteReason;
+      }
       catch (error) { if (!outcomes.length) throw error; incomplete = true; }
     }
     return { postings: keyPostings(outcomes.flatMap(p => p.postings)).keyed, method: "browser", dropped: outcomes.reduce((n, p) => n + p.dropped, 0),
-      contentHash: sha1(captures.map(p => p.html).join("|")), unchanged: false, httpHash, renderedAt: deps.now().toISOString(), incomplete, incompleteReason: incomplete ? "Browser pagination could not complete; a control was blocked, did not advance, or reached its limit." : undefined, traversed: true };
+      contentHash: sha1(captures.map(p => p.html).join("|")), unchanged: false, httpHash, renderedAt: deps.now().toISOString(), incomplete,
+      incompleteReason: incomplete ? incompleteReason ?? "Browser pagination could not complete; a control was blocked, did not advance, or reached its limit." : undefined, traversed: true };
 
   }
 
@@ -938,6 +945,9 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
 
   if (postings.length === 0 && unchanged && cached?.postings.length) postings = cached.postings;
   if (postings.length > 0) return { postings, method, dropped: 0, contentHash, unchanged, html, finalUrl, httpHash };
+  if (ats.isExplicitEmptyListing(html, finalUrl)) {
+    return { postings: [], method, dropped: 0, contentHash, unchanged, html, finalUrl, httpHash };
+  }
   if (unchanged || !deps.ai.enabled || (await aiBudgetExceeded(deps))) {
     throw new SourceFetchError("HTML extraction found no verifiable postings; cannot establish a successful empty scan", "parse");
   }
@@ -955,13 +965,28 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
     remote: p.location ? /remote/i.test(p.location) || undefined : undefined,
   }));
 
+  const visibleUrls = new Set(compact.knownUrls.map(normalisePostingUrl));
+  const modelUrls = new Set(modelPostings.map(posting => normalisePostingUrl(posting.url)));
+  const omittedVisiblePrevious = (cached?.postings ?? []).filter(posting => {
+    const url = normalisePostingUrl(posting.url);
+    return visibleUrls.has(url) && !modelUrls.has(url);
+  });
+  const incomplete = compact.truncated || omittedVisiblePrevious.length > 0;
+  const incompleteReason = compact.truncated
+    ? "Model extraction used a truncated listing representation; this scan cannot prove the complete set of postings."
+    : omittedVisiblePrevious.length > 0
+      ? `Model extraction omitted ${omittedVisiblePrevious.length} previously observed posting URL(s) still visible on the listing; this scan cannot close roles.`
+      : undefined;
+
   let recipe: HtmlRecipe | undefined;
-  if (extraction.recipe) {
+  if (extraction.recipe && !incomplete) {
     const validation = ats.validateRecipe(html, finalUrl, extraction.recipe, modelPostings);
     if (validation.ok) recipe = extraction.recipe;
     else log.info("model recipe rejected", { url: finalUrl, coverage: validation.coverage });
   }
-  return { postings: modelPostings, method, dropped: extraction.dropped, contentHash, unchanged, recipe, html, finalUrl };
+  return { postings: modelPostings, method, dropped: extraction.dropped, contentHash, unchanged, recipe, html, finalUrl,
+    incomplete,
+    incompleteReason };
 }
 
 export { scanSource as _scanSourceForTests };

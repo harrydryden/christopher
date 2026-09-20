@@ -1,7 +1,7 @@
 /** Pure retention decisions; callers supply metadata in newest-created order. */
 export type CvRetentionRow = {
   id: string;
-  status: "queued" | "generating" | "ready" | "failed";
+  status: "queued" | "generating" | "awaiting_evidence" | "ready" | "failed";
   archivedAt: Date | null;
 };
 export type CvRetentionPlan = {
@@ -17,7 +17,7 @@ export type CvRetentionPlan = {
  * the build then spent the rest of its model calls on a row that was no longer there.
  */
 export function cvBuildInFlight(row: Pick<CvRetentionRow, "status">): boolean {
-  return row.status === "queued" || row.status === "generating";
+  return row.status === "queued" || row.status === "generating" || row.status === "awaiting_evidence";
 }
 
 function plan(

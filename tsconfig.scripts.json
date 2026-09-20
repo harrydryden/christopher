@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": false
+  },
+  "include": [
+    "scripts/evaluate-cv.ts",
+    "scripts/evaluate-cv-tailoring.ts",
+    "scripts/evaluate-discovery-ai.ts",
+    "scripts/evaluate-extraction-ai.ts",
+    "scripts/extraction-accuracy-capture.ts"
+  ]
+}

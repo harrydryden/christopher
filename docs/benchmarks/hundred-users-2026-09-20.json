@@ -1,0 +1,124 @@
+{
+  "at": "2026-09-20T07:40:28.769Z",
+  "node": "v22.18.0",
+  "cpu": "Apple M4",
+  "users": 100,
+  "companies": 20,
+  "sharedJobs": 1000,
+  "userJobRows": 100000,
+  "samples": [
+    {
+      "concurrency": 10,
+      "seconds": 6.29,
+      "requestsPerSecond": 95.39,
+      "requests": 600,
+      "errors": 0,
+      "p50Ms": 89,
+      "p95Ms": 215,
+      "maxMs": 379,
+      "routes": {
+        "/?view=auto-matched": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 127,
+          "p95Ms": 173,
+          "maxMs": 255
+        },
+        "/companies": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 203,
+          "p95Ms": 287,
+          "maxMs": 379
+        },
+        "/applications": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 81,
+          "p95Ms": 109,
+          "maxMs": 193
+        },
+        "/library": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 89,
+          "p95Ms": 125,
+          "maxMs": 194
+        },
+        "/health": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 81,
+          "p95Ms": 112,
+          "maxMs": 166
+        },
+        "/api/work-status": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 34,
+          "p95Ms": 46,
+          "maxMs": 70
+        }
+      },
+      "failures": []
+    },
+    {
+      "concurrency": 100,
+      "seconds": 6.33,
+      "requestsPerSecond": 94.79,
+      "requests": 600,
+      "errors": 0,
+      "p50Ms": 1072,
+      "p95Ms": 1415,
+      "maxMs": 1694,
+      "routes": {
+        "/?view=auto-matched": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 1369,
+          "p95Ms": 1609,
+          "maxMs": 1694
+        },
+        "/companies": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 1207,
+          "p95Ms": 1472,
+          "maxMs": 1666
+        },
+        "/applications": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 1060,
+          "p95Ms": 1265,
+          "maxMs": 1421
+        },
+        "/library": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 1074,
+          "p95Ms": 1288,
+          "maxMs": 1442
+        },
+        "/health": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 1063,
+          "p95Ms": 1288,
+          "maxMs": 1409
+        },
+        "/api/work-status": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 524,
+          "p95Ms": 671,
+          "maxMs": 795
+        }
+      },
+      "failures": []
+    }
+  ],
+  "limitations": "Local single Next.js process and PostgreSQL 16 container; warm authenticated reads with no think time. Sessions are seeded, so login/password hashing, concurrent writes, AI, browser jobs, provider/network latency, serverless connection fan-out and sustained soak behaviour are not measured. This is a capacity probe, not production certification.",
+  "concurrentHostActivity": "Regression tests and, during part of the worker run, browser smoke checks used separate databases on the same host/container. Results are observations, not isolated hardware capacity limits.",
+  "fixtureLimits": "Roles and company subscriptions are populated. Applications and Library pages are empty-state reads. No AI calls, real sign-in, populated CV documents or mixed write load are included."
+}

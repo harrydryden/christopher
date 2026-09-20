@@ -187,7 +187,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     // The row that was just added takes the caret, so it can be typed into straight away.
     assert.match(await page.evaluate(() => document.activeElement?.id ?? ""), /^responsibility-/);
     await page
-      .getByRole("textbox", { name: "Smoke Co Operations Lead responsibility 1", exact: true })
+      .getByRole("textbox", { name: "Smoke Co Operations Lead evidence 1", exact: true })
       .fill("Ran the smoke estate end to end every morning.");
     assert.match(await smokeJob.innerText(), /0 of 1 row confirmed · draft/);
     await smokeJob.getByRole("button", { name: "Confirm all", exact: true }).click();
@@ -290,7 +290,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     const priced = (line) => Number(/about .{0,3}\$(\d+\.\d\d)/.exec(line)[1]);
     const [direct, rebuild] = actions.split("\n");
     assert.match(direct, /^Save Direct Edits · keeps your wording, re-checks it · about .{0,3}\$\d+\.\d\d$/);
-    assert.match(rebuild, /^Rebuild from Library · rewrites from the latest Library · about .{0,3}\$\d+\.\d\d$/);
+    assert.match(rebuild, /^Rebuild from Library · plans and rewrites from the latest Library; includes one improvement pass if useful · about .{0,3}\$\d+\.\d\d$/);
     assert.ok(
       priced(direct) < priced(rebuild),
       `keeping the wording must cost less than writing it again: ${actions}`,

@@ -94,6 +94,13 @@ describe("polite fetcher", () => {
     await expect(f.fetchText("https://www.example.test/private/public")).resolves.toMatchObject({ status: 200 });
   });
 
+  it("applies the same robots policy to browser navigation guards", async () => {
+    const f = fetcher();
+    await expect(f.assertRobotsAllowed("https://www.example.test/private/secret")).rejects.toMatchObject({ kind: "blocked", status: 999 });
+    await expect(f.assertRobotsAllowed("https://www.example.test/private/public")).resolves.toBeUndefined();
+    await expect(f.assertRobotsAllowed("https://blocked.test/403")).resolves.toBeUndefined();
+  });
+
   it("can be told to ignore robots.txt", async () => {
     const f = fetcher({ respectRobots: () => false });
     await expect(f.fetchText("https://www.example.test/private/secret")).resolves.toMatchObject({ status: 200 });

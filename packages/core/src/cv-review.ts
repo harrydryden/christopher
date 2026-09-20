@@ -20,6 +20,8 @@ import {
   type CvReviewPlan,
   type CvTextItem,
 } from "./cv-assessment";
+export { mentionsDemographicAttribute } from "./cv-demographics";
+import { mentionsDemographicAttribute } from "./cv-demographics";
 
 const normalise = (value: string) =>
   value.normalize("NFKC").replace(/\s+/g, " ").trim();
@@ -27,15 +29,6 @@ function anchored(value: string, full: string) {
   return normalise(full).includes(normalise(value));
 }
 export { anchored as cvQuoteIsAnchored };
-/**
- * Attributes a recruitment judgement may never rest on, however a page or a model phrases it.
- * One list, so the rubric validator and the evidence review refuse the same things.
- */
-const DEMOGRAPHIC_ATTRIBUTES =
-  /\b(gender|ethnicity|race|religion|marital status|sexual orientation|date of birth)\b/i;
-export function mentionsDemographicAttribute(text: string): boolean {
-  return DEMOGRAPHIC_ATTRIBUTES.test(text);
-}
 export function validateCvRubric(
   description: string,
   value: unknown,

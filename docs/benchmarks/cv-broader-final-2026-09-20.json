@@ -1,0 +1,948 @@
+{
+  "at": "2026-09-20T12:08:46.960Z",
+  "status": "automated_checks_passed",
+  "model": "claude-fable-5-1",
+  "priceSource": "https://platform.claude.com/docs/en/about-claude/pricing",
+  "pricesCheckedAt": "2026-09-20",
+  "syntheticCandidate": true,
+  "releaseAccepted": false,
+  "suite": "representative",
+  "budgetGuardrail": "The USD limit is a conservative admission estimate. Actual provider usage is recorded and can exceed the estimate; it is not an exact billing guarantee.",
+  "provider": {
+    "status": "passed",
+    "models": [
+      {
+        "model": "claude-fable-5-1",
+        "passed": true,
+        "providerId": "claude-fable-5-1",
+        "price": {
+          "input": 10,
+          "output": 50,
+          "cacheRead": 0.25
+        }
+      }
+    ],
+    "limitations": "Model metadata access only; generation quality, streaming behaviour and billing are separate checks."
+  },
+  "results": [],
+  "representativeResults": [
+    {
+      "name": "multi-role-senior",
+      "status": "passed",
+      "pdfPath": "docs/benchmarks/cv-broader-final-2026-09-20-multi-role-senior.pdf",
+      "deterministic": {
+        "passed": true,
+        "missingEntries": [],
+        "missingHeadings": [],
+        "missingSkills": [],
+        "missingSectionText": [],
+        "inventedDatePrecision": [],
+        "lexicalReview": [],
+        "pageLimit": 2,
+        "pageCount": 1
+      },
+      "rubricGroundTruth": {
+        "passed": true,
+        "intentIds": {
+          "lead several operational teams": "r1",
+          "own an annual operating plan": "r2",
+          "report to executive stakeholders": "r3"
+        },
+        "missingIntents": [],
+        "injectedRequirements": []
+      },
+      "passed": true,
+      "requirementGroundTruth": {
+        "passed": true,
+        "findings": [
+          {
+            "intent": "lead several operational teams",
+            "allowed": [
+              "demonstrated"
+            ],
+            "requirementId": "r1",
+            "cvStatus": "demonstrated",
+            "libraryStatus": "demonstrated",
+            "passed": true
+          },
+          {
+            "intent": "own an annual operating plan",
+            "allowed": [
+              "demonstrated"
+            ],
+            "requirementId": "r2",
+            "cvStatus": "demonstrated",
+            "libraryStatus": "demonstrated",
+            "passed": true
+          },
+          {
+            "intent": "report to executive stakeholders",
+            "allowed": [
+              "demonstrated"
+            ],
+            "requirementId": "r3",
+            "cvStatus": "demonstrated",
+            "libraryStatus": "demonstrated",
+            "passed": true
+          }
+        ]
+      },
+      "assessorPassed": true,
+      "claimFlags": [],
+      "content": {
+        "theme": {
+          "version": 1,
+          "primary": "#000000",
+          "background": "#ffffff",
+          "surface": "#f2f2f2",
+          "pill": "#e6e6e6",
+          "introPanel": true,
+          "skillPills": true,
+          "font": "Christopher",
+          "maxPages": 2
+        },
+        "name": "Synthetic Candidate",
+        "contact": "London",
+        "summary": "Operations leader with experience as Operations Director at North Works, leading three operational teams and owning the annual operating plan. Reports monthly operating risks to the executive committee. Earlier career in operations management and analysis, including service scheduling across two regions and weekly inventory reporting.",
+        "sections": [
+          {
+            "entryId": "recent-evidence",
+            "kind": "experience",
+            "heading": "Operations Director · North Works · 2021 – Present",
+            "bullets": [
+              "Led three operational teams.",
+              "Owned the annual operating plan.",
+              "Reported monthly operating risks to the executive committee."
+            ]
+          },
+          {
+            "entryId": "middle-evidence",
+            "kind": "experience",
+            "heading": "Operations Manager · West Services · 2017 – 2021",
+            "bullets": [
+              "Managed service scheduling for two regions."
+            ]
+          },
+          {
+            "entryId": "early-evidence",
+            "kind": "experience",
+            "heading": "Analyst · East Supply · 2013 – 2017",
+            "bullets": [
+              "Prepared weekly inventory reports."
+            ]
+          }
+        ],
+        "gaps": [
+          "No education or qualification evidence is stored in the library, so no Education section could be produced.",
+          "No skills evidence is stored, so no Skills section could be produced.",
+          "No industry descriptions are stored for any employer, so industryDescriptions arrays have been omitted.",
+          "Evidence is sparse: no numbers for team sizes, plan scale, budgets or outcomes are recorded, so bullets have been kept to the confirmed responsibilities only.",
+          "Requirement r3 (report to executive stakeholders) is supported only by monthly operating risk reporting to the executive committee; no other executive stakeholder engagement is evidenced."
+        ],
+        "fitNotes": []
+      },
+      "assessment": {
+        "version": "2026-09-12.1",
+        "inputHash": "9a05acdda7bfcca7805854c34c4c54d73626be78fe218bddf72689fd68c1137d",
+        "model": "claude-fable-5-1",
+        "assessedAt": "2026-09-20T12:09:21.088Z",
+        "pageCount": 1,
+        "rubric": {
+          "requirements": [
+            {
+              "id": "r1",
+              "label": "Lead several operational teams",
+              "quote": "lead several operational teams",
+              "importance": "essential",
+              "category": "experience"
+            },
+            {
+              "id": "r2",
+              "label": "Own an annual operating plan",
+              "quote": "own an annual operating plan",
+              "importance": "essential",
+              "category": "delivery"
+            },
+            {
+              "id": "r3",
+              "label": "Report to executive stakeholders",
+              "quote": "report to executive stakeholders",
+              "importance": "desirable",
+              "category": "experience"
+            }
+          ],
+          "caveats": [
+            "The description is extremely brief and lacks context such as job title, industry, team size, seniority, qualifications, location or working arrangements, limiting the depth of assessment.",
+            "Requirements are stated as activities rather than measurable criteria; no numeric thresholds (e.g. number of teams, plan scale) are given, so assessment of 'several' and 'annual operating plan' ownership is subjective.",
+            "No technical, domain, education or logistics requirements are stated, so none have been inferred."
+          ]
+        },
+        "review": {
+          "matches": [
+            {
+              "requirementId": "r1",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:recent-evidence:0",
+                  "quote": "Led three operational teams."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:recent-evidence",
+                  "quote": "Led three operational teams."
+                }
+              ],
+              "reason": "CV and evidence library both state the candidate led three operational teams as Operations Director, satisfying 'several operational teams'.",
+              "improvement": "Add team sizes, functions and any measurable outcomes of the leadership to strengthen the evidence."
+            },
+            {
+              "requirementId": "r2",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:recent-evidence:1",
+                  "quote": "Owned the annual operating plan."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:recent-evidence",
+                  "quote": "Owned the annual operating plan."
+                }
+              ],
+              "reason": "Explicit ownership of the annual operating plan is stated in both the CV and the confirmed evidence.",
+              "improvement": "State the scale of the plan (budget, scope) and delivery results against it, if available."
+            },
+            {
+              "requirementId": "r3",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:recent-evidence:2",
+                  "quote": "Reported monthly operating risks to the executive committee."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:recent-evidence",
+                  "quote": "Reported monthly operating risks to the executive committee."
+                }
+              ],
+              "reason": "Monthly risk reporting to the executive committee is explicit evidence of reporting to executive stakeholders.",
+              "improvement": "Optionally note the content of the reporting and any decisions or actions it informed."
+            }
+          ],
+          "claims": [
+            {
+              "claimId": "profile",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:recent-evidence",
+                  "quote": "Operations Director · North Works · 2021 – Present\nLed three operational teams.\nOwned the annual operating plan.\nReported monthly operating risks to the executive committee."
+                },
+                {
+                  "id": "entry:middle-evidence",
+                  "quote": "Managed service scheduling for two regions."
+                },
+                {
+                  "id": "entry:early-evidence",
+                  "quote": "Prepared weekly inventory reports."
+                }
+              ],
+              "reason": "Every element of the profile (title, employer, three teams, plan ownership, monthly executive risk reporting, two-region scheduling, weekly inventory reporting) is grounded in the corresponding evidence entries."
+            },
+            {
+              "claimId": "section:recent-evidence:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:recent-evidence",
+                  "quote": "Led three operational teams."
+                }
+              ],
+              "reason": "Verbatim match in the required source."
+            },
+            {
+              "claimId": "section:recent-evidence:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:recent-evidence",
+                  "quote": "Owned the annual operating plan."
+                }
+              ],
+              "reason": "Verbatim match in the required source."
+            },
+            {
+              "claimId": "section:recent-evidence:2",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:recent-evidence",
+                  "quote": "Reported monthly operating risks to the executive committee."
+                }
+              ],
+              "reason": "Verbatim match in the required source."
+            },
+            {
+              "claimId": "section:middle-evidence:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:middle-evidence",
+                  "quote": "Managed service scheduling for two regions."
+                }
+              ],
+              "reason": "Verbatim match in the required source."
+            },
+            {
+              "claimId": "section:early-evidence:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:early-evidence",
+                  "quote": "Prepared weekly inventory reports."
+                }
+              ],
+              "reason": "Verbatim match in the required source."
+            }
+          ]
+        },
+        "score": 100,
+        "availableEvidenceScore": 100
+      },
+      "humanReview": "required: inspect this generated PDF for layout, lexical review flags and factual grounding"
+    },
+    {
+      "name": "long-document-layout",
+      "status": "passed",
+      "pdfPath": "docs/benchmarks/cv-broader-final-2026-09-20-long-document-layout.pdf",
+      "deterministic": {
+        "passed": true,
+        "missingEntries": [],
+        "missingHeadings": [],
+        "missingSkills": [],
+        "missingSectionText": [],
+        "inventedDatePrecision": [],
+        "lexicalReview": [],
+        "pageLimit": 2,
+        "pageCount": 2
+      },
+      "rubricGroundTruth": {
+        "passed": true,
+        "intentIds": {
+          "lead service delivery": "r1",
+          "manage supplier performance": "r2",
+          "improve operational reporting": "r3"
+        },
+        "missingIntents": [],
+        "injectedRequirements": []
+      },
+      "passed": true,
+      "requirementGroundTruth": {
+        "passed": true,
+        "findings": [
+          {
+            "intent": "lead service delivery",
+            "allowed": [
+              "demonstrated"
+            ],
+            "requirementId": "r1",
+            "cvStatus": "demonstrated",
+            "libraryStatus": "demonstrated",
+            "passed": true
+          },
+          {
+            "intent": "manage supplier performance",
+            "allowed": [
+              "partial",
+              "demonstrated"
+            ],
+            "requirementId": "r2",
+            "cvStatus": "partial",
+            "libraryStatus": "partial",
+            "passed": true
+          },
+          {
+            "intent": "improve operational reporting",
+            "allowed": [
+              "missing",
+              "unknown"
+            ],
+            "requirementId": "r3",
+            "cvStatus": "missing",
+            "libraryStatus": "missing",
+            "passed": true
+          }
+        ]
+      },
+      "assessorPassed": true,
+      "claimFlags": [],
+      "content": {
+        "theme": {
+          "version": 1,
+          "primary": "#000000",
+          "background": "#ffffff",
+          "surface": "#f2f2f2",
+          "pill": "#e6e6e6",
+          "introPanel": true,
+          "skillPills": true,
+          "font": "Christopher",
+          "maxPages": 2
+        },
+        "name": "Synthetic Candidate",
+        "contact": "Edinburgh",
+        "summary": "Service delivery leader, currently Head of Service Delivery leading service delivery across three regional teams, following successive Service Manager roles across six organisations since 2007. Reviews supplier performance at monthly service meetings, prepares operational reporting for senior managers and resolves service incidents with internal teams and suppliers.",
+        "sections": [
+          {
+            "entryId": "long-evidence-0",
+            "kind": "experience",
+            "heading": "Head of Service Delivery · Employer 1 · 2019 – Present",
+            "bullets": [
+              "Led service delivery across three regional teams.",
+              "Reviewed supplier performance at monthly service meetings.",
+              "Prepared operational reporting for senior managers.",
+              "Resolved service incidents with internal teams and suppliers."
+            ]
+          },
+          {
+            "entryId": "long-evidence-1",
+            "kind": "experience",
+            "heading": "Service Manager · Employer 2 · 2017 – 2019",
+            "bullets": [
+              "Managed service operations for region 2.",
+              "Reviewed supplier performance at monthly service meetings.",
+              "Prepared operational reporting for senior managers and resolved service incidents with internal teams and suppliers."
+            ]
+          },
+          {
+            "entryId": "long-evidence-2",
+            "kind": "experience",
+            "heading": "Service Manager · Employer 3 · 2015 – 2017",
+            "bullets": [
+              "Managed service operations for region 3.",
+              "Reviewed supplier performance at monthly service meetings.",
+              "Prepared operational reporting for senior managers and resolved service incidents with internal teams and suppliers."
+            ]
+          },
+          {
+            "entryId": "long-evidence-3",
+            "kind": "experience",
+            "heading": "Service Manager · Employer 4 · 2013 – 2015",
+            "bullets": [
+              "Managed service operations for region 4.",
+              "Reviewed supplier performance at monthly service meetings.",
+              "Prepared operational reporting for senior managers and resolved service incidents with internal teams and suppliers."
+            ]
+          },
+          {
+            "entryId": "long-evidence-4",
+            "kind": "experience",
+            "heading": "Service Manager · Employer 5 · 2011 – 2013",
+            "bullets": [
+              "Managed service operations for region 5, reviewing supplier performance at monthly service meetings.",
+              "Prepared operational reporting for senior managers and resolved service incidents with internal teams and suppliers."
+            ]
+          },
+          {
+            "entryId": "long-evidence-5",
+            "kind": "experience",
+            "heading": "Service Manager · Employer 6 · 2009 – 2011",
+            "bullets": [
+              "Managed service operations for region 6, reviewing supplier performance at monthly service meetings.",
+              "Prepared operational reporting for senior managers and resolved service incidents with internal teams and suppliers."
+            ]
+          },
+          {
+            "entryId": "long-evidence-6",
+            "kind": "experience",
+            "heading": "Service Manager · Employer 7 · 2007 – 2009",
+            "bullets": [
+              "Managed service operations for region 7, reviewing supplier performance at monthly service meetings.",
+              "Prepared operational reporting for senior managers and resolved service incidents with internal teams and suppliers."
+            ]
+          }
+        ],
+        "gaps": [
+          "Desirable requirement 'improve operational reporting' (r3): the library only evidences preparing operational reporting for senior managers, with no evidence of improving or changing reporting, so no improvement claim has been made.",
+          "Essential requirement 'manage supplier performance' (r2): evidence is limited to reviewing supplier performance at monthly service meetings; there is no evidence of setting supplier targets, contract management or driving supplier remediation.",
+          "No education, qualifications or certifications are stored in the library, so the CV has no Education subsection.",
+          "No structured skills entries are stored in the library, so no Skills subsection has been included.",
+          "No industry descriptions are stored for any employer, so industryDescriptions have been omitted.",
+          "The evidence contains no quantified outcomes, team sizes (beyond three regional teams in the current role), budgets or measurable results; bullets are correspondingly brief and repeat similar responsibilities across roles."
+        ],
+        "fitNotes": []
+      },
+      "assessment": {
+        "version": "2026-09-12.1",
+        "inputHash": "b1dad5b382c8e2c491bf9b49b2beece6e7d12b791a032abe4881a3d965e3267b",
+        "model": "claude-fable-5-1",
+        "assessedAt": "2026-09-20T12:10:07.862Z",
+        "pageCount": 2,
+        "rubric": {
+          "requirements": [
+            {
+              "id": "r1",
+              "label": "Lead service delivery",
+              "quote": "Essential: lead service delivery.",
+              "importance": "essential",
+              "category": "delivery"
+            },
+            {
+              "id": "r2",
+              "label": "Manage supplier performance",
+              "quote": "Essential: manage supplier performance.",
+              "importance": "essential",
+              "category": "delivery"
+            },
+            {
+              "id": "r3",
+              "label": "Improve operational reporting",
+              "quote": "Desirable: improve operational reporting.",
+              "importance": "desirable",
+              "category": "skills"
+            }
+          ],
+          "caveats": [
+            "The description is extremely brief and gives no context on role scope, seniority, industry, team size, required years of experience, qualifications, location or working arrangements, so the rubric is limited to three high-level criteria.",
+            "Criteria are phrased as activities rather than measurable skills or experience; assessing candidates against them will require interpreting what evidence of leading service delivery, managing supplier performance and improving operational reporting looks like."
+          ]
+        },
+        "review": {
+          "matches": [
+            {
+              "requirementId": "r1",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:long-evidence-0:heading",
+                  "quote": "Head of Service Delivery · Employer 1 · 2019 - Present"
+                },
+                {
+                  "id": "section:long-evidence-0:0",
+                  "quote": "Led service delivery across three regional teams."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:long-evidence-0",
+                  "quote": "Led service delivery across three regional teams."
+                }
+              ],
+              "reason": "The CV and the confirmed library both state explicitly that the candidate, as Head of Service Delivery since 2019, led service delivery across three regional teams, directly satisfying the activity-phrased requirement. Earlier Service Manager roles managing regional service operations add depth.",
+              "improvement": "Optionally add scope detail (team sizes, service volumes, SLAs owned) and any outcomes achieved while leading delivery, if these can be confirmed."
+            },
+            {
+              "requirementId": "r2",
+              "status": "partial",
+              "libraryStatus": "partial",
+              "cvEvidence": [
+                {
+                  "id": "section:long-evidence-0:1",
+                  "quote": "Reviewed supplier performance at monthly service meetings."
+                },
+                {
+                  "id": "section:long-evidence-0:3",
+                  "quote": "Resolved service incidents with internal teams and suppliers."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:long-evidence-0",
+                  "quote": "Reviewed supplier performance at monthly service meetings."
+                },
+                {
+                  "id": "entry:long-evidence-0",
+                  "quote": "Resolved service incidents with internal teams and suppliers."
+                }
+              ],
+              "reason": "The CV and library show a concrete component of managing supplier performance: regular monthly supplier performance reviews and working with suppliers to resolve incidents, repeated across every role since 2007. However, there is no evidence of owning supplier relationships, setting or enforcing SLAs/KPIs, driving corrective action or improvement plans, or any performance outcomes, so the complete requirement is not demonstrated.",
+              "improvement": "Add specifics on ownership: did you set supplier SLAs or KPIs, issue corrective action or improvement plans, escalate or exit underperforming suppliers, and what changed in supplier performance as a result? Include the number or type of suppliers managed and any measurable outcomes you can confirm."
+            },
+            {
+              "requirementId": "r3",
+              "status": "missing",
+              "libraryStatus": "missing",
+              "cvEvidence": [],
+              "libraryEvidence": [],
+              "reason": "The CV and evidence library only show the baseline activity of preparing operational reporting for senior managers in every role (e.g. \"Prepared operational reporting for senior managers.\"). There is no evidence of changing, redesigning, automating or otherwise improving reporting, so this is adjacent activity rather than a component of the requested improvement.",
+              "improvement": "If applicable, describe a concrete change made to operational reporting: what was improved (content, frequency, tooling, accuracy, automation), your ownership of the change, when it happened, and any observable outcome. Do not add this unless such work actually occurred."
+            }
+          ],
+          "claims": [
+            {
+              "claimId": "profile",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "source:profile",
+                  "quote": "Service delivery leader"
+                },
+                {
+                  "id": "entry:long-evidence-0",
+                  "quote": "Head of Service Delivery · Employer 1 · 2019 – Present\nLed service delivery across three regional teams."
+                },
+                {
+                  "id": "entry:long-evidence-6",
+                  "quote": "Service Manager · Employer 7 · 2007 – 2009"
+                }
+              ],
+              "reason": "Library confirms the current Head of Service Delivery role leading three regional teams, six Service Manager roles at Employers 2–7 spanning 2007–2019, and the supplier review, operational reporting and incident resolution activities in each role."
+            },
+            {
+              "claimId": "section:long-evidence-0:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-0",
+                  "quote": "Led service delivery across three regional teams."
+                }
+              ],
+              "reason": "Verbatim match in the required source."
+            },
+            {
+              "claimId": "section:long-evidence-0:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-0",
+                  "quote": "Reviewed supplier performance at monthly service meetings."
+                }
+              ],
+              "reason": "Verbatim match in the required source."
+            },
+            {
+              "claimId": "section:long-evidence-0:2",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-0",
+                  "quote": "Prepared operational reporting for senior managers."
+                }
+              ],
+              "reason": "Verbatim match in the required source."
+            },
+            {
+              "claimId": "section:long-evidence-0:3",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-0",
+                  "quote": "Resolved service incidents with internal teams and suppliers."
+                }
+              ],
+              "reason": "Verbatim match in the required source."
+            },
+            {
+              "claimId": "section:long-evidence-1:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-1",
+                  "quote": "Managed service operations for region 2."
+                }
+              ],
+              "reason": "Verbatim match in the required source."
+            },
+            {
+              "claimId": "section:long-evidence-1:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-1",
+                  "quote": "Reviewed supplier performance at monthly service meetings."
+                }
+              ],
+              "reason": "Verbatim match in the required source."
+            },
+            {
+              "claimId": "section:long-evidence-1:2",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-1",
+                  "quote": "Prepared operational reporting for senior managers."
+                },
+                {
+                  "id": "entry:long-evidence-1",
+                  "quote": "Resolved service incidents with internal teams and suppliers."
+                }
+              ],
+              "reason": "Both parts of the combined statement appear verbatim in the Employer 2 evidence block; the merge adds no new scope or ownership."
+            },
+            {
+              "claimId": "section:long-evidence-2:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-2",
+                  "quote": "Managed service operations for region 3."
+                }
+              ],
+              "reason": "Exact match to the Employer 3 evidence block."
+            },
+            {
+              "claimId": "section:long-evidence-2:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-2",
+                  "quote": "Reviewed supplier performance at monthly service meetings."
+                }
+              ],
+              "reason": "Exact match to the Employer 3 evidence block."
+            },
+            {
+              "claimId": "section:long-evidence-2:2",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-2",
+                  "quote": "Prepared operational reporting for senior managers."
+                },
+                {
+                  "id": "entry:long-evidence-2",
+                  "quote": "Resolved service incidents with internal teams and suppliers."
+                }
+              ],
+              "reason": "Both parts of the combined statement appear verbatim in the Employer 3 evidence block; no added scope or outcome."
+            },
+            {
+              "claimId": "section:long-evidence-3:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-3",
+                  "quote": "Managed service operations for region 4."
+                }
+              ],
+              "reason": "Exact match to the Employer 4 evidence block."
+            },
+            {
+              "claimId": "section:long-evidence-3:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-3",
+                  "quote": "Reviewed supplier performance at monthly service meetings."
+                }
+              ],
+              "reason": "Exact match to the Employer 4 evidence block."
+            },
+            {
+              "claimId": "section:long-evidence-3:2",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-3",
+                  "quote": "Prepared operational reporting for senior managers."
+                },
+                {
+                  "id": "entry:long-evidence-3",
+                  "quote": "Resolved service incidents with internal teams and suppliers."
+                }
+              ],
+              "reason": "Both parts of the combined statement appear verbatim in the Employer 4 evidence block; the merge introduces no unsupported detail."
+            },
+            {
+              "claimId": "section:long-evidence-4:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-4",
+                  "quote": "Managed service operations for region 5."
+                },
+                {
+                  "id": "entry:long-evidence-4",
+                  "quote": "Reviewed supplier performance at monthly service meetings."
+                }
+              ],
+              "reason": "Both parts of the claim appear verbatim in the Employer 5 evidence entry; the CV merely merges two bullets into one sentence."
+            },
+            {
+              "claimId": "section:long-evidence-4:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-4",
+                  "quote": "Prepared operational reporting for senior managers."
+                },
+                {
+                  "id": "entry:long-evidence-4",
+                  "quote": "Resolved service incidents with internal teams and suppliers."
+                }
+              ],
+              "reason": "Both activities are stated in the Employer 5 evidence entry with the same scope; no added ownership, numbers or outcomes."
+            },
+            {
+              "claimId": "section:long-evidence-5:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-5",
+                  "quote": "Managed service operations for region 6."
+                },
+                {
+                  "id": "entry:long-evidence-5",
+                  "quote": "Reviewed supplier performance at monthly service meetings."
+                }
+              ],
+              "reason": "Both parts of the claim appear verbatim in the Employer 6 evidence entry."
+            },
+            {
+              "claimId": "section:long-evidence-5:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-5",
+                  "quote": "Prepared operational reporting for senior managers."
+                },
+                {
+                  "id": "entry:long-evidence-5",
+                  "quote": "Resolved service incidents with internal teams and suppliers."
+                }
+              ],
+              "reason": "Both activities are stated in the Employer 6 evidence entry with identical scope."
+            },
+            {
+              "claimId": "section:long-evidence-6:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-6",
+                  "quote": "Managed service operations for region 7."
+                },
+                {
+                  "id": "entry:long-evidence-6",
+                  "quote": "Reviewed supplier performance at monthly service meetings."
+                }
+              ],
+              "reason": "Both parts of the claim appear verbatim in the Employer 7 evidence entry."
+            },
+            {
+              "claimId": "section:long-evidence-6:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-6",
+                  "quote": "Prepared operational reporting for senior managers."
+                },
+                {
+                  "id": "entry:long-evidence-6",
+                  "quote": "Resolved service incidents with internal teams and suppliers."
+                }
+              ],
+              "reason": "Both activities are stated in the Employer 7 evidence entry with identical scope."
+            }
+          ]
+        },
+        "score": 60,
+        "availableEvidenceScore": 60
+      },
+      "humanReview": "required: inspect this generated PDF for layout, lexical review flags and factual grounding"
+    }
+  ],
+  "budget": {
+    "capUsd": 5.191201,
+    "spentUsd": 0.576169,
+    "heldUsd": 0,
+    "records": [
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 52,
+        "outputTokens": 318,
+        "cacheReadTokens": 1098,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.016695,
+        "durationMs": 9322,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 1159,
+        "outputTokens": 436,
+        "cacheReadTokens": 2275,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.033959,
+        "durationMs": 9067,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 725,
+        "outputTokens": 1233,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 3370,
+        "costUsd": 0.111025,
+        "durationMs": 15269,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 48,
+        "outputTokens": 306,
+        "cacheReadTokens": 1098,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.016055,
+        "durationMs": 6342,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 2796,
+        "outputTokens": 1614,
+        "cacheReadTokens": 2275,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.109229,
+        "durationMs": 18493,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 778,
+        "outputTokens": 1511,
+        "cacheReadTokens": 2601,
+        "cacheWriteTokens": 2235,
+        "costUsd": 0.111918,
+        "durationMs": 18358,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 863,
+        "outputTokens": 1417,
+        "cacheReadTokens": 4836,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.080689,
+        "durationMs": 17138,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 879,
+        "outputTokens": 1732,
+        "cacheReadTokens": 4836,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.096599,
+        "durationMs": 19121,
+        "ok": true
+      }
+    ],
+    "exceeded": false
+  }
+}

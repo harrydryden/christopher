@@ -13,8 +13,11 @@ const BASE: Record<string, number> = {
   pasted_ats: 0.95,
   listing_jsonld: 0.85,
   listing_html: 0.85,
+  listing_empty: 0.85,
   pasted_listing: 0.85,
   ai_listing: 0.75,
+  ats_sitemap: 0.7,
+  ats_probe: 0.7,
   ats_guess: 0.7,
   landing: 0.5,
 };

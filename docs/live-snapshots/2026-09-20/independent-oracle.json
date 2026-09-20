@@ -1,0 +1,337 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-20T08:43:11.798Z",
+  "classification": "machine-derived independent oracle; requires human review before it is a golden label",
+  "snapshots": [
+    {
+      "id": "mozilla",
+      "url": "https://www.mozilla.org/en-US/careers/listings/",
+      "fetchedAt": "2026-09-20T08:43:01.548Z",
+      "finalUrl": "https://www.mozilla.org/en-US/careers/listings/",
+      "status": 200,
+      "oracleMethod": "Independent, source-specific enumeration of unique first-party /careers/position/gh/<id>/ anchors; this does not call Christopher's HTML adapter.",
+      "explicitEmptyState": false,
+      "identities": [
+        {
+          "id": "gh:7137777",
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/7137777/"
+        },
+        {
+          "id": "gh:8188873",
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8188873/"
+        },
+        {
+          "id": "gh:7622995",
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/7622995/"
+        },
+        {
+          "id": "gh:8064613",
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8064613/"
+        },
+        {
+          "id": "gh:7921645",
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/7921645/"
+        },
+        {
+          "id": "gh:8153321",
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8153321/"
+        },
+        {
+          "id": "gh:7997152",
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/7997152/"
+        },
+        {
+          "id": "gh:8035891",
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8035891/"
+        },
+        {
+          "id": "gh:8089818",
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8089818/"
+        },
+        {
+          "id": "gh:8162972",
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8162972/"
+        },
+        {
+          "id": "gh:8107442",
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8107442/"
+        },
+        {
+          "id": "gh:8112211",
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8112211/"
+        },
+        {
+          "id": "gh:8155198",
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8155198/"
+        },
+        {
+          "id": "gh:8122131",
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8122131/"
+        },
+        {
+          "id": "gh:8139403",
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8139403/"
+        },
+        {
+          "id": "gh:8170952",
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8170952/"
+        },
+        {
+          "id": "gh:8144651",
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8144651/"
+        },
+        {
+          "id": "gh:8167254",
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8167254/"
+        },
+        {
+          "id": "gh:8172267",
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8172267/"
+        },
+        {
+          "id": "gh:8185984",
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8185984/"
+        },
+        {
+          "id": "gh:8177406",
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8177406/"
+        },
+        {
+          "id": "gh:8180982",
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8180982/"
+        }
+      ],
+      "adapterObservation": {
+        "identities": [
+          {
+            "id": "gh:7137777",
+            "title": "Staff Data Scientist, Ads",
+            "url": "https://www.mozilla.org/en-US/careers/position/gh/7137777/"
+          },
+          {
+            "id": "gh:8188873",
+            "title": "Senior Software Engineer, Add-Ons",
+            "url": "https://www.mozilla.org/en-US/careers/position/gh/8188873/"
+          },
+          {
+            "id": "gh:7622995",
+            "title": "Senior Strategic Account Executive, Firefox Enterprise (DACH)",
+            "url": "https://www.mozilla.org/en-US/careers/position/gh/7622995/"
+          },
+          {
+            "id": "gh:8064613",
+            "title": "Senior Security Engineer, Bug Bounty",
+            "url": "https://www.mozilla.org/en-US/careers/position/gh/8064613/"
+          },
+          {
+            "id": "gh:7921645",
+            "title": "Senior Solutions Engineer (DACH), Firefox Enterprise",
+            "url": "https://www.mozilla.org/en-US/careers/position/gh/7921645/"
+          },
+          {
+            "id": "gh:8153321",
+            "title": "Front End Engineering Manager, Firefox Desktop",
+            "url": "https://www.mozilla.org/en-US/careers/position/gh/8153321/"
+          },
+          {
+            "id": "gh:7997152",
+            "title": "Staff Operations Engineer",
+            "url": "https://www.mozilla.org/en-US/careers/position/gh/7997152/"
+          },
+          {
+            "id": "gh:8035891",
+            "title": "Senior Software Engineer, Cloud Engineering",
+            "url": "https://www.mozilla.org/en-US/careers/position/gh/8035891/"
+          },
+          {
+            "id": "gh:8089818",
+            "title": "Senior Backend Engineer, Ecosystems",
+            "url": "https://www.mozilla.org/en-US/careers/position/gh/8089818/"
+          },
+          {
+            "id": "gh:8162972",
+            "title": "Staff Designer, Rapid Prototyping",
+            "url": "https://www.mozilla.org/en-US/careers/position/gh/8162972/"
+          },
+          {
+            "id": "gh:8107442",
+            "title": "Staff Security GRC Engineer",
+            "url": "https://www.mozilla.org/en-US/careers/position/gh/8107442/"
+          },
+          {
+            "id": "gh:8112211",
+            "title": "Senior Mobile Engineer, iOS",
+            "url": "https://www.mozilla.org/en-US/careers/position/gh/8112211/"
+          },
+          {
+            "id": "gh:8155198",
+            "title": "Staff Product Manager, Search Experiences",
+            "url": "https://www.mozilla.org/en-US/careers/position/gh/8155198/"
+          },
+          {
+            "id": "gh:8122131",
+            "title": "Senior Staff Performance Engineer, Firefox",
+            "url": "https://www.mozilla.org/en-US/careers/position/gh/8122131/"
+          },
+          {
+            "id": "gh:8139403",
+            "title": "Marketing Data Science Manager",
+            "url": "https://www.mozilla.org/en-US/careers/position/gh/8139403/"
+          },
+          {
+            "id": "gh:8170952",
+            "title": "Senior Staff Product Manager, Browser Control Platform",
+            "url": "https://www.mozilla.org/en-US/careers/position/gh/8170952/"
+          },
+          {
+            "id": "gh:8144651",
+            "title": "Senior Lead, Enterprise Partnerships & Strategy",
+            "url": "https://www.mozilla.org/en-US/careers/position/gh/8144651/"
+          },
+          {
+            "id": "gh:8167254",
+            "title": "Director, Portfolio Management (Mozilla.org)",
+            "url": "https://www.mozilla.org/en-US/careers/position/gh/8167254/"
+          },
+          {
+            "id": "gh:8172267",
+            "title": "Senior Accounting Manager",
+            "url": "https://www.mozilla.org/en-US/careers/position/gh/8172267/"
+          },
+          {
+            "id": "gh:8185984",
+            "title": "Staff Product Engineer, Enterprise AI",
+            "url": "https://www.mozilla.org/en-US/careers/position/gh/8185984/"
+          },
+          {
+            "id": "gh:8177406",
+            "title": "Major Gifts Officer",
+            "url": "https://www.mozilla.org/en-US/careers/position/gh/8177406/"
+          },
+          {
+            "id": "gh:8180982",
+            "title": "Senior Staff Data Engineer",
+            "url": "https://www.mozilla.org/en-US/careers/position/gh/8180982/"
+          },
+          {
+            "id": "url:https://www.mozilla.org/en-US/careers/feed/",
+            "title": "Subscribe to our open positions RSS feed",
+            "url": "https://www.mozilla.org/en-US/careers/feed/"
+          }
+        ],
+        "comparison": {
+          "truePositives": 22,
+          "falsePositives": 1,
+          "falseNegatives": 0,
+          "precision": 0.9565217391304348,
+          "recall": 1
+        }
+      },
+      "bytes": 47356,
+      "sha256": "baa3bbde25ac15f2da4d2c9f1eca93be168b48be3ad4fe1e4e6c303b36d2f82e"
+    },
+    {
+      "id": "37signals",
+      "url": "https://37signals.com/jobs",
+      "fetchedAt": "2026-09-20T08:43:05.669Z",
+      "finalUrl": "https://37signals.com/jobs",
+      "status": 200,
+      "oracleMethod": "Independent inspection of the first-party jobs page's explicit no-openings state; zero posting-detail links were present.",
+      "explicitEmptyState": true,
+      "identities": [],
+      "adapterObservation": {
+        "identities": [],
+        "comparison": {
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 0,
+          "precision": 1,
+          "recall": 1
+        }
+      },
+      "bytes": 13421,
+      "sha256": "9944babe8e83da61db11c0df5ccd2a8fae233225175f546450c2a720015f6e9e"
+    },
+    {
+      "id": "stripe-careers",
+      "url": "https://stripe.com/gb/careers",
+      "fetchedAt": "2026-09-20T08:43:09.776Z",
+      "finalUrl": "https://stripe.com/gb/careers",
+      "status": 200,
+      "oracleMethod": "Diagnostic snapshot of a discovery candidate; no posting oracle is asserted for this page.",
+      "explicitEmptyState": false,
+      "identities": [],
+      "adapterObservation": {
+        "identities": [
+          {
+            "id": "url:https://stripe.com/gb/careers/compatibility",
+            "title": "Learn how successful Stripes operate, and see if Stripe is right for you.Compatibility",
+            "url": "https://stripe.com/gb/careers/compatibility"
+          },
+          {
+            "id": "url:https://stripe.com/gb/careers/emerging-talent",
+            "title": "Start your career at the centre of the global economy – see what we offer for early career opportunities.Emerging talent",
+            "url": "https://stripe.com/gb/careers/emerging-talent"
+          },
+          {
+            "id": "url:https://stripe.com/gb/careers/search",
+            "title": "We're hiring. Explore our open roles and submit your application.Open roles",
+            "url": "https://stripe.com/gb/careers/search"
+          }
+        ],
+        "comparison": {
+          "truePositives": 0,
+          "falsePositives": 3,
+          "falseNegatives": 0,
+          "precision": 0,
+          "recall": 1
+        }
+      },
+      "bytes": 360555,
+      "sha256": "ab37a058828d26015416626f78ed2377dcbde0bd893b9f3873b36a47f0a4617c"
+    },
+    {
+      "id": "mozilla-careers",
+      "url": "https://www.mozilla.org/en-GB/careers/",
+      "fetchedAt": "2026-09-20T08:43:11.798Z",
+      "finalUrl": "https://www.mozilla.org/en-GB/careers/",
+      "status": 200,
+      "oracleMethod": "Diagnostic snapshot of a discovery candidate; no posting oracle is asserted for this page.",
+      "explicitEmptyState": false,
+      "identities": [],
+      "adapterObservation": {
+        "identities": [
+          {
+            "id": "url:https://www.mozilla.org/en-GB/careers/benefits/",
+            "title": "Read more about our benefits",
+            "url": "https://www.mozilla.org/en-GB/careers/benefits/"
+          },
+          {
+            "id": "url:https://www.mozilla.org/en-GB/careers/listings/",
+            "title": "Find your role",
+            "url": "https://www.mozilla.org/en-GB/careers/listings/"
+          },
+          {
+            "id": "url:https://www.mozilla.org/en-GB/careers/teams/",
+            "title": "View all teams",
+            "url": "https://www.mozilla.org/en-GB/careers/teams/"
+          },
+          {
+            "id": "url:https://www.mozilla.org/en-GB/careers/locations/",
+            "title": "Read more about the future of work at Mozilla",
+            "url": "https://www.mozilla.org/en-GB/careers/locations/"
+          }
+        ],
+        "comparison": {
+          "truePositives": 0,
+          "falsePositives": 4,
+          "falseNegatives": 0,
+          "precision": 0,
+          "recall": 1
+        }
+      },
+      "bytes": 63043,
+      "sha256": "338f019dbe44423c2e7afe3652d9c67cce21e7a91b7d603194638f96d12506ce"
+    }
+  ]
+}

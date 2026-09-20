@@ -235,7 +235,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
   }
   const obsolete = !state.ok && state.error === OBSOLETE;
   const asked = (need ?? "").trim();
-  return <form action={action} onSubmit={() => { submitted.current = value; }} className="space-y-4 pb-4">
+  return <form action={action} onSubmit={() => { submitted.current = value; }} className="min-w-0 space-y-4 pb-4">
     {/* A gap in a CV's evidence, carried here from the row that named it. Client state only: it is
         a note about the visit, not a thing to store. */}
     {asked && needShown && <div role="status" className="flex flex-wrap items-start justify-between gap-3 border-2 border-line bg-sunken p-3 text-14">
@@ -290,7 +290,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
         // What the six facets say is missing, live from the tags on screen. Shown on its own only
         // when it is not already the line the stored review carries.
         const untagged = entry ? missingFacetLine(untaggedFacets(entry)) : "";
-        return <fieldset key={currentJob.id} className="space-y-3 border-2 border-line-muted p-4">
+        return <fieldset key={currentJob.id} className="min-w-0 space-y-3 border-2 border-line-muted p-4">
           <legend className="px-1 text-14 font-semibold">{employmentHeading(currentJob) || "Complete this job in employment history"}</legend>
           {entry && statusControls(entry)}
           <p className="text-12 text-muted">Responsibilities and outcomes · {rows.length}/20</p>
@@ -307,8 +307,9 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
           />}
           {entry && untagged && untagged !== score?.missingLine && <p className="text-12 text-muted">{untagged}</p>}
           {rows.length > 20 && <p role="alert" className="text-14 text-warn">All existing wording has been preserved. Combine related rows to reach 20 or fewer before saving.</p>}
-          {rows.length > 0 && <div className="overflow-x-auto border-2 border-line"><table className="w-full text-left text-14" aria-label={`${currentJob.company} ${currentJob.jobTitle} responsibilities and outcomes`}>
-            <thead className="ds-pixel bg-sunken text-9 tracking-th text-muted"><tr><th scope="col" className="w-10 border-b-2 border-line px-3 py-2">#</th><th scope="col" className="w-28 border-b-2 border-line px-3 py-2 text-center">Confirmed</th><th scope="col" className="border-b-2 border-line px-3 py-2">Narrative</th></tr></thead>
+          {rows.length > 0 && <p className="text-12 text-muted sm:hidden">Scroll across the table for evidence types and row actions.</p>}
+          {rows.length > 0 && <div className="relative overflow-x-auto border-2 border-line"><table className="w-full min-w-[720px] text-left text-14" aria-label={`${currentJob.company} ${currentJob.jobTitle} responsibilities and outcomes`}>
+            <thead className="ds-pixel bg-sunken text-9 tracking-th text-muted"><tr><th scope="col" className="w-10 border-b-2 border-line px-3 py-2">#</th><th scope="col" className="w-28 border-b-2 border-line px-3 py-2 text-center">Confirmed</th><th scope="col" className="border-b-2 border-line px-3 py-2">Evidence</th><th scope="col" className="w-52 border-b-2 border-line px-3 py-2">Evidence type</th><th scope="col" className="w-20 border-b-2 border-line px-3 py-2"><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>{rows.map((row, index) => {
               const key = rowKey(row);
               const facet = entry && key ? rowFacet(entry, key) : pendingFacets[pendingRowKey(currentJob.id, index)] ?? null;
@@ -320,32 +321,30 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
                   if (event.target.checked) confirmed.add(key); else confirmed.delete(key);
                   setValue({ ...value, entries: value.entries.map(item => item.id === entry.id ? { ...item, confirmedResponsibilities: [...confirmed] } : item) });
                 }} /></td>
-              <td className="px-3 py-2"><div className="space-y-2">
-                <div className="flex items-start gap-3">
-                  <textarea required rows={2} id={`responsibility-${currentJob.id}-${index}`} className={`resize-y ${input}`} placeholder={facet ? EVIDENCE_FACET_PROMPTS[facet] : undefined} aria-label={`${currentJob.company} ${currentJob.jobTitle} responsibility ${index + 1}`} value={row} onChange={event => writeRow(currentJob, rows, index, event.target.value)} />
-                  <button type="button" className="mt-2 text-12 text-muted underline hover:text-fg" aria-label={`Remove ${currentJob.company} ${currentJob.jobTitle} entry ${index + 1}`} onClick={() => {
+              <td className="px-3 py-2">
+                <textarea required rows={2} id={`responsibility-${currentJob.id}-${index}`} className={`resize-y ${input}`} placeholder={facet ? EVIDENCE_FACET_PROMPTS[facet] : undefined} aria-label={`${currentJob.company} ${currentJob.jobTitle} evidence ${index + 1}`} value={row} onChange={event => writeRow(currentJob, rows, index, event.target.value)} />
+              </td>
+              <td className="px-3 py-2">
+                <EvidenceFacetSelect
+                  label={`Evidence type for ${currentJob.company} ${currentJob.jobTitle} row ${index + 1}`}
+                  value={facet}
+                  onChange={next => {
+                    if (entry && key) setValue(tagRow(value, entry.id, key, next));
+                    else setPendingFacets(current => {
+                      const rest = { ...current };
+                      if (next) rest[pendingRowKey(currentJob.id, index)] = next; else delete rest[pendingRowKey(currentJob.id, index)];
+                      return rest;
+                    });
+                  }}
+                />
+              </td>
+              <td className="px-3 py-2">
+                <button type="button" className="min-h-11 text-12 text-muted underline hover:text-fg" aria-label={`Remove ${currentJob.company} ${currentJob.jobTitle} evidence ${index + 1}`} onClick={() => {
                     setPendingFacets({});
                     if (rows.length === 1 && entry) setValue({ ...value, entries: entry.details.trim() ? value.entries.map(item => item.id === entry.id ? { ...item, status: "inactive" } : item) : value.entries.filter(item => item.id !== entry.id) });
                     else setValue(removeJobRow(value, currentJob, index));
                   }}>Remove</button>
-                </div>
-                {/* What this row is for. The person classifies; nothing here asserts it is true. */}
-                <div className="flex flex-wrap items-center gap-2 text-12 text-muted">
-                  <span>This row is</span>
-                  <EvidenceFacetSelect
-                    label={`Facet for ${currentJob.company} ${currentJob.jobTitle} responsibility ${index + 1}`}
-                    value={facet}
-                    onChange={next => {
-                      if (entry && key) setValue(tagRow(value, entry.id, key, next));
-                      else setPendingFacets(current => {
-                        const rest = { ...current };
-                        if (next) rest[pendingRowKey(currentJob.id, index)] = next; else delete rest[pendingRowKey(currentJob.id, index)];
-                        return rest;
-                      });
-                    }}
-                  />
-                </div>
-              </div></td>
+              </td>
             </tr>;
             })}</tbody>
           </table></div>}

@@ -1,7 +1,8 @@
-import { requireSession } from '@/lib/auth';
+import { routeUser } from '@/lib/route-auth';
 export const dynamic = 'force-dynamic';
 export async function POST(request: Request) {
-  await requireSession();
+  const auth = await routeUser();
+  if (!auth.ok) return auth.response;
   const body = await request.text();
   if (body.length > 1000) return new Response(null, { status: 413 });
   try {

@@ -1,0 +1,56 @@
+{
+  "status": "verified",
+  "workspaceId": "tea-da1dkajl550s73fel3og",
+  "originalDatabaseId": "dpg-dadte11t0dsc7380n7i0-a",
+  "recoveryDatabaseId": "dpg-danq11ijnfac739fekdg-a",
+  "recoveryDatabaseName": "christopher-recovery-drill-20260920",
+  "requestedRecoveryPointMinute": "2026-09-20T08:28:00Z",
+  "createdAt": "2026-09-20T08:59:50.906878Z",
+  "firstSuccessfulReadOnlyCheckAt": "2026-09-20T09:05:06.254079Z",
+  "provisioningToCheckSeconds": 315.35,
+  "lastProviderStatus": "available",
+  "approvedMonthlyUSD": 7.5,
+  "billing": "prorated by second; resource remains provisioned",
+  "plan": {
+    "cpu": 0.1,
+    "memoryMB": 256,
+    "storageGB": 5
+  },
+  "applicationConnected": false,
+  "sqlChecksExecuted": true,
+  "readOnlyTransaction": true,
+  "recoveryGatePassed": false,
+  "results": {
+    "serverVersion": "16.15 (Debian 16.15-1.pgdg12+2)",
+    "counts": {
+      "users": 1,
+      "companies": 6,
+      "jobs": 3827,
+      "userJobs": 6,
+      "libraries": 14,
+      "cvs": 2,
+      "applications": 0,
+      "tasks": 727
+    },
+    "orphans": {
+      "userJobs": 0,
+      "libraries": 0,
+      "applications": 0,
+      "subscriptions": 0
+    },
+    "invalidConstraints": 0,
+    "migrationCount": 34,
+    "publicBaseTables": 45,
+    "publicConstraints": 105
+  },
+  "interpretation": "The restored copy is queryable and its checked aggregate relationships, validated constraints and migration ledger are internally consistent.",
+  "limitations": [
+    "No source baseline was captured at the requested recovery point, so these aggregates cannot establish bitwise equality or exact point-in-time data loss.",
+    "The measured interval ends at the first successful read-only check and is provisioning evidence, not a full service RTO.",
+    "No application or worker was connected to the recovery copy, and full service restoration and rollback were not exercised."
+  ],
+  "queryBasis": "scripts/recovery-drill.mjs coreIntegritySql(), extended with aggregate public table and constraint totals and server version",
+  "productionOriginalTouched": false,
+  "recordedAt": "2026-09-20T09:05:06.254079Z",
+  "managedRestoreIntegrityPassed": true
+}

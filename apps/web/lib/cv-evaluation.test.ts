@@ -67,6 +67,7 @@ describe("unified CV evaluation", () => {
         change,
         evidence,
         experience,
+        category: "experience",
       });
       expect(JSON.stringify(assessment)).toBe(before);
     },

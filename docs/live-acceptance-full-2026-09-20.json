@@ -1,0 +1,1202 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-20T08:17:35.668Z",
+  "mode": "discovery_and_extraction",
+  "limitations": [
+    "This is a live observation, so role counts and pages can change during the run.",
+    "A null metric means the required independent label does not exist; it is not a pass.",
+    "No browser or AI fallback is used, and no database is read or written."
+  ],
+  "acceptance": {
+    "verdict": "blocked",
+    "reasons": [
+      "14 source label(s) remain independently unverified",
+      "25 case(s) lack an independent posting-identity golden snapshot",
+      "posting-identity recall and precision have not been measured",
+      "6 extraction failure(s) and 0 partial extraction(s)"
+    ]
+  },
+  "metrics": {
+    "total": 25,
+    "sourceLabelled": 11,
+    "sourceMatches": 10,
+    "sourceMismatches": 1,
+    "labelledAutomaticMatchesAt085": 10,
+    "automaticResolvedAt085": 16,
+    "wrongAutomaticAccepts": 0,
+    "extractionComplete": 19,
+    "extractionPartial": 0,
+    "extractionFailed": 6,
+    "countLabelled": 0,
+    "countMatches": 0,
+    "discoveryAccuracy": 0.9090909090909091,
+    "extractionExactCountAgreement": null,
+    "postingIdentityRecall": null,
+    "postingIdentityPrecision": null
+  },
+  "cases": [
+    {
+      "manifest": {
+        "id": "anduril",
+        "company": "Anduril",
+        "homepageUrl": "https://www.anduril.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://boards.greenhouse.io/andurilindustries"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Board mapping is documented in REVIEW-PLAN; current count is time-dependent.",
+        "sourceEvidenceUrls": [
+          "https://www.anduril.com/careers",
+          "https://job-boards.greenhouse.io/andurilindustries"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "anduril",
+        "company": "Anduril",
+        "startedAt": "2026-09-20T08:14:23.231Z",
+        "durationMs": 2878,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "greenhouse",
+          "observedUrl": "https://job-boards.greenhouse.io/andurilindustries",
+          "confidence": 0.98,
+          "fetches": 1,
+          "sourceMatchesLabel": true
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 2374,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "2026 Early Career Electrical Engineer",
+              "location": "Costa Mesa, California, United States; Fort Collins, Colorado, United States",
+              "url": "https://boards.greenhouse.io/andurilindustries/jobs/4802172007?gh_jid=4802172007"
+            },
+            {
+              "title": "2026 Early Career Flight Test Engineer, Mission Autonomy",
+              "location": "Costa Mesa, California, United States",
+              "url": "https://boards.greenhouse.io/andurilindustries/jobs/5185089007?gh_jid=5185089007"
+            },
+            {
+              "title": "2026 Early Career Manufacturing Engineer",
+              "location": "Costa Mesa, California, United States; Irvine, California, United States; Santa Ana, California, United States",
+              "url": "https://boards.greenhouse.io/andurilindustries/jobs/5176254007?gh_jid=5176254007"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "airbnb",
+        "company": "Airbnb",
+        "homepageUrl": "https://www.airbnb.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://boards.greenhouse.io/airbnb"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "unverified",
+        "labelNote": "Candidate source; independent dated review still required."
+      },
+      "result": {
+        "id": "airbnb",
+        "company": "Airbnb",
+        "startedAt": "2026-09-20T08:14:23.233Z",
+        "durationMs": 13524,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://careers.airbnb.com/positions/",
+          "confidence": 0.85,
+          "fetches": 5,
+          "sourceMatchesLabel": null
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 168,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "Account Manager",
+              "location": "London, United Kingdom",
+              "url": "https://careers.airbnb.com/positions/8184174?gh_jid=8184174"
+            },
+            {
+              "title": "Associate Legal Counsel, Japan",
+              "location": "Tokyo, Japan",
+              "url": "https://careers.airbnb.com/positions/7789554?gh_jid=7789554"
+            },
+            {
+              "title": "Business Development Manager",
+              "location": "Berlin, Germany",
+              "url": "https://careers.airbnb.com/positions/7995153?gh_jid=7995153"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "stripe",
+        "company": "Stripe",
+        "homepageUrl": "https://stripe.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://boards.greenhouse.io/stripe"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "unverified",
+        "labelNote": "Candidate source; independent dated review still required."
+      },
+      "result": {
+        "id": "stripe",
+        "company": "Stripe",
+        "startedAt": "2026-09-20T08:14:23.233Z",
+        "durationMs": 25448,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://stripe.com/gb/careers",
+          "confidence": 0.85,
+          "fetches": 2,
+          "sourceMatchesLabel": null
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 665,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "Abuse Investigator",
+              "location": "Dublin",
+              "url": "https://stripe.com/jobs/search?gh_jid=8172487"
+            },
+            {
+              "title": "Abuse Investigator",
+              "location": "Seattle, San Francisco, New York City",
+              "url": "https://stripe.com/jobs/search?gh_jid=8172510"
+            },
+            {
+              "title": "Abuse Investigator",
+              "location": "Dublin",
+              "url": "https://stripe.com/jobs/search?gh_jid=8172508"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "openai",
+        "company": "OpenAI",
+        "homepageUrl": "https://openai.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://openai.com/careers/search/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "OpenAI's first-party careers page links to its first-party search listing; the previous Ashby candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://openai.com/careers/",
+          "https://openai.com/careers/search/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "openai",
+        "company": "OpenAI",
+        "startedAt": "2026-09-20T08:14:26.109Z",
+        "durationMs": 26059,
+        "discovery": {
+          "outcome": "needs_confirmation",
+          "observedType": "html",
+          "observedUrl": "https://openai.com/careers/",
+          "confidence": 0.5,
+          "fetches": 12,
+          "sourceMatchesLabel": false
+        },
+        "extraction": {
+          "outcome": "failed",
+          "countMatchesLabel": null,
+          "sample": [],
+          "error": "blocked (403) fetching https://openai.com/careers/search/"
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "notion",
+        "company": "Notion",
+        "homepageUrl": "https://www.notion.so",
+        "expectedSource": {
+          "type": "ashby",
+          "url": "https://jobs.ashbyhq.com/notion"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Notion's first-party careers page links its roles to the Notion Ashby board.",
+        "sourceEvidenceUrls": [
+          "https://www.notion.com/careers",
+          "https://jobs.ashbyhq.com/notion"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "notion",
+        "company": "Notion",
+        "startedAt": "2026-09-20T08:14:36.757Z",
+        "durationMs": 23251,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "ashby",
+          "observedUrl": "https://jobs.ashbyhq.com/notion",
+          "confidence": 0.99,
+          "fetches": 12,
+          "sourceMatchesLabel": true
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 128,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "Software Engineer, Developer Platform",
+              "location": "San Francisco, California",
+              "url": "https://jobs.ashbyhq.com/notion/1fc309c8-da20-4ff2-84c7-8b863ece2b0a"
+            },
+            {
+              "title": "Business Development Representative, New York",
+              "location": "New York, New York",
+              "url": "https://jobs.ashbyhq.com/notion/05e14247-17c4-4e98-9a13-53828a4e2f13"
+            },
+            {
+              "title": "Business Development Representative, San Francisco",
+              "location": "San Francisco, California",
+              "url": "https://jobs.ashbyhq.com/notion/b21fef72-4864-4a3e-a627-91557a0f8a36"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "anthropic",
+        "company": "Anthropic",
+        "homepageUrl": "https://www.anthropic.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://job-boards.greenhouse.io/anthropic"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Anthropic's first-party jobs listing links each live role to its Greenhouse board.",
+        "sourceEvidenceUrls": [
+          "https://www.anthropic.com/careers",
+          "https://www.anthropic.com/jobs",
+          "https://job-boards.greenhouse.io/anthropic"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "anthropic",
+        "company": "Anthropic",
+        "startedAt": "2026-09-20T08:14:48.682Z",
+        "durationMs": 14519,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "greenhouse",
+          "observedUrl": "https://job-boards.greenhouse.io/anthropic",
+          "confidence": 0.99,
+          "fetches": 7,
+          "sourceMatchesLabel": true
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 611,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "Accommodations Partner",
+              "location": "San Francisco, CA | Seattle, WA",
+              "url": "https://job-boards.greenhouse.io/anthropic/jobs/5421031008"
+            },
+            {
+              "title": "Account Executive, AI Native",
+              "location": "New York City, NY; San Francisco, CA | New York City, NY",
+              "url": "https://job-boards.greenhouse.io/anthropic/jobs/4461450008"
+            },
+            {
+              "title": "Account Executive - DNB",
+              "location": "Singapore",
+              "url": "https://job-boards.greenhouse.io/anthropic/jobs/5391376008"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "netflix",
+        "company": "Netflix",
+        "homepageUrl": "https://www.netflix.com",
+        "expectedSource": {
+          "type": "lever",
+          "url": "https://jobs.lever.co/netflix"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "unverified",
+        "labelNote": "Candidate source for live probing; independent source review still required."
+      },
+      "result": {
+        "id": "netflix",
+        "company": "Netflix",
+        "startedAt": "2026-09-20T08:14:52.168Z",
+        "durationMs": 798,
+        "discovery": {
+          "outcome": "not_found",
+          "fetches": 16,
+          "sourceMatchesLabel": null
+        },
+        "extraction": {
+          "outcome": "failed",
+          "countMatchesLabel": null,
+          "sample": [],
+          "error": "HTTP 404 from https://api.lever.co/v0/postings/netflix?mode=json"
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "figma",
+        "company": "Figma",
+        "homepageUrl": "https://www.figma.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://boards.greenhouse.io/figma"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Figma's first-party careers page links its roles to the Figma Greenhouse board.",
+        "sourceEvidenceUrls": [
+          "https://www.figma.com/careers/",
+          "https://job-boards.greenhouse.io/figma"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "figma",
+        "company": "Figma",
+        "startedAt": "2026-09-20T08:14:52.966Z",
+        "durationMs": 22318,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "greenhouse",
+          "observedUrl": "https://job-boards.greenhouse.io/figma",
+          "confidence": 0.99,
+          "fetches": 11,
+          "sourceMatchesLabel": true
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 152,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "Account Executive, Enterprise",
+              "location": "San Francisco, CA • New York, NY • United States",
+              "url": "https://boards.greenhouse.io/figma/jobs/5426468004?gh_jid=5426468004"
+            },
+            {
+              "title": "Account Executive, Enterprise (Bengaluru, India)",
+              "location": "Bengaluru, India",
+              "url": "https://boards.greenhouse.io/figma/jobs/5579204004?gh_jid=5579204004"
+            },
+            {
+              "title": "Account Executive, Enterprise (Berlin, Germany)",
+              "location": "Berlin, Germany",
+              "url": "https://boards.greenhouse.io/figma/jobs/5783812004?gh_jid=5783812004"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "datadog",
+        "company": "Datadog",
+        "homepageUrl": "https://www.datadoghq.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://boards.greenhouse.io/datadog"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "unverified",
+        "labelNote": "Candidate source; independent dated review still required."
+      },
+      "result": {
+        "id": "datadog",
+        "company": "Datadog",
+        "startedAt": "2026-09-20T08:15:00.008Z",
+        "durationMs": 23018,
+        "discovery": {
+          "outcome": "needs_confirmation",
+          "observedType": "html",
+          "observedUrl": "https://careers.datadoghq.com/",
+          "confidence": 0.5,
+          "fetches": 12,
+          "sourceMatchesLabel": null
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 453,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "AI Research Engineer - Datadog AI Research (DAIR)",
+              "location": "Paris, France",
+              "url": "https://careers.datadoghq.com/detail/7194969/?gh_jid=7194969"
+            },
+            {
+              "title": "AI Research Scientist - Datadog AI Research (DAIR)",
+              "location": "New York, New York, USA; Pittsburgh, Pennsylvania, USA",
+              "url": "https://careers.datadoghq.com/detail/6572669/?gh_jid=6572669"
+            },
+            {
+              "title": "AI Research Scientist - Datadog AI Research (DAIR)",
+              "location": "Paris, France",
+              "url": "https://careers.datadoghq.com/detail/6652564/?gh_jid=6652564"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "cloudflare",
+        "company": "Cloudflare",
+        "homepageUrl": "https://www.cloudflare.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://boards.greenhouse.io/cloudflare"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "unverified",
+        "labelNote": "Candidate source; independent source review still required."
+      },
+      "result": {
+        "id": "cloudflare",
+        "company": "Cloudflare",
+        "startedAt": "2026-09-20T08:15:03.201Z",
+        "durationMs": 13063,
+        "discovery": {
+          "outcome": "needs_confirmation",
+          "observedType": "html",
+          "observedUrl": "https://www.cloudflare.com/careers/",
+          "confidence": 0.5,
+          "fetches": 7,
+          "sourceMatchesLabel": null
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 379,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "Account Executive, FedCiv",
+              "location": "Hybrid",
+              "url": "https://boards.greenhouse.io/cloudflare/jobs/7695702?gh_jid=7695702"
+            },
+            {
+              "title": "Account Executive, Indonesia",
+              "location": "Hybrid",
+              "url": "https://boards.greenhouse.io/cloudflare/jobs/8172582?gh_jid=8172582"
+            },
+            {
+              "title": "AI Security Research & Red Team Engineer",
+              "location": "Hybrid",
+              "url": "https://boards.greenhouse.io/cloudflare/jobs/8097321?gh_jid=8097321"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "canonical",
+        "company": "Canonical",
+        "homepageUrl": "https://canonical.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://boards.greenhouse.io/canonical"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Canonical's first-party careers page links its roles to the Canonical Greenhouse board.",
+        "sourceEvidenceUrls": [
+          "https://canonical.com/careers",
+          "https://job-boards.greenhouse.io/canonical"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "canonical",
+        "company": "Canonical",
+        "startedAt": "2026-09-20T08:15:15.284Z",
+        "durationMs": 25840,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "greenhouse",
+          "observedUrl": "https://job-boards.greenhouse.io/canonical",
+          "confidence": 0.95,
+          "fetches": 14,
+          "sourceMatchesLabel": true
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 304,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "Accountant",
+              "location": "Home based - EMEA",
+              "url": "https://job-boards.greenhouse.io/canonical/jobs/5569916"
+            },
+            {
+              "title": "Accounts Payable Clerk",
+              "location": "Home based - EMEA; Office Based - London, UK",
+              "url": "https://job-boards.greenhouse.io/canonical/jobs/7971310"
+            },
+            {
+              "title": "Accounts Receivable Clerk",
+              "location": "Home based - EMEA",
+              "url": "https://job-boards.greenhouse.io/canonical/jobs/5243483"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "automattic",
+        "company": "Automattic",
+        "homepageUrl": "https://automattic.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://boards.greenhouse.io/automattic"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "unverified",
+        "labelNote": "Candidate source; independent source review still required."
+      },
+      "result": {
+        "id": "automattic",
+        "company": "Automattic",
+        "startedAt": "2026-09-20T08:15:16.264Z",
+        "durationMs": 12601,
+        "discovery": {
+          "outcome": "needs_confirmation",
+          "observedType": "html",
+          "observedUrl": "https://automattic.com/work-with-us/",
+          "confidence": 0.5,
+          "fetches": 6,
+          "sourceMatchesLabel": null
+        },
+        "extraction": {
+          "outcome": "failed",
+          "countMatchesLabel": null,
+          "sample": [],
+          "error": "HTTP 404 from https://boards-api.greenhouse.io/v1/boards/automattic/jobs"
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "gitlab",
+        "company": "GitLab",
+        "homepageUrl": "https://about.gitlab.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://boards.greenhouse.io/gitlab"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "unverified",
+        "labelNote": "Candidate source; independent source review still required."
+      },
+      "result": {
+        "id": "gitlab",
+        "company": "GitLab",
+        "startedAt": "2026-09-20T08:15:23.026Z",
+        "durationMs": 11703,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "greenhouse",
+          "observedUrl": "https://job-boards.greenhouse.io/gitlab",
+          "confidence": 0.97,
+          "fetches": 6,
+          "sourceMatchesLabel": null
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 216,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "AI Engineer",
+              "location": "Remote, Bangalore",
+              "url": "https://job-boards.greenhouse.io/gitlab/jobs/8556658002"
+            },
+            {
+              "title": "AI Transformation Owner, CRO",
+              "location": "Remote, United States",
+              "url": "https://job-boards.greenhouse.io/gitlab/jobs/8638232002"
+            },
+            {
+              "title": "AI Transformation Owner, Product & Design",
+              "location": "Remote, Canada; Remote, United Kingdom; Remote, United States",
+              "url": "https://job-boards.greenhouse.io/gitlab/jobs/8716179002"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "wise",
+        "company": "Wise",
+        "homepageUrl": "https://wise.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://wise.jobs/jobs"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Wise's explicit first-party all-jobs listing is a SmartRecruiters Attrax-powered custom HTML site, not Workday or the SmartRecruiters public postings API.",
+        "sourceEvidenceUrls": [
+          "https://wise.jobs",
+          "https://wise.jobs/jobs"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "wise",
+        "company": "Wise",
+        "startedAt": "2026-09-20T08:15:28.865Z",
+        "durationMs": 24650,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://wise.jobs/jobs",
+          "confidence": 0.85,
+          "fetches": 11,
+          "sourceMatchesLabel": true
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 12,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "FinCrime Operations Team Lead - AML Investigations",
+              "url": "https://wise.jobs/job/fincrime-operations-team-lead-aml-investigations-in-hyderabad-jid-2818"
+            },
+            {
+              "title": "Presales Consultant",
+              "url": "https://wise.jobs/job/presales-consultant-in-austin-jid-4184"
+            },
+            {
+              "title": "Customer Success Manager",
+              "url": "https://wise.jobs/job/customer-success-manager-in-sao-paulo-jid-3685"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "salesforce",
+        "company": "Salesforce",
+        "homepageUrl": "https://www.salesforce.com",
+        "expectedSource": {
+          "type": "workday",
+          "url": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "unverified",
+        "labelNote": "Workday tenant candidate; expected mapping requires independent review."
+      },
+      "result": {
+        "id": "salesforce",
+        "company": "Salesforce",
+        "startedAt": "2026-09-20T08:15:34.729Z",
+        "durationMs": 75105,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://www.salesforce.com/company/careers/locations/apac/?bc=DB",
+          "confidence": 0.85,
+          "fetches": 12,
+          "sourceMatchesLabel": null
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 1480,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "AI Builder, Emerging Talent - Spanish Market",
+              "location": "Spain - Madrid",
+              "url": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/Spain---Madrid/AI-Builder--Emerging-Talent---Spanish-Market_JR360475-2"
+            },
+            {
+              "title": "Operations Senior Analyst",
+              "location": "Japan - Tokyo",
+              "url": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/Japan---Tokyo/Operations-Senior-Analyst_JR358512"
+            },
+            {
+              "title": "Software Engineering SMTS (Backend - Distributed Systems)",
+              "location": "2 Locations",
+              "url": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/India---Hyderabad/Software-Engineering-SMTS---MTS----Platform-Engineering--Backend--Kubernetes---Cloud-_JR347341"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "siemens",
+        "company": "Siemens",
+        "homepageUrl": "https://www.siemens.com",
+        "expectedSource": {
+          "type": "workday",
+          "url": "https://jobs.siemens.com/careers"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "unverified",
+        "labelNote": "Enterprise custom-domain candidate; source type and mapping require independent review."
+      },
+      "result": {
+        "id": "siemens",
+        "company": "Siemens",
+        "startedAt": "2026-09-20T08:15:41.124Z",
+        "durationMs": 21645,
+        "discovery": {
+          "outcome": "needs_confirmation",
+          "observedType": "html",
+          "observedUrl": "https://www.siemens.com/en-gb/company/jobs/",
+          "confidence": 0.5,
+          "fetches": 11,
+          "sourceMatchesLabel": null
+        },
+        "extraction": {
+          "outcome": "failed",
+          "countMatchesLabel": null,
+          "sample": [],
+          "error": "workday spec missing host/tenant/site"
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "spotify",
+        "company": "Spotify",
+        "homepageUrl": "https://www.spotify.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://www.lifeatspotify.com/jobs"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "unverified",
+        "labelNote": "Candidate first-party listing; independent dated review still required."
+      },
+      "result": {
+        "id": "spotify",
+        "company": "Spotify",
+        "startedAt": "2026-09-20T08:15:53.515Z",
+        "durationMs": 34370,
+        "discovery": {
+          "outcome": "not_found",
+          "fetches": 16,
+          "sourceMatchesLabel": null
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 0,
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "mozilla",
+        "company": "Mozilla",
+        "homepageUrl": "https://www.mozilla.org",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://www.mozilla.org/en-US/careers/listings/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "unverified",
+        "labelNote": "First-party listing candidate; independent review still required."
+      },
+      "result": {
+        "id": "mozilla",
+        "company": "Mozilla",
+        "startedAt": "2026-09-20T08:16:02.769Z",
+        "durationMs": 22052,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://www.mozilla.org/en-GB/careers/",
+          "confidence": 0.85,
+          "fetches": 10,
+          "sourceMatchesLabel": null
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 23,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "Staff Data Scientist, Ads",
+              "location": "Remote US Core Services",
+              "url": "https://www.mozilla.org/en-US/careers/position/gh/7137777/"
+            },
+            {
+              "title": "Senior Software Engineer, Add-Ons",
+              "location": "Remote France, Remote Germany",
+              "url": "https://www.mozilla.org/en-US/careers/position/gh/8188873/"
+            },
+            {
+              "title": "Senior Strategic Account Executive, Firefox Enterprise (DACH)",
+              "location": "Remote Germany New Products",
+              "url": "https://www.mozilla.org/en-US/careers/position/gh/7622995/"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "basecamp",
+        "company": "37signals",
+        "homepageUrl": "https://37signals.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://37signals.com/jobs"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "unverified",
+        "labelNote": "First-party listing candidate; independent review still required."
+      },
+      "result": {
+        "id": "basecamp",
+        "company": "37signals",
+        "startedAt": "2026-09-20T08:16:24.821Z",
+        "durationMs": 34136,
+        "discovery": {
+          "outcome": "not_found",
+          "fetches": 16,
+          "sourceMatchesLabel": null
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 0,
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "monzo",
+        "company": "Monzo",
+        "homepageUrl": "https://monzo.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://boards.greenhouse.io/monzo"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Monzo's first-party careers page links to the Monzo Greenhouse board.",
+        "sourceEvidenceUrls": [
+          "https://monzo.com/careers",
+          "https://boards.greenhouse.io/monzo"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "monzo",
+        "company": "Monzo",
+        "startedAt": "2026-09-20T08:16:27.885Z",
+        "durationMs": 20115,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "greenhouse",
+          "observedUrl": "https://job-boards.greenhouse.io/monzo",
+          "confidence": 0.97,
+          "fetches": 11,
+          "sourceMatchesLabel": true
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 73,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "Anaplan Support Analyst",
+              "location": "Cardiff, London or Remote (UK)",
+              "url": "https://job-boards.greenhouse.io/monzo/jobs/8143930"
+            },
+            {
+              "title": "Android Engineer",
+              "location": "Barcelona",
+              "url": "https://job-boards.greenhouse.io/monzo/jobs/7343996"
+            },
+            {
+              "title": "Android Engineer",
+              "location": "Cardiff, London or Remote (UK)",
+              "url": "https://job-boards.greenhouse.io/monzo/jobs/7115379"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "revolut",
+        "company": "Revolut",
+        "homepageUrl": "https://www.revolut.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://boards.greenhouse.io/revolut"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "unverified",
+        "labelNote": "Candidate source; independent source review still required."
+      },
+      "result": {
+        "id": "revolut",
+        "company": "Revolut",
+        "startedAt": "2026-09-20T08:16:48.000Z",
+        "durationMs": 32571,
+        "discovery": {
+          "outcome": "not_found",
+          "fetches": 16,
+          "sourceMatchesLabel": null
+        },
+        "extraction": {
+          "outcome": "failed",
+          "countMatchesLabel": null,
+          "sample": [],
+          "error": "HTTP 404 from https://boards-api.greenhouse.io/v1/boards/revolut/jobs"
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "zapier",
+        "company": "Zapier",
+        "homepageUrl": "https://zapier.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://boards.greenhouse.io/zapier"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "unverified",
+        "labelNote": "Candidate source; independent source review still required."
+      },
+      "result": {
+        "id": "zapier",
+        "company": "Zapier",
+        "startedAt": "2026-09-20T08:16:49.834Z",
+        "durationMs": 18679,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://zapier.com/jobs",
+          "confidence": 0.85,
+          "fetches": 10,
+          "sourceMatchesLabel": null
+        },
+        "extraction": {
+          "outcome": "failed",
+          "countMatchesLabel": null,
+          "sample": [],
+          "error": "HTTP 404 from https://boards-api.greenhouse.io/v1/boards/zapier/jobs"
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "linear",
+        "company": "Linear",
+        "homepageUrl": "https://linear.app",
+        "expectedSource": {
+          "type": "ashby",
+          "url": "https://jobs.ashbyhq.com/Linear"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Linear's first-party careers listing links its roles to the Linear Ashby board.",
+        "sourceEvidenceUrls": [
+          "https://linear.app/careers",
+          "https://jobs.ashbyhq.com/Linear"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "linear",
+        "company": "Linear",
+        "startedAt": "2026-09-20T08:16:58.957Z",
+        "durationMs": 4515,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "ashby",
+          "observedUrl": "https://jobs.ashbyhq.com/Linear",
+          "confidence": 0.95,
+          "fetches": 7,
+          "sourceMatchesLabel": true
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 32,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "Senior / Staff Fullstack Engineer",
+              "location": "Europe",
+              "url": "https://jobs.ashbyhq.com/Linear/d3bc1ced-3ce4-4086-a050-555055dbb1ff"
+            },
+            {
+              "title": "Senior / Staff Fullstack Engineer",
+              "location": "North America",
+              "url": "https://jobs.ashbyhq.com/Linear/cd5ae036-0223-427a-b038-ba16ef9dcb32"
+            },
+            {
+              "title": "Senior / Staff Product Engineer",
+              "location": "Europe",
+              "url": "https://jobs.ashbyhq.com/Linear/069c4628-88d7-4e4d-b393-c996fc7f3076"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "vercel",
+        "company": "Vercel",
+        "homepageUrl": "https://vercel.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://job-boards.greenhouse.io/vercel"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Vercel's first-party careers page links its roles to the Vercel Greenhouse board; the earlier Ashby candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://vercel.com/careers",
+          "https://job-boards.greenhouse.io/vercel"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "vercel",
+        "company": "Vercel",
+        "startedAt": "2026-09-20T08:17:03.472Z",
+        "durationMs": 22156,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "greenhouse",
+          "observedUrl": "https://job-boards.greenhouse.io/vercel",
+          "confidence": 0.95,
+          "fetches": 11,
+          "sourceMatchesLabel": true
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 84,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "Account Executive, Commercial",
+              "location": "Hybrid - London",
+              "url": "https://job-boards.greenhouse.io/vercel/jobs/6136160004"
+            },
+            {
+              "title": "Account Executive, Majors",
+              "location": "Hybrid - London",
+              "url": "https://job-boards.greenhouse.io/vercel/jobs/5999792004"
+            },
+            {
+              "title": "Account Executive, Majors (APAC)",
+              "location": "Hybrid - Sydney",
+              "url": "https://job-boards.greenhouse.io/vercel/jobs/5841911004"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "render",
+        "company": "Render",
+        "homepageUrl": "https://render.com",
+        "expectedSource": {
+          "type": "ashby",
+          "url": "https://jobs.ashbyhq.com/render"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Render's first-party careers page links its roles to the Render Ashby board.",
+        "sourceEvidenceUrls": [
+          "https://render.com/careers",
+          "https://jobs.ashbyhq.com/render"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "render",
+        "company": "Render",
+        "startedAt": "2026-09-20T08:17:08.513Z",
+        "durationMs": 27154,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "ashby",
+          "observedUrl": "https://jobs.ashbyhq.com/render",
+          "confidence": 0.99,
+          "fetches": 14,
+          "sourceMatchesLabel": true
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 39,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "Open Application",
+              "location": "Remote: United States",
+              "url": "https://jobs.ashbyhq.com/render/558f18ed-c98c-4928-aa2b-2f9e297eea42"
+            },
+            {
+              "title": "Software Engineer, Product (all levels)",
+              "location": "Remote: United States",
+              "url": "https://jobs.ashbyhq.com/render/c7d896f2-20a9-4b44-9f7d-13929a0fe453"
+            },
+            {
+              "title": "Software Engineer, Security (all levels)",
+              "location": "Remote: United States",
+              "url": "https://jobs.ashbyhq.com/render/226a1b3b-5937-4880-817b-4beb1f72ecc6"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

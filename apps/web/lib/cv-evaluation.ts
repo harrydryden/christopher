@@ -22,6 +22,7 @@ export type CvEvaluationRow = {
   id: string;
   requirement: string;
   importance?: string;
+  category?: "experience" | "skills" | "education" | "delivery" | "logistics";
   currentText: string[];
   change: CvChange;
   suggestion: string;
@@ -176,6 +177,7 @@ export function cvEvaluationRows(
           id: requirement.id,
           requirement: requirement.label,
           importance: requirement.importance,
+          category: requirement.category,
           currentText: [],
           change: "Uncertain",
           suggestion: "Reassess this revision to review this requirement.",
@@ -217,6 +219,7 @@ export function cvEvaluationRows(
         id: requirement.id,
         requirement: requirement.label,
         importance: requirement.importance,
+        category: requirement.category,
         currentText: unique(match.cvEvidence.map((ref) => ref.quote)),
         change,
         suggestion: flags.length

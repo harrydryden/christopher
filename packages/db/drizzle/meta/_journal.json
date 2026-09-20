@@ -239,6 +239,13 @@
       "when": 1790676000000,
       "tag": "0033_cv_shares",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1790762400000,
+      "tag": "0034_cv_gap_quiz",
+      "breakpoints": true
     }
   ]
 }

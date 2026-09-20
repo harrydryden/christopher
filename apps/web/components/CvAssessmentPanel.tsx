@@ -1,5 +1,6 @@
 import { cvMaxPages, type CvContent, type CvLibrary } from "@christopher/core/cv";
 import type { CvAssessment } from "@christopher/core/cv-assessment";
+import { diagnoseCvQuality } from "@christopher/core/cv-quality";
 import { assessCvDraft, finaliseCvDraft } from "@/app/actions/cv";
 import { cvEvaluationRows, type CvCommentInput } from "@/lib/cv-evaluation";
 import { CvEvaluationTable } from "./CvEvaluationTable";
@@ -105,6 +106,7 @@ export function CvAssessmentPanel({
   const essentialGaps = rows.filter(
     (row) => row.importance === "essential" && row.experience !== "Strong",
   ).length;
+  const quality = content ? diagnoseCvQuality(assessment, content) : null;
   return (
     <section
       className="space-y-4 border border-line-muted p-4"
@@ -134,6 +136,45 @@ export function CvAssessmentPanel({
         {flagged.length} factual {flagged.length === 1 ? "concern" : "concerns"}
 
       </p>
+      {quality && (
+        <div className="space-y-3" aria-labelledby="cv-quality-title">
+          <div>
+            <h3 id="cv-quality-title" className="ds-pixel text-11">Quality checks</h3>
+            <p className="text-12 text-muted">Separate checks show what the match score alone cannot.</p>
+          </div>
+          <dl className="grid gap-px border border-line-muted bg-line-muted sm:grid-cols-2 lg:grid-cols-4">
+            <div className="bg-raised p-3">
+              <dt className="ds-label">Factual support</dt>
+              <dd className="mt-1 text-16 font-semibold">{quality.factualSupport.score === null ? "Not assessed" : `${quality.factualSupport.score}/100`}</dd>
+              <dd className="text-12 text-muted">{quality.factualSupport.supported} of {quality.factualSupport.total} claims supported</dd>
+            </div>
+            <div className="bg-raised p-3">
+              <dt className="ds-label">Priority coverage</dt>
+              <dd className="mt-1 text-16 font-semibold">{quality.priorityCoverage.score === null ? "Not assessed" : `${quality.priorityCoverage.score}/100`}</dd>
+              <dd className="text-12 text-muted">{quality.priorityCoverage.basis === "responsibilities_fallback" ? "Responsibility coverage; no essential or desirable priorities were stated" : "Capability evidence, weighted by role priority"}</dd>
+            </div>
+            <div className="bg-raised p-3">
+              <dt className="ds-label">Evidence ready to use</dt>
+              <dd className="mt-1 text-16 font-semibold">{quality.evidencedOpportunityGap.count}</dd>
+              <dd className="text-12 text-muted">requirements with stronger evidence in the Library than this CV shows</dd>
+            </div>
+            <div className="bg-raised p-3">
+              <dt className="ds-label">Logistics to confirm</dt>
+              <dd className="mt-1 text-16 font-semibold">{quality.unverifiedLogistics.count}</dd>
+              <dd className="text-12 text-muted">kept separate from capability coverage</dd>
+            </div>
+          </dl>
+          <div className="border border-line-muted p-3 text-12">
+            <p className="font-semibold">Editorial review</p>
+            <p className="text-muted">{quality.editorial.disclaimer}</p>
+            <ul className="mt-2 grid gap-2 sm:grid-cols-3">
+              <li><strong>Repetition · {quality.editorial.repetition.label}</strong><span className="block text-muted">{quality.editorial.repetition.note}</span></li>
+              <li><strong>Concision · {quality.editorial.concision.label}</strong><span className="block text-muted">{quality.editorial.concision.note}</span></li>
+              <li><strong>Profile focus · {quality.editorial.summaryFocus.label}</strong><span className="block text-muted">{quality.editorial.summaryFocus.note}</span></li>
+            </ul>
+          </div>
+        </div>
+      )}
       <LibraryDrift sentence={libraryDrift} formId={rebuildFormId} />
       <CvEvaluationTable rows={rows} />
       <div className="flex flex-wrap items-center gap-3 text-14">

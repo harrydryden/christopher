@@ -1,0 +1,880 @@
+{
+  "at": "2026-09-20T08:11:01.440Z",
+  "passed": true,
+  "failures": [],
+  "environment": {
+    "node": "v22.18.0",
+    "cpu": "Apple M4",
+    "cpuCount": 10,
+    "hostMemoryMiB": 24576,
+    "database": "christopher_users_benchmark"
+  },
+  "target": {
+    "registeredUsers": 100,
+    "simultaneouslyActiveUsers": 10,
+    "soakSeconds": 60,
+    "idleSeconds": 30
+  },
+  "counts": {
+    "users": 100,
+    "user_jobs": 100000,
+    "libraries": 110,
+    "cvs": 100,
+    "applications": 100,
+    "decisions": 100,
+    "queued_tasks": 30
+  },
+  "thresholds": {
+    "readP95Ms": 2000,
+    "writeP95Ms": 4000,
+    "maxErrors": 0,
+    "maxPhaseSeconds": 120
+  },
+  "phases": [
+    {
+      "label": "ten-active authenticated reads",
+      "concurrency": 10,
+      "seconds": 7.27,
+      "requestsPerSecond": 82.55,
+      "requests": 600,
+      "errors": 0,
+      "p50Ms": 123,
+      "p95Ms": 203,
+      "maxMs": 343,
+      "routes": {
+        "/?view=auto-matched": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 135,
+          "p95Ms": 191,
+          "maxMs": 239
+        },
+        "/companies": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 156,
+          "p95Ms": 273,
+          "maxMs": 343
+        },
+        "/applications": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 167,
+          "p95Ms": 229,
+          "maxMs": 289
+        },
+        "/library": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 106,
+          "p95Ms": 155,
+          "maxMs": 248
+        },
+        "/health": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 87,
+          "p95Ms": 142,
+          "maxMs": 166
+        },
+        "/api/work-status": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 42,
+          "p95Ms": 65,
+          "maxMs": 80
+        }
+      },
+      "failures": []
+    },
+    {
+      "label": "ten-active authenticated CV archive and restore",
+      "concurrency": 10,
+      "operations": {
+        "archives": 10,
+        "restores": 10
+      },
+      "requests": 20,
+      "errors": 0,
+      "p50Ms": 50,
+      "p95Ms": 68,
+      "maxMs": 68,
+      "failures": []
+    },
+    {
+      "label": "ten-active database decision, Library and queue fixtures",
+      "concurrency": 10,
+      "seconds": 0.03,
+      "operations": {
+        "decisions": 100,
+        "librarySaves": 10,
+        "queuedTasks": 30
+      },
+      "requests": 10,
+      "errors": 0,
+      "p50Ms": 14,
+      "p95Ms": 14,
+      "maxMs": 14,
+      "failures": []
+    },
+    {
+      "label": "ten-active steady read soak (60s)",
+      "concurrency": 10,
+      "seconds": 50.95,
+      "requestsPerMinute": 60,
+      "requests": 60,
+      "errors": 0,
+      "p50Ms": 142,
+      "p95Ms": 174,
+      "maxMs": 182,
+      "failures": []
+    },
+    {
+      "label": "hundred-user authenticated read burst",
+      "concurrency": 100,
+      "seconds": 6.21,
+      "requestsPerSecond": 96.59,
+      "requests": 600,
+      "errors": 0,
+      "p50Ms": 939,
+      "p95Ms": 1786,
+      "maxMs": 2145,
+      "routes": {
+        "/?view=auto-matched": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 1122,
+          "p95Ms": 1373,
+          "maxMs": 1480
+        },
+        "/companies": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 970,
+          "p95Ms": 1265,
+          "maxMs": 1376
+        },
+        "/applications": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 1722,
+          "p95Ms": 1989,
+          "maxMs": 2145
+        },
+        "/library": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 900,
+          "p95Ms": 1177,
+          "maxMs": 1317
+        },
+        "/health": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 873,
+          "p95Ms": 1092,
+          "maxMs": 1265
+        },
+        "/api/work-status": {
+          "requests": 100,
+          "errors": 0,
+          "p50Ms": 429,
+          "p95Ms": 587,
+          "maxMs": 629
+        }
+      },
+      "failures": []
+    }
+  ],
+  "resources": [
+    {
+      "at": "2026-09-20T08:08:58.139Z",
+      "phase": "ten-active reads",
+      "serverRssMiB": 328,
+      "serverHeapUsedMiB": 169,
+      "benchmarkRssMiB": 101,
+      "benchmarkHeapUsedMiB": 16,
+      "hostFreeMiB": 250,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:00.138Z",
+      "phase": "ten-active reads",
+      "serverRssMiB": 434,
+      "serverHeapUsedMiB": 281,
+      "benchmarkRssMiB": 117,
+      "benchmarkHeapUsedMiB": 15,
+      "hostFreeMiB": 227,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:02.140Z",
+      "phase": "ten-active reads",
+      "serverRssMiB": 435,
+      "serverHeapUsedMiB": 205,
+      "benchmarkRssMiB": 116,
+      "benchmarkHeapUsedMiB": 9,
+      "hostFreeMiB": 218,
+      "dbConnections": 4,
+      "dbActive": 2
+    },
+    {
+      "at": "2026-09-20T08:09:04.138Z",
+      "phase": "authenticated CV writes",
+      "serverRssMiB": 411,
+      "serverHeapUsedMiB": 184,
+      "benchmarkRssMiB": 112,
+      "benchmarkHeapUsedMiB": 23,
+      "hostFreeMiB": 208,
+      "dbConnections": 4,
+      "dbActive": 3
+    },
+    {
+      "at": "2026-09-20T08:09:06.139Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 409,
+      "serverHeapUsedMiB": 187,
+      "benchmarkRssMiB": 109,
+      "benchmarkHeapUsedMiB": 16,
+      "hostFreeMiB": 247,
+      "dbConnections": 13,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:08.136Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 401,
+      "serverHeapUsedMiB": 187,
+      "benchmarkRssMiB": 105,
+      "benchmarkHeapUsedMiB": 16,
+      "hostFreeMiB": 379,
+      "dbConnections": 13,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:10.137Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 401,
+      "serverHeapUsedMiB": 187,
+      "benchmarkRssMiB": 105,
+      "benchmarkHeapUsedMiB": 16,
+      "hostFreeMiB": 364,
+      "dbConnections": 13,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:12.138Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 401,
+      "serverHeapUsedMiB": 187,
+      "benchmarkRssMiB": 105,
+      "benchmarkHeapUsedMiB": 16,
+      "hostFreeMiB": 385,
+      "dbConnections": 13,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:14.137Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 376,
+      "serverHeapUsedMiB": 187,
+      "benchmarkRssMiB": 75,
+      "benchmarkHeapUsedMiB": 9,
+      "hostFreeMiB": 317,
+      "dbConnections": 13,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:16.139Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 330,
+      "serverHeapUsedMiB": 192,
+      "benchmarkRssMiB": 81,
+      "benchmarkHeapUsedMiB": 12,
+      "hostFreeMiB": 401,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:18.142Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 167,
+      "serverHeapUsedMiB": 192,
+      "benchmarkRssMiB": 62,
+      "benchmarkHeapUsedMiB": 13,
+      "hostFreeMiB": 366,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:20.144Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 213,
+      "serverHeapUsedMiB": 192,
+      "benchmarkRssMiB": 62,
+      "benchmarkHeapUsedMiB": 13,
+      "hostFreeMiB": 370,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:22.148Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 167,
+      "serverHeapUsedMiB": 112,
+      "benchmarkRssMiB": 62,
+      "benchmarkHeapUsedMiB": 13,
+      "hostFreeMiB": 401,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:24.142Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 166,
+      "serverHeapUsedMiB": 112,
+      "benchmarkRssMiB": 62,
+      "benchmarkHeapUsedMiB": 13,
+      "hostFreeMiB": 220,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:26.143Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 201,
+      "serverHeapUsedMiB": 114,
+      "benchmarkRssMiB": 67,
+      "benchmarkHeapUsedMiB": 15,
+      "hostFreeMiB": 245,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:28.145Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 191,
+      "serverHeapUsedMiB": 114,
+      "benchmarkRssMiB": 65,
+      "benchmarkHeapUsedMiB": 9,
+      "hostFreeMiB": 331,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:30.146Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 187,
+      "serverHeapUsedMiB": 114,
+      "benchmarkRssMiB": 65,
+      "benchmarkHeapUsedMiB": 9,
+      "hostFreeMiB": 443,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:32.146Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 186,
+      "serverHeapUsedMiB": 114,
+      "benchmarkRssMiB": 65,
+      "benchmarkHeapUsedMiB": 9,
+      "hostFreeMiB": 367,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:34.145Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 169,
+      "serverHeapUsedMiB": 114,
+      "benchmarkRssMiB": 62,
+      "benchmarkHeapUsedMiB": 10,
+      "hostFreeMiB": 336,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:36.147Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 198,
+      "serverHeapUsedMiB": 109,
+      "benchmarkRssMiB": 67,
+      "benchmarkHeapUsedMiB": 12,
+      "hostFreeMiB": 243,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:38.149Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 198,
+      "serverHeapUsedMiB": 109,
+      "benchmarkRssMiB": 67,
+      "benchmarkHeapUsedMiB": 13,
+      "hostFreeMiB": 183,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:40.148Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 186,
+      "serverHeapUsedMiB": 109,
+      "benchmarkRssMiB": 62,
+      "benchmarkHeapUsedMiB": 13,
+      "hostFreeMiB": 282,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:42.149Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 186,
+      "serverHeapUsedMiB": 109,
+      "benchmarkRssMiB": 62,
+      "benchmarkHeapUsedMiB": 13,
+      "hostFreeMiB": 198,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:44.150Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 150,
+      "serverHeapUsedMiB": 109,
+      "benchmarkRssMiB": 62,
+      "benchmarkHeapUsedMiB": 12,
+      "hostFreeMiB": 173,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:46.151Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 181,
+      "serverHeapUsedMiB": 121,
+      "benchmarkRssMiB": 69,
+      "benchmarkHeapUsedMiB": 11,
+      "hostFreeMiB": 257,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:48.157Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 177,
+      "serverHeapUsedMiB": 122,
+      "benchmarkRssMiB": 69,
+      "benchmarkHeapUsedMiB": 11,
+      "hostFreeMiB": 179,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:50.154Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 173,
+      "serverHeapUsedMiB": 122,
+      "benchmarkRssMiB": 66,
+      "benchmarkHeapUsedMiB": 12,
+      "hostFreeMiB": 469,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:52.154Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 167,
+      "serverHeapUsedMiB": 122,
+      "benchmarkRssMiB": 66,
+      "benchmarkHeapUsedMiB": 11,
+      "hostFreeMiB": 398,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:54.154Z",
+      "phase": "ten-active soak",
+      "serverRssMiB": 167,
+      "serverHeapUsedMiB": 122,
+      "benchmarkRssMiB": 66,
+      "benchmarkHeapUsedMiB": 11,
+      "hostFreeMiB": 700,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:56.155Z",
+      "phase": "post-soak idle",
+      "serverRssMiB": 199,
+      "serverHeapUsedMiB": 111,
+      "benchmarkRssMiB": 70,
+      "benchmarkHeapUsedMiB": 15,
+      "hostFreeMiB": 703,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:09:58.156Z",
+      "phase": "post-soak idle",
+      "serverRssMiB": 199,
+      "serverHeapUsedMiB": 111,
+      "benchmarkRssMiB": 70,
+      "benchmarkHeapUsedMiB": 15,
+      "hostFreeMiB": 687,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:00.156Z",
+      "phase": "post-soak idle",
+      "serverRssMiB": 199,
+      "serverHeapUsedMiB": 111,
+      "benchmarkRssMiB": 70,
+      "benchmarkHeapUsedMiB": 15,
+      "hostFreeMiB": 596,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:02.160Z",
+      "phase": "post-soak idle",
+      "serverRssMiB": 199,
+      "serverHeapUsedMiB": 111,
+      "benchmarkRssMiB": 70,
+      "benchmarkHeapUsedMiB": 15,
+      "hostFreeMiB": 663,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:04.158Z",
+      "phase": "post-soak idle",
+      "serverRssMiB": 199,
+      "serverHeapUsedMiB": 111,
+      "benchmarkRssMiB": 70,
+      "benchmarkHeapUsedMiB": 15,
+      "hostFreeMiB": 601,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:06.157Z",
+      "phase": "post-soak idle",
+      "serverRssMiB": 199,
+      "serverHeapUsedMiB": 111,
+      "benchmarkRssMiB": 70,
+      "benchmarkHeapUsedMiB": 15,
+      "hostFreeMiB": 591,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:08.159Z",
+      "phase": "post-soak idle",
+      "serverRssMiB": 199,
+      "serverHeapUsedMiB": 111,
+      "benchmarkRssMiB": 70,
+      "benchmarkHeapUsedMiB": 15,
+      "hostFreeMiB": 513,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:10.161Z",
+      "phase": "post-soak idle",
+      "serverRssMiB": 199,
+      "serverHeapUsedMiB": 111,
+      "benchmarkRssMiB": 70,
+      "benchmarkHeapUsedMiB": 15,
+      "hostFreeMiB": 307,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:12.161Z",
+      "phase": "post-soak idle",
+      "serverRssMiB": 199,
+      "serverHeapUsedMiB": 111,
+      "benchmarkRssMiB": 70,
+      "benchmarkHeapUsedMiB": 15,
+      "hostFreeMiB": 176,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:14.163Z",
+      "phase": "post-soak idle",
+      "serverRssMiB": 199,
+      "serverHeapUsedMiB": 111,
+      "benchmarkRssMiB": 70,
+      "benchmarkHeapUsedMiB": 15,
+      "hostFreeMiB": 139,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:16.163Z",
+      "phase": "post-soak idle",
+      "serverRssMiB": 199,
+      "serverHeapUsedMiB": 111,
+      "benchmarkRssMiB": 70,
+      "benchmarkHeapUsedMiB": 15,
+      "hostFreeMiB": 111,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:18.165Z",
+      "phase": "post-soak idle",
+      "serverRssMiB": 194,
+      "serverHeapUsedMiB": 111,
+      "benchmarkRssMiB": 68,
+      "benchmarkHeapUsedMiB": 9,
+      "hostFreeMiB": 268,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:20.165Z",
+      "phase": "post-soak idle",
+      "serverRssMiB": 194,
+      "serverHeapUsedMiB": 111,
+      "benchmarkRssMiB": 68,
+      "benchmarkHeapUsedMiB": 9,
+      "hostFreeMiB": 180,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:22.166Z",
+      "phase": "post-soak idle",
+      "serverRssMiB": 194,
+      "serverHeapUsedMiB": 111,
+      "benchmarkRssMiB": 68,
+      "benchmarkHeapUsedMiB": 9,
+      "hostFreeMiB": 107,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:24.168Z",
+      "phase": "post-soak idle",
+      "serverRssMiB": 168,
+      "serverHeapUsedMiB": 111,
+      "benchmarkRssMiB": 66,
+      "benchmarkHeapUsedMiB": 10,
+      "hostFreeMiB": 314,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:26.168Z",
+      "phase": "hundred-user burst",
+      "serverRssMiB": 266,
+      "serverHeapUsedMiB": 154,
+      "benchmarkRssMiB": 84,
+      "benchmarkHeapUsedMiB": 18,
+      "hostFreeMiB": 237,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:28.167Z",
+      "phase": "hundred-user burst",
+      "serverRssMiB": 433,
+      "serverHeapUsedMiB": 310,
+      "benchmarkRssMiB": 108,
+      "benchmarkHeapUsedMiB": 14,
+      "hostFreeMiB": 170,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:30.168Z",
+      "phase": "hundred-user burst",
+      "serverRssMiB": 635,
+      "serverHeapUsedMiB": null,
+      "benchmarkRssMiB": 113,
+      "benchmarkHeapUsedMiB": 26,
+      "hostFreeMiB": 123,
+      "dbConnections": 4,
+      "dbActive": 2
+    },
+    {
+      "at": "2026-09-20T08:10:32.169Z",
+      "phase": "post-burst idle",
+      "serverRssMiB": 673,
+      "serverHeapUsedMiB": null,
+      "benchmarkRssMiB": 113,
+      "benchmarkHeapUsedMiB": 22,
+      "hostFreeMiB": 102,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:34.169Z",
+      "phase": "post-burst idle",
+      "serverRssMiB": 673,
+      "serverHeapUsedMiB": null,
+      "benchmarkRssMiB": 113,
+      "benchmarkHeapUsedMiB": 22,
+      "hostFreeMiB": 95,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:36.170Z",
+      "phase": "post-burst idle",
+      "serverRssMiB": 660,
+      "serverHeapUsedMiB": null,
+      "benchmarkRssMiB": 112,
+      "benchmarkHeapUsedMiB": 23,
+      "hostFreeMiB": 99,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:38.170Z",
+      "phase": "post-burst idle",
+      "serverRssMiB": 609,
+      "serverHeapUsedMiB": null,
+      "benchmarkRssMiB": 103,
+      "benchmarkHeapUsedMiB": 23,
+      "hostFreeMiB": 326,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:40.170Z",
+      "phase": "post-burst idle",
+      "serverRssMiB": 609,
+      "serverHeapUsedMiB": null,
+      "benchmarkRssMiB": 103,
+      "benchmarkHeapUsedMiB": 23,
+      "hostFreeMiB": 261,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:42.171Z",
+      "phase": "post-burst idle",
+      "serverRssMiB": 320,
+      "serverHeapUsedMiB": null,
+      "benchmarkRssMiB": 103,
+      "benchmarkHeapUsedMiB": 23,
+      "hostFreeMiB": 487,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:44.171Z",
+      "phase": "post-burst idle",
+      "serverRssMiB": 254,
+      "serverHeapUsedMiB": null,
+      "benchmarkRssMiB": 103,
+      "benchmarkHeapUsedMiB": 23,
+      "hostFreeMiB": 494,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:46.173Z",
+      "phase": "post-burst idle",
+      "serverRssMiB": 254,
+      "serverHeapUsedMiB": null,
+      "benchmarkRssMiB": 103,
+      "benchmarkHeapUsedMiB": 23,
+      "hostFreeMiB": 435,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:48.175Z",
+      "phase": "post-burst idle",
+      "serverRssMiB": 254,
+      "serverHeapUsedMiB": null,
+      "benchmarkRssMiB": 103,
+      "benchmarkHeapUsedMiB": 23,
+      "hostFreeMiB": 248,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:50.175Z",
+      "phase": "post-burst idle",
+      "serverRssMiB": 254,
+      "serverHeapUsedMiB": null,
+      "benchmarkRssMiB": 103,
+      "benchmarkHeapUsedMiB": 23,
+      "hostFreeMiB": 174,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:52.179Z",
+      "phase": "post-burst idle",
+      "serverRssMiB": 254,
+      "serverHeapUsedMiB": null,
+      "benchmarkRssMiB": 103,
+      "benchmarkHeapUsedMiB": 23,
+      "hostFreeMiB": 115,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:54.176Z",
+      "phase": "post-burst idle",
+      "serverRssMiB": 254,
+      "serverHeapUsedMiB": null,
+      "benchmarkRssMiB": 103,
+      "benchmarkHeapUsedMiB": 23,
+      "hostFreeMiB": 412,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:56.177Z",
+      "phase": "post-burst idle",
+      "serverRssMiB": 254,
+      "serverHeapUsedMiB": null,
+      "benchmarkRssMiB": 103,
+      "benchmarkHeapUsedMiB": 23,
+      "hostFreeMiB": 371,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:10:58.180Z",
+      "phase": "post-burst idle",
+      "serverRssMiB": 254,
+      "serverHeapUsedMiB": null,
+      "benchmarkRssMiB": 103,
+      "benchmarkHeapUsedMiB": 23,
+      "hostFreeMiB": 390,
+      "dbConnections": 4,
+      "dbActive": 1
+    },
+    {
+      "at": "2026-09-20T08:11:00.180Z",
+      "phase": "post-burst idle",
+      "serverRssMiB": 254,
+      "serverHeapUsedMiB": null,
+      "benchmarkRssMiB": 103,
+      "benchmarkHeapUsedMiB": 23,
+      "hostFreeMiB": 407,
+      "dbConnections": 4,
+      "dbActive": 1
+    }
+  ],
+  "limitations": [
+    "Local single Next.js process and local PostgreSQL; short warm workload with no think time.",
+    "CV archive/restore crosses the authenticated HTTP boundary. Decision, Library and queue fixtures use production tables directly; their browser form handling, queue-start latency and completed worker/model work are not measured.",
+    "The local inspector used for heap samples adds small diagnostic overhead and is bound to loopback.",
+    "Synthetic populated CV/Library/application data is smaller than p95 documents. No imports, public shares, Chromium, external providers or paid models run.",
+    "This does not establish hosted connection, memory, network, serverless fan-out or sustained-soak headroom."
+  ]
+}

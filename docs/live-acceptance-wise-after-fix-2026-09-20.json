@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-20T08:18:33.545Z",
+  "mode": "discovery_and_extraction",
+  "limitations": [
+    "This is a live observation, so role counts and pages can change during the run.",
+    "A null metric means the required independent label does not exist; it is not a pass.",
+    "No browser or AI fallback is used, and no database is read or written."
+  ],
+  "acceptance": {
+    "verdict": "blocked",
+    "reasons": [
+      "1 case(s) lack an independent posting-identity golden snapshot",
+      "posting-identity recall and precision have not been measured"
+    ]
+  },
+  "metrics": {
+    "total": 1,
+    "sourceLabelled": 1,
+    "sourceMatches": 1,
+    "sourceMismatches": 0,
+    "labelledAutomaticMatchesAt085": 1,
+    "automaticResolvedAt085": 1,
+    "wrongAutomaticAccepts": 0,
+    "extractionComplete": 1,
+    "extractionPartial": 0,
+    "extractionFailed": 0,
+    "countLabelled": 0,
+    "countMatches": 0,
+    "discoveryAccuracy": 1,
+    "extractionExactCountAgreement": null,
+    "postingIdentityRecall": null,
+    "postingIdentityPrecision": null
+  },
+  "cases": [
+    {
+      "manifest": {
+        "id": "wise",
+        "company": "Wise",
+        "homepageUrl": "https://wise.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://wise.jobs/jobs"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Wise's explicit first-party all-jobs listing is a SmartRecruiters Attrax-powered custom HTML site, not Workday or the SmartRecruiters public postings API.",
+        "sourceEvidenceUrls": [
+          "https://wise.jobs",
+          "https://wise.jobs/jobs"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "wise",
+        "company": "Wise",
+        "startedAt": "2026-09-20T08:18:08.775Z",
+        "durationMs": 24770,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://wise.jobs/jobs",
+          "confidence": 0.85,
+          "fetches": 11,
+          "sourceMatchesLabel": true
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 12,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "FinCrime Operations Team Lead - AML Investigations",
+              "url": "https://wise.jobs/job/fincrime-operations-team-lead-aml-investigations-in-hyderabad-jid-2818"
+            },
+            {
+              "title": "Presales Consultant",
+              "url": "https://wise.jobs/job/presales-consultant-in-austin-jid-4184"
+            },
+            {
+              "title": "Customer Success Manager",
+              "url": "https://wise.jobs/job/customer-success-manager-in-sao-paulo-jid-3685"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,368 @@
+{
+  "at": "2026-09-20T11:55:39.928Z",
+  "status": "automated_checks_passed",
+  "model": "claude-fable-5-1",
+  "priceSource": "https://platform.claude.com/docs/en/about-claude/pricing",
+  "pricesCheckedAt": "2026-09-20",
+  "syntheticCandidate": true,
+  "releaseAccepted": false,
+  "suite": "representative",
+  "budgetGuardrail": "The USD limit is a conservative admission estimate. Actual provider usage is recorded and can exceed the estimate; it is not an exact billing guarantee.",
+  "provider": {
+    "status": "passed",
+    "models": [
+      {
+        "model": "claude-fable-5-1",
+        "passed": true,
+        "providerId": "claude-fable-5-1",
+        "price": {
+          "input": 10,
+          "output": 50,
+          "cacheRead": 0.25
+        }
+      }
+    ],
+    "limitations": "Model metadata access only; generation quality, streaming behaviour and billing are separate checks."
+  },
+  "results": [],
+  "representativeResults": [
+    {
+      "name": "multi-role-senior",
+      "status": "passed",
+      "pdfPath": "docs/benchmarks/cv-broader-canary-2026-09-20-multi-role-senior.pdf",
+      "deterministic": {
+        "passed": true,
+        "missingEntries": [],
+        "lexicalReview": [],
+        "pageLimit": 2,
+        "pageCount": 1
+      },
+      "rubricGroundTruth": {
+        "passed": true,
+        "intentIds": {
+          "lead several operational teams": "r1",
+          "own an annual operating plan": "r2",
+          "report to executive stakeholders": "r3"
+        },
+        "missingIntents": [],
+        "injectedRequirements": []
+      },
+      "passed": true,
+      "requirementGroundTruth": {
+        "passed": true,
+        "findings": [
+          {
+            "intent": "lead several operational teams",
+            "allowed": [
+              "demonstrated"
+            ],
+            "requirementId": "r1",
+            "cvStatus": "demonstrated",
+            "libraryStatus": "demonstrated",
+            "passed": true
+          },
+          {
+            "intent": "own an annual operating plan",
+            "allowed": [
+              "demonstrated"
+            ],
+            "requirementId": "r2",
+            "cvStatus": "demonstrated",
+            "libraryStatus": "demonstrated",
+            "passed": true
+          },
+          {
+            "intent": "report to executive stakeholders",
+            "allowed": [
+              "demonstrated"
+            ],
+            "requirementId": "r3",
+            "cvStatus": "demonstrated",
+            "libraryStatus": "demonstrated",
+            "passed": true
+          }
+        ]
+      },
+      "assessorPassed": true,
+      "claimFlags": [],
+      "content": {
+        "theme": {
+          "version": 1,
+          "primary": "#000000",
+          "background": "#ffffff",
+          "surface": "#f2f2f2",
+          "pill": "#e6e6e6",
+          "introPanel": true,
+          "skillPills": true,
+          "font": "Christopher",
+          "maxPages": 2
+        },
+        "name": "Synthetic Candidate",
+        "contact": "London",
+        "summary": "Operations leader currently serving as Operations Director, leading three operational teams, owning the annual operating plan and reporting monthly operating risks to the executive committee. Earlier experience managing service scheduling for two regions and preparing weekly inventory reports.",
+        "sections": [
+          {
+            "entryId": "recent-evidence",
+            "kind": "experience",
+            "heading": "Operations Director · North Works · 2021 – Present",
+            "bullets": [
+              "Led three operational teams.",
+              "Owned the annual operating plan.",
+              "Reported monthly operating risks to the executive committee."
+            ]
+          },
+          {
+            "entryId": "middle-evidence",
+            "kind": "experience",
+            "heading": "Operations Manager · West Services · 2017 – 2021",
+            "bullets": [
+              "Managed service scheduling for two regions."
+            ]
+          },
+          {
+            "entryId": "early-evidence",
+            "kind": "experience",
+            "heading": "Analyst · East Supply · 2013 – 2017",
+            "bullets": [
+              "Prepared weekly inventory reports."
+            ]
+          }
+        ],
+        "gaps": [
+          "No education, qualifications or certifications are stored in the library, so no Education subsection could be included.",
+          "No skills blocks are stored, so no Skills subsection could be included.",
+          "No industry descriptions are stored for any employer, so industryDescriptions were omitted.",
+          "Evidence for each role is very sparse: no team sizes, budget scope, outcomes or metrics are recorded, so bullets were kept short rather than embellished.",
+          "The job description is extremely brief; only the three rubric criteria (team leadership, annual operating plan ownership, executive reporting) could be matched, all with confirmed evidence from the current role."
+        ],
+        "fitNotes": []
+      },
+      "assessment": {
+        "version": "2026-09-12.1",
+        "inputHash": "206eff21aafbdf70612f2a58dd55dee6c82898346b02897118196db611ed0d35",
+        "model": "claude-fable-5-1",
+        "assessedAt": "2026-09-20T11:56:19.656Z",
+        "pageCount": 1,
+        "rubric": {
+          "requirements": [
+            {
+              "id": "r1",
+              "label": "Lead several operational teams",
+              "quote": "lead several operational teams",
+              "importance": "essential",
+              "category": "experience"
+            },
+            {
+              "id": "r2",
+              "label": "Own an annual operating plan",
+              "quote": "own an annual operating plan",
+              "importance": "essential",
+              "category": "delivery"
+            },
+            {
+              "id": "r3",
+              "label": "Report to executive stakeholders",
+              "quote": "report to executive stakeholders",
+              "importance": "desirable",
+              "category": "delivery"
+            }
+          ],
+          "caveats": [
+            "The description is extremely brief and lacks role title, domain, industry, seniority, qualifications, technical skills, and logistics (location, hours, salary), so the rubric can only assess three high-level criteria.",
+            "'Several operational teams' has no numeric threshold or scope (team size, function), making the leadership requirement hard to assess objectively.",
+            "'Own an annual operating plan' does not specify budget size, scope, or whether ownership means authoring, approving or executing the plan."
+          ]
+        },
+        "review": {
+          "matches": [
+            {
+              "requirementId": "r1",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:recent-evidence:heading",
+                  "quote": "Operations Director · North Works · 2021 - Present"
+                },
+                {
+                  "id": "section:recent-evidence:0",
+                  "quote": "Led three operational teams."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:recent-evidence",
+                  "quote": "Led three operational teams."
+                }
+              ],
+              "reason": "The current Operations Director role explicitly states leading three operational teams, which satisfies 'several' given the rubric sets no numeric threshold or scope. Team size and functions are not stated.",
+              "improvement": "If known, add the functions and approximate headcount of the three teams to make the scope of leadership concrete."
+            },
+            {
+              "requirementId": "r2",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:recent-evidence:1",
+                  "quote": "Owned the annual operating plan."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:recent-evidence",
+                  "quote": "Owned the annual operating plan."
+                }
+              ],
+              "reason": "The CV and confirmed evidence both state explicit ownership of the annual operating plan in the current role, matching the requirement as worded. The rubric notes the requirement does not define budget size or what ownership entails, so no further threshold applies.",
+              "improvement": "Clarify what ownership covered (authoring, approval, budget scope, execution tracking) only if that detail is factual and available."
+            },
+            {
+              "requirementId": "r3",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:recent-evidence:2",
+                  "quote": "Reported monthly operating risks to the executive committee."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:recent-evidence",
+                  "quote": "Reported monthly operating risks to the executive committee."
+                }
+              ],
+              "reason": "Monthly reporting of operating risks to the executive committee is explicit, regular reporting to executive stakeholders.",
+              "improvement": "Optionally note the format (e.g. written report or presentation) and any decisions the reporting informed, if accurate."
+            }
+          ],
+          "claims": [
+            {
+              "claimId": "profile",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "source:profile",
+                  "quote": "Operations leader"
+                },
+                {
+                  "id": "entry:recent-evidence",
+                  "quote": "Operations Director · North Works · 2021 – Present\nLed three operational teams.\nOwned the annual operating plan.\nReported monthly operating risks to the executive committee."
+                },
+                {
+                  "id": "entry:middle-evidence",
+                  "quote": "Managed service scheduling for two regions."
+                },
+                {
+                  "id": "entry:early-evidence",
+                  "quote": "Prepared weekly inventory reports."
+                }
+              ],
+              "reason": "Every element of the profile (title, current tenure, three teams, plan ownership, monthly risk reporting, two-region scheduling, weekly inventory reports) is stated verbatim in the confirmed sources with no added numbers or seniority."
+            },
+            {
+              "claimId": "section:recent-evidence:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:recent-evidence",
+                  "quote": "Led three operational teams."
+                }
+              ],
+              "reason": "The required source contains the identical statement under the Operations Director role."
+            },
+            {
+              "claimId": "section:recent-evidence:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:recent-evidence",
+                  "quote": "Owned the annual operating plan."
+                }
+              ],
+              "reason": "The required source contains the identical statement under the Operations Director role."
+            },
+            {
+              "claimId": "section:recent-evidence:2",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:recent-evidence",
+                  "quote": "Reported monthly operating risks to the executive committee."
+                }
+              ],
+              "reason": "The required source contains the identical statement under the Operations Director role."
+            },
+            {
+              "claimId": "section:middle-evidence:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:middle-evidence",
+                  "quote": "Managed service scheduling for two regions."
+                }
+              ],
+              "reason": "The required source contains the identical statement under the Operations Manager role at West Services."
+            },
+            {
+              "claimId": "section:early-evidence:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:early-evidence",
+                  "quote": "Prepared weekly inventory reports."
+                }
+              ],
+              "reason": "The required source contains the identical statement under the Analyst role at East Supply."
+            }
+          ]
+        },
+        "score": 100,
+        "availableEvidenceScore": 100
+      },
+      "humanReview": "required: inspect this generated PDF for layout, lexical review flags and factual grounding"
+    }
+  ],
+  "budget": {
+    "capUsd": 8,
+    "spentUsd": 0.246894,
+    "heldUsd": 0,
+    "records": [
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 52,
+        "outputTokens": 316,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 1098,
+        "costUsd": 0.030045,
+        "durationMs": 7125,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 1157,
+        "outputTokens": 687,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 2275,
+        "costUsd": 0.074357,
+        "durationMs": 9679,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 718,
+        "outputTokens": 1951,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 3021,
+        "costUsd": 0.142492,
+        "durationMs": 22431,
+        "ok": true
+      }
+    ],
+    "exceeded": false
+  }
+}

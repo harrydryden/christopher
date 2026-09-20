@@ -1,0 +1,30 @@
+{
+  "checkedAt": "2026-09-20",
+  "method": "Public read-only retrieval with a descriptive user agent and host pacing; facts below were extracted independently from the discovery algorithm.",
+  "root": {
+    "url": "https://careers.datadoghq.com/",
+    "file": "root.html",
+    "bytes": 141517,
+    "sha256": "6487f637ae7908c7c5ffcd17af5c4f2e6f235dfb6bfedc15a71677cb152011c0",
+    "canonical": "https://careers.datadoghq.com/",
+    "listingLink": {
+      "text": "All Jobs",
+      "href": "/all-jobs"
+    },
+    "finding": "The root is a careers landing page with team, location and culture navigation. It explicitly delegates the complete vacancy view to All Jobs."
+  },
+  "allJobs": {
+    "url": "https://careers.datadoghq.com/all-jobs/",
+    "file": "all-jobs.html",
+    "bytes": 117505,
+    "sha256": "a1f7d1c2391ee4b210a996d532721c578365c2ae7b1058f89ff885fdbf3ffbae",
+    "canonical": "https://careers.datadoghq.com/all-jobs/",
+    "title": "Job Openings | Datadog Careers",
+    "listingSignals": [
+      "body search=\"true\"",
+      "unfiltered search configuration",
+      "team, location and remote refinements"
+    ],
+    "finding": "This is the first-party canonical complete searchable listing, rather than an equivalent spelling of the landing-page URL."
+  }
+}

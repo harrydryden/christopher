@@ -132,7 +132,7 @@ const aiCallsByStage = async () =>
 
 /** Let a requeued task run now, without waiting out its backoff. */
 async function runDueNow() {
-  await db.update(schema.tasks).set({ runAfter: new Date() });
+  await db.update(schema.tasks).set({ runAfter: sql`now()` });
   await queueFor().drain();
 }
 

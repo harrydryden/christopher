@@ -12,7 +12,7 @@
  */
 import type { CvLibrary, CvContent, LibraryEntryReview } from "@christopher/core";
 import type { CvAssessment, CvJobSource } from "@christopher/core/cv-assessment";
-import type { CvBuildCheckpoint, CvBuildFailure, CvBuildMotion, CvBuildStage, CvBuildStepStatus } from "@christopher/core";
+import type { CvBuildCheckpoint, CvBuildFailure, CvBuildMotion, CvBuildStage, CvBuildStepStatus, CvGapQuiz } from "@christopher/core";
 import { sql } from "drizzle-orm";
 import { cvRoleKey } from "./cv-role-key";
 import {
@@ -769,7 +769,7 @@ export const cvDrafts = pgTable("cv_drafts", {
   libraryVersion: integer("library_version").notNull(),
   librarySnapshot: jsonb("library_snapshot").$type<CvLibrary>().notNull(),
   model: text("model").notNull(),
-  status: text("status", { enum: ["queued", "generating", "ready", "failed"] }).notNull().default("queued"),
+  status: text("status", { enum: ["queued", "generating", "awaiting_evidence", "ready", "failed"] }).notNull().default("queued"),
   buildStage: text("build_stage", { enum: ["analysing", "writing", "fitting", "assessing"] }),
   /** Last moment the build advanced (a stage change, a batch finishing). Stale while `generating` means the worker stopped, not that the model is slow. */
   progressAt: ts("progress_at"),
@@ -777,6 +777,8 @@ export const cvDrafts = pgTable("cv_drafts", {
   buildCheckpoint: jsonb("build_checkpoint").$type<CvBuildCheckpoint>(),
   /** Why the last attempt stopped and whose move it is; cleared when a build starts afresh. */
   failure: jsonb("failure").$type<CvBuildFailure>(),
+  /** Optional factual questions raised after role analysis, including their immutable resolution. */
+  gapQuiz: jsonb("gap_quiz").$type<CvGapQuiz>(),
   content: jsonb("content").$type<CvContent>(),
   error: text("error"),
   revision: integer("revision").notNull().default(0),

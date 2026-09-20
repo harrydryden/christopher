@@ -466,6 +466,61 @@ describe("end to end", () => {
     expect(server.requests.every((r) => HOSTS.includes(r.host))).toBe(true);
   }, 60_000);
 
+  it("recovers a company with no discovered source when a person supplies its board URL", async () => {
+    await setGate({});
+    server.setRoutes({
+      "www.orbital.example": {
+        "/": { body: `<!doctype html><html><head><title>Orbital</title></head><body><nav><a href="/">Home</a><a href="/tech">Tech</a><a href="/news">News</a><a href="/contact">Contact</a><a href="/legal">Legal</a></nav></body></html>` },
+        "/robots.txt": { body: "User-agent: *\nAllow: /\n", contentType: "text/plain" },
+      },
+      "orbital.example": {},
+      "boards-api.greenhouse.io": greenhouseRoutes([JOB_OPERATIONS_MANAGER, JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]),
+      "job-boards.greenhouse.io": {},
+    });
+    const company = await addCompany("https://www.orbital.example/", "orbital.example");
+    await queue.drain();
+
+    const [automaticRun] = await db.select().from(schema.discoveryRuns)
+      .where(eq(schema.discoveryRuns.companyId, company.id));
+    expect(automaticRun!.status).toBe("not_found");
+    expect(await db.select().from(schema.careerSources)
+      .where(eq(schema.careerSources.companyId, company.id))).toHaveLength(0);
+
+    // This is the worker half of the assisted path. The web action has a database integration
+    // test proving that the pasted value is queued unchanged with this reason and a URL-specific
+    // dedupe key; here the real discovery and scan handlers consume that task end to end.
+    const suppliedUrl = "https://job-boards.greenhouse.io/acme";
+    await enqueueTask(db, "discover", { companyId: company.id, url: suppliedUrl, reason: "pasted" }, {
+      dedupeKey: `discover:${company.id}:url:${suppliedUrl}`,
+      priority: 1,
+    });
+    await queue.drain();
+
+    const runs = await db.select().from(schema.discoveryRuns)
+      .where(eq(schema.discoveryRuns.companyId, company.id));
+    expect(runs).toHaveLength(2);
+    const recoveredRun = runs.find((run) => run.id !== automaticRun!.id);
+    expect(recoveredRun).toMatchObject({ status: "resolved" });
+    expect(recoveredRun!.chosenSourceId).not.toBeNull();
+    const [source] = await db.select().from(schema.careerSources)
+      .where(eq(schema.careerSources.companyId, company.id));
+    expect(source).toMatchObject({
+      id: recoveredRun!.chosenSourceId,
+      type: "greenhouse",
+      atsSlug: "acme",
+      url: suppliedUrl,
+      status: "active",
+    });
+    const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source!.id));
+    expect(scan).toMatchObject({ status: "ok", postingsFound: 5 });
+    expect((await jobsInTable()).map((job) => job.title).sort()).toEqual([
+      "Head of Business Operations",
+      "Operations Analyst",
+      "Operations Manager",
+      "Senior Operations Associate",
+    ]);
+  }, 90_000);
+
   it("records a scan run that the health page can report on", async () => {
     await setGate({});
     await addCompany("https://www.acme.example/", "acme.example");
@@ -848,6 +903,75 @@ describe("HTML extraction completion", () => {
     const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://www.acme.example/listing" }).returning();
     return { company: company!, source: source! };
   }
+  it("accepts a structurally verified first-party empty listing", async () => {
+    const [company] = await db.insert(schema.companies).values({ name: "Empty Co", domain: "acme.example", homepageUrl: "https://www.acme.example" }).returning();
+    const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://www.acme.example/jobs" }).returning();
+    server.setRoutes({ "www.acme.example": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/jobs": { body: '<main><h1>Current job openings</h1><div class="jobs"><div class="jobs__job"><p>Sorry, we don\u2019t have any job openings right now.</p></div></div></main>' },
+    } });
+    const result = await _scanSourceForTests(deps, company!, source!, await deps.settings(), null);
+    expect(result.status).toBe("ok");
+    expect(result.postingsFound).toBe(0);
+  });
+  it("keeps an ambiguous empty result as a parse failure", async () => {
+    const [company] = await db.insert(schema.companies).values({ name: "Filtered Co", domain: "acme.example", homepageUrl: "https://www.acme.example" }).returning();
+    const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://www.acme.example/jobs?department=sales" }).returning();
+    server.setRoutes({ "www.acme.example": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /" },
+      "/jobs?department=sales": { body: '<main><div class="jobs-empty">No jobs available.</div></main>' },
+    } });
+    const result = await _scanSourceForTests(deps, company!, source!, await deps.settings(), null);
+    expect(result.status).toBe("failed");
+    const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source!.id)).orderBy(desc(schema.scans.startedAt)).limit(1);
+    expect(scan!.error).toContain("cannot establish a successful empty scan");
+  });
+  it("marks model extraction from a truncated DOM as partial", async () => {
+    const { company, source } = await htmlFixture();
+    const links = Array.from({ length: 900 }, (_, i) => `<article><a href="/vacancy-${i}">${"Long role title ".repeat(8)}${i}</a></article>`).join("");
+    server.setRoutes({ "www.acme.example": { "/robots.txt": { body: "User-agent: *\nAllow: /" }, "/listing": { body: `<main>${links}</main>` } } });
+    const extractPostings = vi.fn().mockResolvedValue({ postings: [{ title: "Operations Manager", url: "https://www.acme.example/vacancy-1" }], dropped: 0 });
+    const modelDeps = { ...deps, ai: { ...deps.ai, enabled: true, extractPostings } } as unknown as WorkerDeps;
+    const result = await _scanSourceForTests(modelDeps, company, source, await deps.settings(), null);
+    expect(result.status).toBe("partial");
+    const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source.id)).orderBy(desc(schema.scans.startedAt)).limit(1);
+    expect(scan!.error).toContain("truncated listing representation");
+  });
+  it("keeps a rendered, model-extracted truncated listing partial and closes nothing", async () => {
+    const { company, source } = await htmlFixture();
+    await db.insert(schema.jobs).values({ companyId: company.id, sourceId: source.id, title: "Existing role", normalizedTitle: "existing role", url: "https://www.acme.example/old-role", externalKey: "url:https://www.acme.example/old-role" });
+    server.setRoutes({ "www.acme.example": { "/robots.txt": { body: "User-agent: *\nAllow: /" }, "/listing": { body: '<main><div id="jobs-app"></div></main>' } } });
+    const links = Array.from({ length: 900 }, (_, i) => `<article><a href="/vacancy-${i}">${"Long role title ".repeat(8)}${i}</a></article>`).join("");
+    const render = vi.fn(async () => ({ html: `<main>${links}</main>`, finalUrl: "https://www.acme.example/listing", requests: [], status: 200 }));
+    const extractPostings = vi.fn().mockResolvedValue({
+      postings: [{ title: "Observed role", url: "https://www.acme.example/vacancy-1" }],
+      dropped: 0,
+      recipe: { version: 1, listItem: "article", title: "a", link: "a" },
+    });
+    const modelDeps = { ...deps, browser: { render }, ai: { ...deps.ai, enabled: true, extractPostings } } as unknown as WorkerDeps;
+    for (let i = 0; i < 2; i++) expect((await _scanSourceForTests(modelDeps, company, source, await deps.settings(), null)).status).toBe("partial");
+    const [existing] = await db.select().from(schema.jobs).where(eq(schema.jobs.url, "https://www.acme.example/old-role"));
+    expect(existing).toMatchObject({ status: "open", missingScans: 0 });
+    const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source.id));
+    expect(current!.recipe).toBeNull();
+  });
+  it("marks a known visible model omission partial and preserves the omitted role", async () => {
+    const { company, source } = await htmlFixture();
+    const firstHtml = '<main><a href="/vacancy-one">Operations Manager</a><a href="/vacancy-two">Strategy Lead</a></main>';
+    server.setRoutes({ "www.acme.example": { "/robots.txt": { body: "User-agent: *\nAllow: /" }, "/listing": { body: firstHtml } } });
+    const extractPostings = vi.fn()
+      .mockResolvedValueOnce({ postings: [
+        { title: "Operations Manager", url: "https://www.acme.example/vacancy-one" },
+        { title: "Strategy Lead", url: "https://www.acme.example/vacancy-two" },
+      ], dropped: 0 })
+      .mockResolvedValueOnce({ postings: [{ title: "Strategy Lead", url: "https://www.acme.example/vacancy-two" }], dropped: 0 });
+    const modelDeps = { ...deps, ai: { ...deps.ai, enabled: true, extractPostings } } as unknown as WorkerDeps;
+    expect((await _scanSourceForTests(modelDeps, company, source, await deps.settings(), null)).status).toBe("ok");
+    server.setRoutes({ "www.acme.example": { "/robots.txt": { body: "User-agent: *\nAllow: /" }, "/listing": { body: firstHtml.replace("</main>", "<!-- changed --></main>") } } });
+    expect((await _scanSourceForTests(modelDeps, company, source, await deps.settings(), null)).status).toBe("partial");
+    const [omitted] = await db.select().from(schema.jobs).where(eq(schema.jobs.url, "https://www.acme.example/vacancy-one"));
+    expect(omitted).toMatchObject({ status: "open", missingScans: 0 });
+  });
   it("unions pages and retains only three compressed scan snapshots", async () => {
     const { company, source } = await htmlFixture();
     server.setRoutes({ "www.acme.example": {

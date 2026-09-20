@@ -97,7 +97,7 @@ export interface CvBuildTask {
 }
 
 export interface CvBuildDraft {
-  status: "queued" | "generating" | "ready" | "failed";
+  status: "queued" | "generating" | "awaiting_evidence" | "ready" | "failed";
   buildStage: string | null;
   error: string | null;
   createdAt: Date;

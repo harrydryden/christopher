@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { roleStatus, liveFor } from "@christopher/core";
-import { requireUser } from "@/lib/auth";
+import { routeUser } from "@/lib/route-auth";
 import { csvRow } from "@/lib/csv";
 import {
   fetchRoleRows,
@@ -34,7 +34,9 @@ const BLOCK = 500;
 const CAP_NOTICE = `# Truncated at ${MAX_ROWS.toLocaleString("en-GB")} rows. Narrow the filters and export again for the rest.`;
 
 export async function GET(request: NextRequest) {
-  const user = await requireUser();
+  const auth = await routeUser();
+  if (!auth.ok) return auth.response;
+  const user = auth.user;
   const now = new Date();
   const filters = parseRolesFilters(rawParamsFrom(request.nextUrl.searchParams));
   const archived = request.nextUrl.searchParams.get("archive") === "1" || request.nextUrl.searchParams.get("view") === "archived";

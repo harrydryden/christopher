@@ -9,6 +9,13 @@ on:
     types: [completed]
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: release-identity
+  cancel-in-progress: true
+
 jobs:
   worker-release:
     if: >-
@@ -16,10 +23,7 @@ jobs:
       && github.event.workflow_run.event == 'push'
       && github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
-    timeout-minutes: 16
-    concurrency:
-      group: worker-release
-      cancel-in-progress: true
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,5 +36,25 @@ jobs:
       - name: Verify the running worker includes this merge
         run: node scripts/verify-worker-release.mjs
         env:
-          WORKER_HEALTH_URL: https://christopher-worker.onrender.com/healthz
+          WORKER_HEALTH_URL: ${{ vars.WORKER_HEALTH_URL }}
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+
+  web-release:
+    if: >-
+      github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push'
+      && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify the running web application includes this merge
+        run: node scripts/verify-web-release.mjs
+        env:
+          WEB_HEALTH_URL: ${{ vars.WEB_HEALTH_URL }}
           RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}

@@ -1,9 +1,9 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { DEFAULT_CV_THEME } from "@christopher/core/cv";
 const auth = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/auth", () => ({ requireSession: auth }));
+vi.mock("@/lib/auth", () => ({ requireUser: auth }));
 import { POST } from "./route";
-beforeEach(() => { auth.mockReset(); auth.mockResolvedValue(undefined); });
+beforeEach(() => { auth.mockReset(); auth.mockResolvedValue({ id: "user-1" }); });
 const content = { name: "Example", contact: "London", summary: "Analyst", theme: DEFAULT_CV_THEME, sections: [{ entryId: "s", kind: "skill", heading: "Tools", bullets: ["Reporting"], skillItems: ["SQL"] }], gaps: [] };
 it("renders an authenticated unsaved preview and reports its actual page count", async () => {
   const response = await POST(new Request("http://localhost/api/cv/preview", { method: "POST", body: JSON.stringify(content) }));
@@ -18,5 +18,7 @@ it("rejects malformed and oversized bodies and unsupported themes", async () => 
 });
 it("requires a session before reading or rendering the content", async () => {
   auth.mockRejectedValue(new Error('Unauthorised'));
-  await expect(POST(new Request('http://localhost', { method: 'POST', body: JSON.stringify(content) }))).rejects.toThrow('Unauthorised');
+  const response = await POST(new Request('http://localhost', { method: 'POST', body: JSON.stringify(content) }));
+  expect(response.status).toBe(401);
+  expect(await response.json()).toEqual({ ok: false, error: "Please sign in again." });
 });

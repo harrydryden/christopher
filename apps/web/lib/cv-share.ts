@@ -26,6 +26,10 @@ import { hashToken } from "./auth-tokens";
 
 export { CV_SHARE_ANCHOR_MAX_CHARS, CV_SHARE_AUTHOR_NAME_MAX_CHARS, CV_SHARE_BODY_MAX_CHARS };
 
+// A valid note is a little over 2 KB. Multipart boundaries and headers need some room, but a
+// public request must be refused before `formData()` buffers an attacker-controlled body.
+export const CV_SHARE_COMMENT_REQUEST_MAX_BYTES = 16_384;
+
 /** The same 32 bytes `issueAuthToken` draws, in the same alphabet: 43 URL-safe characters. */
 const TOKEN_BYTES = 32;
 

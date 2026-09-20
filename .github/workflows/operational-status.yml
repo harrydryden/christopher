@@ -1,0 +1,28 @@
+name: Operational status
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operational-status
+  cancel-in-progress: true
+
+jobs:
+  read-only-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check operational failures and report account-budget attention
+        run: node scripts/verify-operational-status.mjs
+        env:
+          WORKER_HEALTH_URL: ${{ vars.WORKER_HEALTH_URL }}
+          OPERATIONAL_EXPECTED_SHA: ${{ github.sha }}

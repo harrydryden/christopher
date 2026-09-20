@@ -1,4 +1,4 @@
-import { requireUser } from "@/lib/auth";
+import { routeUser } from "@/lib/route-auth";
 import { libraryReviewSignature, ownsLibraryVersion } from "@/lib/queries/cv";
 
 export const runtime = "nodejs";
@@ -14,7 +14,9 @@ export const dynamic = "force-dynamic";
  * the whole point is that it has just moved.
  */
 export async function GET(request: Request) {
-  const user = await requireUser();
+  const auth = await routeUser();
+  if (!auth.ok) return auth.response;
+  const user = auth.user;
   const version = Number(new URL(request.url).searchParams.get("version"));
   if (!Number.isInteger(version) || version < 1) {
     return Response.json({ ok: false, error: "Ask for a saved library version." }, { status: 400 });

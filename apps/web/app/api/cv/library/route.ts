@@ -1,6 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import { cvLibraries } from "@christopher/db";
-import { requireUser } from "@/lib/auth";
+import { routeUser } from "@/lib/route-auth";
 import { db } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -15,7 +15,9 @@ export const dynamic = "force-dynamic";
  * cached, because the whole point is that the stored version has just moved.
  */
 export async function GET() {
-  const user = await requireUser();
+  const auth = await routeUser();
+  if (!auth.ok) return auth.response;
+  const user = auth.user;
   const [library] = await db()
     .select({ version: cvLibraries.version, content: cvLibraries.content })
     .from(cvLibraries)

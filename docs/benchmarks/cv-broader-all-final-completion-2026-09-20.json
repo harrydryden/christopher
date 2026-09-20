@@ -1,0 +1,117 @@
+{
+  "at": "2026-09-20T12:16:09.009Z",
+  "status": "failed",
+  "model": "claude-fable-5-1",
+  "priceSource": "https://platform.claude.com/docs/en/about-claude/pricing",
+  "pricesCheckedAt": "2026-09-20",
+  "syntheticCandidate": true,
+  "releaseAccepted": false,
+  "suite": "representative",
+  "reproducibility": {
+    "cvPromptsSha256": "3cef6ac4cde906dd297b8dec175b94dcdd4ac99b22349df01b44afa879ee3703",
+    "fixturesSha256": "b38f8287a1a11fa9deef3ffb9ae894cd79aaa206283d5b98335cda12f35e2d70",
+    "gitHead": "99c0edd2fd4f0199fe4c8bd36d6047d82dd26766",
+    "gitDirty": true
+  },
+  "budgetGuardrail": "The USD limit is a conservative admission estimate. Actual provider usage is recorded and can exceed the estimate; it is not an exact billing guarantee.",
+  "provider": {
+    "status": "passed",
+    "models": [
+      {
+        "model": "claude-fable-5-1",
+        "passed": true,
+        "providerId": "claude-fable-5-1",
+        "price": {
+          "input": 10,
+          "output": 50,
+          "cacheRead": 0.25
+        }
+      }
+    ],
+    "limitations": "Model metadata access only; generation quality, streaming behaviour and billing are separate checks."
+  },
+  "results": [],
+  "representativeResults": [
+    {
+      "name": "long-document-layout",
+      "status": "running",
+      "pdfPath": "docs/benchmarks/cv-broader-all-final-completion-2026-09-20-long-document-layout.pdf",
+      "deterministic": {
+        "passed": true,
+        "missingEntries": [],
+        "missingHeadings": [],
+        "missingSkills": [],
+        "missingSectionText": [],
+        "inventedDatePrecision": [],
+        "lexicalReview": [],
+        "pageLimit": 2,
+        "pageCount": 2
+      },
+      "rubricGroundTruth": {
+        "passed": true,
+        "intentIds": {
+          "lead service delivery": "r1",
+          "manage supplier performance": "r2",
+          "improve operational reporting": "r3"
+        },
+        "missingIntents": [],
+        "injectedRequirements": []
+      }
+    }
+  ],
+  "error": "AI budget reserved or exhausted; retry later",
+  "budget": {
+    "capUsd": 3.455141,
+    "spentUsd": 0.161339,
+    "heldUsd": 0,
+    "records": [
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 48,
+        "outputTokens": 290,
+        "cacheReadTokens": 1098,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.015255,
+        "durationMs": 6131,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 2780,
+        "outputTokens": 1627,
+        "cacheReadTokens": 2275,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.109719,
+        "durationMs": 18800,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "costUsd": 0,
+        "durationMs": 5,
+        "ok": false,
+        "error": "Cancelled because another call in the same task failed."
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 794,
+        "outputTokens": 1,
+        "cacheReadTokens": 2601,
+        "cacheWriteTokens": 2218,
+        "costUsd": 0.036365,
+        "durationMs": 2425,
+        "ok": false,
+        "error": "Cancelled because another call in the same task failed."
+      }
+    ],
+    "exceeded": false
+  }
+}

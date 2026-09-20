@@ -1,0 +1,1710 @@
+{
+  "at": "2026-09-20T09:46:21.640Z",
+  "passed": true,
+  "workloadCompleted": true,
+  "capacityGatePassed": true,
+  "failures": [],
+  "environment": {
+    "requestedMemoryLimitMiB": 1024,
+    "actualMemoryLimitMiB": 1024,
+    "actualCpuLimit": 0.5,
+    "workerConcurrency": 3,
+    "browserConcurrency": 1,
+    "paidAiEnabled": false
+  },
+  "target": {
+    "registeredUsers": 100,
+    "simultaneouslyActiveUsers": 10
+  },
+  "workload": {
+    "iterations": 3,
+    "verifyTasksPerIteration": 3,
+    "fixtureHtmlMiB": 1.19,
+    "browserCapable": true
+  },
+  "elapsedSeconds": 29.93,
+  "iterations": [
+    {
+      "iteration": 1,
+      "seconds": 12.04,
+      "statuses": {
+        "done": 3
+      }
+    },
+    {
+      "iteration": 2,
+      "seconds": 9.08,
+      "statuses": {
+        "done": 6
+      }
+    },
+    {
+      "iteration": 3,
+      "seconds": 8.79,
+      "statuses": {
+        "done": 9
+      }
+    }
+  ],
+  "verificationIntervalOverlaps": 0,
+  "resources": {
+    "peakRssMiB": 362,
+    "peakCgroupMiB": 411.1,
+    "peakAnonMiB": 381.9,
+    "peakFileMiB": 5.6,
+    "cpuSeconds": 10.337,
+    "memoryEvents": {
+      "low": 0,
+      "high": 0,
+      "max": 0,
+      "oom": 0,
+      "oom_kill": 0,
+      "oom_group_kill": 0
+    }
+  },
+  "samples": [
+    {
+      "at": "2026-09-20T09:45:53.594Z",
+      "rssMiB": 229.5,
+      "cgroupMiB": 186.2,
+      "anonMiB": 189.5,
+      "fileMiB": 2.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 4334982
+    },
+    {
+      "at": "2026-09-20T09:45:53.602Z",
+      "rssMiB": 229.5,
+      "cgroupMiB": 206,
+      "anonMiB": 189.8,
+      "fileMiB": 2.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 4683879
+    },
+    {
+      "at": "2026-09-20T09:45:53.699Z",
+      "rssMiB": 230.5,
+      "cgroupMiB": 211.5,
+      "anonMiB": 196.8,
+      "fileMiB": 2.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 4810752
+    },
+    {
+      "at": "2026-09-20T09:45:53.898Z",
+      "rssMiB": 230.5,
+      "cgroupMiB": 232.4,
+      "anonMiB": 213.9,
+      "fileMiB": 2.8,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 4928758
+    },
+    {
+      "at": "2026-09-20T09:45:54.297Z",
+      "rssMiB": 231,
+      "cgroupMiB": 244.6,
+      "anonMiB": 224.8,
+      "fileMiB": 3.3,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 5100281
+    },
+    {
+      "at": "2026-09-20T09:45:54.495Z",
+      "rssMiB": 231.3,
+      "cgroupMiB": 259.5,
+      "anonMiB": 236.4,
+      "fileMiB": 3.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 5214888
+    },
+    {
+      "at": "2026-09-20T09:45:54.698Z",
+      "rssMiB": 241.7,
+      "cgroupMiB": 273,
+      "anonMiB": 250.9,
+      "fileMiB": 4.1,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 5324365
+    },
+    {
+      "at": "2026-09-20T09:45:54.991Z",
+      "rssMiB": 240.1,
+      "cgroupMiB": 280.4,
+      "anonMiB": 256.3,
+      "fileMiB": 5.3,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 5459554
+    },
+    {
+      "at": "2026-09-20T09:45:55.201Z",
+      "rssMiB": 240.1,
+      "cgroupMiB": 278.2,
+      "anonMiB": 254.9,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 5532428
+    },
+    {
+      "at": "2026-09-20T09:45:55.451Z",
+      "rssMiB": 240.1,
+      "cgroupMiB": 277.6,
+      "anonMiB": 254.9,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 5572225
+    },
+    {
+      "at": "2026-09-20T09:45:55.704Z",
+      "rssMiB": 240.6,
+      "cgroupMiB": 280.8,
+      "anonMiB": 257.9,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 5661349
+    },
+    {
+      "at": "2026-09-20T09:45:55.960Z",
+      "rssMiB": 243,
+      "cgroupMiB": 284.2,
+      "anonMiB": 261.1,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 5726318
+    },
+    {
+      "at": "2026-09-20T09:45:56.205Z",
+      "rssMiB": 241.9,
+      "cgroupMiB": 282.8,
+      "anonMiB": 259.9,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 5750458
+    },
+    {
+      "at": "2026-09-20T09:45:56.492Z",
+      "rssMiB": 241.9,
+      "cgroupMiB": 283.6,
+      "anonMiB": 259.9,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 5824142
+    },
+    {
+      "at": "2026-09-20T09:45:57.490Z",
+      "rssMiB": 279.2,
+      "cgroupMiB": 297,
+      "anonMiB": 275.3,
+      "fileMiB": 3.4,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 6293861
+    },
+    {
+      "at": "2026-09-20T09:45:57.706Z",
+      "rssMiB": 279,
+      "cgroupMiB": 297.2,
+      "anonMiB": 275,
+      "fileMiB": 3.4,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 6424580
+    },
+    {
+      "at": "2026-09-20T09:45:57.998Z",
+      "rssMiB": 327.3,
+      "cgroupMiB": 344.8,
+      "anonMiB": 324.2,
+      "fileMiB": 3.5,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 6581984
+    },
+    {
+      "at": "2026-09-20T09:45:58.288Z",
+      "rssMiB": 329.2,
+      "cgroupMiB": 374,
+      "anonMiB": 346.1,
+      "fileMiB": 5.3,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 6722522
+    },
+    {
+      "at": "2026-09-20T09:45:58.492Z",
+      "rssMiB": 328.8,
+      "cgroupMiB": 370.1,
+      "anonMiB": 344.3,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 6795105
+    },
+    {
+      "at": "2026-09-20T09:45:58.742Z",
+      "rssMiB": 329.2,
+      "cgroupMiB": 370.4,
+      "anonMiB": 344.6,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 6821132
+    },
+    {
+      "at": "2026-09-20T09:45:58.996Z",
+      "rssMiB": 331.7,
+      "cgroupMiB": 375.8,
+      "anonMiB": 350.1,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 6892067
+    },
+    {
+      "at": "2026-09-20T09:45:59.245Z",
+      "rssMiB": 330.9,
+      "cgroupMiB": 375.2,
+      "anonMiB": 349.1,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 6918536
+    },
+    {
+      "at": "2026-09-20T09:45:59.497Z",
+      "rssMiB": 331,
+      "cgroupMiB": 375.3,
+      "anonMiB": 349.2,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 6940981
+    },
+    {
+      "at": "2026-09-20T09:46:00.499Z",
+      "rssMiB": 328.1,
+      "cgroupMiB": 347.8,
+      "anonMiB": 324.4,
+      "fileMiB": 3.4,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 7410106
+    },
+    {
+      "at": "2026-09-20T09:46:00.739Z",
+      "rssMiB": 332.8,
+      "cgroupMiB": 352.7,
+      "anonMiB": 329.2,
+      "fileMiB": 3.4,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 7474468
+    },
+    {
+      "at": "2026-09-20T09:46:01.299Z",
+      "rssMiB": 328.4,
+      "cgroupMiB": 349,
+      "anonMiB": 324.8,
+      "fileMiB": 3.4,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 7736453
+    },
+    {
+      "at": "2026-09-20T09:46:01.500Z",
+      "rssMiB": 328.6,
+      "cgroupMiB": 362.2,
+      "anonMiB": 336.9,
+      "fileMiB": 4.1,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 7857516
+    },
+    {
+      "at": "2026-09-20T09:46:01.792Z",
+      "rssMiB": 328.6,
+      "cgroupMiB": 370.6,
+      "anonMiB": 344.1,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 7981003
+    },
+    {
+      "at": "2026-09-20T09:46:01.996Z",
+      "rssMiB": 328.6,
+      "cgroupMiB": 370.2,
+      "anonMiB": 344.1,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 8006532
+    },
+    {
+      "at": "2026-09-20T09:46:02.288Z",
+      "rssMiB": 331,
+      "cgroupMiB": 376,
+      "anonMiB": 349.4,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 8084641
+    },
+    {
+      "at": "2026-09-20T09:46:02.541Z",
+      "rssMiB": 329.9,
+      "cgroupMiB": 374.3,
+      "anonMiB": 348.2,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 8115203
+    },
+    {
+      "at": "2026-09-20T09:46:02.794Z",
+      "rssMiB": 329.9,
+      "cgroupMiB": 373.9,
+      "anonMiB": 348.2,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 8137245
+    },
+    {
+      "at": "2026-09-20T09:46:03.524Z",
+      "rssMiB": 329.1,
+      "cgroupMiB": 349.2,
+      "anonMiB": 325.6,
+      "fileMiB": 3.4,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 8476566
+    },
+    {
+      "at": "2026-09-20T09:46:03.772Z",
+      "rssMiB": 329.1,
+      "cgroupMiB": 349.6,
+      "anonMiB": 325.7,
+      "fileMiB": 3.4,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 8517985
+    },
+    {
+      "at": "2026-09-20T09:46:04.387Z",
+      "rssMiB": 331.7,
+      "cgroupMiB": 352.3,
+      "anonMiB": 328.4,
+      "fileMiB": 3.4,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 8785935
+    },
+    {
+      "at": "2026-09-20T09:46:04.587Z",
+      "rssMiB": 331.7,
+      "cgroupMiB": 379.8,
+      "anonMiB": 353.5,
+      "fileMiB": 5.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 8897319
+    },
+    {
+      "at": "2026-09-20T09:46:04.837Z",
+      "rssMiB": 331.9,
+      "cgroupMiB": 373,
+      "anonMiB": 347.3,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 8934684
+    },
+    {
+      "at": "2026-09-20T09:46:05.092Z",
+      "rssMiB": 331.9,
+      "cgroupMiB": 373.2,
+      "anonMiB": 347.3,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 8948046
+    },
+    {
+      "at": "2026-09-20T09:46:05.345Z",
+      "rssMiB": 333.1,
+      "cgroupMiB": 377.6,
+      "anonMiB": 351.4,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 9017775
+    },
+    {
+      "at": "2026-09-20T09:46:05.597Z",
+      "rssMiB": 333.1,
+      "cgroupMiB": 377.4,
+      "anonMiB": 351.4,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 9045032
+    },
+    {
+      "at": "2026-09-20T09:46:05.896Z",
+      "rssMiB": 333.1,
+      "cgroupMiB": 378.4,
+      "anonMiB": 351.4,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 9122565
+    },
+    {
+      "at": "2026-09-20T09:46:06.992Z",
+      "rssMiB": 333.1,
+      "cgroupMiB": 353.7,
+      "anonMiB": 329.8,
+      "fileMiB": 3.4,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 9645172
+    },
+    {
+      "at": "2026-09-20T09:46:07.051Z",
+      "rssMiB": 333.1,
+      "cgroupMiB": 353.6,
+      "anonMiB": 329.8,
+      "fileMiB": 3.4,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 9669760
+    },
+    {
+      "at": "2026-09-20T09:46:07.294Z",
+      "rssMiB": 340.3,
+      "cgroupMiB": 365.2,
+      "anonMiB": 340.4,
+      "fileMiB": 3.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 9781579
+    },
+    {
+      "at": "2026-09-20T09:46:07.545Z",
+      "rssMiB": 340.4,
+      "cgroupMiB": 382.8,
+      "anonMiB": 356,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 9895635
+    },
+    {
+      "at": "2026-09-20T09:46:07.802Z",
+      "rssMiB": 340.4,
+      "cgroupMiB": 382.2,
+      "anonMiB": 356,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 9933959
+    },
+    {
+      "at": "2026-09-20T09:46:08.085Z",
+      "rssMiB": 342.8,
+      "cgroupMiB": 387.7,
+      "anonMiB": 361.3,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 10002662
+    },
+    {
+      "at": "2026-09-20T09:46:08.304Z",
+      "rssMiB": 341.6,
+      "cgroupMiB": 386.4,
+      "anonMiB": 360.2,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 10018659
+    },
+    {
+      "at": "2026-09-20T09:46:08.553Z",
+      "rssMiB": 341.6,
+      "cgroupMiB": 386.3,
+      "anonMiB": 360.2,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 10041050
+    },
+    {
+      "at": "2026-09-20T09:46:08.805Z",
+      "rssMiB": 341.6,
+      "cgroupMiB": 386.8,
+      "anonMiB": 360.2,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 10130929
+    },
+    {
+      "at": "2026-09-20T09:46:09.708Z",
+      "rssMiB": 338.8,
+      "cgroupMiB": 359.5,
+      "anonMiB": 335.5,
+      "fileMiB": 3.4,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 10575410
+    },
+    {
+      "at": "2026-09-20T09:46:09.951Z",
+      "rssMiB": 343.5,
+      "cgroupMiB": 364.4,
+      "anonMiB": 340.3,
+      "fileMiB": 3.4,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 10646089
+    },
+    {
+      "at": "2026-09-20T09:46:10.595Z",
+      "rssMiB": 340,
+      "cgroupMiB": 375,
+      "anonMiB": 350.9,
+      "fileMiB": 3.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 10823208
+    },
+    {
+      "at": "2026-09-20T09:46:10.602Z",
+      "rssMiB": 340,
+      "cgroupMiB": 373.7,
+      "anonMiB": 347.4,
+      "fileMiB": 4.1,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 10977941
+    },
+    {
+      "at": "2026-09-20T09:46:10.847Z",
+      "rssMiB": 340.3,
+      "cgroupMiB": 383.3,
+      "anonMiB": 355.9,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 11090657
+    },
+    {
+      "at": "2026-09-20T09:46:11.100Z",
+      "rssMiB": 340.3,
+      "cgroupMiB": 382.5,
+      "anonMiB": 355.9,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 11113473
+    },
+    {
+      "at": "2026-09-20T09:46:11.391Z",
+      "rssMiB": 342.7,
+      "cgroupMiB": 386.9,
+      "anonMiB": 361.2,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 11182994
+    },
+    {
+      "at": "2026-09-20T09:46:11.601Z",
+      "rssMiB": 341.5,
+      "cgroupMiB": 386.7,
+      "anonMiB": 360.1,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 11212298
+    },
+    {
+      "at": "2026-09-20T09:46:11.850Z",
+      "rssMiB": 341.5,
+      "cgroupMiB": 386.4,
+      "anonMiB": 360.1,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 11247349
+    },
+    {
+      "at": "2026-09-20T09:46:12.101Z",
+      "rssMiB": 341.5,
+      "cgroupMiB": 393.2,
+      "anonMiB": 366.4,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 11337163
+    },
+    {
+      "at": "2026-09-20T09:46:12.622Z",
+      "rssMiB": 352,
+      "cgroupMiB": 373,
+      "anonMiB": 348.8,
+      "fileMiB": 3.4,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 11584918
+    },
+    {
+      "at": "2026-09-20T09:46:12.868Z",
+      "rssMiB": 352,
+      "cgroupMiB": 373.1,
+      "anonMiB": 348.8,
+      "fileMiB": 3.4,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 11630868
+    },
+    {
+      "at": "2026-09-20T09:46:13.401Z",
+      "rssMiB": 353.3,
+      "cgroupMiB": 381,
+      "anonMiB": 357.2,
+      "fileMiB": 4.1,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 11811053
+    },
+    {
+      "at": "2026-09-20T09:46:13.443Z",
+      "rssMiB": 353.3,
+      "cgroupMiB": 383.8,
+      "anonMiB": 357.6,
+      "fileMiB": 4.1,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 11929940
+    },
+    {
+      "at": "2026-09-20T09:46:13.697Z",
+      "rssMiB": 353.4,
+      "cgroupMiB": 396.6,
+      "anonMiB": 369.1,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 12024016
+    },
+    {
+      "at": "2026-09-20T09:46:13.947Z",
+      "rssMiB": 353.4,
+      "cgroupMiB": 396,
+      "anonMiB": 369.1,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 12052943
+    },
+    {
+      "at": "2026-09-20T09:46:14.197Z",
+      "rssMiB": 355.9,
+      "cgroupMiB": 401.9,
+      "anonMiB": 374.5,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 12117596
+    },
+    {
+      "at": "2026-09-20T09:46:14.449Z",
+      "rssMiB": 354.7,
+      "cgroupMiB": 400.4,
+      "anonMiB": 373.3,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 12141488
+    },
+    {
+      "at": "2026-09-20T09:46:14.703Z",
+      "rssMiB": 354.7,
+      "cgroupMiB": 399.8,
+      "anonMiB": 373.3,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 12168342
+    },
+    {
+      "at": "2026-09-20T09:46:15.597Z",
+      "rssMiB": 356.7,
+      "cgroupMiB": 377.5,
+      "anonMiB": 353.5,
+      "fileMiB": 3.4,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 12571700
+    },
+    {
+      "at": "2026-09-20T09:46:15.762Z",
+      "rssMiB": 356.8,
+      "cgroupMiB": 378.1,
+      "anonMiB": 353.6,
+      "fileMiB": 3.4,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 12609870
+    },
+    {
+      "at": "2026-09-20T09:46:16.389Z",
+      "rssMiB": 358.2,
+      "cgroupMiB": 387.7,
+      "anonMiB": 366.2,
+      "fileMiB": 3.5,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 12802088
+    },
+    {
+      "at": "2026-09-20T09:46:16.397Z",
+      "rssMiB": 358.2,
+      "cgroupMiB": 392.2,
+      "anonMiB": 365.6,
+      "fileMiB": 4.1,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 12939164
+    },
+    {
+      "at": "2026-09-20T09:46:16.690Z",
+      "rssMiB": 358.2,
+      "cgroupMiB": 401.3,
+      "anonMiB": 373.8,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 13074478
+    },
+    {
+      "at": "2026-09-20T09:46:16.894Z",
+      "rssMiB": 358.2,
+      "cgroupMiB": 400.9,
+      "anonMiB": 373.9,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 13113307
+    },
+    {
+      "at": "2026-09-20T09:46:17.144Z",
+      "rssMiB": 358.3,
+      "cgroupMiB": 411.1,
+      "anonMiB": 381.9,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 13181184
+    },
+    {
+      "at": "2026-09-20T09:46:17.397Z",
+      "rssMiB": 360.5,
+      "cgroupMiB": 408.2,
+      "anonMiB": 381.1,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 13214700
+    },
+    {
+      "at": "2026-09-20T09:46:17.652Z",
+      "rssMiB": 359.4,
+      "cgroupMiB": 406.5,
+      "anonMiB": 379.9,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 13245556
+    },
+    {
+      "at": "2026-09-20T09:46:17.904Z",
+      "rssMiB": 359.4,
+      "cgroupMiB": 406.9,
+      "anonMiB": 379.8,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 13322989
+    },
+    {
+      "at": "2026-09-20T09:46:18.505Z",
+      "rssMiB": 351.2,
+      "cgroupMiB": 372.3,
+      "anonMiB": 348,
+      "fileMiB": 3.4,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 13627895
+    },
+    {
+      "at": "2026-09-20T09:46:18.751Z",
+      "rssMiB": 357.1,
+      "cgroupMiB": 378.1,
+      "anonMiB": 353.9,
+      "fileMiB": 3.4,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 13671284
+    },
+    {
+      "at": "2026-09-20T09:46:19.289Z",
+      "rssMiB": 357.1,
+      "cgroupMiB": 384.5,
+      "anonMiB": 353.9,
+      "fileMiB": 3.4,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 13923465
+    },
+    {
+      "at": "2026-09-20T09:46:19.388Z",
+      "rssMiB": 357.1,
+      "cgroupMiB": 386.5,
+      "anonMiB": 363.4,
+      "fileMiB": 3.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 13983079
+    },
+    {
+      "at": "2026-09-20T09:46:19.595Z",
+      "rssMiB": 360.8,
+      "cgroupMiB": 400.4,
+      "anonMiB": 373.3,
+      "fileMiB": 5.3,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 14091343
+    },
+    {
+      "at": "2026-09-20T09:46:19.848Z",
+      "rssMiB": 360.8,
+      "cgroupMiB": 403.7,
+      "anonMiB": 376.5,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 14165815
+    },
+    {
+      "at": "2026-09-20T09:46:20.100Z",
+      "rssMiB": 360.8,
+      "cgroupMiB": 403.1,
+      "anonMiB": 376.5,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 14198111
+    },
+    {
+      "at": "2026-09-20T09:46:20.352Z",
+      "rssMiB": 362,
+      "cgroupMiB": 407.3,
+      "anonMiB": 380.7,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 14264069
+    },
+    {
+      "at": "2026-09-20T09:46:20.606Z",
+      "rssMiB": 362,
+      "cgroupMiB": 407.5,
+      "anonMiB": 380.7,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 14284843
+    },
+    {
+      "at": "2026-09-20T09:46:20.858Z",
+      "rssMiB": 362,
+      "cgroupMiB": 408.5,
+      "anonMiB": 380.8,
+      "fileMiB": 4.6,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 14341382
+    },
+    {
+      "at": "2026-09-20T09:46:21.403Z",
+      "rssMiB": 354,
+      "cgroupMiB": 375.1,
+      "anonMiB": 350.9,
+      "fileMiB": 3.4,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 14631306
+    },
+    {
+      "at": "2026-09-20T09:46:21.638Z",
+      "rssMiB": 354.1,
+      "cgroupMiB": 375.3,
+      "anonMiB": 351,
+      "fileMiB": 3.4,
+      "memoryEvents": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memoryMaxMiB": 1024,
+      "cpuLimit": 0.5,
+      "cpuUsec": 14672184
+    }
+  ],
+  "limitations": [
+    "Local Docker evidence only; it does not pass the hosted capacity gate.",
+    "Synthetic private pages exercise browser-capable discovery without public providers or paid AI.",
+    "The local PostgreSQL server is outside the worker cgroup and does not model Render network latency or PgBouncer."
+  ]
+}

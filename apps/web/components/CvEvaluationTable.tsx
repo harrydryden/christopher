@@ -139,6 +139,11 @@ export function CvEvaluationTable({ rows }: { rows: CvEvaluationRow[] }) {
                         {row.importance}
                       </span>
                     )}
+                    {row.category === "logistics" && (
+                      <span className="mt-1 block text-11 font-normal text-warn">
+                        Confirm separately
+                      </span>
+                    )}
                   </th>
                   <td className="space-y-2 break-words px-2 py-4 text-muted">
                     {row.currentText.length ? (

@@ -128,7 +128,7 @@ describe("engine plumbing", () => {
     expect(calls[0]!.params.model).toBe("claude-haiku-4-5");
   });
 
-  it("caches the stable system block and sets the effort", async () => {
+  it("caches the stable system block without sending unsupported effort to Haiku", async () => {
     const { engine, calls } = engineWith({ score: 50, verdict: "possible", rationale: "Maybe.", flags: [] });
     await engine.scoreJob({ profileMarkdown: "PROFILE", decisionDigest: "DIGEST", job: { title: "Ops", company: "Acme" } });
     const system = calls[0]!.params.system as Array<{ text: string; cache_control?: unknown;
@@ -136,7 +136,22 @@ describe("engine plumbing", () => {
     expect(system[0]!.cache_control).toEqual({ type: "ephemeral" });
     expect(system[0]!.text).toContain("PROFILE");
     expect(system[0]!.text).toContain("DIGEST");
-    expect((calls[0]!.params.output_config as { effort: string }).effort).toBe("low");
+    expect(calls[0]!.params.output_config).not.toHaveProperty("effort");
+    expect(calls[0]!.params.output_config).toHaveProperty("format");
+  });
+
+  it.each(["claude-opus-5", "claude-sonnet-5", "claude-fable-5-1", "claude-opus-4-6-20260205"])("sends effort to a compatible model: %s", async model => {
+    const { client, calls } = fakeClient({ score: 50, verdict: "possible", rationale: "Maybe.", flags: [] });
+    const engine = createAiEngine({ client, getModel: () => model });
+    await engine.scoreJob({ profileMarkdown: "", decisionDigest: "", job: { title: "Ops", company: "Acme" } });
+    expect(calls[0]!.params.output_config).toHaveProperty("effort", "low");
+  });
+
+  it.each(["claude-haiku-4-5-20251001", "claude-sonnet-4-5", "unknown-model"])("omits effort when unsupported or unverified: %s", async model => {
+    const { client, calls } = fakeClient({ score: 50, verdict: "possible", rationale: "Maybe.", flags: [] });
+    const engine = createAiEngine({ client, getModel: () => model });
+    await engine.scoreJob({ profileMarkdown: "", decisionDigest: "", job: { title: "Ops", company: "Acme" } });
+    expect(calls[0]!.params.output_config).not.toHaveProperty("effort");
   });
 
   it("wraps untrusted content and keeps the job out of the cached prefix", async () => {
@@ -413,6 +428,23 @@ it("routes CV generation separately, validates industry selections and records u
   expect(calls[0]!.options?.timeout).toBe(300_000);
   expect(JSON.parse((calls[0]!.params.messages as Array<{ content: string }>)[0]!.content).maxPages).toBe(3);
   expect(usage[0]).toMatchObject({ callSite: "CV", refId: "draft", ok: true });
+});
+
+it("plans CV evidence in one bounded call and validates exact row references", async () => {
+  const rubric = { requirements: [{ id: "r1", label: "Lead operations", quote: "Lead operations", importance: "essential" as const, category: "delivery" as const }], caveats: [] };
+  const library: CvLibrary = { name: "Candidate", contact: "", profile: "Operations leader", entries: [{ id: "role", kind: "experience", heading: "Director", details: "Led operations across Europe", confirmedResponsibilities: ["Led operations across Europe"] }] };
+  const output = { requirements: [{ requirementId: "r1", status: "demonstrated", evidence: [{ sourceId: "entry:role:row:0", quote: "Led operations across Europe" }], reason: "Direct evidence." }], gapQuestions: [] };
+  const { engine, calls, usage } = engineWith(output);
+  expect(await engine.planCvTailoring({ rubric, library }, { refType: "cv", refId: "draft" })).toEqual(output);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.params.max_tokens).toBe(16000);
+  expect(usage[0]).toMatchObject({ callSite: "CV", stage: "planning" });
+  expect(JSON.stringify(calls[0]!.params.system)).toContain("exact source IDs");
+
+  const invalid = engineWith({ ...output, requirements: [{ ...output.requirements[0]!, evidence: [{ sourceId: "entry:role:row:999", quote: "Led operations across Europe" }] }] });
+  await expect(invalid.engine.planCvTailoring({ rubric, library })).rejects.toMatchObject({
+    kind: "output_invalid", message: expect.stringContaining("Unknown tailoring evidence source"),
+  });
 });
 
 describe("source company extraction", () => {

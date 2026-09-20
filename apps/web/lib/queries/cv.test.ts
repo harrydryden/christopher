@@ -23,9 +23,10 @@ let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 let user: User;
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { cvWorkVersionFor, getOwnCvBuildSteps, getOwnCvDraft, getOwnCvWorkRow } from "./cv";
+import { cvWorkVersionFor, getOwnCvBuildSteps, getOwnCvBuildTask, getOwnCvDraft, getOwnCvWorkRow } from "./cv";
+import { getCvWorkStatus } from "@/lib/work-status";
 
-const BUILD_COLUMNS = ["progress_at", "build_checkpoint", "failure"] as const;
+const BUILD_COLUMNS = ["progress_at", "build_checkpoint", "failure", "gap_quiz"] as const;
 
 beforeAll(async () => {
   const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
@@ -137,4 +138,31 @@ it("signs the ledger the same way from the page's rows and from the poll's query
   const closed = cvStepsSignature(await getOwnCvBuildSteps(user.id, draft.id));
   expect(closed).not.toBe(signature);
   expect(closed).toBe(normaliseCvStepsSignature(await cvBuildStepsSignature(database, draft.id)));
+});
+
+it("reads the quiz continuation task rather than the completed task that paused", async () => {
+  const draft = await seedDraft({ status: "queued" });
+  await database.insert(schema.tasks).values([
+    {
+      type: "generate_cv", payload: { draftId: draft.id }, dedupeKey: `generate_cv:${draft.id}`,
+      status: "done", attempts: 1, startedAt: new Date(Date.now() - 60_000), finishedAt: new Date(Date.now() - 30_000),
+    },
+    {
+      type: "generate_cv", payload: { draftId: draft.id }, dedupeKey: `generate_cv:${draft.id}:quiz-complete`,
+      status: "queued", attempts: 0,
+    },
+  ]);
+  expect(await getOwnCvBuildTask(user.id, draft.id)).toMatchObject({ status: "queued", attempts: 0, startedAt: null });
+  expect(await getOwnCvBuildTask(crypto.randomUUID(), draft.id)).toBeNull();
+});
+
+it("includes a quiz continuation task in account CV work status", async () => {
+  const draft = await seedDraft({ status: "queued" });
+  await database.insert(schema.tasks).values({
+    type: "generate_cv", payload: { draftId: draft.id }, dedupeKey: `generate_cv:${draft.id}:quiz-complete`,
+    status: "queued", attempts: 0,
+  });
+  const status = await getCvWorkStatus(user.id);
+  expect(status.active).toBe(true);
+  expect(status.version).not.toBe("");
 });

@@ -1,10 +1,15 @@
 import { getAccountWorkStatus } from "@/lib/work-status";
-import { requireUser } from '@/lib/auth';
+import { routeUser } from '@/lib/route-auth';
 import { zUuid } from '@/lib/validation';
 import { cvWorkVersionFor, getOwnCvWorkRow } from '@/lib/queries/cv';
 export const dynamic = 'force-dynamic';
 export async function GET(request: Request) {
-  const user = await requireUser();
+  // A correctly signed cookie can still name an expired or revoked database session. Middleware
+  // cannot know that without a database read, so handle it here as an authentication failure
+  // rather than allowing requireUser's server-action error to become an API 500.
+  const auth = await routeUser();
+  if (!auth.ok) return auth.response;
+  const user = auth.user;
   const id = new URL(request.url).searchParams.get('cv');
   if (id) {
     if (!zUuid().safeParse(id).success) return Response.json({ ok: false, error: 'Invalid ID' }, { status: 400 });

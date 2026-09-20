@@ -66,7 +66,7 @@ export interface CvBuildSize {
  * again, so holding the whole build's estimate against the account would refuse a resumption the
  * month can plainly afford — and hold roughly three times what the attempt can spend.
  */
-export type CvBuildParts = "all" | "assessment";
+export type CvBuildParts = "all" | "assessment" | "tailored" | "tailored_completion" | "tailored_assessment";
 
 /** The tokens each part of a build is calibrated at, so the parts always add up to the whole. */
 function cvBuildUsage(size: CvBuildSize, parts: CvBuildParts): TokenUsage {
@@ -104,6 +104,20 @@ function cvBuildUsage(size: CvBuildSize, parts: CvBuildParts): TokenUsage {
  * written down as a fraction that could drift away from them.
  */
 export function estimateCvBuildUsd(model: string, size: CvBuildSize, parts: CvBuildParts = "all"): number {
+  if (parts === "tailored" || parts === "tailored_completion" || parts === "tailored_assessment") {
+    const library = size.libraryBytes / 3;
+    const description = size.descriptionBytes / 3;
+    const planning = estimateCostUsd(model, { inputTokens: library + description + 1500, outputTokens: 6000, cacheReadTokens: 0, cacheWriteTokens: 0 });
+    const rubric = estimateCostUsd(model, { inputTokens: description, outputTokens: 4500, cacheReadTokens: 0, cacheWriteTokens: 0 });
+    const writingAndAudit = estimateCostUsd(model, cvBuildUsage(size, "all")) - rubric;
+    if (parts === "tailored_assessment") {
+      // The first author call is checkpointed, but its audit may still discover an opportunity.
+      return estimateCostUsd(model, cvBuildUsage(size, "assessment")) + writingAndAudit;
+    }
+    // Includes one optional revision and re-check. The pause releases the hold; continuing only
+    // reserves the remaining work. New quiz evidence may require one fresh evidence plan.
+    return writingAndAudit * 2 + planning + (parts === "tailored" ? rubric + planning : 0);
+  }
   return estimateCostUsd(model, cvBuildUsage(size, parts));
 }
 

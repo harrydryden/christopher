@@ -1,5 +1,6 @@
 import { CvRubricSchema, CvReviewPlanSchema, type CvRubric, type CvReviewPlan, type CvTextItem, type CvClaimItem } from "@christopher/core/cv-assessment";
-import { CV_RUBRIC_PROMPT, CV_REVIEW_PROMPT, CV_AUTHOR_PROMPT } from "./cv-prompts";
+import { CvBuildStop } from "@christopher/core/cv-build-failure";
+import { CV_RUBRIC_PROMPT, CV_REVIEW_PROMPT, CV_AUTHOR_PROMPT, CV_TAILORING_PROMPT } from "./cv-prompts";
 import { cvReviewBatches, reviewBatchIssues, markUnverifiedFindings, type CvReviewBatch } from "./cv-review-batch";
 import {
   CvPlanSchema,
@@ -9,12 +10,17 @@ import {
   LibraryReviewPlanSchema,
   employmentHeading,
   responsibilityRows,
+  cvTailoringEvidence,
+  validateCvTailoringPlan,
+  validateCvPlanProvenance,
+  CvTailoringPlanSchema,
   reviewableRows,
   rowFacet,
   validateLibraryReview,
   type CvWritingBudget,
   type CvPlan,
   type CvLibrary,
+  type CvTailoringPlan,
   type LibraryEntryReview,
   type LibraryProposalPlan,
   type LibraryReviewPlan,
@@ -32,6 +38,7 @@ import Anthropic, {
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { estimateCostUsd, serverToolCostUsd } from "./pricing";
+import { modelSupportsEffort } from "./model-capabilities";
 import * as P from "./prompts";
 import * as S from "./schemas";
 
@@ -386,7 +393,7 @@ export class AiEngine {
       // The cache is a prefix match, so a cached block sits before everything that varies.
       messages: [{ role: "user", content: typeof params.user === "string" ? params.user
         : blocks.map(block => ({ type: "text", text: block.text, ...(block.cache ? { cache_control: { type: "ephemeral" } } : {}) })) }],
-      output_config: { format: zodOutputFormat(params.schema), effort: params.effort },
+      output_config: { format: zodOutputFormat(params.schema), ...(modelSupportsEffort(model) ? { effort: params.effort } : {}) },
     };
     if (params.tools) request.tools = params.tools;
 
@@ -499,6 +506,32 @@ export class AiEngine {
       },
       ref,
     );
+  }
+
+  /** One bounded pre-writing call. The returned index is validated against exact trusted rows. */
+  async planCvTailoring(
+    input: { rubric: CvRubric; library: CvLibrary },
+    ref: Ref = {},
+  ): Promise<CvTailoringPlan | null> {
+    const evidence = cvTailoringEvidence(input.library);
+    const destinations = {
+      employment: (input.library.employment ?? []).map(job => ({ employmentId: job.id, label: employmentHeading(job) })),
+      evidence: input.library.entries.map(entry => ({ entryId: entry.id, label: entry.heading, kind: entry.kind })),
+    };
+    const result = await this.run<CvTailoringPlan>("CV", {
+      system: CV_TAILORING_PROMPT,
+      user: JSON.stringify({ rubric: input.rubric, evidence, destinations }),
+      schema: CvTailoringPlanSchema,
+      effort: "high",
+      maxTokens: 16000,
+      timeoutMs: 240_000,
+    }, { ...ref, stage: ref.stage ?? "planning" });
+    if (!result) return null;
+    try {
+      return validateCvTailoringPlan(result, input.rubric, evidence, input.library);
+    } catch (error) {
+      throw new CvBuildStop("output_invalid", `The evidence plan could not be verified: ${(error as Error).message}`);
+    }
   }
 
   async assessCv(
@@ -633,6 +666,7 @@ export class AiEngine {
       writingBudget?: CvWritingBudget;
       maxPages?: number;
       rubric?: CvRubric;
+      tailoringPlan?: CvTailoringPlan;
       improvements?: string[];
       layoutFeedback?: {
         pageCount: number;
@@ -652,11 +686,12 @@ export class AiEngine {
       websiteUrl: _website,
       ...evidenceLibrary
     } = input.library;
-    return this.run<CvPlan>(
+    const plan = await this.run<CvPlan>(
       "CV",
       {
         system: CV_AUTHOR_PROMPT,
-        user: JSON.stringify({ ...input, maxPages: input.maxPages ?? CV_PAGE_LIMITS.default, library: evidenceLibrary }),
+        user: JSON.stringify({ ...input, maxPages: input.maxPages ?? CV_PAGE_LIMITS.default, library: evidenceLibrary,
+          ...(input.tailoringPlan ? { tailoringEvidence: cvTailoringEvidence(input.library) } : {}) }),
         schema: CvPlanSchema,
         effort: "high",
         // Thinking counts towards the output ceiling, and recorded two-page builds have reached
@@ -667,6 +702,12 @@ export class AiEngine {
       },
       ref,
     );
+    if (!plan || !input.tailoringPlan) return plan;
+    try {
+      return validateCvPlanProvenance(plan, input.library);
+    } catch (error) {
+      throw new CvBuildStop("output_invalid", `The written CV's sources could not be verified: ${(error as Error).message}`);
+    }
   }
 
   // A1 ---------------------------------------------------------------------

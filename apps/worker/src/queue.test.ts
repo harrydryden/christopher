@@ -10,7 +10,7 @@ import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { agePriorities, backoffMs, claimTask, deadlineMsFor, failTask, laneSlots, recoverFromCrash, requeueStale, TASK_STALE_AFTER_MS, TaskQueue } from "./queue";
 import { reconcileCvDrafts, schedulerTick } from "./scheduler";
-import { CV_ABANDONED_MESSAGE, onAbandon } from "./handlers";
+import { CV_ABANDONED_MESSAGE, onAbandon, onInterrupted } from "./handlers";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test";
 
@@ -246,7 +246,7 @@ it("fences completion, failure and writes from a reclaimed attempt", async () =>
   const old = (await claimTask(db, "same-worker"))!;
   await db.update(schema.tasks).set({ lockedAt: new Date(0) });
   await requeueStale(db);
-  await db.update(schema.tasks).set({ runAfter: new Date() }); // past the recovery backoff
+  await db.update(schema.tasks).set({ runAfter: sql`now()` }); // past the recovery backoff
   const current = (await claimTask(db, "same-worker"))!;
   expect(await renewTask(db, old)).toBe(false);
   await completeTask(db, old, { stale: true });
@@ -276,7 +276,7 @@ it("recovers a stopped worker after five missed minutes while retaining a fresh 
   await db.update(schema.tasks).set({ lockedAt: new Date(Date.now() - 6 * 60_000) }).where(eq(schema.tasks.id, stopped.id));
   await db.update(schema.tasks).set({ startedAt: new Date(Date.now() - 30 * 60_000), lockedAt: new Date(Date.now() - 60_000) }).where(eq(schema.tasks.id, live.id));
   expect(await requeueStale(db)).toEqual({ requeued: 1, failed: 0 });
-  await db.update(schema.tasks).set({ runAfter: new Date() }).where(eq(schema.tasks.id, stopped.id));
+  await db.update(schema.tasks).set({ runAfter: sql`now()` }).where(eq(schema.tasks.id, stopped.id));
   const recovered = (await claimTask(db, "current-worker"))!;
   expect(recovered.id).toBe(stopped.id);
   expect(recovered.attempts).toBe(stopped.attempts + 1);
@@ -327,7 +327,7 @@ it("does not repeat a manual daily fan-out after a crash between commit and comp
   await handleRunDaily(first, deps);
   await db.update(schema.tasks).set({ lockedAt: new Date(0) }).where(eq(schema.tasks.id, first.id));
   await requeueStale(db);
-  await db.update(schema.tasks).set({ runAfter: new Date() }).where(eq(schema.tasks.id, first.id));
+  await db.update(schema.tasks).set({ runAfter: sql`now()` }).where(eq(schema.tasks.id, first.id));
   const retry = (await claimTask(db, "second", "scan"))!;
   expect(retry.id).toBe(first.id);
   await handleRunDaily(retry, deps);
@@ -367,6 +367,94 @@ describe("execution model", () => {
     release();
     await queueUnderTest!.stop(5_000);
   }, 20_000);
+
+  it("serialises company verification without occupying the other queue slots", async () => {
+    let verifying = 0;
+    let maxVerifying = 0;
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>(resolve => { releaseFirst = resolve; });
+    let firstStarted!: () => void;
+    const sawFirst = new Promise<void>(resolve => { firstStarted = resolve; });
+    let otherStarted!: () => void;
+    const sawOther = new Promise<void>(resolve => { otherStarted = resolve; });
+    let bothVerified!: () => void;
+    const sawBoth = new Promise<void>(resolve => { bothVerified = resolve; });
+    let completed = 0;
+
+    queueUnderTest = new TaskQueue(deps, {
+      verify_company: async () => {
+        verifying++;
+        maxVerifying = Math.max(maxVerifying, verifying);
+        if (completed === 0) { firstStarted(); await firstBlocked; }
+        verifying--;
+        if (++completed === 2) bothVerified();
+        return {};
+      },
+      reevaluate_gate: async () => { otherStarted(); return {}; },
+    }, { concurrency: 3, workerId: "bounded-verification", pollMs: 10 });
+
+    await enqueueTask(db, "verify_company", { candidateId: "one" });
+    await enqueueTask(db, "verify_company", { candidateId: "two" });
+    await enqueueTask(db, "reevaluate_gate", { userId: "account" });
+    queueUnderTest.start();
+
+    await Promise.race([Promise.all([sawFirst, sawOther]), new Promise((_, reject) => setTimeout(() => reject(new Error("eligible work was starved")), 5_000))]);
+    expect(verifying).toBe(1);
+    const running = await db.select().from(schema.tasks).where(eq(schema.tasks.status, "running"));
+    expect(running.filter(task => task.type === "verify_company")).toHaveLength(1);
+    releaseFirst();
+    await Promise.race([sawBoth, new Promise((_, reject) => setTimeout(() => reject(new Error("second verification did not run")), 5_000))]);
+    expect(maxVerifying).toBe(1);
+    await queueUnderTest.stop(5_000);
+  }, 15_000);
+
+  it("releases the verification slot after a handler fails", async () => {
+    let calls = 0;
+    let secondStarted!: () => void;
+    const sawSecond = new Promise<void>(resolve => { secondStarted = resolve; });
+    queueUnderTest = new TaskQueue(deps, {
+      verify_company: async () => {
+        if (++calls === 1) throw new Error("first verification failed");
+        secondStarted();
+        return {};
+      },
+    }, { concurrency: 3, workerId: "failed-verification", pollMs: 10 });
+    await enqueueTask(db, "verify_company", { candidateId: "one" }, { maxAttempts: 1 });
+    await enqueueTask(db, "verify_company", { candidateId: "two" }, { maxAttempts: 1 });
+    queueUnderTest.start();
+    await Promise.race([sawSecond, new Promise((_, reject) => setTimeout(() => reject(new Error("verification slot stayed reserved")), 5_000))]);
+    expect(calls).toBe(2);
+    await queueUnderTest.stop(5_000);
+  }, 15_000);
+
+  it("keeps verification reserved while a timed-out handler is still unwinding", async () => {
+    let calls = 0;
+    let releaseTimedOut!: () => void;
+    const ignoredAbort = new Promise<void>(resolve => { releaseTimedOut = resolve; });
+    let otherStarted!: () => void;
+    const sawOther = new Promise<void>(resolve => { otherStarted = resolve; });
+    let secondStarted!: () => void;
+    const sawSecond = new Promise<void>(resolve => { secondStarted = resolve; });
+    queueUnderTest = new TaskQueue(deps, {
+      verify_company: async () => {
+        if (++calls === 1) { await ignoredAbort; return {}; }
+        secondStarted();
+        return {};
+      },
+      reevaluate_gate: async () => { otherStarted(); return {}; },
+    }, { concurrency: 3, workerId: "timed-out-verification", pollMs: 10, deadlines: { verify_company: 30 } });
+    await enqueueTask(db, "verify_company", { candidateId: "one" }, { maxAttempts: 1 });
+    await enqueueTask(db, "verify_company", { candidateId: "two" }, { maxAttempts: 1 });
+    await enqueueTask(db, "reevaluate_gate", { userId: "account" });
+    queueUnderTest.start();
+    await Promise.race([sawOther, new Promise((_, reject) => setTimeout(() => reject(new Error("other work was starved")), 5_000))]);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(calls).toBe(1);
+    releaseTimedOut();
+    await Promise.race([sawSecond, new Promise((_, reject) => setTimeout(() => reject(new Error("verification slot was not released after settlement")), 5_000))]);
+    expect(calls).toBe(2);
+    await queueUnderTest.stop(5_000);
+  }, 15_000);
 
   it("fails a handler that outruns its deadline, naming the type and the time it took", async () => {
     let release!: () => void;
@@ -475,13 +563,13 @@ it("keeps a requeued company scan on one task row, through a deadline, a stale l
   expect(afterDeadline.attempts).toBe(1);
 
   // A worker that crashed with the task claimed: the stale sweep puts the same row back.
-  await db.update(schema.tasks).set({ runAfter: new Date() }).where(eq(schema.tasks.id, id!));
+  await db.update(schema.tasks).set({ runAfter: sql`now()` }).where(eq(schema.tasks.id, id!));
   expect((await claimTask(db, "crashed", "scan"))!.id).toBe(id);
   await db.update(schema.tasks).set({ lockedAt: new Date(Date.now() - 6 * 60_000) }).where(eq(schema.tasks.id, id!));
   expect(await requeueStale(db)).toEqual({ requeued: 1, failed: 0 });
   expect((await theOneTask()).attempts).toBe(2);
   // Still the same row, and claimable again once its recovery backoff has passed.
-  await db.update(schema.tasks).set({ runAfter: new Date() }).where(eq(schema.tasks.id, id!));
+  await db.update(schema.tasks).set({ runAfter: sql`now()` }).where(eq(schema.tasks.id, id!));
 
   // And an orderly shutdown hands it straight back, without spending an attempt.
   let seen!: () => void;
@@ -567,7 +655,7 @@ describe("crash recovery", () => {
     await enqueueTask(db, "scan_company", { companyId: "greenhouse-monster" }, {});
     // Three incarnations, each claiming the task and dying with it.
     for (const attempt of [1, 2, 3]) {
-      await db.update(schema.tasks).set({ runAfter: new Date() });
+      await db.update(schema.tasks).set({ runAfter: sql`now()` });
       const claimed = (await claimTask(db, `pod-${attempt}#0`, "scan"))!;
       expect(claimed.attempts).toBe(attempt);
       await db.update(schema.tasks).set({ lockedAt: past() }).where(eq(schema.tasks.id, claimed.id));
@@ -613,6 +701,40 @@ describe("crash recovery", () => {
     const [event] = await listWorkerEvents(db, { kinds: ["task_abandoned"] });
     expect(event!.taskType).toBe("generate_cv");
     expect(event!.detail).toMatchObject({ subject: `generate_cv:${draft.id}` });
+  });
+
+  it("does not let the pre-quiz task fail or annotate a continuation already queued for the same draft", async () => {
+    const { user, draft, task } = await buildInFlight("quiz-continuation@example.com", "pod-a", 3);
+    const completedAt = new Date(Date.now() + 1_000);
+    await db.update(schema.cvDrafts).set({
+      status: "queued",
+      failure: null,
+      gapQuiz: { status: "skipped", questions: [], completedAt: completedAt.toISOString() } as never,
+    }).where(eq(schema.cvDrafts.id, draft.id));
+    await enqueueTask(db, "generate_cv", { draftId: draft.id }, {
+      dedupeKey: `generate_cv:${draft.id}:quiz-complete`, priority: 2,
+    });
+
+    expect(await requeueStale(db, TASK_STALE_AFTER_MS, "pod-b", { deps, onAbandon })).toEqual({ requeued: 0, failed: 1 });
+    let [continued] = await db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+    expect(continued!.status).toBe("queued");
+    expect(continued!.failure).toBeNull();
+    expect(await heldFor(user.id)).toBe(1);
+
+    // The same guard applies when the old run is interrupted with another attempt available.
+    await onInterrupted.generate_cv!(task, deps, { retryAt: new Date(Date.now() + 60_000).toISOString() });
+    [continued] = await db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+    expect(continued!.status).toBe("queued");
+    expect(continued!.failure).toBeNull();
+
+    // A later ordinary retry can reuse the legacy key. Its failure is real work ending, not the
+    // pre-quiz delivery arriving late, so it must close the draft and return the budget hold.
+    await db.update(schema.tasks).set({ status: "done" })
+      .where(eq(schema.tasks.dedupeKey, `generate_cv:${draft.id}:quiz-complete`));
+    await onAbandon.generate_cv!({ ...task, createdAt: new Date(completedAt.getTime() + 1_000) }, deps, "later retry failed");
+    [continued] = await db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+    expect(continued!.status).toBe("failed");
+    expect(await heldFor(user.id)).toBe(0);
   });
 
   it("leaves a build that still has attempts alone, draft and hold included", async () => {
@@ -682,6 +804,9 @@ describe("crash recovery", () => {
   it("fails a CV draft no task is building any more, and leaves a live build alone", async () => {
     const { user, draft } = await buildInFlight("orphan-build@example.com", "pod-a", 1);
     const live = await buildInFlight("live-build@example.com", "pod-a", 1);
+    // A resumed quiz uses a different dedupe key, but is still the task building this draft.
+    await db.update(schema.tasks).set({ dedupeKey: `generate_cv:${live.draft.id}:quiz-complete` })
+      .where(sql`payload->>'draftId' = ${live.draft.id}`);
     // The orphan's task is gone (history maintenance takes finished rows after thirty days);
     // the other's is still running, and its draft is nobody's business.
     await db.delete(schema.tasks).where(sql`payload->>'draftId' = ${draft.id}`);

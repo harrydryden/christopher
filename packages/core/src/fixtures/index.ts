@@ -435,6 +435,25 @@ export const RENDERED_SHELL_HTML = `<!doctype html><html><head><title>Open Roles
   <a href="https://job-boards.greenhouse.io/acmeindustries/jobs/5003">Supply Chain Operations</a><span>Costa Mesa, CA</span>
 </div></body></html>`;
 
+/** A realistic client-rendered careers page whose static navigation prevents shell detection. */
+export const CLIENT_RENDERED_CAREERS_STATIC_HTML = `<!doctype html><html><head><title>Careers | Acme</title></head><body>
+  <nav><a href="/">Home</a><a href="/about">About</a><a href="/products">Products</a><a href="/customers">Customers</a><a href="/blog">Blog</a><a href="/careers">Careers</a></nav>
+  <main><h1>Find your next role</h1><p>Search open positions across our teams and locations.</p><div id="jobs-app"></div></main>
+  <footer><a href="/privacy">Privacy</a><a href="/terms">Terms</a></footer><script src="/assets/jobs.js"></script>
+</body></html>`;
+
+export const CLIENT_RENDERED_CAREERS_RENDERED_HTML = `<!doctype html><html><head><title>Careers | Acme</title></head><body><main>
+  <article><a href="/jobs/operations-director">Operations Director</a><span>London, UK</span></article>
+  <article><a href="/jobs/strategy-lead">Strategy Lead</a><span>Remote</span></article>
+  <article><a href="/jobs/programme-manager">Programme Manager</a><span>Manchester, UK</span></article>
+</main></body></html>`;
+
+/** A first-party listing with a trustworthy zero-opening state. */
+export const EMPTY_CAREERS_LISTING_HTML = `<!doctype html><html><head><title>Jobs | Acme</title></head><body>
+  <nav><a href="/">Home</a><a href="/about">About</a><a href="/jobs">Jobs</a></nav>
+  <main><h1>Current job openings</h1><div class="jobs"><p><em>Sorry, we don’t have any job openings right now.</em></p></div></main>
+</body></html>`;
+
 export const HOMEPAGE_WITH_CAREERS_LINK = `<!doctype html><html><head>
   <title>Acme Robotics | Building the future</title>
   <meta property="og:site_name" content="Acme Robotics">

@@ -69,5 +69,7 @@ it("answers an account that has never saved a library with nothing, rather than 
 
 it("reads nothing at all without an account", async () => {
   auth.mockRejectedValue(new Error("Unauthorised"));
-  await expect(GET()).rejects.toThrow("Unauthorised");
+  const response = await GET();
+  expect(response.status).toBe(401);
+  expect(await response.json()).toEqual({ ok: false, error: "Please sign in again." });
 });

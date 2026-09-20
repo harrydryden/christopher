@@ -1,0 +1,22 @@
+{
+  "at": "2026-09-20T08:10:23.377Z",
+  "status": "blocked",
+  "model": "claude-fable-5-1",
+  "priceSource": "https://platform.claude.com/docs/en/about-claude/pricing",
+  "pricesCheckedAt": "2026-09-20",
+  "syntheticCandidate": true,
+  "releaseAccepted": false,
+  "budgetGuardrail": "The USD limit is a conservative admission estimate. Actual provider usage is recorded and can exceed the estimate; it is not an exact billing guarantee.",
+  "provider": {
+    "status": "blocked",
+    "reason": "ANTHROPIC_API_KEY is not configured in this execution environment.",
+    "models": []
+  },
+  "budget": {
+    "capUsd": 10,
+    "spentUsd": 0,
+    "heldUsd": 0,
+    "records": [],
+    "exceeded": false
+  }
+}

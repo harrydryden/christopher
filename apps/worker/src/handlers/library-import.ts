@@ -40,6 +40,7 @@ import {
   completeLibraryImport,
   getLibraryImportForWorker,
   recordAiCall,
+  type Db,
   type Task,
 } from "@christopher/db";
 import { tryReserveAi } from "../budget";
@@ -65,9 +66,19 @@ export async function handleImportLibraryDocument(task: Task, deps: WorkerDeps, 
   if (!row) return { skipped: "import no longer exists" };
   if (row.userId !== userId) return { skipped: "import belongs to another account" };
 
+  // The fetch and model call happen outside a transaction, so the queue lease can be reclaimed
+  // while they are in flight. Fence every terminal write inside its own transaction: an expired
+  // attempt must not overwrite its replacement's proposal or clear the upload the replacement
+  // still needs to read.
+  const complete = (outcome: Parameters<typeof completeLibraryImport>[2]) =>
+    deps.db.transaction(async tx => {
+      await deps.assertOwnership?.(tx as unknown as Db);
+      return completeLibraryImport(tx as unknown as Db, importId, outcome, deps.now());
+    });
+
   /** Record a sentence the person can act on, and finish. The bytes go with it either way. */
   const refuse = async (message: string, content?: string | null) => {
-    await completeLibraryImport(deps.db, importId, { error: message, ...(content === undefined ? {} : { content }) }, deps.now());
+    await complete({ error: message, ...(content === undefined ? {} : { content }) });
     log.info("library import refused", { userId, importId, kind: row.kind, message });
     return { imported: false, message };
   };
@@ -132,7 +143,7 @@ export async function handleImportLibraryDocument(task: Task, deps: WorkerDeps, 
     // document that is already here rather than another upload of it.
     const message = aiBudgetRefusalMessage(aiFeatureLabel("A11"), expected, admitted.refused);
     log.info("library import refused by budget", { userId, importId, expected });
-    await completeLibraryImport(deps.db, importId, { error: message, content: text }, deps.now());
+    await complete({ error: message, content: text });
     return { skipped: "budget", message, cost: 0 };
   }
 
@@ -148,7 +159,7 @@ export async function handleImportLibraryDocument(task: Task, deps: WorkerDeps, 
     if (!counts.jobs && !counts.education && !counts.skills) {
       return refuse("Nothing in that document could be matched to what it says. Check that it is the right file, or paste the text instead.", text);
     }
-    await completeLibraryImport(deps.db, importId, { proposal, content: text }, deps.now());
+    await complete({ proposal, content: text });
     log.info("library import read", { userId, importId, kind: row.kind, ...counts, dropped, truncated, usd: usd(cost) });
     return { proposed: counts, dropped, truncated, cost: usd(cost) };
   } catch (error) {

@@ -1,0 +1,96 @@
+{
+  "at": "2026-09-20T08:05:08.177Z",
+  "passed": true,
+  "failures": [],
+  "elapsedSeconds": 1.93,
+  "sourceDatabase": "christopher_users_benchmark",
+  "targetDatabase": "christopher_recovery_drill",
+  "sourceVersion": {
+    "server_version": "16.15 (Debian 16.15-1.pgdg13+2)",
+    "server_version_num": 160015
+  },
+  "targetVersion": {
+    "server_version": "16.15 (Debian 16.15-1.pgdg13+2)",
+    "server_version_num": 160015
+  },
+  "pgDumpVersion": "pg_dump (PostgreSQL) 16.15 (Debian 16.15-1.pgdg13+2)",
+  "before": {
+    "cvs": 100,
+    "jobs": 1000,
+    "tasks": 30,
+    "users": 100,
+    "orphans": {
+      "userJobs": 0,
+      "libraries": 0,
+      "applications": 0,
+      "subscriptions": 0
+    },
+    "companies": 20,
+    "libraries": 110,
+    "user_jobs": 100000,
+    "applications": 100,
+    "migrationCount": 34,
+    "invalidConstraints": 0,
+    "userJobFingerprint": "-1659598272739247502037"
+  },
+  "after": {
+    "cvs": 100,
+    "jobs": 1000,
+    "tasks": 30,
+    "users": 100,
+    "orphans": {
+      "userJobs": 0,
+      "libraries": 0,
+      "applications": 0,
+      "subscriptions": 0
+    },
+    "companies": 20,
+    "libraries": 110,
+    "user_jobs": 100000,
+    "applications": 100,
+    "migrationCount": 34,
+    "invalidConstraints": 0,
+    "userJobFingerprint": "-1659598272739247502037"
+  },
+  "commands": [
+    {
+      "command": "docker",
+      "seconds": 0.09,
+      "code": 0
+    },
+    {
+      "command": "docker",
+      "seconds": 0.26,
+      "code": 0
+    },
+    {
+      "command": "docker",
+      "seconds": 0.04,
+      "code": 0
+    },
+    {
+      "command": "docker",
+      "seconds": 0.1,
+      "code": 0
+    },
+    {
+      "command": "docker",
+      "seconds": 0.63,
+      "code": 0
+    },
+    {
+      "command": "pnpm",
+      "seconds": 0.77,
+      "code": 0
+    }
+  ],
+  "compatibility": {
+    "currentMigrationsReran": true,
+    "sourceAndTargetServerMatch": true
+  },
+  "limitations": [
+    "This is a local logical dump, not a managed snapshot or point-in-time restore.",
+    "It does not establish production backup scheduling, retention, encryption, access control, RPO or hosted RTO.",
+    "Rollback to an older application revision is not automated; destructive down-migrations are deliberately excluded."
+  ]
+}

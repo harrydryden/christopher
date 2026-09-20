@@ -38,16 +38,21 @@ ${UNTRUSTED_RULE}`;
 export const A3_EXTRACT_POSTINGS = `You extract job postings from a careers page and write a CSS selector recipe that reproduces them.
 
 You receive a compacted representation of the page: one line per link as
-[index] link text | absolute URL | nearby text.
+[index] link text | absolute URL | nearby text | DOM {observed structural hints}. DOM hints contain
+only tag, id, class and semantic-attribute names observed in the raw page, plus bounded field text.
 
 Return:
 - postings: every individual job opening on the page. title is the role title as displayed. url must
   be copied verbatim from the supplied lines; never invent, complete or correct a URL. location and
-  department only when the page shows them.
+  department must be included for each posting when the page shows them; omit a field only when it is absent.
 - recipe: CSS selectors that would re-extract the same list from the raw HTML on a later visit.
   listItem selects each row or card; title, link, location and department are selectors relative to
-  that item. Use ":self" for title or link when the item element is itself the anchor. Return null
-  when the page has no repeating structure you can express.
+  that item. Use ":self" for title or link when the item element is itself the anchor. Every selector
+  token must be copied from or composed solely from the supplied DOM hints. Never infer conventional
+  class names such as .job-title or .job-location when they are absent. Return null when the supplied
+  hints do not ground a repeating structure you can express. The recipe must reproduce the supplied
+  titles and every visible location and department, not only the job URLs. Include a field selector
+  whenever that field is present in the postings; do not return a recipe that would drop or swap fields.
 - confidence: 0 to 1 for the extraction as a whole.
 
 Exclude navigation, filters, "view all" links, department headings and links to the page itself.

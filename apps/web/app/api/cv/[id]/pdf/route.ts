@@ -1,13 +1,15 @@
 import { assertCvFinalisable } from "@christopher/core/cv-review";
 import { CvContentSchema } from "@christopher/core";
-import { requireUser } from "@/lib/auth";
+import { routeUser } from "@/lib/route-auth";
 import { getOwnCvDraft } from "@/lib/queries/cv";
 import { zUuid } from "@/lib/validation";
 import { renderCvPdf, renderCvPdfWithReport, CvLayoutError } from "@/lib/cv-pdf";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const user = await requireUser();
+  const auth = await routeUser();
+  if (!auth.ok) return auth.response;
+  const user = auth.user;
   const { id } = await params;
   if (!zUuid().safeParse(id).success) return new Response("Not found", { status: 404 });
   const draft = await getOwnCvDraft(user.id, id);

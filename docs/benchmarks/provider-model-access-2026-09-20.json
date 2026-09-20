@@ -1,0 +1,33 @@
+{
+  "at": "2026-09-20T09:35:16.930Z",
+  "status": "passed",
+  "models": [
+    {
+      "model": "claude-sonnet-5",
+      "passed": true,
+      "providerId": "claude-sonnet-5",
+      "price": {
+        "input": 2,
+        "output": 10
+      }
+    },
+    {
+      "model": "claude-fable-5-1",
+      "passed": true,
+      "providerId": "claude-fable-5-1",
+      "price": {
+        "input": 10,
+        "output": 50,
+        "cacheRead": 0.25
+      }
+    }
+  ],
+  "limitations": "Model metadata access only; generation quality, streaming behaviour and billing are separate checks.",
+  "selection": {
+    "globalDefault": "claude-sonnet-5",
+    "globalSource": "Read-only production settings query: defaultModel=claude-sonnet-5; modelOverrides absent, so repository default empty overrides applies",
+    "cvDefault": "claude-fable-5-1",
+    "cvSource": "Repository default; per-account production CV settings not inspected"
+  },
+  "billedGenerationCalls": 0
+}

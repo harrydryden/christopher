@@ -1,0 +1,51 @@
+{
+  "at": "2026-09-20T09:42:34.356Z",
+  "passed": false,
+  "blocker": "retained synthetic session expired",
+  "failures": [
+    "/: HTTP 307",
+    "/companies: HTTP 307",
+    "/applications: HTTP 307",
+    "/library: HTTP 307",
+    "/api/work-status: HTTP 500"
+  ],
+  "database": "christopher_recovery_drill",
+  "authenticated": false,
+  "readOnlyJourney": true,
+  "pages": [
+    {
+      "path": "/",
+      "status": 307,
+      "bytes": 9155,
+      "ms": 549.7
+    },
+    {
+      "path": "/companies",
+      "status": 307,
+      "bytes": 9621,
+      "ms": 15.6
+    },
+    {
+      "path": "/applications",
+      "status": 307,
+      "bytes": 9630,
+      "ms": 13.1
+    },
+    {
+      "path": "/library",
+      "status": 307,
+      "bytes": 9615,
+      "ms": 10.2
+    },
+    {
+      "path": "/api/work-status",
+      "status": 500,
+      "bytes": 0,
+      "ms": 7.4
+    }
+  ],
+  "limitations": [
+    "The journey issues GET requests only; authentication uses an existing synthetic restored session row.",
+    "This is local application compatibility evidence, not hosted RTO or production-data validation."
+  ]
+}

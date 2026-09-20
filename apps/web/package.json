@@ -35,5 +35,8 @@
     "tsx": "latest",
     "typescript": "~5.9.0",
     "vitest": "latest"
+  },
+  "engines": {
+    "node": "22.x"
   }
 }

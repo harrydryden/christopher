@@ -78,6 +78,12 @@ it("shows evidence questions and actual unsupported wording, with no finalisatio
     }),
   );
   expect(html).toContain("0/100");
+  expect(html).toContain("Quality checks");
+  expect(html).toContain("Factual support");
+  expect(html).toContain("Priority coverage");
+  expect(html).toContain("Evidence ready to use");
+  expect(html).toContain("Logistics to confirm");
+  expect(html).toContain("Heuristic editorial signals only");
   expect(html).toContain("Provide your actual budget ownership and scope.");
   expect(html).toContain("Owned a £10m budget");
   expect(html).not.toContain("claim: section:");

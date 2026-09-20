@@ -105,7 +105,7 @@ it("quotes the build this account would pay for, from the same estimator the wor
   // The size it measured is the evidence and the advert, not zero and not somebody's default.
   expect(quote.libraryBytes).toBeGreaterThan(200);
   expect(quote.estimateUsd).toBeCloseTo(
-    estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: quote.libraryBytes, descriptionBytes: Buffer.byteLength(DESCRIPTION) }, "all"),
+    estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: quote.libraryBytes, descriptionBytes: Buffer.byteLength(DESCRIPTION) }, "tailored"),
     6,
   );
   expect(quote.estimateUsd).toBeGreaterThan(0);
@@ -186,6 +186,6 @@ it("prices Save Direct Edits below Rebuild from Library, because the wording is 
   const size = { libraryBytes: 45_000, descriptionBytes: 9_000 };
   const costs = cvEditCosts("claude-fable-5-1", size);
   expect(costs.assessmentUsd).toBeCloseTo(estimateCvBuildUsd("claude-fable-5-1", size, "assessment"), 6);
-  expect(costs.allUsd).toBeCloseTo(estimateCvBuildUsd("claude-fable-5-1", size, "all"), 6);
+  expect(costs.allUsd).toBeCloseTo(estimateCvBuildUsd("claude-fable-5-1", size, "tailored_completion"), 6);
   expect(costs.assessmentUsd).toBeLessThan(costs.allUsd);
 });

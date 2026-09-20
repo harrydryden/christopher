@@ -1,0 +1,47 @@
+{
+  "at": "2026-09-20T13:52:27.702Z",
+  "deployment": "7RZbZCkibT4jhmAFHcR1nS8DSMx7",
+  "commit": "704a953d965d80e8234a84f8dd0a5875d722b233",
+  "environment": "branch-specific preview using isolated recovery copy",
+  "authenticatedWithDisposableAccount": true,
+  "productionOriginalTouched": false,
+  "results": [
+    {
+      "path": "/companies",
+      "expectedContentPresent": true,
+      "applicationError": false,
+      "observedMs": 1556
+    },
+    {
+      "path": "/applications",
+      "expectedContentPresent": true,
+      "applicationError": false,
+      "observedMs": 444
+    },
+    {
+      "path": "/library",
+      "expectedContentPresent": true,
+      "applicationError": false,
+      "observedMs": 1075
+    },
+    {
+      "path": "/admin/health",
+      "expectedContentPresent": false,
+      "applicationError": true,
+      "observedMs": 894
+    }
+  ],
+  "healthEndpoint": "Vercel request logs confirm GET /api/health HTTP200; browser client blocked displaying the JSON. Exact commit confirmed in deployment dashboard, response identity still pending.",
+  "limitations": [
+    "Read-only hosted web journey; no hosted worker, CV generation or capacity workload.",
+    "Initial disposable .invalid test email was rejected by intended email validation; corrected to reserved example.com."
+  ],
+  "passed": false,
+  "operationsError": {
+    "message": "TypeError: b.at.toISOString is not a function",
+    "digest": "1911442325",
+    "requestAt": "2026-09-20T13:52:12.128Z",
+    "httpStatus": 200,
+    "interpretation": "Streamed page returned HTTP 200 but displayed an application exception; HTTP status alone is not success."
+  }
+}

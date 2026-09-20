@@ -89,6 +89,7 @@ function BuildCvOffer({ jobId, details }: { jobId: string; details: RoleDetailsV
   return (
     <SettingsForm action={requestCv} submitLabel={label}>
       <input type="hidden" name="jobId" value={jobId} />
+      <p className="text-12 text-muted">We’ll match your evidence to the role, offer up to four optional questions, then write and check your CV. The estimate includes one improvement pass if useful.</p>
     </SettingsForm>
   );
 }

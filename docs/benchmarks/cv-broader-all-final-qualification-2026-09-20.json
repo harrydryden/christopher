@@ -1,0 +1,388 @@
+{
+  "at": "2026-09-20T12:17:38.761Z",
+  "status": "automated_checks_passed",
+  "model": "claude-fable-5-1",
+  "priceSource": "https://platform.claude.com/docs/en/about-claude/pricing",
+  "pricesCheckedAt": "2026-09-20",
+  "syntheticCandidate": true,
+  "releaseAccepted": false,
+  "suite": "representative",
+  "reproducibility": {
+    "cvPromptsSha256": "3cef6ac4cde906dd297b8dec175b94dcdd4ac99b22349df01b44afa879ee3703",
+    "fixturesSha256": "b38f8287a1a11fa9deef3ffb9ae894cd79aaa206283d5b98335cda12f35e2d70",
+    "gitHead": "99c0edd2fd4f0199fe4c8bd36d6047d82dd26766",
+    "gitDirty": true
+  },
+  "budgetGuardrail": "The USD limit is a conservative admission estimate. Actual provider usage is recorded and can exceed the estimate; it is not an exact billing guarantee.",
+  "provider": {
+    "status": "passed",
+    "models": [
+      {
+        "model": "claude-fable-5-1",
+        "passed": true,
+        "providerId": "claude-fable-5-1",
+        "price": {
+          "input": 10,
+          "output": 50,
+          "cacheRead": 0.25
+        }
+      }
+    ],
+    "limitations": "Model metadata access only; generation quality, streaming behaviour and billing are separate checks."
+  },
+  "results": [],
+  "representativeResults": [
+    {
+      "name": "qualifications-structured-skills",
+      "status": "passed",
+      "pdfPath": "docs/benchmarks/cv-broader-all-final-qualification-2026-09-20-qualifications-structured-skills.pdf",
+      "deterministic": {
+        "passed": true,
+        "missingEntries": [],
+        "missingHeadings": [],
+        "missingSkills": [],
+        "missingSectionText": [],
+        "inventedDatePrecision": [],
+        "lexicalReview": [],
+        "pageLimit": 1,
+        "pageCount": 1
+      },
+      "rubricGroundTruth": {
+        "passed": true,
+        "intentIds": {
+          "bachelor's degree in computer science or an equivalent professional qualification": "r1",
+          "use SQL": "r2",
+          "use Python": "r3"
+        },
+        "missingIntents": [],
+        "injectedRequirements": []
+      },
+      "passed": true,
+      "requirementGroundTruth": {
+        "passed": true,
+        "findings": [
+          {
+            "intent": "bachelor's degree in computer science or an equivalent professional qualification",
+            "allowed": [
+              "partial",
+              "demonstrated"
+            ],
+            "requirementId": "r1",
+            "cvStatus": "partial",
+            "libraryStatus": "partial",
+            "passed": true
+          },
+          {
+            "intent": "use SQL",
+            "allowed": [
+              "demonstrated"
+            ],
+            "requirementId": "r2",
+            "cvStatus": "demonstrated",
+            "libraryStatus": "demonstrated",
+            "passed": true
+          },
+          {
+            "intent": "use Python",
+            "allowed": [
+              "missing",
+              "unknown"
+            ],
+            "requirementId": "r3",
+            "cvStatus": "missing",
+            "libraryStatus": "missing",
+            "passed": true
+          }
+        ]
+      },
+      "assessorPassed": true,
+      "claimFlags": [],
+      "content": {
+        "theme": {
+          "version": 1,
+          "primary": "#000000",
+          "background": "#ffffff",
+          "surface": "#f2f2f2",
+          "pill": "#e6e6e6",
+          "introPanel": true,
+          "skillPills": true,
+          "font": "Christopher",
+          "maxPages": 1
+        },
+        "name": "Synthetic Candidate",
+        "contact": "Glasgow",
+        "summary": "Data analyst and Reporting Analyst at Example Research since 2022, using SQL to prepare research operations reports. Holds a Level 6 Diploma in Data Analytics and is an AWS Certified Cloud Practitioner.",
+        "sections": [
+          {
+            "entryId": "analyst-evidence",
+            "kind": "experience",
+            "heading": "Reporting Analyst · Example Research · 2022 – Present",
+            "bullets": [
+              "Used SQL to prepare research operations reports."
+            ]
+          },
+          {
+            "entryId": "diploma",
+            "kind": "education",
+            "heading": "Level 6 Diploma in Data Analytics",
+            "bullets": [
+              "Level 6 Diploma in Data Analytics, awarded 2021"
+            ]
+          },
+          {
+            "entryId": "aws",
+            "kind": "education",
+            "heading": "AWS Certified Cloud Practitioner",
+            "bullets": [
+              "AWS Certified Cloud Practitioner, awarded 2023"
+            ]
+          },
+          {
+            "entryId": "structured-skills",
+            "kind": "skill",
+            "skillItems": [
+              "SQL",
+              "Excel",
+              "Power BI"
+            ],
+            "heading": "Technical skills",
+            "bullets": [
+              "SQL, Excel, Power BI"
+            ]
+          }
+        ],
+        "gaps": [
+          "No bachelor's degree in computer science is evidenced; the Level 6 Diploma in Data Analytics is degree-level in the UK framework but the advert does not define 'equivalent professional qualification', so equivalence cannot be confirmed.",
+          "No evidence of Python use (desirable requirement).",
+          "SQL evidence is limited to a single statement about preparing research operations reports; no depth, scale or outcomes are recorded.",
+          "No quantified achievements, project scope or stakeholder detail are available for the Reporting Analyst role, so the experience section is necessarily brief.",
+          "No industry descriptions are stored for Example Research, so none were included."
+        ],
+        "fitNotes": []
+      },
+      "assessment": {
+        "version": "2026-09-12.1",
+        "inputHash": "b5389f797cef01eb2796e8dca43882fb505400050f9d2e4de3013472778f22e5",
+        "model": "claude-fable-5-1",
+        "assessedAt": "2026-09-20T12:18:31.656Z",
+        "pageCount": 1,
+        "rubric": {
+          "requirements": [
+            {
+              "id": "r1",
+              "label": "Bachelor's degree in computer science or an equivalent professional qualification",
+              "quote": "hold a bachelor's degree in computer science or an equivalent professional qualification",
+              "importance": "essential",
+              "category": "education"
+            },
+            {
+              "id": "r2",
+              "label": "Ability to use SQL",
+              "quote": "use SQL",
+              "importance": "essential",
+              "category": "skills"
+            },
+            {
+              "id": "r3",
+              "label": "Ability to use Python",
+              "quote": "use Python",
+              "importance": "desirable",
+              "category": "skills"
+            }
+          ],
+          "caveats": [
+            "The description is very brief and does not specify the role, responsibilities, scope, seniority, experience level or logistics (location, working pattern, salary).",
+            "No proficiency level or years of experience is given for SQL or Python, so depth of skill cannot be assessed precisely.",
+            "'Equivalent professional qualification' is undefined; assessors should interpret it broadly and consistently."
+          ]
+        },
+        "review": {
+          "matches": [
+            {
+              "requirementId": "r1",
+              "status": "partial",
+              "libraryStatus": "partial",
+              "cvEvidence": [
+                {
+                  "id": "section:diploma:0",
+                  "quote": "Level 6 Diploma in Data Analytics, awarded 2021"
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:diploma",
+                  "quote": "Level 6 Diploma in Data Analytics\nAwarded 2021"
+                }
+              ],
+              "reason": "No bachelor's degree in computer science is shown. The Level 6 Diploma in Data Analytics is a bachelor's-level professional qualification in a related field, so it is a credible candidate for 'equivalent professional qualification', but the CV does not state that it is degree-equivalent and the discipline is data analytics rather than computer science. The AWS Cloud Practitioner is a foundational certificate and does not reach degree equivalence.",
+              "improvement": "State the awarding body and, if applicable, that the Level 6 Diploma is recognised as bachelor's-degree equivalent (e.g. the national framework level), and note any computing-related modules so the equivalence to a computer science degree can be assessed."
+            },
+            {
+              "requirementId": "r2",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:analyst-evidence:0",
+                  "quote": "Used SQL to prepare research operations reports."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:analyst-evidence",
+                  "quote": "Used SQL to prepare research operations reports."
+                }
+              ],
+              "reason": "The CV and the confirmed evidence both show explicit, applied use of SQL in a current Reporting Analyst role to produce reports, which satisfies the requirement to use SQL; no proficiency level or years are specified in the rubric.",
+              "improvement": ""
+            },
+            {
+              "requirementId": "r3",
+              "status": "missing",
+              "libraryStatus": "missing",
+              "cvEvidence": [],
+              "libraryEvidence": [],
+              "reason": "Neither the CV nor the evidence library mentions Python or any Python-based work.",
+              "improvement": "If the candidate has used Python (e.g. for data preparation or analysis), add it to the skills list and, ideally, a role bullet describing what it was used for. Otherwise leave it out; the requirement is desirable, not essential."
+            }
+          ],
+          "claims": [
+            {
+              "claimId": "profile",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "source:profile",
+                  "quote": "Data analyst"
+                },
+                {
+                  "id": "entry:analyst-evidence",
+                  "quote": "Reporting Analyst · Example Research · 2022 – Present\nUsed SQL to prepare research operations reports."
+                },
+                {
+                  "id": "entry:diploma",
+                  "quote": "Level 6 Diploma in Data Analytics"
+                },
+                {
+                  "id": "entry:aws",
+                  "quote": "AWS Certified Cloud Practitioner"
+                }
+              ],
+              "reason": "Each element of the profile (data analyst label, Reporting Analyst role at Example Research since 2022, SQL use for research operations reports, Level 6 Diploma, AWS Certified Cloud Practitioner) is directly grounded in its own evidence block without exaggeration."
+            },
+            {
+              "claimId": "section:analyst-evidence:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:analyst-evidence",
+                  "quote": "Used SQL to prepare research operations reports."
+                }
+              ],
+              "reason": "The claim matches the required role evidence verbatim."
+            },
+            {
+              "claimId": "section:diploma:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:diploma",
+                  "quote": "Level 6 Diploma in Data Analytics\nAwarded 2021"
+                }
+              ],
+              "reason": "Qualification title and award year match the required source exactly."
+            },
+            {
+              "claimId": "section:aws:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:aws",
+                  "quote": "AWS Certified Cloud Practitioner\nAwarded 2023"
+                }
+              ],
+              "reason": "Certification title and award year match the required source exactly."
+            },
+            {
+              "claimId": "section:structured-skills:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:structured-skills",
+                  "quote": "SQL"
+                }
+              ],
+              "reason": "SQL is listed in the confirmed technical skills block; the claim is a bare skill label with no proficiency assertion."
+            },
+            {
+              "claimId": "section:structured-skills:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:structured-skills",
+                  "quote": "Excel"
+                }
+              ],
+              "reason": "Excel is listed in the confirmed technical skills block; the claim is a bare skill label with no proficiency assertion."
+            },
+            {
+              "claimId": "section:structured-skills:2",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:structured-skills",
+                  "quote": "Power BI"
+                }
+              ],
+              "reason": "Power BI is listed in the confirmed technical skills block; the claim is a bare skill label with no proficiency assertion."
+            }
+          ]
+        },
+        "score": 60,
+        "availableEvidenceScore": 60
+      },
+      "humanReview": "required: inspect this generated PDF for layout, lexical review flags and factual grounding"
+    }
+  ],
+  "budget": {
+    "capUsd": 3.293802,
+    "spentUsd": 0.246662,
+    "heldUsd": 0,
+    "records": [
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 60,
+        "outputTokens": 299,
+        "cacheReadTokens": 1098,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.015825,
+        "durationMs": 6342,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 1038,
+        "outputTokens": 1780,
+        "cacheReadTokens": 2275,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.099949,
+        "durationMs": 20126,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 780,
+        "outputTokens": 2277,
+        "cacheReadTokens": 2601,
+        "cacheWriteTokens": 687,
+        "costUsd": 0.130888,
+        "durationMs": 25967,
+        "ok": true
+      }
+    ],
+    "exceeded": false
+  }
+}

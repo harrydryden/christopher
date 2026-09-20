@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-20T08:14:06.340Z",
+  "method": "Read-only PoliteFetcher.fetchText followed by findJobLinks; the two post-fix requests ran sequentially.",
+  "namedFalsePositivesChecked": [
+    "Apply now",
+    "Overview",
+    "Diversity and Inclusion",
+    "Benefits"
+  ],
+  "observations": [
+    {
+      "url": "https://openai.com/careers/search/",
+      "before": {
+        "observedAt": "2026-09-20T08:08Z",
+        "timestampPrecision": "minute",
+        "extractedLinkCount": 1636,
+        "responseBytes": null,
+        "namedFalsePositivesPresent": [
+          "Apply now(opens in a new window)"
+        ]
+      },
+      "after": {
+        "observedAt": "2026-09-20T08:14:03.974Z",
+        "httpStatus": 200,
+        "finalUrl": "https://openai.com/careers/search/",
+        "responseBytes": 2647991,
+        "extractedLinkCount": 818,
+        "namedFalsePositiveCount": 0,
+        "namedFalsePositivesAbsent": true
+      }
+    },
+    {
+      "url": "https://www.mozilla.org/en-US/careers/listings/",
+      "before": {
+        "observedAt": "2026-09-20T08:08Z",
+        "timestampPrecision": "minute",
+        "extractedLinkCount": 28,
+        "responseBytes": null,
+        "namedFalsePositivesPresent": [
+          "Overview",
+          "Diversity and Inclusion",
+          "Benefits"
+        ]
+      },
+      "after": {
+        "observedAt": "2026-09-20T08:14:06.328Z",
+        "httpStatus": 200,
+        "finalUrl": "https://www.mozilla.org/en-US/careers/listings/",
+        "responseBytes": 47356,
+        "extractedLinkCount": 23,
+        "namedFalsePositiveCount": 0,
+        "namedFalsePositivesAbsent": true
+      }
+    }
+  ],
+  "limitations": [
+    "The pre-fix counts came from the completed 08:08 UTC live acceptance run; its response byte counts were not retained and are represented as null rather than reconstructed.",
+    "The pages are live and may change between observations, so count differences are regression evidence rather than a stable inventory.",
+    "The post-fix check proves absence only for the four named false-positive labels; it does not establish precision, recall or completeness.",
+    "No page HTML or candidate data is stored in this evidence file."
+  ]
+}

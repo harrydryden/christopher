@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-20T08:01:04.937Z",
+  "mode": "discovery_and_extraction",
+  "limitations": [
+    "This is a live observation, so role counts and pages can change during the run.",
+    "A null metric means the required independent label does not exist; it is not a pass.",
+    "No browser or AI fallback is used, and no database is read or written."
+  ],
+  "metrics": {
+    "total": 1,
+    "sourceLabelled": 0,
+    "sourceMatches": 0,
+    "sourceMismatches": 0,
+    "automaticResolvedAt085": 1,
+    "wrongAutomaticAccepts": 0,
+    "extractionComplete": 0,
+    "extractionPartial": 0,
+    "extractionFailed": 1,
+    "countLabelled": 0,
+    "countMatches": 0,
+    "discoveryAccuracy": null,
+    "extractionCountAccuracy": null
+  },
+  "cases": [
+    {
+      "manifest": {
+        "id": "openai",
+        "company": "OpenAI",
+        "homepageUrl": "https://openai.com",
+        "expectedSource": {
+          "type": "ashby",
+          "url": "https://jobs.ashbyhq.com/openai"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "unverified",
+        "labelNote": "Candidate source may be stale; independent dated review still required."
+      },
+      "result": {
+        "id": "openai",
+        "company": "OpenAI",
+        "startedAt": "2026-09-20T08:00:39.305Z",
+        "durationMs": 25632,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://openai.com/careers/search/",
+          "confidence": 0.85,
+          "fetches": 13,
+          "sourceMatchesLabel": null
+        },
+        "extraction": {
+          "outcome": "failed",
+          "countMatchesLabel": null,
+          "sample": [],
+          "error": "Response exceeds 5000000 bytes; refusing truncated content"
+        }
+      }
+    }
+  ]
+}

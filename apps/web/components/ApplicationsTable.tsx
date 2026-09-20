@@ -41,6 +41,7 @@ function cvLabel(row: PipelineRow): string {
   switch (row.cv.status) {
     case "queued": return "Queued";
     case "generating": return "Building…";
+    case "awaiting_evidence": return "Waiting for your evidence";
     case "failed": return "Failed";
     case "ready": return `Ready · V${Math.max(1, row.cv.revision)}${row.cv.finalisedAt ? " · finalised" : ""}`;
   }
@@ -278,6 +279,7 @@ function CvPanel({
               />
             </label>
             {quote && <p className="text-12 text-muted">{quote.line}</p>}
+            <p className="text-12 text-muted">Match evidence → optional questions → write and check. The estimate includes one improvement pass if useful.</p>
           </SettingsForm>
         )
       ) : (

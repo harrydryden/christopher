@@ -4,11 +4,13 @@ import { cvImprovementOwner } from "@christopher/core/cv-assessment";
 import { assertCvFinalisable } from "@christopher/core/cv-review";
 import { renderCvPdf } from "@/lib/cv-pdf";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { actionCvs, applications, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, userJobs, enqueueTask } from "@christopher/db";
 import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvWritingPreferences,
   createCvWritingBudget, CvLibrarySchema, consolidateExperience, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel,
   type CvContent, type CvLibrary, type CvWritingPreferences } from "@christopher/core";
+import { CvGapAnswerSchema, CvGapQuizSchema, addGapAnswersToLibrary, type CvGapAnswer } from "@christopher/core/cv-gap-quiz";
 import { requireUser, requireVerifiedUser } from "@/lib/auth";
 import { cvLibraryIssues } from "@/lib/cv-library-issues";
 import { cvBuildQuote } from "@/lib/cv-quote";
@@ -36,16 +38,20 @@ async function upsertUserSetting(tx: Pick<Tx, "insert">, userId: string, key: st
 function applyCvFormEdits(saved: CvContent, form: FormData): CvContent {
   const content = structuredClone(saved);
   if (form.has("theme")) content.theme = JSON.parse(String(form.get("theme")));
-  content.summary = String(form.get("summary") ?? "").trim();
+  const summary = String(form.get("summary") ?? "").trim();
+  if (summary !== saved.summary) delete content.summarySources;
+  content.summary = summary;
   content.sections = content.sections.map((section, i) => ({
     ...section,
-    bullets: String(form.get(`section-${i}`) ?? section.bullets.join("\n")).split("\n").map((t) => t.trim()).filter(Boolean),
+    ...(() => {
+      const bullets = String(form.get(`section-${i}`) ?? section.bullets.join("\n")).split("\n").map((t) => t.trim()).filter(Boolean);
+      const skillItems = section.kind === "skill" && section.skillItems
+        ? String(form.get(`skills-${i}`) ?? section.skillItems.join("\n")).split("\n").map((t) => t.trim()).filter(Boolean)
+        : section.skillItems;
+      const changed = JSON.stringify(bullets) !== JSON.stringify(section.bullets) || JSON.stringify(skillItems) !== JSON.stringify(section.skillItems);
+      return { bullets, ...(skillItems ? { skillItems } : {}), ...(changed ? { bulletSources: undefined } : {}) };
+    })(),
   }));
-  content.sections = content.sections.map((section, i) =>
-    section.kind === "skill" && section.skillItems
-      ? { ...section, skillItems: String(form.get(`skills-${i}`) ?? section.skillItems.join("\n")).split("\n").map((t) => t.trim()).filter(Boolean) }
-      : section,
-  );
   delete content.fitNotes;
   return CvContentSchema.parse(content);
 }
@@ -155,6 +161,119 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
   revalidatePath("/library");
   revalidatePath("/cv");
   return ok();
+}
+
+/** Resolve the one optional evidence pause. Confirmed facts get a new Library version and child draft. */
+export async function answerCvGapQuiz(draftId: string, _prev: ActionResult, form: FormData): Promise<ActionResult> {
+  const user = await requireVerifiedUser();
+  if (!zUuid().safeParse(draftId).success) return fail("This CV could not be found.");
+  const decision = form.get("decision");
+  if (decision !== "confirm" && decision !== "skip") return fail("Choose whether to save evidence or continue without it.");
+  let nextId = draftId;
+  try {
+    nextId = await db().transaction(async tx => {
+      await lockCvDraft(tx, draftId);
+      const [draft] = await tx.select().from(cvDrafts)
+        .where(and(eq(cvDrafts.id, draftId), eq(cvDrafts.userId, user.id))).limit(1).for("update");
+      if (!draft) throw new UserFacingError("This CV could not be found.");
+      const previousQuiz = CvGapQuizSchema.safeParse(draft.gapQuiz);
+      if (!previousQuiz.success) throw new UserFacingError("These questions are no longer available. Reload the CV.");
+      const quiz = previousQuiz.data;
+      // A repeated browser submission resolves to the child already created by the first one.
+      if (quiz.continuationDraftId) return quiz.continuationDraftId;
+      if (quiz.status === "skipped") return draft.id;
+      if (quiz.status !== "awaiting_answers" || draft.status !== "awaiting_evidence")
+        throw new UserFacingError("These questions have already been completed. Reload the CV.");
+
+      if (decision === "skip") {
+        const completedAt = new Date().toISOString();
+        await tx.update(cvDrafts).set({
+          status: "queued",
+          gapQuiz: { ...quiz, status: "skipped", completedAt },
+          buildCheckpoint: { ...draft.buildCheckpoint, tailoringEnabled: true, quizCompleted: true },
+          progressAt: new Date(), error: null, failure: null,
+        }).where(and(eq(cvDrafts.id, draft.id), eq(cvDrafts.userId, user.id)));
+        // The worker that paused can still hold the original task lease while this form is saved.
+        // A distinct stable key ensures the continuation is not deduplicated against that task.
+        await enqueueTask(tx, "generate_cv", { draftId }, { dedupeKey: `generate_cv:${draftId}:quiz-complete`, priority: 2 });
+        return draftId;
+      }
+
+      const answers: CvGapAnswer[] = [];
+      for (const question of quiz.questions) {
+        const answer = String(form.get(`answer:${question.id}`) ?? "").trim();
+        const confirmed = form.get(`confirmed:${question.id}`) === "on";
+        if (!answer) continue;
+        if (!confirmed) throw new UserFacingError("Confirm each answer is accurate before saving it.");
+        const encodedDestination = String(form.get(`destination:${question.id}`) ?? "");
+        const separator = encodedDestination.indexOf(":");
+        const kind = separator < 0 ? "" : encodedDestination.slice(0, separator);
+        const id = separator < 0 ? "" : encodedDestination.slice(separator + 1);
+        const destination = kind === "employment" && id
+          ? { kind: "employment" as const, employmentId: id }
+          : kind === "evidence" && id ? { kind: "evidence" as const, entryId: id } : null;
+        if (!destination) throw new UserFacingError("Choose where each answer belongs in your Library.");
+        answers.push({ questionId: question.id, answer, destination });
+      }
+      if (!answers.length) throw new UserFacingError("Add and confirm at least one answer, or continue without further evidence.");
+      const parsedAnswers = z.array(CvGapAnswerSchema).min(1).max(4).safeParse(answers);
+      if (!parsedAnswers.success) throw new UserFacingError("Keep each answer under 2,000 characters and answer no more than four questions.");
+      let newVersion: number;
+      try {
+        newVersion = await writeCvLibraryVersion(tx, user.id, quiz.libraryVersion, current => {
+          if (!current) throw new UserFacingError("Your Library could not be found.");
+          for (const answer of parsedAnswers.data) {
+            if (answer.destination.kind !== "evidence") continue;
+            const entryId = answer.destination.entryId;
+            const entry = current.entries.find(item => item.id === entryId);
+            if (!entry || (entry.status && entry.status !== "active"))
+              throw new UserFacingError("Choose an active Library entry for each answer. Reload if the available entries changed.");
+          }
+          return addGapAnswersToLibrary(current, quiz, parsedAnswers.data, () => `gap-${randomUUID()}`);
+        });
+      } catch (error) {
+        if (error instanceof UserFacingError && error.message === "The library changed. Reload before saving.")
+          throw new UserFacingError("Your Library changed after these questions were prepared. Review the latest Library, archive this paused CV from Applications, then start a new build so its questions use that evidence.");
+        throw error;
+      }
+      const [savedLibrary] = await tx.select().from(cvLibraries)
+        .where(and(eq(cvLibraries.userId, user.id), eq(cvLibraries.version, newVersion))).limit(1);
+      if (!savedLibrary) throw new Error("Saved Library version could not be read.");
+      // The saved version owns the new evidence; the continuation keeps the appearance and writing
+      // preferences captured when this build began, just as an ordinary draft snapshot does.
+      const continuationLibrary = groupCvLibrary(CvLibrarySchema.parse({
+        ...savedLibrary.content,
+        stylePreferences: draft.librarySnapshot.stylePreferences,
+        preferredWording: draft.librarySnapshot.preferredWording,
+        theme: draft.librarySnapshot.theme,
+      }));
+      const revision = await nextCvRevision(tx, draft, { spare: draft.id });
+      const [continuation] = await tx.insert(cvDrafts).values({
+        userId: user.id, revision, parentId: draft.id, jobId: draft.jobId,
+        jobTitle: draft.jobTitle, companyName: draft.companyName,
+        jobDescription: draft.jobDescription, jobSource: draft.jobSource,
+        libraryVersion: newVersion, librarySnapshot: continuationLibrary, model: draft.model,
+        status: "queued",
+        buildCheckpoint: {
+          ...(draft.buildCheckpoint?.rubric ? { rubric: draft.buildCheckpoint.rubric } : {}),
+          ...(draft.buildCheckpoint?.rubricAt ? { rubricAt: draft.buildCheckpoint.rubricAt } : {}),
+          tailoringEnabled: true, quizCompleted: true,
+        },
+      }).returning({ id: cvDrafts.id });
+      if (!continuation) throw new Error("Continuation draft was not created.");
+      const completedAt = new Date().toISOString();
+      await tx.update(cvDrafts).set({
+        archivedAt: new Date(),
+        gapQuiz: { ...quiz, status: "answered", answers: parsedAnswers.data, completedAt, continuationDraftId: continuation.id },
+      }).where(and(eq(cvDrafts.id, draft.id), eq(cvDrafts.userId, user.id)));
+      await enqueueTask(tx, "generate_cv", { draftId: continuation.id }, { dedupeKey: `generate_cv:${continuation.id}`, priority: 2 });
+      return continuation.id;
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) return fail("These answers do not fit in the selected Library entry. Remove a row there or choose another active entry, then try again.");
+    return actionError(error, "Could not continue this CV build. Please try again.");
+  }
+  return { ok: true, message: `cv-gap-destination:/cv/${nextId}` };
 }
 export async function saveCvWritingPreferences(_prev: ActionResult, form: FormData): Promise<ActionResult> {
   const user = await requireUser();
@@ -299,7 +418,7 @@ export async function requestCv(
             eq(cvDrafts.jobId, id),
             eq(cvDrafts.companyName, row.company),
             eq(cvDrafts.jobTitle, row.job.title),
-            inArray(cvDrafts.status, ["queued", "generating"]),
+            inArray(cvDrafts.status, ["queued", "generating", "awaiting_evidence"]),
             isNull(cvDrafts.archivedAt),
           ),
         )
@@ -328,6 +447,7 @@ export async function requestCv(
           libraryVersion: library.version,
           librarySnapshot: generationLibrary,
           model: settings.cvModel,
+          buildCheckpoint: { tailoringEnabled: true },
         })
         .returning();
       await enqueueTask(
@@ -443,6 +563,7 @@ export async function saveCvDraft(
             archivedAt: null,
             parentId: id,
             revision,
+            buildCheckpoint: { tailoringEnabled: true, quizCompleted: true },
           })
           .returning();
         await enqueueTask(
@@ -531,9 +652,11 @@ export async function assessCvDraft(
         .for("update");
       if (
         !draft ||
+        draft.archivedAt ||
         draft.finalisedAt ||
         draft.status === "queued" ||
-        draft.status === "generating"
+        draft.status === "generating" ||
+        draft.status === "awaiting_evidence"
       )
         throw new UserFacingError(
           "Choose an unfinished saved draft that is not already being processed.",
@@ -551,7 +674,14 @@ export async function assessCvDraft(
           status: "queued",
           error: null,
           buildStage: null,
-          ...(refreshed ? { ...refreshed, buildCheckpoint: null, failure: null } : {}),
+          ...(refreshed ? {
+            ...refreshed,
+            buildCheckpoint: {
+              tailoringEnabled: draft.buildCheckpoint?.tailoringEnabled ?? true,
+              ...(draft.buildCheckpoint?.quizCompleted ? { quizCompleted: true } : {}),
+            },
+            failure: null,
+          } : {}),
         })
         .where(eq(cvDrafts.id, id));
       const queued = await enqueueTask(

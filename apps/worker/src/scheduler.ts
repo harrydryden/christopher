@@ -143,7 +143,9 @@ export async function reconcileCvDrafts(deps: WorkerDeps, graceMinutes = 5): Pro
       and coalesce(d.progress_at, d.created_at) < now() - make_interval(mins => ${graceMinutes}::int)
       and not exists (
         select 1 from tasks t
-        where t.dedupe_key = 'generate_cv:' || d.id::text and t.status in ('queued', 'running')
+        where t.type = 'generate_cv'
+          and t.payload->>'draftId' = d.id::text
+          and t.status in ('queued', 'running')
       )
     limit 200`);
   let failed = 0;

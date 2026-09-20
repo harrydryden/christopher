@@ -24,9 +24,17 @@
       "types": "./src/cv-fit.ts",
       "default": "./src/cv-fit.ts"
     },
+    "./cv-tailoring": {
+      "types": "./src/cv-tailoring.ts",
+      "default": "./src/cv-tailoring.ts"
+    },
     "./cv-build-failure": {
       "types": "./src/cv-build-failure.ts",
       "default": "./src/cv-build-failure.ts"
+    },
+    "./cv-gap-quiz": {
+      "types": "./src/cv-gap-quiz.ts",
+      "default": "./src/cv-gap-quiz.ts"
     },
     "./cv-assessment": {
       "types": "./src/cv-assessment.ts",
@@ -35,6 +43,10 @@
     "./cv-review": {
       "types": "./src/cv-review.ts",
       "default": "./src/cv-review.ts"
+    },
+    "./cv-quality": {
+      "types": "./src/cv-quality.ts",
+      "default": "./src/cv-quality.ts"
     },
     "./library-review": {
       "types": "./src/library-review.ts",

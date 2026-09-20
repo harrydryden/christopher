@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, eq, ne, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { MAX_ACCOUNT_AI_BUDGET_USD } from "@christopher/core";
@@ -52,16 +52,29 @@ export async function updateProfile(_prev: ActionResult, form: FormData): Promis
   return ok();
 }
 
-/** Administrators: promote or demote another account. The last administrator cannot demote themselves. */
+/**
+ * Administrators: promote or demote an account.
+ *
+ * Every demotion locks the current administrator rows, including when an administrator demotes
+ * somebody else. Otherwise two administrators can submit opposing demotions at the same time,
+ * each observe the other, and leave the deployment with no administrator at all.
+ */
 export async function setUserRole(userId: string, role: UserRole): Promise<void> {
-  const admin = await requireAdmin();
+  await requireAdmin();
   const id = zUuid().parse(userId);
   if (role !== "admin" && role !== "member") throw new UserFacingError("Unknown role.");
-  if (id === admin.id && role !== "admin") {
-    const [others] = await db().select({ n: sql<number>`count(*)::int` }).from(users).where(and(eq(users.role, "admin"), ne(users.id, admin.id), sql`${users.claimedAt} is not null`));
-    if (!others?.n) throw new UserFacingError("You are the only administrator. Make someone else an administrator first.");
-  }
-  await db().update(users).set({ role }).where(eq(users.id, id));
+  await db().transaction(async (tx) => {
+    if (role !== "admin") {
+      const administrators = await tx.select({ id: users.id }).from(users)
+        .where(and(eq(users.role, "admin"), sql`${users.claimedAt} is not null`))
+        .orderBy(asc(users.id))
+        .for("update");
+      if (administrators.some((row) => row.id === id) && administrators.length === 1) {
+        throw new UserFacingError("You are the only administrator. Make someone else an administrator first.");
+      }
+    }
+    await tx.update(users).set({ role }).where(eq(users.id, id));
+  });
   revalidatePath("/admin");
 }
 

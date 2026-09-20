@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-20T08:01:50.576Z",
+  "mode": "discovery_only",
+  "limitations": [
+    "This is a live observation, so role counts and pages can change during the run.",
+    "A null metric means the required independent label does not exist; it is not a pass.",
+    "No browser or AI fallback is used, and no database is read or written."
+  ],
+  "metrics": {
+    "total": 1,
+    "sourceLabelled": 1,
+    "sourceMatches": 1,
+    "sourceMismatches": 0,
+    "automaticResolvedAt085": 1,
+    "wrongAutomaticAccepts": 0,
+    "extractionComplete": 0,
+    "extractionPartial": 0,
+    "extractionFailed": 0,
+    "countLabelled": 0,
+    "countMatches": 0,
+    "discoveryAccuracy": 1,
+    "extractionCountAccuracy": null
+  },
+  "cases": [
+    {
+      "manifest": {
+        "id": "anduril",
+        "company": "Anduril",
+        "homepageUrl": "https://www.anduril.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://boards.greenhouse.io/andurilindustries"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Board mapping is documented in REVIEW-PLAN; current count is time-dependent."
+      },
+      "result": {
+        "id": "anduril",
+        "company": "Anduril",
+        "startedAt": "2026-09-20T08:01:13.413Z",
+        "durationMs": 37163,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "greenhouse",
+          "observedUrl": "https://job-boards.greenhouse.io/andurilindustries",
+          "confidence": 0.98,
+          "fetches": 1,
+          "sourceMatchesLabel": true
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    }
+  ]
+}

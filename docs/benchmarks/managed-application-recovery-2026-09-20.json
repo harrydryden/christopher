@@ -1,0 +1,98 @@
+{
+  "at": "2026-09-20T13:40:02.947Z",
+  "passed": true,
+  "failures": [],
+  "recoveryDatabaseId": "dpg-danq11ijnfac739fekdg-a",
+  "releaseCommit": "704a953",
+  "elapsedSeconds": 11.43,
+  "migrationMs": 3457,
+  "gapColumn": {
+    "data_type": "jsonb",
+    "is_nullable": "YES"
+  },
+  "before": {
+    "cvs": 2,
+    "jobs": 3827,
+    "tasks": 727,
+    "users": 1,
+    "orphans": {
+      "userJobs": 0,
+      "libraries": 0,
+      "applications": 0,
+      "subscriptions": 0
+    },
+    "companies": 6,
+    "libraries": 14,
+    "user_jobs": 6,
+    "applications": 0,
+    "migrationCount": 34,
+    "invalidConstraints": 0,
+    "userJobFingerprint": "13436909346733224814"
+  },
+  "after": {
+    "cvs": 2,
+    "jobs": 3827,
+    "tasks": 727,
+    "users": 1,
+    "orphans": {
+      "userJobs": 0,
+      "libraries": 0,
+      "applications": 0,
+      "subscriptions": 0
+    },
+    "companies": 6,
+    "libraries": 14,
+    "user_jobs": 6,
+    "applications": 0,
+    "migrationCount": 35,
+    "invalidConstraints": 0,
+    "userJobFingerprint": "13436909346733224814"
+  },
+  "pages": [
+    {
+      "path": "/",
+      "status": 200,
+      "bytes": 65861,
+      "ms": 2985
+    },
+    {
+      "path": "/companies",
+      "status": 200,
+      "bytes": 88300,
+      "ms": 201
+    },
+    {
+      "path": "/applications",
+      "status": 200,
+      "bytes": 36708,
+      "ms": 404
+    },
+    {
+      "path": "/library",
+      "status": 200,
+      "bytes": 303815,
+      "ms": 229
+    },
+    {
+      "path": "/api/work-status",
+      "status": 200,
+      "bytes": 94,
+      "ms": 65
+    },
+    {
+      "path": "/admin/health",
+      "status": 200,
+      "bytes": 22256,
+      "ms": 403
+    }
+  ],
+  "revokedStatus": 401,
+  "sessionRemoved": true,
+  "productionOriginalTouched": false,
+  "workerStarted": false,
+  "limitations": [
+    "Application ran locally against the isolated managed database, not as a hosted web/worker pair.",
+    "This follow-up does not measure incident-to-restoration RTO, prove historical RPO, or exercise a live worker rollback.",
+    "Application requests were read-only; setup applied the additive migration and created then removed one dedicated session."
+  ]
+}

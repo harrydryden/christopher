@@ -1,0 +1,236 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-20T09:36:18.136Z",
+  "mode": "discovery_only",
+  "browser": {
+    "enabled": true,
+    "implementation": "BrowserRenderer",
+    "aiEnabled": false
+  },
+  "limitations": [
+    "This is a live observation, so role counts and pages can change during the run.",
+    "A null metric means the required independent label does not exist; it is not a pass.",
+    "Production BrowserRenderer fallback is enabled; AI fallback remains disabled and no database is read or written."
+  ],
+  "acceptance": {
+    "verdict": "fail",
+    "reasons": [
+      "labelled automatic discovery agreement is 20.0%, below 80%",
+      "5 case(s) lack an independent posting-identity golden snapshot",
+      "posting-identity recall and precision have not been measured",
+      "one or more selected cases did not run extraction"
+    ]
+  },
+  "metrics": {
+    "total": 5,
+    "sourceLabelled": 5,
+    "sourceMatches": 2,
+    "sourceMismatches": 3,
+    "labelledAutomaticMatchesAt085": 1,
+    "automaticResolvedAt085": 1,
+    "wrongAutomaticAccepts": 0,
+    "extractionComplete": 0,
+    "extractionPartial": 0,
+    "extractionFailed": 0,
+    "countLabelled": 0,
+    "countMatches": 0,
+    "discoveryAccuracy": 0.2,
+    "extractionExactCountAgreement": null,
+    "postingIdentityRecall": null,
+    "postingIdentityPrecision": null
+  },
+  "cases": [
+    {
+      "manifest": {
+        "id": "anduril",
+        "company": "Anduril",
+        "homepageUrl": "https://www.anduril.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://boards.greenhouse.io/andurilindustries"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Board mapping is documented in REVIEW-PLAN; current count is time-dependent.",
+        "sourceEvidenceUrls": [
+          "https://www.anduril.com/careers",
+          "https://job-boards.greenhouse.io/andurilindustries"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "anduril",
+        "company": "Anduril",
+        "startedAt": "2026-09-20T09:35:23.659Z",
+        "durationMs": 42685,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "greenhouse",
+          "observedUrl": "https://job-boards.greenhouse.io/andurilindustries",
+          "confidence": 0.98,
+          "fetches": 1,
+          "sourceMatchesLabel": true,
+          "browserRenders": 0,
+          "browserUrls": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "datadog",
+        "company": "Datadog",
+        "homepageUrl": "https://www.datadoghq.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://careers.datadoghq.com/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Datadog's company-owned careers page is the current searchable all-jobs listing; the previous Greenhouse board candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://careers.datadoghq.com/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "datadog",
+        "company": "Datadog",
+        "startedAt": "2026-09-20T09:35:23.661Z",
+        "durationMs": 22346,
+        "discovery": {
+          "outcome": "needs_confirmation",
+          "observedType": "html",
+          "observedUrl": "https://careers.datadoghq.com/",
+          "confidence": 0.5,
+          "fetches": 12,
+          "sourceMatchesLabel": true,
+          "browserRenders": 0,
+          "browserUrls": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "automattic",
+        "company": "Automattic",
+        "homepageUrl": "https://automattic.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://automattic.com/work-with-us/jobs/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Automattic states that legitimate openings are published on its company-owned careers site; the previous Greenhouse board candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://automattic.com/work-with-us/",
+          "https://automattic.com/work-with-us/jobs/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "automattic",
+        "company": "Automattic",
+        "startedAt": "2026-09-20T09:35:23.661Z",
+        "durationMs": 12420,
+        "discovery": {
+          "outcome": "needs_confirmation",
+          "observedType": "html",
+          "observedUrl": "https://automattic.com/work-with-us/",
+          "confidence": 0.5,
+          "fetches": 6,
+          "sourceMatchesLabel": false,
+          "browserRenders": 0,
+          "browserUrls": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "spotify",
+        "company": "Spotify",
+        "homepageUrl": "https://www.spotify.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://www.lifeatspotify.com/jobs"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Spotify's first-party applicant guidance identifies lifeatspotify.com/jobs as its careers listing (and Lever only as a possible role-detail destination).",
+        "sourceEvidenceUrls": [
+          "https://www.lifeatspotify.com/start-your-journey",
+          "https://www.lifeatspotify.com/jobs"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "spotify",
+        "company": "Spotify",
+        "startedAt": "2026-09-20T09:35:36.081Z",
+        "durationMs": 32286,
+        "discovery": {
+          "outcome": "not_found",
+          "fetches": 16,
+          "sourceMatchesLabel": false,
+          "browserRenders": 0,
+          "browserUrls": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "basecamp",
+        "company": "37signals",
+        "homepageUrl": "https://37signals.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://37signals.com/jobs"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "37signals publishes current openings, including an explicit empty state, on its company-owned jobs page.",
+        "sourceEvidenceUrls": [
+          "https://37signals.com/jobs"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "basecamp",
+        "company": "37signals",
+        "startedAt": "2026-09-20T09:35:46.007Z",
+        "durationMs": 32129,
+        "discovery": {
+          "outcome": "not_found",
+          "fetches": 16,
+          "sourceMatchesLabel": false,
+          "browserRenders": 0,
+          "browserUrls": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    }
+  ]
+}

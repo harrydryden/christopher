@@ -1,0 +1,70 @@
+{
+  "at": "2026-09-20T14:04:44.635Z",
+  "passed": true,
+  "environment": {
+    "database": "christopher_50_company_release",
+    "localPostgres": true,
+    "workerConcurrency": 3,
+    "browserEnabled": false,
+    "paidAiEnabled": false
+  },
+  "workload": {
+    "companies": 50,
+    "sourceMix": {
+      "greenhouse": 40,
+      "html": 10
+    },
+    "rolesPerCompany": 5,
+    "controlledFailedCompanyIndex": 17
+  },
+  "setupRun": {
+    "seconds": 0.66,
+    "requests": 130,
+    "scanRun": {
+      "id": "ce97e2c5-948a-40ca-8e34-9bf61a50a5be",
+      "started_at": "2026-09-20 14:04:43.528+00",
+      "finished_at": "2026-09-20 14:04:44.144+00",
+      "run_date": "2026-09-19",
+      "trigger": "manual",
+      "companies_total": 50,
+      "companies_ok": 50,
+      "companies_failed": 0,
+      "new_roles": 250,
+      "closed_roles": 0
+    },
+    "jobs": {
+      "jobs": 250,
+      "openJobs": 250
+    }
+  },
+  "measuredDailyRun": {
+    "seconds": 0.458,
+    "requests": 128,
+    "scanRun": {
+      "id": "86fde511-5343-4152-8621-cf509d17c933",
+      "started_at": "2026-09-20 14:04:44.179+00",
+      "finished_at": "2026-09-20 14:04:44.586+00",
+      "run_date": "2026-09-20",
+      "trigger": "manual",
+      "companies_total": 50,
+      "companies_ok": 49,
+      "companies_failed": 1,
+      "new_roles": 0,
+      "closed_roles": 0
+    }
+  },
+  "failureIsolation": {
+    "ok_scans": 49,
+    "failed_scans": 1,
+    "failed_company_roles": 5,
+    "failed_company_open_roles": 5,
+    "source_consecutive_failures": 1,
+    "failed_scan_error": "HTTP 500 from https://boards-api.greenhouse.io/v1/boards/fixture-17/jobs"
+  },
+  "healthEvidence": "The failed scan row, its recorded error and the source consecutive-failure counter are the database evidence consumed by Health; the finalised scan run records 49 successful and 1 failed company.",
+  "limitations": [
+    "Local deterministic queue and adapter evidence only; excludes public-provider pacing, hosted scheduling, Chromium memory, paid model latency and remote PostgreSQL/PgBouncer latency.",
+    "The 40 Greenhouse and 10 HTML private fixtures prove daily-run timing and failure isolation for this bounded mix, not source accuracy or public-provider throughput.",
+    "The initial successful run seeds retained roles and is excluded from the measured daily-run duration."
+  ]
+}

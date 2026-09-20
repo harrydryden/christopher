@@ -275,9 +275,9 @@ export async function answerCvGapQuiz(draftId: string, _prev: ActionResult, form
   }
   revalidatePath("/library");
   revalidatePath(`/cv/${draftId}`);
-  // A same-URL redirect can leave React's form transition pending. Revalidation supplies the
-  // queued state to this page directly; only an answered quiz navigates to a different draft.
-  if (nextId === draftId) return ok();
+  // Tell the client to refresh after a successful same-draft continuation. Only an answered quiz
+  // navigates to a different draft.
+  if (nextId === draftId) return { ok: true, message: "cv-gap-continued" };
   redirect(`/cv/${nextId}`);
 }
 export async function saveCvWritingPreferences(_prev: ActionResult, form: FormData): Promise<ActionResult> {

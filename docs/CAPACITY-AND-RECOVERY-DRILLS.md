@@ -183,3 +183,27 @@ long-duration plateau, Vercel memory behaviour or remote database connection hea
 does show that the earlier local RSS peak was not retained under the confirmed ten-user workload.
 Full evidence:
 [`hundred-users-http-soak-2026-09-20.json`](benchmarks/hundred-users-http-soak-2026-09-20.json).
+
+### Fifty-company daily-run timing and failure isolation
+
+The guarded local drill in `apps/worker/src/fifty-company-daily-drill.ts` used the real daily-run
+fan-out, three-lane task queue, Greenhouse and generic HTML adapters, scan reconciliation and scan-run finaliser
+against the dedicated `christopher_50_company_release` PostgreSQL database. All responses were
+private deterministic fixtures and paid-model credentials were refused.
+
+The fixture mix comprised 40 Greenhouse sources and 10 generic HTML sources. An initial successful
+run stored five open roles for each company. The measured run then
+returned a controlled HTTP 500 for one company while the other 49 remained healthy. The finalised
+daily run completed in **0.458 seconds** wall-clock (**0.407 seconds** by scan-run timestamps), against the SPEC's 900-second
+limit. It recorded 49 successful scans and one failed scan. The failed company retained all five
+open roles, closed none, and its source recorded one consecutive failure plus the exact HTTP error;
+the other 49 companies completed. All 102 queue tasks across setup and measurement were terminal
+`done`, because a safely recorded failed source scan is a completed queue task rather than a queue
+crash.
+
+This passes the local synthetic timing and failure-isolation check against the 900-second target
+for this fixture shape. The SPEC's daily-run performance still needs representative hosted
+evidence: this does not establish public-provider throughput, mixed-source accuracy, hosted
+scheduling, browser memory, paid-model latency, remote database/PgBouncer behaviour or the hosted
+capacity gate. Machine-readable evidence is in
+[`fifty-company-daily-run-2026-09-20.json`](benchmarks/fifty-company-daily-run-2026-09-20.json).

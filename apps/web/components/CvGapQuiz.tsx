@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { CvGapQuiz as CvGapQuizValue, CvLibrary } from "@christopher/core";
 import type { ActionResult } from "@/lib/validation";
 import { Button } from "@/components/Button";
@@ -29,8 +30,14 @@ export function CvGapQuiz({
   library: CvLibrary;
   action: (state: ActionResult, form: FormData) => Promise<ActionResult>;
 }) {
+  const router = useRouter();
   const [state, formAction, pending] = useActionState(action, INITIAL);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  // Skipping continues this same draft, so explicitly read its new server state after the
+  // successful action result.
+  useEffect(() => {
+    if (state.ok && state.message === "cv-gap-continued") router.refresh();
+  }, [router, state]);
   // Structured experience is consolidated for generation and can carry a synthetic/grouped ID;
   // employment is its stable editable destination. Legacy unlinked experience keeps its real ID.
   const evidence = library.entries.filter(entry => (!entry.status || entry.status === "active") && (entry.kind !== "experience" || !entry.employmentId));

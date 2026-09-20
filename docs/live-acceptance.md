@@ -1,6 +1,6 @@
 # Live discovery and extraction acceptance
 
-This harness makes bounded, public, read-only requests through Christopher's real polite fetcher, discovery code and ATS adapters. It does not connect to PostgreSQL, call a paid model, use credentials, or bypass sign-in or bot protection.
+This harness makes bounded, public, read-only requests through Christopher's real polite fetcher, discovery code and ATS adapters. It does not connect to PostgreSQL or bypass sign-in or bot protection. The default run makes no paid model calls; production AI fallback is an explicit, budgeted option described below.
 
 Run a small representative observation first:
 
@@ -14,15 +14,32 @@ Run all 25 manifest entries only after reviewing the small run:
 node scripts/live-acceptance.mjs --output docs/live-acceptance-latest.json
 ```
 
-Use `--discovery-only` to omit direct extraction from the labelled source. Up to three cases run concurrently through one shared fetcher, preserving host pacing. Discovery uses a 16-logical-fetch and 45-second budget checked between operations; an in-flight adapter operation and the separate extraction phase may take longer. The fetcher honours robots.txt, response-size limits, per-request timeouts, host pacing and server back-off.
+Use `--discovery-only` to omit direct extraction from the labelled source. HTTP-only runs default to three concurrent cases through one shared fetcher. Browser or AI runs default to one case at a time, matching the candidate worker's serial company-verification lane. `--concurrency 1`, `2` or `3` makes the configuration explicit; AI requires one. Concurrent browser runs remain useful stress diagnostics, but shared-browser queue time consumes each case's discovery budget. Discovery uses a 16-logical-fetch and 45-second budget checked between operations; an in-flight adapter operation and the separate extraction phase may take longer. The fetcher honours robots.txt, response-size limits, per-request timeouts, host pacing and server back-off.
 
-Use `--browser` to attach the worker's production `BrowserRenderer` to that same discovery context. This remains an AI-free, database-free run. The renderer has one slot, shares the fetcher's host pacing, and asks the fetcher to enforce robots.txt before every top-level document request, including redirects. The report distinguishes browser attempts, completed renders and `robots_denied`/`browser_error` failures. The runner closes its browser in a `finally` block.
+Use `--browser` to attach the worker's production `BrowserRenderer` to that same discovery context. Unless `--ai` is also supplied, this remains an AI-free, database-free run. The renderer has one slot, shares the fetcher's host pacing, and asks the fetcher to enforce robots.txt before every top-level document request, including redirects. The report distinguishes browser attempts, completed renders and `robots_denied`/`browser_error` failures. The runner closes its browser in a `finally` block.
+
+### Optional production AI fallback
+
+With an authorised evaluation budget and `ANTHROPIC_API_KEY` supplied securely in the environment:
+
+```bash
+node scripts/live-acceptance.mjs --browser --ai --ai-max-usd 1 --discovery-only \
+  --output docs/live-acceptance-serial-ai.json
+```
+
+This enables the production A1 careers-link chooser and A2 page classifier using public page inputs.
+It uses the system default model unless `LIVE_ACCEPTANCE_AI_MODEL` is explicitly set. No account or
+Library data is read. The report records each call's model, tokens, cost, duration, outcome and case,
+along with refused reservations and uncertain holds. Missing usage from a failed call retains its
+conservative reservation. The cap is a process-local admission guard using repository pricing,
+not a provider-side invoice limit; a refused call means the run did not exercise unrestricted AI
+fallback. Keep cumulative spend across separate runs within the owner's authorised budget.
 
 ## Reading the report
 
 `sourceMatchesLabel` is scored only where `labelStatus` is `source_independently_checked`. Entries marked `unverified` are useful coverage candidates but contribute to no accuracy claim. `expectedRoleCount: null` means nobody has hand-counted a dated source snapshot. Consequently extraction count accuracy remains `null`; an observed adapter count alone is not independent truth and cannot establish recall or precision.
 
-The report can establish current reachability, discovery outcomes, source agreement, adapter completion or partial/failure behaviour, observed role counts and representative samples. It cannot certify the SPEC golden-set thresholds until a reviewer independently checks every source and records exact postings from frozen, dated snapshots. It also does not cover browser-only discovery, AI fallback, detail-description accuracy, or production capacity.
+The report can establish current reachability, discovery outcomes, source agreement, adapter completion or partial/failure behaviour, observed role counts and representative samples. It cannot certify the SPEC golden-set thresholds until a reviewer independently checks every source and records exact postings from frozen, dated snapshots. Browser and AI coverage depend on the options and actual calls recorded in that run. Detail-description accuracy and hosted production capacity are separate checks.
 
 To promote this into golden-set evidence, save the raw permitted pages/feeds as dated fixtures, manually enumerate posting identities outside the adapter under test, update each manifest entry with that count and review note, and then calculate recall and precision from identities rather than count equality alone.
 

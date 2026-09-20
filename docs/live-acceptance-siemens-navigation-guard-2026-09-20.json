@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-20T14:10:42.673Z",
+  "mode": "discovery_only",
+  "concurrency": {
+    "cases": 1,
+    "source": "production_serial_default",
+    "productionShape": true,
+    "note": "Serial case execution avoids charging a case's 45-second discovery budget for time queued behind the shared browser or AI lane."
+  },
+  "browser": {
+    "enabled": true,
+    "implementation": "BrowserRenderer",
+    "aiEnabled": false
+  },
+  "ai": {
+    "enabled": false,
+    "skipCode": "ai_not_requested",
+    "calls": []
+  },
+  "limitations": [
+    "This is a live observation, so role counts and pages can change during the run.",
+    "A null metric means the required independent label does not exist; it is not a pass.",
+    "Production BrowserRenderer fallback is enabled; AI fallback is disabled; no database or account data is read or written.",
+    "No paid model request is made without --ai and an explicit --ai-max-usd cap."
+  ],
+  "acceptance": {
+    "verdict": "fail",
+    "reasons": [
+      "labelled automatic discovery agreement is 0.0%, below 80%",
+      "1 case(s) lack an independent posting-identity golden snapshot",
+      "posting-identity recall and precision have not been measured",
+      "one or more selected cases did not run extraction"
+    ]
+  },
+  "metrics": {
+    "total": 1,
+    "sourceLabelled": 1,
+    "sourceMatches": 0,
+    "sourceMismatches": 1,
+    "labelledAutomaticMatchesAt085": 0,
+    "automaticResolvedAt085": 0,
+    "wrongAutomaticAccepts": 0,
+    "extractionComplete": 0,
+    "extractionPartial": 0,
+    "extractionFailed": 0,
+    "countLabelled": 0,
+    "countMatches": 0,
+    "discoveryAccuracy": 0,
+    "extractionExactCountAgreement": null,
+    "postingIdentityRecall": null,
+    "postingIdentityPrecision": null
+  },
+  "cases": [
+    {
+      "manifest": {
+        "id": "siemens",
+        "company": "Siemens",
+        "homepageUrl": "https://www.siemens.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Siemens' company-owned Careers Marketplace publishes the searchable external-jobs listing; the previous Workday-shaped candidate was invalid.",
+        "sourceEvidenceUrls": [
+          "https://jobs.siemens.com/",
+          "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "siemens",
+        "company": "Siemens",
+        "startedAt": "2026-09-20T14:10:14.314Z",
+        "durationMs": 28358,
+        "discovery": {
+          "outcome": "needs_confirmation",
+          "observedType": "html",
+          "observedUrl": "https://www.siemens.com/en-gb/company/jobs/",
+          "confidence": 0.5,
+          "fetches": 16,
+          "sourceMatchesLabel": false,
+          "browserAttempts": 0,
+          "browserRenders": 0,
+          "browserUrls": [],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    }
+  ]
+}

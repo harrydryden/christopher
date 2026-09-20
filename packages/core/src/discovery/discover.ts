@@ -159,9 +159,13 @@ function shouldRenderCandidate(html: string, url: string, via?: string): boolean
 }
 
 function isCareersContentNavigation(posting: RawPosting): boolean {
-  if (!/^(?:learn|read|explore|discover|meet|about|see)\b/i.test(posting.title.trim())) return false;
   try {
-    return /\/(?:company-culture|culture|benefits?|diversity|identity|progression|hiring-process|application\/faq)(?:\/|$)/i.test(new URL(posting.url).pathname);
+    const path = new URL(posting.url).pathname;
+    const callToAction = /^(?:learn|read|explore|discover|meet|about|see)\b/i.test(posting.title.trim());
+    const contentPath = /\/(?:company-culture|culture|benefits?|diversity|identity|progression|hiring-process|application\/faq)(?:\/|$)/i.test(path);
+    const careersNavigationTitle = /^(?:[^|]{0,40}\s+)?(?:growth\s*(?:&|and)\s*careers?|life at .+|how we hire|how to apply|frequently asked questions(?:\s*\(jobs?\))?)$/i.test(posting.title.trim());
+    const careersNavigationPath = /\/(?:growth-careers|life-at-[^/]+|how-to-apply|how-we-hire|faq)(?:\.html)?\/?$/i.test(path);
+    return (callToAction && contentPath) || (careersNavigationTitle && careersNavigationPath);
   } catch {
     return false;
   }

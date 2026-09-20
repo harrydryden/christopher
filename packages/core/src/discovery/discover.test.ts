@@ -123,6 +123,21 @@ describe("discovery: other shapes", () => {
     expect(result.candidates.some(candidate => candidate.spec.url.endsWith("/careers/hiring-process"))).toBe(false);
   });
 
+  it("does not auto-accept a belonging page's careers navigation as job postings", async () => {
+    const ctx = createFakeDiscoveryContext({ routes: {
+      "https://www.acme.example/": { body: '<html><head><title>Acme</title></head><body><a href="/careers/belonging">Careers and belonging</a></body></html>' },
+      "https://www.acme.example/careers/belonging": { body: `<main>
+        <article><a href="/company/jobs/growth-careers.html">Acme Growth &amp; Careers</a></article>
+        <article><a href="/company/jobs/life-at-acme.html">Life at Acme</a></article>
+        <article><a href="/company/jobs/how-to-apply/">How We Hire</a></article>
+        <article><a href="/company/jobs/faq.html">Frequently Asked Questions (Jobs)</a></article>
+      </main>` },
+    } });
+    const result = await discoverCareersSources("https://www.acme.example/", ctx);
+    expect(result.outcome).not.toBe("resolved");
+    expect(result.candidates.find(candidate => candidate.spec.url.endsWith("/careers/belonging"))?.confidence).toBeLessThan(0.85);
+  });
+
   it("interleaves independent jobs hosts before the same-origin path budget is exhausted", async () => {
     const jobs = Array.from({ length: 4 }, (_, i) => `<article><a href="/jobs/role-${i}">Role ${i}</a></article>`).join("");
     const ctx = createFakeDiscoveryContext({

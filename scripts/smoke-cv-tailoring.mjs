@@ -10,6 +10,18 @@ const { CvLibrarySchema, groupCvLibrary } = require("../packages/core/src/cv.ts"
 const { Pool } = createRequire(new URL("../apps/web/package.json", import.meta.url))("pg");
 const { chromium } = createRequire(new URL("../apps/worker/package.json", import.meta.url))("playwright");
 
+async function within(promise, ms, message) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Browser → optional evidence checkpoint → immutable Library version and resumed build. */
 export async function verifyCvTailoringWorkspace(baseUrl, cookie, databaseUrl, userId) {
   const pool = new Pool({ connectionString: databaseUrl, max: 1 });
@@ -156,9 +168,23 @@ export async function verifyCvTailoringWorkspace(baseUrl, cookie, databaseUrl, u
     // Skipping resumes the same draft once. The same-URL action must finish by replacing the quiz
     // with the queued progress panel; merely waiting for the unchanged URL can pass immediately
     // while the form is still pending.
+    const skipResponse = page.waitForResponse(response =>
+      response.request().method() === "POST" && new URL(response.url()).pathname === `/cv/${skipId}`,
+    );
+    const skipStartedAt = Date.now();
     await page.getByRole("button", { name: "No further evidence — continue", exact: true }).click();
     try {
-      await page.getByRole("heading", { name: "Your CV is queued", exact: true }).waitFor({ timeout: 10_000 });
+      const response = await within(skipResponse, 20_000, "skip action did not return response headers within 20 seconds");
+      const headersMs = Date.now() - skipStartedAt;
+      assert.equal(response.ok(), true, `skip action returned HTTP ${response.status()}`);
+      await within(response.finished(), 20_000, "skip action response body did not finish within 20 seconds");
+      const responseMs = Date.now() - skipStartedAt;
+      await within(
+        page.getByRole("heading", { name: "Your CV is queued", exact: true }).waitFor({ timeout: 20_000 }),
+        20_000,
+        "queued CV did not render within 20 seconds of the skip response",
+      );
+      console.log(`  quiz skip timing: response headers ${headersMs} ms · response finished ${responseMs} ms · queued render ${Date.now() - skipStartedAt} ms`);
     } catch (error) {
       console.error("Skip continuation diagnostic", (await pool.query("select status, gap_quiz from cv_drafts where id = $1", [skipId])).rows);
       console.error(await page.locator("main").innerText());

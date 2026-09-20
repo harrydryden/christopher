@@ -355,7 +355,10 @@ describe("the CV pipeline end to end, against a scripted model", () => {
     expect(paused).toMatchObject({ status: "awaiting_evidence", gapQuiz: { status: "awaiting_answers" } });
     const skipQuiz = new FormData();
     skipQuiz.set("decision", "skip");
-    expect(await answerCvGapQuiz(first.id, { ok: true }, skipQuiz)).toEqual({ ok: true });
+    expect(await answerCvGapQuiz(first.id, { ok: true }, skipQuiz)).toEqual({
+      ok: true,
+      message: "cv-gap-continued",
+    });
     expect(await runHandler(first.id)).toMatchObject({ draftId: first.id, ready: true });
     const built = await draftRow(first.id);
     expect(built.error).toBeNull();

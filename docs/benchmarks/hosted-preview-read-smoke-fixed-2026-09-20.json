@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "checkedAt": "2026-09-20T14:03:21.825Z",
+  "commit": "7008eb1697842a52d797a5b7b135c7f918d7ddf8",
+  "deployment": "6EDZ9WeymEnb35vVWRUbhCd2M9Y2",
+  "url": "https://christopher-o93ldcoqt-harrys-projects-5ab69121.vercel.app",
+  "database": "isolated managed recovery copy using pooled endpoint",
+  "signInPassed": true,
+  "results": [
+    {
+      "path": "/admin/health",
+      "expectedContent": true,
+      "applicationError": false,
+      "invalidDates": false,
+      "historicalCvCostRows": 9,
+      "workerEventRows": 19,
+      "scanInputRows": 6
+    },
+    {
+      "path": "/companies",
+      "expectedContent": true,
+      "applicationError": false,
+      "verifiedHeading": "Companies"
+    },
+    {
+      "path": "/applications",
+      "expectedContent": true,
+      "applicationError": false,
+      "verifiedHeading": "Applications"
+    },
+    {
+      "path": "/library",
+      "expectedContent": true,
+      "applicationError": false,
+      "verifiedHeading": "Library"
+    }
+  ],
+  "passed": true,
+  "limitations": [
+    "Authenticated hosted read smoke only; no production deployment or worker recovery.",
+    "Historical rows belong to the restored snapshot; this does not assert current worker health.",
+    "Exact commit verified in Vercel deployment metadata, not the health JSON response."
+  ],
+  "cleanup": {
+    "disposableAccountRemoved": true,
+    "temporaryCredentialFilesRemoved": true,
+    "revokedSessionReturnedToSignIn": true
+  }
+}

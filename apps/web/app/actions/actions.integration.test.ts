@@ -624,14 +624,14 @@ describe("priority workflows", () => {
       status: "running", lockedAt: new Date(), lockedBy: "worker-that-paused",
     }).returning();
     const skip = new FormData(); skip.set("decision", "skip");
-    expect(await answerCvGapQuiz(draft!.id, { ok: true }, skip)).toEqual({ ok: true });
+    expect(await answerCvGapQuiz(draft!.id, { ok: true }, skip)).toEqual({ ok: true, message: "cv-gap-continued" });
     await database.update(schema.tasks).set({ status: "done", finishedAt: new Date() }).where(eq(schema.tasks.id, oldTask!.id));
     expect(await database.select().from(schema.cvLibraries)).toHaveLength(1);
     const [resumed] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft!.id));
     expect(resumed).toMatchObject({ status: "queued", libraryVersion: 1, gapQuiz: { status: "skipped" }, buildCheckpoint: { tailoringEnabled: true, quizCompleted: true } });
     const [continuation] = await database.select().from(schema.tasks).where(eq(schema.tasks.dedupeKey, `generate_cv:${draft!.id}:quiz-complete`));
     expect(continuation).toMatchObject({ status: "queued", payload: { draftId: draft!.id } });
-    expect(await answerCvGapQuiz(draft!.id, { ok: true }, skip)).toEqual({ ok: true });
+    expect(await answerCvGapQuiz(draft!.id, { ok: true }, skip)).toEqual({ ok: true, message: "cv-gap-continued" });
     expect(await database.select().from(schema.tasks).where(eq(schema.tasks.dedupeKey, `generate_cv:${draft!.id}:quiz-complete`))).toHaveLength(1);
   });
   it("saves skill items and palettes without rewriting the original CV or application", async () => {

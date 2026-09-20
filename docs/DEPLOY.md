@@ -335,6 +335,10 @@ Use this for every production release. Record the release commit, operator, star
 link to the evidence. Provider dashboard configuration is not proven by files in this repository:
 capture the effective Render, Vercel and PostgreSQL settings during the rollout.
 
+For the 20 September 2026 release review, Harry is the confirmed operational alert owner; the
+accepted objectives are **RPO 24 hours and RTO four hours**. A backup contact and proof of alert
+delivery are still outstanding. See [current gate evidence](RELEASE-GATES.md#confirmed-operating-requirements-and-configuration--20-september-2026).
+
 ### Before release
 
 - [ ] Name the release operator and the operational alert owner. Record a second contact for times

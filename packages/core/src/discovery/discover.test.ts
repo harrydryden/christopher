@@ -186,6 +186,23 @@ describe("discovery: other shapes", () => {
     expect(result.best?.evidence.join(" ")).toContain("declares a distinct complete listing");
   });
 
+  it("follows a careers-content page's listing link instead of accepting its cards as postings", async () => {
+    const ctx = createFakeDiscoveryContext({ routes: {
+      "https://www.acme.example/": { body: '<html><head><title>Acme</title></head><body><a href="/careers">Careers</a></body></html>' },
+      "https://www.acme.example/careers": { body: `<main>
+        <a href="/careers/benefits">Read more about benefits</a>
+        <a href="/careers/teams">View all teams</a>
+        <a href="/careers/locations">Explore locations</a>
+        <a href="/careers/listings">Find your role</a>
+      </main>` },
+      "https://www.acme.example/careers/listings": { body: fx.LISTING_PAGE_HTML.replace(/https:\/\/job-boards\.greenhouse\.io\/acme\/jobs\//g, "https://www.acme.example/positions/") },
+    } });
+    const result = await discoverCareersSources("https://www.acme.example/", ctx);
+    expect(result.outcome).toBe("resolved");
+    expect(result.best?.spec.url).toBe("https://www.acme.example/careers/listings");
+    expect(result.best?.confidence).toBe(0.85);
+  });
+
   it("does not treat an external all-jobs link as the company's complete listing", async () => {
     const featured = fx.LISTING_PAGE_HTML
       .replace(/https:\/\/job-boards\.greenhouse\.io\/acme\/jobs\//g, "https://www.acme.example/jobs/")

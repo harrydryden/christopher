@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-20T08:39:58.072Z",
+  "mode": "discovery_and_extraction",
+  "limitations": [
+    "This is a live observation, so role counts and pages can change during the run.",
+    "A null metric means the required independent label does not exist; it is not a pass.",
+    "No browser or AI fallback is used, and no database is read or written."
+  ],
+  "acceptance": {
+    "verdict": "blocked",
+    "reasons": [
+      "1 case(s) lack an independent posting-identity golden snapshot",
+      "posting-identity recall and precision have not been measured"
+    ]
+  },
+  "metrics": {
+    "total": 1,
+    "sourceLabelled": 1,
+    "sourceMatches": 1,
+    "sourceMismatches": 0,
+    "labelledAutomaticMatchesAt085": 1,
+    "automaticResolvedAt085": 1,
+    "wrongAutomaticAccepts": 0,
+    "extractionComplete": 1,
+    "extractionPartial": 0,
+    "extractionFailed": 0,
+    "countLabelled": 0,
+    "countMatches": 0,
+    "discoveryAccuracy": 1,
+    "extractionExactCountAgreement": null,
+    "postingIdentityRecall": null,
+    "postingIdentityPrecision": null
+  },
+  "cases": [
+    {
+      "manifest": {
+        "id": "gitlab",
+        "company": "GitLab",
+        "homepageUrl": "https://about.gitlab.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://job-boards.greenhouse.io/gitlab"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "GitLab's first-party careers flow currently resolves its live openings through the GitLab Greenhouse board; the company-owned all-jobs page remains supporting evidence.",
+        "sourceEvidenceUrls": [
+          "https://about.gitlab.com/jobs/",
+          "https://about.gitlab.com/jobs/all-jobs/",
+          "https://job-boards.greenhouse.io/gitlab"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "gitlab",
+        "company": "GitLab",
+        "startedAt": "2026-09-20T08:39:46.282Z",
+        "durationMs": 11790,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "greenhouse",
+          "observedUrl": "https://job-boards.greenhouse.io/gitlab",
+          "confidence": 0.97,
+          "fetches": 6,
+          "sourceMatchesLabel": true
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 216,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "AI Engineer",
+              "location": "Remote, Bangalore",
+              "url": "https://job-boards.greenhouse.io/gitlab/jobs/8556658002"
+            },
+            {
+              "title": "AI Transformation Owner, CRO",
+              "location": "Remote, United States",
+              "url": "https://job-boards.greenhouse.io/gitlab/jobs/8638232002"
+            },
+            {
+              "title": "AI Transformation Owner, Product & Design",
+              "location": "Remote, Canada; Remote, United Kingdom; Remote, United States",
+              "url": "https://job-boards.greenhouse.io/gitlab/jobs/8716179002"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

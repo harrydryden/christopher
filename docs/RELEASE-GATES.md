@@ -75,3 +75,34 @@ WORKER_HEALTH_URL=https://example.invalid/healthz \
 OPERATIONAL_EXPECTED_SHA=0123456789abcdef0123456789abcdef01234567 \
 node scripts/verify-operational-status.mjs
 ```
+
+## Confirmed operating requirements and configuration — 20 September 2026
+
+Harry is the operational alert owner. The agreed target is 100 registered users with about ten active
+at once, a recovery point objective of 24 hours, and a recovery time objective of four hours.
+
+Both GitHub repository variables were set and verified during the gate follow-up:
+
+- `WORKER_HEALTH_URL`: `https://christopher-worker.onrender.com/healthz`
+- `WEB_HEALTH_URL`: `https://christopher-web-kappa.vercel.app/api/health`
+
+The web alias was verified in Vercel's signed-in production deployment dashboard, then its health
+endpoint returned `ok: true`. The currently deployed base predates web commit identity, so it cannot
+pass the candidate's release check yet. These variables do not activate unmerged workflows.
+
+Render's service notifications inherit the workspace default, **Only failure notifications**. This
+is configuration evidence, not evidence that Harry received an alert. The service health-check path
+is empty; changing it to `/healthz` is prepared and awaiting approval. No notification was sent.
+
+The managed database dashboard reports a **three-day point-in-time recovery window** and 14.95% use
+of its 1 GB disk. An isolated restore at the available 20 September 08:28 UTC recovery point is
+prepared as `christopher-recovery-drill-20260920`, with a displayed $7.50/month charge prorated by the
+second. It has not been created. Approval for the billed copy and successful restoration/integrity
+checks remain outstanding. The recovery objectives are requirements, not achieved measurements.
+
+Vercel's request log for the production health request at 08:35:12 UTC shows routing from London
+(`lhr1`) to **Frankfurt (`fra1`)**, matching `apps/web/vercel.json`. Its 126 ms execution and 228 MB
+Fluid memory are a single-request observation, not a load test. The dashboard's `iad1` default does
+not override this observed execution evidence. Production shows Node 24.x; the release candidate
+now pins the web package to Node 22.x to align with CI and local verification. This changes the
+runtime only after a deployment of the candidate.

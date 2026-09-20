@@ -8,6 +8,11 @@ const JOB_PATH_RE =
 const ATS_HOST_RE =
   /(?:^|\.)(?:greenhouse\.io|lever\.co|ashbyhq\.com|workable\.com|smartrecruiters\.com|recruitee\.com|personio\.(?:de|com)|bamboohr\.com|myworkdayjobs\.com|pinpointhq\.com|breezy\.hr|teamtailor\.com|icims\.com|jobvite\.com|applytojob\.com|rippling\.com|grnh\.se)$/i;
 
+// These are listing, subscription or careers-content destinations, never posting-detail slugs.
+// Exact segment matching preserves genuine titles such as `/jobs/benefits-lead`.
+const NON_DETAIL_LAST_SEGMENT_RE =
+  /^(?:search|listings?|all-jobs?|open-jobs?|feed|rss|compatibility|emerging-talent|benefits?|teams?|locations?)$/i;
+
 const NAV_TEXT_RE =
   /^(careers?|jobs?|all (?:jobs|roles|openings|positions)|view all(?: jobs| roles| openings)?|see (?:all|open) (?:jobs|roles|positions|openings)|open (?:roles|positions|jobs)|apply(?: now)?|learn more|read more|find out more|back(?: to .*)?|home|search|our team|join us|join the team|next|previous|more|show more|load more|view openings|browse jobs|filter|sort|menu|close)$/i;
 
@@ -51,6 +56,7 @@ function isJobHref(url: string, pageUrl: string): boolean {
     const u = new URL(url);
     const segs = u.pathname.split("/").filter(Boolean);
     if (segs.length <= 1 && !u.search) return false;
+    if (NON_DETAIL_LAST_SEGMENT_RE.test(segs.at(-1) ?? "")) return false;
   } catch {
     return false;
   }

@@ -7,6 +7,7 @@ export const CAREERS_VOCABULARY: readonly string[] = [
   "careers", "career", "jobs", "job openings", "open roles", "open positions", "open jobs", "openings", "opportunities",
   "vacancies", "positions", "join us", "join the team", "join our team", "work with us", "work for us", "we're hiring",
   "we are hiring", "hiring", "life at", "come work with us", "explore careers", "search jobs", "current openings",
+  "find your role", "find your next role", "job listings",
   // non-English
   "karriere", "stellen", "stellenangebote", "jobangebote", "carrières", "carrieres", "emplois", "recrutement", "nous rejoindre",
   "empleo", "empleos", "trabaja con nosotros", "únete", "unete", "vacatures", "werken bij", "lavora con noi", "carriere",

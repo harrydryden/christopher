@@ -368,6 +368,94 @@ describe("execution model", () => {
     await queueUnderTest!.stop(5_000);
   }, 20_000);
 
+  it("serialises company verification without occupying the other queue slots", async () => {
+    let verifying = 0;
+    let maxVerifying = 0;
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>(resolve => { releaseFirst = resolve; });
+    let firstStarted!: () => void;
+    const sawFirst = new Promise<void>(resolve => { firstStarted = resolve; });
+    let otherStarted!: () => void;
+    const sawOther = new Promise<void>(resolve => { otherStarted = resolve; });
+    let bothVerified!: () => void;
+    const sawBoth = new Promise<void>(resolve => { bothVerified = resolve; });
+    let completed = 0;
+
+    queueUnderTest = new TaskQueue(deps, {
+      verify_company: async () => {
+        verifying++;
+        maxVerifying = Math.max(maxVerifying, verifying);
+        if (completed === 0) { firstStarted(); await firstBlocked; }
+        verifying--;
+        if (++completed === 2) bothVerified();
+        return {};
+      },
+      reevaluate_gate: async () => { otherStarted(); return {}; },
+    }, { concurrency: 3, workerId: "bounded-verification", pollMs: 10 });
+
+    await enqueueTask(db, "verify_company", { candidateId: "one" });
+    await enqueueTask(db, "verify_company", { candidateId: "two" });
+    await enqueueTask(db, "reevaluate_gate", { userId: "account" });
+    queueUnderTest.start();
+
+    await Promise.race([Promise.all([sawFirst, sawOther]), new Promise((_, reject) => setTimeout(() => reject(new Error("eligible work was starved")), 5_000))]);
+    expect(verifying).toBe(1);
+    const running = await db.select().from(schema.tasks).where(eq(schema.tasks.status, "running"));
+    expect(running.filter(task => task.type === "verify_company")).toHaveLength(1);
+    releaseFirst();
+    await Promise.race([sawBoth, new Promise((_, reject) => setTimeout(() => reject(new Error("second verification did not run")), 5_000))]);
+    expect(maxVerifying).toBe(1);
+    await queueUnderTest.stop(5_000);
+  }, 15_000);
+
+  it("releases the verification slot after a handler fails", async () => {
+    let calls = 0;
+    let secondStarted!: () => void;
+    const sawSecond = new Promise<void>(resolve => { secondStarted = resolve; });
+    queueUnderTest = new TaskQueue(deps, {
+      verify_company: async () => {
+        if (++calls === 1) throw new Error("first verification failed");
+        secondStarted();
+        return {};
+      },
+    }, { concurrency: 3, workerId: "failed-verification", pollMs: 10 });
+    await enqueueTask(db, "verify_company", { candidateId: "one" }, { maxAttempts: 1 });
+    await enqueueTask(db, "verify_company", { candidateId: "two" }, { maxAttempts: 1 });
+    queueUnderTest.start();
+    await Promise.race([sawSecond, new Promise((_, reject) => setTimeout(() => reject(new Error("verification slot stayed reserved")), 5_000))]);
+    expect(calls).toBe(2);
+    await queueUnderTest.stop(5_000);
+  }, 15_000);
+
+  it("keeps verification reserved while a timed-out handler is still unwinding", async () => {
+    let calls = 0;
+    let releaseTimedOut!: () => void;
+    const ignoredAbort = new Promise<void>(resolve => { releaseTimedOut = resolve; });
+    let otherStarted!: () => void;
+    const sawOther = new Promise<void>(resolve => { otherStarted = resolve; });
+    let secondStarted!: () => void;
+    const sawSecond = new Promise<void>(resolve => { secondStarted = resolve; });
+    queueUnderTest = new TaskQueue(deps, {
+      verify_company: async () => {
+        if (++calls === 1) { await ignoredAbort; return {}; }
+        secondStarted();
+        return {};
+      },
+      reevaluate_gate: async () => { otherStarted(); return {}; },
+    }, { concurrency: 3, workerId: "timed-out-verification", pollMs: 10, deadlines: { verify_company: 30 } });
+    await enqueueTask(db, "verify_company", { candidateId: "one" }, { maxAttempts: 1 });
+    await enqueueTask(db, "verify_company", { candidateId: "two" }, { maxAttempts: 1 });
+    await enqueueTask(db, "reevaluate_gate", { userId: "account" });
+    queueUnderTest.start();
+    await Promise.race([sawOther, new Promise((_, reject) => setTimeout(() => reject(new Error("other work was starved")), 5_000))]);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(calls).toBe(1);
+    releaseTimedOut();
+    await Promise.race([sawSecond, new Promise((_, reject) => setTimeout(() => reject(new Error("verification slot was not released after settlement")), 5_000))]);
+    expect(calls).toBe(2);
+    await queueUnderTest.stop(5_000);
+  }, 15_000);
+
   it("fails a handler that outruns its deadline, naming the type and the time it took", async () => {
     let release!: () => void;
     const hang = new Promise<void>(resolve => { release = resolve; });

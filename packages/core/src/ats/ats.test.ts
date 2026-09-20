@@ -439,6 +439,21 @@ describe("HTML extraction", () => {
       "Benefits Lead", "Diversity and Inclusion Director",
     ]);
   });
+  it("excludes listing roots, career content and RSS subscriptions while preserving derived role slugs", () => {
+    const html = `<main>
+      <a href="/careers/listings/">Find your role</a>
+      <a href="/careers/search">Open roles</a>
+      <a href="/careers/feed/">Subscribe to our open positions RSS feed</a>
+      <a href="/careers/compatibility">Compatibility</a>
+      <a href="/careers/emerging-talent">Emerging talent</a>
+      <a href="/jobs/benefits-lead">Benefits Lead</a>
+      <a href="/jobs/feed-engineer">Feed Engineer</a>
+      <a href="/jobs/position?id=123">Position with identifier</a>
+    </main>`;
+    expect(findJobLinks(html, "https://acme.example/careers/").map(link => link.text)).toEqual([
+      "Benefits Lead", "Feed Engineer", "Position with identifier",
+    ]);
+  });
   it("excludes global header navigation while preserving a role link in an article header", () => {
     const html = `<header><a href="/careers/company-overview/">Company overview</a></header>
       <article class="opening-card"><header><a href="/jobs/123">Engineer</a></header></article>`;

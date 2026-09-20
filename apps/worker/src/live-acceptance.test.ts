@@ -13,6 +13,21 @@ describe("live acceptance reporting", () => {
     expect(sourceMatches(labelled.expectedSource, { type: "greenhouse", url: "https://job-boards.greenhouse.io/acme/", atsSlug: "acme" })).toBe(true);
   });
 
+  it("matches only explicitly reviewed equivalent listing URLs", () => {
+    expect(sourceMatches(
+      { type: "html", url: "https://www.mozilla.org/en-US/careers/listings/", equivalentUrls: ["https://www.mozilla.org/en-GB/careers/listings/"] },
+      { type: "html", url: "https://www.mozilla.org/en-GB/careers/listings/" },
+    )).toBe(true);
+    expect(sourceMatches(
+      { type: "html", url: "https://www.mozilla.org/en-US/careers/listings/" },
+      { type: "html", url: "https://www.mozilla.org/en-GB/careers/listings/" },
+    )).toBe(false);
+    expect(sourceMatches(
+      { type: "html", url: "https://www.mozilla.org/en-US/careers/listings/", equivalentUrls: ["https://www.mozilla.org/en-GB/careers/listings/"] },
+      { type: "html", url: "https://www.mozilla.org/en-GB/careers/" },
+    )).toBe(false);
+  });
+
   it("excludes unverified labels and missing manual counts from accuracy denominators", () => {
     const metrics = summariseLiveAcceptance([labelled, unverified], [result("a", false), result("b", true)]);
     expect(metrics.sourceLabelled).toBe(1);

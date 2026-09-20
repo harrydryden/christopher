@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-20T08:49:02.863Z",
+  "mode": "discovery_and_extraction",
+  "limitations": [
+    "This is a live observation, so role counts and pages can change during the run.",
+    "A null metric means the required independent label does not exist; it is not a pass.",
+    "No browser or AI fallback is used, and no database is read or written."
+  ],
+  "acceptance": {
+    "verdict": "blocked",
+    "reasons": [
+      "2 case(s) lack an independent posting-identity golden snapshot",
+      "posting-identity recall and precision have not been measured"
+    ]
+  },
+  "metrics": {
+    "total": 2,
+    "sourceLabelled": 2,
+    "sourceMatches": 2,
+    "sourceMismatches": 0,
+    "labelledAutomaticMatchesAt085": 2,
+    "automaticResolvedAt085": 2,
+    "wrongAutomaticAccepts": 0,
+    "extractionComplete": 2,
+    "extractionPartial": 0,
+    "extractionFailed": 0,
+    "countLabelled": 0,
+    "countMatches": 0,
+    "discoveryAccuracy": 1,
+    "extractionExactCountAgreement": null,
+    "postingIdentityRecall": null,
+    "postingIdentityPrecision": null
+  },
+  "cases": [
+    {
+      "manifest": {
+        "id": "stripe",
+        "company": "Stripe",
+        "homepageUrl": "https://stripe.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://stripe.com/careers/search"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Stripe's first-party careers page links to its current searchable listing at /careers/search; the previous Greenhouse board and /jobs/search candidates were stale.",
+        "sourceEvidenceUrls": [
+          "https://stripe.com/careers",
+          "https://stripe.com/careers/search"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "stripe",
+        "company": "Stripe",
+        "startedAt": "2026-09-20T08:48:36.823Z",
+        "durationMs": 10091,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://stripe.com/careers/search",
+          "confidence": 0.85,
+          "fetches": 4,
+          "sourceMatchesLabel": true
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 8,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "AEO and GEO Marketing Manager",
+              "url": "https://stripe.com/careers/listing/aeo-and-geo-marketing-manager/7844214"
+            },
+            {
+              "title": "AI Engineer",
+              "url": "https://stripe.com/careers/listing/ai-engineer/8044460"
+            },
+            {
+              "title": "APAC Executive Marketing",
+              "url": "https://stripe.com/careers/listing/apac-executive-marketing/7764914"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "mozilla",
+        "company": "Mozilla",
+        "homepageUrl": "https://www.mozilla.org",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://www.mozilla.org/en-US/careers/listings/",
+          "equivalentUrls": [
+            "https://www.mozilla.org/en-GB/careers/listings/"
+          ]
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Mozilla's first-party careers page links to its company-owned job listing. The en-US and en-GB listing snapshots exposed the same complete set of posting identities on the review date.",
+        "sourceEvidenceUrls": [
+          "https://www.mozilla.org/en-US/careers/",
+          "https://www.mozilla.org/en-US/careers/listings/",
+          "https://www.mozilla.org/en-GB/careers/listings/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "mozilla",
+        "company": "Mozilla",
+        "startedAt": "2026-09-20T08:48:36.825Z",
+        "durationMs": 26038,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://www.mozilla.org/en-GB/careers/listings/",
+          "confidence": 0.85,
+          "fetches": 12,
+          "sourceMatchesLabel": true
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 22,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "Staff Data Scientist, Ads",
+              "location": "Remote US Core Services",
+              "url": "https://www.mozilla.org/en-US/careers/position/gh/7137777/"
+            },
+            {
+              "title": "Senior Software Engineer, Add-Ons",
+              "location": "Remote France, Remote Germany",
+              "url": "https://www.mozilla.org/en-US/careers/position/gh/8188873/"
+            },
+            {
+              "title": "Senior Strategic Account Executive, Firefox Enterprise (DACH)",
+              "location": "Remote Germany New Products",
+              "url": "https://www.mozilla.org/en-US/careers/position/gh/7622995/"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

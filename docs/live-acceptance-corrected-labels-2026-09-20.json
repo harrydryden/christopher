@@ -1,0 +1,646 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-20T08:36:52.457Z",
+  "mode": "discovery_and_extraction",
+  "limitations": [
+    "This is a live observation, so role counts and pages can change during the run.",
+    "A null metric means the required independent label does not exist; it is not a pass.",
+    "No browser or AI fallback is used, and no database is read or written."
+  ],
+  "acceptance": {
+    "verdict": "fail",
+    "reasons": [
+      "3 labelled wrong source(s) automatically accepted at or above 0.85",
+      "labelled automatic discovery agreement is 14.3%, below 80%",
+      "14 case(s) lack an independent posting-identity golden snapshot",
+      "posting-identity recall and precision have not been measured",
+      "1 extraction failure(s) and 0 partial extraction(s)"
+    ]
+  },
+  "metrics": {
+    "total": 14,
+    "sourceLabelled": 14,
+    "sourceMatches": 3,
+    "sourceMismatches": 11,
+    "labelledAutomaticMatchesAt085": 2,
+    "automaticResolvedAt085": 5,
+    "wrongAutomaticAccepts": 3,
+    "extractionComplete": 13,
+    "extractionPartial": 0,
+    "extractionFailed": 1,
+    "countLabelled": 0,
+    "countMatches": 0,
+    "discoveryAccuracy": 0.14285714285714285,
+    "extractionExactCountAgreement": null,
+    "postingIdentityRecall": null,
+    "postingIdentityPrecision": null
+  },
+  "cases": [
+    {
+      "manifest": {
+        "id": "airbnb",
+        "company": "Airbnb",
+        "homepageUrl": "https://www.airbnb.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://careers.airbnb.com/positions/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Airbnb's first-party careers homepage links to its company-owned all-jobs listing; the previous Greenhouse board candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://careers.airbnb.com/",
+          "https://careers.airbnb.com/positions/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "airbnb",
+        "company": "Airbnb",
+        "startedAt": "2026-09-20T08:35:12.729Z",
+        "durationMs": 13482,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://careers.airbnb.com/positions/",
+          "confidence": 0.85,
+          "fetches": 5,
+          "sourceMatchesLabel": true
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 10,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "Account Manager",
+              "location": "Hybrid - Be close to an office",
+              "url": "https://careers.airbnb.com/positions/8184174/"
+            },
+            {
+              "title": "Associate Legal Counsel, Japan",
+              "location": "Hybrid - Be close to an office",
+              "url": "https://careers.airbnb.com/positions/7789554/"
+            },
+            {
+              "title": "Business Development Manager",
+              "location": "Hybrid - Be close to an office",
+              "url": "https://careers.airbnb.com/positions/7995153/"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "stripe",
+        "company": "Stripe",
+        "homepageUrl": "https://stripe.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://stripe.com/jobs/search"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Stripe's first-party jobs pages publish the current searchable listing on stripe.com; the previous Greenhouse board candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://stripe.com/jobs",
+          "https://stripe.com/jobs/search"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "stripe",
+        "company": "Stripe",
+        "startedAt": "2026-09-20T08:35:12.729Z",
+        "durationMs": 6452,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://stripe.com/gb/careers",
+          "confidence": 0.85,
+          "fetches": 2,
+          "sourceMatchesLabel": false
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 9,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "Assess your fit",
+              "url": "https://stripe.com/careers/compatibility"
+            },
+            {
+              "title": "AEO and GEO Marketing Manager",
+              "url": "https://stripe.com/careers/listing/aeo-and-geo-marketing-manager/7844214"
+            },
+            {
+              "title": "AI Engineer",
+              "url": "https://stripe.com/careers/listing/ai-engineer/8044460"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "netflix",
+        "company": "Netflix",
+        "homepageUrl": "https://www.netflix.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://jobs.netflix.com/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Netflix publishes and links its open-role search on its company-owned careers site; the previous Lever candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://jobs.netflix.com/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "netflix",
+        "company": "Netflix",
+        "startedAt": "2026-09-20T08:35:12.730Z",
+        "durationMs": 2319,
+        "discovery": {
+          "outcome": "not_found",
+          "fetches": 16,
+          "sourceMatchesLabel": false
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 0,
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "datadog",
+        "company": "Datadog",
+        "homepageUrl": "https://www.datadoghq.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://careers.datadoghq.com/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Datadog's company-owned careers page is the current searchable all-jobs listing; the previous Greenhouse board candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://careers.datadoghq.com/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "datadog",
+        "company": "Datadog",
+        "startedAt": "2026-09-20T08:35:15.049Z",
+        "durationMs": 24124,
+        "discovery": {
+          "outcome": "needs_confirmation",
+          "observedType": "html",
+          "observedUrl": "https://careers.datadoghq.com/",
+          "confidence": 0.5,
+          "fetches": 12,
+          "sourceMatchesLabel": true
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 0,
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "cloudflare",
+        "company": "Cloudflare",
+        "homepageUrl": "https://www.cloudflare.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://www.cloudflare.com/careers/jobs/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Cloudflare's first-party careers page links to its company-owned open-positions listing; the previous Greenhouse board candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://www.cloudflare.com/careers/",
+          "https://www.cloudflare.com/careers/jobs/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "cloudflare",
+        "company": "Cloudflare",
+        "startedAt": "2026-09-20T08:35:19.181Z",
+        "durationMs": 14370,
+        "discovery": {
+          "outcome": "needs_confirmation",
+          "observedType": "html",
+          "observedUrl": "https://www.cloudflare.com/careers/",
+          "confidence": 0.5,
+          "fetches": 7,
+          "sourceMatchesLabel": false
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 0,
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "automattic",
+        "company": "Automattic",
+        "homepageUrl": "https://automattic.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://automattic.com/work-with-us/jobs/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Automattic states that legitimate openings are published on its company-owned careers site; the previous Greenhouse board candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://automattic.com/work-with-us/",
+          "https://automattic.com/work-with-us/jobs/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "automattic",
+        "company": "Automattic",
+        "startedAt": "2026-09-20T08:35:26.211Z",
+        "durationMs": 14063,
+        "discovery": {
+          "outcome": "needs_confirmation",
+          "observedType": "html",
+          "observedUrl": "https://automattic.com/work-with-us/",
+          "confidence": 0.5,
+          "fetches": 6,
+          "sourceMatchesLabel": false
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 1,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "Report this content",
+              "url": "https://wordpress.com/abuse/?report_url=https://automattic.com/work-with-us/jobs/"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "gitlab",
+        "company": "GitLab",
+        "homepageUrl": "https://about.gitlab.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://about.gitlab.com/jobs/all-jobs/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "GitLab's first-party careers page links to its company-owned all-jobs listing; the previous Greenhouse board candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://about.gitlab.com/jobs/",
+          "https://about.gitlab.com/jobs/all-jobs/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "gitlab",
+        "company": "GitLab",
+        "startedAt": "2026-09-20T08:35:33.551Z",
+        "durationMs": 12059,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "greenhouse",
+          "observedUrl": "https://job-boards.greenhouse.io/gitlab",
+          "confidence": 0.97,
+          "fetches": 6,
+          "sourceMatchesLabel": false
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 1,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "Get your free trial",
+              "url": "https://gitlab.com/-/trial_registrations/new?glm_content=default-saas-trial&glm_source=about.gitlab.com/jobs/all-jobs"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "salesforce",
+        "company": "Salesforce",
+        "homepageUrl": "https://www.salesforce.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://careers.salesforce.com/en/jobs/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Salesforce's company-owned careers site publishes its current searchable jobs listing; the previous Workday candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://careers.salesforce.com/",
+          "https://careers.salesforce.com/en/jobs/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "salesforce",
+        "company": "Salesforce",
+        "startedAt": "2026-09-20T08:35:39.173Z",
+        "durationMs": 27150,
+        "discovery": {
+          "outcome": "needs_confirmation",
+          "observedType": "html",
+          "observedUrl": "https://www.salesforce.com/company/careers/locations/apac/?bc=DB",
+          "confidence": 0.5,
+          "fetches": 12,
+          "sourceMatchesLabel": false
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 0,
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "siemens",
+        "company": "Siemens",
+        "homepageUrl": "https://www.siemens.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Siemens' company-owned Careers Marketplace publishes the searchable external-jobs listing; the previous Workday-shaped candidate was invalid.",
+        "sourceEvidenceUrls": [
+          "https://jobs.siemens.com/",
+          "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "siemens",
+        "company": "Siemens",
+        "startedAt": "2026-09-20T08:35:40.274Z",
+        "durationMs": 22485,
+        "discovery": {
+          "outcome": "needs_confirmation",
+          "observedType": "html",
+          "observedUrl": "https://www.siemens.com/en-gb/company/jobs/",
+          "confidence": 0.5,
+          "fetches": 11,
+          "sourceMatchesLabel": false
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 2,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "FAQs & Support",
+              "url": "https://www.siemens.com/global/en/company/jobs/faq.html"
+            },
+            {
+              "title": "Review Accommodations for Disability",
+              "url": "https://www.siemens.com/us/en/company/jobs/search-careers/accommodation-for-disability.html"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "spotify",
+        "company": "Spotify",
+        "homepageUrl": "https://www.spotify.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://www.lifeatspotify.com/jobs"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Spotify's first-party applicant guidance identifies lifeatspotify.com/jobs as its careers listing (and Lever only as a possible role-detail destination).",
+        "sourceEvidenceUrls": [
+          "https://www.lifeatspotify.com/start-your-journey",
+          "https://www.lifeatspotify.com/jobs"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "spotify",
+        "company": "Spotify",
+        "startedAt": "2026-09-20T08:35:45.610Z",
+        "durationMs": 34381,
+        "discovery": {
+          "outcome": "not_found",
+          "fetches": 16,
+          "sourceMatchesLabel": false
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 0,
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "mozilla",
+        "company": "Mozilla",
+        "homepageUrl": "https://www.mozilla.org",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://www.mozilla.org/en-US/careers/listings/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Mozilla's first-party careers page links to its company-owned job listing.",
+        "sourceEvidenceUrls": [
+          "https://www.mozilla.org/en-US/careers/",
+          "https://www.mozilla.org/en-US/careers/listings/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "mozilla",
+        "company": "Mozilla",
+        "startedAt": "2026-09-20T08:36:02.759Z",
+        "durationMs": 22285,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://www.mozilla.org/en-GB/careers/",
+          "confidence": 0.85,
+          "fetches": 10,
+          "sourceMatchesLabel": false
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 23,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "Staff Data Scientist, Ads",
+              "location": "Remote US Core Services",
+              "url": "https://www.mozilla.org/en-US/careers/position/gh/7137777/"
+            },
+            {
+              "title": "Senior Software Engineer, Add-Ons",
+              "location": "Remote France, Remote Germany",
+              "url": "https://www.mozilla.org/en-US/careers/position/gh/8188873/"
+            },
+            {
+              "title": "Senior Strategic Account Executive, Firefox Enterprise (DACH)",
+              "location": "Remote Germany New Products",
+              "url": "https://www.mozilla.org/en-US/careers/position/gh/7622995/"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "basecamp",
+        "company": "37signals",
+        "homepageUrl": "https://37signals.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://37signals.com/jobs"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "37signals publishes current openings, including an explicit empty state, on its company-owned jobs page.",
+        "sourceEvidenceUrls": [
+          "https://37signals.com/jobs"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "basecamp",
+        "company": "37signals",
+        "startedAt": "2026-09-20T08:36:06.323Z",
+        "durationMs": 34123,
+        "discovery": {
+          "outcome": "not_found",
+          "fetches": 16,
+          "sourceMatchesLabel": false
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 0,
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "revolut",
+        "company": "Revolut",
+        "homepageUrl": "https://www.revolut.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://www.revolut.com/careers/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Revolut's company-owned careers page is the current searchable jobs listing; the previous Greenhouse board candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://www.revolut.com/careers/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "revolut",
+        "company": "Revolut",
+        "startedAt": "2026-09-20T08:36:19.991Z",
+        "durationMs": 32466,
+        "discovery": {
+          "outcome": "not_found",
+          "fetches": 16,
+          "sourceMatchesLabel": false
+        },
+        "extraction": {
+          "outcome": "failed",
+          "countMatchesLabel": null,
+          "sample": [],
+          "error": "blocked (403) fetching https://www.revolut.com/careers/"
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "zapier",
+        "company": "Zapier",
+        "homepageUrl": "https://zapier.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://zapier.com/jobs"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Zapier's company-owned jobs page links its current openings; the previous Greenhouse board candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://zapier.com/jobs"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "zapier",
+        "company": "Zapier",
+        "startedAt": "2026-09-20T08:36:25.044Z",
+        "durationMs": 20310,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://zapier.com/jobs",
+          "confidence": 0.85,
+          "fetches": 10,
+          "sourceMatchesLabel": true
+        },
+        "extraction": {
+          "outcome": "complete",
+          "observedRoleCount": 3,
+          "countMatchesLabel": null,
+          "sample": [
+            {
+              "title": "DIBE is part of our DNA",
+              "url": "https://zapier.com/jobs/working-on-diversity-and-inclusivity"
+            },
+            {
+              "title": "code of conduct",
+              "url": "https://zapier.com/jobs/zapier-code-of-conduct"
+            },
+            {
+              "title": "Our commitment to applicants",
+              "url": "https://zapier.com/jobs/our-commitment-to-applicants"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

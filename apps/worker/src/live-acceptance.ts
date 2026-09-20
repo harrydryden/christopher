@@ -5,7 +5,7 @@ export interface LiveAcceptanceCase {
   id: string;
   company: string;
   homepageUrl: string;
-  expectedSource: { type: SourceType; url: string };
+  expectedSource: { type: SourceType; url: string; equivalentUrls?: string[] };
   /** Null means no independent human count exists. It must never be treated as a passing label. */
   expectedRoleCount: number | null;
   labelStatus: "source_independently_checked" | "unverified";
@@ -77,7 +77,8 @@ export function sourceMatches(expected: LiveAcceptanceCase["expectedSource"], ac
     return expectedSpec.atsSlug.toLowerCase() === actual.atsSlug.toLowerCase()
       && (expectedSpec.atsSite ?? "").toLowerCase() === (actual.atsSite ?? "").toLowerCase();
   }
-  return normaliseSourceUrl(expected.url) === normaliseSourceUrl(actual.url);
+  return [expected.url, ...(expected.equivalentUrls ?? [])]
+    .some(url => normaliseSourceUrl(url) === normaliseSourceUrl(actual.url));
 }
 
 export function summariseLiveAcceptance(cases: LiveAcceptanceCase[], results: LiveAcceptanceResult[]): LiveAcceptanceMetrics {

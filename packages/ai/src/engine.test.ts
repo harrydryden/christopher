@@ -917,15 +917,15 @@ describe("library evidence review (A12)", () => {
   /** What the model was asked about, read back out of the batch block the engine built. */
   const entryIdsIn = (params: Record<string, unknown>) =>
     [...userBlocks(params)[1]!.text.matchAll(/^Entry \[([^\]]+)\]/gmu)].map(match => match[1]!);
-  /** A clean answer: every row quoted verbatim, one facet each. */
+  /** A clean answer: every row quoted verbatim, with the types it serves. */
   const answerFor = (params: Record<string, unknown>, over: (entryId: string) => Partial<{
-    rows: Array<{ row: string; facet: string; specific: boolean; quantified: boolean; outcomeLinked: boolean; quote: string | null }>;
+    rows: Array<{ row: string; facets: string[]; specific: boolean; quantified: boolean; outcomeLinked: boolean; quote: string | null }>;
     prompts: string[];
   }> = () => ({})) => ({
     entries: entryIdsIn(params).map(entryId => ({
       entryId,
       rows: ROWS.map((row, index) => ({
-        row, facet: index === 0 ? "responsibility" : "outcome",
+        row, facets: index === 0 ? ["responsibility"] : ["outcome"],
         specific: true, quantified: true, outcomeLinked: index === 1, quote: row,
       })),
       prompts: ["What problem were you brought in to solve?"],
@@ -988,11 +988,11 @@ describe("library evidence review (A12)", () => {
           entryId: "entry0",
           rows: [
             // Tidied on the way back: the quote is no longer anything the person wrote.
-            { row: ROWS[0]!, facet: "responsibility", specific: true, quantified: true, outcomeLinked: false,
+            { row: ROWS[0]!, facets: ["responsibility"], specific: true, quantified: true, outcomeLinked: false,
               quote: "Ran the UK warehouse team of thirty through a relocation" },
-            { row: ROWS[1]!, facet: "outcome", specific: true, quantified: true, outcomeLinked: true, quote: ROWS[1]! },
+            { row: ROWS[1]!, facets: ["outcome"], specific: true, quantified: true, outcomeLinked: true, quote: ROWS[1]! },
             // Never written by anybody: it is not one of the entry's rows.
-            { row: "Grew revenue by 40%", facet: "metric", specific: true, quantified: true, outcomeLinked: true, quote: "Grew revenue by 40%" },
+            { row: "Grew revenue by 40%", facets: ["metric"], specific: true, quantified: true, outcomeLinked: true, quote: "Grew revenue by 40%" },
           ],
           prompts: ["What changed as a result?"],
         }],
@@ -1002,10 +1002,32 @@ describe("library evidence review (A12)", () => {
     const [review] = await engine.reviewLibraryEntries({ library, entries: library.entries }, ref);
 
     expect(review!.rows.map(row => row.row)).toEqual(ROWS);
-    expect(review!.rows[0]).toMatchObject({ verified: false, facet: "unclear", specific: false, quantified: false, quote: null });
-    expect(review!.rows[1]).toMatchObject({ verified: true, facet: "outcome", quote: ROWS[1] });
+    expect(review!.rows[0]).toMatchObject({ verified: false, facets: [], specific: false, quantified: false, quote: null });
+    expect(review!.rows[1]).toMatchObject({ verified: true, facets: ["outcome"], quote: ROWS[1] });
     // An unverified row counts in the denominator and in neither numerator, so it lowers the score.
     expect(review!.score).toBe(Math.round(50 * 2 / 8 + 25 * 0.5 + 25 * 0.5));
+  });
+
+  it("carries the person's own tags as a list and counts a row of two types under both", async () => {
+    const library = libraryOf(1);
+    const tagged: CvLibrary = { ...library, entries: [{ ...library.entries[0]!, rowFacets: { [ROWS[1]!]: ["problem", "metric"] } }] };
+    const calls: Captured[] = [];
+    const engine = createAiEngine({ getModel: () => "claude-sonnet-5", client: { messages: { create: async params => {
+      calls.push({ params });
+      return { parsed_output: { entries: [{ entryId: "entry0", rows: [
+        { row: ROWS[0]!, facets: ["responsibility", "milestone"], specific: true, quantified: true, outcomeLinked: false, quote: ROWS[0]! },
+        { row: ROWS[1]!, facets: ["outcome", "metric"], specific: true, quantified: true, outcomeLinked: true, quote: ROWS[1]! },
+      ], prompts: [] }] }, usage: { input_tokens: 10, output_tokens: 10 } };
+    } } } });
+
+    const [review] = await engine.reviewLibraryEntries({ library: tagged, entries: tagged.entries }, ref);
+
+    // The library block says what the person tagged each row, in the order the six are declared.
+    expect(userBlocks(calls[0]!.params)[0]!.text).toContain("(they tagged this problem, metric)");
+    expect(review!.rows.map(row => row.facets)).toEqual([["responsibility", "milestone"], ["outcome", "metric"]]);
+    expect(review!.coverage).toEqual({ responsibility: 1, problem: 0, outcome: 1, metric: 1, milestone: 1, style: 0 });
+    // Four facets between two rows, each specific and quantified: 50 × 6/8 + 25 + 25 = 87.5 → 88.
+    expect(review!).toMatchObject({ score: 88, rating: "strong", missing: ["problem", "style"] });
   });
 
   it("refuses an answer that asks the person about a demographic attribute", async () => {

@@ -1,5 +1,5 @@
 "use client";
-import { updateEmploymentIndustries, type CvLibrary, type Employment } from "@christopher/core/cv";
+import { isActiveEvidence, responsibilityRows, updateEmploymentIndustries, type CvLibrary, type Employment } from "@christopher/core/cv";
 import { inputClass, labelClass } from "@/components/Field";
 import { Table, TBody, TH, THead, TR } from "@/components/table";
 
@@ -8,16 +8,39 @@ import { Table, TBody, TH, THead, TR } from "@/components/table";
 // one line is enough to see and edit it; it scrolls horizontally.
 const cell = `h-9 py-0 ${inputClass}`;
 const cellPad = "p-1.5 align-middle";
-export function EmploymentHistoryTable({ employment, entries, onChange }: {
+
+/**
+ * What the confirm asks before a job is removed.
+ *
+ * Removing a job archives its evidence rather than deleting it: the rows stay in the versions
+ * already saved and in the CVs already built, and are shown and counted nowhere else. That is
+ * worth a sentence and a confirm when there is anything to archive — and one more sentence for
+ * the way back, because a person who removes the wrong job needs to know there is one before they
+ * answer, not after.
+ */
+export function jobRemovalConfirm(job: Employment, rows: number): string {
+  const name = [job.company.trim(), job.jobTitle.trim()].filter(Boolean).join(" · ") || "this job";
+  return `Remove ${name} and archive its ${rows} ${rows === 1 ? "row" : "rows"}? They stay in earlier versions and in CVs already built. You can restore it from Archived jobs below.`;
+}
+
+export function EmploymentHistoryTable({ employment, entries, onChange, onRemove }: {
   employment: Employment[]; entries: CvLibrary["entries"]; onChange: (jobs: Employment[]) => void;
+  /** Take this job out of the Library, with whatever evidence was written for it. */
+  onRemove: (job: Employment) => void;
 }) {
   const companies = [...new Set(employment.map(job => job.company.trim()).filter(Boolean))].sort();
   function update(id: string, patch: Partial<Employment>) {
     onChange(employment.map(job => job.id === id ? { ...job, ...patch } : job));
   }
-  const removable = (job: Employment) => !entries.some(entry => entry.employmentId === job.id);
-  const removeTitle = (job: Employment) =>
-    removable(job) ? "Remove job" : "This job has an evidence block. Archive the block to exclude it from CVs.";
+  const rowsWritten = (job: Employment) => {
+    const entry = entries.find(item => item.kind === "experience" && item.employmentId === job.id && isActiveEvidence(item));
+    return entry ? responsibilityRows(entry.details).length : 0;
+  };
+  function remove(job: Employment) {
+    const rows = rowsWritten(job);
+    if (rows > 0 && !window.confirm(jobRemovalConfirm(job, rows))) return;
+    onRemove(job);
+  }
   return <section aria-labelledby="employment-heading" className="space-y-3">
     <h2 id="employment-heading" className="ds-pixel text-12">Employment history</h2>
     <datalist id="employment-companies">{companies.map(company => <option key={company} value={company} />)}</datalist>
@@ -45,7 +68,7 @@ export function EmploymentHistoryTable({ employment, entries, onChange }: {
           <td className={cellPad}><input aria-label={`Job ${i + 1} start date`} placeholder="YYYY-MM" pattern="[0-9]{4}(-[0-9]{2})?" className={cell} value={job.startDate} onChange={e => update(job.id, { startDate: e.target.value })} /></td>
           <td className={cellPad}><input disabled={job.current} aria-label={`Job ${i + 1} end date`} placeholder={job.current ? "Present" : "YYYY-MM"} pattern="[0-9]{4}(-[0-9]{2})?" className={`${cell} disabled:opacity-40`} value={job.endDate} onChange={e => update(job.id, { endDate: e.target.value })} /></td>
           <td className={`${cellPad} text-center`}><input type="checkbox" aria-label={`Job ${i + 1} current`} checked={job.current} onChange={e => update(job.id, { current: e.target.checked, endDate: e.target.checked ? "" : job.endDate })} /></td>
-          <td className={`${cellPad} whitespace-nowrap text-right`}><button type="button" disabled={!removable(job)} title={removeTitle(job)} aria-label={`Remove job ${i + 1}`} className="text-12 text-muted underline hover:text-fg disabled:opacity-40" onClick={() => onChange(employment.filter(item => item.id !== job.id))}>Remove</button></td>
+          <td className={`${cellPad} whitespace-nowrap text-right`}><button type="button" title="Remove job" aria-label={`Remove job ${i + 1}`} className="text-12 text-muted underline hover:text-fg" onClick={() => remove(job)}>Remove</button></td>
         </TR>)}</TBody>
     </Table></div>}
     {employment.length > 0 && <div className="space-y-3 md:hidden">{employment.map((job, i) => <div key={job.id} className="space-y-3 border-2 border-line-muted p-3">
@@ -67,7 +90,7 @@ export function EmploymentHistoryTable({ employment, entries, onChange }: {
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3 text-14">
         <label className="flex items-center gap-2"><input type="checkbox" aria-label={`Job ${i + 1} current`} checked={job.current} onChange={e => update(job.id, { current: e.target.checked, endDate: e.target.checked ? "" : job.endDate })} /> Current</label>
-        <button type="button" disabled={!removable(job)} title={removeTitle(job)} aria-label={`Remove job ${i + 1}`} className="text-12 text-muted underline hover:text-fg disabled:opacity-40" onClick={() => onChange(employment.filter(item => item.id !== job.id))}>Remove</button>
+        <button type="button" title="Remove job" aria-label={`Remove job ${i + 1}`} className="text-12 text-muted underline hover:text-fg" onClick={() => remove(job)}>Remove</button>
       </div>
     </div>)}</div>}
     {!employment.length && <p className="text-14 text-muted">Add your first job, then add its responsibilities and outcomes below.</p>}

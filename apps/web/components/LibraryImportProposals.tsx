@@ -73,8 +73,8 @@ export function LibraryImportProposals({ imports, version }: { imports: LibraryI
           {view.state === "proposed" && view.proposal && (
             <div className="grid gap-4">
               <p className="text-14 text-muted">
-                Tick what is yours. They arrive as drafts; activate each block and confirm its rows
-                when you have checked them.
+                Tick what is yours. They arrive with their rows unconfirmed; confirm the ones you
+                have checked.
               </p>
 
               <LibraryImportForm

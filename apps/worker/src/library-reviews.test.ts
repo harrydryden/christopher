@@ -12,7 +12,7 @@ import {
   upsertLibraryReviews, type Db, type LibraryReviewUpsert,
 } from "@christopher/db";
 import { runMigrations } from "@christopher/db/migrate";
-import { rulesLibraryReview, type CvLibrary, type Employment, type LibraryEntryReview } from "@christopher/core";
+import { normaliseLibraryReview, rulesLibraryReview, type CvLibrary, type Employment, type LibraryEntryReview } from "@christopher/core";
 import { sql } from "drizzle-orm";
 import pg from "pg";
 import { ensureTestUser } from "./test-users";
@@ -45,7 +45,7 @@ const job: Employment = { id: "acme", company: "Acme", jobTitle: "Operations Dir
 function review(entryId: string, details: string): LibraryEntryReview {
   const library: CvLibrary = {
     name: "Test Candidate", contact: "London", profile: "Operations", structuredExperience: true, employment: [job],
-    entries: [{ id: entryId, kind: "experience", status: "active", heading: "Operations Director · Acme", details, employmentId: "acme", rowFacets: { [details]: "outcome" } }],
+    entries: [{ id: entryId, kind: "experience", status: "active", heading: "Operations Director · Acme", details, employmentId: "acme", rowFacets: { [details]: ["outcome", "metric"] } }],
   };
   return rulesLibraryReview(library.entries[0]!, library);
 }
@@ -64,7 +64,8 @@ it("writes a pass and reads back the review of each entry as it is written now",
   // The score and rating are stored beside the review so a list can be ordered without reading jsonb.
   expect(stored.score).toBe(stored.review.score);
   expect(stored.rating).toBe(stored.review.rating);
-  expect(stored.review.rows[0]).toMatchObject({ facet: "outcome", quantified: true, verified: true });
+  // Stored as the Library will read it back: a row carries a list of the types it serves.
+  expect(stored.review.rows[0]).toMatchObject({ facets: ["outcome", "metric"], quantified: true, verified: true });
   expect(stored.review.prompts.length).toBeGreaterThan(0);
 
   // Another account's reviews are not this account's, however the entry ids collide.
@@ -148,4 +149,30 @@ it("keeps the newest twenty library versions and drops what is older", async () 
   // An account with fewer than the retained number of versions loses nothing.
   expect(await pruneLibraryReviews(db, otherId)).toBe(0);
   expect(await pruneLibraryReviews(db, userId, 3)).toBe(17);
+});
+
+it("reads back a review a release before row types wrote, in today's shape", async () => {
+  // What is in the column for accounts that have already been reviewed: one `facet` a row, and
+  // `"unclear"` where the row served none. Nothing rewrites those rows, so every reader of
+  // `cv_library_reviews.review` goes through `normaliseLibraryReview`.
+  const stored = {
+    entryId: "acme-block",
+    rows: [
+      { row: "Cut handover time across the Acme network by 40%", facet: "metric", specific: true, quantified: true, outcomeLinked: true, quote: "by 40%", verified: true },
+      { row: "Did some things", facet: "unclear", specific: false, quantified: false, outcomeLinked: false, quote: null, verified: true },
+    ],
+    coverage: { responsibility: 0, problem: 0, outcome: 0, metric: 1, milestone: 0, style: 0 },
+    missing: ["outcome", "responsibility", "problem", "milestone", "style"],
+    prompts: ["What changed as a result?"],
+    score: 38,
+    rating: "weak",
+  } as unknown as LibraryEntryReview;
+  await upsertLibraryReviews(db, userId, 4, [{ entryId: "acme-block", inputHash: "hash-a", review: stored, source: "model", model: "claude-fable-5-1" }], now);
+
+  const row = (await latestLibraryReviews(db, userId, [{ entryId: "acme-block", inputHash: "hash-a" }])).get("acme-block")!;
+  const review = normaliseLibraryReview(row.review);
+  expect(review.rows.map(item => item.facets)).toEqual([["metric"], []]);
+  expect(review.score).toBe(row.score);
+  expect(review.rating).toBe(row.rating);
+  expect(review.prompts).toEqual(["What changed as a result?"]);
 });

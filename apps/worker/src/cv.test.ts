@@ -65,7 +65,7 @@ it("does not spend an AI call when all experience rows are unconfirmed", async (
   expect(build).not.toHaveBeenCalled();
   const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
   expect(saved!.status).toBe("failed");
-  expect(saved!.error).toContain("confirm the responsibilities");
+  expect(saved!.error).toContain("Confirm at least one responsibility or outcome");
 });
 it("rejects model claims referencing invented evidence", async () => {
   vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Leader", sections: [{ entryId: "fabricated", bullets: ["Piloted aircraft"] }], gaps: [] });

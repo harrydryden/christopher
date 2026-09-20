@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { migrateEmploymentHistory, EmploymentSchema, evidenceHeading, materialiseCv, groupCvLibrary, companyForEntry, CvLibrarySchema, type CvLibrary } from "./cv";
+import { migrateEmploymentHistory, EmploymentSchema, evidenceHeading, materialiseCv, groupCvLibrary, companyForEntry, CvLibrarySchema, EVIDENCE_FACETS, consolidateExperience, eligibleCvEvidence, normaliseCvLibrary, rowFacets, setRowFacets, updateResponsibilityRows, type CvLibrary, type Employment } from "./cv";
 const library: CvLibrary = { name: "Test Candidate", contact: "London", profile: "Operations", entries: [
   { id: "recent", kind: "experience", heading: "Director · Acme · 2023-present", details: "Led operations", confirmedResponsibilities: ["Led operations"] },
   { id: "older", kind: "education", heading: "BSc · University · 2010", details: "Economics" },
@@ -125,19 +125,42 @@ describe("structured responsibilities", () => {
 
 
 describe("evidence status", () => {
-  const entry = (id: string, status?: "draft" | "active" | "inactive") => ({ id, kind: "skill" as const, heading: id, details: `Evidence for ${id}`, status });
-  const library = { name: "Test", contact: "", profile: "", entries: [entry("active", "active"), entry("draft", "draft"), entry("archived", "inactive")] };
+  const entry = (id: string, status?: "active" | "inactive") => ({ id, kind: "skill" as const, heading: id, details: `Evidence for ${id}`, status });
+  /** `stored` is what a release that still let someone mark a block Draft wrote. */
+  const stored = { id: "stored-draft", kind: "skill" as const, heading: "stored-draft", details: "Evidence for stored-draft", status: "draft" };
+  const library = { name: "Test", contact: "", profile: "", entries: [entry("active", "active"), entry("legacy"), entry("archived", "inactive")] };
+  it("reads a stored draft as active, and refuses the word for anything new", async () => {
+    const { CvLibrarySchema, consolidateExperience, isActiveEvidence } = await import("./cv");
+    const parsed = CvLibrarySchema.parse({ ...library, entries: [stored] });
+    expect(parsed.entries[0]!.status).toBe("active");
+    expect(isActiveEvidence(parsed.entries[0]!)).toBe(true);
+    // The upgrade does not depend on the parse: the editor consolidates what it was handed.
+    expect(consolidateExperience({ ...library, entries: [stored] } as never).entries[0]!.status).toBe("active");
+    expect(CvLibrarySchema.safeParse({ ...library, entries: [{ ...stored, status: "pending" }] }).success).toBe(false);
+  });
+  it("reads a stored draft as evidence for a reader that cannot parse first", async () => {
+    // Three readers are handed `cv_libraries.content` or a draft's snapshot exactly as stored —
+    // the Library's evidence display, the gap quiz's destinations and the answer it writes —
+    // because the reviews and the snapshot are keyed to those entries. Asked of raw JSON,
+    // `isActiveEvidence` reads the word an earlier release wrote as "not active" and drops a
+    // block the editor beside it is showing; archived is the only status that stands one aside.
+    const { isActiveEvidence, isActiveStoredEvidence } = await import("./cv");
+    expect(isActiveEvidence(stored as never)).toBe(false);
+    expect(isActiveStoredEvidence(stored as never)).toBe(true);
+    for (const item of [entry("active", "active"), entry("legacy")]) expect(isActiveStoredEvidence(item)).toBe(true);
+    expect(isActiveStoredEvidence(entry("archived", "inactive"))).toBe(false);
+  });
   it("passes only active evidence to generation and rejects inactive model references", async () => {
     const { groupCvLibrary, materialiseCv } = await import("./cv");
-    expect(groupCvLibrary(library).entries.map(e => e.id)).toEqual(["active"]);
-    for (const entryId of ["draft", "archived"]) expect(() => materialiseCv(library, { summary: "Test", gaps: [], sections: [{ entryId, bullets: ["Must not appear"] }] })).toThrow();
-    expect(() => groupCvLibrary({ ...library, entries: [entry("draft", "draft")] })).toThrow("Activate at least one");
+    expect(groupCvLibrary(library).entries.map(e => e.id)).toEqual(["active", "legacy"]);
+    expect(() => materialiseCv(library, { summary: "Test", gaps: [], sections: [{ entryId: "archived", bullets: ["Must not appear"] }] })).toThrow();
+    expect(() => groupCvLibrary({ ...library, entries: [entry("archived", "inactive")] })).toThrow("Confirm at least one responsibility or outcome");
     expect(groupCvLibrary({ ...library, entries: [entry("legacy")] }).entries).toHaveLength(1);
   });
   it("retains removed blocks as inactive and allows explicit reactivation", async () => {
     const { retainArchivedEvidence, groupCvLibrary } = await import("./cv");
     const saved = retainArchivedEvidence(library, { ...library, entries: [entry("active", "active")] });
-    expect(saved.entries.map(e => [e.id, e.status])).toEqual([["active", "active"], ["draft", "inactive"], ["archived", "inactive"]]);
+    expect(saved.entries.map(e => [e.id, e.status])).toEqual([["active", "active"], ["legacy", "inactive"], ["archived", "inactive"]]);
     const restored = { ...saved, entries: saved.entries.map(e => ({ ...e, status: "active" as const })) };
     expect(groupCvLibrary(restored).entries).toHaveLength(3);
   });
@@ -147,7 +170,7 @@ describe("evidence status", () => {
     const source = { ...library, employment: [job], entries: library.entries.map(e => ({ ...e, kind: "experience" as const, employmentId: job.id, confirmedResponsibilities: [e.details] })) };
     const result = groupCvLibrary(source);
     expect(result.entries).toHaveLength(1);
-    expect(result.entries[0]!.details).toBe("Evidence for active");
+    expect(result.entries[0]!.details).toBe("Evidence for active\n\nEvidence for legacy");
   });
 });
 
@@ -161,7 +184,7 @@ describe("responsibility confirmation", () => {
     expect(grouped.entries[0]!.details).not.toContain("Proposed");
     expect(groupCvLibrary(grouped)).toEqual(grouped);
     expect(JSON.stringify(experience)).toBe(snapshot);
-    for (const patch of [{ confirmedResponsibilities: undefined }, { confirmedResponsibilities: [] }, { status: "draft" as const }, { status: "inactive" as const }]) {
+    for (const patch of [{ confirmedResponsibilities: undefined }, { confirmedResponsibilities: [] }, { status: "inactive" as const }]) {
       expect(eligibleCvEvidence({ ...experience, ...patch })).toBeUndefined();
       expect(() => materialiseCv({ ...library, entries: [{ ...experience, ...patch }] }, { summary: "Leader", sections: [{ entryId: "job", bullets: ["A claim"] }], gaps: [] })).toThrow("unconfirmed");
     }
@@ -172,7 +195,7 @@ describe("responsibility confirmation", () => {
     const migrated = consolidateExperience({ ...library, entries: [legacy] });
     expect(migrated.entries[0]!.confirmedResponsibilities).toEqual([]);
     expect(eligibleCvEvidence(migrated.entries[0]!)).toBeUndefined();
-    expect(() => groupCvLibrary(migrated)).toThrow("confirm the responsibilities");
+    expect(() => groupCvLibrary(migrated)).toThrow("Confirm at least one responsibility or outcome");
     expect(eligibleCvEvidence({ ...experience, confirmedResponsibilities: ["A removed statement"] })).toBeUndefined();
   });
   it("clears changed and removed rows without shifting confirmation to their replacements", async () => {
@@ -229,4 +252,104 @@ it("keeps a subsidiary label that heads confirmed wording and drops one that hea
   expect(eligible.details).toBe("Led core platform\nAcme Labs Ltd:\nRan the research lab");
   expect(eligible.confirmedResponsibilities).toEqual(["Led core platform", "Ran the research lab"]);
   expect(eligibleCvEvidence({ ...entry, confirmedResponsibilities: [] })).toBeUndefined();
+});
+
+
+/**
+ * A row's types: what a stored library holds, what is written back, and what survives an edit.
+ *
+ * The six ids and their order are fixed; what changed is that a row carries as many of them as it
+ * serves, because one sentence is often the problem somebody solved and the figure it moved. Every
+ * library stored before that carries a single id as a bare string, so the first case here is the
+ * one that matters most: it must still parse, and read as a list of one.
+ */
+describe("row types", () => {
+  const job: Employment = { id: "acme", company: "Acme", jobTitle: "Operations Director", startDate: "2023-01", endDate: "", current: true };
+  const led = "Led the warehouse team through a move to a new site";
+  const cut = "Cut handover time by 40%, which ended the weekend backlog";
+  const faceted = (rowFacets: Record<string, unknown>, over: Record<string, unknown> = {}) => ({
+    name: "Test Candidate", contact: "London", profile: "Operations", structuredExperience: true, employment: [job],
+    entries: [{ id: "acme-block", kind: "experience", status: "active", heading: "Operations Director · Acme",
+      details: [led, cut].join("\n"), employmentId: "acme", rowFacets, ...over }],
+  });
+  const parsed = (rowFacets: Record<string, unknown>, over: Record<string, unknown> = {}) =>
+    CvLibrarySchema.parse(faceted(rowFacets, over)).entries[0]!;
+
+  it("reads the single type a stored library holds as a list of one", () => {
+    const entry = parsed({ [led]: "responsibility", [cut]: "metric" });
+    expect(entry.rowFacets).toEqual({ [led]: ["responsibility"], [cut]: ["metric"] });
+    expect(rowFacets(entry, cut)).toEqual(["metric"]);
+    expect(rowFacets(entry, "A row nobody wrote")).toEqual([]);
+    // Also without the parse: a stored library reaches a reader unparsed in more than one place.
+    const stored = faceted({ [cut]: "metric" }) as unknown as CvLibrary;
+    expect(rowFacets(stored.entries[0]!, cut)).toEqual(["metric"]);
+  });
+
+  it("writes them unique and in the canonical order, whatever order they were chosen in", () => {
+    expect(parsed({ [cut]: ["metric", "problem", "metric"] }).rowFacets).toEqual({ [cut]: ["problem", "metric"] });
+    expect(parsed({ [cut]: [...EVIDENCE_FACETS].reverse() }).rowFacets).toEqual({ [cut]: [...EVIDENCE_FACETS] });
+    // A tag the Library could not show is a bug, not bookkeeping: it is refused, not dropped.
+    expect(CvLibrarySchema.safeParse(faceted({ [cut]: ["vibes"] })).success).toBe(false);
+    expect(CvLibrarySchema.safeParse(faceted({ [cut]: "vibes" })).success).toBe(false);
+    // No types is no tag, written by removing the row's key rather than storing an empty list.
+    expect(CvLibrarySchema.safeParse(faceted({ [cut]: [] })).success).toBe(false);
+  });
+
+  it("tags and untags a row through setRowFacets", () => {
+    const entry = parsed({ [cut]: ["metric", "problem"] });
+    const tagged = setRowFacets(entry, led, ["style", "responsibility", "style"]);
+    expect(tagged.rowFacets).toEqual({ [cut]: ["problem", "metric"], [led]: ["responsibility", "style"] });
+    expect(setRowFacets(tagged, led, []).rowFacets).toEqual({ [cut]: ["problem", "metric"] });
+    expect(setRowFacets(setRowFacets(tagged, led, []), cut, []).rowFacets).toBeUndefined();
+    expect(CvLibrarySchema.safeParse({ ...faceted({}), entries: [tagged] }).success).toBe(true);
+  });
+
+  it("carries every type of a row across an edit, and takes them away with the row", () => {
+    const entry = parsed({ [led]: "responsibility", [cut]: ["problem", "metric"] });
+    const reworded = `${led} in Leeds`;
+    const edited = updateResponsibilityRows(entry, [reworded, cut]);
+    expect(edited.rowFacets).toEqual({ [reworded]: ["responsibility"], [cut]: ["problem", "metric"] });
+    // Rows are matched by text first and by position second, so a reworded row keeps its types.
+    expect(updateResponsibilityRows(edited, ["Ran the same move, rewritten", cut]).rowFacets)
+      .toEqual({ "Ran the same move, rewritten": ["responsibility"], [cut]: ["problem", "metric"] });
+    const removed = updateResponsibilityRows(edited, [reworded]);
+    expect(removed.rowFacets).toEqual({ [reworded]: ["responsibility"] });
+    expect(updateResponsibilityRows(removed, []).rowFacets).toBeUndefined();
+  });
+
+  it("unions the types when two blocks for one job are consolidated", () => {
+    const library = {
+      name: "Test Candidate", contact: "London", profile: "Operations", employment: [job],
+      entries: [
+        { id: "first", kind: "experience" as const, heading: "Operations Director", details: [led, cut].join("\n"), employmentId: "acme", rowFacets: { [cut]: "problem" } },
+        { id: "second", kind: "experience" as const, heading: "Same job, second block", details: cut, employmentId: "acme", rowFacets: { [cut]: ["metric"], [led]: ["responsibility"] } },
+      ],
+    };
+    const consolidated = consolidateExperience(library as unknown as CvLibrary);
+    expect(consolidated.entries).toHaveLength(1);
+    expect(consolidated.entries[0]!.rowFacets).toEqual({ [led]: ["responsibility"], [cut]: ["problem", "metric"] });
+    expect(consolidated.entries[0]!.status).toBe("active");
+    expect(consolidated.facetedRows).toBe(true);
+    // A stale key goes with its row, so a tag cannot outlive the wording it was about.
+    expect(consolidateExperience({ ...consolidated, entries: [{ ...consolidated.entries[0]!, details: cut }] }).entries[0]!.rowFacets).toEqual({ [cut]: ["problem", "metric"] });
+  });
+
+  it("gives generation the tags of the rows it is given, and no others", () => {
+    const entry = parsed({ [led]: "responsibility", [cut]: ["metric"] }, { confirmedResponsibilities: [cut] });
+    const eligible = eligibleCvEvidence(entry)!;
+    expect(eligible.details).toBe(cut);
+    expect(eligible.rowFacets).toEqual({ [cut]: ["metric"] });
+  });
+
+  it("upgrades a stored library on read, through one entry point", () => {
+    const legacy = {
+      name: "Test Candidate", contact: "London", profile: "Operations", employment: [job],
+      entries: [{ id: "acme-block", kind: "experience", status: "draft", heading: "Operations Director", details: [led, cut].join("\n"), employmentId: "acme", rowFacets: { [cut]: "metric" } }],
+    };
+    const upgraded = normaliseCvLibrary(legacy);
+    expect(upgraded.entries[0]).toMatchObject({ status: "active", rowFacets: { [cut]: ["metric"] } });
+    expect(upgraded.structuredExperience).toBe(true);
+    expect(upgraded.facetedRows).toBe(true);
+    expect(normaliseCvLibrary(upgraded)).toEqual(upgraded);
+  });
 });

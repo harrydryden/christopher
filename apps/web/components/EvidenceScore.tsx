@@ -1,9 +1,7 @@
 "use client";
 import { EVIDENCE_RATING_LABELS, type EvidenceEntryView, type EvidencePrompt } from "@/lib/cv-library-evidence";
-import { EVIDENCE_FACETS, EVIDENCE_FACET_LABELS, type EvidenceFacet } from "@christopher/core/cv";
 // Type only: the scorer it belongs to reaches `node:crypto` and never reaches the browser.
 import type { EvidenceRating } from "@christopher/core/library-review";
-import { selectClass } from "@/components/Field";
 
 /** The three cells the CV evaluation table fills for Evidence and Experience, in the same order. */
 const FILLED: Record<EvidenceRating, number> = { none: 0, weak: 1, good: 2, strong: 3 };
@@ -32,8 +30,8 @@ export function EvidenceBar({ rating, score, title }: { rating: EvidenceRating; 
  * One block's evidence, above the rows it is about: the badge, what the pass is doing, what is
  * missing, and the questions that would raise it.
  *
- * The score gates nothing. A block rated None is still active evidence if the person says so, and
- * nothing here disables a control or hides a row.
+ * The score gates nothing. A block rated None is still evidence if the person says so, and nothing
+ * here disables a control or hides a row.
  */
 export function EvidenceSummary({
   evidence,
@@ -80,28 +78,5 @@ export function EvidenceSummary({
         </ul>
       )}
     </div>
-  );
-}
-
-/** The facet a row serves, as the person tagged it. "Unclear" is a real answer, not a blank. */
-export function EvidenceFacetSelect({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: EvidenceFacet | null;
-  onChange: (facet: EvidenceFacet | null) => void;
-}) {
-  return (
-    <select
-      aria-label={label}
-      value={value ?? ""}
-      onChange={event => onChange((event.target.value || null) as EvidenceFacet | null)}
-      className={`w-auto max-w-full text-12 ${selectClass}`}
-    >
-      <option value="">Unclear</option>
-      {EVIDENCE_FACETS.map(facet => <option key={facet} value={facet}>{EVIDENCE_FACET_LABELS[facet]}</option>)}
-    </select>
   );
 }

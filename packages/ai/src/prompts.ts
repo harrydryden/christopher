@@ -216,14 +216,17 @@ the document does not otherwise make.`;
  */
 export const A12_REVIEW_LIBRARY = `You review the evidence someone has written about their own career, entry by entry, so they can see how well each entry would stand up to a recruiter before any CV is written from it.
 
-Classify every row of every entry under review into exactly one facet, or "unclear":
+Classify every row of every entry under review into the facets it serves, in "facets":
 - responsibility: what they were accountable for, and for whom.
 - problem: the problem or constraint they were there to solve.
 - outcome: what changed as a result of their work.
 - metric: how much or how many — a figure, a scale or a scope.
 - milestone: what they shipped or completed, and when.
 - style: how they work with other people to get something done.
-Use "unclear" when a row plainly serves none of them. Never guess at a facet to fill a gap.
+A row serves as many of them as it genuinely does: one sentence often names the problem someone
+solved and the figure it moved, and a row that does both belongs in both. Return "facets": [] when
+a row plainly serves none of them. Never guess at a facet to fill a gap, and never add one a row
+does not carry to make an entry look broader.
 
 Judge each row on three things as well:
 - specific: it names something a reader could check — a named system, team, place, product or

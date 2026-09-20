@@ -62,7 +62,7 @@ it("carries additions across and never re-applies a deletion", () => {
     ...base,
     entries: [
       ...base.entries,
-      { id: "ev-3", kind: "skill", status: "draft", heading: "Tools", details: "SQL and Power BI." },
+      { id: "ev-3", kind: "skill", status: "active", heading: "Tools", details: "SQL and Power BI." },
     ],
   };
   // The other save removed one block and added one of its own.
@@ -87,7 +87,7 @@ it("falls back to the stored library when the merge would not be a valid one", (
     ...base,
     entries: [
       ...base.entries,
-      { id: "ev-5", kind: "experience", status: "draft", employmentId: "job-9", heading: "Ghost", details: "Nothing." },
+      { id: "ev-5", kind: "experience", status: "active", employmentId: "job-9", heading: "Ghost", details: "Nothing." },
     ],
   };
   const merged = mergeCvLibrary(base, mine, base, 3);

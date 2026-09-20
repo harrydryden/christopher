@@ -16,7 +16,7 @@ const library = (overrides: Partial<CvLibrary> = {}): CvLibrary => ({
     {
       id: "one",
       kind: "experience",
-      status: "draft",
+      status: "active",
       employmentId: "job",
       heading: "Director",
       details: "Led a team of nine.\nCut the close from nine days to five.",
@@ -40,12 +40,13 @@ const buildable = (value: CvLibrary) => {
   }
 };
 
-it("agrees with generation about every combination of status and confirmation", () => {
+it("agrees with generation about confirmation and about evidence that has been archived", () => {
   const cases: [Partial<CvLibrary["entries"][number]>, boolean][] = [
-    [{ status: "draft", confirmedResponsibilities: [] }, false],
-    [{ status: "draft", confirmedResponsibilities: ["Led a team of nine."] }, false],
+    [{ confirmedResponsibilities: [] }, false],
+    [{ confirmedResponsibilities: ["Led a team of nine."] }, true],
     [{ status: "active", confirmedResponsibilities: [] }, false],
     [{ status: "active", confirmedResponsibilities: ["Led a team of nine."] }, true],
+    // Removed from employment history: kept for earlier versions, never built from again.
     [{ status: "inactive", confirmedResponsibilities: ["Led a team of nine."] }, false],
   ];
   for (const [patch, ready] of cases) {
@@ -55,39 +56,43 @@ it("agrees with generation about every combination of status and confirmation", 
   }
 });
 
-it("names the nearest thing that would make the library buildable", () => {
-  expect(cvLibraryReadiness(withEntry({ status: "draft", confirmedResponsibilities: [] })).line).toBe(
-    "Ready to build: no — activate Acme and confirm its rows",
-  );
-  expect(
-    cvLibraryReadiness(withEntry({ status: "draft", confirmedResponsibilities: ["Led a team of nine."] })).line,
-  ).toBe("Ready to build: no — activate Acme");
-  expect(cvLibraryReadiness(withEntry({ status: "active", confirmedResponsibilities: [] })).line).toBe(
+it("names the nearest thing that would make the library buildable, and never says activate", () => {
+  expect(cvLibraryReadiness(withEntry({ confirmedResponsibilities: [] })).line).toBe(
     "Ready to build: no — confirm Acme’s rows",
   );
-  expect(cvLibraryReadiness(withEntry({ status: "active", confirmedResponsibilities: ["Led a team of nine."] })).line).toBe(
+  expect(cvLibraryReadiness(withEntry({ confirmedResponsibilities: ["Led a team of nine."] })).line).toBe(
     "Ready to build: yes",
   );
-  expect(cvLibraryReadiness(library({ entries: [], employment: [] })).line).toMatch(/^Ready to build: no — add a job/);
+  // Nothing written at all: where to start, in the order the Library asks for it.
+  expect(cvLibraryReadiness(library({ entries: [], employment: [] })).line).toBe(
+    "Ready to build: no — add a job, write one responsibility or outcome and confirm it",
+  );
+  // Archived evidence is not on the screen, so it is not what the sentence points at either.
+  expect(cvLibraryReadiness(withEntry({ status: "inactive", confirmedResponsibilities: ["Led a team of nine."] })).line).toBe(
+    "Ready to build: no — add a job, write one responsibility or outcome and confirm it",
+  );
 });
 
 it("counts one job's rows and confirmations the way the editor shows them", () => {
-  const value = withEntry({ status: "active", confirmedResponsibilities: ["Led a team of nine."] });
+  const value = withEntry({ confirmedResponsibilities: ["Led a team of nine."] });
   expect(cvJobReadiness(value, "job")).toMatchObject({
     rows: 2,
     confirmed: 1,
     status: "active",
     eligible: true,
-    line: "1 of 2 rows confirmed · active",
+    // The status is not in the sentence: what is left to do about a job is always the confirming.
+    line: "1 of 2 rows confirmed",
   });
   expect(confirmableRows(value, "job")).toEqual([
     "Led a team of nine.",
     "Cut the close from nine days to five.",
   ]);
   // Confirming every row is what the control does, and it makes the job usable.
-  const confirmed = withEntry({ status: "active", confirmedResponsibilities: confirmableRows(value, "job") });
-  expect(cvJobReadiness(confirmed, "job").line).toBe("2 of 2 rows confirmed · active");
+  const confirmed = withEntry({ confirmedResponsibilities: confirmableRows(value, "job") });
+  expect(cvJobReadiness(confirmed, "job").line).toBe("2 of 2 rows confirmed");
   expect(buildable(confirmed)).toBe(true);
+  // One row reads as one row.
+  expect(cvJobReadiness(withEntry({ details: "Led a team of nine." }), "job").line).toBe("0 of 1 row confirmed");
   // A job with no evidence block at all says so rather than counting zero of zero.
   expect(cvJobReadiness(library({ entries: [] }), "job")).toMatchObject({
     rows: 0,
@@ -95,6 +100,21 @@ it("counts one job's rows and confirmations the way the editor shows them", () =
     eligible: false,
     line: "No responsibilities or outcomes yet",
   });
+  // And so does one whose rows have all been removed but whose block is still there.
+  expect(cvJobReadiness(withEntry({ details: " " }), "job").line).toBe("No responsibilities or outcomes yet");
+});
+
+it("does not count a block that has just been added and not written yet", () => {
+  // The Add button puts an empty block on the screen. It is not evidence, it cannot be stored,
+  // and the Library says what to do next rather than that a CV could be built.
+  const value = library({
+    entries: [{ id: "new", kind: "skill", status: "active", heading: "", details: "" }],
+    employment: [],
+  });
+  expect(cvLibraryReadiness(value)).toMatchObject({ ready: false, eligible: 0 });
+  expect(cvLibraryReadiness(value).line).toBe(
+    "Ready to build: no — add a job, write one responsibility or outcome and confirm it",
+  );
 });
 
 it("counts a qualification as evidence in its own right, with no rows to confirm", () => {
@@ -105,7 +125,8 @@ it("counts a qualification as evidence in its own right, with no rows to confirm
   });
   expect(cvLibraryReadiness(value)).toMatchObject({ ready: true, eligible: 1 });
   expect(buildable(value)).toBe(true);
-  expect(cvLibraryReadiness({ ...value, entries: [{ ...value.entries[0]!, status: "draft" }] }).line).toBe(
-    "Ready to build: no — activate MSc Operations",
+  // Archived, it is not evidence and not what the Library asks about.
+  expect(cvLibraryReadiness({ ...value, entries: [{ ...value.entries[0]!, status: "inactive" }] }).line).toBe(
+    "Ready to build: no — add a job, write one responsibility or outcome and confirm it",
   );
 });

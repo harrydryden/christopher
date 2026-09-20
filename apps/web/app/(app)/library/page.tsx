@@ -11,6 +11,7 @@ import { LibraryVersions } from "@/components/LibraryVersions";
 import { saveCvWritingPreferences } from "@/app/actions/cv";
 import { getCvWritingPreferences } from "@/lib/cv-writing-preferences";
 import { diffCvLibraries, requestedDiff } from "@/lib/cv-library-diff";
+import { openStoredLibrary } from "@/lib/cv-library-rows";
 import {
   getLibraryEvidence,
   getLibraryVersionContents,
@@ -48,10 +49,19 @@ export default async function LibraryPage({ searchParams }: {
   const contents = wanted ? await getLibraryVersionContents(user.id, [wanted.from, wanted.to]) : new Map();
   const from = wanted ? contents.get(wanted.from) : undefined;
   const to = wanted ? contents.get(wanted.to) : undefined;
-  const diff = wanted && from && to ? diffCvLibraries(from, to, wanted.from, wanted.to) : null;
+  // Two stored versions, each upgraded to today's shape before they are compared, so a change
+  // of release does not read as a change the person made.
+  const diff = wanted && from && to
+    ? diffCvLibraries(openStoredLibrary(from), openStoredLibrary(to), wanted.from, wanted.to)
+    : null;
+
+  // What the editor opens: the stored content, upgraded from whatever release wrote it. A library
+  // saved before a row could carry several types, or with a block stored as a draft, opens in
+  // today's shape rather than in the one it was written in.
+  const content = library ? openStoredLibrary(library.content) : null;
 
   // The employment record a CV's evidence gap was about, if the link named one this account has.
-  const job = (library?.content.employment ?? []).some(item => item.id === params.job) ? params.job ?? null : null;
+  const job = (content?.employment ?? []).some(item => item.id === params.job) ? params.job ?? null : null;
 
   // The editor is not keyed on the version: a save revalidates this page, and rebuilding the
   // editor from the server would throw away its unsaved-changes state and the version it is
@@ -61,12 +71,12 @@ export default async function LibraryPage({ searchParams }: {
     <div className="max-w-6xl space-y-5">
       <PageHeader
         title="Library"
-        description="The evidence every CV is written from. A block is used only once it is Active and its rows are confirmed."
+        description="The evidence every CV is written from. A job’s rows are used once they are confirmed."
       />
       <LibraryImportProposals imports={imports} version={library?.version ?? 0} />
       {reading > 0 && <LibraryImportPoller pending={reading} />}
       <CvLibraryEditor
-        library={library?.content ?? null}
+        library={content}
         version={library?.version ?? 0}
         evidence={evidence}
         need={(params.need ?? "").slice(0, NEED_LIMIT) || null}

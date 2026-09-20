@@ -174,7 +174,8 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await experienceTab.click();
 
     // What a CV can be built from, said on the Library by the rule generation itself applies: a
-    // job, one responsibility, confirmation, and an active block, each answered in turn.
+    // job, one responsibility and its confirmation, each answered in turn. A job in employment
+    // history is active by being there; there is no status to set.
     const readyLine = page.getByText(/^Ready to build:/);
     assert.match(await readyLine.innerText(), /^Ready to build: no — add a job/);
     await page.getByRole("button", { name: "Add job", exact: true }).click();
@@ -189,11 +190,21 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     await page
       .getByRole("textbox", { name: "Smoke Co Operations Lead evidence 1", exact: true })
       .fill("Ran the smoke estate end to end every morning.");
-    assert.match(await smokeJob.innerText(), /0 of 1 row confirmed · draft/);
+    assert.match(await smokeJob.innerText(), /0 of 1 row confirmed/);
+    assert.equal(await readyLine.innerText(), "Ready to build: no — confirm Smoke Co’s rows");
+    // The row's Type is one dropdown that takes several types at once.
+    assert.equal(await smokeJob.getByRole("group", { name: "Type of row 1", exact: true }).count(), 1);
+    assert.equal(await smokeJob.getByRole("combobox", { name: /^Status:/ }).count(), 0);
+    // Removing a job archives its rows and says so, and the way back is at the foot of the tab.
+    page.once("dialog", (dialog) => { assert.match(dialog.message(), /You can restore it from Archived jobs below\./); return dialog.accept(); });
+    await page.locator('button[aria-label="Remove job 1"]:visible').click();
+    const archived = page.locator("details").filter({ hasText: "Archived jobs (1)" });
+    await archived.locator("summary").click();
+    assert.match(await archived.innerText(), /Operations Lead · Smoke Co.*· 1 row/s);
+    await archived.getByRole("button", { name: /^Restore / }).click();
+    assert.equal(await page.locator('input[aria-label="Job 1 company"]:visible').inputValue(), "Smoke Co");
     await smokeJob.getByRole("button", { name: "Confirm all", exact: true }).click();
-    assert.match(await smokeJob.innerText(), /1 of 1 row confirmed · draft/);
-    assert.equal(await readyLine.innerText(), "Ready to build: no — activate Smoke Co");
-    await smokeJob.getByRole("combobox", { name: /^Status:/ }).selectOption("active");
+    assert.match(await smokeJob.innerText(), /1 of 1 row confirmed/);
     assert.equal(await readyLine.innerText(), "Ready to build: yes");
 
     // An incomplete field in the other tab must be revealed when saving.

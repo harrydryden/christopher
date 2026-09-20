@@ -13,7 +13,7 @@ import {
   EVIDENCE_FACETS_BY_NEED,
   EVIDENCE_FACET_LABELS,
   evidenceRows,
-  rowFacet,
+  rowFacets,
   type CvLibrary,
   type EvidenceFacet,
 } from "@christopher/core/cv";
@@ -30,7 +30,7 @@ export const EVIDENCE_RATING_LABELS: Readonly<Record<EvidenceRating, string>> = 
   strong: "Strong",
 };
 
-/** One question the entry could answer, and the facet to tag the answer with when it is known. */
+/** One question the entry could answer, and the type to tag the answer with when it is known. */
 export interface EvidencePrompt {
   question: string;
   facet: EvidenceFacet | null;
@@ -50,7 +50,7 @@ export interface EvidenceEntryView {
   /** A model review has still to land, and the pass that would write one is in flight. */
   evaluating: boolean;
   missing: EvidenceFacet[];
-  /** "No outcome or metric yet". */
+  /** "No outcomes or metrics moved yet". */
   missingLine: string;
   prompts: EvidencePrompt[];
   /** The rows the score was computed over, so the editor can say when the text has moved on. */
@@ -69,21 +69,30 @@ export interface LibraryEvidence {
 
 export const NO_EVIDENCE: LibraryEvidence = { entries: [], line: null, refusal: null, evaluating: false };
 
-/** Facets no row of this entry is tagged with, the ones worth the most first. */
+/**
+ * Types no row of this entry is tagged with, the ones worth the most first.
+ *
+ * The union across the rows, because a row carries as many types as it serves: one narrative that
+ * is both the problem solved and the metric it moved covers both, and neither is still missing.
+ */
 export function untaggedFacets(entry: CvEntry): EvidenceFacet[] {
-  const tagged = new Set(evidenceRows(entry).map(row => rowFacet(entry, row)).filter(Boolean));
+  const tagged = new Set(evidenceRows(entry).flatMap(row => rowFacets(entry, row)));
   return EVIDENCE_FACETS_BY_NEED.filter(facet => !tagged.has(facet));
 }
 
 /**
- * One line of what is missing, in the words a person would use: the two facets worth the most,
- * and how many others are still untagged, because six names in a row is a list rather than a hint.
+ * One line of what is missing, in the words a person would use: the two types worth the most, and
+ * how many others are still untagged, because six names in a row is a list rather than a hint.
+ *
+ * The labels are the ones the Type column offers, lowercased and left plural — "No outcomes or
+ * metrics moved yet" — so the hint and the control name the same six things. The word facet is
+ * ours, not the person's, and appears nowhere they can read.
  */
 export function missingFacetLine(missing: EvidenceFacet[]): string {
-  if (!missing.length) return "All six facets are covered";
+  if (!missing.length) return "All six types are covered";
   const named = missing.slice(0, 2).map(facet => EVIDENCE_FACET_LABELS[facet].toLowerCase());
   const rest = missing.length - named.length;
-  return `No ${named.join(" or ")} yet${rest ? ` · ${rest} other ${rest === 1 ? "facet" : "facets"} untagged` : ""}`;
+  return `No ${named.join(" or ")} yet${rest ? ` · ${rest} other ${rest === 1 ? "type" : "types"} untagged` : ""}`;
 }
 
 /** "2 jobs are Weak", "1 job has no evidence yet". */

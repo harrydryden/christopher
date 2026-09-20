@@ -203,7 +203,7 @@ it("asks an unverified account to confirm its email before reading anything", as
   expect(await imports()).toHaveLength(0);
 });
 
-it("adds the ticked items as drafts, through the Library's own save", async () => {
+it("adds the ticked items with their rows unconfirmed, through the Library's own save", async () => {
   const row = await proposed();
 
   const result = await acceptLibraryImport(row.id, form({
@@ -211,17 +211,17 @@ it("adds the ticked items as drafts, through the Library's own save", async () =
     accept: ["job-0", "job-0-row-0", "job-0-row-1", "education-0"],
   }));
 
-  expect(result).toMatchObject({ ok: true, message: expect.stringContaining("They arrive as drafts") });
+  expect(result).toMatchObject({ ok: true, message: expect.stringContaining("They arrive with their rows unconfirmed") });
   expect((result as { message: string }).message).toContain("Added 1 job, 2 responsibilities and 1 qualification");
   const saved = await latestLibrary();
   expect(saved!.version).toBe(1);
   const library = saved!.content;
   expect(library.employment).toMatchObject([{ company: "Acme Logistics", jobTitle: "Director of Operations", startDate: "2020-03", endDate: "2022-06" }]);
   const experience = library.entries.find(entry => entry.kind === "experience")!;
-  expect(experience.status).toBe("draft");
+  expect(experience.status).toBe("active");
   expect(experience.confirmedResponsibilities ?? []).toEqual([]);
   expect(responsibilityRows(experience.details)).toEqual([ROWS.moved, ROWS.handover]);
-  expect(library.entries.find(entry => entry.kind === "education")).toMatchObject({ status: "draft", heading: "University of Leeds" });
+  expect(library.entries.find(entry => entry.kind === "education")).toMatchObject({ status: "active", heading: "University of Leeds" });
 
   // The import is finished with, and the save queued what any other save queues.
   expect((await getLibraryImport(database, user.id, row.id))!.resolvedAt).toBeInstanceOf(Date);

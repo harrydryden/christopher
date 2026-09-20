@@ -76,16 +76,19 @@ export function employmentHeading(job: Employment): string {
  *
  * A facet is a classification of a row, kept per exact row text like `confirmedResponsibilities`
  * — but unlike confirmation it is not an assertion that the row is true, so it survives an edit
- * (see `updateResponsibilityRows`).
+ * (see `updateResponsibilityRows`). A row carries as many of the six as it serves: one narrative
+ * is often the problem somebody solved *and* the figure it moved, and a row that is both should
+ * count as both rather than force a choice between them.
  */
 export const EVIDENCE_FACETS = ["responsibility", "problem", "outcome", "metric", "milestone", "style"] as const;
 export type EvidenceFacet = (typeof EVIDENCE_FACETS)[number];
+/** What each facet is called where a row's types are shown or chosen. Plural: a row may carry several. */
 export const EVIDENCE_FACET_LABELS: Readonly<Record<EvidenceFacet, string>> = {
-  responsibility: "Responsibility",
-  problem: "Problem solved",
-  outcome: "Outcome",
-  metric: "Metric",
-  milestone: "Milestone",
+  responsibility: "Responsibilities",
+  problem: "Problems solved",
+  outcome: "Outcomes",
+  metric: "Metrics moved",
+  milestone: "Milestones reached",
   style: "Working style",
 };
 /**
@@ -107,10 +110,41 @@ export const EVIDENCE_FACET_PROMPTS: Readonly<Record<EvidenceFacet, string>> = {
   style: "How do you work with other people to get this done?",
 };
 
+/**
+ * Whether a block is evidence at all — not something the person sets.
+ *
+ * A job that is in employment history is active by being there; evidence whose job has been
+ * removed is archived by `retainArchivedEvidence` and excluded from everything. An earlier release
+ * offered a third state, Draft, and the libraries it wrote still carry it: a stored `"draft"` is
+ * read as `"active"` (see `CvEntrySchema`), and nothing is written as one again.
+ */
+export type CvEvidenceStatus = "active" | "inactive";
+
+/**
+ * The types a row carries, unique and in the canonical `EVIDENCE_FACETS` order.
+ *
+ * Input order is nobody's business — a multi-select hands them over in the order they were ticked
+ * — so it is normalised here and the written form is always sorted and deduplicated. A library
+ * written before a row could carry more than one type stored a bare string; it is read as a
+ * one-item array, which is what keeps every stored library and every draft snapshot parsing.
+ * Anything outside the vocabulary is left for the enum to refuse: a tag the Library cannot show is
+ * a bug, not bookkeeping.
+ */
+const RowFacetsSchema = z.preprocess(value => {
+  const listed = typeof value === "string" ? [value] : value;
+  if (!Array.isArray(listed)) return listed;
+  return [
+    ...EVIDENCE_FACETS.filter(facet => listed.includes(facet)),
+    ...listed.filter(item => !EVIDENCE_FACETS.includes(item as EvidenceFacet)),
+  ];
+}, z.array(z.enum(EVIDENCE_FACETS)).min(1).max(EVIDENCE_FACETS.length));
+
 export const CvEntrySchema = z.object({
   id: z.string().min(1).max(100),
   kind: z.enum(["experience", "education", "skill", "interest"]),
-  status: z.enum(["draft", "active", "inactive"]).optional(),
+  // A block stored as a draft by an earlier release is active: the status is no longer the
+  // person's to set, so reading it as anything else would strand evidence nobody can reactivate.
+  status: z.preprocess(value => value === "draft" ? "active" : value, z.enum(["active", "inactive"])).optional(),
   heading: z.string().trim().min(1).max(250),
   details: z.string().trim().min(1).max(40000),
   skillItems: SkillItemsSchema.optional(),
@@ -118,7 +152,7 @@ export const CvEntrySchema = z.object({
   confirmedResponsibilities: z.array(z.string().min(1).max(40000)).max(20).optional(),
   // Keyed by exact row text, like the confirmations above. Stale keys are dropped by
   // `tidyRowFacets` rather than rejected here, so a save is never blocked by leftover bookkeeping.
-  rowFacets: z.record(z.string().min(1).max(40000), z.enum(EVIDENCE_FACETS))
+  rowFacets: z.record(z.string().min(1).max(40000), RowFacetsSchema)
     .refine(facets => Object.keys(facets).length <= 20, "Keep up to 20 responsibilities and outcomes per job.").optional(),
   company: z.string().trim().max(160).optional(),
   employmentId: z.string().min(1).max(100).optional(),
@@ -236,7 +270,7 @@ export function groupCvLibrary(library: CvLibrary): CvLibrary {
     const usable = eligibleCvEvidence(entry);
     return usable && (!entry.roleId || library.entries.some(parent => parent.id === entry.roleId && isActiveEvidence(parent))) ? [usable] : [];
   });
-  if (!eligible.length) throw new Error("Activate at least one evidence block and confirm the responsibilities you want to use, then save your library before building a CV.");
+  if (!eligible.length) throw new Error("Confirm at least one responsibility or outcome in a job's evidence, then save your library before building a CV.");
   library = { ...library, employment: library.employment?.filter(job => eligible.some(entry => entry.employmentId === job.id)), entries: eligible };
   if (library.employment !== undefined) {
     const experience = employmentCompanyGroups(library.employment).flatMap(group => group.jobs).flatMap(job => {
@@ -310,17 +344,35 @@ export function evidenceRows(entry: CvLibrary["entries"][number]): string[] {
   return responsibilityRows(entry.details).filter(row => !row.endsWith(":"));
 }
 
-/** Which facet a row serves, as the person tagged it. Null when they have not said. */
-export function rowFacet(entry: CvLibrary["entries"][number], row: string): EvidenceFacet | null {
-  return entry.rowFacets?.[row] ?? null;
+/** Unique, in the canonical order, and nothing that is not one of the six. */
+function canonicalFacets(values: readonly unknown[]): EvidenceFacet[] {
+  return EVIDENCE_FACETS.filter(facet => values.includes(facet));
 }
 
-/** Tag a row, or clear its tag with `null`. Unknown rows are tagged anyway; `tidyRowFacets` sweeps. */
-export function setRowFacet(entry: CvLibrary["entries"][number], row: string, facet: EvidenceFacet | null): CvLibrary["entries"][number] {
+/**
+ * The types a row serves, as the person tagged them, in canonical order. Empty when they have not
+ * said.
+ *
+ * Reads a library that has not been through the schema as happily as one that has: an earlier
+ * release stored a row's single type as a bare string, and a stored library is handed straight to
+ * a reader in more than one place, so the string is read as a one-item array here rather than
+ * relying on every caller to have parsed first.
+ */
+export function rowFacets(entry: CvLibrary["entries"][number], row: string): EvidenceFacet[] {
+  const stored = entry.rowFacets?.[row] as readonly EvidenceFacet[] | EvidenceFacet | undefined;
+  return canonicalFacets(typeof stored === "string" ? [stored] : stored ?? []);
+}
+
+/**
+ * Tag a row with the types it serves, or clear it with an empty array. Unknown rows are tagged
+ * anyway; `tidyRowFacets` sweeps.
+ */
+export function setRowFacets(entry: CvLibrary["entries"][number], row: string, facets: readonly EvidenceFacet[]): CvLibrary["entries"][number] {
   const { rowFacets: previous, ...rest } = entry;
-  const facets = { ...previous };
-  if (facet) facets[row] = facet; else delete facets[row];
-  return Object.keys(facets).length ? { ...rest, rowFacets: facets } : rest;
+  const next = { ...previous };
+  const kept = canonicalFacets(facets);
+  if (kept.length) next[row] = kept; else delete next[row];
+  return Object.keys(next).length ? { ...rest, rowFacets: next } : rest;
 }
 
 /**
@@ -332,7 +384,9 @@ export function tidyRowFacets(entry: CvLibrary["entries"][number]): CvLibrary["e
   const facets = entry.rowFacets;
   if (!facets) return entry;
   const rows = new Set(responsibilityRows(entry.details));
-  const kept = Object.entries(facets).filter(([row]) => rows.has(row));
+  // An empty list is not a tag: a row the person untagged goes, rather than being stored as one
+  // the schema would then refuse.
+  const kept = Object.entries(facets).filter(([row, tags]) => rows.has(row) && (Array.isArray(tags) ? tags.length > 0 : !!tags));
   if (kept.length && kept.length === Object.keys(facets).length) return entry;
   const { rowFacets: _dropped, ...rest } = entry;
   return kept.length ? { ...rest, rowFacets: Object.fromEntries(kept) } : rest;
@@ -343,19 +397,20 @@ export function tidyRowFacets(entry: CvLibrary["entries"][number]): CvLibrary["e
  *
  * A facet, unlike a confirmation, is carried across the edit. Confirmation is the person asserting
  * that this exact wording is true of them, so rewording it has to be re-asserted; a facet only
- * classifies what the row is for, and fixing a typo in an outcome leaves it an outcome. Rows are
- * matched by their text first and by position second, which is how the editor rewrites them.
+ * classifies what the row is for, and fixing a typo in an outcome leaves it an outcome. A row
+ * carrying several types carries all of them across, for the same reason. Rows are matched by
+ * their text first and by position second, which is how the editor rewrites them.
  */
 export function updateResponsibilityRows(entry: CvLibrary["entries"][number], rows: string[]): CvLibrary["entries"][number] {
   const details = rows.join("\n");
   const previous = responsibilityRows(entry.details);
   const next = responsibilityRows(details);
   const retained = new Set(next);
-  const existing = entry.rowFacets ?? {};
-  const facets: Record<string, EvidenceFacet> = {};
+  const facets: Record<string, EvidenceFacet[]> = {};
   for (const [index, row] of next.entries()) {
-    const carried = existing[row] ?? (previous[index] !== undefined ? existing[previous[index]!] : undefined);
-    if (carried) facets[row] = carried;
+    const byText = rowFacets(entry, row);
+    const carried = byText.length ? byText : rowFacets(entry, previous[index] ?? "");
+    if (carried.length) facets[row] = carried;
   }
   const { rowFacets: _previous, ...rest } = entry;
   const updated = { ...rest, details, confirmedResponsibilities: (entry.confirmedResponsibilities ?? []).filter(row => retained.has(row)) };
@@ -382,7 +437,10 @@ export function eligibleCvEvidence(entry: CvLibrary["entries"][number]): CvLibra
     return false;
   });
   const evidence = rows.filter(row => !isLabel(row));
-  return evidence.length ? { ...entry, details: rows.join("\n"), confirmedResponsibilities: [...new Set(evidence)] } : undefined;
+  // Tidied, so the tags of the rows that were dropped go with them: `rowFacets` is keyed by row
+  // text, and what this returns is what generation is given — unconfirmed wording must not reach
+  // it through the bookkeeping either.
+  return evidence.length ? tidyRowFacets({ ...entry, details: rows.join("\n"), confirmedResponsibilities: [...new Set(evidence)] }) : undefined;
 }
 
 export function compareEmploymentDates(a: Employment, b: Employment): number {
@@ -417,7 +475,9 @@ function facetedLibrary(library: CvLibrary): CvLibrary {
 /** Consolidate editable evidence without truncating historical wording or changing snapshots. */
 export function consolidateExperience(library: CvLibrary): CvLibrary {
   const history = migrateEmploymentHistory(library);
-  const migrated = { ...history, entries: history.entries.map(entry => ({ ...entry, status: entry.status ?? "active" as const })) };
+  // Active unless it has been archived: a block stored without a status, and one an earlier
+  // release stored as a draft, are both evidence of a job the person still lists.
+  const migrated = { ...history, entries: history.entries.map(entry => ({ ...entry, status: entry.status === "inactive" ? "inactive" as const : "active" as const })) };
   if (migrated.structuredExperience) return facetedLibrary(migrated);
   const entries = (migrated.employment ?? []).flatMap(job => {
     const members = migrated.entries.filter(entry => entry.kind === "experience" && entry.employmentId === job.id);
@@ -433,17 +493,57 @@ export function consolidateExperience(library: CvLibrary): CvLibrary {
       }
     }
     const confirmed = new Set(members.flatMap(member => member.confirmedResponsibilities ?? []));
-    // Facets are keyed by row text, so merging the members' maps carries each row's own tag into
-    // the consolidated block rather than keeping only the first member's.
-    const facets: Record<string, EvidenceFacet> = Object.assign({}, ...members.map(member => member.rowFacets ?? {}));
-    return [{ ...members[0]!, status: members.every(entry => entry.status === members[0]!.status) ? members[0]!.status : "draft" as const, heading: employmentHeading(job), details: rows.join("\n"), confirmedResponsibilities: rows.filter(row => confirmed.has(row)), rowFacets: facets }];
+    // Facets are keyed by row text, so merging the members' maps carries each row's own tags into
+    // the consolidated block rather than keeping only the first member's. Two members that tagged
+    // the same wording differently were both right about it: the merged row carries the union.
+    const facets: Record<string, EvidenceFacet[]> = {};
+    for (const row of rows) {
+      const union = canonicalFacets(members.flatMap(member => rowFacets(member, row)));
+      if (union.length) facets[row] = union;
+    }
+    return [{ ...members[0]!, status: members.every(entry => entry.status === members[0]!.status) ? members[0]!.status : "active" as const, heading: employmentHeading(job), details: rows.join("\n"), confirmedResponsibilities: rows.filter(row => confirmed.has(row)), rowFacets: facets }];
   });
   return facetedLibrary({ ...migrated, structuredExperience: true, entries: [...entries, ...migrated.entries.filter(entry => entry.kind !== "experience")] });
 }
 
-/** Missing statuses belong to legacy snapshots, where evidence was active by default. */
+/**
+ * A stored library, read: parsed, then consolidated. The one entry point that upgrades what an
+ * earlier release wrote.
+ *
+ * Everything that has ever been stored in `cv_libraries.content` comes back through here in
+ * today's shape — a row's single facet as a one-item list of types, a block stored as a draft as
+ * an active one, one block per job — without a migration and without every reader knowing which
+ * release wrote the row it is holding. Deliberately not re-parsed afterwards: consolidation can
+ * produce a library the schema refuses (a merge over twenty rows is the one that happens), and
+ * that library must still open in the editor that will be used to fix it.
+ */
+export function normaliseCvLibrary(raw: unknown): CvLibrary {
+  return consolidateExperience(CvLibrarySchema.parse(raw));
+}
+
+/**
+ * Evidence unless it has been archived. A block with no status at all belongs to a legacy
+ * snapshot, where evidence was active by default, and reads the same way.
+ *
+ * This is the question asked of a *parsed* library, where the only two answers are the two
+ * `CvEvidenceStatus` names. Ask `isActiveStoredEvidence` of anything that has not been parsed.
+ */
 export function isActiveEvidence(entry: CvLibrary["entries"][number]): boolean {
   return entry.status === undefined || entry.status === "active";
+}
+
+/**
+ * The same question, asked of a row of `cv_libraries.content` or `cv_drafts.library_snapshot`
+ * that has not been through `CvEntrySchema`.
+ *
+ * Stored JSON can still say `"draft"`, which the schema reads as `"active"` and which the Library
+ * shows as evidence. A reader handed stored content compares against the one status that means
+ * archived, so a block nobody has re-saved since the release that wrote it is not silently read
+ * as archived — which would drop it from the Library's evidence, keep it out of the review pass
+ * and send a gap answer somewhere other than the block it belongs to.
+ */
+export function isActiveStoredEvidence(entry: CvLibrary["entries"][number]): boolean {
+  return entry.status !== "inactive";
 }
 
 /** Imports/removals retain a recoverable inactive record instead of deleting evidence. */

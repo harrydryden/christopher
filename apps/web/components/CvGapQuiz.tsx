@@ -1,7 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRef, useState } from "react";
 import type { CvGapQuiz as CvGapQuizValue, CvLibrary } from "@christopher/core";
 import type { ActionResult } from "@/lib/validation";
 import { Button } from "@/components/Button";
@@ -30,14 +29,10 @@ export function CvGapQuiz({
   library: CvLibrary;
   action: (state: ActionResult, form: FormData) => Promise<ActionResult>;
 }) {
-  const router = useRouter();
-  const [state, formAction, pending] = useActionState(action, INITIAL);
+  const busy = useRef(false);
+  const [state, setState] = useState<ActionResult>(INITIAL);
+  const [pending, setPending] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>({});
-  // Skipping continues this same draft, so explicitly read its new server state after the
-  // successful action result.
-  useEffect(() => {
-    if (state.ok && state.message === "cv-gap-continued") router.refresh();
-  }, [router, state]);
   // Structured experience is consolidated for generation and can carry a synthetic/grouped ID;
   // employment is its stable editable destination. Legacy unlinked experience keeps its real ID.
   const evidence = library.entries.filter(entry => (!entry.status || entry.status === "active") && (entry.kind !== "experience" || !entry.employmentId));
@@ -51,7 +46,26 @@ export function CvGapQuiz({
           Your confirmed answers will be saved to a new Library version and reused in future CVs. You can continue without adding anything.
         </p>
       </header>
-      <form action={formAction} className="space-y-5">
+      <form method="post" className="space-y-5" onSubmit={async event => {
+        event.preventDefault();
+        if (busy.current) return;
+        busy.current = true;
+        setPending(true);
+        try {
+          const submitter = (event.nativeEvent as SubmitEvent).submitter;
+          const result = await action(state, new FormData(event.currentTarget, submitter));
+          const destination = result.ok && result.message?.match(/^cv-gap-destination:(\/cv\/[0-9a-f-]{36})$/)?.[1];
+          if (destination) {
+            window.location.assign(destination);
+            return;
+          }
+          setState(result);
+        } catch {
+          setState({ ok: false, error: "This CV could not be continued. Your entries are still here; please try again." });
+        }
+        busy.current = false;
+        setPending(false);
+      }}>
         <ol className="space-y-4" aria-label="Evidence questions">
           {quiz.questions.map((question, index) => {
             const answered = !!answers[question.id]?.trim();

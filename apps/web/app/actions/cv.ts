@@ -273,12 +273,7 @@ export async function answerCvGapQuiz(draftId: string, _prev: ActionResult, form
     if (error instanceof z.ZodError) return fail("These answers do not fit in the selected Library entry. Remove a row there or choose another active entry, then try again.");
     return actionError(error, "Could not continue this CV build. Please try again.");
   }
-  revalidatePath("/library");
-  revalidatePath(`/cv/${draftId}`);
-  // Tell the client to refresh after a successful same-draft continuation. Only an answered quiz
-  // navigates to a different draft.
-  if (nextId === draftId) return { ok: true, message: "cv-gap-continued" };
-  redirect(`/cv/${nextId}`);
+  return { ok: true, message: `cv-gap-destination:/cv/${nextId}` };
 }
 export async function saveCvWritingPreferences(_prev: ActionResult, form: FormData): Promise<ActionResult> {
   const user = await requireUser();

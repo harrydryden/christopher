@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 
 const require = createRequire(import.meta.url);
 require("tsx/cjs");
@@ -82,7 +82,11 @@ export async function verifyCvTailoringWorkspace(baseUrl, cookie, databaseUrl, u
     await context.addCookies([{ name: cookie.slice(0, separator), value: cookie.slice(separator + 1), url: baseUrl }]);
     const page = await context.newPage();
     const errors = [];
+    const consoleErrors = [];
+    const failedRequests = [];
     page.on("pageerror", error => errors.push(error.message));
+    page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
+    page.on("requestfailed", request => failedRequests.push({ url: request.url(), error: request.failure()?.errorText }));
     await mkdir("tmp/cv-tailoring-smoke", { recursive: true });
 
     // The applications dashboard points out builds waiting for the person's evidence.
@@ -173,19 +177,51 @@ export async function verifyCvTailoringWorkspace(baseUrl, cookie, databaseUrl, u
     );
     const skipStartedAt = Date.now();
     await page.getByRole("button", { name: "No further evidence — continue", exact: true }).click();
+    let response;
+    let responseBody = "";
+    let finishedResult;
+    let protocol;
     try {
-      const response = await within(skipResponse, 20_000, "skip action did not return response headers within 20 seconds");
+      response = await within(skipResponse, 20_000, "skip action did not return response headers within 20 seconds");
       const headersMs = Date.now() - skipStartedAt;
       assert.equal(response.ok(), true, `skip action returned HTTP ${response.status()}`);
-      await within(response.finished(), 20_000, "skip action response body did not finish within 20 seconds");
-      const responseMs = Date.now() - skipStartedAt;
+      const responseBodyPromise = response.text().catch(() => "");
+      const finishedPromise = response.finished().catch(error => error);
+      protocol = {
+        status: response.status(), headers: {
+          "content-type": response.headers()["content-type"],
+          "x-action-redirect": response.headers()["x-action-redirect"],
+          "x-action-revalidated": response.headers()["x-action-revalidated"],
+        }, headersMs,
+      };
       await within(
         page.getByRole("heading", { name: "Your CV is queued", exact: true }).waitFor({ timeout: 20_000 }),
         20_000,
         "queued CV did not render within 20 seconds of the skip response",
       );
-      console.log(`  quiz skip timing: response headers ${headersMs} ms · response finished ${responseMs} ms · queued render ${Date.now() - skipStartedAt} ms`);
+      finishedResult = await Promise.race([finishedPromise, new Promise(resolve => setTimeout(() => resolve("pending"), 250))]);
+      responseBody = await Promise.race([responseBodyPromise, new Promise(resolve => setTimeout(() => resolve(""), 250))]);
+      const responseMs = Date.now() - skipStartedAt;
+      await writeFile(`tmp/cv-tailoring-smoke/quiz-protocol-${skipId}.json`, JSON.stringify({ ...protocol,
+        outcome: "passed", finishedResult: finishedResult ? String(finishedResult) : null,
+        body: responseBody.slice(0, 10_000), responseMs, queuedRenderMs: Date.now() - skipStartedAt, pageErrors: errors,
+        consoleErrors, failedRequests,
+      }, null, 2));
+      console.log(`  quiz skip timing: response headers ${headersMs} ms · queued render ${Date.now() - skipStartedAt} ms · response ${finishedResult ? String(finishedResult) : "finished"}`);
     } catch (error) {
+      if (response) {
+        console.error("Skip action response", {
+          status: response.status(),
+          headers: protocol?.headers,
+          finishedResult: finishedResult ? String(finishedResult) : null,
+          body: responseBody.slice(0, 10_000),
+        });
+      }
+      await writeFile(`tmp/cv-tailoring-smoke/quiz-protocol-${skipId}.json`, JSON.stringify({ ...(protocol ?? {}),
+        outcome: "failed", elapsedMs: Date.now() - skipStartedAt, pageErrors: errors,
+        consoleErrors, failedRequests,
+      }, null, 2));
+      console.error("Skip browser errors", { pageErrors: errors, consoleErrors, failedRequests });
       console.error("Skip continuation diagnostic", (await pool.query("select status, gap_quiz from cv_drafts where id = $1", [skipId])).rows);
       console.error(await page.locator("main").innerText());
       throw error;

@@ -1,0 +1,20 @@
+{
+  "warning": "Blinding key only; no human review was performed.",
+  "pairs": [
+    {
+      "pairId": "strategy-director",
+      "versionA": "baseline",
+      "versionB": "tailored"
+    },
+    {
+      "pairId": "operations-director",
+      "versionA": "tailored",
+      "versionB": "baseline"
+    },
+    {
+      "pairId": "analytics-lead",
+      "versionA": "baseline",
+      "versionB": "tailored"
+    }
+  ]
+}

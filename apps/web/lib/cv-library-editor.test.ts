@@ -19,7 +19,7 @@ it("renders a labelled confirmation checkbox for every responsibility with its s
   expect(checkboxes[0]).toContain('checked=""');
   expect(checkboxes[1]).not.toContain('checked=""');
   expect(html).toContain('aria-label="Acme Director responsibilities and outcomes"');
-  expect(html).toMatch(/<th[^>]*>#<\/th><th[^>]*>Confirmed<\/th><th[^>]*>Narrative<\/th>/);
+  expect(html).toMatch(/<th[^>]*>#<\/th><th[^>]*>Confirmed<\/th><th[^>]*>Evidence<\/th><th[^>]*>Evidence type<\/th>/);
   expect(html).toContain('aria-label="Job 1 industry descriptions"');
   expect(html).toContain("Healthcare, SaaS");
   expect(html).toMatch(/<th[^>]*>Company<\/th><th[^>]*>Industry descriptions<\/th><th[^>]*>Job title<\/th>/);
@@ -66,8 +66,8 @@ it("tags every row with the facet it serves and says what the job is still missi
       rowFacets: { "Led a team": "responsibility", "Cut handovers by 40%": "metric" } }] };
   const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library, version: 4 }));
   // One control per row, defaulting to the facet the person chose and to Unclear when they have not.
-  expect(html).toContain('aria-label="Facet for Acme Director responsibility 1"');
-  expect(html).toContain('aria-label="Facet for Acme Director responsibility 2"');
+  expect(html).toContain('aria-label="Evidence type for Acme Director row 1"');
+  expect(html).toContain('aria-label="Evidence type for Acme Director row 2"');
   expect(html).toContain("<option value=\"\">Unclear</option>");
   expect(html).toContain("Problem solved");
   expect(html).toContain("Working style");

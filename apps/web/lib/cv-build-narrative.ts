@@ -171,6 +171,10 @@ function skippedPhrase(step: CvBuildStepView): string {
       return "Skipped measuring: the wording has not changed";
     case "assess_retry":
       return "No batch needed re-checking";
+    case "improve_content":
+      return "No further supported priority evidence needed adding";
+    case "gap_quiz":
+      return "No extra evidence questions needed";
     default:
       return `Skipped ${lowerFirst(step.title)}`;
   }
@@ -209,6 +213,16 @@ function runningPhrase(step: CvBuildStepView): string {
 function donePhrase(step: CvBuildStepView, context: NarrativeContext): string {
   const detail = step.detail;
   switch (step.motion) {
+    case "plan_evidence": {
+      const supported = number(detail, "supported");
+      return flag(detail, "reused") ? "Reused the confirmed evidence plan" : `Matched the role to your evidence${supported === null ? "" : `: ${count(supported, "requirement")} ${supported === 1 ? "has" : "have"} supporting evidence`}`;
+    }
+    case "gap_quiz":
+      return flag(detail, "skipped") ? "No further evidence questions needed" : `Prepared ${count(number(detail, "questions") ?? 0, "optional question")} for you before writing`;
+    case "improve_content":
+      return "Wrote one targeted revision using confirmed evidence already in your Library";
+    case "compare_content":
+      return flag(detail, "accepted") ? "Kept the stronger revision after checking its evidence and coverage" : "Kept the original CV because the revision did not pass every improvement check";
     case "load_inputs": {
       const version = number(detail, "libraryVersion");
       const shape = [
@@ -384,7 +398,9 @@ export function narrateStep(step: CvBuildStepView, now: Date = new Date(), conte
       ? step.failure?.message ?? step.error ?? null
       : changes.length
         ? `${changes.slice(0, 3).join("; ")}${changes.length > 3 ? ` (+${formatCount(changes.length - 3)} more)` : ""}`
-        : null;
+        : step.motion === "compare_content" && !flag(step.detail, "accepted")
+          ? names(step.detail, "reasons").join(" ") || null
+          : null;
   return {
     time: formatClock(step.startedAt, context.timeZone),
     glyph: GLYPH[step.status],

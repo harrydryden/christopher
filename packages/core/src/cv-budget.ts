@@ -2,11 +2,13 @@ import type { CvLibrary, CvPlan } from "./cv";
 import { cvRequirementWeight, type CvRubric } from "./cv-assessment";
 import { CV_LIMITS } from "./cv-format";
 import { cvMaxPages } from "./cv-theme";
+import { cvTailoringCoverage, cvTailoringRequirementWeights, type CvTailoringPlan } from "./cv-tailoring";
 
 export type CvBlockBudget = { entryId: string; kind: string; priority: number; maxBullets: number; maxCharacters: number; maxBulletCharacters: number; maxSkills: number };
 export type CvWritingBudget = { summaryCharacters: number; totalCharacters: number; blocks: CvBlockBudget[] };
 /** What a CV is fitted against: plain text, every word counting once, or words weighted by requirement. */
 export type CvRelevanceTarget = string | ReadonlyMap<string, number>;
+export type CvSemanticTarget = { plan: CvTailoringPlan; rubric: CvRubric };
 const stop = new Set('a an of to in on at as is it be by or we with from that this your have will role team work company experience skills across their into and the for are our you'.split(' '));
 const relevantWords = (text: string) => [...new Set(text.toLowerCase().match(/[a-z][a-z0-9+#&-]*/g) ?? [])].filter(word => !stop.has(word));
 
@@ -29,8 +31,17 @@ export function cvRelevance(value: string, target: CvRelevanceTarget): number {
   return relevantWords(value).reduce((sum, word) => sum + (requested.get(word) ?? 0), 0);
 }
 
+function semanticEntryRelevance(entryId: string, semantic?: CvSemanticTarget): number {
+  if (!semantic) return 0;
+  const coverage = cvTailoringCoverage(semantic.plan);
+  const weights = cvTailoringRequirementWeights(semantic.plan, semantic.rubric);
+  const requirements = new Set<string>();
+  for (const [sourceId, ids] of coverage) if (sourceId.startsWith(`entry:${entryId}:`)) ids.forEach(id => requirements.add(id));
+  return [...requirements].reduce((sum, id) => sum + (weights.get(id) ?? 0), 0);
+}
+
 /** Allocate a conservative writing envelope; actual PDF measurement remains authoritative. */
-export function createCvWritingBudget(library: CvLibrary, target: CvRelevanceTarget, scale = 1): CvWritingBudget {
+export function createCvWritingBudget(library: CvLibrary, target: CvRelevanceTarget, scale = 1, semantic?: CvSemanticTarget): CvWritingBudget {
   const roles = library.entries.filter(entry => entry.kind === 'experience').sort((a, b) => {
     const date = (entry: typeof a) => {
       const job = library.employment?.find(job => job.id === entry.employmentId);
@@ -40,8 +51,10 @@ export function createCvWritingBudget(library: CvLibrary, target: CvRelevanceTar
   });
   const education = library.entries.filter(entry => entry.kind === 'education');
   if (roles.length + education.length > 20) throw new Error('Select at most 20 employment and education blocks for this CV. The full library is retained.');
-  const byRelevance = (a: CvLibrary["entries"][number], b: CvLibrary["entries"][number]) =>
-    cvRelevance([b.heading, b.details, ...(b.skillItems ?? [])].join(' '), target) - cvRelevance([a.heading, a.details, ...(a.skillItems ?? [])].join(' '), target);
+  const entryRelevance = (entry: CvLibrary["entries"][number]) => semantic
+    ? semanticEntryRelevance(entry.id, semantic)
+    : cvRelevance([entry.heading, entry.details, ...(entry.skillItems ?? [])].join(' '), target);
+  const byRelevance = (a: CvLibrary["entries"][number], b: CvLibrary["entries"][number]) => entryRelevance(b) - entryRelevance(a);
   const skills = library.entries.filter(entry => entry.kind === 'skill').sort(byRelevance).slice(0, Math.min(2, 20 - roles.length - education.length));
   // The allocations were calibrated on a two-page CV. The user's page limit scales the body;
   // the profile only shrinks for a one-page CV, because it sits in the fixed masthead.
@@ -59,7 +72,7 @@ export function createCvWritingBudget(library: CvLibrary, target: CvRelevanceTar
   const skillCharacters = skills.length * Math.round(180 * scale);
   const interestCharacters = interests.length * Math.round(120 * scale);
   const roleCharacters = Math.max(roles.length * 100, totalCharacters - summaryCharacters - qualificationCharacters - skillCharacters - interestCharacters);
-  const weights = roles.map((entry, index) => 1 + Math.min(2, cvRelevance(entry.heading + ' ' + entry.details, target) / 5) + 2 / (index + 1));
+  const weights = roles.map((entry, index) => 1 + Math.min(2, entryRelevance(entry) / 5) + 2 / (index + 1));
   const sum = weights.reduce((a, b) => a + b, 0) || 1;
   const blocks: CvBlockBudget[] = roles.map((entry, index) => {
     const maxCharacters = Math.floor(roleCharacters * weights[index]! / sum);

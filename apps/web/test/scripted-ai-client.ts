@@ -13,6 +13,7 @@
  */
 import {
   CV_LIMITS,
+  cvTailoringEvidence,
   cvRelevance,
   industryDescriptions,
   type CvBlockBudget,
@@ -40,7 +41,16 @@ export const REVIEW_BATCH_SIZE = 8;
 export const LIBRARY_ONLY_IMPROVEMENT =
   "Bring the confirmed supplier negotiation evidence into the CV instead of leaving it in the library.";
 
-export type ScriptedCallKind = "rubric" | "author" | "review";
+export type ScriptedCallKind = "rubric" | "planning" | "author" | "review";
+
+interface PlanningPayload {
+  rubric: CvRubric;
+  evidence: Array<{ id: string; text: string; entryId?: string }>;
+  destinations: {
+    employment: Array<{ employmentId: string; label: string }>;
+    evidence: Array<{ entryId: string; label: string; kind: string }>;
+  };
+}
 
 export interface AuthorPayload {
   library: Omit<CvLibrary, "theme" | "name" | "contact" | "linkedinUrl" | "websiteUrl">;
@@ -79,6 +89,7 @@ interface ScriptedBase {
 
 export type ScriptedCall =
   | (ScriptedBase & { kind: "rubric"; payload: { description: string } })
+  | (ScriptedBase & { kind: "planning"; payload: PlanningPayload })
   | (ScriptedBase & { kind: "author"; payload: AuthorPayload })
   | (ScriptedBase & { kind: "review"; payload: ReviewPayload });
 
@@ -257,6 +268,7 @@ export function scriptedPlan(payload: AuthorPayload): CvPlan {
   const previous = new Map(
     (layoutFeedback?.previousPlan.sections ?? []).map((section) => [section.entryId, section]),
   );
+  const evidence = cvTailoringEvidence(library as CvLibrary);
   const sections: CvPlan["sections"] = [];
   for (const block of writingBudget.blocks) {
     const entry = library.entries.find((candidate) => candidate.id === block.entryId);
@@ -269,6 +281,10 @@ export function scriptedPlan(payload: AuthorPayload): CvPlan {
         entryId: block.entryId,
         skillItems: chosen,
         bullets: chosen.slice(0, CV_LIMITS.bulletsPerSection),
+        bulletSources: chosen.slice(0, CV_LIMITS.bulletsPerSection).map(label => {
+          const source = evidence.find(item => item.entryId === entry.id && item.text === label)!;
+          return [{ sourceId: source.id, quote: label }];
+        }),
       });
       continue;
     }
@@ -282,6 +298,10 @@ export function scriptedPlan(payload: AuthorPayload): CvPlan {
     sections.push({
       entryId: block.entryId,
       bullets,
+      bulletSources: bullets.map(bullet => {
+        const source = evidence.find(item => item.entryId === entry.id && clean(item.text).includes(clean(bullet)))!;
+        return [{ sourceId: source.id, quote: bullet }];
+      }),
       ...(industries.length ? { industryDescriptions: industries } : {}),
     });
   }
@@ -289,10 +309,10 @@ export function scriptedPlan(payload: AuthorPayload): CvPlan {
     1,
     Math.min(writingBudget.summaryCharacters, CV_LIMITS.summaryCharacters),
   );
+  const summary = clip(layoutFeedback?.previousPlan.summary || library.profile, summaryLimit) || "Operations leader.";
   return {
-    summary:
-      clip(layoutFeedback?.previousPlan.summary || library.profile, summaryLimit) ||
-      "Operations leader.",
+    summary,
+    summarySources: [{ sourceId: "source:profile", quote: summary }],
     sections,
     gaps: [],
   };
@@ -353,6 +373,7 @@ export function scriptedReview(payload: ReviewPayload, unmet: RegExp): CvReviewP
 
 function kindOf(system: string): ScriptedCallKind {
   if (system.startsWith("Analyse the company")) return "rubric";
+  if (system.startsWith("Map every supplied fixed rubric")) return "planning";
   if (system.includes("Write a tailored UK-English CV")) return "author";
   if (system.includes("Independently assess the exact final CV")) return "review";
   throw new Error(`Scripted client saw an unknown call site: ${system.slice(0, 80)}`);
@@ -365,7 +386,7 @@ function blocksOf(params: Record<string, unknown>): TextBlock[] {
 }
 
 function usageFor(kind: ScriptedCallKind, cached: boolean) {
-  if (kind === "rubric")
+  if (kind === "rubric" || kind === "planning")
     return { input_tokens: 1800, output_tokens: 900, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   if (kind === "author")
     return { input_tokens: 4200, output_tokens: 2600, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
@@ -452,6 +473,26 @@ export function createScriptedAiClient(options: ScriptedAiOptions = {}): Scripte
               options.maxRequirements,
             );
             return rubric;
+          }
+          if (kind === "planning") {
+            const planning = payload as PlanningPayload;
+            const ask = planning.rubric.requirements.find(requirement => requirement.importance !== "responsibility" && requirement.category !== "logistics");
+            const destination = planning.destinations.employment[0]
+              ? { kind: "employment" as const, employmentId: planning.destinations.employment[0].employmentId }
+              : { kind: "evidence" as const, entryId: planning.destinations.evidence[0]!.entryId };
+            return {
+              requirements: planning.rubric.requirements.map(requirement => ({
+                requirementId: requirement.id,
+                status: "missing" as const,
+                evidence: [],
+                reason: "The scripted planner leaves this for the factual audit.",
+              })),
+              gapQuestions: ask ? [{
+                id: "q1", requirementId: ask.id, requirement: ask.label,
+                prompt: "What further factual evidence can you add for this requirement?",
+                suggestedDestination: destination,
+              }] : [],
+            };
           }
           if (kind === "author") return scriptedPlan(payload as AuthorPayload);
           return scriptedReview(payload as ReviewPayload, unmet);

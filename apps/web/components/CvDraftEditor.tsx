@@ -202,7 +202,7 @@ export function CvDraftEditor({
         <div>
           <dt className="inline font-semibold text-fg">Rebuild from Library</dt>
           <dd className="inline">
-            {" · rewrites from the latest Library"}
+            {" · plans and rewrites from the latest Library; includes one improvement pass if useful"}
             {costs && ` · about ${formatUsd(costs.allUsd)}`}
           </dd>
         </div>

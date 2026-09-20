@@ -9,6 +9,7 @@ export * from "./cv-theme";
 
 const SkillItemsSchema = z.array(z.string().trim().min(1).max(80).refine(value => !/[\r\n]/.test(value), "Each skill must be a single line.")).min(1).max(20)
   .refine(items => new Set(items.map(item => item.toLowerCase())).size === items.length, "Remove repeated skills.");
+export const CvPlanSourceRefSchema = z.object({ sourceId: z.string().min(1).max(220), quote: z.string().trim().min(1).max(1600) });
 
 const LinkedInSchema = z.string().max(300).refine(value => {
   if (!value) return true;
@@ -174,7 +175,8 @@ export const CvLibrarySchema = z.object({
 export type CvLibrary = z.infer<typeof CvLibrarySchema>;
 export const CvPlanSchema = z.object({
   summary: z.string().min(1).max(CV_LIMITS.summaryCharacters),
-  sections: z.array(z.object({ entryId: z.string(), skillItems: SkillItemsSchema.optional(), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(CV_LIMITS.bulletCharacters)).min(1).max(CV_LIMITS.bulletsPerSection) })).min(1).max(20),
+  summarySources: z.array(CvPlanSourceRefSchema).max(8).optional(),
+  sections: z.array(z.object({ entryId: z.string(), skillItems: SkillItemsSchema.optional(), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(CV_LIMITS.bulletCharacters)).min(1).max(CV_LIMITS.bulletsPerSection), bulletSources: z.array(z.array(CvPlanSourceRefSchema).min(1).max(8)).max(CV_LIMITS.bulletsPerSection).optional() })).min(1).max(20),
   gaps: z.array(z.string().max(500)).max(12),
 });
 export type CvPlan = z.infer<typeof CvPlanSchema>;
@@ -183,8 +185,8 @@ export const CvContentSchema = z.object({
   theme: CvThemeSchema.optional(),
   linkedinUrl: LinkedInSchema,
   websiteUrl: WebsiteSchema,
-  name: z.string().min(1).max(120), contact: z.string().max(500), summary: z.string().min(1).max(CV_LIMITS.summaryCharacters),
-  sections: z.array(z.object({ entryId: z.string(), kind: CvEntrySchema.shape.kind, skillItems: SkillItemsSchema.optional(), heading: z.string().min(1).max(250), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(CV_LIMITS.bulletCharacters)).min(1).max(CV_LIMITS.bulletsPerSection) }).refine(section => !section.skillItems || section.kind === "skill", "Individual skills belong to skill sections only")).min(1).max(20),
+  name: z.string().min(1).max(120), contact: z.string().max(500), summary: z.string().min(1).max(CV_LIMITS.summaryCharacters), summarySources: z.array(CvPlanSourceRefSchema).max(8).optional(),
+  sections: z.array(z.object({ entryId: z.string(), kind: CvEntrySchema.shape.kind, skillItems: SkillItemsSchema.optional(), heading: z.string().min(1).max(250), industryDescriptions: z.array(z.string().min(1).max(120)).max(2).optional(), bullets: z.array(z.string().min(1).max(CV_LIMITS.bulletCharacters)).min(1).max(CV_LIMITS.bulletsPerSection), bulletSources: z.array(z.array(CvPlanSourceRefSchema).min(1).max(8)).max(CV_LIMITS.bulletsPerSection).optional() }).refine(section => !section.skillItems || section.kind === "skill", "Individual skills belong to skill sections only")).min(1).max(20),
   gaps: z.array(z.string().max(500)).max(12),
 });
 export type CvContent = z.infer<typeof CvContentSchema>;
@@ -215,7 +217,7 @@ export function materialiseCv(library: CvLibrary, plan: CvPlan): CvContent {
     }))];
     return [entry.id, { ...section, ...(selectedSkills ? { skillItems: selectedSkills } : {}), ...(selectedIndustries.length ? { industryDescriptions: selectedIndustries } : {}), kind: entry.kind, heading: evidenceHeading(library, entry) }];
   }));
-  return CvContentSchema.parse({ theme: library.theme ?? DEFAULT_CV_THEME, name: library.name, contact: library.contact, linkedinUrl: library.linkedinUrl, websiteUrl: library.websiteUrl, summary: plan.summary,
+  return CvContentSchema.parse({ theme: library.theme ?? DEFAULT_CV_THEME, name: library.name, contact: library.contact, linkedinUrl: library.linkedinUrl, websiteUrl: library.websiteUrl, summary: plan.summary, summarySources: plan.summarySources,
     sections: library.entries.flatMap(e => selected.has(e.id) ? [selected.get(e.id)!] : []), gaps: plan.gaps });
 }
 

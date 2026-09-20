@@ -6,6 +6,8 @@ import { cvDraftSize, cvEditCosts } from "@/lib/cv-quote";
 import { CvDisclosure } from "@/components/CvDisclosure";
 import { CvWorkspace, CvWorkspacePanel } from "@/components/CvWorkspace";
 import { CvBuildProgress } from "@/components/CvBuildProgress";
+import { CvGapQuiz } from "@/components/CvGapQuiz";
+import { answerCvGapQuiz } from "@/app/actions/cv";
 import { CvBuildLog, CvBuildNarrative } from "@/components/CvBuildNarrative";
 import { cvBuildTotals, cvBuildTotalsLine } from "@/lib/cv-build-narrative";
 import { CvBuildFailureNotice } from "@/components/CvBuildFailureNotice";
@@ -76,6 +78,7 @@ export default async function CvDraftPage({
   const version = cvVersionLabel(draft.createdAt, versions.get(draft.id) ?? Math.max(1, draft.revision));
   const content = draft.content;
   const busy = draft.status === "queued" || draft.status === "generating";
+  const awaitingEvidence = draft.status === "awaiting_evidence";
   const failed = draft.status === "failed";
   // A build that has stopped moving is indistinguishable from a slow one without the queue row
   // behind it: which attempt this is, whether anything still holds it, and what the last one left.
@@ -273,6 +276,18 @@ export default async function CvDraftPage({
         )}
         {(!content || busy) && (
           <CvWorkspacePanel tab="content">
+            {awaitingEvidence && draft.gapQuiz?.status === "awaiting_answers" && (
+              <CvGapQuiz
+                quiz={draft.gapQuiz}
+                library={draft.librarySnapshot}
+                action={answerCvGapQuiz.bind(null, id)}
+              />
+            )}
+            {draft.gapQuiz?.continuationDraftId && (
+              <p className="border border-line-muted p-4 text-14">
+                Your answers were saved to the Library. <Link className="underline" href={`/cv/${draft.gapQuiz.continuationDraftId}`}>Open the continuing CV build</Link>.
+              </p>
+            )}
             {busy && build && (
               <CvBuildProgress
                 stage={draft.buildStage}

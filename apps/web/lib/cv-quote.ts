@@ -106,7 +106,7 @@ export async function cvBuildQuote(userId: string, jobId: string, now: Date = ne
     libraryBytes: libraryBytesFor(library?.content, settings.cvWritingPreferences, settings.cvTheme),
     descriptionBytes: role?.description ? Buffer.byteLength(role.description) : 0,
   };
-  const estimateUsd = estimateCvBuildUsd(settings.cvModel, size, "all");
+  const estimateUsd = estimateCvBuildUsd(settings.cvModel, size, "tailored");
   const since = aiBudgetWindowStart(now, settings.aiBudgetResetAt);
   const [spentUsd, heldUsd] = await Promise.all([
     accountAiSpend(database, userId, since),
@@ -153,7 +153,7 @@ export function cvQuoteButtonLine(quote: CvBuildQuote): string {
 export interface CvEditCosts {
   /** Save Direct Edits: the saved wording is kept, so only the assessment is paid for again. */
   assessmentUsd: number;
-  /** Rebuild from Library: written afresh, so the rubric, the writer and the assessment all run. */
+  /** Rebuild from Library: plans, writes and checks, with capacity for one useful improvement. */
   allUsd: number;
 }
 
@@ -167,7 +167,7 @@ export interface CvEditCosts {
 export function cvEditCosts(model: string, size: CvBuildSize): CvEditCosts {
   return {
     assessmentUsd: estimateCvBuildUsd(model, size, "assessment"),
-    allUsd: estimateCvBuildUsd(model, size, "all"),
+    allUsd: estimateCvBuildUsd(model, size, "tailored_completion"),
   };
 }
 

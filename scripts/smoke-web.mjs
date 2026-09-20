@@ -6,6 +6,7 @@
  *   node scripts/smoke-web.mjs --no-build  (test an already built app)
  */
 import { verifyCvWorkspace } from "./smoke-cv.mjs";
+import { verifyCvTailoringWorkspace } from "./smoke-cv-tailoring.mjs";
 import { createRequire } from "node:module";
 import { once } from "node:events";
 import { spawn } from "node:child_process";
@@ -88,7 +89,7 @@ const PAGES = [
   ["/admin", ["Admin", "Registration", "Accounts"]],
   ["/admin/settings", ["System settings", "Schedule"]],
   ["/admin/catalogue", ["Company catalogue"]],
-  ["/admin/health", ["Operations", "Background worker"]],
+  ["/admin/health", ["Operations"]],
   // The CV list has gone: `/cv` is a redirect into the applications table, which holds the CVs.
   ["/cv", { redirectsTo: "/applications" }],
   ["/library", ["Library", "Intro", "Website", "Experience", "Education, skills and interests",
@@ -241,6 +242,8 @@ async function main() {
 
   try { await verifyCvWorkspace(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL, userId); }
   catch (error) { failures.push(`CV browser flow: ${error.message}`); }
+  try { await verifyCvTailoringWorkspace(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL, userId); }
+  catch (error) { failures.push(`CV tailoring browser flow: ${error.message}`); }
 
   // The disposable account takes its sessions, settings and drafts with it, and the throwaway
   // company takes its subscription.

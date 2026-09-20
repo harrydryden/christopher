@@ -105,7 +105,7 @@ export async function dailyCvVersions(database: Pick<Db, "execute" | "select">, 
  * once and remembered — but only when they are all present, so the release that is briefly ahead
  * of its migration recovers by itself the moment the worker catches up, without a redeploy.
  */
-const BUILD_COLUMNS = ["progress_at", "build_checkpoint", "failure"] as const;
+const BUILD_COLUMNS = ["progress_at", "build_checkpoint", "failure", "gap_quiz"] as const;
 let buildColumnsPresent: Promise<boolean> | null = null;
 
 function cvBuildColumnsPresent(): Promise<boolean> {
@@ -160,7 +160,7 @@ export async function getOwnCvDraft(userId: string, id: string): Promise<typeof 
   }
   const [draft] = await db().select(settledCvDraftColumns).from(cvDrafts).where(owned).limit(1);
   // A build that has not been recorded yet reads as one that recorded nothing.
-  return draft ? { ...draft, progressAt: null, buildCheckpoint: null, failure: null } : null;
+  return draft ? { ...draft, progressAt: null, buildCheckpoint: null, failure: null, gapQuiz: null } : null;
 }
 
 /**
@@ -189,13 +189,14 @@ export async function getOwnCvWorkRow(userId: string, id: string) {
 }
 
 /**
- * The queue row behind one account's build, by the dedupe key its enqueue used. It carries the
+ * The newest queue row behind one account's build, by the draft id in its payload. It carries the
  * only evidence that a draft stuck on "generating" has anything working on it: the attempt number,
  * whether it is claimed, and the error a handed-back attempt left. Reached through the draft, so
  * it is never read without the account that owns it.
  *
- * The dedupe index covers queued and running rows only, so a role can accumulate finished ones;
- * the newest is the attempt this page is about.
+ * The payload is the stable relationship: a quiz continuation deliberately uses another dedupe
+ * key so it cannot collide with the worker task that just paused. The newest row is the attempt
+ * this page is about.
  */
 export async function getOwnCvBuildTask(userId: string, draftId: string) {
   const [row] = await db()
@@ -207,9 +208,9 @@ export async function getOwnCvBuildTask(userId: string, draftId: string) {
       startedAt: tasks.startedAt,
     })
     .from(tasks)
-    .innerJoin(cvDrafts, eq(cvDrafts.id, draftId))
-    .where(and(eq(tasks.dedupeKey, `generate_cv:${draftId}`), eq(cvDrafts.userId, userId)))
-    .orderBy(desc(tasks.createdAt))
+    .innerJoin(cvDrafts, sql`${tasks.payload}->>'draftId' = ${cvDrafts.id}::text`)
+    .where(and(eq(tasks.type, "generate_cv"), eq(cvDrafts.id, draftId), eq(cvDrafts.userId, userId)))
+    .orderBy(sql`case when ${tasks.status} in ('queued', 'running') then 0 else 1 end`, desc(tasks.createdAt), desc(tasks.id))
     .limit(1);
   return row ?? null;
 }

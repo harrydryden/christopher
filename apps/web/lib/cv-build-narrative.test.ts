@@ -250,3 +250,10 @@ it("labels a later attempt with its place in the queue's allowance", () => {
   expect(attemptLabel(2, 3)).toBe("Attempt 2 of 3");
   expect(attemptLabel(2, null)).toBe("Attempt 2");
 });
+
+it("makes planning, optional questions and revision selection understandable", () => {
+  expect(narrateStep(step("plan_evidence", "done", { supported: 3 }), now).text).toContain("3 requirements");
+  expect(narrateStep(step("gap_quiz", "done", { questions: 2 }), now).text).toBe("Prepared 2 optional questions for you before writing");
+  expect(narrateStep(step("compare_content", "done", { accepted: false }), now).text).toBe("Kept the original CV because the revision did not pass every improvement check");
+  expect(narrateStep(step("compare_content", "done", { accepted: true }), now).text).toContain("Kept the stronger revision");
+});

@@ -430,6 +430,23 @@ it("routes CV generation separately, validates industry selections and records u
   expect(usage[0]).toMatchObject({ callSite: "CV", refId: "draft", ok: true });
 });
 
+it("plans CV evidence in one bounded call and validates exact row references", async () => {
+  const rubric = { requirements: [{ id: "r1", label: "Lead operations", quote: "Lead operations", importance: "essential" as const, category: "delivery" as const }], caveats: [] };
+  const library: CvLibrary = { name: "Candidate", contact: "", profile: "Operations leader", entries: [{ id: "role", kind: "experience", heading: "Director", details: "Led operations across Europe", confirmedResponsibilities: ["Led operations across Europe"] }] };
+  const output = { requirements: [{ requirementId: "r1", status: "demonstrated", evidence: [{ sourceId: "entry:role:row:0", quote: "Led operations across Europe" }], reason: "Direct evidence." }], gapQuestions: [] };
+  const { engine, calls, usage } = engineWith(output);
+  expect(await engine.planCvTailoring({ rubric, library }, { refType: "cv", refId: "draft" })).toEqual(output);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.params.max_tokens).toBe(16000);
+  expect(usage[0]).toMatchObject({ callSite: "CV", stage: "planning" });
+  expect(JSON.stringify(calls[0]!.params.system)).toContain("exact source IDs");
+
+  const invalid = engineWith({ ...output, requirements: [{ ...output.requirements[0]!, evidence: [{ sourceId: "entry:role:row:999", quote: "Led operations across Europe" }] }] });
+  await expect(invalid.engine.planCvTailoring({ rubric, library })).rejects.toMatchObject({
+    kind: "output_invalid", message: expect.stringContaining("Unknown tailoring evidence source"),
+  });
+});
+
 describe("source company extraction", () => {
   it("validates evidence and recommendation decisions and records usage", async () => {
     const candidate = { name: "Acme", homepageUrl: "https://acme.example", rationale: "Relevant operations employer", quote: "Acme raised funding", recommended: true };

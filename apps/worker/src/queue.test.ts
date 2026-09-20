@@ -10,7 +10,7 @@ import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { agePriorities, backoffMs, claimTask, deadlineMsFor, failTask, laneSlots, recoverFromCrash, requeueStale, TASK_STALE_AFTER_MS, TaskQueue } from "./queue";
 import { reconcileCvDrafts, schedulerTick } from "./scheduler";
-import { CV_ABANDONED_MESSAGE, onAbandon } from "./handlers";
+import { CV_ABANDONED_MESSAGE, onAbandon, onInterrupted } from "./handlers";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test";
 
@@ -703,6 +703,40 @@ describe("crash recovery", () => {
     expect(event!.detail).toMatchObject({ subject: `generate_cv:${draft.id}` });
   });
 
+  it("does not let the pre-quiz task fail or annotate a continuation already queued for the same draft", async () => {
+    const { user, draft, task } = await buildInFlight("quiz-continuation@example.com", "pod-a", 3);
+    const completedAt = new Date(Date.now() + 1_000);
+    await db.update(schema.cvDrafts).set({
+      status: "queued",
+      failure: null,
+      gapQuiz: { status: "skipped", questions: [], completedAt: completedAt.toISOString() } as never,
+    }).where(eq(schema.cvDrafts.id, draft.id));
+    await enqueueTask(db, "generate_cv", { draftId: draft.id }, {
+      dedupeKey: `generate_cv:${draft.id}:quiz-complete`, priority: 2,
+    });
+
+    expect(await requeueStale(db, TASK_STALE_AFTER_MS, "pod-b", { deps, onAbandon })).toEqual({ requeued: 0, failed: 1 });
+    let [continued] = await db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+    expect(continued!.status).toBe("queued");
+    expect(continued!.failure).toBeNull();
+    expect(await heldFor(user.id)).toBe(1);
+
+    // The same guard applies when the old run is interrupted with another attempt available.
+    await onInterrupted.generate_cv!(task, deps, { retryAt: new Date(Date.now() + 60_000).toISOString() });
+    [continued] = await db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+    expect(continued!.status).toBe("queued");
+    expect(continued!.failure).toBeNull();
+
+    // A later ordinary retry can reuse the legacy key. Its failure is real work ending, not the
+    // pre-quiz delivery arriving late, so it must close the draft and return the budget hold.
+    await db.update(schema.tasks).set({ status: "done" })
+      .where(eq(schema.tasks.dedupeKey, `generate_cv:${draft.id}:quiz-complete`));
+    await onAbandon.generate_cv!({ ...task, createdAt: new Date(completedAt.getTime() + 1_000) }, deps, "later retry failed");
+    [continued] = await db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
+    expect(continued!.status).toBe("failed");
+    expect(await heldFor(user.id)).toBe(0);
+  });
+
   it("leaves a build that still has attempts alone, draft and hold included", async () => {
     const { user, draft } = await buildInFlight("retryable-build@example.com", "pod-a", 1);
     expect(await requeueStale(db, TASK_STALE_AFTER_MS, "pod-b", { deps, onAbandon })).toEqual({ requeued: 1, failed: 0 });
@@ -770,6 +804,9 @@ describe("crash recovery", () => {
   it("fails a CV draft no task is building any more, and leaves a live build alone", async () => {
     const { user, draft } = await buildInFlight("orphan-build@example.com", "pod-a", 1);
     const live = await buildInFlight("live-build@example.com", "pod-a", 1);
+    // A resumed quiz uses a different dedupe key, but is still the task building this draft.
+    await db.update(schema.tasks).set({ dedupeKey: `generate_cv:${live.draft.id}:quiz-complete` })
+      .where(sql`payload->>'draftId' = ${live.draft.id}`);
     // The orphan's task is gone (history maintenance takes finished rows after thirty days);
     // the other's is still running, and its draft is nobody's business.
     await db.delete(schema.tasks).where(sql`payload->>'draftId' = ${draft.id}`);

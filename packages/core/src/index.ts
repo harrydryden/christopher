@@ -15,8 +15,11 @@ export * as ats from "./ats/index";
 export * as discovery from "./discovery/index";
 export type { DiscoveryContext, DiscoveryCandidate, DiscoveryResult, DiscoveryOutcome, DiscoveryAiHooks, HarvestedLink } from "./discovery/types";
 export * from "./cv";
+export * from "./cv-tailoring";
 export * from "./cv-build";
 export * from "./cv-build-plan";
+export * from "./cv-quality";
+export * from "./cv-gap-quiz";
 export * from "./library-review";
 export * from "./library-import";
 

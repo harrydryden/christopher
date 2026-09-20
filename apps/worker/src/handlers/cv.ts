@@ -1,4 +1,4 @@
-import { buildFittedCv, CvFitFailure, type CvFitEvent } from "@christopher/core/cv-fit";
+import { buildFittedCv, selectCvToFit, CvFitFailure, type CvFitEvent } from "@christopher/core/cv-fit";
 import {
   renderCvPdfWithReport,
   assertCvPageLimit,
@@ -16,6 +16,9 @@ import {
   type CvAssessment,
   type CvReviewPlan,
 } from "@christopher/core/cv-assessment";
+import { cvTailoringEvidence, validateCvTailoringPlan } from "@christopher/core/cv-tailoring";
+import { buildCvGapQuiz } from "@christopher/core/cv-gap-quiz";
+import { compareCvQuality, diagnoseCvQuality } from "@christopher/core/cv-quality";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { completeCv, cvRoleKey, recordAiCall, schema, type Task, type Db } from "@christopher/db";
 import { createAiEngine, estimateCvBuildUsd, CANCELLED_ERROR, type AiFailure, type AiUsageRecord } from "@christopher/ai";
@@ -31,6 +34,7 @@ import {
   callCost,
   cvMaxPages,
   cvRelevanceTerms,
+  createCvWritingBudget,
   groupCvLibrary,
   reusedCvRubric,
   usd,
@@ -82,7 +86,7 @@ export const CV_HOLD_LOST_MESSAGE =
   "This build's share of your AI budget was released while it was running, so it stopped rather than spend more.";
 
 type BuildUpdate = Partial<Pick<typeof schema.cvDrafts.$inferInsert,
-  "status" | "content" | "assessment" | "revision" | "buildStage" | "error" | "finalisedAt" | "progressAt" | "buildCheckpoint" | "failure">>;
+  "status" | "content" | "assessment" | "revision" | "buildStage" | "error" | "finalisedAt" | "progressAt" | "buildCheckpoint" | "failure" | "gapQuiz">>;
 
 /** The four milestones the draft carries for the page's strip. */
 type BuildStage = NonNullable<BuildUpdate["buildStage"]>;
@@ -159,7 +163,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
       .select()
       .from(schema.cvDrafts)
       .where(eq(schema.cvDrafts.id, draftId));
-    if (!draft || draft.status === "ready") return { skipped: true };
+    if (!draft || draft.status === "ready" || draft.status === "awaiting_evidence" || draft.archivedAt) return { skipped: true };
 
     // A queued row always carries both; a hand-made task in a test may not, and an attempt that
     // is not a number would reach the ledger as a broken row.
@@ -260,7 +264,9 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
       const expected = estimateCvBuildUsd(draft.model, {
         libraryBytes: Buffer.byteLength(JSON.stringify(library)),
         descriptionBytes: Buffer.byteLength(draft.jobDescription),
-      }, inputs.reusedContent ? "assessment" : "all");
+      }, inputs.reusedContent
+        ? checkpoint.tailoringEnabled && !checkpoint.improvementAttempted && mode !== "assess" ? "tailored_assessment" : "assessment"
+        : checkpoint.tailoringEnabled ? (checkpoint.quizCompleted ? "tailored_completion" : "tailored") : "all");
       const account = await deps.userSettings(draft.userId);
       const since = aiBudgetWindowStart(deps.now(), account.aiBudgetResetAt);
       await journal.run("admit_budget", {
@@ -368,6 +374,39 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
       checkpoint = { ...checkpoint, rubric, rubricAt: deps.now().toISOString(), attempt };
       await save({ buildCheckpoint: checkpoint });
 
+      let tailoringPlan = checkpoint.tailoringPlan;
+      if (checkpoint.tailoringEnabled && !inputs.reusedContent) {
+        tailoringPlan = await journal.run("plan_evidence", { reused: !!tailoringPlan }, async step => {
+          const sources = cvTailoringEvidence(library);
+          const result = tailoringPlan ?? requireResult(await ai.planCvTailoring({ library, rubric }, {
+            refType: "cv-plan", refId: draft.id, stage: "planning", userId: draft.userId,
+          }), "planning", { gerund: "matching the role to your evidence", step: "evidence planning" });
+          let validated;
+          try {
+            validated = validateCvTailoringPlan(result, rubric, sources, library);
+          } catch (error) {
+            throw new CvBuildStop("output_invalid", (error as Error).message);
+          }
+          step.add({ requirements: validated.requirements.length,
+            supported: validated.requirements.filter(item => item.status === "demonstrated" || item.status === "partial").length,
+            questions: validated.gapQuestions.length, ...callCost(callUsage.get("planning")) });
+          return validated;
+        });
+        checkpoint = { ...checkpoint, tailoringPlan };
+        await save({ buildCheckpoint: checkpoint });
+        if (!checkpoint.quizCompleted) {
+          const gapQuiz = buildCvGapQuiz(tailoringPlan.gapQuestions, draft.librarySnapshot, draft.libraryVersion, rubric);
+          await journal.record("gap_quiz", { questions: gapQuiz?.questions.length ?? 0, skipped: !gapQuiz });
+          if (gapQuiz) {
+            await save({ status: "awaiting_evidence", gapQuiz, buildStage: null, failure: null, error: null });
+            return { draftId, awaitingEvidence: true };
+          }
+          checkpoint = { ...checkpoint, quizCompleted: true };
+          await save({ buildCheckpoint: checkpoint });
+        }
+      }
+      const semantic = tailoringPlan ? { plan: tailoringPlan, rubric } : undefined;
+
       let content = inputs.reusedContent ? inputs.saved : undefined;
       if (!content) {
         let writeStep: CvOpenStep<"write" | "rewrite"> | null = null;
@@ -398,6 +437,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
                     description: draft.jobDescription,
                     rubric,
                     improvements,
+                    tailoringPlan,
                     ...input,
                   },
                   { refType: "cv-author", refId: draft.id, stage: "author", userId: draft.userId },
@@ -441,6 +481,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
                   return;
               }
             },
+            semantic,
           );
         } catch (error) {
           if (error instanceof CvBuildStop) throw error;
@@ -454,8 +495,9 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
         checkpoint = { ...checkpoint, contentAt: deps.now().toISOString() };
         await save({ content, buildCheckpoint: checkpoint });
       }
+      const assessContent = async (candidate: NonNullable<typeof content>) => {
       await stage("assessing");
-      const { pageCount, maxPages } = await renderCvPdfWithReport(content!);
+      const { pageCount, maxPages } = await renderCvPdfWithReport(candidate);
       // A build that skipped the writer never measured anything, so its one measurement is here.
       if (inputs.reusedContent) await journal.record("measure", { pages: pageCount, maxPages });
       assertCvPageLimit(pageCount, maxPages);
@@ -468,8 +510,8 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
           await ai.assessCv(
             {
               rubric,
-              cv: cvTextItems(content!),
-              claims: cvClaimItems(content!),
+              cv: cvTextItems(candidate),
+              claims: cvClaimItems(candidate),
               evidence: cvEvidenceItems(library),
             },
             // The engine re-runs a batch whose attribution it had to correct, and names that
@@ -517,11 +559,11 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
         // was asked for; the written CV is saved, so another assessment is all that is needed.
         throw new CvBuildStop("assessment_incomplete", (error as Error).message);
       }
-      const assessment = await journal.run("assemble", { pageCount }, async step => {
+      const checked = await journal.run("assemble", { pageCount }, async step => {
         let value: CvAssessment;
         try {
           value = createCvAssessment({
-            content: content!,
+            content: candidate,
             description: draft.jobDescription,
             library,
             rubric,
@@ -538,6 +580,57 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
         step.add(assessmentTally(value.review));
         return value;
       });
+      return checked;
+      };
+      let assessment = await assessContent(content!);
+      const opportunityIds = new Set(diagnoseCvQuality(assessment, content!).evidencedOpportunityGap.requirementIds);
+      const opportunities = assessment.review.matches.filter(match => opportunityIds.has(match.requirementId));
+      if (semantic && mode !== "assess" && !checkpoint.improvementAttempted && opportunities.length > 0) {
+        // Persist the baseline and the one-shot fence before any optional work is paid for. A
+        // crash can resume the verified baseline, without buying the same improvement again.
+        checkpoint = { ...checkpoint, improvementAttempted: true };
+        await save({ content, assessment, buildCheckpoint: checkpoint });
+        const step = await journal.open("improve_content", { opportunities: opportunities.length });
+        try {
+          const budget = createCvWritingBudget(library, cvRelevanceTerms(rubric.requirements), 1, semantic);
+          const plan = requireResult(await ai.buildCv({ library, rubric, tailoringPlan,
+            description: draft.jobDescription, jobTitle: draft.jobTitle, company: draft.companyName,
+            improvements: opportunities.map(item => item.improvement).filter(Boolean),
+            writingBudget: budget, maxPages: cvMaxPages(library.theme),
+          }, { refType: "cv-author", refId: draft.id, stage: "improvement", userId: draft.userId }), "improvement", AUTHOR_CALL);
+          const omitted = library.entries.filter(entry =>
+            (entry.kind === "experience" || entry.kind === "education") &&
+            !plan.sections.some(section => section.entryId === entry.id));
+          if (omitted.length)
+            throw new CvBuildStop("output_invalid", "The optional revision omitted employment or education; the original CV was retained.");
+          // The optional pass strengthens role evidence. Preserve the already checked qualification
+          // wording, so retaining an education block cannot conceal the loss of one qualification.
+          const baselineQualifications = new Map(CvPlanSchema.parse(content).sections
+            .filter(section => library.entries.some(entry => entry.id === section.entryId && entry.kind === "education"))
+            .map(section => [section.entryId, section]));
+          plan.sections = plan.sections.map(section => baselineQualifications.get(section.entryId) ?? section);
+          // One author call only. Deterministic fitting may remove whole lower-value bullets; an
+          // unfittable or unsupported candidate is discarded rather than starting another loop.
+          const fitted = await selectCvToFit(library, plan, cvRelevanceTerms(rubric.requirements), budget, semantic);
+          assertCvPageLimit(fitted.pageCount, cvMaxPages(library.theme));
+          await journal.close(step, "done", callCost(callUsage.get("improvement")));
+          const candidateAssessment = await assessContent(fitted.content);
+          const comparison = compareCvQuality(assessment, content!, candidateAssessment, fitted.content);
+          await journal.record("compare_content", { accepted: comparison.accept, reasons: comparison.reasons });
+          if (comparison.accept) {
+            content = fitted.content;
+            assessment = candidateAssessment;
+            await save({ content, assessment, buildCheckpoint: checkpoint });
+          }
+        } catch (error) {
+          if (interrupted || error instanceof CvDeletedError) throw interrupted ?? error;
+          // Optional polish must not turn an already verified draft into a failed build.
+          await journal.failOpen(`Kept the original CV: ${(error as Error).message}`);
+          await journal.record("compare_content", { accepted: false, reasons: ["The optional revision could not be verified; the checked original was retained."] });
+        }
+      } else if (semantic && !checkpoint.improvementAttempted) {
+        await journal.record("improve_content", { opportunities: 0, skipped: true, reason: "No important evidence available in the Library was omitted." }, "skipped");
+      }
       const revision = Math.max(1, draft.revision);
       await journal.run("publish", { revision }, async step => {
         step.add({ archivedPrevious: await archivesPrevious(deps.db, draft) });

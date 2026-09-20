@@ -78,6 +78,7 @@ import {
   saveCvLibrary,
   saveCvAppearance,
   saveCvWritingPreferences,
+  answerCvGapQuiz,
   requestCv,
   saveCvDraft,
   saveCvModel,
@@ -572,6 +573,67 @@ describe("priority workflows", () => {
     expect(await database.select().from(schema.cvDrafts)).toHaveLength(0);
     expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(0);
   });
+  it("saves confirmed gap answers as a new Library version and resumes in one child draft", async () => {
+    const library = {
+      name: "Test Candidate", contact: "London", profile: "Leader", structuredExperience: true as const,
+      employment: [{ id: "job:1", company: "Acme", jobTitle: "Director", startDate: "2022", endDate: "", current: true }],
+      entries: [{ id: "e1", kind: "experience" as const, status: "active" as const, heading: "Director · Acme", employmentId: "job:1", details: "Led delivery.", confirmedResponsibilities: ["Led delivery."] }],
+    };
+    await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+    const rubric = rubricFixture("Own international market launches and commercial delivery.");
+    const requirement = rubric.requirements[0]!;
+    const [parent] = await database.insert(schema.cvDrafts).values({
+      userId: user.id, jobTitle: "Director", companyName: "Acme", jobDescription: "Own international market launches and commercial delivery.",
+      libraryVersion: 1, librarySnapshot: library, model: "test", status: "awaiting_evidence", revision: 1,
+      buildCheckpoint: { rubric, rubricAt: new Date().toISOString(), tailoringEnabled: true },
+      gapQuiz: { version: 1, status: "awaiting_answers", libraryVersion: 1, questions: [{ id: "q1", requirementId: requirement.id, requirement: requirement.label, prompt: "What market did you launch, and what changed?", suggestedDestination: { kind: "employment", employmentId: "job:1" } }] },
+    }).returning();
+    const form = new FormData();
+    form.set("decision", "confirm");
+    form.set("answer:q1", "Launched a new route to market with product and sales.");
+    form.set("destination:q1", "employment:job:1");
+    form.set("confirmed:q1", "on");
+    await expect(answerCvGapQuiz(parent!.id, { ok: true }, form)).rejects.toThrow("redirect:/cv/");
+    const libraries = await database.select().from(schema.cvLibraries).orderBy(schema.cvLibraries.version);
+    expect(libraries).toHaveLength(2);
+    expect(libraries[0]!.content.entries[0]!.details).toBe("Led delivery.");
+    expect(libraries[1]!.content.entries[0]!.details).toContain("Launched a new route to market");
+    const [storedParent] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, parent!.id));
+    const [child] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent!.id));
+    expect(storedParent).toMatchObject({ archivedAt: expect.any(Date), gapQuiz: { status: "answered", continuationDraftId: child!.id } });
+    expect(child).toMatchObject({ status: "queued", libraryVersion: 2, buildCheckpoint: { tailoringEnabled: true, quizCompleted: true, rubric } });
+    expect(await database.select().from(schema.tasks).where(eq(schema.tasks.dedupeKey, `generate_cv:${child!.id}`))).toHaveLength(1);
+    // A replay returns the same continuation and does not write another Library version or task.
+    await expect(answerCvGapQuiz(parent!.id, { ok: true }, form)).rejects.toThrow(`redirect:/cv/${child!.id}`);
+    expect(await database.select().from(schema.cvLibraries)).toHaveLength(2);
+  });
+
+  it("skips the gap quiz without changing the Library snapshot", async () => {
+    const library = { name: "Test Candidate", contact: "London", profile: "Leader", entries: [{ id: "skills", kind: "skill" as const, heading: "Skills", details: "Planning" }] };
+    await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+    const rubric = rubricFixture("Commercial planning and delivery.");
+    const requirement = rubric.requirements[0]!;
+    const [draft] = await database.insert(schema.cvDrafts).values({
+      userId: user.id, jobTitle: "Director", companyName: "Acme", jobDescription: "Commercial planning and delivery.",
+      libraryVersion: 1, librarySnapshot: library, model: "test", status: "awaiting_evidence", revision: 1,
+      buildCheckpoint: { rubric, tailoringEnabled: true },
+      gapQuiz: { version: 1, status: "awaiting_answers", libraryVersion: 1, questions: [{ id: "q1", requirementId: requirement.id, requirement: requirement.label, prompt: "What can you add?", suggestedDestination: { kind: "evidence", entryId: "skills" } }] },
+    }).returning();
+    const [oldTask] = await database.insert(schema.tasks).values({
+      type: "generate_cv", payload: { draftId: draft!.id }, dedupeKey: `generate_cv:${draft!.id}`,
+      status: "running", lockedAt: new Date(), lockedBy: "worker-that-paused",
+    }).returning();
+    const skip = new FormData(); skip.set("decision", "skip");
+    expect(await answerCvGapQuiz(draft!.id, { ok: true }, skip)).toEqual({ ok: true });
+    await database.update(schema.tasks).set({ status: "done", finishedAt: new Date() }).where(eq(schema.tasks.id, oldTask!.id));
+    expect(await database.select().from(schema.cvLibraries)).toHaveLength(1);
+    const [resumed] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft!.id));
+    expect(resumed).toMatchObject({ status: "queued", libraryVersion: 1, gapQuiz: { status: "skipped" }, buildCheckpoint: { tailoringEnabled: true, quizCompleted: true } });
+    const [continuation] = await database.select().from(schema.tasks).where(eq(schema.tasks.dedupeKey, `generate_cv:${draft!.id}:quiz-complete`));
+    expect(continuation).toMatchObject({ status: "queued", payload: { draftId: draft!.id } });
+    expect(await answerCvGapQuiz(draft!.id, { ok: true }, skip)).toEqual({ ok: true });
+    expect(await database.select().from(schema.tasks).where(eq(schema.tasks.dedupeKey, `generate_cv:${draft!.id}:quiz-complete`))).toHaveLength(1);
+  });
   it("saves skill items and palettes without rewriting the original CV or application", async () => {
     const library: import("@christopher/core/cv").CvLibrary = { name: "Example", contact: "London", profile: "Analyst", theme: DEFAULT_CV_THEME, entries: [{ id: "skills", kind: "skill", heading: "Tools", details: "Reporting", skillItems: ["SQL", "Python"] }] };
     const form = new FormData(); form.set("library", JSON.stringify(library)); form.set("version", "0");
@@ -608,13 +670,15 @@ describe("priority workflows", () => {
     // like) does not fail a test about what the snapshot carries.
     expect(draft!.librarySnapshot).toMatchObject({ ...content, theme: DEFAULT_CV_THEME, structuredExperience: true, entries: [{ ...content.entries[0], heading: "Director · Acme · Aug 2023 – Present", status: "active", details: "Led an operations team" }] }); expect(draft!.model).toBe("claude-fable-5-1");
     expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(1);
-    await database.update(schema.cvDrafts).set({ status: "ready", revision: 1, content: { name: content.name, contact: content.contact, summary: "Original", sections: [{ entryId: "one", kind: "experience", heading: "Director · Acme", industryDescriptions: ["SaaS"], bullets: ["Led a team"] }], gaps: [] } }).where(eq(schema.cvDrafts.id, draft!.id));
+    await database.update(schema.cvDrafts).set({ status: "ready", revision: 1, content: { name: content.name, contact: content.contact, summary: "Original", summarySources: [{ sourceId: "entry:one:row:0", quote: "Led an operations team" }], sections: [{ entryId: "one", kind: "experience", heading: "Director · Acme", industryDescriptions: ["SaaS"], bullets: ["Led a team"], bulletSources: [[{ sourceId: "entry:one:row:0", quote: "Led an operations team" }]] }], gaps: [] } }).where(eq(schema.cvDrafts.id, draft!.id));
     const edit = new FormData(); edit.set("summary", "Edited summary"); edit.set("section-0", "Led the operations team"); edit.set("rememberWording", "on");
     await expect(saveCvDraft(draft!.id, { ok: true }, edit)).rejects.toThrow("redirect:/cv/");
     const versions = await database.select().from(schema.cvDrafts).orderBy(schema.cvDrafts.revision);
     expect(versions.map((v) => v.content?.summary)).toEqual(["Original", "Edited summary"]);
     expect(versions[1]!.parentId).toBe(draft!.id);
     expect(versions[1]!.content?.sections[0]?.industryDescriptions).toEqual(["SaaS"]);
+    expect(versions[1]!.content?.summarySources).toBeUndefined();
+    expect(versions[1]!.content?.sections[0]?.bulletSources).toBeUndefined();
     const libraries = await database.select().from(schema.cvLibraries).orderBy(schema.cvLibraries.version);
     expect(libraries).toHaveLength(1);
     expect(libraries[0]!.content.preferredWording).toBeUndefined();
@@ -1117,10 +1181,16 @@ it("queues oversized edits for automatic fitting, permits previews and protects 
 
 it("carries library styling through generation, revision, matching preview/download and immutable application bytes", async () => {
   const { AiEngine } = await import("../../../../packages/ai/src/index");
-  vi.spyOn(AiEngine.prototype, "analyseCvJob").mockImplementation(
+  const analyse = vi.spyOn(AiEngine.prototype, "analyseCvJob").mockImplementation(
     async (description) => rubricFixture(description),
   );
-  vi.spyOn(AiEngine.prototype, "assessCv").mockImplementation(async (input) =>
+  const planner = vi.spyOn(AiEngine.prototype, "planCvTailoring").mockImplementation(async ({ rubric }) => ({
+    requirements: rubric.requirements.map(requirement => ({
+      requirementId: requirement.id, status: "missing" as const, evidence: [], reason: "No direct evidence in this fixture.",
+    })),
+    gapQuestions: [],
+  }));
+  const reviewer = vi.spyOn(AiEngine.prototype, "assessCv").mockImplementation(async (input) =>
     reviewFixture(input),
   );
   const { handleGenerateCv } = await import("../../../worker/src/handlers/cv");
@@ -1201,18 +1271,21 @@ it("carries library styling through generation, revision, matching preview/downl
     .where(eq(schema.tasks.type, "generate_cv"));
   const model = vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({
     summary: "Operations leader with experience in planning and reporting.",
+    summarySources: [{ sourceId: "entry:role:row:0", quote: "Led a team" }],
     sections: [
       {
         entryId: "role",
         industryDescriptions: ["Healthcare", "Software & SaaS"],
         bullets: ["Led a team."],
+        bulletSources: [[{ sourceId: "entry:role:row:0", quote: "Led a team" }]],
       },
       {
         entryId: "skills",
         bullets: ["SQL and reporting"],
         skillItems: ["SQL", "Financial planning"],
+        bulletSources: [[{ sourceId: "entry:skills:row:0", quote: "SQL and reporting" }]],
       },
-      { entryId: "degree", bullets: ["BSc Economics, Example University."] },
+      { entryId: "degree", bullets: ["BSc Economics, Example University."], bulletSources: [[{ sourceId: "entry:degree:row:0", quote: "BSc Economics, Example University." }]] },
     ],
     gaps: ["Review-only evidence gap"],
   });
@@ -1225,6 +1298,9 @@ it("carries library styling through generation, revision, matching preview/downl
     } as unknown as import("../../../worker/src/context").WorkerDeps);
   } finally {
     model.mockRestore();
+    planner.mockRestore();
+    reviewer.mockRestore();
+    analyse.mockRestore();
   }
   const [ready] = await database
     .select()
@@ -1413,23 +1489,41 @@ it("assesses, improves with current evidence, finalises and exports through the 
   const analyse = vi
     .spyOn(AiEngine.prototype, "analyseCvJob")
     .mockResolvedValue(rubric);
+  const planner = vi
+    .spyOn(AiEngine.prototype, "planCvTailoring")
+    .mockResolvedValue({
+      requirements: [
+        { requirementId: "r1", status: "demonstrated", evidence: [{ sourceId: "entry:role:row:0", quote: "Led operations" }], reason: "The role evidence directly supports this." },
+        { requirementId: "r2", status: "demonstrated", evidence: [{ sourceId: "entry:skills:row:0", quote: "SQL" }], reason: "The skills evidence directly supports this." },
+      ],
+      gapQuestions: [],
+    });
+  let improvedWritten = false;
   const writer = vi
     .spyOn(AiEngine.prototype, "buildCv")
-    .mockImplementation(async () => ({
+    .mockImplementation(async (input) => {
+      if (input.improvements?.length) improvedWritten = true;
+      return ({
       summary: "Operations leader",
+      summarySources: [{ sourceId: "entry:role:row:0", quote: "Led operations" }],
       sections: [
-        { entryId: "role", bullets: ["Led operations"] },
-        ...(writer.mock.calls.length > 1
-          ? [{ entryId: "skills", bullets: ["SQL"], skillItems: ["SQL"] }]
+        { entryId: "role", bullets: ["Led operations"], bulletSources: [[{ sourceId: "entry:role:row:0", quote: "Led operations" }]] },
+        ...(input.improvements?.length
+          ? [{ entryId: "skills", bullets: ["SQL"], skillItems: ["SQL"], bulletSources: [[{ sourceId: "entry:skills:row:0", quote: "SQL" }]] }]
           : []),
       ],
       gaps: [],
-    }));
+    });
+    });
   const reviewer = vi
     .spyOn(AiEngine.prototype, "assessCv")
     .mockImplementation(async (input) => {
       const result = reviewFixture(input);
-      const sql = input.cv.find((item) => item.text === "SQL");
+      // The first build deliberately leaves this available Library evidence out; improved and
+      // directly edited revisions are then judged from their actual printed SQL text.
+      const sql = improvedWritten
+        ? input.cv.find((item) => item.text === "SQL")
+        : undefined;
       Object.assign(result.matches[1]!, {
         status: sql ? "demonstrated" : "missing",
         cvEvidence: sql ? [{ id: sql.id, quote: "SQL" }] : [],
@@ -1472,7 +1566,9 @@ it("assesses, improves with current evidence, finalises and exports through the 
     const first = (await database.select().from(schema.cvDrafts))[0]!;
     const ready = await run(first.id);
     expect(ready.status).toBe("ready");
-    expect(ready.assessment!.score).toBe(67);
+    // The new tailoring pass spots the evidenced SQL omission and applies its one verified
+    // automatic improvement before publishing the first revision.
+    expect(ready.assessment!.score).toBe(100);
     expect(ready.jobSource!.kind).toBe("user_supplied");
     expect(ready.finalisedAt).toBeNull();
     const endpoint = () => ({ params: Promise.resolve({ id: ready.id }) });
@@ -1556,13 +1652,14 @@ it("assesses, improves with current evidence, finalises and exports through the 
     expect(revised.finalisedAt).toBeNull();
     const reviewed = await run(revised.id);
     expect(reviewed.status).toBe("ready");
-    expect(writer).toHaveBeenCalledTimes(2);
-    expect(reviewer).toHaveBeenCalledTimes(3);
+    expect(writer).toHaveBeenCalledTimes(4);
+    expect(reviewer).toHaveBeenCalledTimes(5);
     expect(
       (await database.select().from(schema.applications))[0]!.pdfBase64,
     ).toBe(frozen.pdfBase64);
   } finally {
     analyse.mockRestore();
+    planner.mockRestore();
     writer.mockRestore();
     reviewer.mockRestore();
   }
@@ -1733,7 +1830,7 @@ it("starts a rebuild clean of the attempt it replaces, and starts it once", asyn
 
   // Nothing of the parent's build comes with it: this revision has never run.
   const child = children[0]!;
-  expect(child).toMatchObject({ status: "queued", progressAt: null, buildCheckpoint: null, failure: null, error: null });
+  expect(child).toMatchObject({ status: "queued", progressAt: null, buildCheckpoint: { tailoringEnabled: true, quizCompleted: true }, failure: null, error: null });
   const [queued] = await database.select().from(schema.tasks).where(eq(schema.tasks.dedupeKey, `generate_cv:${child.id}`));
   const state = cvBuildState(child, {
     status: queued!.status, attempts: queued!.attempts, maxAttempts: queued!.maxAttempts,
@@ -1799,7 +1896,8 @@ it("retries a page-limit failure against the Library and the settings as they ar
   expect(retried!.librarySnapshot.theme!.maxPages).toBe(4);
   expect(retried!.librarySnapshot.profile).toBe("Operations leader");
   expect(retried!.libraryVersion).toBe(2);
-  expect(retried!.buildCheckpoint).toBeNull();
+  expect(retried!.buildCheckpoint).toMatchObject({ tailoringEnabled: true });
+  expect(retried!.buildCheckpoint).not.toHaveProperty("quizCompleted");
   expect(retried!.failure).toBeNull();
   expect(retried!.status).toBe("queued");
   // The wording is the person's, and a retry that rewrites it without being asked is a different bug.
@@ -1825,6 +1923,21 @@ it("retries a page-limit failure against the Library and the settings as they ar
   expect(requeued!.librarySnapshot).toEqual(snapshot);
   expect(requeued!.libraryVersion).toBe(1);
   expect(requeued!.status).toBe("queued");
+});
+
+it("does not let manual assessment bypass a quiz pause or revive an archived draft", async () => {
+  const base = {
+    userId: user.id, jobTitle: "Director", companyName: "Example", jobDescription: "Lead operations",
+    libraryVersion: 1, librarySnapshot: rebuildLibrary, model: "test", revision: 1,
+  };
+  const [paused, archived] = await database.insert(schema.cvDrafts).values([
+    { ...base, status: "awaiting_evidence", gapQuiz: { version: 1, status: "awaiting_answers", libraryVersion: 1, questions: [{ id: "q1", requirementId: "r1", requirement: "Lead operations", prompt: "What did you lead?", suggestedDestination: { kind: "evidence", entryId: "one" } }] } },
+    { ...base, status: "failed", archivedAt: new Date() },
+  ]).returning();
+  for (const draft of [paused!, archived!]) {
+    expect((await assessCvDraft(draft.id, { ok: true }, new FormData())).ok).toBe(false);
+  }
+  expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(0);
 });
 
 

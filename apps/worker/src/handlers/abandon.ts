@@ -3,6 +3,7 @@ import { cvBuildFailure, type CvBuildFailure } from "@christopher/core";
 import type { AbandonHookMap, InterruptedHookMap } from "../queue";
 import { failOpenCvBuildStepsQuietly } from "./cv-journal";
 import { log } from "../log";
+import { sql } from "drizzle-orm";
 
 /**
  * What a CV draft is told when the worker gave up on building it. It names the number of attempts
@@ -40,6 +41,26 @@ function draftIdOf(task: { payload: unknown }): string | null {
 }
 
 /**
+ * A quiz continuation can be queued while the worker that produced the quiz is still returning.
+ * If that old lease is then declared interrupted, its hook belongs to the pre-quiz run and must
+ * not overwrite or release the continuation that the person has just requested.
+ */
+async function isCompletedQuizPredecessor(
+  task: { dedupeKey: string | null; createdAt: Date },
+  deps: { db: Parameters<typeof abandonCvDraft>[0] },
+  draftId: string,
+): Promise<boolean> {
+  if (task.dedupeKey !== `generate_cv:${draftId}`) return false;
+  const completed = await deps.db.execute<{ status: string | null; completedAt: string | null }>(sql`
+    select gap_quiz->>'status' as status, gap_quiz->>'completedAt' as "completedAt"
+    from cv_drafts where id = ${draftId} limit 1`);
+  const quiz = completed.rows[0];
+  if (!quiz || !quiz.completedAt || (quiz.status !== "skipped" && quiz.status !== "answered")) return false;
+  const completedAt = new Date(quiz.completedAt).getTime();
+  return Number.isFinite(completedAt) && task.createdAt.getTime() <= completedAt;
+}
+
+/**
  * Closing off the work behind a task the queue has given up on.
  *
  * A task that fails normally has already written its own failure; these are for the tasks that
@@ -51,6 +72,7 @@ export const onAbandon: AbandonHookMap = {
   generate_cv: async (task, deps, reason) => {
     const draftId = draftIdOf(task);
     if (!draftId) return;
+    if (await isCompletedQuizPredecessor(task, deps, draftId)) return;
     const failure = cvInterruptedFailure({ attempt: task.attempts, maxAttempts: task.maxAttempts }, reason);
     const abandoned = await abandonCvDraft(deps.db, draftId, CV_ABANDONED_MESSAGE, failure);
     if (!abandoned) return;
@@ -80,6 +102,7 @@ export const onInterrupted: InterruptedHookMap = {
   generate_cv: async (task, deps, { retryAt }) => {
     const draftId = draftIdOf(task);
     if (!draftId) return;
+    if (await isCompletedQuizPredecessor(task, deps, draftId)) return;
     const attempts = { attempt: task.attempts, maxAttempts: task.maxAttempts };
     const message = cvInterruptedMessage(attempts);
     // The system is resolving this one: the draft stays `generating`, keeps its checkpoint, and

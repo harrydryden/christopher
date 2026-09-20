@@ -35,8 +35,9 @@ export const getCvWorkStatus = cache(async function getCvWorkStatus(userId: stri
       version: sql<string>`md5(coalesce(string_agg(${cvDrafts.id}::text || ${cvDrafts.status} || coalesce(${tasks.status}, '-'), ',' order by ${cvDrafts.id}, ${tasks.id}), ''))`,
     })
     .from(cvDrafts)
-    // The queue row by the dedupe key the enqueue used, which is the only link a draft has to it.
-    .leftJoin(tasks, sql`${tasks.dedupeKey} = 'generate_cv:' || ${cvDrafts.id}::text`)
+    // Payload is the stable relationship: a quiz continuation deliberately has a distinct dedupe
+    // key so it cannot collide with the task whose worker just paused.
+    .leftJoin(tasks, and(eq(tasks.type, 'generate_cv'), sql`${tasks.payload}->>'draftId' = ${cvDrafts.id}::text`))
     .where(and(eq(cvDrafts.userId, userId), inArray(cvDrafts.status, ['queued', 'generating'])));
   return { active: (row?.n ?? 0) > 0, version: row?.version ?? "" };
 });

@@ -8,6 +8,9 @@
     "checkJs": false
   },
   "include": [
-    "scripts/evaluate-cv.ts"
+    "scripts/evaluate-cv.ts",
+    "scripts/evaluate-discovery-ai.ts",
+    "scripts/evaluate-extraction-ai.ts",
+    "scripts/extraction-accuracy-capture.ts"
   ]
 }

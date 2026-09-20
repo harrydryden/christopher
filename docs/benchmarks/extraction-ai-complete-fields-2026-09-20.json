@@ -1,0 +1,580 @@
+{
+  "at": "2026-09-20T12:17:51.375Z",
+  "model": "claude-sonnet-5",
+  "mode": "provider_evaluation",
+  "status": "automated_checks_passed",
+  "releaseAccepted": false,
+  "closureProof": false,
+  "closureLimitation": "A machine-derived oracle for one URL pattern and one page cannot prove the complete live posting set or authorise role closure.",
+  "sourceProvenance": {
+    "oracleReport": "docs/live-snapshots/2026-09-20-extraction-accuracy/extraction-accuracy-report.json",
+    "oracleClassification": "machine-derived independently implemented field oracle; not human labels",
+    "rawPath": "docs/live-snapshots/2026-09-20-extraction-accuracy/mozilla-html-1-listings.raw",
+    "sourceUrl": "https://www.mozilla.org/en-US/careers/listings/",
+    "requestedUrl": "https://www.mozilla.org/en-US/careers/listings/",
+    "finalUrl": "https://www.mozilla.org/en-US/careers/listings/",
+    "fetchedAt": "2026-09-20T11:54:27.286Z",
+    "sha256": "baa3bbde25ac15f2da4d2c9f1eca93be168b48be3ad4fe1e4e6c303b36d2f82e",
+    "oracleIdentities": 22
+  },
+  "compactInput": {
+    "maxChars": 60000,
+    "chars": 19906,
+    "truncated": false
+  },
+  "reproducibility": {
+    "generation": {
+      "promptSource": "packages/ai/src/prompts.ts#A3_EXTRACT_POSTINGS",
+      "promptSha256": "b6b52fd03cd3ced02bdb14ee3693d35de6f89b3047e1d694aa8b305d8287a4a4",
+      "compactInputSha256": "ce8b10685269e74fd47f67f22c1515e271156e00250a548a0dfcb573250517a9"
+    }
+  },
+  "limitation": "One frozen first-party HTML page with a machine-derived field oracle; not the 15-page human-labelled A3 set.",
+  "provider": {
+    "status": "passed",
+    "models": [
+      {
+        "model": "claude-sonnet-5",
+        "passed": true,
+        "providerId": "claude-sonnet-5",
+        "price": {
+          "input": 2,
+          "output": 10
+        }
+      }
+    ],
+    "limitations": "Model metadata access only; generation quality, streaming behaviour and billing are separate checks."
+  },
+  "extraction": {
+    "identity": {
+      "truePositives": 22,
+      "falsePositives": [],
+      "falseNegatives": [],
+      "precision": 1,
+      "recall": 1,
+      "exactIdentityMatch": true
+    },
+    "fields": {
+      "comparedFields": 44,
+      "rawExactMatches": 31,
+      "rawExactAccuracy": 0.7045454545454546,
+      "rawExactMismatches": [
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8188873/",
+          "field": "location",
+          "expected": "Remote France,Remote Germany,Remote Netherlands,Remote Canada,Remote Sweden,Remote Belgium,Remote Spain,Remote Finland,Remote UK",
+          "actual": "Remote France, Remote Germany, Remote Netherlands, Remote Canada, Remote Sweden, Remote Belgium, Remote Spain, Remote Finland, Remote UK"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8064613/",
+          "field": "location",
+          "expected": "Remote Canada,Remote UK,Remote Germany,Remote US",
+          "actual": "Remote Canada, Remote UK, Remote Germany, Remote US"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8153321/",
+          "field": "location",
+          "expected": "Remote US,Remote Canada",
+          "actual": "Remote US, Remote Canada"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/7997152/",
+          "field": "location",
+          "expected": "Remote Germany,Remote US,Remote Canada",
+          "actual": "Remote Germany, Remote US, Remote Canada"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8162972/",
+          "field": "location",
+          "expected": "Remote US,Remote Canada",
+          "actual": "Remote US, Remote Canada"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8107442/",
+          "field": "location",
+          "expected": "Remote US,Remote France,Remote Germany,Remote UK,Remote Canada",
+          "actual": "Remote US, Remote France, Remote Germany, Remote UK, Remote Canada"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8112211/",
+          "field": "location",
+          "expected": "Remote US,Remote Canada",
+          "actual": "Remote US, Remote Canada"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8155198/",
+          "field": "location",
+          "expected": "Remote US,Remote Canada",
+          "actual": "Remote US, Remote Canada"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8139403/",
+          "field": "location",
+          "expected": "Remote US,Remote Canada",
+          "actual": "Remote US, Remote Canada"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8170952/",
+          "field": "location",
+          "expected": "Remote France,Remote Netherlands,Remote UK,Remote Belgium,Remote Spain,Remote Finland,Remote Sweden,Remote Canada,Remote Germany",
+          "actual": "Remote France, Remote Netherlands, Remote UK, Remote Belgium, Remote Spain, Remote Finland, Remote Sweden, Remote Canada, Remote Germany"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8144651/",
+          "field": "location",
+          "expected": "Remote Canada,Remote US",
+          "actual": "Remote Canada, Remote US"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8185984/",
+          "field": "location",
+          "expected": "Remote US,Remote Canada",
+          "actual": "Remote US, Remote Canada"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8180982/",
+          "field": "location",
+          "expected": "Remote US,Remote Canada",
+          "actual": "Remote US, Remote Canada"
+        }
+      ],
+      "semanticMatches": 44,
+      "semanticAccuracy": 1,
+      "semanticMismatches": [],
+      "rawExactPassed": false,
+      "semanticPassed": true
+    },
+    "postings": [
+      {
+        "title": "Staff Data Scientist, Ads",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/7137777/",
+        "location": "Remote US",
+        "department": "Core Services"
+      },
+      {
+        "title": "Senior Software Engineer, Add-Ons",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8188873/",
+        "location": "Remote France, Remote Germany, Remote Netherlands, Remote Canada, Remote Sweden, Remote Belgium, Remote Spain, Remote Finland, Remote UK",
+        "department": "Firefox"
+      },
+      {
+        "title": "Senior Strategic Account Executive, Firefox Enterprise (DACH)",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/7622995/",
+        "location": "Remote Germany",
+        "department": "New Products"
+      },
+      {
+        "title": "Senior Security Engineer, Bug Bounty",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8064613/",
+        "location": "Remote Canada, Remote UK, Remote Germany, Remote US",
+        "department": "Infrastructure"
+      },
+      {
+        "title": "Senior Solutions Engineer (DACH), Firefox Enterprise",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/7921645/",
+        "location": "Remote Germany",
+        "department": "New Products"
+      },
+      {
+        "title": "Front End Engineering Manager, Firefox Desktop",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8153321/",
+        "location": "Remote US, Remote Canada",
+        "department": "Firefox"
+      },
+      {
+        "title": "Staff Operations Engineer",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/7997152/",
+        "location": "Remote Germany, Remote US, Remote Canada",
+        "department": "Infrastructure"
+      },
+      {
+        "title": "Senior Software Engineer, Cloud Engineering",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8035891/",
+        "location": "Remote Canada",
+        "department": "Infrastructure"
+      },
+      {
+        "title": "Senior Backend Engineer, Ecosystems",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8089818/",
+        "location": "Remote Canada",
+        "department": "Infrastructure"
+      },
+      {
+        "title": "Staff Designer, Rapid Prototyping",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8162972/",
+        "location": "Remote US, Remote Canada",
+        "department": "MZLA/Thunderbird"
+      },
+      {
+        "title": "Staff Security GRC Engineer",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8107442/",
+        "location": "Remote US, Remote France, Remote Germany, Remote UK, Remote Canada",
+        "department": "Infrastructure"
+      },
+      {
+        "title": "Senior Mobile Engineer, iOS",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8112211/",
+        "location": "Remote US, Remote Canada",
+        "department": "MZLA/Thunderbird"
+      },
+      {
+        "title": "Staff Product Manager, Search Experiences",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8155198/",
+        "location": "Remote US, Remote Canada",
+        "department": "Firefox"
+      },
+      {
+        "title": "Senior Staff Performance Engineer, Firefox",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8122131/",
+        "location": "Remote Canada",
+        "department": "Firefox"
+      },
+      {
+        "title": "Marketing Data Science Manager",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8139403/",
+        "location": "Remote US, Remote Canada",
+        "department": "Core Services"
+      },
+      {
+        "title": "Senior Staff Product Manager, Browser Control Platform",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8170952/",
+        "location": "Remote France, Remote Netherlands, Remote UK, Remote Belgium, Remote Spain, Remote Finland, Remote Sweden, Remote Canada, Remote Germany",
+        "department": "Firefox"
+      },
+      {
+        "title": "Senior Lead, Enterprise Partnerships & Strategy",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8144651/",
+        "location": "Remote Canada, Remote US",
+        "department": "MZLA/Thunderbird"
+      },
+      {
+        "title": "Director, Portfolio Management (Mozilla.org)",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8167254/",
+        "location": "Remote US",
+        "department": "Mozilla.org"
+      },
+      {
+        "title": "Senior Accounting Manager",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8172267/",
+        "location": "Remote US",
+        "department": "Mozilla.org"
+      },
+      {
+        "title": "Staff Product Engineer, Enterprise AI",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8185984/",
+        "location": "Remote US, Remote Canada",
+        "department": "MZLA/Thunderbird"
+      },
+      {
+        "title": "Major Gifts Officer",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8177406/",
+        "location": "Remote Canada; Remote Germany; Remote UK; Remote US",
+        "department": "Mozilla Foundation"
+      },
+      {
+        "title": "Senior Staff Data Engineer",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8180982/",
+        "location": "Remote US, Remote Canada",
+        "department": "Core Services"
+      }
+    ],
+    "dropped": 0
+  },
+  "recipe": {
+    "recipe": {
+      "version": 1,
+      "listItem": "tr.position[data-location][data-team]",
+      "title": "td.title > a",
+      "link": "td.title > a",
+      "location": "td.location",
+      "department": "td.name"
+    },
+    "validationAgainstModelOutput": {
+      "ok": true,
+      "coverage": 1
+    },
+    "modelReplayFieldMismatches": [],
+    "identity": {
+      "truePositives": 22,
+      "falsePositives": [],
+      "falseNegatives": [],
+      "precision": 1,
+      "recall": 1,
+      "exactIdentityMatch": true
+    },
+    "fields": {
+      "comparedFields": 44,
+      "rawExactMatches": 31,
+      "rawExactAccuracy": 0.7045454545454546,
+      "rawExactMismatches": [
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8188873/",
+          "field": "location",
+          "expected": "Remote France,Remote Germany,Remote Netherlands,Remote Canada,Remote Sweden,Remote Belgium,Remote Spain,Remote Finland,Remote UK",
+          "actual": "Remote France, Remote Germany, Remote Netherlands, Remote Canada, Remote Sweden, Remote Belgium, Remote Spain, Remote Finland, Remote UK"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8064613/",
+          "field": "location",
+          "expected": "Remote Canada,Remote UK,Remote Germany,Remote US",
+          "actual": "Remote Canada, Remote UK, Remote Germany, Remote US"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8153321/",
+          "field": "location",
+          "expected": "Remote US,Remote Canada",
+          "actual": "Remote US, Remote Canada"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/7997152/",
+          "field": "location",
+          "expected": "Remote Germany,Remote US,Remote Canada",
+          "actual": "Remote Germany, Remote US, Remote Canada"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8162972/",
+          "field": "location",
+          "expected": "Remote US,Remote Canada",
+          "actual": "Remote US, Remote Canada"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8107442/",
+          "field": "location",
+          "expected": "Remote US,Remote France,Remote Germany,Remote UK,Remote Canada",
+          "actual": "Remote US, Remote France, Remote Germany, Remote UK, Remote Canada"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8112211/",
+          "field": "location",
+          "expected": "Remote US,Remote Canada",
+          "actual": "Remote US, Remote Canada"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8155198/",
+          "field": "location",
+          "expected": "Remote US,Remote Canada",
+          "actual": "Remote US, Remote Canada"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8139403/",
+          "field": "location",
+          "expected": "Remote US,Remote Canada",
+          "actual": "Remote US, Remote Canada"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8170952/",
+          "field": "location",
+          "expected": "Remote France,Remote Netherlands,Remote UK,Remote Belgium,Remote Spain,Remote Finland,Remote Sweden,Remote Canada,Remote Germany",
+          "actual": "Remote France, Remote Netherlands, Remote UK, Remote Belgium, Remote Spain, Remote Finland, Remote Sweden, Remote Canada, Remote Germany"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8144651/",
+          "field": "location",
+          "expected": "Remote Canada,Remote US",
+          "actual": "Remote Canada, Remote US"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8185984/",
+          "field": "location",
+          "expected": "Remote US,Remote Canada",
+          "actual": "Remote US, Remote Canada"
+        },
+        {
+          "url": "https://www.mozilla.org/en-US/careers/position/gh/8180982/",
+          "field": "location",
+          "expected": "Remote US,Remote Canada",
+          "actual": "Remote US, Remote Canada"
+        }
+      ],
+      "semanticMatches": 44,
+      "semanticAccuracy": 1,
+      "semanticMismatches": [],
+      "rawExactPassed": false,
+      "semanticPassed": true
+    },
+    "producedRows": [
+      {
+        "title": "Staff Data Scientist, Ads",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/7137777/",
+        "location": "Remote US",
+        "department": "Core Services",
+        "remote": true
+      },
+      {
+        "title": "Senior Software Engineer, Add-Ons",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8188873/",
+        "location": "Remote France, Remote Germany, Remote Netherlands, Remote Canada, Remote Sweden, Remote Belgium, Remote Spain, Remote Finland, Remote UK",
+        "department": "Firefox",
+        "remote": true
+      },
+      {
+        "title": "Senior Strategic Account Executive, Firefox Enterprise (DACH)",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/7622995/",
+        "location": "Remote Germany",
+        "department": "New Products",
+        "remote": true
+      },
+      {
+        "title": "Senior Security Engineer, Bug Bounty",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8064613/",
+        "location": "Remote Canada, Remote UK, Remote Germany, Remote US",
+        "department": "Infrastructure",
+        "remote": true
+      },
+      {
+        "title": "Senior Solutions Engineer (DACH), Firefox Enterprise",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/7921645/",
+        "location": "Remote Germany",
+        "department": "New Products",
+        "remote": true
+      },
+      {
+        "title": "Front End Engineering Manager, Firefox Desktop",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8153321/",
+        "location": "Remote US, Remote Canada",
+        "department": "Firefox",
+        "remote": true
+      },
+      {
+        "title": "Staff Operations Engineer",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/7997152/",
+        "location": "Remote Germany, Remote US, Remote Canada",
+        "department": "Infrastructure",
+        "remote": true
+      },
+      {
+        "title": "Senior Software Engineer, Cloud Engineering",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8035891/",
+        "location": "Remote Canada",
+        "department": "Infrastructure",
+        "remote": true
+      },
+      {
+        "title": "Senior Backend Engineer, Ecosystems",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8089818/",
+        "location": "Remote Canada",
+        "department": "Infrastructure",
+        "remote": true
+      },
+      {
+        "title": "Staff Designer, Rapid Prototyping",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8162972/",
+        "location": "Remote US, Remote Canada",
+        "department": "MZLA/Thunderbird",
+        "remote": true
+      },
+      {
+        "title": "Staff Security GRC Engineer",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8107442/",
+        "location": "Remote US, Remote France, Remote Germany, Remote UK, Remote Canada",
+        "department": "Infrastructure",
+        "remote": true
+      },
+      {
+        "title": "Senior Mobile Engineer, iOS",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8112211/",
+        "location": "Remote US, Remote Canada",
+        "department": "MZLA/Thunderbird",
+        "remote": true
+      },
+      {
+        "title": "Staff Product Manager, Search Experiences",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8155198/",
+        "location": "Remote US, Remote Canada",
+        "department": "Firefox",
+        "remote": true
+      },
+      {
+        "title": "Senior Staff Performance Engineer, Firefox",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8122131/",
+        "location": "Remote Canada",
+        "department": "Firefox",
+        "remote": true
+      },
+      {
+        "title": "Marketing Data Science Manager",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8139403/",
+        "location": "Remote US, Remote Canada",
+        "department": "Core Services",
+        "remote": true
+      },
+      {
+        "title": "Senior Staff Product Manager, Browser Control Platform",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8170952/",
+        "location": "Remote France, Remote Netherlands, Remote UK, Remote Belgium, Remote Spain, Remote Finland, Remote Sweden, Remote Canada, Remote Germany",
+        "department": "Firefox",
+        "remote": true
+      },
+      {
+        "title": "Senior Lead, Enterprise Partnerships & Strategy",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8144651/",
+        "location": "Remote Canada, Remote US",
+        "department": "MZLA/Thunderbird",
+        "remote": true
+      },
+      {
+        "title": "Director, Portfolio Management (Mozilla.org)",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8167254/",
+        "location": "Remote US",
+        "department": "Mozilla.org",
+        "remote": true
+      },
+      {
+        "title": "Senior Accounting Manager",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8172267/",
+        "location": "Remote US",
+        "department": "Mozilla.org",
+        "remote": true
+      },
+      {
+        "title": "Staff Product Engineer, Enterprise AI",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8185984/",
+        "location": "Remote US, Remote Canada",
+        "department": "MZLA/Thunderbird",
+        "remote": true
+      },
+      {
+        "title": "Major Gifts Officer",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8177406/",
+        "location": "Remote Canada; Remote Germany; Remote UK; Remote US",
+        "department": "Mozilla Foundation",
+        "remote": true
+      },
+      {
+        "title": "Senior Staff Data Engineer",
+        "url": "https://www.mozilla.org/en-US/careers/position/gh/8180982/",
+        "location": "Remote US, Remote Canada",
+        "department": "Core Services",
+        "remote": true
+      }
+    ]
+  },
+  "grades": {
+    "specThresholdPass": true,
+    "exactIdentityMatch": true,
+    "exactFieldMatch": false,
+    "semanticFieldMatch": true,
+    "compactInputComplete": true,
+    "closureProof": false,
+    "note": "Threshold agreement is evaluation evidence only. Even exact agreement with this machine oracle is not proof of the complete live listing."
+  },
+  "budget": {
+    "capUsd": 0.15,
+    "spentUsd": 0.03669,
+    "heldUsd": 0,
+    "records": [
+      {
+        "callSite": "A3",
+        "model": "claude-sonnet-5",
+        "inputTokens": 8554,
+        "outputTokens": 1933,
+        "cacheReadTokens": 1258,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.03669,
+        "durationMs": 13313,
+        "ok": true
+      }
+    ],
+    "exceeded": false
+  }
+}

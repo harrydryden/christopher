@@ -1,0 +1,215 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-20T11:57:36.576Z",
+  "mode": "discovery_only",
+  "browser": {
+    "enabled": true,
+    "implementation": "BrowserRenderer",
+    "aiEnabled": false
+  },
+  "limitations": [
+    "This is a live observation, so role counts and pages can change during the run.",
+    "A null metric means the required independent label does not exist; it is not a pass.",
+    "Production BrowserRenderer fallback is enabled; AI fallback remains disabled and no database is read or written."
+  ],
+  "acceptance": {
+    "verdict": "fail",
+    "reasons": [
+      "labelled automatic discovery agreement is 75.0%, below 80%",
+      "4 case(s) lack an independent posting-identity golden snapshot",
+      "posting-identity recall and precision have not been measured",
+      "one or more selected cases did not run extraction"
+    ]
+  },
+  "metrics": {
+    "total": 4,
+    "sourceLabelled": 4,
+    "sourceMatches": 3,
+    "sourceMismatches": 1,
+    "labelledAutomaticMatchesAt085": 3,
+    "automaticResolvedAt085": 3,
+    "wrongAutomaticAccepts": 0,
+    "extractionComplete": 0,
+    "extractionPartial": 0,
+    "extractionFailed": 0,
+    "countLabelled": 0,
+    "countMatches": 0,
+    "discoveryAccuracy": 0.75,
+    "extractionExactCountAgreement": null,
+    "postingIdentityRecall": null,
+    "postingIdentityPrecision": null
+  },
+  "cases": [
+    {
+      "manifest": {
+        "id": "datadog",
+        "company": "Datadog",
+        "homepageUrl": "https://www.datadoghq.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://careers.datadoghq.com/all-jobs/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Datadog's company-owned careers homepage explicitly links to All Jobs; that destination has its own canonical URL and is the complete searchable listing. The previous careers-root and Greenhouse candidates were landing/stale sources.",
+        "sourceEvidenceUrls": [
+          "https://careers.datadoghq.com/",
+          "https://careers.datadoghq.com/all-jobs/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "datadog",
+        "company": "Datadog",
+        "startedAt": "2026-09-20T11:56:33.053Z",
+        "durationMs": 63504,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://careers.datadoghq.com/all-jobs/",
+          "confidence": 0.85,
+          "fetches": 15,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 3,
+          "browserRenders": 3,
+          "browserUrls": [
+            "https://careers.datadoghq.com/",
+            "https://careers.datadoghq.com/early-careers/",
+            "https://careers.datadoghq.com/all-jobs/"
+          ],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "automattic",
+        "company": "Automattic",
+        "homepageUrl": "https://automattic.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://automattic.com/work-with-us/jobs/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Automattic states that legitimate openings are published on its company-owned careers site; the previous Greenhouse board candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://automattic.com/work-with-us/",
+          "https://automattic.com/work-with-us/jobs/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "automattic",
+        "company": "Automattic",
+        "startedAt": "2026-09-20T11:56:33.054Z",
+        "durationMs": 18700,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://automattic.com/work-with-us/jobs/",
+          "confidence": 0.85,
+          "fetches": 8,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 2,
+          "browserRenders": 2,
+          "browserUrls": [
+            "https://automattic.com/work-with-us/",
+            "https://automattic.com/work-with-us/jobs/"
+          ],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "spotify",
+        "company": "Spotify",
+        "homepageUrl": "https://www.spotify.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://www.lifeatspotify.com/jobs"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Spotify's first-party applicant guidance identifies lifeatspotify.com/jobs as its careers listing (and Lever only as a possible role-detail destination).",
+        "sourceEvidenceUrls": [
+          "https://www.lifeatspotify.com/start-your-journey",
+          "https://www.lifeatspotify.com/jobs"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "spotify",
+        "company": "Spotify",
+        "startedAt": "2026-09-20T11:56:33.054Z",
+        "durationMs": 32622,
+        "discovery": {
+          "outcome": "not_found",
+          "fetches": 16,
+          "sourceMatchesLabel": false,
+          "browserAttempts": 0,
+          "browserRenders": 0,
+          "browserUrls": [],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "basecamp",
+        "company": "37signals",
+        "homepageUrl": "https://37signals.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://37signals.com/jobs"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "37signals publishes current openings, including an explicit empty state, on its company-owned jobs page.",
+        "sourceEvidenceUrls": [
+          "https://37signals.com/jobs"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "basecamp",
+        "company": "37signals",
+        "startedAt": "2026-09-20T11:56:51.754Z",
+        "durationMs": 8121,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://37signals.com/jobs",
+          "confidence": 0.85,
+          "fetches": 4,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 0,
+          "browserRenders": 0,
+          "browserUrls": [],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    }
+  ]
+}

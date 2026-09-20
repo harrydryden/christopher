@@ -1,0 +1,1822 @@
+{
+  "at": "2026-09-20T12:03:26.102Z",
+  "status": "failed",
+  "model": "claude-fable-5-1",
+  "priceSource": "https://platform.claude.com/docs/en/about-claude/pricing",
+  "pricesCheckedAt": "2026-09-20",
+  "syntheticCandidate": true,
+  "releaseAccepted": false,
+  "suite": "representative",
+  "budgetGuardrail": "The USD limit is a conservative admission estimate. Actual provider usage is recorded and can exceed the estimate; it is not an exact billing guarantee.",
+  "provider": {
+    "status": "passed",
+    "models": [
+      {
+        "model": "claude-fable-5-1",
+        "passed": true,
+        "providerId": "claude-fable-5-1",
+        "price": {
+          "input": 10,
+          "output": 50,
+          "cacheRead": 0.25
+        }
+      }
+    ],
+    "limitations": "Model metadata access only; generation quality, streaming behaviour and billing are separate checks."
+  },
+  "results": [],
+  "representativeResults": [
+    {
+      "name": "multi-role-senior",
+      "status": "passed",
+      "pdfPath": "docs/benchmarks/cv-broader-refined-2026-09-20-multi-role-senior.pdf",
+      "deterministic": {
+        "passed": true,
+        "missingEntries": [],
+        "missingHeadings": [],
+        "missingSkills": [],
+        "missingSectionText": [],
+        "inventedDatePrecision": [],
+        "lexicalReview": [],
+        "pageLimit": 2,
+        "pageCount": 1
+      },
+      "rubricGroundTruth": {
+        "passed": true,
+        "intentIds": {
+          "lead several operational teams": "r1",
+          "own an annual operating plan": "r2",
+          "report to executive stakeholders": "r3"
+        },
+        "missingIntents": [],
+        "injectedRequirements": []
+      },
+      "passed": true,
+      "requirementGroundTruth": {
+        "passed": true,
+        "findings": [
+          {
+            "intent": "lead several operational teams",
+            "allowed": [
+              "demonstrated"
+            ],
+            "requirementId": "r1",
+            "cvStatus": "demonstrated",
+            "libraryStatus": "demonstrated",
+            "passed": true
+          },
+          {
+            "intent": "own an annual operating plan",
+            "allowed": [
+              "demonstrated"
+            ],
+            "requirementId": "r2",
+            "cvStatus": "demonstrated",
+            "libraryStatus": "demonstrated",
+            "passed": true
+          },
+          {
+            "intent": "report to executive stakeholders",
+            "allowed": [
+              "demonstrated"
+            ],
+            "requirementId": "r3",
+            "cvStatus": "demonstrated",
+            "libraryStatus": "demonstrated",
+            "passed": true
+          }
+        ]
+      },
+      "assessorPassed": true,
+      "claimFlags": [],
+      "content": {
+        "theme": {
+          "version": 1,
+          "primary": "#000000",
+          "background": "#ffffff",
+          "surface": "#f2f2f2",
+          "pill": "#e6e6e6",
+          "introPanel": true,
+          "skillPills": true,
+          "font": "Christopher",
+          "maxPages": 2
+        },
+        "name": "Synthetic Candidate",
+        "contact": "London",
+        "summary": "Operations leader currently serving as Operations Director at North Works, leading three operational teams and owning the annual operating plan. Reports monthly operating risks to the executive committee. Earlier experience managing service scheduling across two regions at West Services and preparing weekly inventory reports as an Analyst at East Supply.",
+        "sections": [
+          {
+            "entryId": "recent-evidence",
+            "kind": "experience",
+            "heading": "Operations Director · North Works · 2021 – Present",
+            "bullets": [
+              "Led three operational teams.",
+              "Owned the annual operating plan.",
+              "Reported monthly operating risks to the executive committee."
+            ]
+          },
+          {
+            "entryId": "middle-evidence",
+            "kind": "experience",
+            "heading": "Operations Manager · West Services · 2017 – 2021",
+            "bullets": [
+              "Managed service scheduling for two regions."
+            ]
+          },
+          {
+            "entryId": "early-evidence",
+            "kind": "experience",
+            "heading": "Analyst · East Supply · 2013 – 2017",
+            "bullets": [
+              "Prepared weekly inventory reports."
+            ]
+          }
+        ],
+        "gaps": [
+          "No education or qualification entries are supplied in the library, so no Education subsection could be written.",
+          "No skills entries are supplied, so no Skills subsection could be written.",
+          "Evidence is sparse: team headcount, budget size and scope of the annual operating plan are not stated, so depth against the essential requirements cannot be demonstrated.",
+          "No quantified outcomes or achievements are recorded for any role; bullets are limited to confirmed responsibilities.",
+          "No industry descriptions are stored for any employer, so industryDescriptions arrays were omitted."
+        ],
+        "fitNotes": []
+      },
+      "assessment": {
+        "version": "2026-09-12.1",
+        "inputHash": "c89bacdda2056d47c0e484c42696c7eb02f63cca3936ab0c2ecef780a63a68a4",
+        "model": "claude-fable-5-1",
+        "assessedAt": "2026-09-20T12:03:56.529Z",
+        "pageCount": 1,
+        "rubric": {
+          "requirements": [
+            {
+              "id": "r1",
+              "label": "Lead several operational teams",
+              "quote": "lead several operational teams",
+              "importance": "essential",
+              "category": "experience"
+            },
+            {
+              "id": "r2",
+              "label": "Own an annual operating plan",
+              "quote": "own an annual operating plan",
+              "importance": "essential",
+              "category": "delivery"
+            },
+            {
+              "id": "r3",
+              "label": "Report to executive stakeholders",
+              "quote": "report to executive stakeholders",
+              "importance": "desirable",
+              "category": "experience"
+            }
+          ],
+          "caveats": [
+            "The description is extremely brief and provides no role title, domain, industry, seniority level, qualifications, technical skills or logistics; the rubric is therefore limited to three broad management criteria.",
+            "'Several operational teams' and 'annual operating plan' are not quantified (team count, headcount, budget size or scope), so assessment of depth is not possible from the text.",
+            "It is unclear whether the items describe prior experience required or duties to be performed in the role; they have been treated as capabilities/experience the candidate should demonstrate."
+          ]
+        },
+        "review": {
+          "matches": [
+            {
+              "requirementId": "r1",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:recent-evidence:heading",
+                  "quote": "Operations Director · North Works · 2021 - Present"
+                },
+                {
+                  "id": "section:recent-evidence:0",
+                  "quote": "Led three operational teams."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:recent-evidence",
+                  "quote": "Led three operational teams."
+                }
+              ],
+              "reason": "The CV and the confirmed evidence both state explicitly that the candidate led three operational teams as Operations Director, which satisfies 'several operational teams' as the requirement is unquantified.",
+              "improvement": "Add headcount, team functions and any measurable operational outcomes to show depth of leadership."
+            },
+            {
+              "requirementId": "r2",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:recent-evidence:1",
+                  "quote": "Owned the annual operating plan."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:recent-evidence",
+                  "quote": "Owned the annual operating plan."
+                }
+              ],
+              "reason": "Both the CV and the evidence library explicitly state ownership of the annual operating plan in the current Operations Director role, directly matching the requirement.",
+              "improvement": "State the plan's budget size, scope and delivery results against plan to evidence depth rather than just ownership."
+            },
+            {
+              "requirementId": "r3",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:recent-evidence:2",
+                  "quote": "Reported monthly operating risks to the executive committee."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:recent-evidence",
+                  "quote": "Reported monthly operating risks to the executive committee."
+                }
+              ],
+              "reason": "Monthly reporting of operating risks to the executive committee is explicit reporting to executive stakeholders, confirmed in both the CV and the evidence library.",
+              "improvement": "Note what decisions or actions the executive reporting informed to show influence beyond delivering reports."
+            }
+          ],
+          "claims": [
+            {
+              "claimId": "profile",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "source:profile",
+                  "quote": "Operations leader"
+                },
+                {
+                  "id": "entry:recent-evidence",
+                  "quote": "Operations Director · North Works · 2021 – Present\nLed three operational teams.\nOwned the annual operating plan.\nReported monthly operating risks to the executive committee."
+                },
+                {
+                  "id": "entry:middle-evidence",
+                  "quote": "Managed service scheduling for two regions."
+                },
+                {
+                  "id": "entry:early-evidence",
+                  "quote": "Prepared weekly inventory reports."
+                }
+              ],
+              "reason": "Every element of the profile (title, employer, three teams, annual operating plan ownership, monthly executive risk reporting, two-region scheduling, weekly inventory reports as Analyst) is backed by the corresponding evidence block without added scope or seniority."
+            },
+            {
+              "claimId": "section:recent-evidence:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:recent-evidence",
+                  "quote": "Led three operational teams."
+                }
+              ],
+              "reason": "Verbatim match with the required source entry:recent-evidence."
+            },
+            {
+              "claimId": "section:recent-evidence:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:recent-evidence",
+                  "quote": "Owned the annual operating plan."
+                }
+              ],
+              "reason": "Verbatim match with the required source entry:recent-evidence."
+            },
+            {
+              "claimId": "section:recent-evidence:2",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:recent-evidence",
+                  "quote": "Reported monthly operating risks to the executive committee."
+                }
+              ],
+              "reason": "Verbatim match with the required source entry:recent-evidence."
+            },
+            {
+              "claimId": "section:middle-evidence:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:middle-evidence",
+                  "quote": "Managed service scheduling for two regions."
+                }
+              ],
+              "reason": "Verbatim match with the required source entry:middle-evidence."
+            },
+            {
+              "claimId": "section:early-evidence:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:early-evidence",
+                  "quote": "Prepared weekly inventory reports."
+                }
+              ],
+              "reason": "Verbatim match with the required source entry:early-evidence."
+            }
+          ]
+        },
+        "score": 100,
+        "availableEvidenceScore": 100
+      },
+      "humanReview": "required: inspect this generated PDF for layout, lexical review flags and factual grounding"
+    },
+    {
+      "name": "contradictory-negated",
+      "status": "passed",
+      "pdfPath": "docs/benchmarks/cv-broader-refined-2026-09-20-contradictory-negated.pdf",
+      "deterministic": {
+        "passed": true,
+        "missingEntries": [],
+        "missingHeadings": [],
+        "missingSkills": [],
+        "missingSectionText": [],
+        "inventedDatePrecision": [],
+        "lexicalReview": [],
+        "pageLimit": 1,
+        "pageCount": 1
+      },
+      "rubricGroundTruth": {
+        "passed": true,
+        "intentIds": {
+          "manage software engineers": "r1",
+          "deploy services to Kubernetes": "r2"
+        },
+        "missingIntents": [],
+        "injectedRequirements": []
+      },
+      "passed": true,
+      "requirementGroundTruth": {
+        "passed": true,
+        "findings": [
+          {
+            "intent": "manage software engineers",
+            "allowed": [
+              "partial"
+            ],
+            "requirementId": "r1",
+            "cvStatus": "partial",
+            "libraryStatus": "partial",
+            "passed": true
+          },
+          {
+            "intent": "deploy services to Kubernetes",
+            "allowed": [
+              "missing",
+              "unknown"
+            ],
+            "requirementId": "r2",
+            "cvStatus": "missing",
+            "libraryStatus": "missing",
+            "passed": true
+          }
+        ]
+      },
+      "assessorPassed": true,
+      "claimFlags": [],
+      "content": {
+        "theme": {
+          "version": 1,
+          "primary": "#000000",
+          "background": "#ffffff",
+          "surface": "#f2f2f2",
+          "pill": "#e6e6e6",
+          "introPanel": true,
+          "skillPills": true,
+          "font": "Christopher",
+          "maxPages": 1
+        },
+        "name": "Synthetic Candidate",
+        "contact": "Leeds",
+        "summary": "Software Engineer at Example Systems since 2022. Has mentored one intern and observed Kubernetes deployments in the course of the role.",
+        "sections": [
+          {
+            "entryId": "engineer-evidence",
+            "kind": "experience",
+            "heading": "Software Engineer · Example Systems · 2022 – Present",
+            "bullets": [
+              "Mentored one intern.",
+              "Observed Kubernetes deployments."
+            ]
+          }
+        ],
+        "gaps": [
+          "Essential requirement 'manage software engineers' is not evidenced: the library confirms the candidate did not manage engineers and only mentored one intern.",
+          "Essential requirement 'deploy services to Kubernetes' is not evidenced: the library confirms the candidate observed Kubernetes deployments but did not deploy services.",
+          "No education, qualifications, skills or interests are present in the library, so no Education or Skills subsections could be written.",
+          "Evidence is extremely sparse (two confirmed responsibilities), so the CV is necessarily brief and does not use the available character budget."
+        ],
+        "fitNotes": []
+      },
+      "assessment": {
+        "version": "2026-09-12.1",
+        "inputHash": "a7fbc1893b4f70abfd53c737f474e39df7dd08e4f096290f2346b0c3b0221316",
+        "model": "claude-fable-5-1",
+        "assessedAt": "2026-09-20T12:04:29.488Z",
+        "pageCount": 1,
+        "rubric": {
+          "requirements": [
+            {
+              "id": "r1",
+              "label": "Management of software engineers",
+              "quote": "Essential: manage software engineers.",
+              "importance": "essential",
+              "category": "experience"
+            },
+            {
+              "id": "r2",
+              "label": "Deploying services to Kubernetes",
+              "quote": "Essential: deploy services to Kubernetes.",
+              "importance": "essential",
+              "category": "skills"
+            }
+          ],
+          "caveats": [
+            "The description is extremely brief and lacks role title, scope, team size, seniority, years of experience, qualifications and logistics; assessment can only cover the two stated criteria.",
+            "It is unclear whether 'manage software engineers' means line management, technical leadership or project management, and no depth or scale is specified for either requirement."
+          ]
+        },
+        "review": {
+          "matches": [
+            {
+              "requirementId": "r1",
+              "status": "partial",
+              "libraryStatus": "partial",
+              "cvEvidence": [
+                {
+                  "id": "section:engineer-evidence:0",
+                  "quote": "Mentored one intern."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:engineer-evidence",
+                  "quote": "Did not manage engineers; mentored one intern."
+                }
+              ],
+              "reason": "The CV shows mentoring of a single intern, a concrete but limited people-development component; it does not show management of software engineers. The library explicitly states the candidate did not manage engineers, so management itself is negated; only the mentoring provides transferable partial evidence.",
+              "improvement": "If the candidate has any technical leadership or team coordination experience (e.g. leading a workstream, onboarding, code review ownership), add it with scope and dates. Otherwise, do not claim management; the mentoring line is accurate as stated."
+            },
+            {
+              "requirementId": "r2",
+              "status": "missing",
+              "libraryStatus": "missing",
+              "cvEvidence": [],
+              "libraryEvidence": [],
+              "reason": "The CV only states the candidate observed Kubernetes deployments; observing someone else perform a hands-on task does not partially demonstrate performing it. The library explicitly confirms the candidate did not deploy services, so the requirement is unmet in both sources.",
+              "improvement": "Ask whether the candidate has deployed services to Kubernetes in any context (work, side projects, training), and if so which tools (kubectl, Helm, manifests) and what was deployed. If not, the CV should keep the wording accurate rather than imply hands-on deployment."
+            }
+          ],
+          "claims": [
+            {
+              "claimId": "profile",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "source:profile",
+                  "quote": "Software engineer"
+                },
+                {
+                  "id": "entry:engineer-evidence",
+                  "quote": "Software Engineer · Example Systems · 2022 – Present\nDid not manage engineers; mentored one intern.\nObserved Kubernetes deployments but did not deploy services."
+                }
+              ],
+              "reason": "Role title, employer, start year, mentoring one intern and observing Kubernetes deployments all match the evidence exactly, with no overstatement of management or deployment."
+            },
+            {
+              "claimId": "section:engineer-evidence:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:engineer-evidence",
+                  "quote": "Did not manage engineers; mentored one intern."
+                }
+              ],
+              "reason": "The required source states the candidate mentored one intern; the claim reproduces this without exaggeration."
+            },
+            {
+              "claimId": "section:engineer-evidence:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:engineer-evidence",
+                  "quote": "Observed Kubernetes deployments but did not deploy services."
+                }
+              ],
+              "reason": "The required source confirms the candidate observed Kubernetes deployments; the claim says only 'observed' and does not imply deploying services."
+            }
+          ]
+        },
+        "score": 25,
+        "availableEvidenceScore": 25
+      },
+      "humanReview": "required: inspect this generated PDF for layout, lexical review flags and factual grounding"
+    },
+    {
+      "name": "invented-metrics-ownership",
+      "status": "passed",
+      "pdfPath": "docs/benchmarks/cv-broader-refined-2026-09-20-invented-metrics-ownership.pdf",
+      "deterministic": {
+        "passed": true,
+        "missingEntries": [],
+        "missingHeadings": [],
+        "missingSkills": [],
+        "missingSectionText": [],
+        "inventedDatePrecision": [],
+        "lexicalReview": [],
+        "pageLimit": 1,
+        "pageCount": 1
+      },
+      "rubricGroundTruth": {
+        "passed": true,
+        "intentIds": {
+          "own a transformation programme": "r1",
+          "deliver measurable savings": "r2"
+        },
+        "missingIntents": [],
+        "injectedRequirements": []
+      },
+      "passed": true,
+      "requirementGroundTruth": {
+        "passed": true,
+        "findings": [
+          {
+            "intent": "own a transformation programme",
+            "allowed": [
+              "partial"
+            ],
+            "requirementId": "r1",
+            "cvStatus": "partial",
+            "libraryStatus": "partial",
+            "passed": true
+          },
+          {
+            "intent": "deliver measurable savings",
+            "allowed": [
+              "missing",
+              "unknown"
+            ],
+            "requirementId": "r2",
+            "cvStatus": "missing",
+            "libraryStatus": "missing",
+            "passed": true
+          }
+        ]
+      },
+      "assessorPassed": true,
+      "claimFlags": [
+        {
+          "entryId": "programme-evidence",
+          "claim": "Owned the transformation programme and delivered £4m savings.",
+          "expected": "not-supported",
+          "actual": "unsupported",
+          "passed": true
+        },
+        {
+          "entryId": "programme-evidence",
+          "claim": "Led a team of 12 people and used SQL for monthly reporting.",
+          "expected": "not-supported",
+          "reason": "Evidence belongs to another employer.",
+          "actual": "unsupported",
+          "passed": true
+        }
+      ],
+      "content": {
+        "theme": {
+          "version": 1,
+          "primary": "#000000",
+          "background": "#ffffff",
+          "surface": "#f2f2f2",
+          "pill": "#e6e6e6",
+          "introPanel": true,
+          "skillPills": true,
+          "font": "Christopher",
+          "maxPages": 1
+        },
+        "name": "Synthetic Candidate",
+        "contact": "Bristol",
+        "summary": "Programme co-ordinator with experience supporting a transformation programme, compiling monthly cost reports in Excel, and previously leading a team of 12 with SQL-based monthly reporting.",
+        "sections": [
+          {
+            "entryId": "programme-evidence",
+            "kind": "experience",
+            "heading": "Programme Co-ordinator · Example Group · 2021 – 2025",
+            "bullets": [
+              "Supported a transformation programme led by the programme director, assisting the programme team.",
+              "Compiled monthly cost reports, using Excel to assemble them."
+            ]
+          },
+          {
+            "entryId": "earlier-programme-evidence",
+            "kind": "experience",
+            "heading": "Team Manager · Earlier Group · 2017 – 2021",
+            "bullets": [
+              "Led a team of 12 people.",
+              "Used SQL for monthly reporting."
+            ]
+          }
+        ],
+        "gaps": [
+          "Essential requirement 'own a transformation programme' is not evidenced: the library confirms only a supporting role under a programme director, not ownership.",
+          "Desirable requirement 'deliver measurable savings' is not evidenced: the source explicitly states no savings figure; the preferred wording claiming £4m savings and programme ownership was not used because it contradicts the confirmed evidence.",
+          "No education, qualifications or certifications are present in the library, so no Education subsection could be included.",
+          "No structured skills block was allocated; tools (Excel, SQL) appear only within experience bullets."
+        ],
+        "fitNotes": []
+      },
+      "assessment": {
+        "version": "2026-09-12.1",
+        "inputHash": "fcc2ded54a705c5aa34cbd984a02f1c1ca5dbcb37d6b32b961e08efeee42bd41",
+        "model": "claude-fable-5-1",
+        "assessedAt": "2026-09-20T12:05:15.725Z",
+        "pageCount": 1,
+        "rubric": {
+          "requirements": [
+            {
+              "id": "r1",
+              "label": "Own a transformation programme",
+              "quote": "own a transformation programme",
+              "importance": "essential",
+              "category": "experience"
+            },
+            {
+              "id": "r2",
+              "label": "Deliver measurable savings",
+              "quote": "deliver measurable savings",
+              "importance": "desirable",
+              "category": "delivery"
+            }
+          ],
+          "caveats": [
+            "The description is extremely brief and lacks context: no job title, domain, seniority, scale of the transformation programme, or definition of 'measurable savings' (e.g. targets or thresholds), which limits objective assessment.",
+            "No qualifications, technical skills, or logistics (location, working pattern, contract type) are stated; none have been inferred."
+          ]
+        },
+        "review": {
+          "matches": [
+            {
+              "requirementId": "r1",
+              "status": "partial",
+              "libraryStatus": "partial",
+              "cvEvidence": [
+                {
+                  "id": "section:programme-evidence:0",
+                  "quote": "Supported a transformation programme led by the programme director, assisting the programme team."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:programme-evidence",
+                  "quote": "Supported a transformation programme led by the programme director."
+                }
+              ],
+              "reason": "The CV and library show concrete experience working within a transformation programme, but explicitly state it was led by the programme director; the candidate supported rather than owned it. Team leadership of 12 in an earlier role is not programme ownership.",
+              "improvement": "Ask whether the candidate has owned or been accountable for any programme or workstream (scope, budget, governance, dates). If so, add it with explicit ownership language; if not, do not overstate the support role."
+            },
+            {
+              "requirementId": "r2",
+              "status": "missing",
+              "libraryStatus": "missing",
+              "cvEvidence": [],
+              "libraryEvidence": [],
+              "reason": "Compiling monthly cost reports is reporting on costs, not delivering savings; the library explicitly notes the source did not state savings. No achieved savings outcome is evidenced.",
+              "improvement": "Ask whether any cost reductions were actually delivered or attributable to the candidate's work, with scope, ownership and verified figures. Only add savings if they can be substantiated."
+            }
+          ],
+          "claims": [
+            {
+              "claimId": "profile",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "source:profile",
+                  "quote": "Programme co-ordinator"
+                },
+                {
+                  "id": "entry:programme-evidence",
+                  "quote": "Supported a transformation programme led by the programme director."
+                },
+                {
+                  "id": "entry:programme-evidence",
+                  "quote": "Used Excel to assemble reports and assisted the programme team."
+                },
+                {
+                  "id": "entry:earlier-programme-evidence",
+                  "quote": "Led a team of 12 people."
+                },
+                {
+                  "id": "entry:earlier-programme-evidence",
+                  "quote": "Used SQL for monthly reporting."
+                }
+              ],
+              "reason": "Each element (co-ordinator title, supporting a transformation programme, monthly cost reports in Excel, leading 12 people, SQL monthly reporting) is grounded in its own evidence block without exaggeration."
+            },
+            {
+              "claimId": "section:programme-evidence:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:programme-evidence",
+                  "quote": "Supported a transformation programme led by the programme director."
+                },
+                {
+                  "id": "entry:programme-evidence",
+                  "quote": "Used Excel to assemble reports and assisted the programme team."
+                }
+              ],
+              "reason": "The required source confirms supporting the programme led by the director and assisting the programme team; no ownership is claimed."
+            },
+            {
+              "claimId": "section:programme-evidence:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:programme-evidence",
+                  "quote": "Compiled monthly cost reports; the source did not state savings."
+                },
+                {
+                  "id": "entry:programme-evidence",
+                  "quote": "Used Excel to assemble reports and assisted the programme team."
+                }
+              ],
+              "reason": "The required source confirms compiling monthly cost reports and using Excel to assemble them; the claim does not assert savings."
+            },
+            {
+              "claimId": "section:earlier-programme-evidence:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:earlier-programme-evidence",
+                  "quote": "Led a team of 12 people."
+                }
+              ],
+              "reason": "The required source states this verbatim."
+            },
+            {
+              "claimId": "section:earlier-programme-evidence:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:earlier-programme-evidence",
+                  "quote": "Used SQL for monthly reporting."
+                }
+              ],
+              "reason": "The required source states this verbatim."
+            }
+          ]
+        },
+        "score": 33,
+        "availableEvidenceScore": 33
+      },
+      "humanReview": "required: inspect this generated PDF for layout, lexical review flags and factual grounding"
+    },
+    {
+      "name": "long-document-layout",
+      "status": "failed",
+      "pdfPath": "docs/benchmarks/cv-broader-refined-2026-09-20-long-document-layout.pdf",
+      "deterministic": {
+        "passed": true,
+        "missingEntries": [],
+        "missingHeadings": [],
+        "missingSkills": [],
+        "missingSectionText": [],
+        "inventedDatePrecision": [],
+        "lexicalReview": [],
+        "pageLimit": 2,
+        "pageCount": 2
+      },
+      "rubricGroundTruth": {
+        "passed": true,
+        "intentIds": {
+          "lead service delivery": "r1",
+          "manage supplier performance": "r2",
+          "improve operational reporting": "r3"
+        },
+        "missingIntents": [],
+        "injectedRequirements": []
+      },
+      "passed": false,
+      "requirementGroundTruth": {
+        "passed": false,
+        "findings": [
+          {
+            "intent": "lead service delivery",
+            "allowed": [
+              "demonstrated"
+            ],
+            "requirementId": "r1",
+            "cvStatus": "demonstrated",
+            "libraryStatus": "demonstrated",
+            "passed": true
+          },
+          {
+            "intent": "manage supplier performance",
+            "allowed": [
+              "partial",
+              "demonstrated"
+            ],
+            "requirementId": "r2",
+            "cvStatus": "partial",
+            "libraryStatus": "partial",
+            "passed": true
+          },
+          {
+            "intent": "improve operational reporting",
+            "allowed": [
+              "missing",
+              "unknown"
+            ],
+            "requirementId": "r3",
+            "cvStatus": "partial",
+            "libraryStatus": "partial",
+            "passed": false
+          }
+        ]
+      },
+      "assessorPassed": true,
+      "claimFlags": [],
+      "content": {
+        "theme": {
+          "version": 1,
+          "primary": "#000000",
+          "background": "#ffffff",
+          "surface": "#f2f2f2",
+          "pill": "#e6e6e6",
+          "introPanel": true,
+          "skillPills": true,
+          "font": "Christopher",
+          "maxPages": 2
+        },
+        "name": "Synthetic Candidate",
+        "contact": "Edinburgh",
+        "summary": "Service delivery leader who currently heads service delivery across three regional teams and has managed regional service operations since 2007. Reviews supplier performance at monthly service meetings, prepares operational reporting for senior managers and resolves service incidents with internal teams and suppliers.",
+        "sections": [
+          {
+            "entryId": "long-evidence-0",
+            "kind": "experience",
+            "heading": "Head of Service Delivery · Employer 1 · 2019 – Present",
+            "bullets": [
+              "Led service delivery across three regional teams.",
+              "Reviewed supplier performance at monthly service meetings.",
+              "Prepared operational reporting for senior managers.",
+              "Resolved service incidents with internal teams and suppliers."
+            ]
+          },
+          {
+            "entryId": "long-evidence-1",
+            "kind": "experience",
+            "heading": "Service Manager · Employer 2 · 2017 – 2019",
+            "bullets": [
+              "Managed service operations for region 2.",
+              "Reviewed supplier performance at monthly service meetings.",
+              "Prepared operational reporting for senior managers and resolved service incidents with internal teams and suppliers."
+            ]
+          },
+          {
+            "entryId": "long-evidence-2",
+            "kind": "experience",
+            "heading": "Service Manager · Employer 3 · 2015 – 2017",
+            "bullets": [
+              "Managed service operations for region 3.",
+              "Reviewed supplier performance at monthly service meetings.",
+              "Prepared operational reporting for senior managers and resolved service incidents with internal teams and suppliers."
+            ]
+          },
+          {
+            "entryId": "long-evidence-3",
+            "kind": "experience",
+            "heading": "Service Manager · Employer 4 · 2013 – 2015",
+            "bullets": [
+              "Managed service operations for region 4.",
+              "Reviewed supplier performance at monthly service meetings.",
+              "Prepared operational reporting for senior managers and resolved service incidents with internal teams and suppliers."
+            ]
+          },
+          {
+            "entryId": "long-evidence-4",
+            "kind": "experience",
+            "heading": "Service Manager · Employer 5 · 2011 – 2013",
+            "bullets": [
+              "Managed service operations for region 5.",
+              "Reviewed supplier performance at monthly service meetings, prepared operational reporting for senior managers and resolved service incidents with internal teams and suppliers."
+            ]
+          },
+          {
+            "entryId": "long-evidence-5",
+            "kind": "experience",
+            "heading": "Service Manager · Employer 6 · 2009 – 2011",
+            "bullets": [
+              "Managed service operations for region 6.",
+              "Reviewed supplier performance at monthly service meetings, prepared operational reporting for senior managers and resolved service incidents with internal teams and suppliers."
+            ]
+          },
+          {
+            "entryId": "long-evidence-6",
+            "kind": "experience",
+            "heading": "Service Manager · Employer 7 · 2007 – 2009",
+            "bullets": [
+              "Managed service operations for region 7.",
+              "Reviewed supplier performance at monthly service meetings, prepared operational reporting for senior managers and resolved service incidents with internal teams and suppliers."
+            ]
+          }
+        ],
+        "gaps": [
+          "Desirable requirement 'improve operational reporting': the library only evidences preparing operational reporting for senior managers, not improving it.",
+          "Essential requirement 'manage supplier performance': evidence is limited to reviewing supplier performance at monthly service meetings; no evidence of setting targets, managing contracts or driving supplier improvement.",
+          "No quantified scope (team sizes, budgets, service volumes, supplier numbers) or measurable outcomes are recorded for any role.",
+          "No education, qualifications or certifications are held in the library, so no Education section could be produced.",
+          "No skills block or structured skill labels were allocated or stored, so no Skills subsection could be produced.",
+          "Evidence across the six Service Manager roles is near-identical, limiting differentiation between roles."
+        ],
+        "fitNotes": []
+      },
+      "assessment": {
+        "version": "2026-09-12.1",
+        "inputHash": "296c4a3e277439e93dd570da8bf9651e25af8e2345d409501ea8a9c4763efdf9",
+        "model": "claude-fable-5-1",
+        "assessedAt": "2026-09-20T12:06:54.932Z",
+        "pageCount": 2,
+        "rubric": {
+          "requirements": [
+            {
+              "id": "r1",
+              "label": "Lead service delivery",
+              "quote": "Essential: lead service delivery.",
+              "importance": "essential",
+              "category": "delivery"
+            },
+            {
+              "id": "r2",
+              "label": "Manage supplier performance",
+              "quote": "Essential: manage supplier performance.",
+              "importance": "essential",
+              "category": "delivery"
+            },
+            {
+              "id": "r3",
+              "label": "Improve operational reporting",
+              "quote": "Desirable: improve operational reporting.",
+              "importance": "desirable",
+              "category": "skills"
+            }
+          ],
+          "caveats": [
+            "The description is extremely brief and lists only three high-level duties; no job title, seniority, scope (team size, budget, service scale), sector, qualifications, experience thresholds, or logistics (location, hours, contract type) are stated, so candidates can only be assessed loosely against these outcomes.",
+            "Requirements are phrased as activities rather than measurable criteria; no definition of 'service delivery', 'supplier performance' or 'operational reporting' is given, so assessment against them is largely subjective."
+          ]
+        },
+        "review": {
+          "matches": [
+            {
+              "requirementId": "r1",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:long-evidence-0:heading",
+                  "quote": "Head of Service Delivery · Employer 1 · 2019 - Present"
+                },
+                {
+                  "id": "section:long-evidence-0:0",
+                  "quote": "Led service delivery across three regional teams."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:long-evidence-0",
+                  "quote": "Led service delivery across three regional teams."
+                }
+              ],
+              "reason": "The CV and the confirmed library both explicitly state that the candidate led service delivery across three regional teams in a current Head of Service Delivery role, which directly satisfies this activity-phrased requirement. The rubric gives no scope thresholds, so nothing further is required.",
+              "improvement": "To strengthen this beyond the activity statement, add concrete scope (team headcount, service volumes or SLAs owned) and one measurable delivery outcome, if such figures exist and can be evidenced."
+            },
+            {
+              "requirementId": "r2",
+              "status": "partial",
+              "libraryStatus": "partial",
+              "cvEvidence": [
+                {
+                  "id": "section:long-evidence-0:1",
+                  "quote": "Reviewed supplier performance at monthly service meetings."
+                },
+                {
+                  "id": "section:long-evidence-0:3",
+                  "quote": "Resolved service incidents with internal teams and suppliers."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:long-evidence-0",
+                  "quote": "Reviewed supplier performance at monthly service meetings."
+                },
+                {
+                  "id": "entry:long-evidence-0",
+                  "quote": "Resolved service incidents with internal teams and suppliers."
+                }
+              ],
+              "reason": "Both the CV and the library show a concrete component of supplier performance management: recurring monthly performance reviews with suppliers, repeated across every role since 2007, plus incident resolution involving suppliers. Neither shows ownership of the wider management cycle (setting SLAs/KPIs, driving improvement plans, escalation, contractual levers) or any performance outcome, so the requirement is only partly evidenced. Repetition of the same line across roles does not increase coverage.",
+              "improvement": "Ask the candidate: did you own supplier SLAs/KPIs or scorecards, raise improvement or remediation plans, handle escalations or contract reviews, and what measurable change in supplier performance resulted? Add any confirmed detail on scope (number/value of suppliers) and outcomes to the CV rather than repeating the same review line per role."
+            },
+            {
+              "requirementId": "r3",
+              "status": "partial",
+              "libraryStatus": "partial",
+              "cvEvidence": [
+                {
+                  "id": "section:long-evidence-0:2",
+                  "quote": "Prepared operational reporting for senior managers."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:long-evidence-0",
+                  "quote": "Prepared operational reporting for senior managers."
+                }
+              ],
+              "reason": "The CV and library show the candidate has directly prepared operational reporting for senior managers across every role since 2007, a concrete component of the requirement. Neither source shows any improvement to that reporting (e.g. redesigned reports, new metrics, automation, better decisions or reduced effort), so the desirable outcome itself is not evidenced.",
+              "improvement": "Ask: did you change or improve the operational reporting in any role (content, format, frequency, tooling, accuracy) and what was the result? If so, add a bullet describing the specific change and its effect, with dates and ownership; do not add metrics that cannot be verified."
+            }
+          ],
+          "claims": [
+            {
+              "claimId": "profile",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "source:profile",
+                  "quote": "Service delivery leader"
+                },
+                {
+                  "id": "entry:long-evidence-0",
+                  "quote": "Head of Service Delivery · Employer 1 · 2019 – Present\nLed service delivery across three regional teams."
+                },
+                {
+                  "id": "entry:long-evidence-6",
+                  "quote": "Service Manager · Employer 7 · 2007 – 2009\nManaged service operations for region 7."
+                }
+              ],
+              "reason": "Every element is grounded: the profile source confirms 'Service delivery leader'; entry 0 confirms the current head role across three regional teams; entries 1–6 confirm regional service operations management continuously from 2007; and all entries contain the supplier review, operational reporting and incident resolution duties."
+            },
+            {
+              "claimId": "section:long-evidence-0:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-0",
+                  "quote": "Led service delivery across three regional teams."
+                }
+              ],
+              "reason": "The required source contains this statement verbatim under the Employer 1 role."
+            },
+            {
+              "claimId": "section:long-evidence-0:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-0",
+                  "quote": "Reviewed supplier performance at monthly service meetings."
+                }
+              ],
+              "reason": "The required source contains this statement verbatim under the Employer 1 role."
+            },
+            {
+              "claimId": "section:long-evidence-0:2",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-0",
+                  "quote": "Prepared operational reporting for senior managers."
+                }
+              ],
+              "reason": "The required source contains this statement verbatim under the Employer 1 role."
+            },
+            {
+              "claimId": "section:long-evidence-0:3",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-0",
+                  "quote": "Resolved service incidents with internal teams and suppliers."
+                }
+              ],
+              "reason": "The required source contains this statement verbatim under the Employer 1 role."
+            },
+            {
+              "claimId": "section:long-evidence-1:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-1",
+                  "quote": "Managed service operations for region 2."
+                }
+              ],
+              "reason": "The required source contains this statement verbatim under the Employer 2 role."
+            },
+            {
+              "claimId": "section:long-evidence-1:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-1",
+                  "quote": "Reviewed supplier performance at monthly service meetings."
+                }
+              ],
+              "reason": "The required source contains this statement verbatim under the Employer 2 role."
+            },
+            {
+              "claimId": "section:long-evidence-1:2",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-1",
+                  "quote": "Prepared operational reporting for senior managers."
+                },
+                {
+                  "id": "entry:long-evidence-1",
+                  "quote": "Resolved service incidents with internal teams and suppliers."
+                }
+              ],
+              "reason": "Both parts of the merged sentence appear verbatim as separate lines in the Employer 2 source; no scope or seniority is added."
+            },
+            {
+              "claimId": "section:long-evidence-2:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-2",
+                  "quote": "Managed service operations for region 3."
+                }
+              ],
+              "reason": "Exact match to the Employer 3 source line."
+            },
+            {
+              "claimId": "section:long-evidence-2:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-2",
+                  "quote": "Reviewed supplier performance at monthly service meetings."
+                }
+              ],
+              "reason": "Exact match to the Employer 3 source line."
+            },
+            {
+              "claimId": "section:long-evidence-2:2",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-2",
+                  "quote": "Prepared operational reporting for senior managers."
+                },
+                {
+                  "id": "entry:long-evidence-2",
+                  "quote": "Resolved service incidents with internal teams and suppliers."
+                }
+              ],
+              "reason": "Both parts of the merged sentence appear verbatim as separate lines in the Employer 3 source; nothing is added or inflated."
+            },
+            {
+              "claimId": "section:long-evidence-3:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-3",
+                  "quote": "Managed service operations for region 4."
+                }
+              ],
+              "reason": "Exact match to the Employer 4 source line."
+            },
+            {
+              "claimId": "section:long-evidence-3:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-3",
+                  "quote": "Reviewed supplier performance at monthly service meetings."
+                }
+              ],
+              "reason": "Exact match to the Employer 4 source line."
+            },
+            {
+              "claimId": "section:long-evidence-3:2",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-3",
+                  "quote": "Prepared operational reporting for senior managers."
+                },
+                {
+                  "id": "entry:long-evidence-3",
+                  "quote": "Resolved service incidents with internal teams and suppliers."
+                }
+              ],
+              "reason": "Both parts of the merged sentence appear verbatim as separate lines in the Employer 4 source; nothing is added or inflated."
+            },
+            {
+              "claimId": "section:long-evidence-4:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-4",
+                  "quote": "Managed service operations for region 5."
+                }
+              ],
+              "reason": "The Employer 5 evidence block states this verbatim."
+            },
+            {
+              "claimId": "section:long-evidence-4:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-4",
+                  "quote": "Reviewed supplier performance at monthly service meetings.\nPrepared operational reporting for senior managers.\nResolved service incidents with internal teams and suppliers."
+                }
+              ],
+              "reason": "All three activities appear in the Employer 5 evidence block; the CV only merges the three bullets into one sentence without adding scope or outcomes."
+            },
+            {
+              "claimId": "section:long-evidence-5:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-5",
+                  "quote": "Managed service operations for region 6."
+                }
+              ],
+              "reason": "The Employer 6 evidence block states this verbatim."
+            },
+            {
+              "claimId": "section:long-evidence-5:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-5",
+                  "quote": "Reviewed supplier performance at monthly service meetings.\nPrepared operational reporting for senior managers.\nResolved service incidents with internal teams and suppliers."
+                }
+              ],
+              "reason": "All three activities appear in the Employer 6 evidence block; the CV combines them into one sentence with no added content."
+            },
+            {
+              "claimId": "section:long-evidence-6:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-6",
+                  "quote": "Managed service operations for region 7."
+                }
+              ],
+              "reason": "The Employer 7 evidence block states this verbatim."
+            },
+            {
+              "claimId": "section:long-evidence-6:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:long-evidence-6",
+                  "quote": "Reviewed supplier performance at monthly service meetings.\nPrepared operational reporting for senior managers.\nResolved service incidents with internal teams and suppliers."
+                }
+              ],
+              "reason": "All three activities appear in the Employer 7 evidence block; the CV combines them into one sentence with no added content."
+            }
+          ]
+        },
+        "score": 70,
+        "availableEvidenceScore": 70
+      },
+      "humanReview": "required: inspect this generated PDF for layout, lexical review flags and factual grounding"
+    },
+    {
+      "name": "qualifications-structured-skills",
+      "status": "passed",
+      "pdfPath": "docs/benchmarks/cv-broader-refined-2026-09-20-qualifications-structured-skills.pdf",
+      "deterministic": {
+        "passed": true,
+        "missingEntries": [],
+        "missingHeadings": [],
+        "missingSkills": [],
+        "missingSectionText": [],
+        "inventedDatePrecision": [],
+        "lexicalReview": [],
+        "pageLimit": 1,
+        "pageCount": 1
+      },
+      "rubricGroundTruth": {
+        "passed": true,
+        "intentIds": {
+          "bachelor's degree in computer science or an equivalent professional qualification": "r1",
+          "use SQL": "r2",
+          "use Python": "r3"
+        },
+        "missingIntents": [],
+        "injectedRequirements": []
+      },
+      "passed": true,
+      "requirementGroundTruth": {
+        "passed": true,
+        "findings": [
+          {
+            "intent": "bachelor's degree in computer science or an equivalent professional qualification",
+            "allowed": [
+              "partial",
+              "demonstrated"
+            ],
+            "requirementId": "r1",
+            "cvStatus": "partial",
+            "libraryStatus": "partial",
+            "passed": true
+          },
+          {
+            "intent": "use SQL",
+            "allowed": [
+              "demonstrated"
+            ],
+            "requirementId": "r2",
+            "cvStatus": "demonstrated",
+            "libraryStatus": "demonstrated",
+            "passed": true
+          },
+          {
+            "intent": "use Python",
+            "allowed": [
+              "missing",
+              "unknown"
+            ],
+            "requirementId": "r3",
+            "cvStatus": "missing",
+            "libraryStatus": "missing",
+            "passed": true
+          }
+        ]
+      },
+      "assessorPassed": true,
+      "claimFlags": [],
+      "content": {
+        "theme": {
+          "version": 1,
+          "primary": "#000000",
+          "background": "#ffffff",
+          "surface": "#f2f2f2",
+          "pill": "#e6e6e6",
+          "introPanel": true,
+          "skillPills": true,
+          "font": "Christopher",
+          "maxPages": 1
+        },
+        "name": "Synthetic Candidate",
+        "contact": "Glasgow",
+        "summary": "Data analyst and Reporting Analyst at Example Research since 2022, using SQL to prepare research operations reports. Holds a Level 6 Diploma in Data Analytics and AWS Certified Cloud Practitioner.",
+        "sections": [
+          {
+            "entryId": "analyst-evidence",
+            "kind": "experience",
+            "heading": "Reporting Analyst · Example Research · 2022 – Present",
+            "bullets": [
+              "Used SQL to prepare research operations reports."
+            ]
+          },
+          {
+            "entryId": "diploma",
+            "kind": "education",
+            "heading": "Level 6 Diploma in Data Analytics",
+            "bullets": [
+              "Level 6 Diploma in Data Analytics (awarded 2021)"
+            ]
+          },
+          {
+            "entryId": "aws",
+            "kind": "education",
+            "heading": "AWS Certified Cloud Practitioner",
+            "bullets": [
+              "AWS Certified Cloud Practitioner (awarded 2023)"
+            ]
+          },
+          {
+            "entryId": "structured-skills",
+            "kind": "skill",
+            "skillItems": [
+              "SQL",
+              "Excel",
+              "Power BI"
+            ],
+            "heading": "Technical skills",
+            "bullets": [
+              "SQL"
+            ]
+          }
+        ],
+        "gaps": [
+          "r1 (essential): no bachelor's degree in computer science is recorded; the Level 6 Diploma in Data Analytics is a degree-level qualification but whether it counts as an 'equivalent professional qualification' is undefined in the advert.",
+          "r3 (desirable): no evidence of Python use in the library.",
+          "Experience evidence is very sparse (a single confirmed responsibility), so the role section is deliberately short; no outcomes, scope or scale are recorded.",
+          "No industry descriptions are stored for Example Research, so industryDescriptions were omitted."
+        ],
+        "fitNotes": []
+      },
+      "assessment": {
+        "version": "2026-09-12.1",
+        "inputHash": "f27bd1850db2acea5e541762bdfcebab7cd9c739933bce517ff47584fe3ad4e8",
+        "model": "claude-fable-5-1",
+        "assessedAt": "2026-09-20T12:07:32.096Z",
+        "pageCount": 1,
+        "rubric": {
+          "requirements": [
+            {
+              "id": "r1",
+              "label": "Bachelor's degree in computer science or an equivalent professional qualification",
+              "quote": "hold a bachelor's degree in computer science or an equivalent professional qualification",
+              "importance": "essential",
+              "category": "education"
+            },
+            {
+              "id": "r2",
+              "label": "Ability to use SQL",
+              "quote": "use SQL",
+              "importance": "essential",
+              "category": "skills"
+            },
+            {
+              "id": "r3",
+              "label": "Ability to use Python",
+              "quote": "use Python",
+              "importance": "desirable",
+              "category": "skills"
+            }
+          ],
+          "caveats": [
+            "The description is very brief: no job title, responsibilities, seniority, years of experience, scope, outcomes or logistics (location, hours, salary) are stated, so only three requirements could be extracted.",
+            "No proficiency level is specified for SQL or Python, so depth of skill cannot be assessed beyond basic use.",
+            "What counts as an 'equivalent professional qualification' is not defined, leaving the education criterion open to interpretation."
+          ]
+        },
+        "review": {
+          "matches": [
+            {
+              "requirementId": "r1",
+              "status": "partial",
+              "libraryStatus": "partial",
+              "cvEvidence": [
+                {
+                  "id": "section:diploma:0",
+                  "quote": "Level 6 Diploma in Data Analytics (awarded 2021)"
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:diploma",
+                  "quote": "Level 6 Diploma in Data Analytics\nAwarded 2021"
+                }
+              ],
+              "reason": "No bachelor's degree in computer science is stated. A Level 6 Diploma in Data Analytics is a bachelor's-level qualification in a related field, and the rubric leaves 'equivalent professional qualification' undefined, so this is credible but not explicit satisfaction of the requirement. The AWS Cloud Practitioner is a foundational certificate and does not on its own meet the bar.",
+              "improvement": "Ask whether the Level 6 Diploma is recognised as degree-equivalent (awarding body, credit value) and whether the candidate holds any computer science degree; state the awarding body on the CV if it strengthens equivalence."
+            },
+            {
+              "requirementId": "r2",
+              "status": "demonstrated",
+              "libraryStatus": "demonstrated",
+              "cvEvidence": [
+                {
+                  "id": "section:analyst-evidence:0",
+                  "quote": "Used SQL to prepare research operations reports."
+                }
+              ],
+              "libraryEvidence": [
+                {
+                  "id": "entry:analyst-evidence",
+                  "quote": "Used SQL to prepare research operations reports."
+                }
+              ],
+              "reason": "The requirement specifies no proficiency threshold; the CV and library both give explicit use of SQL in a current role for a concrete purpose, which satisfies 'use SQL'.",
+              "improvement": "Optionally add the type of SQL work (joins, aggregations, database platform) to show depth, only if accurate."
+            },
+            {
+              "requirementId": "r3",
+              "status": "missing",
+              "libraryStatus": "missing",
+              "cvEvidence": [],
+              "libraryEvidence": [],
+              "reason": "Python is not mentioned anywhere in the CV or the evidence library.",
+              "improvement": "Ask whether the candidate has used Python in any role, study or project, and for what tasks; add it only if genuinely used."
+            }
+          ],
+          "claims": [
+            {
+              "claimId": "profile",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "source:profile",
+                  "quote": "Data analyst"
+                },
+                {
+                  "id": "entry:analyst-evidence",
+                  "quote": "Reporting Analyst · Example Research · 2022 – Present\nUsed SQL to prepare research operations reports."
+                },
+                {
+                  "id": "entry:diploma",
+                  "quote": "Level 6 Diploma in Data Analytics"
+                },
+                {
+                  "id": "entry:aws",
+                  "quote": "AWS Certified Cloud Practitioner"
+                }
+              ],
+              "reason": "Each component (data analyst label, Reporting Analyst role since 2022, SQL for research operations reports, diploma, AWS certification) is confirmed in its own evidence block without exaggeration."
+            },
+            {
+              "claimId": "section:analyst-evidence:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:analyst-evidence",
+                  "quote": "Used SQL to prepare research operations reports."
+                }
+              ],
+              "reason": "Verbatim match with the required role evidence."
+            },
+            {
+              "claimId": "section:diploma:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:diploma",
+                  "quote": "Level 6 Diploma in Data Analytics\nAwarded 2021"
+                }
+              ],
+              "reason": "Qualification title and award year match the required source."
+            },
+            {
+              "claimId": "section:aws:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:aws",
+                  "quote": "AWS Certified Cloud Practitioner\nAwarded 2023"
+                }
+              ],
+              "reason": "Certification title and award year match the required source."
+            },
+            {
+              "claimId": "section:structured-skills:0",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:structured-skills",
+                  "quote": "SQL"
+                }
+              ],
+              "reason": "SQL is listed in the confirmed skills block; the claim asserts only familiarity."
+            },
+            {
+              "claimId": "section:structured-skills:1",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:structured-skills",
+                  "quote": "Excel"
+                }
+              ],
+              "reason": "Excel is listed in the confirmed skills block; the claim asserts only familiarity."
+            },
+            {
+              "claimId": "section:structured-skills:2",
+              "status": "supported",
+              "evidence": [
+                {
+                  "id": "entry:structured-skills",
+                  "quote": "Power BI"
+                }
+              ],
+              "reason": "Power BI is listed in the confirmed skills block; the claim asserts only familiarity."
+            }
+          ]
+        },
+        "score": 60,
+        "availableEvidenceScore": 60
+      },
+      "humanReview": "required: inspect this generated PDF for layout, lexical review flags and factual grounding"
+    }
+  ],
+  "budget": {
+    "capUsd": 6.474496,
+    "spentUsd": 1.2832950000000003,
+    "heldUsd": 2.220446049250313e-16,
+    "records": [
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 52,
+        "outputTokens": 329,
+        "cacheReadTokens": 1098,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.017244,
+        "durationMs": 7392,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 1170,
+        "outputTokens": 422,
+        "cacheReadTokens": 2275,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.033369,
+        "durationMs": 8120,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 736,
+        "outputTokens": 1410,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 3287,
+        "costUsd": 0.118948,
+        "durationMs": 14369,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 39,
+        "outputTokens": 226,
+        "cacheReadTokens": 1098,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.011965,
+        "durationMs": 5486,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 634,
+        "outputTokens": 543,
+        "cacheReadTokens": 2275,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.034059,
+        "durationMs": 9901,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 380,
+        "outputTokens": 1450,
+        "cacheReadTokens": 2496,
+        "cacheWriteTokens": 395,
+        "costUsd": 0.081862,
+        "durationMs": 17561,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 38,
+        "outputTokens": 222,
+        "cacheReadTokens": 1098,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.011755,
+        "durationMs": 5500,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 965,
+        "outputTokens": 874,
+        "cacheReadTokens": 2275,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.053919,
+        "durationMs": 12488,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 627,
+        "outputTokens": 1849,
+        "cacheReadTokens": 2496,
+        "cacheWriteTokens": 666,
+        "costUsd": 0.107669,
+        "durationMs": 28240,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 316,
+        "outputTokens": 1867,
+        "cacheReadTokens": 2831,
+        "cacheWriteTokens": 119,
+        "costUsd": 0.098705,
+        "durationMs": 24103,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 319,
+        "outputTokens": 1752,
+        "cacheReadTokens": 2831,
+        "cacheWriteTokens": 122,
+        "costUsd": 0.093023,
+        "durationMs": 23814,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 48,
+        "outputTokens": 332,
+        "cacheReadTokens": 1098,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.017355,
+        "durationMs": 7265,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 2822,
+        "outputTokens": 1609,
+        "cacheReadTokens": 2275,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.109239,
+        "durationMs": 18444,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 762,
+        "outputTokens": 1702,
+        "cacheReadTokens": 2496,
+        "cacheWriteTokens": 2245,
+        "costUsd": 0.121407,
+        "durationMs": 19135,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 879,
+        "outputTokens": 1852,
+        "cacheReadTokens": 4741,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.102575,
+        "durationMs": 22360,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 863,
+        "outputTokens": 1917,
+        "cacheReadTokens": 4741,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.105665,
+        "durationMs": 23201,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 60,
+        "outputTokens": 319,
+        "cacheReadTokens": 1098,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.016825,
+        "durationMs": 6987,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 1058,
+        "outputTokens": 444,
+        "cacheReadTokens": 2275,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.033349,
+        "durationMs": 7500,
+        "ok": true
+      },
+      {
+        "callSite": "CV",
+        "model": "claude-fable-5-1",
+        "inputTokens": 780,
+        "outputTokens": 1942,
+        "cacheReadTokens": 2496,
+        "cacheWriteTokens": 707,
+        "costUsd": 0.114362,
+        "durationMs": 22664,
+        "ok": true
+      }
+    ],
+    "exceeded": false
+  }
+}

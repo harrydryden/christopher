@@ -1,0 +1,73 @@
+{
+  "at": "2026-09-20T12:20:52.606201+00:00",
+  "classification": "Token-based provider cost estimate, not invoice or hard billing cap",
+  "uniquePaidReports": [
+    {
+      "report": "docs/benchmarks/cv-broader-canary-2026-09-20.json",
+      "sha256": "73e4dc0a8d9f799cfdca9183b3d27e23d780d0787507bed757831ab6a9d78d7a",
+      "estimatedUsd": 0.246894
+    },
+    {
+      "report": "docs/benchmarks/cv-broader-remaining-2026-09-20.json",
+      "sha256": "ee477fec8a7afe51db7ef99de0606d4a20a0c6992b55b1456140159658b28ced",
+      "estimatedUsd": 1.27861
+    },
+    {
+      "report": "docs/benchmarks/cv-broader-refined-2026-09-20.json",
+      "sha256": "44178954c17a442c2abd1bdd662045598aa3ccfea08226aa4bdf5063f927cf1c",
+      "estimatedUsd": 1.2832950000000003
+    },
+    {
+      "report": "docs/benchmarks/cv-broader-final-2026-09-20.json",
+      "sha256": "ef7fc30eb47dd1ffeb81f2af042e96274e50b92c12287443f6ae7ee9dba15de9",
+      "estimatedUsd": 0.576169
+    },
+    {
+      "report": "docs/benchmarks/cv-broader-all-final-2026-09-20.json",
+      "sha256": "29066114d2d8f33f4e21b4f3811acf2caafda77dce3a98996ef2673c8152d9bd",
+      "estimatedUsd": 1.1598909999999998
+    },
+    {
+      "report": "docs/benchmarks/cv-broader-all-final-completion-2026-09-20.json",
+      "sha256": "c9a2db77ce6b95d8def1e14d09da16f3328dec3ba6438d7335c44add37de0892",
+      "estimatedUsd": 0.161339
+    },
+    {
+      "report": "docs/benchmarks/cv-broader-all-final-qualification-2026-09-20.json",
+      "sha256": "f34cd5b53064fa8476b5a5ce0ffc619aab2a11d889e44bfecc7d0151cd75b961",
+      "estimatedUsd": 0.246662
+    },
+    {
+      "report": "docs/benchmarks/discovery-ai-broader-2026-09-20.json",
+      "sha256": "d50352197c614b125c246f37ee16c28713631f57a7d982219866570d42ae42e6",
+      "estimatedUsd": 0.017953
+    },
+    {
+      "report": "docs/benchmarks/extraction-ai-frozen-2026-09-20.json",
+      "sha256": "f8fc57039b959b5846868c78de2d93c80742196a8a7d82d43998eb372874e1d9",
+      "estimatedUsd": 0.02546
+    },
+    {
+      "report": "docs/benchmarks/extraction-ai-structure-fix-2026-09-20.json",
+      "sha256": "e8e1a857cb197cd18a027d70d9bc26496c959adf93ec4dfc205e8fd19186dcf4",
+      "estimatedUsd": 0.033317
+    },
+    {
+      "report": "docs/benchmarks/extraction-ai-fields-final-2026-09-20.json",
+      "sha256": "7461774e505da55fb6d2a353c455d9698e7a30ee94eb967ef631c60ae2eb5e81",
+      "estimatedUsd": 0.032543
+    },
+    {
+      "report": "docs/benchmarks/extraction-ai-complete-fields-2026-09-20.json",
+      "sha256": "aa86d66a21d4dbecc3a52d9c835240e553facd04f3618c65a09a4c1403443836",
+      "estimatedUsd": 0.03669
+    }
+  ],
+  "broaderCvUsd": 4.95286,
+  "broaderDiscoveryExtractionUsd": 0.145963,
+  "thisReviewUsd": 5.098823,
+  "previousReviewUsd": 0.927517,
+  "cumulativeEvaluationUsd": 6.02634,
+  "estimatedEnvelopeUsd": 10,
+  "excluded": "Copied interrupted report, zero-cost regrades and composite reports are not additional paid runs."
+}

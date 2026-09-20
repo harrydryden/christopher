@@ -27,6 +27,34 @@ Python separately; checks direct, partial, inflated, repeated-keyword and negate
 the writer, PDF renderer and assessor together. The generated CV must keep every claim grounded,
 score at least 80, demonstrate all three synthetic requirements and fit within two pages.
 
+The legacy check above remains the default. A broader synthetic suite is available explicitly:
+
+```sh
+CV_EVAL_SUITE=representative \
+CV_EVAL_CASES=multi-role-senior \
+CV_EVAL_MODEL=claude-fable-5-1 \
+CV_EVAL_MAX_USD=8 \
+pnpm exec tsx scripts/evaluate-cv.ts
+```
+
+Omit `CV_EVAL_CASES` to run all seven representative cases: a multi-role senior candidate, a sparse
+career changer, negated evidence, invented metrics and borrowed ownership, malicious instructions,
+ a long two-page document, and exact qualification/date/structured-skill retention. Each case groups and validates its library through the production
+path, extracts a fresh rubric, uses the production allocation and measured refitting loop, renders a
+CV, then audits every printed claim. The two adversarial cases add three fixed bad-claim audits, including a claim
+that borrows SQL and team leadership from another employer. This is at least 21 provider calls; the
+long case can require extra assessment batches. Start with the single-case canary shown above and
+inspect its recorded cost before admitting the full suite. `CV_EVAL_MAX_USD` is an admission ceiling,
+not a target, and must remain at or below $8 for this review.
+
+The suite does not accept the assessor's score alone. Deterministic checks require every employment
+record to remain present, enforce independently declared rubric intents and per-requirement semantic
+outcomes, and enforce the requested page limit. Fixture-specific lexical matches are reported for
+review rather than automatically failed because an honest negation may contain the same words. The
+fixed bad-claim audits record the expected and actual status per claim independently of the overall
+score. The JSON report is saved after each case and preserves the latest PDF path if a later call
+fails. Every generated PDF still needs visual inspection.
+
 An automated pass is not release acceptance. Open the generated PDF and report, verify factual
 grounding and document quality, record the observed provider cost, and set release acceptance only
 through the production review. Without `ANTHROPIC_API_KEY`, the checked-in evidence remains honestly
@@ -62,3 +90,41 @@ agent reviewers and preserves PDF hashes. No human sign-off or application relea
 recorded. This closes missing-key/provider-access verification and passes this narrow synthetic
 CV check. It does not establish representative long/multi-role quality, deterministic grounding,
 production account settings, hosted generation or general release readiness.
+
+## Broader synthetic evaluation — 20 September 2026
+
+The broader suite exercised seven synthetic libraries through the production grouping, writing
+allocation, measured fitting, renderer and assessor paths. It covered senior multi-role history,
+sparse career change, negated evidence, invented metrics and cross-employer ownership, hostile
+instructions, a seven-role two-page CV, and exact qualification/date/structured-skill retention.
+
+Early runs exposed two kinds of correction. The fixture labels were too strict where mentoring is
+legitimate partial people-leadership evidence and reviewing supplier performance is legitimate
+partial supplier-management evidence. Those expectation corrections did not change production
+behaviour. Separately, the assessor wrongly gave partial credit for cost reporting as evidence of
+savings, observing deployments as evidence of deploying, and preparing baseline reports as evidence
+of improving them. The review prompt now requires a concrete component of the requested task or
+outcome and explicitly separates baseline activity from improvement, optimisation, transformation
+or increase. The author prompt and factual fixtures were not weakened.
+
+[The final composite record](benchmarks/cv-broader-all-final-composite-2026-09-20.json) passes all
+seven cases on `claude-fable-5-1`: scores were 100, 25, 25, 33, 100, 60 and 60 respectively. Low
+scores are expected for deliberately sparse or negated evidence. Every printed claim was supported;
+the three intentionally bad claims were rejected; all roles and qualifications were retained; all
+documents met their one- or two-page limit; and rubric and requirement-level ground truth passed.
+The record carries source-report hashes, prompt and fixture hashes where captured, PDF paths and an
+explicit provenance limitation for the long-case source whose prompt hash was not embedded at call
+time. Execution chronology records that it used the same final prompt and fixtures.
+
+The broader investigation and final evidence cost an estimated **$4.952860** in total, including
+diagnostic runs and two admission-guard interruptions. The composite's three source runs account
+for $1.982722 of that total; this must not be added again. These are repository price-table estimates
+from provider-reported usage, not invoice reconciliation. The admission guard correctly stopped a
+parallel long-document assessment when its conservative in-flight reservations exceeded the
+remaining per-process ceiling, even though actual spend was lower.
+
+Root visually reviewed all seven selected PDFs across eight pages. They were grounded and clean,
+with no clipping or overlap. The qualification page kept both full qualification names, the known
+2021 and 2023 years without invented months, and exact SQL, Excel and Power BI labels without adding
+Python or a degree. Automated success and visual review remain evaluation evidence, not release
+acceptance or a claim about hiring outcomes.

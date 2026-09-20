@@ -3,6 +3,7 @@
  * See docs/SPEC.md section 3.2. Every step adds candidates with a method; the best one decides the outcome.
  */
 import { absoluteUrl, ensureHttpUrl, extractDomain, normalizeUrl, sameDomain, stripHtml } from "../normalize";
+import { isExplicitEmptyListing } from "../ats/html";
 import type { RawPosting, SourceSpec } from "../types";
 import { confidenceFor, outcomeFor } from "./confidence";
 import { countAnchors, extractMeta, harvestLinks, scoreLink, WELL_KNOWN_PATHS } from "./links";
@@ -142,6 +143,33 @@ function isJsShell(html: string): boolean {
   return countAnchors(html) < 5 || stripHtml(html).length < 400;
 }
 
+function shouldRenderCandidate(html: string, url: string, via?: string): boolean {
+  if (!via) return false;
+  let path = "";
+  try {
+    path = new URL(url).pathname;
+  } catch {
+    return false;
+  }
+  const jobShapedPath = /(?:^|\/)(?:careers?|career|jobs?|open-roles?|openings?|positions?|vacancies|work-with-us|join-us)(?:\/|$)/i.test(path);
+  const careerText = /\b(?:careers?|jobs?|open roles?|open positions?|openings?|vacancies|join (?:us|the team)|work with us|we(?:'re| are) hiring)\b/i.test(stripHtml(html));
+  // Candidate pages have already been selected by a careers link, hub link or conservative path
+  // probe. Require one more page-local signal before spending a browser operation.
+  return isJsShell(html) || jobShapedPath || careerText;
+}
+
+function isExplicitCompleteListingLink(link: HarvestedLink, pageUrl: string, ctx: DiscoveryContext): boolean {
+  if (link.kind !== "a" || !sameDomain(link.href, pageUrl) || normalizeUrl(link.href) === normalizeUrl(pageUrl) || ctx.resolveSpec(link.href)) return false;
+  const label = link.text.trim() || link.context || "";
+  if (/\b(?:(?:all|search)\s+(?:open\s+)?(?:jobs?|roles?|positions?|vacancies|opportunities)|(?:view|explore|browse|see)\s+(?:all\s+)?(?:open\s+)?(?:jobs?|roles?|positions?|vacancies|opportunities))\b/i.test(label)) return true;
+  try {
+    const target = new URL(link.href);
+    return !target.search && /^\/(?:all-jobs?|jobs?|positions?|open-roles?|openings?|vacancies)\/?$/i.test(target.pathname);
+  } catch {
+    return false;
+  }
+}
+
 /** Look for ATS references in a page's text, its links, and (optionally) its network requests. */
 function collectAtsFromPage(run: Run, ctx: DiscoveryContext, html: string, pageUrl: string, links: HarvestedLink[], via?: string): void {
   const evidenceSuffix = via ? [`via ${via}`] : [];
@@ -199,13 +227,23 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
   collectAtsFromPage(run, ctx, html, finalUrl, links, via);
 
   let postings = safeExtract(ctx, html, finalUrl);
-  if (postings.length < 3 && isJsShell(html) && ctx.render) {
+  if (postings.length === 0 && isExplicitEmptyListing(html, finalUrl)) {
+    run.say(`${finalUrl} is an explicitly empty listing`);
+    run.add({ spec: { type: "html", url: finalUrl }, method: "listing_empty", evidence: [`explicit no-openings state on ${finalUrl}`], sample: [], count: 0 });
+    return;
+  }
+  if (postings.length < 3 && ctx.render && shouldRenderCandidate(html, finalUrl, via)) {
     const rendered = await renderAndScan(run, ctx, finalUrl, via);
     if (rendered) {
       html = rendered.html;
       finalUrl = rendered.url;
       links = harvestLinks(html, finalUrl);
       postings = safeExtract(ctx, html, finalUrl);
+      if (postings.length === 0 && isExplicitEmptyListing(html, finalUrl)) {
+        run.say(`${finalUrl} is an explicitly empty listing after rendering`);
+        run.add({ spec: { type: "html", url: finalUrl }, method: "listing_empty", evidence: [`explicit no-openings state on rendered ${finalUrl}`], sample: [], count: 0 });
+        return;
+      }
     }
   }
 
@@ -217,9 +255,7 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
     // "All jobs" or "Search roles" link. The embedded cards prove this is a listing, but returning
     // immediately would never inspect the complete listing and would auto-accept a short source.
     const complete = links
-      .filter(link => link.kind === "a")
-      .filter(link => /\b(all|view|search|explore|browse|see)\s+(open\s+)?(jobs?|roles?|positions?|vacancies|opportunities)\b/i.test(link.text.trim() || link.context || ""))
-      .filter(link => sameDomain(link.href, finalUrl) && normalizeUrl(link.href) !== normalizeUrl(finalUrl) && !ctx.resolveSpec(link.href))
+      .filter(link => isExplicitCompleteListingLink(link, finalUrl, ctx))
       .map(link => ({ link, score: scoreLink(link, finalUrl, { resolveSpec: ctx.resolveSpec }) }))
       .sort((a, b) => b.score - a.score)[0];
     if (complete) {
@@ -231,6 +267,23 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
       run.add({
         spec: { type: "html", url: finalUrl }, method: "landing",
         evidence: [...evidence, `page declares a distinct complete listing at ${complete.link.href}`],
+        sample: postings.slice(0, 3), count: postings.length,
+      });
+      return;
+    }
+    const atsBacked = new Map<string, { spec: SourceSpec; count: number }>();
+    for (const posting of postings) {
+      const spec = ctx.resolveSpec(posting.url);
+      if (!spec) continue;
+      const key = specKey(spec);
+      const seen = atsBacked.get(key);
+      atsBacked.set(key, { spec, count: (seen?.count ?? 0) + 1 });
+    }
+    const dominantAts = [...atsBacked.values()].sort((a, b) => b.count - a.count)[0];
+    if (dominantAts && dominantAts.count >= 3 && dominantAts.count / postings.length >= 0.8) {
+      run.add({
+        spec: { type: "html", url: finalUrl }, method: "landing",
+        evidence: [...evidence, `${dominantAts.count} of ${postings.length} posting links point to the same ${dominantAts.spec.type} board`],
         sample: postings.slice(0, 3), count: postings.length,
       });
       return;

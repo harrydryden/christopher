@@ -1,0 +1,1130 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-20T12:04:21.688Z",
+  "mode": "discovery_only",
+  "browser": {
+    "enabled": true,
+    "implementation": "BrowserRenderer",
+    "aiEnabled": false
+  },
+  "limitations": [
+    "This is a live observation, so role counts and pages can change during the run.",
+    "A null metric means the required independent label does not exist; it is not a pass.",
+    "Production BrowserRenderer fallback is enabled; AI fallback remains disabled and no database is read or written."
+  ],
+  "acceptance": {
+    "verdict": "fail",
+    "reasons": [
+      "2 labelled wrong source(s) automatically accepted at or above 0.85",
+      "labelled automatic discovery agreement is 60.0%, below 80%",
+      "25 case(s) lack an independent posting-identity golden snapshot",
+      "posting-identity recall and precision have not been measured",
+      "one or more selected cases did not run extraction"
+    ]
+  },
+  "metrics": {
+    "total": 25,
+    "sourceLabelled": 25,
+    "sourceMatches": 15,
+    "sourceMismatches": 10,
+    "labelledAutomaticMatchesAt085": 15,
+    "automaticResolvedAt085": 17,
+    "wrongAutomaticAccepts": 2,
+    "extractionComplete": 0,
+    "extractionPartial": 0,
+    "extractionFailed": 0,
+    "countLabelled": 0,
+    "countMatches": 0,
+    "discoveryAccuracy": 0.6,
+    "extractionExactCountAgreement": null,
+    "postingIdentityRecall": null,
+    "postingIdentityPrecision": null
+  },
+  "cases": [
+    {
+      "manifest": {
+        "id": "anduril",
+        "company": "Anduril",
+        "homepageUrl": "https://www.anduril.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://boards.greenhouse.io/andurilindustries"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Board mapping is documented in REVIEW-PLAN; current count is time-dependent.",
+        "sourceEvidenceUrls": [
+          "https://www.anduril.com/careers",
+          "https://job-boards.greenhouse.io/andurilindustries"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "anduril",
+        "company": "Anduril",
+        "startedAt": "2026-09-20T11:58:31.251Z",
+        "durationMs": 43273,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "greenhouse",
+          "observedUrl": "https://job-boards.greenhouse.io/andurilindustries",
+          "confidence": 0.98,
+          "fetches": 1,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 0,
+          "browserRenders": 0,
+          "browserUrls": [],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "airbnb",
+        "company": "Airbnb",
+        "homepageUrl": "https://www.airbnb.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://careers.airbnb.com/positions/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Airbnb's first-party careers homepage links to its company-owned all-jobs listing; the previous Greenhouse board candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://careers.airbnb.com/",
+          "https://careers.airbnb.com/positions/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "airbnb",
+        "company": "Airbnb",
+        "startedAt": "2026-09-20T11:58:31.253Z",
+        "durationMs": 42589,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://careers.airbnb.com/",
+          "confidence": 0.85,
+          "fetches": 6,
+          "sourceMatchesLabel": false,
+          "browserAttempts": 2,
+          "browserRenders": 2,
+          "browserUrls": [
+            "https://www.airbnb.com/",
+            "https://careers.airbnb.com/"
+          ],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "stripe",
+        "company": "Stripe",
+        "homepageUrl": "https://stripe.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://stripe.com/careers/search"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Stripe's first-party careers page links to its current searchable listing at /careers/search; the previous Greenhouse board and /jobs/search candidates were stale.",
+        "sourceEvidenceUrls": [
+          "https://stripe.com/careers",
+          "https://stripe.com/careers/search"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "stripe",
+        "company": "Stripe",
+        "startedAt": "2026-09-20T11:58:31.253Z",
+        "durationMs": 46834,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://stripe.com/careers/search",
+          "confidence": 0.85,
+          "fetches": 6,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 2,
+          "browserRenders": 2,
+          "browserUrls": [
+            "https://stripe.com/gb/careers",
+            "https://stripe.com/gb/careers/compatibility"
+          ],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "openai",
+        "company": "OpenAI",
+        "homepageUrl": "https://openai.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://openai.com/careers/search/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "OpenAI's first-party careers page links to its first-party search listing; the previous Ashby candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://openai.com/careers/",
+          "https://openai.com/careers/search/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "openai",
+        "company": "OpenAI",
+        "startedAt": "2026-09-20T11:59:13.842Z",
+        "durationMs": 46185,
+        "discovery": {
+          "outcome": "needs_confirmation",
+          "observedType": "html",
+          "observedUrl": "https://openai.com/careers/",
+          "confidence": 0.5,
+          "fetches": 14,
+          "sourceMatchesLabel": false,
+          "browserAttempts": 2,
+          "browserRenders": 2,
+          "browserUrls": [
+            "https://openai.com/careers/",
+            "https://openai.com/interview-guide/"
+          ],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "notion",
+        "company": "Notion",
+        "homepageUrl": "https://www.notion.so",
+        "expectedSource": {
+          "type": "ashby",
+          "url": "https://jobs.ashbyhq.com/notion"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Notion's first-party careers page links its roles to the Notion Ashby board.",
+        "sourceEvidenceUrls": [
+          "https://www.notion.com/careers",
+          "https://jobs.ashbyhq.com/notion"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "notion",
+        "company": "Notion",
+        "startedAt": "2026-09-20T11:59:14.524Z",
+        "durationMs": 21358,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "ashby",
+          "observedUrl": "https://jobs.ashbyhq.com/notion",
+          "confidence": 0.99,
+          "fetches": 11,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 0,
+          "browserRenders": 0,
+          "browserUrls": [],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "anthropic",
+        "company": "Anthropic",
+        "homepageUrl": "https://www.anthropic.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://job-boards.greenhouse.io/anthropic"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Anthropic's first-party jobs listing links each live role to its Greenhouse board.",
+        "sourceEvidenceUrls": [
+          "https://www.anthropic.com/careers",
+          "https://www.anthropic.com/jobs",
+          "https://job-boards.greenhouse.io/anthropic"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "anthropic",
+        "company": "Anthropic",
+        "startedAt": "2026-09-20T11:59:18.087Z",
+        "durationMs": 20394,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "greenhouse",
+          "observedUrl": "https://job-boards.greenhouse.io/anthropic",
+          "confidence": 0.99,
+          "fetches": 9,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 2,
+          "browserRenders": 2,
+          "browserUrls": [
+            "https://www.anthropic.com/careers",
+            "https://www.anthropic.com/careers"
+          ],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "netflix",
+        "company": "Netflix",
+        "homepageUrl": "https://www.netflix.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://jobs.netflix.com/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Netflix publishes and links its open-role search on its company-owned careers site; the previous Lever candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://jobs.netflix.com/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "netflix",
+        "company": "Netflix",
+        "startedAt": "2026-09-20T11:59:35.882Z",
+        "durationMs": 16867,
+        "discovery": {
+          "outcome": "not_found",
+          "fetches": 16,
+          "sourceMatchesLabel": false,
+          "browserAttempts": 1,
+          "browserRenders": 0,
+          "browserUrls": [
+            "https://www.netflix.com/"
+          ],
+          "browserFailures": [
+            {
+              "url": "https://www.netflix.com/",
+              "code": "robots_denied",
+              "error": "robots.txt disallows https://www.netflix.com/"
+            }
+          ]
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "figma",
+        "company": "Figma",
+        "homepageUrl": "https://www.figma.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://boards.greenhouse.io/figma"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Figma's first-party careers page links its roles to the Figma Greenhouse board.",
+        "sourceEvidenceUrls": [
+          "https://www.figma.com/careers/",
+          "https://job-boards.greenhouse.io/figma"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "figma",
+        "company": "Figma",
+        "startedAt": "2026-09-20T11:59:38.481Z",
+        "durationMs": 21504,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "greenhouse",
+          "observedUrl": "https://job-boards.greenhouse.io/figma",
+          "confidence": 0.99,
+          "fetches": 11,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 0,
+          "browserRenders": 0,
+          "browserUrls": [],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "datadog",
+        "company": "Datadog",
+        "homepageUrl": "https://www.datadoghq.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://careers.datadoghq.com/all-jobs/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Datadog's company-owned careers homepage explicitly links to All Jobs; that destination has its own canonical URL and is the complete searchable listing. The previous careers-root and Greenhouse candidates were landing/stale sources.",
+        "sourceEvidenceUrls": [
+          "https://careers.datadoghq.com/",
+          "https://careers.datadoghq.com/all-jobs/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "datadog",
+        "company": "Datadog",
+        "startedAt": "2026-09-20T11:59:52.749Z",
+        "durationMs": 102922,
+        "discovery": {
+          "outcome": "needs_confirmation",
+          "observedType": "html",
+          "observedUrl": "https://careers.datadoghq.com/early-careers/",
+          "confidence": 0.5,
+          "fetches": 13,
+          "sourceMatchesLabel": false,
+          "browserAttempts": 2,
+          "browserRenders": 2,
+          "browserUrls": [
+            "https://careers.datadoghq.com/",
+            "https://careers.datadoghq.com/early-careers/"
+          ],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "cloudflare",
+        "company": "Cloudflare",
+        "homepageUrl": "https://www.cloudflare.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://www.cloudflare.com/careers/jobs/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Cloudflare's first-party careers page links to its company-owned open-positions listing; the previous Greenhouse board candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://www.cloudflare.com/careers/",
+          "https://www.cloudflare.com/careers/jobs/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "cloudflare",
+        "company": "Cloudflare",
+        "startedAt": "2026-09-20T11:59:59.985Z",
+        "durationMs": 89205,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://www.cloudflare.com/careers/jobs/",
+          "confidence": 0.85,
+          "fetches": 8,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 2,
+          "browserRenders": 2,
+          "browserUrls": [
+            "https://www.cloudflare.com/careers/",
+            "https://www.cloudflare.com/careers/jobs/"
+          ],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "canonical",
+        "company": "Canonical",
+        "homepageUrl": "https://canonical.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://boards.greenhouse.io/canonical"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Canonical's first-party careers page links its roles to the Canonical Greenhouse board.",
+        "sourceEvidenceUrls": [
+          "https://canonical.com/careers",
+          "https://job-boards.greenhouse.io/canonical"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "canonical",
+        "company": "Canonical",
+        "startedAt": "2026-09-20T12:00:00.028Z",
+        "durationMs": 27764,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "greenhouse",
+          "observedUrl": "https://job-boards.greenhouse.io/canonical",
+          "confidence": 0.95,
+          "fetches": 14,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 0,
+          "browserRenders": 0,
+          "browserUrls": [],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "automattic",
+        "company": "Automattic",
+        "homepageUrl": "https://automattic.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://automattic.com/work-with-us/jobs/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Automattic states that legitimate openings are published on its company-owned careers site; the previous Greenhouse board candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://automattic.com/work-with-us/",
+          "https://automattic.com/work-with-us/jobs/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "automattic",
+        "company": "Automattic",
+        "startedAt": "2026-09-20T12:00:27.792Z",
+        "durationMs": 70374,
+        "discovery": {
+          "outcome": "needs_confirmation",
+          "observedType": "html",
+          "observedUrl": "https://automattic.com/work-with-us/",
+          "confidence": 0.5,
+          "fetches": 6,
+          "sourceMatchesLabel": false,
+          "browserAttempts": 1,
+          "browserRenders": 1,
+          "browserUrls": [
+            "https://automattic.com/work-with-us/"
+          ],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "gitlab",
+        "company": "GitLab",
+        "homepageUrl": "https://about.gitlab.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://job-boards.greenhouse.io/gitlab"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "GitLab's first-party careers flow currently resolves its live openings through the GitLab Greenhouse board; the company-owned all-jobs page remains supporting evidence.",
+        "sourceEvidenceUrls": [
+          "https://about.gitlab.com/jobs/",
+          "https://about.gitlab.com/jobs/all-jobs/",
+          "https://job-boards.greenhouse.io/gitlab"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "gitlab",
+        "company": "GitLab",
+        "startedAt": "2026-09-20T12:01:29.190Z",
+        "durationMs": 35046,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "greenhouse",
+          "observedUrl": "https://job-boards.greenhouse.io/gitlab",
+          "confidence": 0.99,
+          "fetches": 9,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 3,
+          "browserRenders": 3,
+          "browserUrls": [
+            "https://about.gitlab.com/jobs/",
+            "https://about.gitlab.com/jobs/all-jobs/",
+            "https://about.gitlab.com/jobs/ai-interview-process/"
+          ],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "wise",
+        "company": "Wise",
+        "homepageUrl": "https://wise.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://wise.jobs/jobs"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Wise's explicit first-party all-jobs listing is a SmartRecruiters Attrax-powered custom HTML site, not Workday or the SmartRecruiters public postings API.",
+        "sourceEvidenceUrls": [
+          "https://wise.jobs",
+          "https://wise.jobs/jobs"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "wise",
+        "company": "Wise",
+        "startedAt": "2026-09-20T12:01:35.671Z",
+        "durationMs": 22791,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://wise.jobs/jobs",
+          "confidence": 0.85,
+          "fetches": 11,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 0,
+          "browserRenders": 0,
+          "browserUrls": [],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "salesforce",
+        "company": "Salesforce",
+        "homepageUrl": "https://www.salesforce.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://careers.salesforce.com/en/jobs/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Salesforce's company-owned careers site publishes its current searchable jobs listing; the previous Workday candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://careers.salesforce.com/",
+          "https://careers.salesforce.com/en/jobs/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "salesforce",
+        "company": "Salesforce",
+        "startedAt": "2026-09-20T12:01:38.166Z",
+        "durationMs": 60368,
+        "discovery": {
+          "outcome": "not_found",
+          "fetches": 11,
+          "sourceMatchesLabel": false,
+          "browserAttempts": 1,
+          "browserRenders": 1,
+          "browserUrls": [
+            "https://trailhead.salesforce.com/career-path/"
+          ],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "siemens",
+        "company": "Siemens",
+        "homepageUrl": "https://www.siemens.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Siemens' company-owned Careers Marketplace publishes the searchable external-jobs listing; the previous Workday-shaped candidate was invalid.",
+        "sourceEvidenceUrls": [
+          "https://jobs.siemens.com/",
+          "https://jobs.siemens.com/en_US/externaljobs/SearchJobs/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "siemens",
+        "company": "Siemens",
+        "startedAt": "2026-09-20T12:01:58.462Z",
+        "durationMs": 48123,
+        "discovery": {
+          "outcome": "needs_confirmation",
+          "observedType": "html",
+          "observedUrl": "https://www.siemens.com/en-gb/company/jobs/",
+          "confidence": 0.5,
+          "fetches": 10,
+          "sourceMatchesLabel": false,
+          "browserAttempts": 1,
+          "browserRenders": 1,
+          "browserUrls": [
+            "https://www.siemens.com/en-gb/company/jobs/"
+          ],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "spotify",
+        "company": "Spotify",
+        "homepageUrl": "https://www.spotify.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://www.lifeatspotify.com/jobs"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Spotify's first-party applicant guidance identifies lifeatspotify.com/jobs as its careers listing (and Lever only as a possible role-detail destination).",
+        "sourceEvidenceUrls": [
+          "https://www.lifeatspotify.com/start-your-journey",
+          "https://www.lifeatspotify.com/jobs"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "spotify",
+        "company": "Spotify",
+        "startedAt": "2026-09-20T12:02:04.236Z",
+        "durationMs": 32319,
+        "discovery": {
+          "outcome": "not_found",
+          "fetches": 16,
+          "sourceMatchesLabel": false,
+          "browserAttempts": 0,
+          "browserRenders": 0,
+          "browserUrls": [],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "mozilla",
+        "company": "Mozilla",
+        "homepageUrl": "https://www.mozilla.org",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://www.mozilla.org/en-US/careers/listings/",
+          "equivalentUrls": [
+            "https://www.mozilla.org/en-GB/careers/listings/"
+          ]
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Mozilla's first-party careers page links to its company-owned job listing. The en-US and en-GB listing snapshots exposed the same complete set of posting identities on the review date.",
+        "sourceEvidenceUrls": [
+          "https://www.mozilla.org/en-US/careers/",
+          "https://www.mozilla.org/en-US/careers/listings/",
+          "https://www.mozilla.org/en-GB/careers/listings/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "mozilla",
+        "company": "Mozilla",
+        "startedAt": "2026-09-20T12:02:36.555Z",
+        "durationMs": 26577,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://www.mozilla.org/en-GB/careers/listings/",
+          "confidence": 0.85,
+          "fetches": 13,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 1,
+          "browserRenders": 1,
+          "browserUrls": [
+            "https://www.mozilla.org/en-GB/careers/"
+          ],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "basecamp",
+        "company": "37signals",
+        "homepageUrl": "https://37signals.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://37signals.com/jobs"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "37signals publishes current openings, including an explicit empty state, on its company-owned jobs page.",
+        "sourceEvidenceUrls": [
+          "https://37signals.com/jobs"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "basecamp",
+        "company": "37signals",
+        "startedAt": "2026-09-20T12:02:38.534Z",
+        "durationMs": 8171,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://37signals.com/jobs",
+          "confidence": 0.85,
+          "fetches": 4,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 0,
+          "browserRenders": 0,
+          "browserUrls": [],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "monzo",
+        "company": "Monzo",
+        "homepageUrl": "https://monzo.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://boards.greenhouse.io/monzo"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Monzo's first-party careers page links to the Monzo Greenhouse board.",
+        "sourceEvidenceUrls": [
+          "https://monzo.com/careers",
+          "https://boards.greenhouse.io/monzo"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "monzo",
+        "company": "Monzo",
+        "startedAt": "2026-09-20T12:02:46.585Z",
+        "durationMs": 24214,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "greenhouse",
+          "observedUrl": "https://job-boards.greenhouse.io/monzo",
+          "confidence": 0.99,
+          "fetches": 12,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 1,
+          "browserRenders": 1,
+          "browserUrls": [
+            "https://monzo.com/careers"
+          ],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "revolut",
+        "company": "Revolut",
+        "homepageUrl": "https://www.revolut.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://www.revolut.com/careers/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Revolut's company-owned careers page is the current searchable jobs listing; the previous Greenhouse board candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://www.revolut.com/careers/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "revolut",
+        "company": "Revolut",
+        "startedAt": "2026-09-20T12:02:46.705Z",
+        "durationMs": 33042,
+        "discovery": {
+          "outcome": "not_found",
+          "fetches": 16,
+          "sourceMatchesLabel": false,
+          "browserAttempts": 1,
+          "browserRenders": 1,
+          "browserUrls": [
+            "https://www.revolut.com/"
+          ],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "zapier",
+        "company": "Zapier",
+        "homepageUrl": "https://zapier.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://zapier.com/jobs"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Zapier's company-owned jobs page links its current openings; the previous Greenhouse board candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://zapier.com/jobs"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "zapier",
+        "company": "Zapier",
+        "startedAt": "2026-09-20T12:03:03.132Z",
+        "durationMs": 18472,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://zapier.com/jobs",
+          "confidence": 0.85,
+          "fetches": 10,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 0,
+          "browserRenders": 0,
+          "browserUrls": [],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "linear",
+        "company": "Linear",
+        "homepageUrl": "https://linear.app",
+        "expectedSource": {
+          "type": "ashby",
+          "url": "https://jobs.ashbyhq.com/Linear"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Linear's first-party careers listing links its roles to the Linear Ashby board.",
+        "sourceEvidenceUrls": [
+          "https://linear.app/careers",
+          "https://jobs.ashbyhq.com/Linear"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "linear",
+        "company": "Linear",
+        "startedAt": "2026-09-20T12:03:10.799Z",
+        "durationMs": 4566,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "ashby",
+          "observedUrl": "https://jobs.ashbyhq.com/Linear",
+          "confidence": 0.95,
+          "fetches": 7,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 0,
+          "browserRenders": 0,
+          "browserUrls": [],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "vercel",
+        "company": "Vercel",
+        "homepageUrl": "https://vercel.com",
+        "expectedSource": {
+          "type": "greenhouse",
+          "url": "https://job-boards.greenhouse.io/vercel"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Vercel's first-party careers page links its roles to the Vercel Greenhouse board; the earlier Ashby candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://vercel.com/careers",
+          "https://job-boards.greenhouse.io/vercel"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "vercel",
+        "company": "Vercel",
+        "startedAt": "2026-09-20T12:03:15.365Z",
+        "durationMs": 21480,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "greenhouse",
+          "observedUrl": "https://job-boards.greenhouse.io/vercel",
+          "confidence": 0.95,
+          "fetches": 11,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 0,
+          "browserRenders": 0,
+          "browserUrls": [],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    },
+    {
+      "manifest": {
+        "id": "render",
+        "company": "Render",
+        "homepageUrl": "https://render.com",
+        "expectedSource": {
+          "type": "ashby",
+          "url": "https://jobs.ashbyhq.com/render"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Render's first-party careers page links its roles to the Render Ashby board.",
+        "sourceEvidenceUrls": [
+          "https://render.com/careers",
+          "https://jobs.ashbyhq.com/render"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "render",
+        "company": "Render",
+        "startedAt": "2026-09-20T12:03:19.747Z",
+        "durationMs": 61911,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://render.com/careers",
+          "confidence": 0.87,
+          "fetches": 14,
+          "sourceMatchesLabel": false,
+          "browserAttempts": 2,
+          "browserRenders": 2,
+          "browserUrls": [
+            "https://render.com/docs/cronjobs",
+            "https://render.com/docs/one-off-jobs"
+          ],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    }
+  ]
+}

@@ -128,7 +128,7 @@ describe("engine plumbing", () => {
     expect(calls[0]!.params.model).toBe("claude-haiku-4-5");
   });
 
-  it("caches the stable system block and sets the effort", async () => {
+  it("caches the stable system block without sending unsupported effort to Haiku", async () => {
     const { engine, calls } = engineWith({ score: 50, verdict: "possible", rationale: "Maybe.", flags: [] });
     await engine.scoreJob({ profileMarkdown: "PROFILE", decisionDigest: "DIGEST", job: { title: "Ops", company: "Acme" } });
     const system = calls[0]!.params.system as Array<{ text: string; cache_control?: unknown;
@@ -136,7 +136,22 @@ describe("engine plumbing", () => {
     expect(system[0]!.cache_control).toEqual({ type: "ephemeral" });
     expect(system[0]!.text).toContain("PROFILE");
     expect(system[0]!.text).toContain("DIGEST");
-    expect((calls[0]!.params.output_config as { effort: string }).effort).toBe("low");
+    expect(calls[0]!.params.output_config).not.toHaveProperty("effort");
+    expect(calls[0]!.params.output_config).toHaveProperty("format");
+  });
+
+  it.each(["claude-opus-5", "claude-sonnet-5", "claude-fable-5-1", "claude-opus-4-6-20260205"])("sends effort to a compatible model: %s", async model => {
+    const { client, calls } = fakeClient({ score: 50, verdict: "possible", rationale: "Maybe.", flags: [] });
+    const engine = createAiEngine({ client, getModel: () => model });
+    await engine.scoreJob({ profileMarkdown: "", decisionDigest: "", job: { title: "Ops", company: "Acme" } });
+    expect(calls[0]!.params.output_config).toHaveProperty("effort", "low");
+  });
+
+  it.each(["claude-haiku-4-5-20251001", "claude-sonnet-4-5", "unknown-model"])("omits effort when unsupported or unverified: %s", async model => {
+    const { client, calls } = fakeClient({ score: 50, verdict: "possible", rationale: "Maybe.", flags: [] });
+    const engine = createAiEngine({ client, getModel: () => model });
+    await engine.scoreJob({ profileMarkdown: "", decisionDigest: "", job: { title: "Ops", company: "Acme" } });
+    expect(calls[0]!.params.output_config).not.toHaveProperty("effort");
   });
 
   it("wraps untrusted content and keeps the job out of the cached prefix", async () => {

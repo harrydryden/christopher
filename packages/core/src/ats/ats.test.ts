@@ -412,6 +412,45 @@ describe("HTML extraction", () => {
     expect(postings.find((p) => p.title === "Operations Manager")?.location).toBe("London, UK");
     expect(postings.find((p) => p.title === "Senior Operations Associate")?.remote).toBe(true);
   });
+  it("removes accessibility target hints before rejecting apply controls", () => {
+    // Reduced from OpenAI's live careers markup on 20 September 2026: every real role link was
+    // followed by an Ashby application control whose hidden target hint became visible text.
+    const html = `<main>
+      <article><a href="/careers/research-engineer/">Research Engineer</a>
+        <a href="https://jobs.ashbyhq.com/openai/application/123">Apply now<span>(opens in a new window)</span></a></article>
+      <article><a href="https://jobs.ashbyhq.com/acme/456">Operations Lead<span>(opens in a new tab)</span></a></article>
+    </main>`;
+    expect(findJobLinks(html, "https://openai.com/careers/search/")).toEqual([
+      expect.objectContaining({ text: "Research Engineer", url: "https://openai.com/careers/research-engineer/" }),
+      expect.objectContaining({ text: "Operations Lead", url: "https://jobs.ashbyhq.com/acme/456" }),
+    ]);
+  });
+  it("excludes career navigation without blacklisting words that can be role titles", () => {
+    // Reduced from Mozilla's live careers sub-navigation on 20 September 2026.
+    const html = `<nav aria-label="Careers">
+      <a href="/en-US/careers/">Overview</a>
+      <a href="/en-US/careers/diversity/">Diversity and Inclusion</a>
+      <a href="/en-US/careers/benefits/">Benefits</a>
+    </nav><main>
+      <a href="/en-US/careers/listings/benefits-lead/">Benefits Lead</a>
+      <a href="/en-US/careers/listings/diversity-director/">Diversity and Inclusion Director</a>
+    </main>`;
+    expect(findJobLinks(html, "https://www.mozilla.org/en-US/careers/listings/").map(link => link.text)).toEqual([
+      "Benefits Lead", "Diversity and Inclusion Director",
+    ]);
+  });
+  it("excludes global header navigation while preserving a role link in an article header", () => {
+    const html = `<header><a href="/careers/company-overview/">Company overview</a></header>
+      <article class="opening-card"><header><a href="/jobs/123">Engineer</a></header></article>`;
+    expect(findJobLinks(html, "https://acme.example/careers/").map(link => link.text)).toEqual(["Engineer"]);
+  });
+  it("matches ATS domains on the hostname rather than arbitrary URL text", () => {
+    const html = `<main>
+      <a href="https://example.com/about?next=jobs.ashbyhq.com/acme">Company overview</a>
+      <a href="https://jobs.ashbyhq.com/acme/123">Platform Engineer</a>
+    </main>`;
+    expect(findJobLinks(html, "https://example.com/about").map(link => link.text)).toEqual(["Platform Engineer"]);
+  });
   it("prefers JSON-LD when present", () => {
     const postings = extractPostingsFromHtml(fx.JSONLD_LISTING_HTML, "https://acmefoods.example.com/careers");
     expect(postings).toHaveLength(4);

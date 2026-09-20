@@ -211,14 +211,31 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
 
   if (postings.length >= 3) {
     const method = hasJsonLdJobPosting(html) ? "listing_jsonld" : "listing_html";
-    run.add({
-      spec: { type: "html", url: finalUrl },
-      method,
-      evidence: [`${postings.length} postings found on ${finalUrl}`, ...(via ? [`via ${via}`] : [])],
-      sample: postings.slice(0, 3),
-      count: postings.length,
-    });
+    const evidence = [`${postings.length} postings found on ${finalUrl}`, ...(via ? [`via ${via}`] : [])];
     run.say(`${finalUrl} is a listing (${postings.length} postings, ${method})`);
+    // Marketing and careers homepages commonly embed a few featured vacancies beside an explicit
+    // "All jobs" or "Search roles" link. The embedded cards prove this is a listing, but returning
+    // immediately would never inspect the complete listing and would auto-accept a short source.
+    const complete = links
+      .filter(link => link.kind === "a")
+      .filter(link => /\b(all|view|search|explore|browse|see)\s+(open\s+)?(jobs?|roles?|positions?|vacancies|opportunities)\b/i.test(link.text.trim() || link.context || ""))
+      .filter(link => sameDomain(link.href, finalUrl) && normalizeUrl(link.href) !== normalizeUrl(finalUrl) && !ctx.resolveSpec(link.href))
+      .map(link => ({ link, score: scoreLink(link, finalUrl, { resolveSpec: ctx.resolveSpec }) }))
+      .sort((a, b) => b.score - a.score)[0];
+    if (complete) {
+      run.say(`${finalUrl} has featured roles; ${depth > 0 ? "checking" : "cannot check"} complete listing ${complete.link.href}`);
+      if (depth > 0) await inspectPage(run, ctx, complete.link.href, depth - 1, `complete listing from ${finalUrl}`);
+      // The page's own wording says these cards are a subset. It remains a confirmation fallback
+      // even when following the declared full listing fails or produces an ATS candidate that is
+      // later rejected during verification; a verified full-page candidate naturally outranks it.
+      run.add({
+        spec: { type: "html", url: finalUrl }, method: "landing",
+        evidence: [...evidence, `page declares a distinct complete listing at ${complete.link.href}`],
+        sample: postings.slice(0, 3), count: postings.length,
+      });
+      return;
+    }
+    run.add({ spec: { type: "html", url: finalUrl }, method, evidence, sample: postings.slice(0, 3), count: postings.length });
     return;
   }
 
@@ -549,7 +566,15 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
     });
   }
 
-  finalCandidates.sort((a, b) => b.confidence - a.confidence || rank(b.method) - rank(a.method));
+  // A careers landing page often shows featured roles and links to an explicit complete listing.
+  // The featured page is held at confirmation confidence above; when the complete page verifies,
+  // this evidence preference makes it deterministic without outranking a verified ATS feed.
+  const explicitCompleteListing = (candidate: DiscoveryCandidate) => candidate.evidence.some(line => line.startsWith("via complete listing from ")) ? 1 : 0;
+  finalCandidates.sort((a, b) =>
+    b.confidence - a.confidence
+    || rank(b.method) - rank(a.method)
+    || explicitCompleteListing(b) - explicitCompleteListing(a),
+  );
   result.candidates = finalCandidates.slice(0, 5);
   result.best = result.candidates[0];
   result.outcome = outcomeFor(result.best?.confidence);

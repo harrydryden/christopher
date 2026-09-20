@@ -19,7 +19,13 @@
     "smoke:web": "node scripts/smoke-web.mjs",
     "seed:demo": "pnpm --filter @christopher/worker exec tsx src/seed-demo.ts",
     "benchmark:scale": "pnpm --filter @christopher/worker exec tsx src/benchmark-scale.ts",
-    "benchmark:users": "node scripts/benchmark-users.mjs"
+    "benchmark:users": "node scripts/benchmark-users.mjs",
+    "typecheck:eval": "tsc --noEmit -p tsconfig.scripts.json",
+    "test:release": "node --test scripts/*.test.mjs",
+    "eval:cv": "tsx scripts/evaluate-cv.ts",
+    "acceptance:live": "node scripts/live-acceptance.mjs",
+    "recovery:drill": "node scripts/recovery-drill.mjs",
+    "check:operations": "node scripts/verify-operational-status.mjs"
   },
   "devDependencies": {
     "@types/node": "latest",

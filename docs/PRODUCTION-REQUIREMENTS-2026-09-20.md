@@ -2,6 +2,24 @@
 
 For the executed tests, fixes, current capacity measurements, local recovery drill and read-only live observations, see [the integrated audit](PRODUCTION-AUDIT-2026-09-20.md). The matrix below separates repository requirements from production acceptance; it does not supersede those newer execution results.
 
+## Release-gate development update
+
+The historical repository review below is retained for provenance. This table supersedes its execution and release-control statements after the follow-up development. The confirmed target is 100 registered users and around ten active at once. See [the release-gate development report](RELEASE-DEVELOPMENT-2026-09-20.md) for the final evidence and blockers.
+
+| Job / release requirement | Current status | Executed evidence and remaining gap |
+| --- | --- | --- |
+| Secure onboarding, account separation, decisions and sharing | complete locally; partial in production | Full web integration and Chromium journeys passed after atomic throttling, administrator protection and bounded public request fixes. Production sign-in, email delivery and release smoke remain required. |
+| Discover the complete careers source | partial | A 25-company live observation now exists. Labelled source checks exposed a featured-jobs landing-page acceptance defect; follow-up regression and live evidence are recorded in the development report. Independent labels and full accuracy acceptance remain incomplete. |
+| Extract actual job postings accurately | partial | Live checks exposed navigation and decorated Apply links being treated as postings. Regression fixes are included. A posting-identity golden set, Tier-1/Tier-3 precision/recall and browser/AI coverage remain required. |
+| Preserve roles after failed/incomplete scans | complete locally; partial live | Core and worker regression suites passed. Existing synthetic disruption/recovery evidence is retained; representative live completeness acceptance remains open. |
+| Build and assess a grounded, useful CV | partial | Fixed Haiku effort compatibility. The evaluator now checks individual requirements, exact inflated claims, useful generated content, PDF length and actual usage. Real provider execution is blocked by missing credentials, and manual PDF acceptance remains required. |
+| Library imports, edits and application stages | complete locally; partial in production | Worker/import, web/action and browser journeys passed. Populated capacity fixtures now include Libraries, CVs and applications. Optional UX refinements from the original matrix remain open. |
+| Operate for 100 registered / ten active users | partial | Populated authenticated load and safe write checks, resource sampling and a local recovery drill have run. Hosted worker/Chromium/database headroom and a production-like mixed workload remain required; local figures are not a hosted guarantee. |
+| Deploy the intended web and worker revision | partial | Both release checks now require the exact checked commit. Missing URLs/identity fail visibly. Workflow activation, stable endpoint variables, live deployment and hosted verification remain pending. |
+| Detect operational failure | partial | Scheduled read-only checks and regression tests cover stopped worker responses, overdue scans, queue growth, heap/database pressure and observed restart loops. An owner, delivered alert test, historical failure/spend coverage and hosted validation remain outstanding. |
+| Recover data and release safely | partial | Repeatable isolated dump/restore verifies counts, fingerprints, orphans, constraints and migration reruns. Managed backup retention/PITR, agreed recovery objectives and actual managed restore/rollback are not yet verified. |
+| Learn preferences and suggest verified companies | partial | Deterministic/fixture tests pass; real decision calibration and provider-quality acceptance remain outstanding. |
+
 ## Scope and judgement
 
 This is a read-only review of the stated jobs to be done, product requirements and production evidence in `CLAUDE.md`, `docs/SPEC.md`, `docs/UX-JOURNEYS.md`, `docs/REVIEW-PLAN.md`, `README.md`, `docs/DEPLOY.md`, `render.yaml`, `Dockerfile`, `apps/web/vercel.json` and the two GitHub Actions workflows. No tests, live-provider checks, deployment actions or production queries were run for this review.

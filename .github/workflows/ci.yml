@@ -8,6 +8,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 # One run per ref. A new push to a pull request cancels the run still working on the
 # commit it replaced; a run on main is never cancelled, because worker-release only
 # fires for a successful one.
@@ -44,7 +47,10 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r typecheck
+      - run: pnpm typecheck:eval
       - run: pnpm -r test
+      - name: Test release and evaluation scripts
+        run: pnpm exec node --test scripts/*.test.mjs
 
   # Everything that needs a real browser: the headless Chromium test and the smoke
   # run, which builds the interface, signs in, fetches every page and drives the CV

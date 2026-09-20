@@ -6,7 +6,7 @@ import { extractJsonLdPostings } from "./jsonld";
 const JOB_PATH_RE =
   /\/(jobs?|careers?|positions?|openings?|vacanc(?:y|ies)|opportunit(?:y|ies)|roles?|apply|job-details?|joblisting)\/|[?&](?:gh_jid|jobId|job_id|reqId|requisitionId)=/i;
 const ATS_HOST_RE =
-  /(greenhouse\.io|lever\.co|ashbyhq\.com|workable\.com|smartrecruiters\.com|recruitee\.com|personio\.(?:de|com)|bamboohr\.com|myworkdayjobs\.com|pinpointhq\.com|breezy\.hr|teamtailor\.com|icims\.com|jobvite\.com|applytojob\.com|rippling\.com|grnh\.se)/i;
+  /(?:^|\.)(?:greenhouse\.io|lever\.co|ashbyhq\.com|workable\.com|smartrecruiters\.com|recruitee\.com|personio\.(?:de|com)|bamboohr\.com|myworkdayjobs\.com|pinpointhq\.com|breezy\.hr|teamtailor\.com|icims\.com|jobvite\.com|applytojob\.com|rippling\.com|grnh\.se)$/i;
 
 const NAV_TEXT_RE =
   /^(careers?|jobs?|all (?:jobs|roles|openings|positions)|view all(?: jobs| roles| openings)?|see (?:all|open) (?:jobs|roles|positions|openings)|open (?:roles|positions|jobs)|apply(?: now)?|learn more|read more|find out more|back(?: to .*)?|home|search|our team|join us|join the team|next|previous|more|show more|load more|view openings|browse jobs|filter|sort|menu|close)$/i;
@@ -24,6 +24,11 @@ function cleanText(s: string | undefined | null): string {
   return (s ?? "").replace(/\s+/g, " ").trim();
 }
 
+/** Screen-reader hints appended inside a link describe its target, not the role title. */
+function cleanLinkText(s: string | undefined | null): string {
+  return cleanText(s).replace(/\s*\(\s*opens in (?:a )?new (?:window|tab)\s*\)\s*$/i, "").trim();
+}
+
 function looksLikeTitle(text: string): boolean {
   const t = cleanText(text);
   if (t.length < 2 || t.length > 120) return false;
@@ -33,7 +38,11 @@ function looksLikeTitle(text: string): boolean {
 }
 
 function isJobHref(url: string, pageUrl: string): boolean {
-  if (ATS_HOST_RE.test(url)) return true;
+  try {
+    if (ATS_HOST_RE.test(new URL(url).hostname)) return true;
+  } catch {
+    return false;
+  }
   if (!JOB_PATH_RE.test(url)) return false;
   const norm = normalizeUrl(url);
   if (norm === normalizeUrl(pageUrl)) return false;
@@ -54,16 +63,29 @@ function containerOf($: cheerio.CheerioAPI, el: Parameters<cheerio.CheerioAPI>[0
   return container.length ? container : node.parent();
 }
 
+function isGlobalChrome($: cheerio.CheerioAPI, el: Parameters<cheerio.CheerioAPI>[0]): boolean {
+  const node = $(el);
+  if (node.closest("nav, [role='navigation'], [role='banner'], [role='contentinfo']").length) return true;
+  if (!node.closest("header, footer").length) return false;
+  // `header` is also the natural heading wrapper inside an article or job card. Only treat it as
+  // site chrome when no posting-shaped container owns it.
+  return !node.closest("article, tr, .job, .position, .opening, [class*='job'], [class*='role'], [class*='posting']").length;
+}
+
 export function findJobLinks(html: string, pageUrl: string): JobLink[] {
   const $ = cheerio.load(html);
   const out: JobLink[] = [];
   const seen = new Set<string>();
   $("a[href]").each((_, el) => {
+    // Navigation paths often sit below `/careers/` and therefore resemble job-detail URLs. The
+    // element's semantic container is stronger evidence than words such as "Benefits" or
+    // "Overview", which could also be legitimate role titles outside navigation.
+    if (isGlobalChrome($, el)) return;
     const href = $(el).attr("href");
     if (!href) return;
     const abs = absoluteUrl(href, pageUrl);
     if (!abs) return;
-    const text = cleanText($(el).text()) || cleanText($(el).attr("aria-label")) || cleanText($(el).attr("title"));
+    const text = cleanLinkText($(el).text()) || cleanLinkText($(el).attr("aria-label")) || cleanLinkText($(el).attr("title"));
     if (!looksLikeTitle(text)) return;
     if (!isJobHref(abs, pageUrl)) return;
     const key = normalizeUrl(abs);

@@ -1,5 +1,7 @@
 # Christopher production audit — 20 September 2026
 
+For the subsequent fixes, updated acceptance tooling and newer capacity/recovery results, see [release-gate development](RELEASE-DEVELOPMENT-2026-09-20.md). This audit remains the historical record of the initial pass.
+
 ## Verdict
 
 **Not yet ready for unconditional production sign-off.** The application passes the local functional and capacity checks recorded below, and the audit fixes four security/reliability defects. Remaining release gates concern real-provider accuracy and CV quality, hosted capacity and connection headroom, managed backup recovery and operational ownership. These cannot be established by local tests or an idle health check.

@@ -32,6 +32,7 @@ import Anthropic, {
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { estimateCostUsd, serverToolCostUsd } from "./pricing";
+import { modelSupportsEffort } from "./model-capabilities";
 import * as P from "./prompts";
 import * as S from "./schemas";
 
@@ -386,7 +387,7 @@ export class AiEngine {
       // The cache is a prefix match, so a cached block sits before everything that varies.
       messages: [{ role: "user", content: typeof params.user === "string" ? params.user
         : blocks.map(block => ({ type: "text", text: block.text, ...(block.cache ? { cache_control: { type: "ephemeral" } } : {}) })) }],
-      output_config: { format: zodOutputFormat(params.schema), effort: params.effort },
+      output_config: { format: zodOutputFormat(params.schema), ...(modelSupportsEffort(model) ? { effort: params.effort } : {}) },
     };
     if (params.tools) request.tools = params.tools;
 

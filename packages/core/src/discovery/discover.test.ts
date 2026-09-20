@@ -152,6 +152,54 @@ describe("discovery: other shapes", () => {
     expect(result.log.join("\n")).toContain("listing");
   });
 
+  it("prefers a complete jobs page over featured roles on the homepage", async () => {
+    const jobs = (count: number, prefix: string) => Array.from({ length: count }, (_, i) =>
+      `<article><h3><a href="/positions/${prefix}-${i + 1}">Role ${i + 1}</a></h3><span>London</span></article>`,
+    ).join("");
+    const ctx = createFakeDiscoveryContext({
+      routes: {
+        "https://www.acme.example/": { body: '<html><head><title>Acme</title></head><body><a href="/careers-hub">Careers</a></body></html>' },
+        "https://www.acme.example/careers-hub": { body: `<html><head><title>Acme careers</title></head><body><nav><a href="/about">About</a><a href="/jobs">All jobs</a></nav>${jobs(16, "featured")}</body></html>` },
+        "https://www.acme.example/jobs": { body: `<html><head><title>Acme jobs</title></head><body>${jobs(12, "jobs")}</body></html>` },
+      },
+    });
+    const result = await discoverCareersSources("https://www.acme.example/", ctx);
+    expect(result.outcome).toBe("resolved");
+    expect(result.best?.spec.url).toBe("https://www.acme.example/jobs");
+    expect(result.best?.count).toBe(12);
+    expect(ctx.requestLog.some(request => request.url === "https://www.acme.example/about")).toBe(false);
+  });
+
+  it("requires confirmation when a declared complete listing cannot be verified", async () => {
+    const featured = fx.LISTING_PAGE_HTML
+      .replace(/https:\/\/job-boards\.greenhouse\.io\/acme\/jobs\//g, "https://www.acme.example/jobs/")
+      .replace("<main>", '<main><a href="/careers/all-jobs">View all jobs</a>');
+    const ctx = createFakeDiscoveryContext({ routes: {
+      "https://www.acme.example/": { body: '<html><head><title>Acme</title></head><body><a href="/careers-hub">Careers</a></body></html>' },
+      "https://www.acme.example/careers-hub": { body: featured },
+      "https://www.acme.example/careers/all-jobs": { status: 503, body: "try later" },
+    } });
+    const result = await discoverCareersSources("https://www.acme.example/", ctx);
+    expect(result.outcome).toBe("needs_confirmation");
+    expect(result.best?.spec.url).toBe("https://www.acme.example/careers-hub");
+    expect(result.best?.confidence).toBe(0.5);
+    expect(result.best?.evidence.join(" ")).toContain("declares a distinct complete listing");
+  });
+
+  it("does not treat an external all-jobs link as the company's complete listing", async () => {
+    const featured = fx.LISTING_PAGE_HTML
+      .replace(/https:\/\/job-boards\.greenhouse\.io\/acme\/jobs\//g, "https://www.acme.example/jobs/")
+      .replace("<main>", '<main><a href="https://jobs.unrelated.example/jobs">View all jobs</a>');
+    const ctx = createFakeDiscoveryContext({ routes: {
+      "https://www.acme.example/": { body: '<html><head><title>Acme</title></head><body><a href="/careers-hub">Careers</a></body></html>' },
+      "https://www.acme.example/careers-hub": { body: featured },
+    } });
+    const result = await discoverCareersSources("https://www.acme.example/", ctx);
+    expect(result.outcome).toBe("resolved");
+    expect(result.best?.spec.url).toBe("https://www.acme.example/careers-hub");
+    expect(ctx.requestLog.some(request => request.url.includes("unrelated.example"))).toBe(false);
+  });
+
   it("asks for confirmation when the slug is only a guess from the domain", async () => {
     const ctx = createFakeDiscoveryContext({
       routes: {

@@ -31,3 +31,34 @@ An automated pass is not release acceptance. Open the generated PDF and report, 
 grounding and document quality, record the observed provider cost, and set release acceptance only
 through the production review. Without `ANTHROPIC_API_KEY`, the checked-in evidence remains honestly
 blocked until an authorised person runs the paid evaluation.
+
+## Executed live evaluation — 20 September 2026
+
+The locally configured key successfully accessed `claude-fable-5-1`, the repository’s default CV
+model. The first paid run passed all five semantic cases but failed the generated-CV check:
+the writer added unsupported reliability and decision-support clauses. The assessor correctly
+marked those claims uncertain, limiting the generated score to 40. The failure is preserved in
+[the initial report](benchmarks/provider-evaluation-live-2026-09-20.json).
+
+The writer prompt now explicitly forbids inferred purposes, outcomes, quality, scope and ownership;
+requires sparse evidence to remain sparse; and excludes commentary about the advert’s thresholds.
+No rubric, scoring rule, fixture or acceptance threshold was changed. All 84 AI package tests and
+its type check passed.
+
+[The fixed live run](benchmarks/provider-evaluation-grounding-fix-2026-09-20.json) passed the same five
+semantic cases and generated a one-page A4 CV scoring 100, with all four assessed claims supported.
+Astra inspected the rendered PDF; Astra and Sol independently compared its text with the synthetic
+source. No unsupported candidate claim, clipping or overlap was found. Large blank space reflects
+the deliberately minimal fixture. The preserved PDF is
+`output/pdf/provider-evaluation-grounding-fix-2026-09-20.pdf`.
+
+The first run’s token-cost estimate was $0.491344 and the fixed run’s was $0.436173: **$0.927517 total**,
+from reported usage and the repository price table. This is not an invoice reconciliation. The
+second run’s admission guardrail was reduced to $9.50 to account for the first run within the
+original $10 estimated envelope; actual charges remain subject to the estimation limitation above.
+
+[The separate review record](benchmarks/provider-evaluation-review-2026-09-20.json) identifies both
+agent reviewers and preserves PDF hashes. No human sign-off or application release approval is
+recorded. This closes missing-key/provider-access verification and passes this narrow synthetic
+CV check. It does not establish representative long/multi-role quality, deterministic grounding,
+production account settings, hosted generation or general release readiness.

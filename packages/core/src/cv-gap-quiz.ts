@@ -97,7 +97,8 @@ export function addGapAnswersToLibrary(
     const answerRows = answer.answer.split(/\r?\n/).map(row => row.trim()).filter(Boolean);
     let index = destination.kind === "evidence"
       ? entries.findIndex(entry => entry.id === destination.entryId)
-      : entries.findIndex(entry => entry.kind === "experience" && entry.employmentId === destination.employmentId);
+      : entries.findIndex(entry => entry.kind === "experience" && entry.employmentId === destination.employmentId
+          && (!entry.status || entry.status === "active"));
     if (destination.kind === "evidence" && index < 0) throw new Error("The selected Library evidence no longer exists.");
     if (destination.kind === "evidence" && entries[index]!.status && entries[index]!.status !== "active")
       throw new Error("New evidence can only be added to an active Library entry.");

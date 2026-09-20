@@ -120,13 +120,12 @@ repository root.
 | `RESEND_API_KEY`, `EMAIL_FROM` | optional, for confirmation and password-reset emails |
 | `ADMIN_EMAILS` | optional, see step 4 above; defaults to the owner's address |
 
-The interface tolerates being deployed ahead of the worker's migrations. Every read of the newest
-ledgers and draft columns is guarded — the tables by `to_regclass`, the columns by one probe per
-process — so what the database does not have yet reads as "nothing recorded" rather than erroring,
-and the pages recover on their own the moment the worker migrates, with no second deploy. The two
-can therefore be released in either order. Only what *writes* those columns waits: starting or
-retrying a build in that window fails with its own message, not a broken page. A database missing
-migrations altogether is a different thing — the "every page 500s right after deploy" row below.
+The interface has guarded reads for a short deployment skew, but that is a recovery measure rather
+than the release order. Apply migrations first, deploy and verify the interface second, then deploy
+the worker. The worker is last because it is the component that can first write a new lifecycle
+state such as `awaiting_evidence`; the corresponding interface must be live before a person can be
+left at that checkpoint. A database missing migrations altogether is a different thing — the
+"every page 500s right after deploy" row below.
 
 Vercel's egress addresses vary, so the database is protected by TLS and a strong password rather
 than an IP allowlist. Leave `CRON_SECRET` unset and the daily cron in `apps/web/vercel.json` is
@@ -363,8 +362,12 @@ delivery are still outstanding. See [current gate evidence](RELEASE-GATES.md#con
 
 ### Roll out
 
-- [ ] Deploy the worker and web in the order allowed by the migration review. Do not infer web
-  success from the worker release check: verify both deployed commit identities separately.
+- [ ] Apply the reviewed migrations through the direct PostgreSQL endpoint on port 5432. For the CV
+  quiz release, verify that `public.cv_drafts.gap_quiz` exists before changing either application.
+- [ ] Deploy the web application and verify its exact commit through the production origin. Only
+  then deploy the worker. This order ensures the quiz interface exists before the worker can write
+  `awaiting_evidence`. Do not infer web success from the worker release check: verify both deployed
+  commit identities separately.
 - [ ] Confirm `/healthz` names the intended commit, three slots, browser availability and expected AI
   configuration; confirm Operations shows a healthy worker without a restart loop.
 - [ ] Sign in through the production origin and exercise the minimum journey: read roles and a
@@ -379,8 +382,17 @@ delivery are still outstanding. See [current gate evidence](RELEASE-GATES.md#con
 - [ ] Stop the rollout for repeated worker restarts, database connection exhaustion, rising queue age,
   authentication failure, widespread page errors, incorrect cross-account data, lost tasks or any
   scan that incorrectly closes roles.
-- [ ] If the schema remains compatible, redeploy the last known-good worker and web commits, then
-  verify both commit identities and the minimum journey above.
+- [ ] Prefer a roll-forward fix once the new worker has run. The quiz migration is additive, but
+  application compatibility changes when the worker writes `awaiting_evidence`, an answered parent,
+  a continuation draft or its task and budget records. The previous release does not understand that
+  complete lifecycle, so the presence of the nullable column alone does not make old-code rollback
+  safe.
+- [ ] Before considering an old-code rollback, stop the worker and use the new code to prove there
+  are no `awaiting_evidence` drafts, answered parents with continuation drafts, active or queued
+  continuation tasks, or CV budget holds belonging to those builds. Archiving a paused parent alone
+  is not sufficient: its child, task and hold state must be reconciled as one lifecycle. Preserve the
+  affected Library versions and quiz answers. Redeploy the last known-good versions only after that
+  validation is empty and a release owner has accepted the result; otherwise roll forward.
 - [ ] If a migration is not backwards-compatible, do not put old application code against it. Apply
   the documented forward fix. Restore the database only when the release owner accepts the data loss
   bounded by the supplied RPO.

@@ -59,8 +59,14 @@ optional revision. The narrative reports planning, questions and the revision de
 completed log remains available during the quiz. Evidence tags sit beside evidence in a table row;
 the table has its own horizontal scroll area on small screens.
 
-The database migration is `packages/db/drizzle/0034_cv_gap_quiz.sql`. Apply it before releasing the
-new worker. This work has been tested locally; it does not constitute a production deployment.
+The database migration is `packages/db/drizzle/0034_cv_gap_quiz.sql`. Apply it first, deploy and
+verify the web application second, then release the worker. The worker is the first component that
+can write `awaiting_evidence`, so the interface that resolves that state must already be live. Once
+the worker has written a paused quiz, an answered parent, a continuation draft or its task and budget
+records, prefer roll-forward recovery: the previous release does not understand the whole lifecycle.
+An old-code rollback requires the new code to stop the worker and prove that none of those linked
+states remains; archiving a parent alone is not sufficient. This work has been tested locally; it
+does not constitute a production deployment.
 
 ## Live synthetic check
 
@@ -91,6 +97,6 @@ review is prepared but has not been performed, and no old-versus-new quality gai
 - All three generated PDF examples were rendered and visually inspected.
 
 Integration suites used disposable local PostgreSQL databases and scripted model responses. The
-three-role live evaluation is recorded separately above. Human pairwise review, applying the
-migration to hosting, and production deployment remain outstanding; these results do not close
+three-role live evaluation is recorded separately above. Human pairwise review by designated
+reviewers, applying the migration to hosting, and production deployment remain outstanding; these results do not close
 unrelated discovery-accuracy or operational release gates.

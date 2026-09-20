@@ -145,18 +145,25 @@ export async function verifyCvTailoringWorkspace(baseUrl, cookie, databaseUrl, u
     await page.screenshot({ path: "tmp/cv-tailoring-smoke/library-evidence-mobile.png", fullPage: true });
     await page.setViewportSize({ width: 1440, height: 1000 });
 
-    // Skipping resumes the same draft once, and its earlier planning motions remain visible.
+    // While the quiz is paused, completed planning is historical context behind the build-log
+    // disclosure. Open it deliberately: a text locator alone also finds its hidden contents and
+    // would not prove that the person can see the narrative.
     await page.goto(`${baseUrl}/cv/${skipId}`);
+    await page.getByRole("button", { name: "Show build log", exact: true }).click();
+    await page.getByText(/Matched the role to your evidence/).waitFor();
+    await page.getByText(/Prepared 1 optional question for you before writing/).waitFor();
+
+    // Skipping resumes the same draft once. The same-URL action must finish by replacing the quiz
+    // with the queued progress panel; merely waiting for the unchanged URL can pass immediately
+    // while the form is still pending.
     await page.getByRole("button", { name: "No further evidence — continue", exact: true }).click();
-    await page.waitForURL(url => url.pathname === `/cv/${skipId}`);
     try {
-      await page.getByText(/Matched the role to your evidence/).waitFor({ timeout: 10_000 });
+      await page.getByRole("heading", { name: "Your CV is queued", exact: true }).waitFor({ timeout: 10_000 });
     } catch (error) {
       console.error("Skip continuation diagnostic", (await pool.query("select status, gap_quiz from cv_drafts where id = $1", [skipId])).rows);
       console.error(await page.locator("main").innerText());
       throw error;
     }
-    await page.getByText(/Prepared 1 optional question for you before writing/).waitFor();
     const skipped = (await pool.query("select status, gap_quiz, build_checkpoint, library_snapshot from cv_drafts where id = $1", [skipId])).rows[0];
     assert.equal(skipped.status, "queued");
     assert.equal(skipped.gap_quiz.status, "skipped");

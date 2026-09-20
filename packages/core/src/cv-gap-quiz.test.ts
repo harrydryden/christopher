@@ -51,6 +51,19 @@ describe("CV gap quiz", () => {
     expect(next.entries[0]?.confirmedResponsibilities).toEqual(["Led delivery.", "Opened the market.", "Reached first revenue."]);
   });
 
+  it("creates active evidence instead of reviving an inactive employment entry", () => {
+    const inactive = { ...library, entries: library.entries.map(entry => entry.id === "experience-1" ? { ...entry, status: "inactive" as const } : entry) };
+    const quiz = buildCvGapQuiz([
+      { id: "q1", requirementId: "r1", requirement: "Market launches", prompt: "What did you launch?", suggestedDestination: { kind: "employment", employmentId: "job-1" } },
+    ], inactive, 7, rubric)!;
+    const next = addGapAnswersToLibrary(inactive, quiz, [{ questionId: "q1", answer: "Opened a new market.", destination: { kind: "employment", employmentId: "job-1" } }], id => `gap-${id}`);
+    expect(next.entries.find(entry => entry.id === "experience-1")).toEqual(inactive.entries[0]);
+    expect(next.entries.find(entry => entry.id === "gap-q1")).toMatchObject({
+      kind: "experience", status: "active", employmentId: "job-1",
+      details: "Opened a new market.", confirmedResponsibilities: ["Opened a new market."],
+    });
+  });
+
   it("refuses to save new evidence into an inactive entry", () => {
     const inactive = { ...library, entries: library.entries.map(entry => entry.id === "skills" ? { ...entry, status: "inactive" as const } : entry) };
     const quiz = buildCvGapQuiz([

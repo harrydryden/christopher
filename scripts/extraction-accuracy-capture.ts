@@ -6,7 +6,7 @@ import { PoliteFetcher, userAgentFor } from "../apps/worker/src/fetcher";
 
 type Captured = { method: string; url: string; finalUrl: string; status: number; fetchedAt: string; body: string; file?: string; sha256?: string };
 type OraclePosting = { sourceIdentity: string; title: string; location?: string; url: string };
-type Target = { id: string; spec: SourceSpec; kind: "greenhouse" | "lever" | "ashby" | "smartrecruiters" | "html-mozilla" | "html-empty" };
+type Target = { id: string; spec: SourceSpec; kind: "greenhouse" | "lever" | "ashby" | "smartrecruiters" | "workday" | "html-mozilla" | "html-empty" };
 class CaptureFailure extends Error { constructor(message: string, public readonly responses: Captured[]) { super(message); } }
 
 const root = resolve(import.meta.dirname, "..");
@@ -21,6 +21,8 @@ const targets: Target[] = [
   { id: "educative-lever", kind: "lever", spec: ats.specFromAnyUrl("https://jobs.lever.co/educative")! },
   { id: "ode-ashby", kind: "ashby", spec: ats.specFromAnyUrl("https://jobs.ashbyhq.com/odewithanthropic")! },
   { id: "smartrecruiters-feed", kind: "smartrecruiters", spec: ats.specFromAnyUrl("https://jobs.smartrecruiters.com/SmartRecruiters")! },
+  { id: "workday-workday", kind: "workday", spec: ats.specFromAnyUrl("https://workday.wd5.myworkdayjobs.com/Workday")! },
+  { id: "adobe-workday", kind: "workday", spec: ats.specFromAnyUrl("https://adobe.wd5.myworkdayjobs.com/external_experienced")! },
   { id: "mozilla-html", kind: "html-mozilla", spec: { type: "html", url: "https://www.mozilla.org/en-US/careers/listings/" } },
   { id: "37signals-empty-html", kind: "html-empty", spec: { type: "html", url: "https://37signals.com/jobs" } },
 ];
@@ -34,7 +36,11 @@ const key = (method: string, url: string) => `${method.toUpperCase()} ${canonica
 async function liveResponses(target: Target, fetcher: PoliteFetcher): Promise<Captured[]> {
   const out: Captured[] = [];
   const fetch = async (url: string, method: "GET" | "POST" | "HEAD" = "GET", body?: Record<string, unknown>) => {
-    const response = await fetcher.fetchText(url, method === "GET" ? undefined : { method, body: body ? JSON.stringify(body) : undefined });
+    const response = await fetcher.fetchText(url, method === "GET" ? undefined : {
+      method,
+      body: body ? JSON.stringify(body) : undefined,
+      headers: { accept: "application/json", "content-type": "application/json" },
+    });
     if (response.status < 200 || response.status >= 300 || !response.body) throw new Error(`${target.id}: HTTP ${response.status} from ${url}`);
     const captured = { method, url, finalUrl: response.url, status: response.status, fetchedAt: new Date().toISOString(), body: response.body };
     out.push(captured);
@@ -57,6 +63,17 @@ async function liveResponses(target: Target, fetcher: PoliteFetcher): Promise<Ca
       if (!parsed.content?.length || offset + 100 >= (parsed.totalFound ?? parsed.content.length)) { finished = true; break; }
     }
     if (!finished) throw new Error(`${target.id}: independent traversal reached its 1,000-posting safety bound; refusing an incomplete oracle`);
+  } else if (target.kind === "workday") {
+    let finished = false;
+    let total: number | undefined;
+    for (let offset = 0; offset < 1_000; offset += 20) {
+      const response = await fetch(target.spec.apiUrl!, "POST", { appliedFacets: {}, limit: 20, offset, searchText: "" });
+      const parsed = JSON.parse(response.body) as { total?: number; jobPostings?: unknown[] };
+      const rows = Array.isArray(parsed.jobPostings) ? parsed.jobPostings : [];
+      if (total === undefined && typeof parsed.total === "number" && parsed.total > 0) total = parsed.total;
+      if (!rows.length || (total !== undefined ? offset + rows.length >= total : rows.length < 20)) { finished = true; break; }
+    }
+    if (!finished) throw new Error(`${target.id}: independent Workday traversal reached its 1,000-posting safety bound; refusing an incomplete oracle`);
   } else {
     await fetch(target.spec.url);
   } } catch (error) {
@@ -84,6 +101,22 @@ function oracle(target: Target, responses: Captured[]): { method: string; explic
     const rows = responses.flatMap(r => JSON.parse(r.body).content ?? []);
     return { method: "Independent offset traversal using totalFound, then direct enumeration of captured content[] items; identity is uuid/id.", explicitEmptyState: rows.length === 0,
       postings: rows.map((j: any) => ({ sourceIdentity: String(j.id ?? j.uuid), title: text(j.name)!, location: text(j.location?.fullLocation) ?? location(j.location?.city, j.location?.region, j.location?.country), url: canonicalUrl(`https://jobs.smartrecruiters.com/${target.spec.atsSlug}/${j.id ?? j.uuid}`) })) };
+  }
+  if (target.kind === "workday") {
+    const rows = responses.flatMap(r => JSON.parse(r.body).jobPostings ?? []);
+    const host = new URL(target.spec.url).hostname;
+    const site = target.spec.atsSite?.split("|")[1];
+    if (!site) throw new Error(`${target.id}: Workday source has no site identity`);
+    const postings = rows.flatMap((j: any): OraclePosting[] => {
+      const sourceIdentity = text(j.bulletFields?.[0]) ?? text(j.externalPath);
+      const title = text(j.title);
+      const url = j.externalPath ? canonicalUrl(`https://${host}/${site}${j.externalPath}`) : undefined;
+      if (!sourceIdentity || !title || !url) return [];
+      return [{ sourceIdentity, title, location: text(j.locationsText), url }];
+    });
+    if (!postings.length) throw new Error(`${target.id}: independently enumerated Workday listing contains no usable identities`);
+    if (new Set(postings.map((p: OraclePosting) => p.sourceIdentity)).size !== postings.length) throw new Error(`${target.id}: Workday listing contains duplicate requisition identities`);
+    return { method: "Independent offset traversal of the captured Workday jobPostings arrays; identity is the first bullet field (requisition ID), falling back to externalPath.", explicitEmptyState: false, postings };
   }
   if (target.kind === "html-mozilla") {
     const body = responses[0]!.body;

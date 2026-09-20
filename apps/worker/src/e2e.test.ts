@@ -466,6 +466,61 @@ describe("end to end", () => {
     expect(server.requests.every((r) => HOSTS.includes(r.host))).toBe(true);
   }, 60_000);
 
+  it("recovers a company with no discovered source when a person supplies its board URL", async () => {
+    await setGate({});
+    server.setRoutes({
+      "www.orbital.example": {
+        "/": { body: `<!doctype html><html><head><title>Orbital</title></head><body><nav><a href="/">Home</a><a href="/tech">Tech</a><a href="/news">News</a><a href="/contact">Contact</a><a href="/legal">Legal</a></nav></body></html>` },
+        "/robots.txt": { body: "User-agent: *\nAllow: /\n", contentType: "text/plain" },
+      },
+      "orbital.example": {},
+      "boards-api.greenhouse.io": greenhouseRoutes([JOB_OPERATIONS_MANAGER, JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]),
+      "job-boards.greenhouse.io": {},
+    });
+    const company = await addCompany("https://www.orbital.example/", "orbital.example");
+    await queue.drain();
+
+    const [automaticRun] = await db.select().from(schema.discoveryRuns)
+      .where(eq(schema.discoveryRuns.companyId, company.id));
+    expect(automaticRun!.status).toBe("not_found");
+    expect(await db.select().from(schema.careerSources)
+      .where(eq(schema.careerSources.companyId, company.id))).toHaveLength(0);
+
+    // This is the worker half of the assisted path. The web action has a database integration
+    // test proving that the pasted value is queued unchanged with this reason and a URL-specific
+    // dedupe key; here the real discovery and scan handlers consume that task end to end.
+    const suppliedUrl = "https://job-boards.greenhouse.io/acme";
+    await enqueueTask(db, "discover", { companyId: company.id, url: suppliedUrl, reason: "pasted" }, {
+      dedupeKey: `discover:${company.id}:url:${suppliedUrl}`,
+      priority: 1,
+    });
+    await queue.drain();
+
+    const runs = await db.select().from(schema.discoveryRuns)
+      .where(eq(schema.discoveryRuns.companyId, company.id));
+    expect(runs).toHaveLength(2);
+    const recoveredRun = runs.find((run) => run.id !== automaticRun!.id);
+    expect(recoveredRun).toMatchObject({ status: "resolved" });
+    expect(recoveredRun!.chosenSourceId).not.toBeNull();
+    const [source] = await db.select().from(schema.careerSources)
+      .where(eq(schema.careerSources.companyId, company.id));
+    expect(source).toMatchObject({
+      id: recoveredRun!.chosenSourceId,
+      type: "greenhouse",
+      atsSlug: "acme",
+      url: suppliedUrl,
+      status: "active",
+    });
+    const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source!.id));
+    expect(scan).toMatchObject({ status: "ok", postingsFound: 5 });
+    expect((await jobsInTable()).map((job) => job.title).sort()).toEqual([
+      "Head of Business Operations",
+      "Operations Analyst",
+      "Operations Manager",
+      "Senior Operations Associate",
+    ]);
+  }, 90_000);
+
   it("records a scan run that the health page can report on", async () => {
     await setGate({});
     await addCompany("https://www.acme.example/", "acme.example");

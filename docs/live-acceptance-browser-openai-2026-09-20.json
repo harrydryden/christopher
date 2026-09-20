@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-20T09:44:41.088Z",
+  "mode": "discovery_only",
+  "browser": {
+    "enabled": true,
+    "implementation": "BrowserRenderer",
+    "aiEnabled": false
+  },
+  "limitations": [
+    "This is a live observation, so role counts and pages can change during the run.",
+    "A null metric means the required independent label does not exist; it is not a pass.",
+    "Production BrowserRenderer fallback is enabled; AI fallback remains disabled and no database is read or written."
+  ],
+  "acceptance": {
+    "verdict": "blocked",
+    "reasons": [
+      "1 case(s) lack an independent posting-identity golden snapshot",
+      "posting-identity recall and precision have not been measured",
+      "one or more selected cases did not run extraction"
+    ]
+  },
+  "metrics": {
+    "total": 1,
+    "sourceLabelled": 1,
+    "sourceMatches": 1,
+    "sourceMismatches": 0,
+    "labelledAutomaticMatchesAt085": 1,
+    "automaticResolvedAt085": 1,
+    "wrongAutomaticAccepts": 0,
+    "extractionComplete": 0,
+    "extractionPartial": 0,
+    "extractionFailed": 0,
+    "countLabelled": 0,
+    "countMatches": 0,
+    "discoveryAccuracy": 1,
+    "extractionExactCountAgreement": null,
+    "postingIdentityRecall": null,
+    "postingIdentityPrecision": null
+  },
+  "cases": [
+    {
+      "manifest": {
+        "id": "openai",
+        "company": "OpenAI",
+        "homepageUrl": "https://openai.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://openai.com/careers/search/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "OpenAI's first-party careers page links to its first-party search listing; the previous Ashby candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://openai.com/careers/",
+          "https://openai.com/careers/search/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "openai",
+        "company": "OpenAI",
+        "startedAt": "2026-09-20T09:44:15.606Z",
+        "durationMs": 25482,
+        "discovery": {
+          "outcome": "resolved",
+          "observedType": "html",
+          "observedUrl": "https://openai.com/careers/search/",
+          "confidence": 0.85,
+          "fetches": 13,
+          "sourceMatchesLabel": true,
+          "browserAttempts": 0,
+          "browserRenders": 0,
+          "browserUrls": [],
+          "browserFailures": []
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    }
+  ]
+}

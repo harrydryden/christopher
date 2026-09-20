@@ -65,7 +65,7 @@ The checked-in pools are bounded:
 - each Vercel function process: 3 connections;
 - the serverless cron fallback, if it runs, creates a one-slot worker context and therefore a 6-connection pool in addition to its process database access.
 
-At a simple ten-function-process assumption, web plus worker would request up to about 40 client connections. That is below PostgreSQL's 103 backend setting, but it is not a capacity certificate. Fluid Compute can create a different number of processes, reused processes keep pools warm, and PgBouncer decouples client connections from database backends. Neither the pool mode nor its client cap was available in the API evidence. Current history peaked at only 8 active database connections, so the observed workload does not exercise the proposed budget.
+At a simple ten-function-process assumption, web plus worker would request up to about 40 client connections. That is below PostgreSQL's 103 backend setting, but it is not a capacity certificate. Fluid Compute can create a different number of processes, reused processes keep pools warm, and PgBouncer decouples client connections from database backends. Render’s [connection-pooling documentation](https://render.com/docs/postgresql-connection-pooling) specifies transaction pooling on port 6432, with a default client cap of 30,000 and backend pool limits of `max_connections - 10` (93 for this database). These are documented defaults, not verification of the effective live configuration or proof that Vercel uses the pooled endpoint. Current history peaked at only 8 active database connections, so the observed workload does not exercise the proposed budget.
 
 The release budget should reserve backend capacity for Render administration, migrations and incident access rather than plan to consume all 103. A reasonable measurement gate is: under the representative ten-active-user workload plus a real three-slot scan/CV mix, demonstrate PgBouncer clients admitted without timeout, PostgreSQL active backends below 70, worker and web pool waiting at zero in steady state, and no connection errors. The exact threshold can be tightened once PgBouncer mode and client limits are known.
 
@@ -73,7 +73,7 @@ The release budget should reserve backend capacity for Render administration, mi
 
 1. **Completed after explicit approval:** Render’s service health check is `/healthz`; the API, successful configuration rollout and public HTTP 200 response confirm it. The local candidate remains undeployed.
 2. Retain the verified Frankfurt Vercel function override and re-check it during the representative workload; resolve the separate Node 24 versus intended Node 22 runtime drift.
-3. Confirm PgBouncer pool mode, maximum client connections and whether Vercel uses the pooled endpoint. Record these alongside `max_connections=103`.
+3. Confirm the effective PgBouncer limits and whether Vercel uses the pooled endpoint; the documented defaults are now recorded above. Record these alongside `max_connections=103`.
 4. Run a safe production-like workload for about ten active users with populated CVs, representative writes and three worker slots performing real scan/browser work. Capture worker and database CPU/memory at one-minute or finer resolution, PgBouncer client counts, PostgreSQL backends, connection timeouts, application pool waiting and request p95/p99.
 5. Reproduce the 06:11 verification shape in a controlled environment and explain the unclean exit. Treat absence of a five-minute metric limit breach as inconclusive; correlate platform lifecycle events with per-task heap/RSS and Chromium use.
 6. Decide whether the single-instance worker and non-HA 256 MiB database meet the agreed availability objective. That is an availability gate even if the capacity run passes.
@@ -82,3 +82,13 @@ The release budget should reserve backend capacity for Render administration, mi
 ## Evidence boundary
 
 Render API evidence was collected from the user-confirmed workspace `tea-da1dkajl550s73fel3og`, service `srv-dadtemou01pc73c81oq0` and database `dpg-dadte11t0dsc7380n7i0-a`. Repository evidence is from worktree commit `dd8925dc2a2c70a92720ac4ba69ded692314aa01`. The worktree already contained an unrelated modification to `apps/worker/src/live-acceptance-manifest.ts`; it was not touched.
+
+### Migration connection safeguard
+
+The candidate rejects known Render pooled URLs on port 6432 before acquiring the session advisory migration lock. Keep the worker (which migrates on boot) and migration runner on the direct port 5432 endpoint. Vercel request-serving functions can use the pooled endpoint. Three regression cases cover internal, external and query-parameter port URLs without connecting or exposing credentials. This safeguard does not detect every possible third-party pooler.
+
+### Controlled Chromium follow-up
+
+A local Docker repeat at the actual 512 MiB / 0.5 CPU limits completed all nine serial verification tasks without overlap or recorded OOM, but **failed** the agreed 70% memory-headroom gate: total cgroup memory peaked at 466.8 MiB (threshold 358.4 MiB), anonymous memory at 391.8 MiB and file memory at 57.1 MiB. The initial 511.9 MiB observation is retained separately. This is not just a Node heap measurement.
+
+The same bounded workload at 1 GiB / 0.5 CPU passed the local headroom threshold, peaking at 411.1 MiB total cgroup memory. This supports a 1 GiB staging trial; no hosted plan was changed. Neither short local run proves a long-duration hosted soak, real-provider concurrency or Vercel/database fan-out. The production gate remains open. See [method and raw evidence](CAPACITY-AND-RECOVERY-DRILLS.md).

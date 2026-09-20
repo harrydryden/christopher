@@ -4,9 +4,10 @@
  * Skipped when CHRISTOPHER_DISABLE_BROWSER=1 (CI without a browser).
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createServer } from "node:http";
 import { BrowserRenderer } from "./browser";
 import { startTestServer, type TestServer } from "./test-server";
-import { ats, discovery } from "@christopher/core";
+import { ats, discovery, SourceFetchError } from "@christopher/core";
 
 const skip = process.env.CHRISTOPHER_DISABLE_BROWSER === "1";
 const GH_API = "https://boards-api.greenhouse.io/v1/boards/acmeindustries/jobs?content=true";
@@ -101,5 +102,52 @@ describe.skipIf(skip)("headless rendering", () => {
     const page = await renderer.render("https://www.acmeind.example/open-roles");
     expect(page.status).toBe(200);
     expect(page.requests.every((r) => !/\.(png|jpg|jpeg|gif|woff2?)$/i.test(r))).toBe(true);
+  }, 120_000);
+
+  it("guards a redirect destination before sending it", async () => {
+    const checked: string[] = [];
+    const paced: string[] = [];
+    let privateRequests = 0;
+    const redirectServer = createServer((req, res) => {
+      if (req.url === "/start") {
+        res.writeHead(302, { location: "/private" });
+        return res.end();
+      }
+      if (req.url === "/client") {
+        res.writeHead(200, { "content-type": "text/html" });
+        return res.end('<html><body>moving<script>location.href="/private"</script></body></html>');
+      }
+      if (req.url === "/private") privateRequests++;
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end("<html><body>private</body></html>");
+    });
+    await new Promise<void>(resolve => redirectServer.listen(0, "127.0.0.1", resolve));
+    const address = redirectServer.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+    const startUrl = `http://127.0.0.1:${port}/start`;
+    const guarded = new BrowserRenderer({
+      userAgent: "ChristopherJobMonitor/0.1 (test)",
+      executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
+      beforeNavigate: async host => { paced.push(host); },
+      allowNavigate: async url => {
+        checked.push(url);
+        if (new URL(url).pathname === "/private") throw new SourceFetchError(`robots.txt disallows ${url}`, "blocked", 999);
+      },
+    });
+    try {
+      await expect(guarded.render(startUrl)).rejects.toMatchObject({ kind: "blocked", status: 999 });
+      expect(checked.map(url => new URL(url).pathname)).toEqual(["/start", "/private"]);
+      expect(paced).toEqual(["127.0.0.1", "127.0.0.1"]);
+      expect(privateRequests).toBe(0);
+
+      checked.length = 0;
+      paced.length = 0;
+      await expect(guarded.render(`http://127.0.0.1:${port}/client`)).rejects.toMatchObject({ kind: "blocked", status: 999 });
+      expect(checked.map(url => new URL(url).pathname)).toEqual(["/client", "/private"]);
+      expect(privateRequests).toBe(0);
+    } finally {
+      await guarded.close();
+      await new Promise<void>(resolve => redirectServer.close(() => resolve()));
+    }
   }, 120_000);
 });

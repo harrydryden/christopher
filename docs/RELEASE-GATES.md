@@ -31,7 +31,7 @@ first web check also requires a deployment containing the updated `/api/health` 
 ## Operational status
 
 The scheduled workflow runs every fifteen minutes and can also be dispatched manually. It makes
-three read-only requests fifteen seconds apart. The gate fails on these conditions:
+three read-only requests fifteen seconds apart. The table distinguishes gate failures from non-failing budget attention:
 
 | Condition | Threshold | Requirement represented |
 | --- | --- | --- |
@@ -45,11 +45,21 @@ three read-only requests fifteen seconds apart. The gate fails on these conditio
 | Old queue | Any ready task whose scheduled time is at least 15 minutes old | A small number of stuck interactive tasks must not be hidden by a backlog threshold |
 | Growing queue | At least 25 ready tasks after growth of at least 10 during the check | Detects accumulation rather than treating every non-empty queue as failure |
 | Restart loop | Two process changes, detected by a new worker ID or falling uptime when an ID is reused | One process replacement can be a rollout; two within thirty seconds indicates repeated restarts |
+| Persisted restart loop | Two or more `crash_recovery` ledger entries in the last hour | Implements the `restarting` derivation in SPEC R-9.3 even when restarts fall outside the thirty-second sampling window |
+| Persistent AI failure | Any call-site/model pair has at least three failed or stalled calls and no successful call in the last hour | Operational heuristic; grouping prevents an unrelated healthy model or feature from masking a broken one, and cancelled sibling calls are excluded |
+| Account AI budget attention | At least one account with positive recorded spend since its own reset/month boundary is at or above its configured budget | Reported as non-failing attention per SPEC R-6.11 and R-9.1, without exposing account identity; reaching an account limit is expected product behaviour and does not make global operations unhealthy |
 
 The numerical queue thresholds are operational guardrails, not product promises. A small normal
 queue passes while it is younger than fifteen minutes; age fails independently of queue size.
 The daily overdue counters are the direct product requirement and therefore have a zero tolerance
 once work is beyond that window.
+
+The response also reports aggregate AI spend for the last 24 hours and current UTC month, provider
+attempt/failure counts for the last hour, and crash recoveries for the last 24 hours. These figures
+contain no account identifiers, prompts, errors or secrets. Spend has no deployment-wide failure
+threshold: account limits vary and the operator's optional caps may be unset. The account-budget
+count supplies actionable attention telemetry instead. A zero budget with zero spend is not warned:
+that setting deliberately disables AI and is not overspend.
 
 The scheduled workflow supplies its default-branch `github.sha` as
 `OPERATIONAL_EXPECTED_SHA`, and every sample must report that exact healthy release. This catches
@@ -57,10 +67,16 @@ a stale deployment or a URL pointing at a service on another commit. It cannot d
 production from staging if both endpoints run the same commit, so the repository variable still
 needs an independently reviewed production URL.
 
+The additional fields are required rather than defaulted to zero. Deploy the compatible worker
+release before enabling this scheduled check; an older `/healthz` response fails visibly instead of
+creating a false pass for restart, provider, spend or account-budget monitoring.
+
 Scheduled workflows run from the default branch, so this schedule starts only after merge. GitHub
 records a failed check, but delivery to a person depends on repository notification settings and
 operational ownership. The owner must configure and prove those notifications; this repository does
 not claim that a failure is delivered through email, chat, paging or an issue tracker.
+Harry is the named owner, but a successful test notification received by Harry remains external
+release evidence. Neither a green workflow nor a deliberately failed local check proves delivery.
 
 Run the pure checks locally with:
 

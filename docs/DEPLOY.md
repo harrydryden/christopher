@@ -98,6 +98,8 @@ Set these on the service:
 | `TZ` | e.g. `Europe/London` |
 | `WORKER_CONCURRENCY` | `3` — the supported value for the 512 MB Starter instance shared with Chromium. It gives a database pool of `2 × concurrency + 4` = 10 connections. Six slots caused an observed ten-hour out-of-memory restart loop on a 41 MB listing; use six only after increasing the instance size and proving memory and database headroom under a representative soak |
 
+The worker and migration runner must use Render’s **direct port 5432** database URL: the session advisory migration lock is incompatible with transaction pooling. The migration runner rejects known Render pooled URLs on port 6432 before connecting. Vercel request-serving functions can use the **pooled port 6432** URL; enabling PgBouncer alone does not switch existing clients. See [Render’s connection-pooling documentation](https://render.com/docs/postgresql-connection-pooling).
+
 The worker runs migrations on boot under an advisory lock. That makes concurrent migration attempts
 safe; it does not by itself prove that an older release can run against every newer schema. Follow
 the rollout and recovery checklist below. Check `/healthz` returns `{"ok":true,…}` and the logs show

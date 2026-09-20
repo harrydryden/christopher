@@ -1,0 +1,54 @@
+{
+  "at": "2026-09-20T09:54:06.612Z",
+  "passed": true,
+  "failures": [],
+  "blocker": null,
+  "database": "christopher_recovery_drill",
+  "authenticated": true,
+  "readOnlyJourney": true,
+  "fixtureSetup": {
+    "insertedDedicatedSession": true,
+    "sessionRemovedAfterJourney": true
+  },
+  "pages": [
+    {
+      "path": "/",
+      "status": 200,
+      "bytes": 228321,
+      "ms": 128.2
+    },
+    {
+      "path": "/companies",
+      "status": 200,
+      "bytes": 234096,
+      "ms": 36.2
+    },
+    {
+      "path": "/applications",
+      "status": 200,
+      "bytes": 33504,
+      "ms": 26.4
+    },
+    {
+      "path": "/library",
+      "status": 200,
+      "bytes": 66593,
+      "ms": 21.9
+    },
+    {
+      "path": "/api/work-status",
+      "status": 200,
+      "bytes": 93,
+      "ms": 6.5
+    }
+  ],
+  "revokedSession": {
+    "status": 401,
+    "cacheControl": "private, no-store",
+    "body": "{\"ok\":false,\"error\":\"Please sign in again.\"}"
+  },
+  "limitations": [
+    "The application journey issues GET requests only. Setup inserts one short-lived session for an existing synthetic account and cleanup removes it.",
+    "This is local application compatibility evidence, not hosted RTO or production-data validation."
+  ]
+}

@@ -52,6 +52,8 @@ it("is 404 for an id that is not a uuid and for a company with nothing captured"
 
 it("authenticates before it reads anything", async () => {
   auth.mockRejectedValue(new Error("Unauthorised"));
-  await expect(GET(request(), params())).rejects.toThrow("Unauthorised");
+  const response = await GET(request(), params());
+  expect(response.status).toBe(401);
+  expect(await response.json()).toEqual({ ok: false, error: "Please sign in again." });
   expect(read).not.toHaveBeenCalled();
 });

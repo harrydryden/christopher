@@ -25,6 +25,7 @@
     "eval:cv": "tsx scripts/evaluate-cv.ts",
     "acceptance:live": "node scripts/live-acceptance.mjs",
     "recovery:drill": "node scripts/recovery-drill.mjs",
+    "capacity:worker": "pnpm --filter @christopher/worker exec tsx src/capacity-recovery-drill.ts",
     "check:operations": "node scripts/verify-operational-status.mjs"
   },
   "devDependencies": {

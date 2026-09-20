@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   operationalFailures,
+  operationalAttentionMessage,
+  operationalSuccessMessage,
+  operationalWarnings,
   readOperationalSample,
   readReleaseHealth,
   requiredOperationalConfig,
@@ -11,7 +14,12 @@ import {
 const healthy = (overrides = {}) => ({
   workerId: "worker-a",
   ready: 0, running: 0, oldestSeconds: 0, overdueCompanies: 0,
-  overdueDiscovery: 0, heapFraction: 0.4, dbWaiting: 0, uptimeSeconds: 100, ...overrides,
+  overdueDiscovery: 0, heapFraction: 0.4, dbWaiting: 0, uptimeSeconds: 100,
+  crashRecoveries1h: 0, crashRecoveries24h: 0,
+  providerCalls1h: 0, providerSuccesses1h: 0, providerFailures1h: 0,
+  providerOutageGroups1h: 0, spend24hUsd: 0, spendMonthUsd: 0,
+  accountsAtOrOverBudget: 0,
+  ...overrides,
 });
 
 test("release configuration fails visibly when identity or URL is missing", () => {
@@ -39,7 +47,13 @@ test("operational samples reject missing readings instead of treating them as ze
   assert.throws(() => readOperationalSample({ ok: true, metrics: {}, vitals: {} }), /missing required operational fields/);
   assert.deepEqual(readOperationalSample({
     ok: true, workerId: "worker-a",
-    metrics: { ready: 1, running: 2, oldest_seconds: 3, overdueCompanies: 0, overdueDiscovery: 0 },
+    metrics: {
+      ready: 1, running: 2, oldest_seconds: 3, overdueCompanies: 0, overdueDiscovery: 0,
+      crashRecoveries1h: 0, crashRecoveries24h: 0,
+      providerCalls1h: 0, providerSuccesses1h: 0, providerFailures1h: 0,
+      providerOutageGroups1h: 0, spend24hUsd: 0, spendMonthUsd: 0,
+      accountsAtOrOverBudget: 0,
+    },
     vitals: { heapFraction: 0.5, uptimeSeconds: 100, db: { waiting: 0 } },
   }), healthy({ ready: 1, running: 2, oldestSeconds: 3, heapFraction: 0.5 }));
   assert.throws(() => readOperationalSample({
@@ -124,4 +138,62 @@ test("mixed identity replacement and reused-ID restart still fail", () => {
     healthy({ workerId: "second", uptimeSeconds: 1 }),
   ]);
   assert.ok(failures.some(value => value.includes("repeated restarts")));
+});
+
+test("persisted crash recovery evidence catches a loop outside the thirty-second sample", () => {
+  const failures = operationalFailures([
+    healthy({ uptimeSeconds: 120, crashRecoveries1h: 2, crashRecoveries24h: 3 }),
+    healthy({ uptimeSeconds: 135, crashRecoveries1h: 2, crashRecoveries24h: 3 }),
+  ]);
+  assert.ok(failures.some(value => value.includes("2 worker crash recoveries")));
+  assert.deepEqual(operationalFailures([
+    healthy({ crashRecoveries1h: 1, crashRecoveries24h: 1 }),
+    healthy({ crashRecoveries1h: 1, crashRecoveries24h: 1 }),
+  ]), []);
+});
+
+test("one failing provider group fails and an observed recovery clears it", () => {
+  const failed = operationalFailures([
+    healthy({ providerCalls1h: 4, providerSuccesses1h: 1, providerFailures1h: 3, providerOutageGroups1h: 1 }),
+    healthy({ providerCalls1h: 4, providerSuccesses1h: 1, providerFailures1h: 3, providerOutageGroups1h: 1 }),
+  ]);
+  assert.ok(failed.some(value => value.includes("call-site/model groups")));
+  assert.deepEqual(operationalFailures([
+    healthy({ providerCalls1h: 3, providerFailures1h: 3, providerOutageGroups1h: 1 }),
+    healthy({ providerCalls1h: 4, providerSuccesses1h: 1, providerFailures1h: 3, providerOutageGroups1h: 0 }),
+  ]), []);
+});
+
+test("configured account budget exhaustion warns without failing global operations or exposing identity", () => {
+  const samples = [
+    healthy({ accountsAtOrOverBudget: 2, spendMonthUsd: 50 }),
+    healthy({ accountsAtOrOverBudget: 2, spendMonthUsd: 50 }),
+  ];
+  const failures = operationalFailures(samples);
+  assert.deepEqual(failures, []);
+  assert.deepEqual(operationalWarnings(samples), ["2 accounts are at or over their configured AI budget"]);
+  assert.match(operationalSuccessMessage(samples.at(-1)), /^Operational gate passed:/);
+  assert.equal(
+    operationalAttentionMessage(operationalWarnings(samples)),
+    "Operational attention (does not fail this gate):\n- 2 accounts are at or over their configured AI budget",
+  );
+});
+
+test("new telemetry cannot disappear or become invalid and silently pass", () => {
+  const response = {
+    ok: true, workerId: "worker-a",
+    metrics: {
+      ready: 0, running: 0, oldest_seconds: 0, overdueCompanies: 0, overdueDiscovery: 0,
+      crashRecoveries1h: 0, crashRecoveries24h: 0,
+      providerCalls1h: 0, providerSuccesses1h: 0, providerFailures1h: 0,
+      providerOutageGroups1h: 0, spend24hUsd: 0, spendMonthUsd: 0,
+      accountsAtOrOverBudget: 0,
+    },
+    vitals: { heapFraction: 0.4, uptimeSeconds: 100, db: { waiting: 0 } },
+  };
+  delete response.metrics.providerOutageGroups1h;
+  assert.throws(() => readOperationalSample(response), /providerOutageGroups1h/);
+  response.metrics.providerOutageGroups1h = 0;
+  response.metrics.spendMonthUsd = Number.NaN;
+  assert.throws(() => readOperationalSample(response), /spendMonthUsd/);
 });

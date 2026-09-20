@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { operationalFailures, readOperationalSample, readReleaseHealth, requiredOperationalConfig } from "./release-checks.mjs";
+import { operationalAttentionMessage, operationalFailures, operationalSuccessMessage, operationalWarnings, readOperationalSample, readReleaseHealth, requiredOperationalConfig } from "./release-checks.mjs";
 
 const { expected, url } = requiredOperationalConfig(process.env);
 const sampleCount = 3;
@@ -29,4 +29,7 @@ for (let index = 0; index < sampleCount; index++) {
 const failures = operationalFailures(samples);
 if (failures.length) throw new Error(`Operational gate failed:\n- ${failures.join("\n- ")}`);
 const latest = samples.at(-1);
-console.log(`Operational gate passed: ${latest.ready} ready, ${latest.running} running, no overdue scans, no sustained heap or database pressure.`);
+const warnings = operationalWarnings(samples);
+console.log(operationalSuccessMessage(latest));
+const attention = operationalAttentionMessage(warnings);
+if (attention) console.warn(attention);

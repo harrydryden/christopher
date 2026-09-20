@@ -17,6 +17,8 @@ export interface BrowserOptions {
   concurrency?: number;
   /** Politeness for one navigation: reserved once, before the page is opened, never per subresource. */
   beforeNavigate?: (host: string) => Promise<void>;
+  /** Robots/policy guard for every top-level document request, including redirects. */
+  allowNavigate?: (url: string) => Promise<void>;
   /**
    * The same ledger the fetcher writes to, so a render is visible as traffic too. A render is
    * counted as one request under `via: "browser"` — the subresources it makes are the page's
@@ -82,12 +84,35 @@ export class BrowserRenderer {
       viewport: { width: 1366, height: 900 },
       locale: "en-GB",
       javaScriptEnabled: true,
+      serviceWorkers: "block",
     });
     const requests: string[] = [];
     let status: number | null = null;
+    let navigationError: unknown;
     try {
       const page = await context.newPage();
       page.setDefaultNavigationTimeout(this.opts.navigationTimeoutMs ?? 30_000);
+      // Playwright's route handler is not invoked again for a server redirect after route.continue.
+      // Chromium Fetch interception is: guard each Document request before any bytes reach the
+      // destination, including every hop in a redirect chain.
+      const cdp = await context.newCDPSession(page);
+      await cdp.send("Fetch.enable", { patterns: [{ resourceType: "Document", requestStage: "Request" }] });
+      const frameTree = await cdp.send("Page.getFrameTree") as { frameTree: { frame: { id: string } } };
+      const mainFrameId = frameTree.frameTree.frame.id;
+      cdp.on("Fetch.requestPaused", async (event: { requestId: string; frameId?: string; request: { url: string }; resourceType?: string }) => {
+        try {
+          if (event.frameId !== mainFrameId) {
+            await cdp.send("Fetch.continueRequest", { requestId: event.requestId });
+            return;
+          }
+          await this.opts.beforeNavigate?.(new URL(event.request.url).hostname);
+          await this.opts.allowNavigate?.(event.request.url);
+          await cdp.send("Fetch.continueRequest", { requestId: event.requestId });
+        } catch (error) {
+          navigationError = error;
+          await cdp.send("Fetch.failRequest", { requestId: event.requestId, errorReason: "BlockedByClient" }).catch(() => undefined);
+        }
+      });
       const hostMap = this.opts.hostMap ?? {};
       await page.route("**/*", async (route) => {
         const req = route.request();
@@ -111,7 +136,8 @@ export class BrowserRenderer {
               method: req.method(),
               headers: { ...req.headers(), "x-forwarded-host": original },
               body: (req.postDataBuffer() as unknown as BodyInit | null) ?? undefined,
-              redirect: "follow",
+              // Let Chromium follow redirects so every new top-level URL passes allowNavigate.
+              redirect: "manual",
             });
             const headers: Record<string, string> = {};
             response.headers.forEach((v, k) => {
@@ -127,12 +153,8 @@ export class BrowserRenderer {
       page.on("request", (req) => {
         if (["xhr", "fetch", "document", "script"].includes(req.resourceType())) requests.push(req.url());
       });
-      // One reservation for the whole navigation. Reserving per request instead made a page with
-      // twenty same-host XHRs sleep the per-host delay twenty times — longer than the navigation
-      // timeout it was sleeping inside — and pushed that host's next allowed request minutes into
-      // the future for every other scan.
-      await this.opts.beforeNavigate?.(new URL(url).hostname);
-      const response = await page.goto(url, { waitUntil: "domcontentloaded" });
+      // Reserve once per top-level document navigation (including redirects), never per subresource.
+      const response = await page.goto(url, { waitUntil: "domcontentloaded" }).catch(error => { throw navigationError ?? error; });
       status = response?.status() ?? null;
       await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => undefined);
 
@@ -167,7 +189,11 @@ export class BrowserRenderer {
       } else {
         await page.waitForTimeout(500);
       }
+      // A later client-side navigation can be denied after page.goto has already resolved. Never
+      // return the previous page as a successful render when that happens.
+      if (navigationError) throw navigationError;
       const html = await page.content();
+      if (navigationError) throw navigationError;
       this.opts.traffic?.request(host, "browser", { status, bytes: Buffer.byteLength(html, "utf8"), durationMs: Date.now() - started });
       return { html, finalUrl: page.url(), requests: [...new Set(requests)], status, listingPages, incomplete };
 

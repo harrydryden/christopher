@@ -246,7 +246,7 @@ it("fences completion, failure and writes from a reclaimed attempt", async () =>
   const old = (await claimTask(db, "same-worker"))!;
   await db.update(schema.tasks).set({ lockedAt: new Date(0) });
   await requeueStale(db);
-  await db.update(schema.tasks).set({ runAfter: new Date() }); // past the recovery backoff
+  await db.update(schema.tasks).set({ runAfter: sql`now()` }); // past the recovery backoff
   const current = (await claimTask(db, "same-worker"))!;
   expect(await renewTask(db, old)).toBe(false);
   await completeTask(db, old, { stale: true });
@@ -276,7 +276,7 @@ it("recovers a stopped worker after five missed minutes while retaining a fresh 
   await db.update(schema.tasks).set({ lockedAt: new Date(Date.now() - 6 * 60_000) }).where(eq(schema.tasks.id, stopped.id));
   await db.update(schema.tasks).set({ startedAt: new Date(Date.now() - 30 * 60_000), lockedAt: new Date(Date.now() - 60_000) }).where(eq(schema.tasks.id, live.id));
   expect(await requeueStale(db)).toEqual({ requeued: 1, failed: 0 });
-  await db.update(schema.tasks).set({ runAfter: new Date() }).where(eq(schema.tasks.id, stopped.id));
+  await db.update(schema.tasks).set({ runAfter: sql`now()` }).where(eq(schema.tasks.id, stopped.id));
   const recovered = (await claimTask(db, "current-worker"))!;
   expect(recovered.id).toBe(stopped.id);
   expect(recovered.attempts).toBe(stopped.attempts + 1);
@@ -327,7 +327,7 @@ it("does not repeat a manual daily fan-out after a crash between commit and comp
   await handleRunDaily(first, deps);
   await db.update(schema.tasks).set({ lockedAt: new Date(0) }).where(eq(schema.tasks.id, first.id));
   await requeueStale(db);
-  await db.update(schema.tasks).set({ runAfter: new Date() }).where(eq(schema.tasks.id, first.id));
+  await db.update(schema.tasks).set({ runAfter: sql`now()` }).where(eq(schema.tasks.id, first.id));
   const retry = (await claimTask(db, "second", "scan"))!;
   expect(retry.id).toBe(first.id);
   await handleRunDaily(retry, deps);
@@ -563,13 +563,13 @@ it("keeps a requeued company scan on one task row, through a deadline, a stale l
   expect(afterDeadline.attempts).toBe(1);
 
   // A worker that crashed with the task claimed: the stale sweep puts the same row back.
-  await db.update(schema.tasks).set({ runAfter: new Date() }).where(eq(schema.tasks.id, id!));
+  await db.update(schema.tasks).set({ runAfter: sql`now()` }).where(eq(schema.tasks.id, id!));
   expect((await claimTask(db, "crashed", "scan"))!.id).toBe(id);
   await db.update(schema.tasks).set({ lockedAt: new Date(Date.now() - 6 * 60_000) }).where(eq(schema.tasks.id, id!));
   expect(await requeueStale(db)).toEqual({ requeued: 1, failed: 0 });
   expect((await theOneTask()).attempts).toBe(2);
   // Still the same row, and claimable again once its recovery backoff has passed.
-  await db.update(schema.tasks).set({ runAfter: new Date() }).where(eq(schema.tasks.id, id!));
+  await db.update(schema.tasks).set({ runAfter: sql`now()` }).where(eq(schema.tasks.id, id!));
 
   // And an orderly shutdown hands it straight back, without spending an attempt.
   let seen!: () => void;
@@ -655,7 +655,7 @@ describe("crash recovery", () => {
     await enqueueTask(db, "scan_company", { companyId: "greenhouse-monster" }, {});
     // Three incarnations, each claiming the task and dying with it.
     for (const attempt of [1, 2, 3]) {
-      await db.update(schema.tasks).set({ runAfter: new Date() });
+      await db.update(schema.tasks).set({ runAfter: sql`now()` });
       const claimed = (await claimTask(db, `pod-${attempt}#0`, "scan"))!;
       expect(claimed.attempts).toBe(attempt);
       await db.update(schema.tasks).set({ lockedAt: past() }).where(eq(schema.tasks.id, claimed.id));

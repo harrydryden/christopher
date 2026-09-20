@@ -21,7 +21,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Check worker queue, scans, memory and database pressure
+      - name: Check operational failures and report account-budget attention
         run: node scripts/verify-operational-status.mjs
         env:
           WORKER_HEALTH_URL: ${{ vars.WORKER_HEALTH_URL }}

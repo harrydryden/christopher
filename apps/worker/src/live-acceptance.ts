@@ -1,5 +1,6 @@
 import { ats, discovery, type SourceSpec, type SourceType } from "@christopher/core";
 import { PoliteFetcher, userAgentFor } from "./fetcher";
+import type { BrowserRenderer } from "./browser";
 
 export interface LiveAcceptanceCase {
   id: string;
@@ -28,6 +29,11 @@ export interface LiveAcceptanceResult {
     fetches?: number;
     sourceMatchesLabel: boolean | null;
     error?: string;
+    errorCode?: "discovery_error";
+    browserAttempts: number;
+    browserRenders: number;
+    browserUrls: string[];
+    browserFailures: Array<{ url: string; code: "robots_denied" | "browser_error"; error: string }>;
   };
   extraction: {
     outcome: "complete" | "partial" | "failed" | "not_run";
@@ -35,6 +41,7 @@ export interface LiveAcceptanceResult {
     countMatchesLabel: boolean | null;
     sample: Array<{ title: string; location?: string; url: string }>;
     error?: string;
+    errorCode?: "source_blocked" | "source_incomplete" | "source_network" | "source_http" | "extraction_error";
   };
 }
 
@@ -137,15 +144,41 @@ export function liveAcceptanceVerdict(cases: LiveAcceptanceCase[], metrics: Live
   return { verdict: "pass", reasons: [] };
 }
 
-export async function runLiveAcceptanceCase(item: LiveAcceptanceCase, options: { discoveryOnly?: boolean; maxFetches?: number; fetcher?: PoliteFetcher } = {}): Promise<LiveAcceptanceResult> {
+function extractionErrorCode(error: unknown): NonNullable<LiveAcceptanceResult["extraction"]["errorCode"]> {
+  if (error instanceof Error && error.name === "IncompleteListingError") return "source_incomplete";
+  const message = error instanceof Error ? error.message : String(error);
+  if (/HTTP (403|429)|blocked|denied/i.test(message)) return "source_blocked";
+  if (/HTTP \d{3}/i.test(message)) return "source_http";
+  if (/network|timeout|fetch failed|browser rendering unavailable/i.test(message)) return "source_network";
+  return "extraction_error";
+}
+
+export async function runLiveAcceptanceCase(item: LiveAcceptanceCase, options: { discoveryOnly?: boolean; maxFetches?: number; fetcher?: PoliteFetcher; browser?: BrowserRenderer } = {}): Promise<LiveAcceptanceResult> {
   const started = Date.now();
   const fetcher = options.fetcher ?? new PoliteFetcher({
     userAgent: userAgentFor(process.env.CONTACT_EMAIL ?? "christopher-live-acceptance@example.invalid"),
     respectRobots: () => true,
   });
+  let browserRenders = 0;
+  let browserAttempts = 0;
+  const browserUrls: string[] = [];
+  const browserFailures: LiveAcceptanceResult["discovery"]["browserFailures"] = [];
   const fetchContext = {
     fetchText: (url: string, init?: Parameters<typeof fetcher.fetchText>[1]) => fetcher.fetchText(url, init),
     fetchBytes: (url: string, init?: Parameters<typeof fetcher.fetchBytes>[1]) => fetcher.fetchBytes(url, init),
+    render: options.browser ? async (url: string, opts?: { scrollAndExpand?: boolean }) => {
+      browserAttempts++;
+      browserUrls.push(url);
+      try {
+        const rendered = await options.browser!.render(url, opts);
+        browserRenders++;
+        return rendered;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        browserFailures.push({ url, code: /robots\.txt disallows/i.test(message) ? "robots_denied" : "browser_error", error: message });
+        throw error;
+      }
+    } : undefined,
     now: () => new Date(),
   };
   const discoveryContext = {
@@ -162,7 +195,7 @@ export async function runLiveAcceptanceCase(item: LiveAcceptanceCase, options: {
     company: item.company,
     startedAt: new Date(started).toISOString(),
     durationMs: 0,
-    discovery: { outcome: "error", sourceMatchesLabel: null },
+    discovery: { outcome: "error", sourceMatchesLabel: null, browserAttempts: 0, browserRenders: 0, browserUrls: [], browserFailures: [] },
     extraction: { outcome: options.discoveryOnly ? "not_run" : "failed", countMatchesLabel: null, sample: [] },
   };
   try {
@@ -174,9 +207,13 @@ export async function runLiveAcceptanceCase(item: LiveAcceptanceCase, options: {
       confidence: observed.best?.confidence,
       fetches: observed.fetches,
       sourceMatchesLabel: item.labelStatus === "source_independently_checked" ? sourceMatches(item.expectedSource, observed.best?.spec) : null,
+      browserAttempts,
+      browserRenders,
+      browserUrls,
+      browserFailures,
     };
   } catch (error) {
-    result.discovery = { outcome: "error", sourceMatchesLabel: null, error: (error as Error).message };
+    result.discovery = { outcome: "error", sourceMatchesLabel: null, error: (error as Error).message, errorCode: "discovery_error", browserAttempts, browserRenders, browserUrls, browserFailures };
   }
   if (!options.discoveryOnly) {
     try {
@@ -197,6 +234,7 @@ export async function runLiveAcceptanceCase(item: LiveAcceptanceCase, options: {
         countMatchesLabel: null,
         sample: postings.slice(0, 3).map(({ title, location, url }) => ({ title, location, url })),
         error: (error as Error).message,
+        errorCode: extractionErrorCode(error),
       };
     }
   }

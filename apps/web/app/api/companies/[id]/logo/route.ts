@@ -7,7 +7,7 @@
  * response an `etag` of the same instant, so a re-capture busts the cache and nothing else does.
  */
 import { readCompanyLogo } from "@christopher/db";
-import { requireUser } from "@/lib/auth";
+import { routeUser } from "@/lib/route-auth";
 import { db } from "@/lib/db";
 import { zUuid } from "@/lib/validation";
 
@@ -15,7 +15,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  await requireUser();
+  const auth = await routeUser();
+  if (!auth.ok) return auth.response;
   const { id } = await params;
   if (!zUuid().safeParse(id).success) return new Response("Not found", { status: 404 });
   const logo = await readCompanyLogo(db(), id);

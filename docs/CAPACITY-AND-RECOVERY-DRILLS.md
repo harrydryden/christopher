@@ -48,6 +48,81 @@ Run the fast guard tests with:
 node --test scripts/benchmark-users.test.mjs scripts/recovery-drill.test.mjs
 ```
 
+## Browser-capable worker envelope
+
+`pnpm capacity:worker` runs the real three-lane queue and `verify_company` handler against private
+fixture pages. It requires the exact fresh local database named by the harness, refuses any remote database or paid AI credential,
+and writes `CAPACITY_REPORT_PATH`. Run the worker image with `--memory=512m --cpus=0.5`; the harness
+creates 100 claimed accounts, assigns the work across ten active accounts, serves 1.19 MiB
+JavaScript shells which Chromium renders, and runs three iterations of three verification tasks.
+It samples process RSS, cgroup memory and cgroup CPU every 250 ms and fails if a task fails or two
+verification intervals overlap. The database is retained and the container should be stopped after
+the run.
+
+The first 20 September observation completed all nine tasks with no overlap, restart or OOM, but
+sampled the whole 512 MiB cgroup at 511.9 MiB. That observation did not split anonymous memory from
+cache and its report incorrectly called workload completion a pass; it is retained unchanged as
+[`worker-capacity-browser-initial-observation-2026-09-20.json`](benchmarks/worker-capacity-browser-initial-observation-2026-09-20.json), not used as acceptance evidence.
+
+The corrected 512 MiB run completed all nine tasks in 35.34 seconds with no overlap, restart or OOM,
+but **failed the 70% headroom gate**. Peak cgroup use was 466.8 MiB against the 358.4 MiB gate:
+391.8 MiB anonymous memory and 57.1 MiB file cache at their respective sampled peaks. Process RSS
+peaked at 368.3 MiB. `memory.events` ended with `high=0`, `max=0`, `oom=0` and `oom_kill=0`, so the
+kernel did not record a limit hit or OOM; even treating file cache as reclaimable, anonymous memory
+alone exceeded the gate. The serial reservation behaved correctly, but the configured tier lacks
+the agreed headroom and the local capacity gate is failed. Full evidence:
+[`worker-capacity-browser-2026-09-20.json`](benchmarks/worker-capacity-browser-2026-09-20.json).
+
+A bounded repeat at 1 GiB and the same 0.5 CPU completed the same workload in 29.93 seconds and
+passed its 716.8 MiB headroom gate. The harness read the actual cgroup limits as 1,024 MiB and 0.5
+CPU. Peak cgroup use was 411.1 MiB (381.9 MiB anonymous, 5.6 MiB file cache), process RSS peaked at
+362.0 MiB, and all memory event counters remained zero. This is local evidence that 1 GiB provides
+headroom for this fixture; it is not a hosted plan change or hosted acceptance. Full evidence:
+[`worker-capacity-browser-1g-2026-09-20.json`](benchmarks/worker-capacity-browser-1g-2026-09-20.json).
+
+The synthetic server and PostgreSQL run outside the worker cgroup. This drill does not model public
+provider latency, Render scheduling, remote PostgreSQL latency or PgBouncer, and it makes no paid AI
+call. The 100-account/ten-active authenticated web measurements above remain the web-side evidence;
+this drill adds the production-shaped worker path.
+
+## Restored application compatibility follow-up
+
+`scripts/recovery-read-smoke.mjs` is a guarded GET-only application journey for the retained local
+`christopher_recovery_drill` database. It starts the built web application, signs an existing
+synthetic session and requests `/`, `/companies`, `/applications`, `/library` and
+`/api/work-status`; it refuses any remote or differently named database.
+
+The retained restore's original synthetic sessions had expired before the 09:42 UTC attempt. That
+attempt produced four redirects and an API 500 and is retained as diagnostic evidence in
+[`recovery-read-smoke-expired-session-2026-09-20.json`](benchmarks/recovery-read-smoke-expired-session-2026-09-20.json).
+The redirects were the expected consequence of the expired fixture. The API 500 exposed a separate
+route defect: a validly signed cookie naming an expired database session reached the route and its
+uncaught authentication error became a 500. `/api/work-status` now performs the database-backed
+session check explicitly and returns JSON 401; focused tests cover both missing/expired current-user
+state and a live session. The expired fixture itself was not an external blocker.
+
+The completed rerun inserted one dedicated, 15-minute session row for an existing claimed synthetic
+account, signed its local-only cookie, and removed the row in `finally`. This setup and cleanup are
+the only database mutations; the application journey itself remained GET-only. `/`, `/companies`,
+`/applications`, `/library` and `/api/work-status` all returned HTTP 200, in 6.5–128.2 ms, and the
+report confirms the dedicated session was removed. The harness then reused the still-valid signed
+cookie after deleting its database session: the built application returned HTTP 401 with
+`Cache-Control: private, no-store` and the JSON instruction to sign in again. A direct database
+check found no dedicated smoke sessions left afterwards. Evidence:
+[`recovery-read-smoke-2026-09-20.json`](benchmarks/recovery-read-smoke-2026-09-20.json). The earlier
+isolated restore evidence also remains valid: it rendered authenticated routes and completed the
+Chromium CV/Library/Application/share workflow against the restored synthetic database
+(`local-restore-2026-09-20.json`).
+
+Roll-forward compatibility remains covered by the recovery drill rerunning all current migrations
+on the restored schema. For rollback, the immediate predecessor of `519fbc6` has the identical
+migration journal SHA-256
+`ba58eda6c688c8da05d6c350210a704fe9f88adfa3f8bc2092480f2f07e77824`, and the commit introduces no
+database migration diff. This proves there is no schema migration delta between these two revisions;
+it does not prove runtime rollback compatibility or that an older application artefact starts and serves traffic, because no immutable
+previous web build is retained locally. Destructive down-migration testing remains deliberately
+excluded.
+
 ## Executed local evidence — 20 September 2026
 
 The populated workload ran against PostgreSQL 16 in the isolated

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { liveAcceptanceVerdict, sourceMatches, summariseLiveAcceptance, type LiveAcceptanceCase, type LiveAcceptanceResult } from "./live-acceptance";
+import { liveAcceptanceVerdict, runLiveAcceptanceCase, sourceMatches, summariseLiveAcceptance, type LiveAcceptanceCase, type LiveAcceptanceResult } from "./live-acceptance";
 
 const labelled: LiveAcceptanceCase = { id: "a", company: "A", homepageUrl: "https://a.test", expectedSource: { type: "greenhouse", url: "https://boards.greenhouse.io/acme" }, expectedRoleCount: null, labelStatus: "source_independently_checked", labelNote: "checked" };
 const unverified: LiveAcceptanceCase = { ...labelled, id: "b", labelStatus: "unverified" };
 
 function result(id: string, matches: boolean): LiveAcceptanceResult {
-  return { id, company: id, startedAt: new Date(0).toISOString(), durationMs: 1, discovery: { outcome: "resolved", confidence: 0.9, sourceMatchesLabel: matches }, extraction: { outcome: "complete", countMatchesLabel: null, sample: [] } };
+  return { id, company: id, startedAt: new Date(0).toISOString(), durationMs: 1, discovery: { outcome: "resolved", confidence: 0.9, sourceMatchesLabel: matches, browserAttempts: 0, browserRenders: 0, browserUrls: [], browserFailures: [] }, extraction: { outcome: "complete", countMatchesLabel: null, sample: [] } };
 }
 
 describe("live acceptance reporting", () => {
@@ -45,7 +45,7 @@ describe("live acceptance reporting", () => {
 
   it("fails labelled cases that are all unresolved", () => {
     const unresolved = result("a", false);
-    unresolved.discovery = { outcome: "not_found", sourceMatchesLabel: false };
+    unresolved.discovery = { outcome: "not_found", sourceMatchesLabel: false, browserAttempts: 0, browserRenders: 0, browserUrls: [], browserFailures: [] };
     const metrics = summariseLiveAcceptance([labelled], [unresolved]);
     expect(metrics.discoveryAccuracy).toBe(0);
     expect(liveAcceptanceVerdict([labelled], metrics).verdict).toBe("fail");
@@ -68,5 +68,19 @@ describe("live acceptance reporting", () => {
     expect(metrics.discoveryAccuracy).toBe(0.5);
     expect(acceptance.reasons.join(" ")).toMatch(/no result|did not run extraction/);
     expect(acceptance.verdict).toBe("fail");
+  });
+
+  it("uses and reports the supplied production browser renderer", async () => {
+    const fetcher = {
+      fetchText: async () => { throw new Error("HTTP 403"); },
+      fetchBytes: async () => { throw new Error("unused"); },
+    };
+    const browser = {
+      render: async (url: string) => ({ html: '<html><head><title>A</title></head><body><a href="/careers">Careers</a></body></html>', finalUrl: url, requests: [], status: 200, listingPages: [], incomplete: false }),
+    };
+    const observed = await runLiveAcceptanceCase({ ...labelled, expectedSource: { type: "html", url: "https://a.test/careers" } }, { discoveryOnly: true, maxFetches: 2, fetcher: fetcher as never, browser: browser as never });
+    expect(observed.discovery.browserRenders).toBe(1);
+    expect(observed.discovery.browserAttempts).toBe(1);
+    expect(observed.discovery.browserUrls).toEqual(["https://a.test/"]);
   });
 });

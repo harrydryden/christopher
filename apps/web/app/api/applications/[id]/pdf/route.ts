@@ -1,12 +1,14 @@
 import { and, eq } from "drizzle-orm";
 import { applications } from "@christopher/db";
 import { db } from "@/lib/db";
-import { requireUser } from "@/lib/auth";
+import { routeUser } from "@/lib/route-auth";
 import { zUuid } from "@/lib/validation";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const user = await requireUser();
+  const auth = await routeUser();
+  if (!auth.ok) return auth.response;
+  const user = auth.user;
   const { id } = await params;
   if (!zUuid().safeParse(id).success) return new Response("Not found", { status: 404 });
   const [row] = await db().select({ pdf: applications.pdfBase64 }).from(applications).where(and(eq(applications.id, id), eq(applications.userId, user.id)));

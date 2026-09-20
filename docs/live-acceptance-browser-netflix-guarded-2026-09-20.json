@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-20T09:39:52.795Z",
+  "mode": "discovery_only",
+  "browser": {
+    "enabled": true,
+    "implementation": "BrowserRenderer",
+    "aiEnabled": false
+  },
+  "limitations": [
+    "This is a live observation, so role counts and pages can change during the run.",
+    "A null metric means the required independent label does not exist; it is not a pass.",
+    "Production BrowserRenderer fallback is enabled; AI fallback remains disabled and no database is read or written."
+  ],
+  "acceptance": {
+    "verdict": "fail",
+    "reasons": [
+      "labelled automatic discovery agreement is 0.0%, below 80%",
+      "1 case(s) lack an independent posting-identity golden snapshot",
+      "posting-identity recall and precision have not been measured",
+      "one or more selected cases did not run extraction"
+    ]
+  },
+  "metrics": {
+    "total": 1,
+    "sourceLabelled": 1,
+    "sourceMatches": 0,
+    "sourceMismatches": 1,
+    "labelledAutomaticMatchesAt085": 0,
+    "automaticResolvedAt085": 0,
+    "wrongAutomaticAccepts": 0,
+    "extractionComplete": 0,
+    "extractionPartial": 0,
+    "extractionFailed": 0,
+    "countLabelled": 0,
+    "countMatches": 0,
+    "discoveryAccuracy": 0,
+    "extractionExactCountAgreement": null,
+    "postingIdentityRecall": null,
+    "postingIdentityPrecision": null
+  },
+  "cases": [
+    {
+      "manifest": {
+        "id": "netflix",
+        "company": "Netflix",
+        "homepageUrl": "https://www.netflix.com",
+        "expectedSource": {
+          "type": "html",
+          "url": "https://jobs.netflix.com/"
+        },
+        "expectedRoleCount": null,
+        "labelStatus": "source_independently_checked",
+        "labelNote": "Netflix publishes and links its open-role search on its company-owned careers site; the previous Lever candidate was stale.",
+        "sourceEvidenceUrls": [
+          "https://jobs.netflix.com/"
+        ],
+        "sourceCheckedAt": "2026-09-20"
+      },
+      "result": {
+        "id": "netflix",
+        "company": "Netflix",
+        "startedAt": "2026-09-20T09:39:50.760Z",
+        "durationMs": 2021,
+        "discovery": {
+          "outcome": "not_found",
+          "fetches": 16,
+          "sourceMatchesLabel": false,
+          "browserAttempts": 1,
+          "browserRenders": 0,
+          "browserUrls": [
+            "https://www.netflix.com/"
+          ],
+          "browserFailures": [
+            {
+              "url": "https://www.netflix.com/",
+              "code": "robots_denied",
+              "error": "robots.txt disallows https://www.netflix.com/"
+            }
+          ]
+        },
+        "extraction": {
+          "outcome": "not_run",
+          "countMatchesLabel": null,
+          "sample": []
+        }
+      }
+    }
+  ]
+}

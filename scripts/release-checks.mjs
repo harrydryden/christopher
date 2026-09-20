@@ -7,6 +7,7 @@ export const OPERATIONAL_THRESHOLDS = Object.freeze({
   queueOldestSeconds: 15 * 60,
   queueGrowth: 10,
   uptimeRegressions: 2,
+  crashRecoveries1h: 2,
 });
 
 export const RELEASE_VERIFY_DEADLINE_MS = 8 * 60 * 1000;
@@ -78,6 +79,15 @@ export function readOperationalSample(value) {
     heapFraction: fraction(vitals?.heapFraction),
     dbWaiting: count(db?.waiting),
     uptimeSeconds: nonNegative(vitals?.uptimeSeconds),
+    crashRecoveries1h: count(metrics?.crashRecoveries1h),
+    crashRecoveries24h: count(metrics?.crashRecoveries24h),
+    providerCalls1h: count(metrics?.providerCalls1h),
+    providerSuccesses1h: count(metrics?.providerSuccesses1h),
+    providerFailures1h: count(metrics?.providerFailures1h),
+    providerOutageGroups1h: count(metrics?.providerOutageGroups1h),
+    spend24hUsd: nonNegative(metrics?.spend24hUsd),
+    spendMonthUsd: nonNegative(metrics?.spendMonthUsd),
+    accountsAtOrOverBudget: count(metrics?.accountsAtOrOverBudget),
   };
   const missing = Object.entries(sample).filter(([, value]) => value === null).map(([key]) => key);
   if (missing.length) throw new Error(`Worker health is missing required operational fields: ${missing.join(", ")}.`);
@@ -95,6 +105,12 @@ export function operationalFailures(samples, thresholds = OPERATIONAL_THRESHOLDS
   }
   if (samples.some(sample => sample.overdueDiscovery > 0)) {
     failures.push(`${Math.max(...samples.map(sample => sample.overdueDiscovery))} discovery sources are more than a day overdue`);
+  }
+  if (latest.crashRecoveries1h >= thresholds.crashRecoveries1h) {
+    failures.push(`${latest.crashRecoveries1h} worker crash recoveries were recorded in the last hour`);
+  }
+  if (latest.providerOutageGroups1h > 0) {
+    failures.push(`${latest.providerOutageGroups1h} AI call-site/model groups recorded at least three failed or stalled calls and no successful call in the last hour`);
   }
   if (samples.filter(sample => sample.heapFraction >= thresholds.heapFraction).length >= thresholds.sustainedSamples) {
     failures.push(`worker heap pressure is sustained at or above ${Math.round(thresholds.heapFraction * 100)}%`);
@@ -123,4 +139,21 @@ export function operationalFailures(samples, thresholds = OPERATIONAL_THRESHOLDS
     failures.push(`the ready queue grew by ${latest.ready - first.ready} tasks during the check`);
   }
   return failures;
+}
+
+/** Attention telemetry that should be surfaced but does not mean the deployment is unhealthy. */
+export function operationalWarnings(samples) {
+  if (!Array.isArray(samples) || samples.length === 0) throw new Error("At least one operational sample is required.");
+  const latest = samples.at(-1);
+  return latest.accountsAtOrOverBudget > 0
+    ? [`${latest.accountsAtOrOverBudget} accounts are at or over their configured AI budget`]
+    : [];
+}
+
+export function operationalSuccessMessage(latest) {
+  return `Operational gate passed: ${latest.ready} ready, ${latest.running} running, ${latest.crashRecoveries24h} crash recoveries in 24 hours, ${latest.providerFailures1h}/${latest.providerCalls1h} provider calls failed or stalled in one hour, $${latest.spend24hUsd.toFixed(2)} spent in 24 hours and $${latest.spendMonthUsd.toFixed(2)} this UTC month.`;
+}
+
+export function operationalAttentionMessage(warnings) {
+  return warnings.length ? `Operational attention (does not fail this gate):\n- ${warnings.join("\n- ")}` : null;
 }

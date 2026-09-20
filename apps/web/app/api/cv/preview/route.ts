@@ -1,12 +1,13 @@
 import { CvContentSchema } from "@christopher/core/cv";
-import { requireSession } from "@/lib/auth";
+import { routeUser } from "@/lib/route-auth";
 import { renderCvPdfWithReport, CvLayoutError } from "@/lib/cv-pdf";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /** A bounded, authenticated render only: no database writes and no AI calls. */
 export async function POST(request: Request) {
-  await requireSession();
+  const auth = await routeUser();
+  if (!auth.ok) return auth.response;
   const reader = request.body?.getReader();
   if (!reader) return new Response("CV content is required.", { status: 400 });
   let size = 0;

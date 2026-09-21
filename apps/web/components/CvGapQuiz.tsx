@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { isActiveStoredEvidence } from "@christopher/core/cv";
 import type { CvGapQuiz as CvGapQuizValue, CvLibrary } from "@christopher/core";
 import type { ActionResult } from "@/lib/validation";
 import { Button } from "@/components/Button";
@@ -35,7 +36,7 @@ export function CvGapQuiz({
   const [answers, setAnswers] = useState<Record<string, string>>({});
   // Structured experience is consolidated for generation and can carry a synthetic/grouped ID;
   // employment is its stable editable destination. Legacy unlinked experience keeps its real ID.
-  const evidence = library.entries.filter(entry => (!entry.status || entry.status === "active") && (entry.kind !== "experience" || !entry.employmentId));
+  const evidence = library.entries.filter(entry => isActiveStoredEvidence(entry) && (entry.kind !== "experience" || !entry.employmentId));
   return (
     <section aria-labelledby="gap-quiz-title" className="space-y-5 border-2 border-line bg-raised p-4 sm:p-6">
       <header className="space-y-2">

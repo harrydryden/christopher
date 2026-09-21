@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { CvLibrary } from "./cv";
+import { isActiveStoredEvidence, type CvLibrary } from "./cv";
 import { CvRubricSchema, type CvRubric } from "./cv-assessment";
 
 export const CV_GAP_QUIZ_MAX_QUESTIONS = 4;
@@ -95,13 +95,18 @@ export function addGapAnswersToLibrary(
     if (!question) throw new Error("This answer does not belong to the current quiz.");
     const destination = answer.destination;
     const answerRows = answer.answer.split(/\r?\n/).map(row => row.trim()).filter(Boolean);
+    // The library here is the account's stored one, which has not been parsed: archived is the
+    // only status that stands a block aside. A block an earlier release stored as a draft is the
+    // job's evidence — the generation that asked this question read it as one — so the answer is
+    // appended to it rather than landing in a second block for the same job that the editor,
+    // which shows one block per job, would never show.
     let index = destination.kind === "evidence"
       ? entries.findIndex(entry => entry.id === destination.entryId)
       : entries.findIndex(entry => entry.kind === "experience" && entry.employmentId === destination.employmentId
-          && (!entry.status || entry.status === "active"));
+          && isActiveStoredEvidence(entry));
     if (destination.kind === "evidence" && index < 0) throw new Error("The selected Library evidence no longer exists.");
-    if (destination.kind === "evidence" && entries[index]!.status && entries[index]!.status !== "active")
-      throw new Error("New evidence can only be added to an active Library entry.");
+    if (destination.kind === "evidence" && !isActiveStoredEvidence(entries[index]!))
+      throw new Error("New evidence can only be added to a Library entry that has not been archived.");
     if (destination.kind === "employment" && !(library.employment ?? []).some(job => job.id === destination.employmentId))
       throw new Error("The suggested employment record no longer exists.");
     if (index < 0 && destination.kind === "employment") {

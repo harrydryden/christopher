@@ -13,7 +13,8 @@ import { createDb, schema, upsertLibraryReviews, type Db } from "@christopher/db
 import { runMigrations } from "@christopher/db/migrate";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { libraryEntryInputHash, rulesLibraryReview } from "@christopher/core/library-review";
-import type { CvLibrary } from "@christopher/core/cv";
+import { groupCvLibrary, type CvLibrary, type EvidenceFacet } from "@christopher/core/cv";
+import { cvTailoringEvidence } from "@christopher/core/cv-tailoring";
 import { signInTestUser } from "@/test/auth";
 import type { User } from "@christopher/db/schema";
 
@@ -29,6 +30,8 @@ vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error
 import { saveCvLibrary } from "@/app/actions/cv";
 import { GET as reviewsRoute } from "@/app/api/cv/library/reviews/route";
 import { diffCvLibraries, requestedDiff } from "./cv-library-diff";
+import { cvLibraryReadiness } from "./cv-ready";
+import { archivedBlocks, editableEmployment, openStoredLibrary, removeJob, restoreJob } from "./cv-library-rows";
 import {
   getLibraryEvidence,
   getLibraryVersionContents,
@@ -40,7 +43,7 @@ import {
 
 const ACME = { id: "acme", company: "Acme", jobTitle: "Operations Director", startDate: "2023-01", endDate: "", current: true };
 
-function libraryFixture(rows: string[], facets: Record<string, string> = {}): CvLibrary {
+function libraryFixture(rows: string[], facets: Record<string, EvidenceFacet[]> = {}): CvLibrary {
   return {
     name: "Test Candidate",
     contact: "London",
@@ -55,7 +58,7 @@ function libraryFixture(rows: string[], facets: Record<string, string> = {}): Cv
       heading: "Operations Director · Acme",
       details: rows.join("\n"),
       confirmedResponsibilities: rows,
-      ...(Object.keys(facets).length ? { rowFacets: facets as CvLibrary["entries"][number]["rowFacets"] } : {}),
+      ...(Object.keys(facets).length ? { rowFacets: facets } : {}),
     }],
   };
 }
@@ -88,8 +91,8 @@ beforeEach(async () => {
 
 it("shows the badge, the prompts and the poll token a saved Library's reviews produce", async () => {
   expect(await save(libraryFixture(["Led a team of nine through a move to one site", "Cut handovers by 40%"], {
-    "Led a team of nine through a move to one site": "responsibility",
-    "Cut handovers by 40%": "metric",
+    "Led a team of nine through a move to one site": ["responsibility"],
+    "Cut handovers by 40%": ["metric"],
   }), 0)).toEqual({ ok: true });
 
   const stored = (await getOwnCvLibrary(user.id))!;
@@ -110,7 +113,7 @@ it("shows the badge, the prompts and the poll token a saved Library's reviews pr
     rating: baseline.rating,
   });
   expect(queued.evaluating).toBe(true);
-  // Two rows covering two of the six facets: the baseline reads Weak, and the line names it.
+  // Two rows covering two of the six types: the baseline reads Weak, and the line names it.
   expect(baseline.rating).toBe("weak");
   expect(queued.line).toBe("Evidence: Weak · 1 job is Weak");
   // Nothing is stored yet, so the poll token is empty and the route says so.
@@ -128,8 +131,15 @@ it("shows the badge, the prompts and the poll token a saved Library's reviews pr
     model: "test-model",
     review: {
       ...baseline,
+      // The model reads the second row as both the outcome and the figure that moved, which is
+      // what a row carrying two types is for. Responsibility 1 + outcome 2 + metric 2 of 8 is
+      // 31.25, both rows specific is 25, one of two quantified is 12.5: 69, which is Good.
+      rows: [
+        { ...baseline.rows[0]!, facets: ["responsibility"], specific: true },
+        { ...baseline.rows[1]!, facets: ["outcome", "metric"], specific: true, quantified: true, outcomeLinked: true },
+      ],
       prompts: ["What did the move to one site achieve?", "What changed as a result?"],
-      score: 62,
+      score: 69,
       rating: "good",
     },
   }]);
@@ -138,15 +148,132 @@ it("shows the badge, the prompts and the poll token a saved Library's reviews pr
   expect(after.body.signature).not.toBe(before.body.signature);
 
   const scored = await getLibraryEvidence(user.id, stored);
-  expect(scored.entries[0]).toMatchObject({ source: "model", provisional: false, evaluating: false, score: 62, rating: "good" });
+  expect(scored.entries[0]).toMatchObject({ source: "model", provisional: false, evaluating: false, score: 69, rating: "good" });
   expect(scored.evaluating).toBe(false);
   expect(scored.line).toBe("Evidence: Good");
-  // Each prompt is one question; the one that is a facet question carries its facet for the
+  // Each prompt is one question; the one that is a type's own question carries that type for the
   // "Add a row for this" control, and the one the model wrote itself does not.
   expect(scored.entries[0]!.prompts).toEqual([
     { question: "What did the move to one site achieve?", facet: null },
     { question: "What changed as a result?", facet: "outcome" },
   ]);
+});
+
+it("reads a review an earlier release stored, in today's shape", async () => {
+  // Every account already reviewed carries reviews whose rows name one `facet`, as a string, and
+  // whose row tags have not changed — so they still match by hash and are what the page shows.
+  // Read as they were written, their rows would carry no types at all.
+  await save(libraryFixture(["Led a team of nine through a move to one site", "Cut handovers by 40%"], {
+    "Led a team of nine through a move to one site": ["responsibility"],
+    "Cut handovers by 40%": ["metric"],
+  }), 0);
+  const stored = (await getOwnCvLibrary(user.id))!;
+  const entry = stored.content.entries[0]!;
+  const rows = ["Led a team of nine through a move to one site", "Cut handovers by 40%"];
+  await upsertLibraryReviews(database, user.id, stored.version, [{
+    entryId: entry.id,
+    inputHash: libraryEntryInputHash(entry, ACME),
+    source: "model",
+    model: "test-model",
+    review: {
+      entryId: entry.id,
+      rows: [
+        { row: rows[0]!, facet: "responsibility", specific: true, quantified: false, outcomeLinked: false, quote: rows[0]!, verified: true },
+        { row: rows[1]!, facet: "unclear", specific: false, quantified: true, outcomeLinked: false, quote: rows[1]!, verified: true },
+      ],
+      prompts: ["What changed as a result?"],
+      // What that release stored alongside the rows. The score is recomputed from the rows on the
+      // way out, so a review read back is consistent with what it is about.
+      coverage: {},
+      missing: [],
+      score: 0,
+      rating: "none",
+    } as never,
+  }]);
+
+  const evidence = await getLibraryEvidence(user.id, stored);
+  const view = evidence.entries[0]!;
+  expect(view.source).toBe("model");
+  // One row classified as a responsibility and one the release could not classify: the first is
+  // covered, the second covers nothing, and the sentence says what is still missing.
+  expect(view.missing).toEqual(["outcome", "metric", "problem", "milestone", "style"]);
+  expect(view.missingLine).toBe("No outcomes or metrics moved yet · 3 other types untagged");
+  expect(view.score).toBeGreaterThan(0);
+  expect(view.prompts).toEqual([{ question: "What changed as a result?", facet: "outcome" }]);
+  expect(view.reviewedRows).toEqual(rows);
+});
+
+it("archives a removed job's evidence instead of deleting it, and shows it nowhere again", async () => {
+  // The one destructive motion the editor has. The rows have to survive in the saved versions and
+  // in the CVs already built from them, and appear in nothing that is built or scored from here.
+  await save(libraryFixture(["Led a team of nine through a move to one site"]), 0);
+  const before = (await getOwnCvLibrary(user.id))!;
+
+  // What the editor posts: `removeJob` over what the page opened.
+  const posted = removeJob(openStoredLibrary(before.content), "acme");
+  expect(posted.entries.map(entry => entry.status)).toEqual(["inactive"]);
+  expect(await save(posted, before.version)).toEqual({ ok: true });
+
+  const after = (await getOwnCvLibrary(user.id))!;
+  // Kept, as inactive, with the employment record the block points at.
+  expect(after.content.entries.map(entry => [entry.id, entry.status])).toEqual([["acme-block", "inactive"]]);
+  expect(after.content.employment?.map(job => job.id)).toEqual(["acme"]);
+  expect(after.content.entries[0]!.details).toBe("Led a team of nine through a move to one site");
+
+  // Not on the screen, not scored, not counted, and not something a CV could be built from.
+  const opened = openStoredLibrary(after.content);
+  expect(cvLibraryReadiness(opened).ready).toBe(false);
+  expect((await getLibraryEvidence(user.id, after)).entries).toEqual([]);
+  expect(cvTailoringEvidence(after.content).filter(item => item.entryId)).toEqual([]);
+  expect(() => groupCvLibrary(opened)).toThrow("Confirm at least one responsibility or outcome");
+
+  // And the history says what that save did, rather than comparing equal to the version before it.
+  const contents = await getLibraryVersionContents(user.id, [before.version, after.version]);
+  const diff = diffCvLibraries(
+    openStoredLibrary(contents.get(before.version)),
+    openStoredLibrary(contents.get(after.version)),
+    before.version,
+    after.version,
+  );
+  expect(diff.blocksRemoved).toEqual(["Operations Director · Acme · Jan 2023 – Present"]);
+});
+
+it("puts a removed job back, with its wording and its employment record intact", async () => {
+  // The way back from the one destructive motion the editor has. A removal is recoverable for as
+  // long as the block is stored, and the save that recovers it is an ordinary save.
+  await save(libraryFixture(["Led a team of nine through a move to one site"]), 0);
+  const before = (await getOwnCvLibrary(user.id))!;
+  expect(await save(removeJob(openStoredLibrary(before.content), "acme"), before.version)).toEqual({ ok: true });
+
+  const archived = (await getOwnCvLibrary(user.id))!;
+  // What the Experience tab offers: the job by its heading, and the rows that come back with it.
+  expect(archivedBlocks(openStoredLibrary(archived.content))).toEqual([{
+    entryId: "acme-block",
+    employmentId: "acme",
+    heading: "Operations Director · Acme · Jan 2023 – Present",
+    rows: 1,
+  }]);
+
+  // Typed back in rather than restored, the new job collides with the record the removal kept.
+  // The refusal is about a row that is not on the screen, so it says where that row is.
+  const retyped = openStoredLibrary(archived.content);
+  const duplicate = await save({ ...retyped, employment: [...retyped.employment!, { ...ACME, id: "acme-again" }] }, archived.version);
+  expect(duplicate).toEqual({ ok: false, error: "This job is in Archived jobs below; restore it instead of adding it again." });
+
+  // Restored and saved: the stored block is evidence again, unchanged, and so is its record.
+  expect(await save(restoreJob(openStoredLibrary(archived.content), "acme"), archived.version)).toEqual({ ok: true });
+  const after = (await getOwnCvLibrary(user.id))!;
+  expect(after.content.entries.map(entry => [entry.id, entry.status])).toEqual([["acme-block", "active"]]);
+  expect(after.content.entries[0]!.details).toBe("Led a team of nine through a move to one site");
+  expect(after.content.entries[0]!.confirmedResponsibilities).toEqual(["Led a team of nine through a move to one site"]);
+  expect(after.content.employment?.map(job => job.id)).toEqual(["acme"]);
+
+  const opened = openStoredLibrary(after.content);
+  expect(editableEmployment(opened).map(job => job.id)).toEqual(["acme"]);
+  expect(archivedBlocks(opened)).toEqual([]);
+  // Counted again by everything that reads the library: the CV it was holding back can be built.
+  expect(cvLibraryReadiness(opened).ready).toBe(true);
+  expect((await getLibraryEvidence(user.id, after)).entries.map(entry => entry.entryId)).toEqual(["acme-block"]);
 });
 
 it("treats a review of wording that has since been edited as no review at all", async () => {
@@ -157,15 +284,14 @@ it("treats a review of wording that has since been edited as no review at all", 
     inputHash: libraryEntryInputHash(first.content.entries[0]!, ACME),
     source: "model",
     model: "test-model",
-    review: { ...rulesLibraryReview(first.content.entries[0]!, first.content), score: 70, rating: "good" },
+    review: rulesLibraryReview(first.content.entries[0]!, first.content),
   }]);
-  expect((await getLibraryEvidence(user.id, first)).entries[0]).toMatchObject({ source: "model", score: 70 });
+  expect((await getLibraryEvidence(user.id, first)).entries[0]).toMatchObject({ source: "model", provisional: false });
 
   await save(libraryFixture(["Led a team of nine through a move to one site"]), first.version);
   const second = (await getOwnCvLibrary(user.id))!;
   const evidence = await getLibraryEvidence(user.id, second);
   expect(evidence.entries[0]).toMatchObject({ source: "rules", provisional: true });
-  expect(evidence.entries[0]!.score).not.toBe(70);
 });
 
 it("shows the refusal the worker recorded instead of waiting for a pass that will not run", async () => {

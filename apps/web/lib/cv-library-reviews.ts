@@ -4,7 +4,7 @@
  * The score is never computed here. `scoreLibraryRows` in `packages/core` is the only place a
  * number is produced, so this either reads back the stored review of an entry's exact wording or,
  * when none describes it yet, falls back to `rulesLibraryReview` — the no-model baseline computed
- * from the person's own facet tags. A baseline standing in for a review that has not run is marked
+ * from the types the person tagged the rows with. A baseline standing in for a review that has not run is marked
  * provisional, so the page can say so rather than pass it off as the whole answer.
  *
  * This is the server half of the Library's evidence display; the words and the shapes are in
@@ -13,6 +13,7 @@
 import {
   employmentHeading,
   evidenceRows,
+  isActiveStoredEvidence,
   type CvLibrary,
 } from "@christopher/core/cv";
 import {
@@ -76,7 +77,12 @@ export function libraryEvidence(
 ): LibraryEvidence {
   if (!library) return NO_EVIDENCE;
   const entries = library.entries
-    .filter(entry => REVIEWABLE_KINDS.has(entry.kind) && evidenceRows(entry).length > 0)
+    // Archived evidence is not on the screen and is never built from, so it is not scored, not
+    // counted in the Library's line, and not something to be asked questions about. Archived is
+    // the only status this excludes: what it is given is `cv_libraries.content` as stored — it is
+    // the hashes of those exact entries that the reviews are keyed by — so a block an earlier
+    // release wrote as a draft is the evidence the editor beside it is showing.
+    .filter(entry => REVIEWABLE_KINDS.has(entry.kind) && isActiveStoredEvidence(entry) && evidenceRows(entry).length > 0)
     .map<EvidenceEntryView>(entry => {
       const held = stored.get(entry.id);
       const review = held?.review ?? rulesLibraryReview(entry, library);

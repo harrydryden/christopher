@@ -8,6 +8,7 @@
 import { expect, it } from "vitest";
 import type { CvLibrary, Employment } from "@christopher/core/cv";
 import { diffCvLibraries, diffRows, libraryDiffSummary, requestedDiff } from "./cv-library-diff";
+import { openStoredLibrary } from "./cv-library-rows";
 
 const acme: Employment = { id: "acme", company: "Acme", jobTitle: "Operations Director", startDate: "2023-01", endDate: "", current: true };
 const globex: Employment = { id: "globex", company: "Globex", jobTitle: "Head of Operations", startDate: "2019-01", endDate: "2022-12", current: false };
@@ -23,6 +24,40 @@ function library(over: Partial<CvLibrary> = {}): CvLibrary {
     ...over,
   };
 }
+
+it("compares what two releases stored, not how they stored it", () => {
+  // The page reads both versions through the same parse the editor opens on, so a block an
+  // earlier release wrote as a draft and a row it tagged with a bare string are not a change
+  // somebody made. A status is not something the person edits, and never appears in a diff.
+  const stored = {
+    ...library(),
+    entries: [{
+      id: "acme-block", kind: "experience", status: "draft", heading: "Acme", employmentId: "acme",
+      details: "Led a team\nCut handovers", rowFacets: { "Led a team": "responsibility" },
+    }],
+  };
+  const now = library({
+    entries: [{
+      ...library().entries[0]!, status: "active", rowFacets: { "Led a team": ["responsibility"] },
+    }],
+  });
+  const diff = diffCvLibraries(openStoredLibrary(stored), openStoredLibrary(now), 4, 5);
+  expect(diff.unchanged).toBe(true);
+  expect(libraryDiffSummary(diff)).toBe("No changes between these versions");
+});
+
+it("reads a job removed as the block it archived, not as no change at all", () => {
+  // Removing a job keeps its block, as inactive, and the employment record the block points at,
+  // so the save that did it would otherwise compare equal to the version before it.
+  const before = library();
+  const after = library({ entries: [{ ...library().entries[0]!, status: "inactive" }] });
+  const diff = diffCvLibraries(before, after, 4, 5);
+  expect(diff.unchanged).toBe(false);
+  expect(diff.blocksRemoved).toEqual(["Operations Director · Acme · Jan 2023 – Present"]);
+  expect(libraryDiffSummary(diff)).toBe("1 block removed");
+  // A block that was already archived in both versions is not removed again.
+  expect(diffCvLibraries(after, after, 5, 6).unchanged).toBe(true);
+});
 
 it("pairs rows by text first and by position second", () => {
   expect(diffRows(["a", "b"], ["a", "b"])).toEqual({ added: [], removed: [], changed: [] });
@@ -59,7 +94,7 @@ it("names jobs and blocks that arrived or went", () => {
     employment: [acme, globex],
     entries: [
       library().entries[0]!,
-      { id: "globex-block", kind: "experience", status: "draft", heading: "Globex", employmentId: "globex", details: "Ran the regional team" },
+      { id: "globex-block", kind: "experience", status: "active", heading: "Globex", employmentId: "globex", details: "Ran the regional team" },
       { id: "degree", kind: "education", status: "active", heading: "BSc Mathematics", details: "University of Leeds" },
     ],
   });

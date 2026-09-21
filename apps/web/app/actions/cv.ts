@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { actionCvs, applications, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, userJobs, enqueueTask } from "@christopher/db";
 import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvWritingPreferences,
-  createCvWritingBudget, CvLibrarySchema, consolidateExperience, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel,
+  createCvWritingBudget, CvLibrarySchema, consolidateExperience, isActiveStoredEvidence, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel,
   type CvContent, type CvLibrary, type CvWritingPreferences } from "@christopher/core";
 import { CvGapAnswerSchema, CvGapQuizSchema, addGapAnswersToLibrary, type CvGapAnswer } from "@christopher/core/cv-gap-quiz";
 import { requireUser, requireVerifiedUser } from "@/lib/auth";
@@ -226,8 +226,10 @@ export async function answerCvGapQuiz(draftId: string, _prev: ActionResult, form
             if (answer.destination.kind !== "evidence") continue;
             const entryId = answer.destination.entryId;
             const entry = current.entries.find(item => item.id === entryId);
-            if (!entry || (entry.status && entry.status !== "active"))
-              throw new UserFacingError("Choose an active Library entry for each answer. Reload if the available entries changed.");
+            // `current` is the stored library, unparsed: archived is the only status that
+            // refuses, so an answer is never turned away from a block the Library is showing.
+            if (!entry || !isActiveStoredEvidence(entry))
+              throw new UserFacingError("Choose a Library entry that is still in your Library for each answer. Reload if the available entries changed.");
           }
           return addGapAnswersToLibrary(current, quiz, parsedAnswers.data, () => `gap-${randomUUID()}`);
         });

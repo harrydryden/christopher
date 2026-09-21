@@ -82,7 +82,7 @@ function scriptedClient() {
             entries: batch.map(entry => ({
               entryId: entry.id,
               rows: entry.rows.map((row, index) => ({
-                row, facet: index === 0 ? "responsibility" : "outcome",
+                row, facets: index === 0 ? ["responsibility"] : ["outcome", "metric"],
                 specific: true, quantified: true, outcomeLinked: index > 0, quote: row,
               })),
               prompts: ["What problem were you brought in to solve?"],
@@ -254,6 +254,24 @@ it("still scores a library for a deployment with no model configured", async () 
     deps.env.anthropicApiKey = key;
   }
   expect((await reviews()).map(row => [row.entryId, row.source])).toEqual([["degree", "rules"], ["role", "rules"]]);
+});
+
+it("does not classify the evidence of a job that was removed", async () => {
+  // Archived with its job: it is on no screen and in no CV, so it is not worth a model call — and
+  // a block an earlier release stored as a draft is evidence, which is, so it is still reviewed.
+  const library = libraryOf();
+  await saveLibrary(1, {
+    ...library,
+    entries: [
+      { ...library.entries[0]!, status: "inactive" },
+      { ...library.entries[1]!, status: "draft" } as never,
+      library.entries[2]!,
+    ],
+  });
+  deps.aiClient = scriptedClient().client;
+  const result = await handleReviewLibrary(task({ userId, libraryVersion: 1 }), deps) as { reviewed: number };
+  expect((await reviews()).map(row => row.entryId)).toEqual(["degree"]);
+  expect(result.reviewed).toBe(1);
 });
 
 it("does nothing but say so for an account with no library", async () => {

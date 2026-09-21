@@ -64,11 +64,37 @@ describe("CV gap quiz", () => {
     });
   });
 
+  it("appends to a block an earlier release stored as a draft, rather than writing a second one", () => {
+    // What the editor wrote for every job before a block's status stopped being the person's to
+    // set. The library here is the stored one, unparsed, so the status is still the word that
+    // release used — and the generation that asked this question read it as active evidence.
+    const draft = { ...library, entries: library.entries.map(entry => entry.id === "experience-1" ? { ...entry, status: "draft" } : entry) } as unknown as CvLibrary;
+    const quiz = buildCvGapQuiz([
+      { id: "q1", requirementId: "r1", requirement: "Market launches", prompt: "What did you launch?", suggestedDestination: { kind: "employment", employmentId: "job-1" } },
+    ], draft, 7, rubric)!;
+    const next = addGapAnswersToLibrary(draft, quiz, [{ questionId: "q1", answer: "Opened a new market.", destination: { kind: "employment", employmentId: "job-1" } }], id => `gap-${id}`);
+    // One block for the job, still: a second one is a block the editor would never show.
+    expect(next.entries.filter(entry => entry.employmentId === "job-1")).toHaveLength(1);
+    expect(next.entries.find(entry => entry.id === "experience-1")).toMatchObject({
+      details: "Led delivery.\nOpened a new market.",
+      confirmedResponsibilities: ["Led delivery.", "Opened a new market."],
+    });
+  });
+
+  it("saves new evidence into a block stored as a draft, and refuses only an archived one", () => {
+    const draft = { ...library, entries: library.entries.map(entry => entry.id === "skills" ? { ...entry, status: "draft" } : entry) } as unknown as CvLibrary;
+    const quiz = buildCvGapQuiz([
+      { id: "q1", requirementId: "r1", requirement: "Market launches", prompt: "What did you launch?", suggestedDestination: { kind: "evidence", entryId: "skills" } },
+    ], library, 7, rubric)!;
+    const next = addGapAnswersToLibrary(draft, quiz, [{ questionId: "q1", answer: "Market entry", destination: { kind: "evidence", entryId: "skills" } }], id => id);
+    expect(next.entries.find(entry => entry.id === "skills")?.details).toBe("Planning\nMarket entry");
+  });
+
   it("refuses to save new evidence into an inactive entry", () => {
     const inactive = { ...library, entries: library.entries.map(entry => entry.id === "skills" ? { ...entry, status: "inactive" as const } : entry) };
     const quiz = buildCvGapQuiz([
       { id: "q1", requirementId: "r1", requirement: "Market launches", prompt: "What did you launch?", suggestedDestination: { kind: "evidence", entryId: "skills" } },
     ], library, 7, rubric)!;
-    expect(() => addGapAnswersToLibrary(inactive, quiz, [{ questionId: "q1", answer: "Planning", destination: { kind: "evidence", entryId: "skills" } }], id => id)).toThrow("active Library entry");
+    expect(() => addGapAnswersToLibrary(inactive, quiz, [{ questionId: "q1", answer: "Planning", destination: { kind: "evidence", entryId: "skills" } }], id => id)).toThrow("has not been archived");
   });
 });

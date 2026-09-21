@@ -60,3 +60,25 @@ it("repeats a whole-library refusal once, without a field name", () => {
   expect(message).toContain("Library entry IDs must be unique");
   expect(message.match(/Library entry IDs must be unique/g)).toHaveLength(1);
 });
+
+it("points at Archived jobs when the duplicate a new job collides with was removed", () => {
+  // The collision is with a record the person cannot see: the removal kept it, because the
+  // evidence archived with it points at it. The refusal has to say where the job went.
+  const message = refusal({
+    ...posted,
+    employment: [posted.employment[0], { ...posted.employment[0], id: "job-3" }],
+    entries: [{ ...posted.entries[0], status: "inactive" }],
+  });
+  expect(message).toBe("This job is in Archived jobs below; restore it instead of adding it again.");
+  expect(message).not.toContain("already exist in employment history");
+});
+
+it("keeps the plain duplicate refusal when both jobs are on the screen", () => {
+  const message = refusal({
+    ...posted,
+    employment: [posted.employment[0], { ...posted.employment[0], id: "job-3" }],
+    entries: [posted.entries[0]],
+  });
+  expect(message).toContain("This company, job title and date range already exist in employment history.");
+  expect(message).not.toContain("Archived jobs");
+});

@@ -10,7 +10,7 @@ import {
   tasks,
 } from "@christopher/db";
 import type { CvBuildFailure, CvBuildStepView, CvLibrary } from "@christopher/core";
-import { libraryEntryInputHash } from "@christopher/core/library-review";
+import { libraryEntryInputHash, normaliseLibraryReview } from "@christopher/core/library-review";
 import { cvWorkVersion, normaliseCvStepsSignature } from "@/lib/cv-build-state";
 import type { LibraryEvidence } from "@/lib/cv-library-evidence";
 import {
@@ -326,6 +326,11 @@ async function libraryReviewRun(userId: string): Promise<LibraryReviewRun> {
  * `cv_library_reviews` arrived with the worker's migration and the interface deploys separately,
  * so a release serving ahead of it reads as "nothing reviewed yet" — every entry falls back to the
  * baseline computed from the person's own tags — rather than an error page over the Library.
+ *
+ * Every row goes through `normaliseLibraryReview`, because the column holds what the pass that
+ * wrote it wrote: a review from before a row could carry several types names one `facet`, and a
+ * row whose tags have not changed still matches by hash, so those reviews are live rather than
+ * historical. Read raw, their rows would carry no types at all.
  */
 async function readLibraryReviews(userId: string, content: CvLibrary): Promise<Map<string, StoredLibraryReview>> {
   const wanted = content.entries.map(entry => ({
@@ -334,7 +339,7 @@ async function readLibraryReviews(userId: string, content: CvLibrary): Promise<M
   }));
   try {
     const rows = await latestLibraryReviews(db(), userId, wanted);
-    return new Map([...rows].map(([entryId, row]) => [entryId, { entryId, source: row.source, review: row.review }]));
+    return new Map([...rows].map(([entryId, row]) => [entryId, { entryId, source: row.source, review: normaliseLibraryReview(row.review) }]));
   } catch {
     return new Map();
   }

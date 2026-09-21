@@ -202,20 +202,23 @@ const library = (over: Partial<CvLibrary> = {}): CvLibrary => CvLibrarySchema.pa
 });
 
 describe("proposalToLibraryAdditions", () => {
-  it("lands accepted items as draft blocks with nothing confirmed", () => {
+  it("lands accepted items as active blocks with nothing confirmed", () => {
     const proposal = validated();
     const { library: next, added } = proposalToLibraryAdditions(null, proposal, proposedItemIds(proposal), { prefix: "abc", name: "Jane Okafor" });
 
     expect(added).toEqual({ jobs: 1, rows: 2, education: 1, skills: 2 });
     expect(next.employment).toEqual([{ id: "abc:job-0", company: "Acme Logistics", jobTitle: "Director of Operations", startDate: "2020-03", endDate: "2022-06", current: false }]);
     const experience = next.entries.find(entry => entry.kind === "experience")!;
-    expect(experience).toMatchObject({ status: "draft", employmentId: "abc:job-0", confirmedResponsibilities: [] });
+    expect(experience).toMatchObject({ status: "active", employmentId: "abc:job-0", confirmedResponsibilities: [] });
     expect(responsibilityRows(experience.details)).toEqual([
       "Ran the UK warehouse team of 30 through a move to a new site",
       "Cut handover time from two days to four hours",
     ]);
-    expect(next.entries.find(entry => entry.kind === "education")).toMatchObject({ status: "draft", heading: "University of Leeds" });
-    expect(next.entries.find(entry => entry.kind === "skill")).toMatchObject({ status: "draft", skillItems: ["Kanban", "S&OP"] });
+    expect(next.entries.find(entry => entry.kind === "education")).toMatchObject({ status: "active", heading: "University of Leeds" });
+    expect(next.entries.find(entry => entry.kind === "skill")).toMatchObject({ status: "active", skillItems: ["Kanban", "S&OP"] });
+    // Nothing lands as a draft: confirming the rows is the review step, and the status is not the
+    // person's to set, so a block nobody could activate would be evidence nobody could use.
+    expect(next.entries.some(entry => (entry.status as string) === "draft")).toBe(false);
     // Valid the moment it is saved, without another pass by hand.
     expect(() => parseLibraryAdditions(next)).not.toThrow();
   });

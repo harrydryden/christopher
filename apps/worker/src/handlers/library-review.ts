@@ -21,6 +21,7 @@ import {
   aiBudgetRefusalMessage,
   aiBudgetWindowStart,
   aiFeatureLabel,
+  isActiveStoredEvidence,
   libraryEntryInputHash,
   reviewableRows,
   rulesLibraryReview,
@@ -75,8 +76,12 @@ export async function handleReviewLibrary(task: Task, deps: WorkerDeps, ctx?: Ta
 
   const employmentOf = (entry: CvEntry): Employment | null =>
     library.content.employment?.find(job => job.id === entry.employmentId) ?? null;
+  // Archived evidence is shown nowhere and built from nothing, so it is not worth a model call:
+  // a block archived with the job it belonged to would otherwise be classified for ever, and the
+  // content read here has not been parsed, so archived is the one status that stands a block
+  // aside (a block an earlier release stored as a draft is evidence, and is reviewed).
   const entries = library.content.entries.filter(entry =>
-    REVIEWABLE_KINDS.has(entry.kind) && reviewableRows(entry).length > 0);
+    REVIEWABLE_KINDS.has(entry.kind) && isActiveStoredEvidence(entry) && reviewableRows(entry).length > 0);
   if (!entries.length) return { reviewed: 0, reused: 0, ...newer, skipped: "no reviewable entries" };
   const hashes = new Map(entries.map(entry => [entry.id, libraryEntryInputHash(entry, employmentOf(entry))]));
 

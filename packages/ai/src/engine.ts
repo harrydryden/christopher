@@ -15,7 +15,7 @@ import {
   validateCvPlanProvenance,
   CvTailoringPlanSchema,
   reviewableRows,
-  rowFacet,
+  rowFacets,
   validateLibraryReview,
   type CvWritingBudget,
   type CvPlan,
@@ -1271,11 +1271,11 @@ type CvEntry = CvLibrary["entries"][number];
 
 /**
  * The library as evidence context: the jobs it records and every entry's rows exactly as written,
- * including the entries this pass is not reviewing and the facets the person tagged themselves.
+ * including the entries this pass is not reviewing and the types the person tagged them with.
  *
  * Deliberately not `groupCvLibrary`/`cvEvidenceItems`, which the CV assessment uses: those keep
- * only confirmed rows of active blocks and refuse a library with none, and a draft entry nobody
- * has confirmed yet is exactly the one this review exists to help with.
+ * only confirmed rows and refuse a library with none, and an entry nobody has confirmed yet is
+ * exactly the one this review exists to help with.
  */
 function libraryEvidenceText(library: CvLibrary): string {
   const lines: string[] = [];
@@ -1286,8 +1286,8 @@ function libraryEvidenceText(library: CvLibrary): string {
     const job = library.employment?.find(item => item.id === entry.employmentId);
     lines.push(`Entry [${entry.id}] ${entry.kind}${job ? ` at job [${job.id}]` : ""}: ${entry.heading}`);
     for (const row of responsibilityRows(entry.details)) {
-      const facet = rowFacet(entry, row);
-      lines.push(`  - ${row}${facet ? ` (they tagged this ${facet})` : ""}`);
+      const facets = rowFacets(entry, row);
+      lines.push(`  - ${row}${facets.length ? ` (they tagged this ${facets.join(", ")})` : ""}`);
     }
     for (const skill of entry.skillItems ?? []) lines.push(`  - skill: ${skill}`);
     lines.push("");

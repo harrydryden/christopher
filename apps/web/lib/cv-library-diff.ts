@@ -3,16 +3,25 @@
  *
  * A save appends an immutable version, so the only way to see what a past edit did is to compare
  * two of them. Rows are the unit everywhere else in the Library — the writer, the confirmation,
- * the facet tag and the evidence review all key on a row's exact text — so they are the unit here
- * too: per block, the rows that arrived, the rows that went, and the rows that were reworded.
+ * the types a row is tagged with and the evidence review all key on a row's exact text — so they
+ * are the unit here too: per block, the rows that arrived, the rows that went, and the rows that
+ * were reworded.
  *
  * Rewording is told from a removal followed by an addition the same way `updateResponsibilityRows`
- * carries a facet across an edit: rows that match by text are paired first, and whatever is left
- * over on each side is paired by position. Two versions apart that is a guess, so it is presented
- * as one — "reworded", with both texts shown — rather than as a fact about what the person did.
+ * carries a row's types across an edit: rows that match by text are paired first, and whatever is
+ * left over on each side is paired by position. Two versions apart that is a guess, so it is
+ * presented as one — "reworded", with both texts shown — rather than as a fact about what the
+ * person did.
+ *
+ * What is compared is two parsed libraries, which the page hands over: the shapes an earlier
+ * release stored are upgraded first, so a row whose tag was one string and a block that was stored
+ * as a draft are not changes anybody made. The one status that is a change is the archiving a
+ * person does by removing a job: the block and the employment record are both kept, so without it
+ * the save that removed a job would read as no change at all.
  */
 import {
   employmentHeading,
+  isActiveStoredEvidence,
   responsibilityRows,
   type CvLibrary,
   type Employment,
@@ -92,7 +101,15 @@ export function diffCvLibraries(from: CvLibrary, to: CvLibrary, fromVersion: num
       return diff ? [diff] : [];
     });
   const blocksAdded = [...after.values()].filter(entry => !before.has(entry.id)).map(entry => labelFor(to, entry));
-  const blocksRemoved = [...before.values()].filter(entry => !after.has(entry.id)).map(entry => labelFor(from, entry));
+  // Gone, or archived where it stands: removing a job keeps its block and the record it points
+  // at, so an entry that was evidence in the older version and is not in the newer one went.
+  const blocksRemoved = [...before.values()]
+    .filter(entry => {
+      if (!isActiveStoredEvidence(entry)) return false;
+      const now = after.get(entry.id);
+      return !now || !isActiveStoredEvidence(now);
+    })
+    .map(entry => labelFor(after.has(entry.id) ? to : from, entry));
   const jobsBefore = new Map((from.employment ?? []).map(job => [job.id, job]));
   const jobsAfter = new Map((to.employment ?? []).map(job => [job.id, job]));
   const employmentAdded = [...jobsAfter.values()].filter(job => !jobsBefore.has(job.id)).map(jobLabel);

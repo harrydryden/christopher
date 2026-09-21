@@ -37,7 +37,9 @@ const evidenceRows = (entry: CvLibrary["entries"][number]) => entry.details.spli
 export function cvTailoringEvidence(library: CvLibrary): CvTailoringEvidenceItem[] {
   return [
     ...(library.profile.trim() ? [{ id: "source:profile", text: library.profile }] : []),
-    ...library.entries.filter(entry => entry.status !== "draft" && entry.status !== "inactive").flatMap(entry => [
+    // Archived evidence only: a block is active by belonging to a job the person still lists, and
+    // the draft a release before this one could write reads as active.
+    ...library.entries.filter(entry => entry.status !== "inactive").flatMap(entry => [
       ...evidenceRows(entry).filter(text => entry.kind !== "experience" || (entry.confirmedResponsibilities ?? []).includes(text))
         .map((text, row) => ({ id: `entry:${entry.id}:row:${row}`, text, entryId: entry.id, row })),
       ...(entry.skillItems ?? []).map((text, row) => ({ id: `entry:${entry.id}:skill:${row}`, text, entryId: entry.id, row })),

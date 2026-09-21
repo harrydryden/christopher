@@ -15,9 +15,9 @@
  * product would rather propose less than propose something they never wrote.
  *
  * Nothing here writes to the Library. `proposalToLibraryAdditions` returns the library the person
- * would have if they accepted the items they ticked — additions only, with every new block a
- * `draft` whose rows are unconfirmed, so the Library's own lifecycle (activate, confirm) is the
- * review step rather than a second one.
+ * would have if they accepted the items they ticked — additions only, with every new block active
+ * and every row on it unconfirmed, so confirming those rows is the review step rather than a
+ * second one.
  */
 import { z } from "zod";
 import {
@@ -328,9 +328,10 @@ const EMPTY: CvLibrary = { name: "", contact: "", profile: "", structuredExperie
  *
  * Additions only. Nothing that was already in the library is removed, reworded or re-confirmed:
  * an existing job keeps its block and gains the accepted rows it does not already have, and a job
- * the library has never heard of arrives as a `draft` block with every row unconfirmed. That is
- * deliberate — an import proposes evidence, and the person asserting that a row is true of them is
- * the step that makes it usable, exactly as it is for a row they typed themselves.
+ * the library has never heard of arrives as a block of its own with every row unconfirmed. The
+ * block is active, because the job is in employment history and there is no status to set; what
+ * makes a row usable is the person asserting that it is true of them, exactly as it is for a row
+ * they typed themselves.
  *
  * A responsibility whose job was not accepted is not added: the row belongs to the job, and a
  * library cannot carry evidence for an employer it does not list.
@@ -389,7 +390,7 @@ export function proposalToLibraryAdditions(
       entries.push({
         id: `${prefix}:${job.id}:evidence`,
         kind: "experience",
-        status: "draft",
+        status: "active",
         heading: employmentHeading(record),
         details: rows.join("\n"),
         employmentId: record.id,
@@ -402,7 +403,7 @@ export function proposalToLibraryAdditions(
     if (!accepted.has(item.id)) continue;
     if (entries.some(entry => entry.kind === "education" && key(entry.heading) === key(item.heading)
       && key(entry.details) === key(item.detail))) continue;
-    entries.push({ id: `${prefix}:${item.id}`, kind: "education", status: "draft", heading: item.heading, details: item.detail });
+    entries.push({ id: `${prefix}:${item.id}`, kind: "education", status: "active", heading: item.heading, details: item.detail });
     added.education += 1;
   }
 
@@ -414,7 +415,7 @@ export function proposalToLibraryAdditions(
     entries.push({
       id: `${prefix}:skills`,
       kind: "skill",
-      status: "draft",
+      status: "active",
       heading: "Skills",
       details: items.join("\n"),
       skillItems: items,

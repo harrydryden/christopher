@@ -569,7 +569,7 @@ describe("priority workflows", () => {
     const generate = new FormData(); generate.set("jobId", job.id);
     const result = await requestCv({ ok: true }, generate);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toContain("confirm the responsibilities");
+    if (!result.ok) expect(result.error).toContain("Confirm at least one responsibility or outcome");
     expect(await database.select().from(schema.cvDrafts)).toHaveLength(0);
     expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(0);
   });

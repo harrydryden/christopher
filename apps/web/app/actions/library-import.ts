@@ -143,7 +143,7 @@ async function prepareImport(
 }
 
 /**
- * Add the items the person ticked, as drafts.
+ * Add the items the person ticked, with their rows unconfirmed.
  *
  * It goes through the same save the editor's own does — `writeCvLibraryVersion` — so the version
  * number moves, a library that changed underneath is refused rather than overwritten, and the
@@ -187,7 +187,7 @@ export async function acceptLibraryImport(importId: string, form: FormData): Pro
     await pruneLibraryImports(db(), user.id);
     revalidatePath("/library");
     revalidatePath("/cv");
-    return said(`${addedSentence(added)} They arrive as drafts; activate each block and confirm its rows when you have checked them.`);
+    return said(`${addedSentence(added)} They arrive with their rows unconfirmed; confirm the ones you have checked.`);
   } catch (error) {
     return actionError(error, "Those items could not be added. Reload the page and try again.");
   }

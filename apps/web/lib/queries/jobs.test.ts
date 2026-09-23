@@ -9,7 +9,7 @@ import type { User } from "@ava/db/schema";
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { appliedRoleCount, sortRoleRows, parseRolesFilters, applyRolesFilters, buildRoleRowVM, fetchRecentEventsFor, fetchRolePage, fetchRoleRows, filtersToQueryString, locationReasonText, parseSince, resolveRoleView, roleTabFor, scoreStateText, type RoleRow } from "./jobs";
+import { appliedRoleCount, sortRoleRows, parseRolesFilters, applyRolesFilters, buildRoleRowVM, fetchRecentEventsFor, fetchRolePage, fetchRoleRows, filtersToQueryString, locationReasonText, parseSince, resolveRoleView, roleTabFor, scoreStateText, SORT_KEYS, type RoleCursor, type RoleRow } from "./jobs";
 
 beforeAll(async () => {
   const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
@@ -347,5 +347,68 @@ describe("a role's recent events", () => {
     expect(events.get(job!.id)!.map((e) => e.id)).toEqual([...ids].sort());
     expect(events.has(quiet!.id)).toBe(false);
     expect(await fetchRecentEventsFor(me.id, [])).toEqual(new Map());
+  });
+});
+
+describe("reading a view block by block", () => {
+  /**
+   * The export reads a view 500 rows at a time after the last row it wrote. Every order the table
+   * offers has ties, and several have nulls, so the cursor must place both exactly as the `order by`
+   * does; and a timestamp can differ in its microseconds alone, which a JavaScript date cannot hold.
+   */
+  it("gives every sort, both ways, the same rows in the same order as an offset read", async () => {
+    await database.execute(sql`truncate users, companies restart identity cascade`);
+    const user: User = await ensureTestUser(database, "keyset@example.com");
+    const now = new Date("2026-09-23T12:00:00Z");
+    const [acme, beta] = await database.insert(schema.companies).values([
+      { name: "Acme", domain: "acme.test", homepageUrl: "https://acme.test" },
+      { name: "Beta", domain: "beta.test", homepageUrl: "https://beta.test" },
+    ]).returning();
+    const sources = await database.insert(schema.careerSources).values([
+      { companyId: acme!.id, type: "html", url: "https://acme.test/jobs" },
+      { companyId: beta!.id, type: "html", url: "https://beta.test/jobs" },
+    ]).returning();
+    const fits = [null, 50, 50, 80, null, 20, 50, null, 80, 10, 50, null, 30];
+    const titles = ["Ops", "Ops", "Lead", "Lead", "Ops", "Chief", "Lead", "Ops", "Chief", "Ops", "Lead", "Ops", "Chief"];
+    const locations = ["London", null, "Leeds", "London", null, "London", "Leeds", null, "London", "Leeds", null, "London", "Leeds"];
+    const inserted = await database.insert(schema.jobs).values(fits.map((_, i) => ({
+      companyId: (i % 3 ? acme : beta)!.id, sourceId: sources[i % 3 ? 0 : 1]!.id, externalKey: `id:${i}`,
+      title: titles[i]!, normalizedTitle: titles[i]!.toLowerCase(), url: `https://acme.test/jobs/${i}`, location: locations[i],
+      status: i % 5 === 4 ? "closed" as const : "open" as const, closedAt: i % 5 === 4 ? new Date("2026-09-20T00:00:00Z") : null,
+      postedAt: i % 4 === 0 ? new Date("2026-08-01T00:00:00Z") : null,
+    }))).returning();
+    // Three moments, two of them a microsecond apart, and ties on each: new and active roles both.
+    const moments = ["2026-09-20 08:00:00.000100+00", "2026-09-20 08:00:00.000200+00", "2026-08-10 08:00:00+00"];
+    for (const [i, job] of inserted.entries()) {
+      await database.execute(sql`update jobs set first_seen_at = ${moments[i % 3]}::timestamptz where id = ${job.id}`);
+    }
+    await database.insert(schema.userJobs).values(inserted.map((job, i) => ({
+      userId: user.id, jobId: job.id, keywordMatched: true, locationOk: true, inTable: true, fitScore: fits[i],
+    })));
+    // Some roles decided, two of them a microsecond apart and two at the same moment; the rest never.
+    for (const [i, job] of inserted.entries()) {
+      if (i % 3 === 2) continue;
+      if (i > 8) continue;
+      const [decision] = await database.insert(schema.decisions)
+        .values({ userId: user.id, jobId: job.id, decision: i % 2 ? "apply" : "skip", jobTitle: job.title, companyName: "Acme" }).returning();
+      await database.execute(sql`update decisions set created_at = ${moments[i % 2]}::timestamptz where id = ${decision!.id}`);
+    }
+
+    for (const sort of SORT_KEYS) {
+      for (const dir of ["asc", "desc"] as const) {
+        const filters = parseRolesFilters({ sort, dir, decision: "all" });
+        const whole = (await fetchRoleRows(user.id, filters, false, { limit: 100, now })).map((row) => row.job.id);
+        expect(whole, `${sort} ${dir}`).toHaveLength(inserted.length);
+        const blocks: string[] = [];
+        let after: RoleCursor | null = null;
+        for (;;) {
+          const block = await fetchRoleRows(user.id, filters, false, { after, limit: 2, now });
+          blocks.push(...block.map((row) => row.job.id));
+          if (block.length < 2) break;
+          after = block.at(-1)!.cursor;
+        }
+        expect(blocks, `${sort} ${dir}`).toEqual(whole);
+      }
+    }
   });
 });

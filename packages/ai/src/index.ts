@@ -1,4 +1,7 @@
-export { AiEngine, createAiEngine, classifyAiFailure, decisionDigest, extractJsonBlock, CANCELLED_ERROR, OUTPUT_LIMIT_ERROR, STREAM_CEILING_MS } from "./engine";
+export {
+  AiEngine, createAiEngine, classifyAiFailure, decisionDigest, extractJsonBlock, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX,
+  INTERRUPTED_ERROR_PREFIX, NO_OUTPUT_ERROR, OUTPUT_LIMIT_ERROR, REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, STREAM_CEILING_MS,
+} from "./engine";
 export type { AiEngineOptions, AiFailure, AiFailureKind, AiUsageRecord, AiClientLike, AiStreamLike, CvAssessBatchEvent, CvAssessHooks, DecisionForDigest, Effort, LibraryReviewBatchEvent, LibraryReviewHooks, ParseResponse, Ref, UserBlock } from "./engine";
 /**
  * The provider's own error classes, re-exported from the one module that talks to it. The engine

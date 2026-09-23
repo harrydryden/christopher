@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createAiEngine, decisionDigest, extractJsonBlock, CANCELLED_ERROR, OUTPUT_LIMIT_ERROR, STREAM_CEILING_MS, type AiClientLike, type AiUsageRecord, type DecisionForDigest, type ParseResponse } from "./engine";
+import { createAiEngine, decisionDigest, extractJsonBlock, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, NO_OUTPUT_ERROR, OUTPUT_LIMIT_ERROR, REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, STREAM_CEILING_MS, type AiClientLike, type AiUsageRecord, type DecisionForDigest, type ParseResponse } from "./engine";
 import { APIConnectionError, APIConnectionTimeoutError, APIError, AuthenticationError, BadRequestError, InternalServerError, NotFoundError, PermissionDeniedError, RateLimitError } from "@anthropic-ai/sdk";
 import { estimateCostUsd, estimateCvBuildUsd, estimateLibraryImportUsd, estimateLibraryReviewUsd, serverToolCostUsd, SERVER_TOOL_USD } from "./pricing";
 import type { CvLibrary } from "@ava/core";
@@ -237,11 +237,57 @@ describe("engine plumbing", () => {
     expect(usage[1]!.stage).toBe("rubric");
   });
 
-  it("classifies its two non-failure failures by a prefix the ledger can match", () => {
+  it("classifies its non-failure failures by a prefix the ledger can match", () => {
     // packages/db's aiOutcome() splits cancellations and stalls out of the failure count by these
-    // prefixes. They are one taxonomy across two packages, so pin both ends.
+    // prefixes, and keeps the model's own unusable answers out of outage detection by the rest.
+    // They are one taxonomy across two packages, so pin both ends.
     expect(CANCELLED_ERROR.startsWith("Cancelled because another call")).toBe(true);
+    expect(DEADLINE_ERROR_PREFIX).toBe("Stopped at the task deadline:");
+    expect(INTERRUPTED_ERROR_PREFIX).toBe("Stopped by the worker:");
     expect(`Stream timed out: no complete response after ${STREAM_CEILING_MS / 60_000} minutes.`.startsWith("Stream timed out:")).toBe(true);
+    expect([REFUSAL_ERROR_PREFIX, OUTPUT_LIMIT_ERROR.slice(0, 26), SCHEMA_ERROR_PREFIX, NO_OUTPUT_ERROR])
+      .toEqual(["refusal:", "Model output limit reached", "schema rejected:", "no parseable output"]);
+  });
+
+  it("stops one call when its own signal aborts, at once, and records it as the worker's stop", async () => {
+    // A client that ignores the signal entirely: the engine still stops waiting for it.
+    const usage: AiUsageRecord[] = [];
+    const engine = createAiEngine({ getModel: () => "claude-opus-5", onUsage: record => { usage.push(record); },
+      client: { messages: { create: () => new Promise(() => {}) } } });
+    const stop = new AbortController();
+    const pending = engine.scoreJob({ profileMarkdown: "", decisionDigest: "", job: { title: "Ops", company: "Acme" } }, { refType: "job", refId: "job-1", signal: stop.signal });
+    await new Promise(resolve => setTimeout(resolve, 5));
+    stop.abort();
+    expect(await pending).toBeNull();
+    expect(usage).toHaveLength(1);
+    expect(usage[0]!.error!.startsWith(INTERRUPTED_ERROR_PREFIX)).toBe(true);
+    expect(usage[0]!.failure).toBeUndefined();
+    expect(usage[0]).toMatchObject({ refType: "job", refId: "job-1" });
+    expect(usage[0]).not.toHaveProperty("signal");
+    // An already-stopped call is never sent.
+    expect(await engine.scoreJob({ profileMarkdown: "", decisionDigest: "", job: { title: "Ops", company: "Acme" } }, { signal: stop.signal })).toBeNull();
+    expect(usage).toHaveLength(1);
+  });
+
+  it("gives a run its own engine that shares the client, the budget and the ledger", async () => {
+    const { client, calls } = fakeClient({ score: 80, verdict: "strong", rationale: "Fits.", flags: [] });
+    const usage: AiUsageRecord[] = [];
+    const reserved: string[] = [];
+    const shared = createAiEngine({ client, getModel: () => "claude-opus-5", onUsage: record => { usage.push(record); },
+      reserve: async callSite => { reserved.push(callSite); return async () => {}; } });
+    const run = new AbortController();
+    const scoped = shared.withSignal(run.signal);
+    expect(scoped.enabled).toBe(true);
+    expect(await scoped.scoreJob({ profileMarkdown: "", decisionDigest: "", job: { title: "Ops", company: "Acme" } })).toMatchObject({ score: 80 });
+    expect(calls[0]!.options?.signal).toBe(run.signal);
+    expect(reserved).toEqual(["A5"]);
+    expect(usage).toHaveLength(1);
+    run.abort();
+    // The run's engine sends nothing more; the shared one is untouched by that run's stop.
+    expect(await scoped.scoreJob({ profileMarkdown: "", decisionDigest: "", job: { title: "Ops", company: "Acme" } })).toBeNull();
+    expect(await shared.scoreJob({ profileMarkdown: "", decisionDigest: "", job: { title: "Ops", company: "Acme" } })).toMatchObject({ score: 80 });
+    expect(calls).toHaveLength(2);
+    expect(createAiEngine({ getModel: () => "claude-opus-5" }).withSignal(run.signal).enabled).toBe(false);
   });
 });
 
@@ -880,10 +926,32 @@ describe("assessment batch hooks", () => {
     // Without every batch the audit is worthless, so it comes back empty rather than partial.
     expect(await audit).toBeNull();
     expect(events.filter(event => event.startsWith("cancel:"))).toHaveLength(2);
-    expect(usage.filter(record => record.error === CANCELLED_ERROR)).toHaveLength(2);
+    // Stopped by the run, not by a sibling: no other call failed, so none is labelled as if it had.
+    expect(usage.filter(record => record.error?.startsWith(INTERRUPTED_ERROR_PREFIX))).toHaveLength(2);
+    expect(usage.some(record => record.error === CANCELLED_ERROR)).toBe(false);
     expect(await engine.analyseCvJob("Lead operations for a growing team.")).toBeNull();
     expect(await engine.buildCv({ library: { name: "A", contact: "", profile: "", entries: [] }, jobTitle: "Ops", company: "Acme", description: "Lead" })).toBeNull();
     expect(calls).toHaveLength(3);
+  });
+
+  it("labels every batch in flight with the run's deadline, and keeps CANCELLED_ERROR for a sibling's failure", async () => {
+    const stop = new AbortController();
+    const { client, calls } = streamingClient((params, index, signal) => {
+      if (index === 0) return Promise.resolve({ parsed_output: answerFor(userPayload(params)) });
+      return new Promise((_, reject) => signal!.addEventListener("abort", () => reject(new Error("Request was aborted."))));
+    });
+    const usage: AiUsageRecord[] = [];
+    const engine = createAiEngine({ client, getModel: () => "claude-fable-5-1", onUsage: record => { usage.push(record); } });
+    // The caller's signal, on the ref, stops the audit as the run's own does.
+    const audit = engine.assessCv(input(17), { stage: "review", signal: stop.signal });
+    for (let tick = 0; tick < 50 && calls.length < 3; tick++) await new Promise(resolve => setTimeout(resolve, 5));
+    expect(calls).toHaveLength(3);
+    stop.abort(Object.assign(new Error("generate_cv exceeded its 2700s deadline after 2700s and was abandoned"), { name: "TimeoutError" }));
+    expect(await audit).toBeNull();
+    const stopped = usage.filter(record => !record.ok);
+    expect(stopped).toHaveLength(2);
+    expect(stopped.every(record => record.error === `${DEADLINE_ERROR_PREFIX} generate_cv exceeded its 2700s deadline after 2700s and was abandoned`)).toBe(true);
+    expect(stopped.every(record => record.failure === undefined)).toBe(true);
   });
 });
 
@@ -1088,7 +1156,9 @@ describe("library evidence review (A12)", () => {
     stop.abort();
     await expect(pass).rejects.toThrow("returned nothing usable");
     expect(events.filter(event => event.startsWith("cancel:")).length).toBeGreaterThan(0);
-    expect(usage.some(record => record.error === CANCELLED_ERROR)).toBe(true);
+    // The caller stopped the pass; no batch failed for the others to be cancelled by.
+    expect(usage.some(record => record.error?.startsWith(INTERRUPTED_ERROR_PREFIX))).toBe(true);
+    expect(usage.some(record => record.error === CANCELLED_ERROR)).toBe(false);
   });
 });
 

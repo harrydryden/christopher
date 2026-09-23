@@ -152,19 +152,55 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
   };
 }
 
-export function makeFetchContext(deps: WorkerDeps): FetchContext {
+/**
+ * Settle with the run's own stop as soon as `signal` aborts, and start nothing once it has.
+ *
+ * The request itself is handed the signal too, and a fetcher or renderer that honours it cancels
+ * the transfer; this is what makes the caller stop waiting either way, so a task given up on does
+ * not keep its handler parked on a slow host until the fetch's own timeout.
+ */
+function untilStopped<T>(signal: AbortSignal | undefined, work: () => Promise<T>): Promise<T> {
+  if (!signal) return work();
+  if (signal.aborted) return Promise.reject(signal.reason);
+  let stop: (() => void) | undefined;
+  const stopped = new Promise<never>((_, reject) => {
+    stop = () => reject(signal.reason);
+    signal.addEventListener("abort", stop, { once: true });
+  });
+  return Promise.race([work(), stopped]).finally(() => signal.removeEventListener("abort", stop!));
+}
+
+/**
+ * The fetches and renders a handler makes. With `signal` — the run's own — every one of them is
+ * refused once the run has been told to stop, and one in flight is let go at once.
+ */
+export function makeFetchContext(deps: WorkerDeps, opts: { signal?: AbortSignal } = {}): FetchContext {
+  const { signal } = opts;
+  // The signal rides along in the request options for a fetcher and renderer that take one.
+  const withSignal = <O extends object>(options: O | undefined): O & { signal?: AbortSignal } =>
+    ({ ...(options ?? {}), ...(signal ? { signal } : {}) }) as O & { signal?: AbortSignal };
   return {
-    fetchText: (url, init) => deps.fetcher.fetchText(url, init),
-    fetchBytes: (url, init) => deps.fetcher.fetchBytes(url, init),
-    render: deps.browser ? (url, opts) => deps.browser!.render(url, opts) : undefined,
+    fetchText: (url, init) => untilStopped(signal, () => deps.fetcher.fetchText(url, withSignal(init))),
+    fetchBytes: (url, init) => untilStopped(signal, () => deps.fetcher.fetchBytes(url, withSignal(init))),
+    render: deps.browser ? (url, options) => untilStopped(signal, () => deps.browser!.render(url, withSignal(options))) : undefined,
     log: (msg, data) => log.debug(msg, data),
     now: deps.now,
   };
 }
 
-export function makeDiscoveryContext(deps: WorkerDeps, opts: { maxFetches?: number; useAi?: boolean } = {}): DiscoveryContext {
-  const fetchCtx = makeFetchContext(deps);
+/**
+ * What discovery needs for one run. `userId` is the account the run is for, when it is for one:
+ * its model calls are then held and recorded against that account's budget, while a run for the
+ * shared catalogue alone stays under the deployment's caps. `signal` stops its fetches, renders
+ * and model calls together.
+ */
+export function makeDiscoveryContext(
+  deps: WorkerDeps,
+  opts: { maxFetches?: number; useAi?: boolean; userId?: string; signal?: AbortSignal } = {},
+): DiscoveryContext {
+  const fetchCtx = makeFetchContext(deps, { signal: opts.signal });
   const useAi = opts.useAi ?? true;
+  const ref = { ...(opts.userId ? { userId: opts.userId } : {}), ...(opts.signal ? { signal: opts.signal } : {}) };
   return {
     ...fetchCtx,
     resolveSpec: (url) => ats.specFromAnyUrl(url),
@@ -174,8 +210,8 @@ export function makeDiscoveryContext(deps: WorkerDeps, opts: { maxFetches?: numb
     ai:
       useAi && deps.ai.enabled
         ? {
-            chooseCareersLinks: async (input) => (await deps.ai.chooseCareersLinks(input)) ?? [],
-            classifyPage: async (input) => (await deps.ai.classifyPage(input)) ?? { kind: "other", confidence: 0 },
+            chooseCareersLinks: async (input) => (await deps.ai.chooseCareersLinks(input, ref)) ?? [],
+            classifyPage: async (input) => (await deps.ai.classifyPage(input, ref)) ?? { kind: "other", confidence: 0 },
           }
         : undefined,
     maxFetches: opts.maxFetches ?? 40,

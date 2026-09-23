@@ -104,6 +104,12 @@ export interface Ref {
    */
   stage?: string;
   userId?: string;
+  /**
+   * Stops this one call: the request, the SDK's retries, and the wait for either. A handler passes
+   * its run's signal, so a task that outran its deadline or lost its lease stops paying for an
+   * answer nobody will read. It is never recorded; the rest of the ref is.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -114,6 +120,11 @@ export interface Ref {
  * schema. That discards the usage figures for a call the model did answer and the account was
  * billed for, so the spend never reaches the monthly budget. Validating here instead keeps the
  * response, and its usage, in hand whatever the outcome.
+ *
+ * The stream parses too: at `message_stop` it runs the output format's `parse` over the answer
+ * and rejects `finalMessage()` when that throws, which a truncated answer or a prose refusal
+ * always does. So the format is sent without its parser on both paths (see `run`), and the answer
+ * reaches the engine's own refusal, truncation and schema checks whatever it says.
  */
 export interface AiClientLike {
   messages: {
@@ -198,7 +209,11 @@ interface RunParams {
   tools?: Array<Record<string, unknown>>;
   /** Fires once the response has begun, which is when a prefix this call caches becomes readable by others. */
   onStart?: () => void;
-  /** Cancels the call; whatever it had consumed by then is recorded against CANCELLED_ERROR. */
+  /**
+   * Cancels the call; whatever it had consumed by then is recorded, labelled by what it was
+   * aborted with: a sibling's failure (CANCELLED_ERROR), the task deadline, or anything else the
+   * worker stopped it for.
+   */
   signal?: AbortSignal;
   /**
    * This call's own usage record, after it has been recorded. `onUsage` sees every call the engine
@@ -210,8 +225,27 @@ interface RunParams {
 
 export const OUTPUT_LIMIT_ERROR = "Model output limit reached before the response was complete.";
 export const CANCELLED_ERROR = "Cancelled because another call in the same task failed.";
+/**
+ * A call stopped because its task ran out of time. Never CANCELLED_ERROR: no other call failed,
+ * and a call site that keeps outrunning its task has to be visible as that.
+ */
+export const DEADLINE_ERROR_PREFIX = "Stopped at the task deadline:";
+/** A call stopped for anything else the run was told: its lease went, its build was stopped. */
+export const INTERRUPTED_ERROR_PREFIX = "Stopped by the worker:";
+/** The label of an answer the model declined to give, followed by the refusal's category. */
+export const REFUSAL_ERROR_PREFIX = "refusal:";
+/** The label of an answer with no JSON in it at all. */
+export const NO_OUTPUT_ERROR = "no parseable output";
+/** The label of an answer the call site's schema rejected, followed by the offending fields. */
+export const SCHEMA_ERROR_PREFIX = "schema rejected:";
 /** No answer legitimately takes this long, so a stream still open at the ceiling has stalled. */
 export const STREAM_CEILING_MS = 15 * 60_000;
+
+/**
+ * Why a call was cut off by this process rather than by the provider: the stall ceiling, a sibling
+ * batch failing, the task's deadline, or any other stop the run was told of.
+ */
+type CallCut = "stalled" | "cancelled" | "deadline" | "interrupted";
 
 /**
  * A streamed call cut off before it completed, carrying whatever the stream had received.
@@ -227,25 +261,64 @@ class CallCutOff extends Error {
     readonly snapshot: ParseResponse | undefined,
     /** The error the stream rejected with, when the cut-off was not one we decided on ourselves. */
     readonly reason?: unknown,
-    /** Set when this process cut the call off: the ceiling, or a caller's signal. */
-    readonly cut?: "stalled" | "cancelled",
+    /** Set when this process cut the call off: the ceiling, or a signal. */
+    readonly cut?: CallCut,
   ) {
     super(message);
   }
 }
 
 /**
+ * The reason a batch controller aborts its siblings with when one of them failed. It is the only
+ * abort recorded as CANCELLED_ERROR; an outer stop is passed on with its own reason.
+ */
+class SiblingFailed extends Error {
+  constructor() {
+    super(CANCELLED_ERROR);
+    this.name = "SiblingFailed";
+  }
+}
+
+/**
+ * What a signal was aborted with, as a cut. The queue aborts a run with an error named
+ * `TimeoutError` at its deadline (as `AbortSignal.timeout` does); anything else — a lost lease, a
+ * build told to stop, a caller's bare `abort()` — is an interruption. This package cannot import
+ * the worker's classes, so the name is the contract.
+ */
+function cutFor(reason: unknown): Exclude<CallCut, "stalled"> {
+  if (reason instanceof SiblingFailed) return "cancelled";
+  if (reason instanceof Error && reason.name === "TimeoutError") return "deadline";
+  return "interrupted";
+}
+
+function cutMessage(cut: CallCut, reason: unknown): string {
+  if (cut === "stalled") return `Stream timed out: no complete response after ${STREAM_CEILING_MS / 60_000} minutes.`;
+  if (cut === "cancelled") return CANCELLED_ERROR;
+  const why = reason instanceof Error && reason.message ? reason.message
+    : typeof reason === "string" && reason ? reason : "the run was stopped.";
+  return `${cut === "deadline" ? DEADLINE_ERROR_PREFIX : INTERRUPTED_ERROR_PREFIX} ${why}`;
+}
+
+/** One signal for several, or none: a call stops when any of the runs it belongs to does. */
+function anySignal(...signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
+  const present = signals.filter((signal): signal is AbortSignal => !!signal);
+  return present.length <= 1 ? present[0] : AbortSignal.any(present);
+}
+
+/**
  * What a thrown call was, by the class it was thrown as.
  *
- * Returns null for a call this process cancelled, which is not a failure of its own: the batch it
- * was cancelled for is the failure, and reporting both would name the wrong one. A fake client in
- * a test throws plain errors, and an SDK class we do not know yet is equally unnamed, so anything
- * unrecognised is honestly `unknown` rather than guessed at from its message.
+ * Returns null for a call this process stopped, which is not a failure of its own: a batch
+ * cancelled because a sibling failed (the sibling is the failure, and reporting both would name
+ * the wrong one), and a call stopped by its run's deadline or a lost lease (the task records that,
+ * and the model never had the chance to fail). A fake client in a test throws plain errors, and an
+ * SDK class we do not know yet is equally unnamed, so anything unrecognised is honestly `unknown`
+ * rather than guessed at from its message.
  */
 export function classifyAiFailure(error: unknown): AiFailure | null {
   if (error instanceof CallCutOff) {
-    if (error.cut === "cancelled") return null;
     if (error.cut === "stalled") return { kind: "stalled" };
+    if (error.cut) return null;
     return classifyAiFailure(error.reason);
   }
   // Order matters: the timeout is a subclass of the connection error, and every one of these is a
@@ -261,6 +334,25 @@ export function classifyAiFailure(error: unknown): AiFailure | null {
 }
 
 class BatchFailed extends Error {}
+
+/**
+ * One controller for a batched pass: aborted with the outer signal's own reason when any outer
+ * signal aborts (so a deadline stays a deadline on every batch), and with `SiblingFailed` by the
+ * pass itself when one batch fails.
+ */
+function batchController(outer: Array<AbortSignal | undefined>) {
+  const controller = new AbortController();
+  const signals = outer.filter((signal): signal is AbortSignal => !!signal);
+  const forward = (event: Event) => controller.abort((event.target as AbortSignal).reason);
+  const aborted = signals.find(signal => signal.aborted);
+  if (aborted) controller.abort(aborted.reason);
+  else for (const signal of signals) signal.addEventListener("abort", forward, { once: true });
+  return {
+    signal: controller.signal,
+    siblingFailed: () => controller.abort(new SiblingFailed()),
+    release: () => { for (const signal of signals) signal.removeEventListener("abort", forward); },
+  };
+}
 
 /**
  * One assessment batch reporting on itself, so a caller can narrate an audit that runs its batches
@@ -330,6 +422,15 @@ export class AiEngine {
     this.enabled = this.client !== null;
   }
 
+  /**
+   * This engine for one run: every call it makes also stops when `signal` aborts. The client, and
+   * its connection pool, is shared rather than built again from the key, and so are the budget
+   * and the ledger, so a run's engine spends and records exactly as the shared one does.
+   */
+  withSignal(signal: AbortSignal): AiEngine {
+    return new AiEngine({ ...this.options, client: this.client ?? undefined, signal: anySignal(this.options.signal, signal) });
+  }
+
   private log(msg: string, data?: unknown) {
     this.options.logger?.(msg, data);
   }
@@ -348,44 +449,67 @@ export class AiEngine {
    */
   private async complete(request: Record<string, unknown>, params: RunParams): Promise<ParseResponse> {
     const { messages } = this.client!;
-    const options = { timeout: params.timeoutMs ?? 30_000, ...(params.signal ? { signal: params.signal } : {}) };
-    if (!messages.stream) {
-      const response = await messages.create(request, options);
-      params.onStart?.();
-      return response;
-    }
-    const stream = messages.stream(request, options);
-    let started = false;
-    stream.on("streamEvent", () => {
-      if (started) return;
-      started = true;
-      params.onStart?.();
-    });
+    const signal = params.signal;
+    // The signal goes to the SDK, which stops the request and sends no retry once it sees it.
+    const options = { timeout: params.timeoutMs ?? 30_000, ...(signal ? { signal } : {}) };
+    // The SDK notices an abort only between attempts, after sleeping out the back-off it is in,
+    // and a provider's retry-after can ask for a minute. The caller stops waiting at once instead.
+    let stopWaiting: (() => void) | undefined;
+    const aborted = signal ? new Promise<never>((_, reject) => {
+      stopWaiting = () => reject(signal.reason);
+      if (signal.aborted) stopWaiting();
+      else signal.addEventListener("abort", stopWaiting, { once: true });
+    }) : undefined;
+    aborted?.catch(() => {});
+    const settled = <R>(work: Promise<R>): Promise<R> => aborted ? Promise.race([work, aborted]) : work;
+    let stream: AiStreamLike | undefined;
     let stalled = false;
-    const ceiling = setTimeout(() => {
-      stalled = true;
-      stream.abort();
-    }, STREAM_CEILING_MS);
+    let ceiling: ReturnType<typeof setTimeout> | undefined;
     try {
-      return await stream.finalMessage();
+      if (!messages.stream) {
+        const response = await settled(messages.create(request, options));
+        params.onStart?.();
+        return response;
+      }
+      const open = messages.stream(request, options);
+      stream = open;
+      let started = false;
+      open.on("streamEvent", () => {
+        if (started) return;
+        started = true;
+        params.onStart?.();
+      });
+      ceiling = setTimeout(() => {
+        stalled = true;
+        open.abort();
+      }, STREAM_CEILING_MS);
+      return await settled(open.finalMessage());
     } catch (err) {
-      const cut = stalled ? "stalled" : params.signal?.aborted ? "cancelled" : undefined;
-      const reason = stalled
-        ? `Stream timed out: no complete response after ${STREAM_CEILING_MS / 60_000} minutes.`
-        : cut === "cancelled" ? CANCELLED_ERROR : (err as Error).message;
-      throw new CallCutOff(reason, stream.currentMessage, err, cut);
+      const cut: CallCut | undefined = stalled ? "stalled" : signal?.aborted ? cutFor(signal.reason) : undefined;
+      // A create call that failed on its own is thrown as it came, so its class still names it.
+      if (!stream && !cut) throw err;
+      throw new CallCutOff(cut ? cutMessage(cut, signal?.reason) : (err as Error).message, stream?.currentMessage, err, cut);
     } finally {
       clearTimeout(ceiling);
+      if (stopWaiting) signal!.removeEventListener("abort", stopWaiting);
     }
   }
 
   private async run<T>(callSite: string, params: RunParams, ref: Ref = {}): Promise<T | null> {
-    // A call's own signal when it has one (an assessment batch's), the run's otherwise.
-    const signal = params.signal ?? this.options.signal;
+    // The signal stops the call, and is not part of what is recorded about it.
+    const { signal: callerSignal, ...recorded } = ref;
+    // A call's own signal when it has one (an assessment batch's, which already listens to the
+    // run's and the caller's), otherwise the caller's and the run's together.
+    const signal = params.signal ?? anySignal(callerSignal, this.options.signal);
     if (!this.client || signal?.aborted) return null;
     const model = params.model ?? this.options.getModel(callSite);
     const started = Date.now();
     const blocks = typeof params.user === "string" ? [{ text: params.user }] : params.user;
+    // The format goes without its parser. Given one, the SDK parses inside the stream and rejects
+    // the whole answer when the text is not valid JSON — which a truncated answer and a prose
+    // refusal always are — so it arrived here as an unnamed error instead of as a refusal, an
+    // output limit or a schema failure. Validation is `validate` below, on both paths.
+    const { parse: _parse, ...format } = zodOutputFormat(params.schema);
     const request: Record<string, unknown> = {
       model,
       max_tokens: params.maxTokens ?? 4096,
@@ -393,7 +517,7 @@ export class AiEngine {
       // The cache is a prefix match, so a cached block sits before everything that varies.
       messages: [{ role: "user", content: typeof params.user === "string" ? params.user
         : blocks.map(block => ({ type: "text", text: block.text, ...(block.cache ? { cache_control: { type: "ephemeral" } } : {}) })) }],
-      output_config: { format: zodOutputFormat(params.schema), ...(modelSupportsEffort(model) ? { effort: params.effort } : {}) },
+      output_config: { format, ...(modelSupportsEffort(model) ? { effort: params.effort } : {}) },
     };
     if (params.tools) request.tools = params.tools;
 
@@ -407,7 +531,7 @@ export class AiEngine {
       const promptBytes = Buffer.byteLength(params.system + blocks.map(block => block.text).join(""));
       const estimate = estimateCostUsd(model, { inputTokens: promptBytes / 3,
         outputTokens: params.maxTokens ?? 4096, cacheReadTokens: 0, cacheWriteTokens: 0 }) + (params.tools?.length ? 1 : 0);
-      settle = await this.options.reserve(callSite, estimate, ref);
+      settle = await this.options.reserve(callSite, estimate, recorded);
       if (settle === null) throw new Error("AI budget reserved or exhausted; retry later");
     }
     try {
@@ -423,11 +547,11 @@ export class AiEngine {
       const truncated = response.stop_reason === "max_tokens";
       const parsed = refused || truncated ? null : (response.parsed_output ?? extractJsonBlock(textOf(response)));
       const outcome = refused
-        ? { error: `refusal:${response.stop_details?.category ?? "unknown"}` }
+        ? { error: `${REFUSAL_ERROR_PREFIX}${response.stop_details?.category ?? "unknown"}` }
         : truncated
           ? { error: OUTPUT_LIMIT_ERROR }
         : parsed === null || parsed === undefined
-          ? { error: "no parseable output" }
+          ? { error: NO_OUTPUT_ERROR }
           : validate<T>(params.schema, parsed);
       const validated = "data" in outcome ? outcome.data : null;
       const served = response.model ?? model;
@@ -448,7 +572,7 @@ export class AiEngine {
         ok: validated !== null,
         error: "error" in outcome ? outcome.error : undefined,
         ...(failure ? { failure } : {}),
-        ...ref,
+        ...recorded,
       };
       await this.record(record);
       params.onRecord?.(record);
@@ -478,7 +602,7 @@ export class AiEngine {
         ok: false,
         error: (err as Error).message.slice(0, 500),
         ...(failure ? { failure } : {}),
-        ...ref,
+        ...recorded,
       };
       await this.record(record);
       params.onRecord?.(record);
@@ -562,11 +686,7 @@ export class AiEngine {
     const batches = cvReviewBatches(input, batchSize);
     // One controller for the audit: a batch that fails cancels its siblings, and so does the run's
     // own signal, so a build whose task has been given up on stops paying for the rest of its audit.
-    const controller = new AbortController();
-    const stopBatches = () => controller.abort();
-    const run = this.options.signal;
-    if (run?.aborted) controller.abort();
-    else run?.addEventListener("abort", stopBatches, { once: true });
+    const controller = batchController([this.options.signal, ref.signal]);
     const runBatch = (batch: CvReviewBatch, corrections?: string[], onStart?: () => void, onRecord?: (record: AiUsageRecord) => void) => this.run<CvReviewPlan>("CV", {
       system: CV_REVIEW_PROMPT + "\nThis is one batch of a larger audit. The user turn has three parts: the complete evidence library with the rubric's caveats, then the complete cv, then this batch: the rubric requirements and claims to assess now, with claimSources supplying each claim's required source explicitly. Assess only the batch's requirements and claims, using the complete CV and evidence as context. Return an empty array when the batch has no requirements or no claims. Use the shortest sufficient verbatim quotes; usually one or two sources per finding suffice. Keep reasons and improvements concise. Every claim with requiredEvidenceId must cite a verbatim quote from that exact source to be supported, including skills. Evidence from a different role, profile or skill block cannot substitute for it. If that source does not support the complete claim, mark it uncertain or unsupported; never copy in unrelated evidence merely to satisfy this rule.",
       user: [{ text: stable, cache: true }, { text: printed, cache: true }, { text: JSON.stringify({ ...batch, ...(corrections ? { corrections } : {}) }) }],
@@ -645,12 +765,12 @@ export class AiEngine {
       }
     } catch (err) {
       // Without every batch the audit is worthless: stop paying for the rest, then let them record.
-      controller.abort();
+      controller.siblingFailed();
       await Promise.allSettled(pending);
       if (err instanceof BatchFailed) return null;
       throw err;
     } finally {
-      run?.removeEventListener("abort", stopBatches);
+      controller.release();
     }
     const review = { matches: results.flatMap(result => result.matches), claims: results.flatMap(result => result.claims) };
     const result = CvReviewPlanSchema.safeParse(review);
@@ -1162,7 +1282,7 @@ export class AiEngine {
    */
   async reviewLibraryEntries(
     input: { library: CvLibrary; entries: CvEntry[]; model?: string },
-    ref: { userId: string; refType: "library"; refId: string },
+    ref: { userId: string; refType: "library"; refId: string; signal?: AbortSignal },
     hooks: LibraryReviewHooks = {},
   ): Promise<LibraryEntryReview[]> {
     if (!input.entries.length) return [];
@@ -1175,11 +1295,7 @@ export class AiEngine {
 
     // One controller for the pass: a batch that fails cancels its siblings, and so does the run's
     // signal or the caller's, so a task that has been given up on stops paying for the rest.
-    const controller = new AbortController();
-    const stopBatches = () => controller.abort();
-    const outer = [this.options.signal, hooks.signal].filter((signal): signal is AbortSignal => !!signal);
-    if (outer.some(signal => signal.aborted)) controller.abort();
-    else for (const signal of outer) signal.addEventListener("abort", stopBatches, { once: true });
+    const controller = batchController([this.options.signal, hooks.signal, ref.signal]);
 
     const ask = (entries: CvEntry[], missing: string[] | undefined, onStart: (() => void) | undefined,
       onRecord: (record: AiUsageRecord) => void) => this.run<LibraryReviewPlan>("A12", {
@@ -1255,13 +1371,13 @@ export class AiEngine {
       await Promise.all(pending);
     } catch (err) {
       // Without every batch the pass is incomplete: stop paying for the rest, then let them record.
-      controller.abort();
+      controller.siblingFailed();
       await Promise.allSettled(pending);
       throw err instanceof BatchFailed
         ? new Error("The evidence review returned nothing usable for one batch of entries.")
         : err;
     } finally {
-      for (const signal of outer) signal.removeEventListener("abort", stopBatches);
+      controller.release();
     }
     return results.flat();
   }
@@ -1414,7 +1530,7 @@ function validate<T>(schema: z.ZodType, value: unknown): { data: T } | { error: 
   const result = schema.safeParse(value);
   if (result.success) return { data: result.data as T };
   const issues = result.error.issues.map(i => `${i.path.join(".")}: ${i.message}`).join("; ");
-  return { error: `schema rejected: ${issues}`.slice(0, 500) };
+  return { error: `${SCHEMA_ERROR_PREFIX} ${issues}`.slice(0, 500) };
 }
 
 export function createAiEngine(options: AiEngineOptions): AiEngine {

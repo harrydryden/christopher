@@ -1,5 +1,5 @@
 import { desc, eq } from "drizzle-orm";
-import { cvLibraries } from "@christopher/db";
+import { cvLibraries } from "@ava/db";
 import { routeUser } from "@/lib/route-auth";
 import { openStoredLibrary } from "@/lib/cv-library-rows";
 import { db } from "@/lib/db";

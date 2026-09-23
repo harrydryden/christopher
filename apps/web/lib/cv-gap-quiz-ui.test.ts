@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import type { CvLibrary } from "@christopher/core";
+import type { CvLibrary } from "@ava/core";
 import { gapDestinationValue } from "@/components/CvGapQuiz";
 
 it("maps a structured experience suggestion to its editable employment record", () => {

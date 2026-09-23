@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { applications } from "@christopher/db";
+import { applications } from "@ava/db";
 import { db } from "@/lib/db";
 import { routeUser } from "@/lib/route-auth";
 import { zUuid } from "@/lib/validation";

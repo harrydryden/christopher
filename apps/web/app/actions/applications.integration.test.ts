@@ -5,15 +5,15 @@
  * building a CV creates it, and recording a submitted CV upgrades whichever of those is already
  * there rather than adding a second. Withdrawing is also a decision, so it leaves one.
  */
-import { createCvAssessment } from "@christopher/core/cv-review";
-import { cvTextItems, cvClaimItems, cvEvidenceItems } from "@christopher/core/cv-assessment";
+import { createCvAssessment } from "@ava/core/cv-review";
+import { cvTextItems, cvClaimItems, cvEvidenceItems } from "@ava/core/cv-assessment";
 import { rubricFixture, reviewFixture } from "../../../../packages/core/test/cv-review-fixture";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, subscribeToCompany, type Db } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
+import { createDb, schema, subscribeToCompany, type Db } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { signInTestUser } from "@/test/auth";
-import type { User } from "@christopher/db/schema";
+import type { User } from "@ava/db/schema";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
@@ -41,7 +41,7 @@ const LIBRARY = {
 };
 
 beforeAll(async () => {
-  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
+  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
   database = client.db;
   pool = client.pool;
   await runMigrations(database);

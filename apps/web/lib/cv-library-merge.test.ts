@@ -3,7 +3,7 @@
  * moved on, and what is honestly reported as lost.
  */
 import { expect, it } from "vitest";
-import type { CvLibrary } from "@christopher/core/cv";
+import type { CvLibrary } from "@ava/core/cv";
 import { mergeCvLibrary } from "./cv-library-merge";
 
 const base: CvLibrary = {

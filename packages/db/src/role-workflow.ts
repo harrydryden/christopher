@@ -1,7 +1,7 @@
 import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
 import { QueryBuilder } from "drizzle-orm/pg-core";
 import { applications, cvDrafts, userJobs, decisions, jobs } from "./schema";
-import type { RoleStage, RoleStatus } from "@christopher/core";
+import type { RoleStage, RoleStatus } from "@ava/core";
 /** Requires the `user_jobs` row and the active-decision LEFT JOIN. Shared by tables, totals and exports. */
 export const roleStatusSql = sql<RoleStatus>`case
   when ${userJobs.archivedAt} is not null then 'archived'
@@ -51,7 +51,7 @@ export function hasCvSql(userId: string) {
 
 /**
  * The role's stage for one account, in SQL, with the same precedence as `roleStage()` in
- * @christopher/core: the application decides when there is one (it is the furthest anything has
+ * @ava/core: the application decides when there is one (it is the furthest anything has
  * got, so it outranks the decision behind it), then archive or skip is Dismissed, then an apply
  * decision is Applying or Shortlisted depending on whether a CV exists, then the gate.
  *

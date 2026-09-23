@@ -1,5 +1,5 @@
 {
-  "name": "@christopher/ai",
+  "name": "@ava/ai",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "latest",
-    "@christopher/core": "workspace:*",
+    "@ava/core": "workspace:*",
     "zod": "latest"
   },
   "devDependencies": {

@@ -9,9 +9,9 @@
  * throws, because only a transport failure is worth retrying.
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { createDb, enqueueTask, schema, subscribeToCompany, type Db, type User } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
-import { dedupeKeyFor, normalisePostingUrl, sha1 } from "@christopher/core";
+import { createDb, enqueueTask, schema, subscribeToCompany, type Db, type User } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
+import { dedupeKeyFor, normalisePostingUrl, sha1 } from "@ava/core";
 import { and, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -21,7 +21,7 @@ import { TaskQueue } from "./queue";
 import { ensureTestUser } from "./test-users";
 import { startTestServer, type TestServer } from "./test-server";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
 const HOSTS = ["www.pasted.test", "pasted.test"];
 
 const STAFF_ENGINEER = "https://www.pasted.test/jobs/staff-engineer";
@@ -72,8 +72,8 @@ beforeAll(async () => {
   }, HOSTS);
 
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.CHRISTOPHER_HOST_MAP = JSON.stringify(server.hostMap);
-  process.env.CHRISTOPHER_DISABLE_BROWSER = "1";
+  process.env.AVA_HOST_MAP = JSON.stringify(server.hostMap);
+  process.env.AVA_DISABLE_BROWSER = "1";
   delete process.env.ANTHROPIC_API_KEY;
   deps = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0 });
   db = deps.db;

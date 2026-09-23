@@ -3,8 +3,8 @@
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { careerSources, companies, companyNameSuggestions } from "@christopher/db/schema";
-import { ensureHttpUrl, extractDomain } from "@christopher/core";
+import { careerSources, companies, companyNameSuggestions } from "@ava/db/schema";
+import { ensureHttpUrl, extractDomain } from "@ava/core";
 import { requireAdmin } from "@/lib/auth";
 import { applySuggestedName, normaliseCompanyName } from "@/lib/company-names";
 import { db } from "@/lib/db";

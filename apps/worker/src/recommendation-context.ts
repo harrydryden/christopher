@@ -1,6 +1,6 @@
-import { schema } from "@christopher/db";
+import { schema } from "@ava/db";
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { sha1 } from "@christopher/core";
+import { sha1 } from "@ava/core";
 import type { WorkerDeps } from "./context";
 import { latestProfile } from "./handlers/learning";
 

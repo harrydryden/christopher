@@ -8,8 +8,8 @@
  */
 import { describe, expect, it } from "vitest";
 import { deflateRawSync, crc32 } from "node:zlib";
-import { renderCvPdf } from "@christopher/core/cv-pdf";
-import { LIBRARY_IMPORT_MAX_BYTES, LIBRARY_IMPORT_MAX_CHARS } from "@christopher/db";
+import { renderCvPdf } from "@ava/core/cv-pdf";
+import { LIBRARY_IMPORT_MAX_BYTES, LIBRARY_IMPORT_MAX_CHARS } from "@ava/db";
 import { capDocumentText, documentKind, documentToText, tidyDocumentText, UNREADABLE_DOCUMENT } from "./document-text";
 
 const ROW = "Cut handover time from two days to four hours";

@@ -7,8 +7,8 @@
  * and a rejection that never expires is a filter the person can no longer be offered.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, type Db } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
+import { createDb, schema, type Db } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
 import { and, eq, sql } from "drizzle-orm";
 import { gzipSync } from "node:zlib";
 import { createDeps, type WorkerDeps } from "./context";
@@ -24,7 +24,7 @@ import {
 import { handleSuggestFromScans } from "./handlers/suggest-from-scans";
 import { ensureTestUser } from "./test-users";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
 
 let deps: WorkerDeps;
 let db: Db;
@@ -37,7 +37,7 @@ beforeAll(async () => {
   await runMigrations(bootstrap.db);
   await bootstrap.pool.end();
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.CHRISTOPHER_DISABLE_BROWSER = "1";
+  process.env.AVA_DISABLE_BROWSER = "1";
   deps = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0 });
   db = deps.db;
   userId = (await ensureTestUser(db, "learning-signals@example.com")).id;

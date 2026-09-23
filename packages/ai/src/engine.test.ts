@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createAiEngine, decisionDigest, extractJsonBlock, CANCELLED_ERROR, OUTPUT_LIMIT_ERROR, STREAM_CEILING_MS, type AiClientLike, type AiUsageRecord, type DecisionForDigest, type ParseResponse } from "./engine";
 import { APIConnectionError, APIConnectionTimeoutError, APIError, AuthenticationError, BadRequestError, InternalServerError, NotFoundError, PermissionDeniedError, RateLimitError } from "@anthropic-ai/sdk";
 import { estimateCostUsd, estimateCvBuildUsd, estimateLibraryImportUsd, estimateLibraryReviewUsd, serverToolCostUsd, SERVER_TOOL_USD } from "./pricing";
-import type { CvLibrary } from "@christopher/core";
+import type { CvLibrary } from "@ava/core";
 
 interface Captured {
   params: Record<string, unknown>;
@@ -460,14 +460,14 @@ describe("source company extraction", () => {
 });
 
 it('passes structured skills and wording guidance to generation without palette settings', async () => {
-  const { DEFAULT_CV_THEME } = await import('@christopher/core/cv');
+  const { DEFAULT_CV_THEME } = await import('@ava/core/cv');
   const { engine, calls } = engineWith({ summary: 'Analyst', sections: [{ entryId: 's', bullets: ['Reporting'], skillItems: ['SQL'] }], gaps: [] });
   await engine.buildCv({ library: { name: 'Example', contact: '', profile: '', theme: DEFAULT_CV_THEME, stylePreferences: 'Concise', entries: [{ id: 's', kind: 'skill', heading: 'Tools', details: 'Reporting', skillItems: ['SQL'] }] }, jobTitle: 'Analyst', company: 'Example', description: 'Analyse data' });
   const messages = calls[0]!.params.messages as Array<{ content: string }>;
   expect(messages[0]!.content).toContain('SQL');
   expect(messages[0]!.content).toContain('Concise');
   expect(messages[0]!.content).not.toContain(DEFAULT_CV_THEME.primary);
-  expect(messages[0]!.content).not.toContain('Christopher');
+  expect(messages[0]!.content).not.toContain(DEFAULT_CV_THEME.font);
   // The page limit reaches the writer as an explicit number, never via the palette object.
   const explicit = engineWith({ summary: 'Analyst', sections: [{ entryId: 's', bullets: ['Reporting'], skillItems: ['SQL'] }], gaps: [] });
   await explicit.engine.buildCv({ library: { name: 'Example', contact: '', profile: '', theme: { ...DEFAULT_CV_THEME, maxPages: 2 }, entries: [{ id: 's', kind: 'skill', heading: 'Tools', details: 'Reporting', skillItems: ['SQL'] }] }, jobTitle: 'Analyst', company: 'Example', description: 'Analyse data', maxPages: 2 });

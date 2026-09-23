@@ -11,13 +11,13 @@
  * other every ten seconds.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, cvBuildStepsSignature, schema, type Db } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
+import { createDb, cvBuildStepsSignature, schema, type Db } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
 import { sql } from "drizzle-orm";
 import { cvStepsSignature, cvWorkVersion, normaliseCvStepsSignature } from "@/lib/cv-build-state";
 import { ensureTestUser } from "@/test/auth";
-import type { User } from "@christopher/db/schema";
-import type { CvBuildFailure } from "@christopher/core";
+import type { User } from "@ava/db/schema";
+import type { CvBuildFailure } from "@ava/core";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
@@ -29,7 +29,7 @@ import { getCvWorkStatus } from "@/lib/work-status";
 const BUILD_COLUMNS = ["progress_at", "build_checkpoint", "failure", "gap_quiz"] as const;
 
 beforeAll(async () => {
-  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
+  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
   database = client.db;
   pool = client.pool;
   await runMigrations(database);

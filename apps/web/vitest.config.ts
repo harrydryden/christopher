@@ -11,7 +11,7 @@ export default defineConfig({
     exclude: ["node_modules/**", ".next/**"],
     environment: "node",
     // Password hashing at production cost would dominate the account tests; the old cost is plenty here.
-    env: { CHRISTOPHER_SCRYPT_N: "16384" },
+    env: { AVA_SCRYPT_N: "16384" },
     testTimeout: 120_000,
     hookTimeout: 120_000,
     fileParallelism: false,

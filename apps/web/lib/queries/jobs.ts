@@ -1,8 +1,8 @@
-import { latestApplicationFor, roleStageSql, roleStatusSql, type LatestApplication } from "@christopher/db";
-import { deadlineFor, defaultRoleTab, roleStatus, ROLE_STATUSES, ROLE_TABS, type ApplicationStatus, type RoleStage, type RoleStatus, type RoleTab } from "@christopher/core";
+import { latestApplicationFor, roleStageSql, roleStatusSql, type LatestApplication } from "@ava/db";
+import { deadlineFor, defaultRoleTab, roleStatus, ROLE_STATUSES, ROLE_TABS, type ApplicationStatus, type RoleStage, type RoleStatus, type RoleTab } from "@ava/core";
 import { getTableColumns, and, desc, eq, inArray, ne, isNull, or, sql, lte } from "drizzle-orm";
-import { careerSources, companies, decisions, jobEvents, jobs, userJobs, type Job, type ScoreState, type SourceType, type UserJob } from "@christopher/db/schema";
-import { displayStatus, formatDuration, liveFor, type DisplayStatus } from "@christopher/core";
+import { careerSources, companies, decisions, jobEvents, jobs, userJobs, type Job, type ScoreState, type SourceType, type UserJob } from "@ava/db/schema";
+import { displayStatus, formatDuration, liveFor, type DisplayStatus } from "@ava/core";
 import { db } from "@/lib/db";
 import { companyLogoUrl } from "@/lib/company-icon";
 import { eventTypeLabel, relativeTime } from "@/lib/format";

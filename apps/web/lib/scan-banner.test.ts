@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import type { ScanRun } from "@christopher/db/schema";
+import type { ScanRun } from "@ava/db/schema";
 import { scanBannerText } from "./scan-banner";
 const now = new Date("2026-09-11T12:00:00Z");
 const run = { startedAt: new Date("2026-09-11T05:00:00Z"), finishedAt: now, trigger: "schedule", companiesTotal: 4, companiesOk: 3, companiesFailed: 1, newRoles: 0 } as ScanRun;

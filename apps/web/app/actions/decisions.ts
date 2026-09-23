@@ -3,8 +3,8 @@
 import { needsEmailConfirmation, requireUser } from "@/lib/auth";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { companies, decisions, jobEvents, jobs, tagVocabulary, userJobs } from "@christopher/db/schema";
-import { evaluateLocation } from "@christopher/core";
+import { companies, decisions, jobEvents, jobs, tagVocabulary, userJobs } from "@ava/db/schema";
+import { evaluateLocation } from "@ava/core";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
-import type { User } from "@christopher/db/schema";
+import type { User } from "@ava/db/schema";
 import { CvSelectionSchema } from "@/lib/cv-management-input";
 import { listCvDraftPages } from "@/lib/queries/cv";
 import { manageCvs } from "@/app/actions/cv";

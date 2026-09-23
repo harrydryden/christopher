@@ -6,7 +6,7 @@ test('recovery guard accepts only the two named databases on one local server', 
   assert.equal(urls.target.pathname, '/christopher_recovery_drill');
   for (const pair of [
     ['postgres://u:p@example.com/christopher_users_benchmark','postgres://u:p@example.com/christopher_recovery_drill'],
-    ['postgres://u:p@localhost/christopher_test','postgres://u:p@localhost/christopher_recovery_drill'],
+    ['postgres://u:p@localhost/ava_test','postgres://u:p@localhost/christopher_recovery_drill'],
     ['postgres://u:p@localhost/christopher_users_benchmark','postgres://u:p@localhost/postgres'],
     ['postgres://u:p@localhost:1/christopher_users_benchmark','postgres://u:p@localhost:2/christopher_recovery_drill'],
   ]) assert.throws(() => validateRecoveryUrls(...pair));

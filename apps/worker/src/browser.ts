@@ -2,7 +2,7 @@
  * Headless Chromium rendering with network sniffing. Used when a careers page is a JavaScript shell.
  * One browser per process, one context per render, images/fonts/media blocked.
  */
-import type { RenderedPage } from "@christopher/core";
+import type { RenderedPage } from "@ava/core";
 import type { HttpTrafficLedger } from "./fetcher";
 import { log } from "./log";
 

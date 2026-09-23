@@ -12,7 +12,7 @@ import {
   totalAiSpend,
   type CvBuildCosts,
   type ScoredRoleCost,
-} from "@christopher/db";
+} from "@ava/db";
 import {
   cvBuildSteps,
   cvDrafts,
@@ -30,10 +30,10 @@ import {
   type CareerSource,
   type Task,
   type WorkerEventKind,
-} from "@christopher/db/schema";
+} from "@ava/db/schema";
 // The deadline table lives in packages/core so the interface can say how long a running task has
 // left without importing the worker.
-import { deadlineFor } from "@christopher/core";
+import { deadlineFor } from "@ava/core";
 import { groupAiUsage, type AiUsageGroup } from "@/lib/ai-usage";
 import { accountAiBudget } from "@/lib/queries/accounts";
 import { formatUsd } from "@/lib/format";
@@ -695,7 +695,7 @@ export { companySubscriptions as _companySubscriptions, workerEvents as _workerE
  * ------------------------------------------------------------------------------------------- */
 
 /** The worker's threshold, named here so Health says the same figure the scan handler acts on. */
-import { SOURCE_FAILING_AFTER } from "@christopher/core";
+import { SOURCE_FAILING_AFTER } from "@ava/core";
 export { SOURCE_FAILING_AFTER };
 
 export type HealthItemKind = "budget" | "needs_confirmation" | "no_source" | "blocked" | "failing" | "rediscovery";

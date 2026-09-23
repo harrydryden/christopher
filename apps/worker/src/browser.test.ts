@@ -1,15 +1,15 @@
 /**
  * Headless Chromium: renders a page whose roles arrive from JavaScript, and captures the API call
  * the page makes so the applicant tracking system can be identified from it.
- * Skipped when CHRISTOPHER_DISABLE_BROWSER=1 (CI without a browser).
+ * Skipped when AVA_DISABLE_BROWSER=1 (CI without a browser).
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer } from "node:http";
 import { BrowserRenderer } from "./browser";
 import { startTestServer, type TestServer } from "./test-server";
-import { ats, discovery, SourceFetchError } from "@christopher/core";
+import { ats, discovery, renamedEnv, SourceFetchError } from "@ava/core";
 
-const skip = process.env.CHRISTOPHER_DISABLE_BROWSER === "1";
+const skip = renamedEnv(process.env, "AVA_DISABLE_BROWSER", "CHRISTOPHER_DISABLE_BROWSER") === "1";
 const GH_API = "https://boards-api.greenhouse.io/v1/boards/acmeindustries/jobs?content=true";
 
 const SHELL_PAGE = `<!doctype html><html><head><title>Open Roles | Acme Industries</title></head><body>
@@ -51,7 +51,7 @@ beforeAll(async () => {
     ["www.acmeind.example", "boards-api.greenhouse.io"],
   );
   renderer = new BrowserRenderer({
-    userAgent: "ChristopherJobMonitor/0.1 (test)",
+    userAgent: "AVAJobMonitor/0.1 (test)",
     hostMap: server.hostMap,
     executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
   });
@@ -126,7 +126,7 @@ describe.skipIf(skip)("headless rendering", () => {
     const port = typeof address === "object" && address ? address.port : 0;
     const startUrl = `http://127.0.0.1:${port}/start`;
     const guarded = new BrowserRenderer({
-      userAgent: "ChristopherJobMonitor/0.1 (test)",
+      userAgent: "AVAJobMonitor/0.1 (test)",
       executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
       beforeNavigate: async host => { paced.push(host); },
       allowNavigate: async url => {

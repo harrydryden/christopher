@@ -1,4 +1,4 @@
-import { CvContentSchema } from "@christopher/core/cv";
+import { CvContentSchema } from "@ava/core/cv";
 import { routeUser } from "@/lib/route-auth";
 import { renderCvPdfWithReport, CvLayoutError } from "@/lib/cv-pdf";
 export const runtime = "nodejs";

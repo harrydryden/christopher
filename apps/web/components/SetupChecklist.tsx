@@ -5,7 +5,7 @@ import { Card } from "@/components/Card";
 import { EMPTY_TABLE_SENTENCE, type SetupChecklist as Checklist } from "@/lib/setup";
 
 /**
- * The five steps of setting Christopher up, derived from rows rather than remembered (Journey 1.1).
+ * The five steps of setting AVA up, derived from rows rather than remembered (Journey 1.1).
  *
  * Two placements, one component. Above an empty table it is the page's explanation and cannot be
  * hidden, because a blank table is exactly what needs explaining; once roles are arriving it is a

@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import type { CvBuildFailure } from "@christopher/core";
+import type { CvBuildFailure } from "@ava/core";
 import type { Db } from "./client";
 import { cvDrafts } from "./schema";
 import { cvRoleKey } from "./cv-role-key";

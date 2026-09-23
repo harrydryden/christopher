@@ -1,6 +1,6 @@
-import { cvMaxPages, type CvContent, type CvLibrary } from "@christopher/core/cv";
-import type { CvAssessment } from "@christopher/core/cv-assessment";
-import { diagnoseCvQuality } from "@christopher/core/cv-quality";
+import { cvMaxPages, type CvContent, type CvLibrary } from "@ava/core/cv";
+import type { CvAssessment } from "@ava/core/cv-assessment";
+import { diagnoseCvQuality } from "@ava/core/cv-quality";
 import { assessCvDraft, finaliseCvDraft } from "@/app/actions/cv";
 import { cvEvaluationRows, type CvCommentInput } from "@/lib/cv-evaluation";
 import { CvEvaluationTable } from "./CvEvaluationTable";

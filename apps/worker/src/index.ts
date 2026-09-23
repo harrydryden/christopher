@@ -2,9 +2,9 @@
  * Worker entry point. One always-on process that runs the scheduler, the task queue and every
  * outbound fetch and model call. See docs/SPEC.md section 6.
  */
-import { enqueueTask, listUserIds, recordWorkerEvent, type Db } from "@christopher/db";
-import { dedupeKeyFor } from "@christopher/core";
-import { runMigrations } from "@christopher/db/migrate";
+import { enqueueTask, listUserIds, recordWorkerEvent, type Db } from "@ava/db";
+import { dedupeKeyFor } from "@ava/core";
+import { runMigrations } from "@ava/db/migrate";
 import { sql } from "drizzle-orm";
 import { createDeps } from "./context";
 import { readEnv } from "./env";

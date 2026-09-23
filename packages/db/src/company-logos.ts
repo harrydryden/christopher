@@ -8,7 +8,7 @@
  * `favicon_url`, which stays the browser's fallback while nothing is stored.
  */
 import { and, asc, eq, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
-import { logoRetryDelayMs, type LogoSource } from "@christopher/core";
+import { logoRetryDelayMs, type LogoSource } from "@ava/core";
 import type { Db } from "./client";
 import { companies, companyLogos } from "./schema";
 

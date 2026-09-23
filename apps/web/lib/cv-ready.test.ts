@@ -3,7 +3,7 @@
  * build will refuse. These cases are the ones `groupCvLibrary` and `eligibleCvEvidence` decide.
  */
 import { expect, it } from "vitest";
-import { groupCvLibrary, type CvLibrary } from "@christopher/core/cv";
+import { groupCvLibrary, type CvLibrary } from "@ava/core/cv";
 import { cvJobReadiness, cvLibraryReadiness, confirmableRows } from "./cv-ready";
 
 const library = (overrides: Partial<CvLibrary> = {}): CvLibrary => ({

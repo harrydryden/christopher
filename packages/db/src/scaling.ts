@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { DEFAULT_ACCOUNT_AI_BUDGET_USD } from "@christopher/core";
+import { DEFAULT_ACCOUNT_AI_BUDGET_USD } from "@ava/core";
 import type { Db } from "./client";
 
 /**

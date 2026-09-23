@@ -4,6 +4,7 @@
  * and can be raised later: old hashes still verify and are rehashed on the next successful sign-in.
  */
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
+import { renamedEnv } from "./env";
 
 /** OWASP's recommended scrypt cost: N = 2^17, r = 8, p = 1 (128 MiB, a few hundred milliseconds). */
 const DEFAULT_SCRYPT_N = 1 << 17;
@@ -16,9 +17,9 @@ const MIN_SCRYPT_N = 1 << 14;
 export const MIN_PASSWORD_LENGTH = 10;
 export const MAX_PASSWORD_LENGTH = 256;
 
-/** CHRISTOPHER_SCRYPT_N lets test suites hash cheaply; production ignores anything weaker than the old cost. */
+/** AVA_SCRYPT_N lets test suites hash cheaply; production ignores anything weaker than the old cost. */
 function currentN(): number {
-  const raw = Number(process.env.CHRISTOPHER_SCRYPT_N);
+  const raw = Number(renamedEnv(process.env, "AVA_SCRYPT_N", "CHRISTOPHER_SCRYPT_N"));
   if (Number.isInteger(raw) && raw >= MIN_SCRYPT_N && (raw & (raw - 1)) === 0) return raw;
   return DEFAULT_SCRYPT_N;
 }

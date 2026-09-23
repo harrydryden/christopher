@@ -3,13 +3,13 @@
  * Covers the whole path the spec describes: add a homepage URL, discover the careers source,
  * scan it, apply the keyword and location gate, then detect a removed role two scans later.
  *
- * Requires a database: set TEST_DATABASE_URL (defaults to the local christopher_test database).
+ * Requires a database: set TEST_DATABASE_URL (defaults to the local ava_test database).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import {createDb, readCompanyLogo, schema, enqueueTask, reevaluateGate, subscribeToCompany, type Db, type User} from "@christopher/db";
+import {createDb, readCompanyLogo, schema, enqueueTask, reevaluateGate, subscribeToCompany, type Db, type User} from "@ava/db";
 import { ensureTestUser } from "./test-users";
-import { runMigrations } from "@christopher/db/migrate";
-import { ats, dedupeKeyFor, displayStatus, liveFor, priorityFor, sha1 } from "@christopher/core";
+import { runMigrations } from "@ava/db/migrate";
+import { ats, dedupeKeyFor, displayStatus, liveFor, priorityFor, sha1 } from "@ava/core";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -20,7 +20,7 @@ import { handleRunDaily, finaliseScanRuns } from "./handlers/daily";
 import { TaskQueue } from "./queue";
 import { startTestServer, type RouteTable, type TestServer } from "./test-server";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
 const HOSTS = ["www.acme.example", "acme.example", "boards-api.greenhouse.io", "job-boards.greenhouse.io", "www.orbital.example", "orbital.example", "api.smartrecruiters.com", "pager.example"];
 
 /** A real PNG, because the logo capture sniffs the bytes and refuses anything that is not one. */
@@ -165,8 +165,8 @@ beforeAll(async () => {
 
   server = await startTestServer({}, HOSTS);
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.CHRISTOPHER_HOST_MAP = JSON.stringify(server.hostMap);
-  process.env.CHRISTOPHER_DISABLE_BROWSER = "1";
+  process.env.AVA_HOST_MAP = JSON.stringify(server.hostMap);
+  process.env.AVA_DISABLE_BROWSER = "1";
   delete process.env.ANTHROPIC_API_KEY;
 
   deps = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0 });
@@ -1145,9 +1145,9 @@ it("fences company profile replacement and retains previous evidence on lost own
   await db.insert(schema.companyProfiles).values({ companyId: company.id, name: company.name, domain: company.domain, sector: "Previous sector" });
   const fakeAi = { enabled: true, profileCompany: async () => ({ oneLiner: "Updated profile", sector: "New sector" }) } as unknown as WorkerDeps["ai"];
   const lost = { ...deps, ai: fakeAi, assertOwnership: async () => { throw new Error("lease lost"); } };
-  await expect(handleProfileCompany({ payload: { companyId: company.id } } as unknown as import("@christopher/db").Task, lost)).rejects.toThrow("lease lost");
+  await expect(handleProfileCompany({ payload: { companyId: company.id } } as unknown as import("@ava/db").Task, lost)).rejects.toThrow("lease lost");
   expect((await db.select().from(schema.companyProfiles))[0]!.sector).toBe("Previous sector");
-  await handleProfileCompany({ payload: { companyId: company.id } } as unknown as import("@christopher/db").Task, { ...deps, ai: fakeAi });
+  await handleProfileCompany({ payload: { companyId: company.id } } as unknown as import("@ava/db").Task, { ...deps, ai: fakeAi });
   const profiles = await db.select().from(schema.companyProfiles);
   expect(profiles).toHaveLength(1); expect(profiles[0]!.sector).toBe("New sector");
 });
@@ -1188,7 +1188,7 @@ describe("shared catalogue", () => {
     expect(manual!.result).toMatchObject({ skipped: "scanned recently" });
 
     // Pausing one follower leaves the company active for the other; unfollowing everyone retires it.
-    const { setSubscriptionStatus } = await import("@christopher/db");
+    const { setSubscriptionStatus } = await import("@ava/db");
     await setSubscriptionStatus(db, user.id, company.id, "paused");
     expect((await db.select().from(schema.companies).where(eq(schema.companies.id, company.id)))[0]!.status).toBe("active");
     await setSubscriptionStatus(db, engineer.id, company.id, "archived");

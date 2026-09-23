@@ -11,6 +11,7 @@ export * from "./tasks";
 export * from "./logo-capture";
 export * from "./posting-page";
 export * from "./password";
+export * from "./env";
 export * as ats from "./ats/index";
 export * as discovery from "./discovery/index";
 export type { DiscoveryContext, DiscoveryCandidate, DiscoveryResult, DiscoveryOutcome, DiscoveryAiHooks, HarvestedLink } from "./discovery/types";

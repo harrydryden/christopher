@@ -20,7 +20,7 @@ COPY apps/worker/package.json apps/worker/
 # The web app is not built here, but pnpm needs every workspace manifest present to
 # resolve a frozen lockfile.
 COPY apps/web/package.json apps/web/
-RUN pnpm install --frozen-lockfile --filter @christopher/worker... --filter @christopher/db --filter @christopher/core --filter @christopher/ai
+RUN pnpm install --frozen-lockfile --filter @ava/worker... --filter @ava/db --filter @ava/core --filter @ava/ai
 
 COPY tsconfig.base.json ./
 COPY packages ./packages

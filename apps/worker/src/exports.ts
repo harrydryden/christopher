@@ -3,7 +3,7 @@
  * when no separate worker service is deployed. See docs/DEPLOY.md.
  *
  * Nothing here imports Playwright eagerly: the browser is loaded on first use and only when
- * `CHRISTOPHER_DISABLE_BROWSER` is unset, so a serverless deployment never pulls it in.
+ * `AVA_DISABLE_BROWSER` is unset, so a serverless deployment never pulls it in.
  */
 export { createDeps, makeFetchContext, makeDiscoveryContext, aiSpendThisMonth, aiBudgetExceeded, aiBudgetStop } from "./context";
 export type { WorkerDeps, DepsOverrides, AiBudgetStop } from "./context";

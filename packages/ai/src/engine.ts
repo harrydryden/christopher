@@ -1,5 +1,5 @@
-import { CvRubricSchema, CvReviewPlanSchema, type CvRubric, type CvReviewPlan, type CvTextItem, type CvClaimItem } from "@christopher/core/cv-assessment";
-import { CvBuildStop } from "@christopher/core/cv-build-failure";
+import { CvRubricSchema, CvReviewPlanSchema, type CvRubric, type CvReviewPlan, type CvTextItem, type CvClaimItem } from "@ava/core/cv-assessment";
+import { CvBuildStop } from "@ava/core/cv-build-failure";
 import { CV_RUBRIC_PROMPT, CV_REVIEW_PROMPT, CV_AUTHOR_PROMPT, CV_TAILORING_PROMPT } from "./cv-prompts";
 import { cvReviewBatches, reviewBatchIssues, markUnverifiedFindings, type CvReviewBatch } from "./cv-review-batch";
 import {
@@ -24,7 +24,7 @@ import {
   type LibraryEntryReview,
   type LibraryProposalPlan,
   type LibraryReviewPlan,
-} from "@christopher/core";
+} from "@ava/core";
 import Anthropic, {
   APIConnectionError,
   APIError,

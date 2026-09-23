@@ -19,9 +19,9 @@ import {
   listCvShares,
   type CvShare,
   type CvShareComment,
-} from "@christopher/db";
-import { cvDrafts, cvShareComments } from "@christopher/db/schema";
-import type { CvContent } from "@christopher/core/cv";
+} from "@ava/db";
+import { cvDrafts, cvShareComments } from "@ava/db/schema";
+import type { CvContent } from "@ava/core/cv";
 import { db } from "@/lib/db";
 import { hashCvShareToken, isCvShareToken } from "@/lib/cv-share";
 

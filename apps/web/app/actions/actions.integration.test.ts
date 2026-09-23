@@ -1,22 +1,22 @@
-import { createCvAssessment } from "@christopher/core/cv-review";
+import { createCvAssessment } from "@ava/core/cv-review";
 import {
   cvTextItems,
   cvClaimItems,
   cvEvidenceItems,
-} from "@christopher/core/cv-assessment";
+} from "@ava/core/cv-assessment";
 import {
   rubricFixture,
   reviewFixture,
 } from "../../../../packages/core/test/cv-review-fixture";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDb, schema, subscribeToCompany, type Db } from "@christopher/db";
-import { DEFAULT_CV_THEME, CV_THEMES } from "@christopher/core/cv";
-import { DEFAULT_ACCOUNT_AI_BUDGET_USD, DEFAULT_SETTINGS, modelForCallSite } from "@christopher/core";
-import { runMigrations } from "@christopher/db/migrate";
+import { createDb, schema, subscribeToCompany, type Db } from "@ava/db";
+import { DEFAULT_CV_THEME, CV_THEMES } from "@ava/core/cv";
+import { DEFAULT_ACCOUNT_AI_BUDGET_USD, DEFAULT_SETTINGS, modelForCallSite } from "@ava/core";
+import { runMigrations } from "@ava/db/migrate";
 import { and, eq, sql } from "drizzle-orm";
 import { cvBuildState } from "@/lib/cv-build-state";
 import { ensureTestUser, signInTestUser } from "@/test/auth";
-import type { User } from "@christopher/db/schema";
+import type { User } from "@ava/db/schema";
 
 async function completeAssessment(id: string) {
   const [draft] = await database
@@ -105,7 +105,7 @@ import { accountAiBudgets } from "@/lib/queries/accounts";
 beforeAll(async () => {
   const client = createDb(
     process.env.TEST_DATABASE_URL ??
-      "postgres://postgres:postgres@127.0.0.1:5432/christopher_test",
+      "postgres://postgres:postgres@127.0.0.1:5432/ava_test",
   );
   database = client.db;
   pool = client.pool;
@@ -635,7 +635,7 @@ describe("priority workflows", () => {
     expect(await database.select().from(schema.tasks).where(eq(schema.tasks.dedupeKey, `generate_cv:${draft!.id}:quiz-complete`))).toHaveLength(1);
   });
   it("saves skill items and palettes without rewriting the original CV or application", async () => {
-    const library: import("@christopher/core/cv").CvLibrary = { name: "Example", contact: "London", profile: "Analyst", theme: DEFAULT_CV_THEME, entries: [{ id: "skills", kind: "skill", heading: "Tools", details: "Reporting", skillItems: ["SQL", "Python"] }] };
+    const library: import("@ava/core/cv").CvLibrary = { name: "Example", contact: "London", profile: "Analyst", theme: DEFAULT_CV_THEME, entries: [{ id: "skills", kind: "skill", heading: "Tools", details: "Reporting", skillItems: ["SQL", "Python"] }] };
     const form = new FormData(); form.set("library", JSON.stringify(library)); form.set("version", "0");
     expect(await saveCvLibrary({ ok: true }, form)).toEqual({ ok: true });
     expect((await database.select().from(schema.cvLibraries))[0]!.content.entries[0]!.skillItems).toEqual(["SQL", "Python"]);
@@ -808,7 +808,7 @@ describe("four-status role workflow", () => {
     expect((await read("user-shortlisted")).total).toBe(1);
   });
   it("archives a lost match once, retains history and restores after criteria match again", async () => {
-    const { archiveNonMatches } = await import("@christopher/db");
+    const { archiveNonMatches } = await import("@ava/db");
     const { job } = await fixture();
     await database.update(schema.userJobs).set({ inTable: false }).where(eq(schema.userJobs.jobId, job.id));
     await archiveNonMatches(database, { userId: user.id });
@@ -1107,7 +1107,7 @@ describe("bulk decisions", () => {
 
 describe("scan reporting", () => {
   it("counts a company only when all latest source scans succeed and its task is done", async () => {
-    const { scanRunSummary } = await import("@christopher/db");
+    const { scanRunSummary } = await import("@ava/db");
     const { company, source } = await fixture();
     const [other] = await database.insert(schema.careerSources).values({ companyId: company.id, type: "html", url: "https://acme.example/other" }).returning();
     const [run] = await database.insert(schema.scanRuns).values({ runDate: "2026-09-11", trigger: "manual", companiesTotal: 1 }).returning();

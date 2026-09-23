@@ -1,7 +1,7 @@
 /** Single-use links: only a hash of the token is stored, and it is consumed inside one transaction. */
 import { createHash, randomBytes } from "node:crypto";
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
-import { authTokens, type AuthToken } from "@christopher/db/schema";
+import { authTokens, type AuthToken } from "@ava/db/schema";
 import { db } from "./db";
 
 export type TokenPurpose = AuthToken["purpose"];

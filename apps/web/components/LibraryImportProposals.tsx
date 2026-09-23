@@ -33,7 +33,7 @@ export function LibraryImportProposals({ imports, version }: { imports: LibraryI
           {view.state === "reading" && view.stalled && (
             <div className="grid gap-3">
               <p role="status" className="text-14 text-warn">
-                This document has been waiting to be read for a while. Christopher will still read it
+                This document has been waiting to be read for a while. AVA will still read it
                 if it comes back to it; dismiss it if you would rather import it again.
               </p>
               <LibraryImportForm

@@ -1,5 +1,5 @@
 "use client";
-import { isActiveEvidence, responsibilityRows, updateEmploymentIndustries, type CvLibrary, type Employment } from "@christopher/core/cv";
+import { isActiveEvidence, responsibilityRows, updateEmploymentIndustries, type CvLibrary, type Employment } from "@ava/core/cv";
 import { inputClass, labelClass } from "@/components/Field";
 import { Table, TBody, TH, THead, TR } from "@/components/table";
 

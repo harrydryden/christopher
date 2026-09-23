@@ -2,8 +2,8 @@
 import { and, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { ensureHttpUrl, normalizeUrl, sha1, stripHtml } from "@christopher/core";
-import { discoveryDocuments, discoverySources } from "@christopher/db/schema";
+import { ensureHttpUrl, normalizeUrl, sha1, stripHtml } from "@ava/core";
+import { discoveryDocuments, discoverySources } from "@ava/db/schema";
 import { requireUser, requireVerifiedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";

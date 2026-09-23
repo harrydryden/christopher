@@ -142,7 +142,7 @@ describe("settings helpers", () => {
 it("validates stored appearance and keeps the legacy fallback when absent", () => {
   const theme = { version: 1, primary: "#142D46", background: "#ffffff", surface: "#eff4f8", pill: "#e3edf5", introPanel: true, skillPills: false };
   // Themes saved before the font and page limit existed pick up the defaults without a save.
-  expect(resolveSettings([], [{ key: "cvTheme", value: theme }]).cvTheme).toEqual({ ...theme, skillPills: true, font: "Christopher", maxPages: 3 });
+  expect(resolveSettings([], [{ key: "cvTheme", value: theme }]).cvTheme).toEqual({ ...theme, skillPills: true, font: "AVA", maxPages: 3 });
   expect(resolveSettings([], [{ key: "cvTheme", value: { ...theme, font: "Arial", maxPages: 2 } }]).cvTheme).toMatchObject({ font: "Arial", maxPages: 2 });
   expect(resolveSettings([], [{ key: "cvTheme", value: { ...theme, maxPages: 9 } }]).cvTheme).toBeUndefined();
   expect(resolveSettings([], [{ key: "cvTheme", value: { ...theme, primary: "bad" } }]).cvTheme).toBeUndefined();

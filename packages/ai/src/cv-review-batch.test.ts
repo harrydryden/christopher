@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
-import { materialiseCv, type CvLibrary } from "@christopher/core/cv";
-import { cvClaimItems, cvTextItems, cvEvidenceItems } from "@christopher/core/cv-assessment";
-import { createCvAssessment, validateCvReview } from "@christopher/core/cv-review";
+import { materialiseCv, type CvLibrary } from "@ava/core/cv";
+import { cvClaimItems, cvTextItems, cvEvidenceItems } from "@ava/core/cv-assessment";
+import { createCvAssessment, validateCvReview } from "@ava/core/cv-review";
 import { rubricFixture, reviewFixture } from "../../core/test/cv-review-fixture";
 import { cvReviewBatches, reviewBatchIssues, markUnverifiedFindings } from "./cv-review-batch";
 

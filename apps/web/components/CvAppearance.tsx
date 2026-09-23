@@ -8,12 +8,12 @@ import {
   resolveCvTheme,
   type CvFont,
   type CvTheme,
-} from "@christopher/core/cv";
+} from "@ava/core/cv";
 import { selectClass } from "@/components/Field";
 
-/** Browser stand-ins for the PDF faces: Christopher is Helvetica; Arial is Liberation Sans in the PDF. */
+/** Browser stand-ins for the PDF faces: AVA is Helvetica; Arial is Liberation Sans in the PDF. */
 const SAMPLE_FONT_FAMILY: Record<CvFont, string> = {
-  Christopher: '"Helvetica Neue", Helvetica, "Liberation Sans", Arial, sans-serif',
+  AVA: '"Helvetica Neue", Helvetica, "Liberation Sans", Arial, sans-serif',
   Arial: 'Arial, "Liberation Sans", Helvetica, sans-serif',
 };
 

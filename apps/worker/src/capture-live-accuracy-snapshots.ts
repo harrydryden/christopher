@@ -1,8 +1,8 @@
 import { PoliteFetcher, userAgentFor } from "./fetcher";
-import { ats } from "@christopher/core";
+import { ats } from "@ava/core";
 
 const fetcher = new PoliteFetcher({
-  userAgent: userAgentFor(process.env.CONTACT_EMAIL ?? "christopher-live-acceptance@example.invalid"),
+  userAgent: userAgentFor(process.env.CONTACT_EMAIL ?? "ava-live-acceptance@example.invalid"),
   respectRobots: () => true,
 });
 
@@ -61,7 +61,7 @@ for (const target of targets) {
     finalUrl: response.url,
     status: response.status,
     oracleMethod: target.id === "mozilla" || target.id === "mozilla-gb"
-      ? "Independent, source-specific enumeration of unique first-party /careers/position/gh/<id>/ anchors; this does not call Christopher's HTML adapter."
+      ? "Independent, source-specific enumeration of unique first-party /careers/position/gh/<id>/ anchors; this does not call AVA's HTML adapter."
       : target.id === "37signals"
         ? "Independent inspection of the first-party jobs page's explicit no-openings state; zero posting-detail links were present."
         : "Diagnostic snapshot of a discovery candidate; no posting oracle is asserted for this page.",

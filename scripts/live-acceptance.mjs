@@ -8,7 +8,7 @@ const outputIndex = args.indexOf("--output");
 if (outputIndex >= 0 && args[outputIndex + 1] && !isAbsolute(args[outputIndex + 1])) {
   args[outputIndex + 1] = resolve(repositoryRoot, args[outputIndex + 1]);
 }
-const child = spawn("pnpm", ["--filter", "@christopher/worker", "exec", "tsx", "src/live-acceptance-cli.ts", ...args], {
+const child = spawn("pnpm", ["--filter", "@ava/worker", "exec", "tsx", "src/live-acceptance-cli.ts", ...args], {
   cwd: repositoryRoot,
   stdio: "inherit",
 });

@@ -1,5 +1,5 @@
-import { sha1, type RawPosting, type GateSettings } from "@christopher/core";
-import { schema, type Db } from "@christopher/db";
+import { sha1, type RawPosting, type GateSettings } from "@ava/core";
+import { schema, type Db } from "@ava/db";
 import { eq } from "drizzle-orm";
 
 /** The listing metadata and the gate it was judged against: a changed gate misses and refetches. */

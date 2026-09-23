@@ -1,3 +1,5 @@
+import { renamedEnv } from "@ava/core";
+
 export interface WorkerEnv {
   databaseUrl: string;
   anthropicApiKey: string | undefined;
@@ -19,11 +21,12 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env): WorkerEnv {
   const databaseUrl = env.DATABASE_URL;
   if (!databaseUrl) throw new Error("DATABASE_URL is required");
   let hostMap: Record<string, string> = {};
-  if (env.CHRISTOPHER_HOST_MAP) {
+  const hostMapJson = renamedEnv(env, "AVA_HOST_MAP", "CHRISTOPHER_HOST_MAP");
+  if (hostMapJson) {
     try {
-      hostMap = JSON.parse(env.CHRISTOPHER_HOST_MAP) as Record<string, string>;
+      hostMap = JSON.parse(hostMapJson) as Record<string, string>;
     } catch {
-      throw new Error("CHRISTOPHER_HOST_MAP must be JSON");
+      throw new Error("AVA_HOST_MAP must be JSON");
     }
   }
   return {
@@ -38,7 +41,7 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env): WorkerEnv {
     discoveryAiBudgetUsd: bounded(env.DISCOVERY_AI_BUDGET_USD, 1000000, 0, 1000000),
     chromiumExecutablePath: env.CHROMIUM_EXECUTABLE_PATH || undefined,
     hostMap,
-    disableBrowser: env.CHRISTOPHER_DISABLE_BROWSER === "1",
+    disableBrowser: renamedEnv(env, "AVA_DISABLE_BROWSER", "CHRISTOPHER_DISABLE_BROWSER") === "1",
     workerId: env.RENDER_INSTANCE_ID || env.HOSTNAME || `worker-${process.pid}`,
   };
 }

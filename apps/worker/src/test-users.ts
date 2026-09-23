@@ -1,5 +1,5 @@
 /** Test helper: an account to act for, created once per email and reused across truncations. */
-import { createUser, schema, type Db } from "@christopher/db";
+import { createUser, schema, type Db } from "@ava/db";
 import { eq } from "drizzle-orm";
 
 export async function ensureTestUser(db: Db, email = "tester@example.com", role: "admin" | "member" = "admin") {

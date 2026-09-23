@@ -3,19 +3,19 @@
  *
  * Its own module, and deliberately importing nothing at all. The file picker's accept list and
  * the size the form refuses are needed by a client component, and anything this reached for would
- * be dragged into the browser bundle behind them: the anchoring in `@christopher/core` reaches
- * `node:crypto`, and the caps in `@christopher/db` reach the database driver. Neither belongs in
+ * be dragged into the browser bundle behind them: the anchoring in `@ava/core` reaches
+ * `node:crypto`, and the caps in `@ava/db` reach the database driver. Neither belongs in
  * a page, and a shared constant is not worth either.
  */
 
-/** The two formats Christopher reads, as the picker offers them and as the action checks them. */
+/** The two formats AVA reads, as the picker offers them and as the action checks them. */
 export const LIBRARY_UPLOAD_MIMES = [
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 ] as const;
 
 /**
- * The cap the form refuses at, mirroring `LIBRARY_IMPORT_MAX_BYTES` in `@christopher/db`, which
+ * The cap the form refuses at, mirroring `LIBRARY_IMPORT_MAX_BYTES` in `@ava/db`, which
  * is the column's own and the one that decides. A test holds the two together.
  */
 export const LIBRARY_UPLOAD_MAX_BYTES = 5 * 1024 * 1024;

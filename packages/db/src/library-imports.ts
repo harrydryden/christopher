@@ -14,7 +14,7 @@
  */
 import { createHash } from "node:crypto";
 import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
-import { normalizeUrl } from "@christopher/core";
+import { normalizeUrl } from "@ava/core";
 import type { Db } from "./client";
 import { libraryImports, LIBRARY_IMPORT_MAX_CHARS, type LibraryImport, type LibraryImportKind } from "./schema";
 

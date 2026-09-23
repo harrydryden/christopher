@@ -13,7 +13,7 @@
  * sentence the interface shows. Only a transport failure throws, because only a transport failure
  * is worth the queue's backoff.
  */
-import { schema, enqueueTask, reevaluateGate, type Db, type Task } from "@christopher/db";
+import { schema, enqueueTask, reevaluateGate, type Db, type Task } from "@ava/db";
 import {
   ats,
   dedupeKeyFor,
@@ -29,7 +29,7 @@ import {
   type AppSettings,
   type GateResult,
   type TaskPayloads,
-} from "@christopher/core";
+} from "@ava/core";
 import { and, eq, ne } from "drizzle-orm";
 import { makeFetchContext, type WorkerDeps } from "../context";
 import { log } from "../log";

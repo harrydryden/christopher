@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { cvDrafts, tasks } from '@christopher/db/schema';
+import { cvDrafts, tasks } from '@ava/db/schema';
 import { cache } from 'react';
 import { db } from './db';
 /** Once per request, however many components ask. Only work that can change this account's view counts. */

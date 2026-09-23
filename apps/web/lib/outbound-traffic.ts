@@ -11,7 +11,7 @@
  * the right direction for a number read as "are they slow": it never flatters a vendor. The top
  * bucket is unbounded, so a host whose 95th percentile falls in it reports null — "over 15s".
  */
-import { LATENCY_BUCKET_UPPER_MS, type HttpHostDailyRow } from "@christopher/db";
+import { LATENCY_BUCKET_UPPER_MS, type HttpHostDailyRow } from "@ava/db";
 
 export interface HostTraffic {
   host: string;

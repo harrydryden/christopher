@@ -2,14 +2,14 @@
  * Seed the database with realistic demo data so the interface can be exercised without waiting
  * for a real scan. Safe to re-run: it clears its own rows first.
  *
- *   DATABASE_URL=... pnpm --filter @christopher/worker exec tsx src/seed-demo.ts
+ *   DATABASE_URL=... pnpm --filter @ava/worker exec tsx src/seed-demo.ts
  *
- * Creates the account demo@christopher.local (password: demo-password) that follows three
+ * Creates the account demo@ava.local (password: demo-password) that follows three
  * companies, plus a second account that follows one of them, to show the shared catalogue.
  */
-import { createDb, createUser, schema, syncCompanyStatus } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
-import { evaluateGate, normalizeTitle, DEFAULT_SETTINGS, hashPassword } from "@christopher/core";
+import { createDb, createUser, schema, syncCompanyStatus } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
+import { evaluateGate, normalizeTitle, DEFAULT_SETTINGS, hashPassword } from "@ava/core";
 import { sql } from "drizzle-orm";
 
 const url = process.env.DATABASE_URL;
@@ -91,8 +91,8 @@ async function main() {
   await runMigrations(db);
   await db.execute(sql`truncate users, companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, company_profiles, company_suggestions, filter_suggestions, preference_profiles, tasks, ai_calls, settings restart identity cascade`);
 
-  const { user: demo } = await createUser(db, { email: "demo@christopher.local", name: "Demo", passwordHash: await hashPassword("demo-password"), emailVerified: true, role: "admin" });
-  const { user: second } = await createUser(db, { email: "engineer@christopher.local", name: "Engineer", passwordHash: await hashPassword("demo-password"), emailVerified: true, role: "member" });
+  const { user: demo } = await createUser(db, { email: "demo@ava.local", name: "Demo", passwordHash: await hashPassword("demo-password"), emailVerified: true, role: "admin" });
+  const { user: second } = await createUser(db, { email: "engineer@ava.local", name: "Engineer", passwordHash: await hashPassword("demo-password"), emailVerified: true, role: "member" });
 
   await db.insert(schema.settings).values([{ key: "timezone", value: "Europe/London" }]).onConflictDoUpdate({ target: schema.settings.key, set: { value: sql`excluded.value` } });
   await db.insert(schema.userSettings).values([
@@ -317,7 +317,7 @@ A remit that includes process design and hiring; reporting to a founder or COO; 
   );
 
   const counts = await db.execute<{ jobs: number; table: number }>(sql`select (select count(*) from jobs)::int as jobs, (select count(*) from user_jobs where in_table)::int as "table"`);
-  console.log(`seeded ${COMPANIES.length} companies, ${counts.rows[0]?.jobs ?? 0} shared postings (${counts.rows[0]?.table ?? 0} account views in tables). Sign in as demo@christopher.local / demo-password.`);
+  console.log(`seeded ${COMPANIES.length} companies, ${counts.rows[0]?.jobs ?? 0} shared postings (${counts.rows[0]?.table ?? 0} account views in tables). Sign in as demo@ava.local / demo-password.`);
 }
 
 main()

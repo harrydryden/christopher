@@ -5,19 +5,19 @@
  * now live in `user_jobs.score_input_hash` and `source_admission_rejections`, and migration 0023
  * carries the stored values across so nothing is re-scored or re-fetched after a deploy.
  *
- * Requires a database: set TEST_DATABASE_URL (defaults to the local christopher_test database).
+ * Requires a database: set TEST_DATABASE_URL (defaults to the local ava_test database).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
-import { createDb, schema } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
-import { DEFAULT_SETTINGS } from "@christopher/core";
+import { createDb, schema } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
+import { DEFAULT_SETTINGS } from "@ava/core";
 import { eq, sql } from "drizzle-orm";
 import { loadSettings, loadUserSettings } from "./settings";
 import { loadAdmissionCache } from "./admission-cache";
 import { ensureTestUser } from "./test-users";
 
-const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
+const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
 beforeAll(() => runMigrations(db));
 afterAll(() => pool.end());
 beforeEach(() => db.execute(sql`truncate users, companies, career_sources, jobs, user_jobs, settings, source_admission_rejections restart identity cascade`));

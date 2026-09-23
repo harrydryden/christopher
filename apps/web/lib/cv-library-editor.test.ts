@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
-import type { CvLibrary } from "@christopher/core/cv";
+import type { CvLibrary } from "@ava/core/cv";
 import { CvLibraryEditor } from "../components/CvLibraryEditor";
 import { jobRemovalConfirm } from "../components/EmploymentHistoryTable";
 import { libraryEvidence } from "./cv-library-reviews";

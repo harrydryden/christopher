@@ -8,12 +8,12 @@ import { Badge, decisionTone, fitVerdictTone, stageTone, FIT_VERDICT_LABELS } fr
 import { CompanyFavicon } from "@/components/CompanyFavicon";
 import { FitBar, Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { Button, buttonClass } from "@/components/Button";
-import { Mark } from "@/components/brand/Mark";
+import { Monogram } from "@/components/brand/Monogram";
 import { SafeMarkdown } from "@/components/SafeMarkdown";
 import { SettingsForm } from "@/components/SettingsForm";
 import type { RoleDetailsVM, RoleRowVM, SortDir, SortKey } from "@/lib/queries/jobs";
 
-import { APPLICATION_STATUS_LABELS, ROLE_STAGE_LABELS, ROLE_STATUS_LABELS, roleStageRank } from "@christopher/core/role-workflow";
+import { APPLICATION_STATUS_LABELS, ROLE_STAGE_LABELS, ROLE_STATUS_LABELS, roleStageRank } from "@ava/core/role-workflow";
 
 type ReasonKind = "apply" | "skip";
 
@@ -536,7 +536,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                           )}
                           <div>
                             <h3 className="ds-label mb-1">Role description</h3>
-                            {detail?.state === "loading" && <span className="inline-block text-muted"><Mark size={16} searching title="Loading the description" /></span>}
+                            {detail?.state === "loading" && <span className="inline-block text-muted"><Monogram size={16} searching title="Loading the description" /></span>}
                             {detail?.state === "error" && <p className="text-13 text-danger">{detail.error}</p>}
                             {detail?.state === "ready" && (detail.details.description?.trim() ? (
                               <>

@@ -1,6 +1,6 @@
 # Live discovery and extraction acceptance
 
-This harness makes bounded, public, read-only requests through Christopher's real polite fetcher, discovery code and ATS adapters. It does not connect to PostgreSQL or bypass sign-in or bot protection. The default run makes no paid model calls; production AI fallback is an explicit, budgeted option described below.
+This harness makes bounded, public, read-only requests through AVA's real polite fetcher, discovery code and ATS adapters. It does not connect to PostgreSQL or bypass sign-in or bot protection. The default run makes no paid model calls; production AI fallback is an explicit, budgeted option described below.
 
 Run a small representative observation first:
 

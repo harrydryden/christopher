@@ -1,4 +1,4 @@
-import { ats, discovery, type DiscoveryAiHooks, type SourceSpec, type SourceType } from "@christopher/core";
+import { ats, discovery, type DiscoveryAiHooks, type SourceSpec, type SourceType } from "@ava/core";
 import { PoliteFetcher, userAgentFor } from "./fetcher";
 import type { BrowserRenderer } from "./browser";
 
@@ -167,7 +167,7 @@ function extractionErrorCode(error: unknown): NonNullable<LiveAcceptanceResult["
 export async function runLiveAcceptanceCase(item: LiveAcceptanceCase, options: { discoveryOnly?: boolean; maxFetches?: number; fetcher?: PoliteFetcher; browser?: BrowserRenderer; ai?: DiscoveryAiHooks } = {}): Promise<LiveAcceptanceResult> {
   const started = Date.now();
   const fetcher = options.fetcher ?? new PoliteFetcher({
-    userAgent: userAgentFor(process.env.CONTACT_EMAIL ?? "christopher-live-acceptance@example.invalid"),
+    userAgent: userAgentFor(process.env.CONTACT_EMAIL ?? "ava-live-acceptance@example.invalid"),
     respectRobots: () => true,
   });
   let browserRenders = 0;

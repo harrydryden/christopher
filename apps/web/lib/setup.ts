@@ -56,7 +56,7 @@ export const EMPTY_TABLE_SENTENCE =
 
 /** What the gate does, in one sentence, wherever the gate is offered. */
 export const GATE_SENTENCE =
-  "Christopher keeps a role only when its title contains one of these words and it is in one of these places or is remote. Change it whenever you like; the table updates at once.";
+  "AVA keeps a role only when its title contains one of these words and it is in one of these places or is remote. Change it whenever you like; the table updates at once.";
 
 /** The example in an empty include-keywords field, so nobody scans against a word they never chose. */
 export const GATE_EXAMPLE = "e.g. operations, chief of staff, programme";

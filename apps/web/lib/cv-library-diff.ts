@@ -25,7 +25,7 @@ import {
   responsibilityRows,
   type CvLibrary,
   type Employment,
-} from "@christopher/core/cv";
+} from "@ava/core/cv";
 
 type CvEntry = CvLibrary["entries"][number];
 

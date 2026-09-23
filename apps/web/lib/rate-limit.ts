@@ -3,7 +3,7 @@
  * of the attempts. Keys are `login:email:<address>`, `login:ip:<address>` and so on.
  */
 import { and, eq, gt, inArray, sql } from "drizzle-orm";
-import { loginAttempts } from "@christopher/db/schema";
+import { loginAttempts } from "@ava/db/schema";
 import { db } from "./db";
 
 export interface RateLimit {

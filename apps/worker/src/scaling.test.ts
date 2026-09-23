@@ -1,13 +1,13 @@
 import { beforeAll, beforeEach, afterAll, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
-import { accountAiSpend, aiUsageByAccount, createDb, schema, totalAiSpend } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
-import { aiBudgetWindowStart } from "@christopher/core";
+import { accountAiSpend, aiUsageByAccount, createDb, schema, totalAiSpend } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
+import { aiBudgetWindowStart } from "@ava/core";
 import { sql } from "drizzle-orm";
 import { reserveAi } from "./budget";
 import { ensureTestUser } from "./test-users";
 import { selectExamples } from "./recommendation-context";
-const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
+const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
 beforeAll(() => runMigrations(db));
 beforeEach(() => db.execute(sql`truncate ai_calls, ai_reservations`));
 afterAll(() => pool.end());

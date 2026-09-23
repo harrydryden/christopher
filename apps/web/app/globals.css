@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /* ---------------------------------------------------------------------------
-   Christopher pixel design system. See docs/DESIGN-SYSTEM.md.
+   AVA pixel design system. See docs/DESIGN-SYSTEM.md.
 
    Two layers:
 
@@ -177,11 +177,14 @@
   /* Motion is stepped, never eased. */
   --ease-step-2: steps(2, end);
   --ease-step-4: steps(4, end);
-  --animate-paddle: ds-paddle-turn 1.6s steps(8, end) infinite;
+  --animate-mark-turn: ds-mark-turn 2.4s steps(8, end) infinite;
 }
 
-@keyframes ds-paddle-turn {
-  to { transform: rotate(360deg); }
+/* The mark's letters turn once in eight 45-degree steps on a 200ms beat, then rest upright. */
+@keyframes ds-mark-turn {
+  0%       { transform: rotate(0deg); }
+  66.6667% { transform: rotate(360deg); }   /* 1.6s: eight steps of 45 degrees */
+  100%     { transform: rotate(360deg); }   /* 0.8s: held upright */
 }
 
 html {
@@ -298,6 +301,20 @@ kbd {
     transform: translate(2px, 2px);
   }
 }
+
+/* Each letter of the mark rotates about its own box; the class is on the <path>, so the turn
+   is a CSS transform and the letter's offset is baked into its coordinates. */
+@utility ds-mark-letter {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* While searching, every letter turns, one 200ms beat behind the letter before it. At pitch 14
+   neighbours never touch: a letter at 45 degrees reaches 7.78 cells from its centre, and the one
+   beside it is then upright or at 90 degrees, 5 or 6. */
+.ds-mark-turning > .ds-mark-letter { animation: var(--animate-mark-turn); }
+.ds-mark-turning > .ds-mark-letter:nth-of-type(2) { animation-delay: 0.2s; }
+.ds-mark-turning > .ds-mark-letter:nth-of-type(3) { animation-delay: 0.4s; }
 
 @media (prefers-reduced-motion: reduce) {
   .ds-animate,

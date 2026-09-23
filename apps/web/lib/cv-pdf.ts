@@ -1,1 +1,1 @@
-export { renderCvPdf, renderCvPdfWithReport, assertCvPageLimit, CvLayoutError } from "@christopher/core/cv-pdf";
+export { renderCvPdf, renderCvPdfWithReport, assertCvPageLimit, CvLayoutError } from "@ava/core/cv-pdf";

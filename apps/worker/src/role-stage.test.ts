@@ -6,13 +6,13 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import {
   createDb, latestApplicationFor, roleStageSql, schema, type ApplicationStatus, type Db,
-} from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
+} from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
 import { and, eq, sql } from "drizzle-orm";
 import pg from "pg";
 import { ensureTestUser } from "./test-users";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
 
 let db: Db;
 let pool: pg.Pool;

@@ -1,6 +1,6 @@
 import v8 from "node:v8";
 import { monitorEventLoopDelay } from "node:perf_hooks";
-import { poolStats, slowQueryCount } from "@christopher/db";
+import { poolStats, slowQueryCount } from "@ava/db";
 
 export interface Vitals {
   heapUsedMb: number;

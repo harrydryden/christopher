@@ -26,13 +26,13 @@ importers:
 
   apps/web:
     dependencies:
-      '@christopher/core':
+      '@ava/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@christopher/db':
+      '@ava/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@christopher/worker':
+      '@ava/worker':
         specifier: workspace:*
         version: link:../worker
       drizzle-orm:
@@ -93,13 +93,13 @@ importers:
 
   apps/worker:
     dependencies:
-      '@christopher/ai':
+      '@ava/ai':
         specifier: workspace:*
         version: link:../../packages/ai
-      '@christopher/core':
+      '@ava/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@christopher/db':
+      '@ava/db':
         specifier: workspace:*
         version: link:../../packages/db
       drizzle-orm:
@@ -139,7 +139,7 @@ importers:
       '@anthropic-ai/sdk':
         specifier: latest
         version: 0.124.0(zod@4.5.4)
-      '@christopher/core':
+      '@ava/core':
         specifier: workspace:*
         version: link:../core
       zod:
@@ -186,7 +186,7 @@ importers:
 
   packages/db:
     dependencies:
-      '@christopher/core':
+      '@ava/core':
         specifier: workspace:*
         version: link:../core
       drizzle-orm:

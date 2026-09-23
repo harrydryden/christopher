@@ -61,10 +61,10 @@ async function main() {
     ({ rows: [sourceVersion] } = await sourceClient.query('select current_setting(\'server_version\') server_version, current_setting(\'server_version_num\')::int server_version_num'));
   } finally { await sourceClient.end(); }
   if (Object.values(before.orphans).some(Number) || Number(before.invalidConstraints)) throw new Error(`Source integrity check failed: ${JSON.stringify(before)}`);
-  const work = await mkdtemp(join(tmpdir(), 'christopher-recovery-'));
+  const work = await mkdtemp(join(tmpdir(), 'ava-recovery-'));
   const dump = join(work, 'backup.dump');
   const dockerContainer = process.env.RECOVERY_DOCKER_CONTAINER;
-  const containerDump = `/tmp/christopher-recovery-${process.pid}.dump`;
+  const containerDump = `/tmp/ava-recovery-${process.pid}.dump`;
   const commands = [];
   const run = (command, args, env = process.env) => new Promise((resolve, reject) => {
     const started = performance.now(), child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], env });
@@ -115,7 +115,7 @@ async function main() {
       sourceVersion, targetVersion, pgDumpVersion: dumpVersion, before, after, commands,
       compatibility: { currentMigrationsReran: commands.some(x => x.command === 'pnpm' && x.code === 0), sourceAndTargetServerMatch: sourceVersion.server_version_num === targetVersion.server_version_num },
       limitations: ['This is a local logical dump, not a managed snapshot or point-in-time restore.', 'It does not establish production backup scheduling, retention, encryption, access control, RPO or hosted RTO.', 'Rollback to an older application revision is not automated; destructive down-migrations are deliberately excluded.'] };
-    await writeFile(process.env.RECOVERY_REPORT_PATH ?? '/tmp/christopher-recovery-report.json', JSON.stringify(report, null, 2) + '\n');
+    await writeFile(process.env.RECOVERY_REPORT_PATH ?? '/tmp/ava-recovery-report.json', JSON.stringify(report, null, 2) + '\n');
     console.log(JSON.stringify({ passed: report.passed, elapsedSeconds: report.elapsedSeconds, targetDatabase: targetDb, before, after, failures }));
     if (!report.passed) process.exitCode = 1;
   } finally {

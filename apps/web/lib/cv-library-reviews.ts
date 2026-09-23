@@ -15,14 +15,14 @@ import {
   evidenceRows,
   isActiveStoredEvidence,
   type CvLibrary,
-} from "@christopher/core/cv";
+} from "@ava/core/cv";
 import {
   evidenceRatingFor,
   facetForPrompt,
   rulesLibraryReview,
   type LibraryEntryReview,
   type LibraryReviewSource,
-} from "@christopher/core/library-review";
+} from "@ava/core/library-review";
 import {
   libraryEvidenceLine,
   NO_EVIDENCE,

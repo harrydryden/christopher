@@ -1,4 +1,4 @@
-import { ats, evaluateGate, type FetchContext, type GateSettings, type RawPosting, type SourceSpec } from "@christopher/core";
+import { ats, evaluateGate, type FetchContext, type GateSettings, type RawPosting, type SourceSpec } from "@ava/core";
 import { admissionKey } from "./admission-cache";
 import { extractMainText } from "./handlers/description";
 

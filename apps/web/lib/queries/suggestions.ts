@@ -1,5 +1,5 @@
 import { desc, eq, inArray, sql, and, ilike } from "drizzle-orm";
-import { companies, companyProfiles, companySuggestions, type CompanyProfile, type CompanySuggestion } from "@christopher/db/schema";
+import { companies, companyProfiles, companySuggestions, type CompanyProfile, type CompanySuggestion } from "@ava/db/schema";
 import { db } from "@/lib/db";
 
 export interface SuggestionRow {

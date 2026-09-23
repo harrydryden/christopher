@@ -70,7 +70,7 @@ export const ROLE_STAGE_DESCRIPTIONS: Record<RoleStage, string> = {
 };
 
 /**
- * What an `applications` row can say. Kept identical to `APPLICATION_STATUSES` in @christopher/db,
+ * What an `applications` row can say. Kept identical to `APPLICATION_STATUSES` in @ava/db,
  * which is the column's enum: core cannot import the database package, so the two lists are
  * maintained together and `applicationStage` is the only thing that reads them.
  */

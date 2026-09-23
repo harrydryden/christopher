@@ -8,7 +8,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
-import type { CvLibrary, Employment } from "@christopher/core/cv";
+import type { CvLibrary, Employment } from "@ava/core/cv";
 import { diffCvLibraries } from "./cv-library-diff";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));

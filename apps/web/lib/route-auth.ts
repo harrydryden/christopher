@@ -1,4 +1,4 @@
-import type { User } from "@christopher/db/schema";
+import type { User } from "@ava/db/schema";
 import { requireUser } from "@/lib/auth";
 
 export type RouteUser = { ok: true; user: User } | { ok: false; response: Response };

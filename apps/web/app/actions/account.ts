@@ -3,9 +3,9 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { MAX_ACCOUNT_AI_BUDGET_USD } from "@christopher/core";
-import { companySubscriptions, cvDrafts, users, sessions, type UserRole } from "@christopher/db/schema";
-import { isPlaceholderEmail } from "@christopher/db";
+import { MAX_ACCOUNT_AI_BUDGET_USD } from "@ava/core";
+import { companySubscriptions, cvDrafts, users, sessions, type UserRole } from "@ava/db/schema";
+import { isPlaceholderEmail } from "@ava/db";
 import { changePassword as changeStoredPassword, issueResetLink, sendVerificationEmail } from "@/lib/accounts";
 import { emailLinkOrigin } from "@/lib/origin";
 import { endAllSessions, endOtherSessions, getCurrentUser, requireAdmin, requireUser } from "@/lib/auth";

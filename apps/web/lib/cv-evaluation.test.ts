@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { CvAssessment } from "@christopher/core/cv-assessment";
-import { materialiseCv, type CvLibrary } from "@christopher/core/cv";
+import type { CvAssessment } from "@ava/core/cv-assessment";
+import { materialiseCv, type CvLibrary } from "@ava/core/cv";
 import {
   cvClaimItems,
   cvTextItems,
   cvEvidenceItems,
-} from "@christopher/core/cv-assessment";
-import { createCvAssessment } from "@christopher/core/cv-review";
+} from "@ava/core/cv-assessment";
+import { createCvAssessment } from "@ava/core/cv-review";
 import {
   rubricFixture,
   reviewFixture,

@@ -1,5 +1,5 @@
-import { localDateParts } from "@christopher/core";
-import type { ScanRun } from "@christopher/db/schema";
+import { localDateParts } from "@ava/core";
+import type { ScanRun } from "@ava/db/schema";
 export function scanBannerText(run: ScanRun | null, tz: string, now: Date): string {
   if (!run) return "No scan batches yet";
   const start = localDateParts(run.startedAt, tz);

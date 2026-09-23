@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { companies, decisions, filterSuggestions, preferenceProfiles, tagVocabulary, userJobs, type FilterSuggestion, type PreferenceProfile } from "@christopher/db/schema";
+import { companies, decisions, filterSuggestions, preferenceProfiles, tagVocabulary, userJobs, type FilterSuggestion, type PreferenceProfile } from "@ava/db/schema";
 import { db } from "@/lib/db";
 import { extractSuggestionValue } from "@/lib/filterSuggestions";
 

@@ -13,10 +13,10 @@
  *
  * Nothing here reads the database or the clock beyond the `now` it is given, so every line is a
  * unit test rather than a screenshot. Elapsed time comes from the rows; the expected-duration
- * sentences come from the task deadlines in `@christopher/core`, so the interface cannot promise
+ * sentences come from the task deadlines in `@ava/core`, so the interface cannot promise
  * something longer than the worker allows.
  */
-import { deadlineFor } from "@christopher/core";
+import { deadlineFor } from "@ava/core";
 import { formatCount, formatStepDuration, pluralize } from "./format";
 
 /** The narrative's tones, as the badges name them. */
@@ -120,7 +120,7 @@ function minutes(ms: number): string {
 
 /**
  * The expected-duration sentences. The ceiling in each is the task's own deadline from
- * `@christopher/core` — the point at which the worker abandons the work — and the usual figure is
+ * `@ava/core` — the point at which the worker abandons the work — and the usual figure is
  * the smaller one: discovery reads a homepage and two or three link hops, and a scan reads one
  * listing, so both normally finish inside a minute and only a large board needs the rest.
  */

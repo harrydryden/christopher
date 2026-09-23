@@ -3,7 +3,7 @@
  * `CvLibrarySchema` actually produces, so the names are read from the value that was posted.
  */
 import { expect, it } from "vitest";
-import { CvLibrarySchema } from "@christopher/core/cv";
+import { CvLibrarySchema } from "@ava/core/cv";
 import { cvLibraryIssues } from "./cv-library-issues";
 
 /** The shape the editor posts: unvalidated, because that is when these names are needed. */

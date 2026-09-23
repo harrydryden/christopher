@@ -9,11 +9,11 @@
  * nothing confirmed.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, createLibraryImport, getLibraryImport, schema, type Db } from "@christopher/db";
-import type { User } from "@christopher/db/schema";
-import { runMigrations } from "@christopher/db/migrate";
-import { renderCvPdf } from "@christopher/core/cv-pdf";
-import { responsibilityRows, type CvLibrary } from "@christopher/core";
+import { createDb, createLibraryImport, getLibraryImport, schema, type Db } from "@ava/db";
+import type { User } from "@ava/db/schema";
+import { runMigrations } from "@ava/db/migrate";
+import { renderCvPdf } from "@ava/core/cv-pdf";
+import { responsibilityRows, type CvLibrary } from "@ava/core";
 import { desc, eq, sql } from "drizzle-orm";
 import { ensureTestUser } from "@/test/auth";
 
@@ -81,7 +81,7 @@ async function saveLibrary(content: CvLibrary, version = 1) {
 }
 
 beforeAll(async () => {
-  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
+  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
   database = client.db;
   pool = client.pool;
   await runMigrations(database);

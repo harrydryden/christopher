@@ -1,22 +1,22 @@
 "use server";
 import { CvSelectionSchema } from "@/lib/cv-management-input";
-import { cvImprovementOwner } from "@christopher/core/cv-assessment";
-import { assertCvFinalisable } from "@christopher/core/cv-review";
+import { cvImprovementOwner } from "@ava/core/cv-assessment";
+import { assertCvFinalisable } from "@ava/core/cv-review";
 import { renderCvPdf } from "@/lib/cv-pdf";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { actionCvs, applications, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, userJobs, enqueueTask } from "@christopher/db";
+import { actionCvs, applications, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, userJobs, enqueueTask } from "@ava/db";
 import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvWritingPreferences,
   createCvWritingBudget, CvLibrarySchema, consolidateExperience, isActiveStoredEvidence, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel,
-  type CvContent, type CvLibrary, type CvWritingPreferences } from "@christopher/core";
-import { CvGapAnswerSchema, CvGapQuizSchema, addGapAnswersToLibrary, type CvGapAnswer } from "@christopher/core/cv-gap-quiz";
+  type CvContent, type CvLibrary, type CvWritingPreferences } from "@ava/core";
+import { CvGapAnswerSchema, CvGapQuizSchema, addGapAnswersToLibrary, type CvGapAnswer } from "@ava/core/cv-gap-quiz";
 import { requireUser, requireVerifiedUser } from "@/lib/auth";
 import { cvLibraryIssues } from "@/lib/cv-library-issues";
 import { cvBuildQuote } from "@/lib/cv-quote";
 import { enqueue } from "@/lib/enqueue";
 import { db } from "@/lib/db";
-import { userSettings as userSettingsTable } from "@christopher/db/schema";
+import { userSettings as userSettingsTable } from "@ava/db/schema";
 import { getSettings, getSettingsFor, setUserSetting } from "@/lib/settings";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";

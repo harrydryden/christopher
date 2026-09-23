@@ -3,7 +3,7 @@
  *
  * Vercel Cron calls this once a day with `Authorization: Bearer $CRON_SECRET`. It runs a
  * scheduler tick, which queues the daily run and the weekly jobs on their day. It also works
- * through the queue itself, but only where `CHRISTOPHER_SERVERLESS_FALLBACK=1` says that is the
+ * through the queue itself, but only where `AVA_SERVERLESS_FALLBACK=1` says that is the
  * whole of the deployment: the tasks it runs are bounded by `maxDuration` and can never launch a
  * browser, so it is a fallback rather than a second worker. Anything unfinished stays queued.
  *
@@ -12,7 +12,8 @@
  */
 import { getWorkerHeartbeat } from "@/lib/queries/health";
 import { NextResponse } from "next/server";
-import { claimTask, createDeps, handlers, readEnv, schedulerTick, TaskQueue } from "@christopher/worker";
+import { claimTask, createDeps, handlers, readEnv, schedulerTick, TaskQueue } from "@ava/worker";
+import { renamedEnv } from "@ava/core";
 import { getCurrentUser } from "@/lib/auth";
 import { timingSafeEqual } from "node:crypto";
 
@@ -54,7 +55,7 @@ const HEARTBEAT_FRESH_MS = 120_000;
 
 async function runScheduledWork(budgetMs: number) {
   // A serverless invocation must never launch a browser: there is no Chromium in the runtime.
-  process.env.CHRISTOPHER_DISABLE_BROWSER = "1";
+  process.env.AVA_DISABLE_BROWSER = "1";
   const started = Date.now();
   const processed: string[] = [];
   let timedOut = false;
@@ -68,7 +69,7 @@ async function runScheduledWork(budgetMs: number) {
 
   const deps = await createDeps(readEnv(), { settingsTtlMs: 0 });
   const queue = new TaskQueue(deps, handlers, { concurrency: 1, workerId: "vercel-cron" });
-  const drains = process.env.CHRISTOPHER_SERVERLESS_FALLBACK === "1";
+  const drains = renamedEnv(process.env, "AVA_SERVERLESS_FALLBACK", "CHRISTOPHER_SERVERLESS_FALLBACK") === "1";
 
   try {
     await schedulerTick(deps);

@@ -1,11 +1,11 @@
 /** Integration coverage for the planned CV path. No live model calls are made. */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { enqueueTask, listCvBuildSteps, schema, type Db } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
-import { estimateCvBuildUsd, type AiClientLike, type ParseResponse } from "@christopher/ai";
-import type { CvAssessment, CvReviewPlan, CvRubric } from "@christopher/core/cv-assessment";
-import type { CvTailoringPlan } from "@christopher/core/cv-tailoring";
-import { dedupeKeyFor } from "@christopher/core";
+import { enqueueTask, listCvBuildSteps, schema, type Db } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
+import { estimateCvBuildUsd, type AiClientLike, type ParseResponse } from "@ava/ai";
+import type { CvAssessment, CvReviewPlan, CvRubric } from "@ava/core/cv-assessment";
+import type { CvTailoringPlan } from "@ava/core/cv-tailoring";
+import { dedupeKeyFor } from "@ava/core";
 import { eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -14,7 +14,7 @@ import { TaskQueue } from "./queue";
 import { onAbandon } from "./handlers/abandon";
 import { ensureTestUser } from "./test-users";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:55439/christopher_final_worker_review";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:55439/ava_final_worker_review";
 const USAGE = { input_tokens: 1000, output_tokens: 200, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
 const rubric: CvRubric = { caveats: [], requirements: [
   { id: "lead", label: "Team leadership", quote: "Lead a team", importance: "essential", category: "experience" },
@@ -42,7 +42,7 @@ let userId: string;
 
 beforeAll(async () => {
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.CHRISTOPHER_DISABLE_BROWSER = "1";
+  process.env.AVA_DISABLE_BROWSER = "1";
   deps = await createDeps(readEnv());
   await runMigrations(deps.db);
   db = deps.db;

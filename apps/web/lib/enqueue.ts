@@ -1,6 +1,6 @@
-import { enqueueTask } from "@christopher/db/tasks";
-import { dedupeKeyFor, priorityFor, type TaskPayloads, type TaskType } from "@christopher/core";
-import { tasks } from "@christopher/db/schema";
+import { enqueueTask } from "@ava/db/tasks";
+import { dedupeKeyFor, priorityFor, type TaskPayloads, type TaskType } from "@ava/core";
+import { tasks } from "@ava/db/schema";
 import { db } from "./db";
 
 type TaskWriter = Pick<ReturnType<typeof db>, "insert">;

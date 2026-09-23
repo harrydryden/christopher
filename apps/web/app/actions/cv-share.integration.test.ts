@@ -8,15 +8,15 @@
  * comments route stop answering once the throttle has been reached.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, resolveCvShareComment as resolveCommentRow, schema, type Db } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
+import { createDb, resolveCvShareComment as resolveCommentRow, schema, type Db } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
 import { desc, eq, isNull, sql } from "drizzle-orm";
 import { signInTestUser, ensureTestUser } from "@/test/auth";
-import { materialiseCv, type CvLibrary } from "@christopher/core/cv";
-import { createCvAssessment } from "@christopher/core/cv-review";
-import { cvTextItems, cvClaimItems, cvEvidenceItems } from "@christopher/core/cv-assessment";
+import { materialiseCv, type CvLibrary } from "@ava/core/cv";
+import { createCvAssessment } from "@ava/core/cv-review";
+import { cvTextItems, cvClaimItems, cvEvidenceItems } from "@ava/core/cv-assessment";
 import { rubricFixture, reviewFixture } from "../../../../packages/core/test/cv-review-fixture";
-import type { User } from "@christopher/db/schema";
+import type { User } from "@ava/db/schema";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
@@ -67,7 +67,7 @@ const DESCRIPTION = "Lead a team and improve operations. This advert must never 
 const SECTION_ANCHOR = cvSectionBlockId("job");
 
 beforeAll(async () => {
-  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
+  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
   database = client.db;
   pool = client.pool;
   await runMigrations(database);
@@ -83,7 +83,7 @@ beforeEach(async () => {
   await database.execute(sql`truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, login_attempts, users restart identity cascade`);
   ({ user, cookie: session } = await signInTestUser(database, process.env.SESSION_SECRET!));
   other = await ensureTestUser(database, "other@example.com", "member");
-  requestHeaders = new Headers({ host: "christopher.test", "x-forwarded-for": "203.0.113.5" });
+  requestHeaders = new Headers({ host: "ava.test", "x-forwarded-for": "203.0.113.5" });
 });
 
 function form(entries: Record<string, string>): FormData {
@@ -125,7 +125,7 @@ const render = async (token: string, query: Record<string, string> = {}) =>
 
 const comment = (token: string, fields: Record<string, string>, address = "198.51.100.9") =>
   postComment(
-    new Request(`https://christopher.test/share/${token}/comments`, {
+    new Request(`https://ava.test/share/${token}/comments`, {
       method: "POST",
       body: form(fields),
       headers: { "x-forwarded-for": address },
@@ -136,7 +136,7 @@ const comment = (token: string, fields: Record<string, string>, address = "198.5
 it("hands the owner a link once, stores only its hash, and opens one revision with it", async () => {
   const cv = await draft();
   const { result, link, token } = await open(cv.id);
-  expect(link).toMatch(/^https:\/\/christopher\.test\/share\/[A-Za-z0-9_-]{43}$/);
+  expect(link).toMatch(/^https:\/\/ava\.test\/share\/[A-Za-z0-9_-]{43}$/);
   expect(result.ok && result.message).toContain("14 days");
 
   const [stored] = await database.select().from(schema.cvShares);
@@ -261,7 +261,7 @@ it("refuses a note on a read-only link, on a block this CV does not have, and on
 
 it("refuses an oversized public comment before parsing its multipart body", async () => {
   const response = await postComment(
-    new Request("https://christopher.test/share/AAAAAAAAAAAAAAAAAAAAAA/comments", {
+    new Request("https://ava.test/share/AAAAAAAAAAAAAAAAAAAAAA/comments", {
       method: "POST",
       body: "not parsed",
       headers: { "content-length": String(CV_SHARE_COMMENT_REQUEST_MAX_BYTES + 1) },
@@ -272,7 +272,7 @@ it("refuses an oversized public comment before parsing its multipart body", asyn
   expect(await response.text()).toMatch(/too large/i);
 
   const headerless = await postComment(
-    new Request("https://christopher.test/share/AAAAAAAAAAAAAAAAAAAAAA/comments", {
+    new Request("https://ava.test/share/AAAAAAAAAAAAAAAAAAAAAA/comments", {
       method: "POST",
       body: "x".repeat(CV_SHARE_COMMENT_REQUEST_MAX_BYTES + 1),
       headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -282,7 +282,7 @@ it("refuses an oversized public comment before parsing its multipart body", asyn
   expect(headerless.status).toBe(413);
 
   const malformed = await postComment(
-    new Request("https://christopher.test/share/AAAAAAAAAAAAAAAAAAAAAA/comments", {
+    new Request("https://ava.test/share/AAAAAAAAAAAAAAAAAAAAAA/comments", {
       method: "POST",
       body: "not multipart",
       headers: { "content-type": "multipart/form-data; boundary=missing" },
@@ -365,18 +365,18 @@ it("lets a reader reach the share route without a session, and nothing else", as
   expect(gated.test("/cv/a-draft")).toBe(true);
   expect(shared).toBe("/share/:path*");
 
-  const reader = await middleware(new NextRequest("https://christopher.test/share/abc"));
+  const reader = await middleware(new NextRequest("https://ava.test/share/abc"));
   expect(reader.status).toBe(200);
   expect(reader.headers.get("location")).toBeNull();
   expect(reader.headers.get("cache-control")).toBe("private, no-store");
   const posting = await middleware(
-    new NextRequest("https://christopher.test/share/abc/comments", { method: "POST" }),
+    new NextRequest("https://ava.test/share/abc/comments", { method: "POST" }),
   );
   expect(posting.headers.get("location")).toBeNull();
 
   // Everything else without a session is still turned away, the API as an error and a page to login.
-  const api = await middleware(new NextRequest("https://christopher.test/api/work-status"));
+  const api = await middleware(new NextRequest("https://ava.test/api/work-status"));
   expect(api.status).toBe(401);
-  const page = await middleware(new NextRequest("https://christopher.test/cv/a-draft"));
+  const page = await middleware(new NextRequest("https://ava.test/cv/a-draft"));
   expect(page.headers.get("location")).toContain("/login");
 });

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef } from "react";
-import { EVIDENCE_FACETS, EVIDENCE_FACET_LABELS, type EvidenceFacet } from "@christopher/core/cv";
+import { EVIDENCE_FACETS, EVIDENCE_FACET_LABELS, type EvidenceFacet } from "@ava/core/cv";
 import { Checkbox } from "@/components/Field";
 
 /**

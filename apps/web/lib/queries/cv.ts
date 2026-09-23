@@ -8,9 +8,9 @@ import {
   libraryReviewsSignature,
   listCvBuildSteps,
   tasks,
-} from "@christopher/db";
-import type { CvBuildFailure, CvBuildStepView, CvLibrary } from "@christopher/core";
-import { libraryEntryInputHash, normaliseLibraryReview } from "@christopher/core/library-review";
+} from "@ava/db";
+import type { CvBuildFailure, CvBuildStepView, CvLibrary } from "@ava/core";
+import { libraryEntryInputHash, normaliseLibraryReview } from "@ava/core/library-review";
 import { cvWorkVersion, normaliseCvStepsSignature } from "@/lib/cv-build-state";
 import type { LibraryEvidence } from "@/lib/cv-library-evidence";
 import {

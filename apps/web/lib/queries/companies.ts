@@ -1,4 +1,4 @@
-import { latestApplicationFor, roleStageSql, roleStatusSql } from "@christopher/db";
+import { latestApplicationFor, roleStageSql, roleStatusSql } from "@ava/db";
 import { and, asc, desc, eq, inArray, isNotNull, ne, sql, getTableColumns, ilike, or } from "drizzle-orm";
 import {
   cvDrafts,
@@ -22,7 +22,7 @@ import {
   type DiscoveryRun,
   type Scan,
   type Task,
-} from "@christopher/db/schema";
+} from "@ava/db/schema";
 import { db } from "@/lib/db";
 import type { CompanySetupRows, TimelineCandidate, TimelineTask } from "@/lib/company-timeline";
 

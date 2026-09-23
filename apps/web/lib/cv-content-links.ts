@@ -1,4 +1,4 @@
-import type { CvContent, CvLibrary } from "@christopher/core/cv";
+import type { CvContent, CvLibrary } from "@ava/core/cv";
 
 export type CvContentLink = { id: string; label: string };
 export const CV_PROFILE_ID = "cv-content-profile";

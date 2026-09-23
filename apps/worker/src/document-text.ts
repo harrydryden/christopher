@@ -16,7 +16,7 @@
  * fallback that half-reads a format: a proposal built from mangled text is worse than being told
  * to export the file again.
  */
-import { LIBRARY_IMPORT_MAX_BYTES, LIBRARY_IMPORT_MAX_CHARS } from "@christopher/db";
+import { LIBRARY_IMPORT_MAX_BYTES, LIBRARY_IMPORT_MAX_CHARS } from "@ava/db";
 
 /** What the conversion produced, and whether the person is seeing all of it. */
 export interface DocumentText {
@@ -42,7 +42,7 @@ const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingm
 const LEGACY_DOC_MAGIC = Buffer.from([0xd0, 0xcf, 0x11, 0xe0]);
 
 export const UNREADABLE_DOCUMENT =
-  "Christopher reads PDF and Word (.docx) documents. Export this one as a PDF, or paste its text instead.";
+  "AVA reads PDF and Word (.docx) documents. Export this one as a PDF, or paste its text instead.";
 
 /**
  * Whitespace as a document should have written it: one kind of line ending, no trailing spaces,

@@ -5,6 +5,10 @@ import { tagVocabulary, users } from "./schema";
 
 /** The owner account the multi-user migration creates for a deployment that already held data. */
 export const BOOTSTRAP_USER_ID = "00000000-0000-4000-8000-000000000001";
+/**
+ * Keeps the product's former name on purpose: migration 0020 wrote this address into existing
+ * rows, and it is how those rows are recognised, so it must not follow the rename.
+ */
 export const BOOTSTRAP_EMAIL = "owner@christopher.invalid";
 
 export const SEED_TAGS: Array<{ tag: string; description: string }> = [
@@ -89,7 +93,7 @@ export async function createUser(db: Db, input: CreateUserInput, options: { admi
   const entitled = isEntitledEmail(email, options.adminEmails ?? adminEmailsFrom());
   const verified = !!input.emailVerified;
   return db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('christopher:users'))`);
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('ava:users'))`);
     const [existing] = await tx.select().from(users).where(eq(users.email, email)).limit(1);
     if (existing?.claimedAt) throw new Error("An account with this email already exists.");
     const [bootstrap] = existing ? [] : await tx.select().from(users).where(eq(users.id, BOOTSTRAP_USER_ID)).limit(1);
@@ -126,7 +130,7 @@ export async function completeAccountClaim(db: Db, userId: string, options: { ad
   const now = options.now ?? new Date();
   const adminEmails = options.adminEmails ?? adminEmailsFrom();
   return db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('christopher:users'))`);
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('ava:users'))`);
     const [user] = await tx.select().from(users).where(eq(users.id, userId)).limit(1);
     if (!user || isPlaceholderEmail(user.email)) return null;
     const [updated] = await tx

@@ -1,6 +1,6 @@
 /**
  * A fake internet for integration tests: one HTTP server that answers for several hostnames.
- * The worker reaches it through CHRISTOPHER_HOST_MAP, so production code paths run unchanged.
+ * The worker reaches it through AVA_HOST_MAP, so production code paths run unchanged.
  */
 import http from "node:http";
 

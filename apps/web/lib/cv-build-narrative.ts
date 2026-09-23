@@ -14,7 +14,7 @@
  *   be a release ahead of or behind the interface, and a half-written detail must still read.
  * - An unknown `detail` key is ignored, and an unknown motion falls back to the step's own title.
  */
-import type { CvBuildStage, CvBuildStepView } from "@christopher/core";
+import type { CvBuildStage, CvBuildStepView } from "@ava/core";
 import { formatClock, formatCount, formatPercent, formatStepDuration, formatUsdPrecise, pluralize } from "./format";
 
 /** A subset of the badge tones; the narrative never needs the other two. */

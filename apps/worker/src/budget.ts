@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
-import type { Db } from "@christopher/db";
-import type { AiBudgetRefusal } from "@christopher/core";
+import type { Db } from "@ava/db";
+import type { AiBudgetRefusal } from "@ava/core";
 
 export type { AiBudgetRefusal };
 
@@ -78,7 +78,7 @@ export async function tryReserveAi(db: Db, callSite: string, amount: number, lim
   type Measured = { spent: number; held: number; limitUsd: number };
   let measured: Measured | undefined;
   const outcome = await db.transaction(async (tx): Promise<{ refused: AiBudgetRefusal } | { measured: Measured }> => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('christopher:ai-budget'))`);
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('ava:ai-budget'))`);
     await tx.execute(sql`delete from ai_reservations where expires_at <= now()`);
     if (account) {
       // This account's own month: what it has spent, plus what its calls in flight are holding.

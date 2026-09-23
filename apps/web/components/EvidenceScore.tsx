@@ -1,7 +1,7 @@
 "use client";
 import { EVIDENCE_RATING_LABELS, type EvidenceEntryView, type EvidencePrompt } from "@/lib/cv-library-evidence";
 // Type only: the scorer it belongs to reaches `node:crypto` and never reaches the browser.
-import type { EvidenceRating } from "@christopher/core/library-review";
+import type { EvidenceRating } from "@ava/core/library-review";
 
 /** The three cells the CV evaluation table fills for Evidence and Experience, in the same order. */
 const FILLED: Record<EvidenceRating, number> = { none: 0, weak: 1, good: 2, strong: 3 };

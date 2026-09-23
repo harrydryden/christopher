@@ -1,11 +1,11 @@
 /** The polite fetcher: identification, robots.txt, rate limiting, and bot-protection detection. */
 import net from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { SourceFetchError } from "@christopher/core";
-import { createDb, listHttpHostDaily } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
+import { SourceFetchError } from "@ava/core";
+import { createDb, listHttpHostDaily } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
 import { sql } from "drizzle-orm";
-import { sha1 } from "@christopher/core";
+import { sha1 } from "@ava/core";
 import { ATS_API_DELAY_MS, DEFAULT_HOST_DELAY_MS, HARD_MAX_BODY_BYTES, hostDelayMs, HttpTrafficLedger, PoliteFetcher, userAgentFor } from "./fetcher";
 import { startTestServer, type TestServer } from "./test-server";
 
@@ -80,7 +80,7 @@ describe("polite fetcher", () => {
   it("identifies itself with a contact address", async () => {
     const res = await fetcher().fetchText("https://www.example.test/echo");
     const body = JSON.parse(res.body) as { ua: string; host: string };
-    expect(body.ua).toContain("ChristopherJobMonitor");
+    expect(body.ua).toContain("AVAJobMonitor");
     expect(body.ua).toContain("mailto:you@example.com");
     // The logical hostname is preserved even though the request went to the test server.
     expect(body.host).toBe("www.example.test");
@@ -377,7 +377,7 @@ describe("revalidating a listing too large to cache", () => {
 });
 
 describe("outbound traffic counters", () => {
-  const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test";
+  const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
   const today = () => new Date().toISOString().slice(0, 10);
   let traffic: TestServer;
   let blackhole: net.Server;

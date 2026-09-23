@@ -98,6 +98,20 @@ it("records a board that is gone as the answer and does not retry", async () => 
   expect((await runs(acme.id)).map((run) => run.status)).toEqual(["not_found"]);
 });
 
+it("never turns a switched-off source back on by itself: a matching board goes to Health instead", async () => {
+  routes[GH_JOBS] = { body: { jobs: [{ id: 1, title: "Engineer", absolute_url: "https://boards.greenhouse.io/acme/jobs/1", updated_at: "2026-09-01T00:00:00Z", location: { name: "London" } }] } };
+  const acme = await company();
+  // An administrator retired this board for every follower; a scheduled re-discovery finds it again.
+  await db.insert(schema.careerSources).values({ companyId: acme.id, type: "greenhouse", url: "https://boards.greenhouse.io/acme", atsSlug: "acme", status: "disabled", confirmedByUser: true });
+  const outcome = await handleDiscover(discoverTask(acme.id, 1), deps()) as { outcome: string };
+  expect(outcome.outcome).toBe("needs_confirmation");
+  const [source] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, acme.id));
+  expect(source!.status).toBe("disabled");
+  expect((await runs(acme.id)).map((run) => run.status)).toEqual(["needs_confirmation"]);
+  const scans = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "scan_company"));
+  expect(scans).toHaveLength(0);
+});
+
 it("never leaves a run running when its result cannot be recorded", async () => {
   routes[GH_JOBS] = { body: { jobs: [{ id: 1, title: "Operations Lead", absolute_url: "https://job-boards.greenhouse.io/acme/jobs/1", location: { name: "London" } }] } };
   routes["https://boards-api.greenhouse.io/v1/boards/acme"] = { body: { name: "Acme" } };

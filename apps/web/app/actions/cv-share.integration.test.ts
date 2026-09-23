@@ -92,11 +92,22 @@ function form(entries: Record<string, string>): FormData {
   return data;
 }
 
+/** The assessment a finished build leaves on its draft, made a minute before the test runs. */
+function assessed(now = new Date(Date.now() - 60_000)) {
+  const rubric = rubricFixture(DESCRIPTION);
+  const review = reviewFixture({
+    rubric, cv: cvTextItems(CONTENT), claims: cvClaimItems(CONTENT), evidence: cvEvidenceItems(LIBRARY),
+  });
+  return createCvAssessment({
+    content: CONTENT, description: DESCRIPTION, library: LIBRARY, rubric, review, model: "test", pageCount: 2, now,
+  });
+}
+
 async function draft(over: Partial<typeof schema.cvDrafts.$inferInsert> = {}) {
   const [row] = await database.insert(schema.cvDrafts).values({
     userId: user.id, jobTitle: "Operations Manager", companyName: "Acme",
     jobDescription: DESCRIPTION, libraryVersion: 1, librarySnapshot: LIBRARY,
-    model: "test", status: "ready", revision: 1, content: CONTENT, ...over,
+    model: "test", status: "ready", revision: 1, content: CONTENT, assessment: assessed(), ...over,
   }).returning();
   return row!;
 }
@@ -169,6 +180,40 @@ it("refuses to open a link onto a CV this account does not own, or one with noth
     ok: false, error: "This CV has nothing to show yet. Build it before sharing it.",
   });
   expect(await database.select().from(schema.cvShares)).toEqual([]);
+});
+
+it("opens a link only onto a revision whose build and assessment have finished", async () => {
+  const refusal = { ok: false, error: "Share this CV once its build and assessment have finished." };
+  // Wording from a build that failed, or never had its facts checked, is not one to send anyone.
+  const failed = await draft({ status: "failed" });
+  expect(await createCvShareLink(failed.id, { ok: true }, form({}))).toEqual(refusal);
+  const unassessed = await draft({ assessment: null });
+  expect(await createCvShareLink(unassessed.id, { ok: true }, form({}))).toEqual(refusal);
+  const rebuilding = await draft({ status: "queued" });
+  expect(await createCvShareLink(rebuilding.id, { ok: true }, form({}))).toEqual(refusal);
+  expect(await database.select().from(schema.cvShares)).toEqual([]);
+});
+
+it("shows only the revision a link was opened on, never one written over it since", async () => {
+  const cv = await draft();
+  const { token } = await open(cv.id);
+  expect((await sharedCvByToken(token))!.content.summary).toBe(CONTENT.summary);
+
+  // The draft is sent back to the worker: while it is rewritten the link reads as closed.
+  for (const status of ["queued", "generating", "failed"] as const) {
+    await database.update(schema.cvDrafts).set({ status }).where(eq(schema.cvDrafts.id, cv.id));
+    expect(await sharedCvByToken(token)).toBeNull();
+  }
+  // It publishes again, with wording the reader was never sent: the link stays closed.
+  await database.update(schema.cvDrafts)
+    .set({ status: "ready", content: { ...CONTENT, summary: "Different wording" }, assessment: assessed(new Date(Date.now() + 60_000)) })
+    .where(eq(schema.cvDrafts.id, cv.id));
+  expect(await sharedCvByToken(token)).toBeNull();
+  expect(await render(token)).toContain(CV_SHARE_GONE_SENTENCE);
+  // A new link onto the new revision shows it.
+  await database.update(schema.cvDrafts).set({ assessment: assessed() }).where(eq(schema.cvDrafts.id, cv.id));
+  const again = await open(cv.id);
+  expect((await sharedCvByToken(again.token))!.content.summary).toBe("Different wording");
 });
 
 it("keeps the expiry inside ninety days however many are asked for", async () => {

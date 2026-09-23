@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { DEFAULT_ACCOUNT_AI_BUDGET_USD } from "@ava/core";
 import type { Db } from "./client";
+import { aiProviderFailureSql } from "./ai-budget";
 
 /**
  * The numbers behind `/status` and the Health panel, in one round trip.
@@ -51,15 +52,15 @@ export async function workloadMetrics(db: Db) {
       (select count(*)::int from worker_events where kind='crash_recovery' and at >= now()-interval '1 hour') as crash_recoveries_1h,
       (select count(*)::int from worker_events where kind='crash_recovery' and at >= now()-interval '24 hours') as crash_recoveries_24h,
       (select count(*)::int from ai_calls where at >= now()-interval '1 hour'
-        and not (ok=false and coalesce(error, '') like 'Cancelled because another call%')) as provider_calls_1h,
+        and (ok or ${aiProviderFailureSql})) as provider_calls_1h,
       (select count(*)::int from ai_calls where at >= now()-interval '1 hour' and ok=true) as provider_successes_1h,
-      (select count(*)::int from ai_calls where at >= now()-interval '1 hour' and ok=false
-        and not (coalesce(error, '') like 'Cancelled because another call%')) as provider_failures_1h,
+      (select count(*)::int from ai_calls where at >= now()-interval '1 hour'
+        and ${aiProviderFailureSql}) as provider_failures_1h,
       (select count(*)::int from (
         select call_site, model
         from ai_calls
         where at >= now()-interval '1 hour'
-          and not (ok=false and coalesce(error, '') like 'Cancelled because another call%')
+          and (ok or ${aiProviderFailureSql})
         group by call_site, model
         having count(*) filter (where ok=false) >= 3 and count(*) filter (where ok=true) = 0
       ) provider_outages) as provider_outage_groups_1h,

@@ -12,6 +12,8 @@ import {
 import type { CvBuildFailure, CvBuildStepView, CvLibrary } from "@ava/core";
 import { libraryEntryInputHash, normaliseLibraryReview } from "@ava/core/library-review";
 import { cvWorkVersion, normaliseCvStepsSignature } from "@/lib/cv-build-state";
+import { getWorkerHeartbeat } from "@/lib/queries/health";
+import { deriveWorkerStatus } from "@/lib/worker-status";
 import type { LibraryEvidence } from "@/lib/cv-library-evidence";
 import {
   libraryEvidence,
@@ -197,8 +199,19 @@ export async function getOwnCvWorkRow(userId: string, id: string) {
  * The payload is the stable relationship: a quiz continuation deliberately uses another dedupe
  * key so it cannot collide with the worker task that just paused. The newest row is the attempt
  * this page is about.
+ *
+ * It also says whether the worker is running at all. Only the worker builds CVs — a build does not
+ * fit a serverless invocation, so the cron fallback never claims one — and a deployment whose
+ * worker is down queued builds that said "Waiting for the worker" for as long as it stayed down.
  */
 export async function getOwnCvBuildTask(userId: string, draftId: string) {
+  const [row, heartbeat] = await Promise.all([ownCvBuildTaskRow(userId, draftId), getWorkerHeartbeat()]);
+  if (!row) return null;
+  const worker = deriveWorkerStatus({ heartbeat, restartsLastHour: 0, restartsLastDay: 0 });
+  return { ...row, workerStopped: worker.state === "stopped" };
+}
+
+async function ownCvBuildTaskRow(userId: string, draftId: string) {
   const [row] = await db()
     .select({
       status: tasks.status,

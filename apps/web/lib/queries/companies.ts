@@ -1,5 +1,6 @@
 import { latestApplicationFor, roleStageSql, roleStatusSql } from "@ava/db";
-import { and, asc, desc, eq, inArray, isNotNull, ne, sql, getTableColumns, ilike, or } from "drizzle-orm";
+import { MANUAL_RESCAN_INTERVAL_MS } from "@ava/core";
+import { and, asc, desc, eq, gte, inArray, isNotNull, ne, sql, getTableColumns, ilike, or } from "drizzle-orm";
 import {
   cvDrafts,
   decisions,
@@ -262,7 +263,11 @@ export async function companyApplicationCount(userId: string, companyId: string)
 export interface CompanyScanTiming {
   /** The newest scan a rescan would be served from: `ok` or `partial`, whichever source ran it. */
   lastGoodScanAt: Date | null;
-  /** When the newest finished `scan_company` task returned `skipped: "scanned recently"`. */
+  /**
+   * When the newest finished `scan_company` task returned `skipped: "scanned recently"`, while
+   * that is still the answer: the task finished after the last good scan, and that scan is inside
+   * the reuse window. Null otherwise, because no line reports an older skip.
+   */
   rescanSkippedAt: Date | null;
 }
 
@@ -270,33 +275,35 @@ export interface CompanyScanTiming {
  * A scan is shared, so a follower's Rescan can finish having done nothing: the worker serves it
  * from a scan made in the last half hour and says so in the task's result. Both readings are of
  * the catalogue, not of one account — the company is scanned once for everyone.
+ *
+ * The last scan comes from `scans`, a few rows per source. Finished tasks are consulted only
+ * inside the half hour after that scan, the only time a skip can be reported, and only those that
+ * finished after it; the rest of the page's life never walks the retained task history.
  */
-export async function companyScanTiming(companyId: string): Promise<CompanyScanTiming> {
-  const [scanRow, taskRow] = await Promise.all([
-    db()
-      .select({ startedAt: scans.startedAt })
-      .from(scans)
-      .innerJoin(careerSources, eq(scans.sourceId, careerSources.id))
-      .where(and(eq(careerSources.companyId, companyId), inArray(scans.status, ["ok", "partial"])))
-      .orderBy(desc(scans.startedAt))
-      .limit(1),
-    db()
-      .select({ finishedAt: tasks.finishedAt, result: tasks.result })
-      .from(tasks)
-      .where(and(
-        eq(tasks.type, "scan_company"),
-        eq(tasks.status, "done"),
-        sql`${tasks.payload}->>'companyId' = ${companyId}`,
-      ))
-      .orderBy(sql`coalesce(${tasks.finishedAt}, ${tasks.createdAt}) desc`)
-      .limit(1),
-  ]);
-  const result = taskRow[0]?.result as { skipped?: unknown } | null | undefined;
+export async function companyScanTiming(companyId: string, now = new Date()): Promise<CompanyScanTiming> {
+  const [scanRow] = await db()
+    .select({ startedAt: scans.startedAt })
+    .from(scans)
+    .innerJoin(careerSources, eq(scans.sourceId, careerSources.id))
+    .where(and(eq(careerSources.companyId, companyId), inArray(scans.status, ["ok", "partial"])))
+    .orderBy(desc(scans.startedAt))
+    .limit(1);
+  const lastGoodScanAt = scanRow?.startedAt ?? null;
+  if (!lastGoodScanAt || now.getTime() - lastGoodScanAt.getTime() >= MANUAL_RESCAN_INTERVAL_MS) return { lastGoodScanAt, rescanSkippedAt: null };
+  const [taskRow] = await db()
+    .select({ finishedAt: tasks.finishedAt, result: tasks.result })
+    .from(tasks)
+    .where(and(
+      eq(tasks.type, "scan_company"),
+      eq(tasks.status, "done"),
+      sql`${tasks.payload}->>'companyId' = ${companyId}`,
+      gte(tasks.finishedAt, lastGoodScanAt),
+    ))
+    .orderBy(desc(tasks.finishedAt))
+    .limit(1);
+  const result = taskRow?.result as { skipped?: unknown } | null | undefined;
   const skipped = !!result && typeof result === "object" && result.skipped === "scanned recently";
-  return {
-    lastGoodScanAt: scanRow[0]?.startedAt ?? null,
-    rescanSkippedAt: skipped ? taskRow[0]?.finishedAt ?? null : null,
-  };
+  return { lastGoodScanAt, rescanSkippedAt: skipped ? taskRow?.finishedAt ?? null : null };
 }
 
 /**

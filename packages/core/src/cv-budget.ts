@@ -85,6 +85,59 @@ export function createCvWritingBudget(library: CvLibrary, target: CvRelevanceTar
   return { summaryCharacters, totalCharacters, blocks };
 }
 
+/**
+ * How much of a person's evidence library one fit score (A5) is shown, in tokens.
+ *
+ * Scoring used to send the whole library, as JSON with every row up to three times over, in every
+ * call: a large library was tens of thousands of tokens a role, and a library of a hundred long
+ * entries passed the context window. A score needs the evidence that bears on the role in front
+ * of it, which is a few entries, not the record of a career.
+ */
+export const A5_EVIDENCE_TOKENS = 2_000;
+
+/** The most of one row scoring is shown. */
+const SCORING_ROW_CHARS = 600;
+
+/** One entry of evidence as scoring reads it: what it is called, and its confirmed rows. */
+export type ScoringEvidenceBlock = { heading: string; rows: string[] };
+
+/**
+ * The evidence a fit score is given for one role: the blocks that share the most words with the
+ * role first, each row once, cut off at `maxTokens` (at about four characters a token).
+ *
+ * Deterministic, so a role's scoring fingerprint moves only when evidence that reaches it changes:
+ * an edit to an entry the role never sees no longer re-scores it. Blocks sharing nothing with the
+ * role still follow when there is room, because what someone has done elsewhere can bear on fit.
+ */
+export function scoringEvidence(blocks: ScoringEvidenceBlock[], role: string, maxTokens = A5_EVIDENCE_TOKENS): string {
+  const maxChars = maxTokens * 4;
+  const ranked = blocks
+    .map((block, index) => ({ block, index, relevance: cvRelevance([block.heading, ...block.rows].join(" "), role) }))
+    .sort((a, b) => b.relevance - a.relevance || a.index - b.index);
+  // A prefix of the ranking: the first line that does not fit ends it, so a small block further
+  // down never slips in ahead of the rows of a more relevant one.
+  const lines: string[] = [];
+  let used = 0;
+  const add = (line: string) => {
+    if (used + line.length + 1 > maxChars) return false;
+    lines.push(line);
+    used += line.length + 1;
+    return true;
+  };
+  const stopped = () => [...lines, "(more evidence not shown)"].join("\n");
+  for (const { block } of ranked) {
+    // A row may be a long paragraph; one of them must not use up the whole allowance on its own.
+    const rows = [...new Set(block.rows.map(row => row.trim()).filter(Boolean))]
+      .map(row => row.length > SCORING_ROW_CHARS ? `${row.slice(0, SCORING_ROW_CHARS)}…` : row);
+    if (!rows.length) continue;
+    // A heading is only worth its space with at least one of its rows beneath it.
+    const heading = block.heading.trim();
+    if (used + heading.length + rows[0]!.length + 4 > maxChars || !add(heading)) return stopped();
+    for (const row of rows) if (!add(`- ${row}`)) return stopped();
+  }
+  return lines.join("\n");
+}
+
 /** Specific feedback, not just a page count, tells the writer what must change. */
 export function cvBudgetViolations(plan: CvPlan, budget: CvWritingBudget): string[] {
   const violations: string[] = [];

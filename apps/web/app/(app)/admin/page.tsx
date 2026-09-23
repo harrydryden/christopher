@@ -1,6 +1,8 @@
-import { createResetLink, deleteUser, listAccounts, resetAccountAiSpend, setAccountAiBudget, setUserRole } from "@/app/actions/account";
+import Link from "next/link";
+import { accountCount, createResetLink, deleteUser, listAccounts, resetAccountAiSpend, setAccountAiBudget, setUserRole } from "@/app/actions/account";
 import { saveRegistrationSettings } from "@/app/actions/settings";
 import { ResetLinkButton } from "@/components/ResetLinkButton";
+import { RunScheduledWork } from "@/components/RunScheduledWork";
 import { adminEmails } from "@/lib/accounts";
 import { isPlaceholderEmail } from "@ava/db";
 import { MAX_ACCOUNT_AI_BUDGET_USD } from "@ava/core";
@@ -12,6 +14,7 @@ import { Card } from "@/components/Card";
 import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
 import { inputClass } from "@/components/Field";
 import { PageHeader } from "@/components/PageHeader";
+import { Pagination, pageNumber } from "@/components/Pagination";
 import { SettingsForm } from "@/components/SettingsForm";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { requireAdmin } from "@/lib/auth";
@@ -19,11 +22,18 @@ import { formatUsd, relativeTime, shortDate } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
-export default async function AdminAccountsPage() {
+/** Every row carries several forms, so a page of a thousand accounts would be megabytes. */
+const ACCOUNTS_PER_PAGE = 50;
+
+export default async function AdminAccountsPage({ searchParams }: { searchParams: Promise<{ page?: string }> }) {
   const admin = await requireAdmin();
   const now = new Date();
-  const [accounts, system] = await Promise.all([listAccounts(), getSystemSettings()]);
-  const budgets = await accountAiBudgets(accounts.map((account) => account.id), now);
+  const [total, system, params] = await Promise.all([accountCount(), getSystemSettings(), searchParams]);
+  const pages = Math.max(1, Math.ceil(total / ACCOUNTS_PER_PAGE));
+  const page = Math.min(pageNumber(params.page), pages);
+  // One page of accounts from the database, then one statement for that page's budgets.
+  const shown = await listAccounts(page, ACCOUNTS_PER_PAGE);
+  const budgets = await accountAiBudgets(shown.map((account) => account.id), now);
 
   return (
     <div className="space-y-6">
@@ -41,10 +51,18 @@ export default async function AdminAccountsPage() {
         </SettingsForm>
       </Card>
 
+      <Card title="Scheduled work">
+        <p className="mb-3 text-14 text-muted">
+          The daily run and the weekly jobs start on schedule. Run the scheduler now to queue anything that is due. On a deployment without a worker service (<code>AVA_SERVERLESS_FALLBACK=1</code>) it also works through the queue for up to a minute; beside a worker that is running, it does nothing.
+        </p>
+        <RunScheduledWork />
+      </Card>
+
       <Card title="Accounts">
         <p className="mb-3 text-14 text-muted">
-          Everyone with an account. Each has its own monthly AI budget, the only budget there is: it resets on the 1st, its holder sets it on Settings and you can set it for anyone here. <a href="/admin/health" className="text-fg underline">Operations</a> shows what the spend bought. Deleting an account removes everything it owns; shared companies and postings stay. A reset link lets you onboard or unblock someone when email delivery is not set up: it works once, for an hour, and confirms their address.
+          Everyone with an account. Each has its own monthly AI budget, the only budget there is: it resets on the 1st, its holder sets it on Settings and you can set it for anyone here. <Link href="/admin/health" className="text-fg underline">Operations</Link> shows what the spend bought. Deleting an account removes everything it owns; shared companies and postings stay. A reset link lets you onboard or unblock someone when email delivery is not set up: it works once, for an hour, and confirms their address.
         </p>
+        {pages > 1 && <Pagination page={page} total={total} size={ACCOUNTS_PER_PAGE} path="/admin" label="Account pages" />}
         <Table>
           <THead>
             <tr>
@@ -59,7 +77,7 @@ export default async function AdminAccountsPage() {
             </tr>
           </THead>
           <TBody>
-            {accounts.map((account) => {
+            {shown.map((account) => {
               const budget = budgets.get(account.id) ?? defaultAccountAiBudget(now);
               return (
               <TR key={account.id}>

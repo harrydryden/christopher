@@ -34,7 +34,17 @@ export interface TaskPayloads {
    * One posting a follower pasted the URL of, fetched and extracted into the shared catalogue.
    * The row it stores is shared like any other posting; the view it creates is this account's.
    */
-  import_posting: { userId: string; companyId: string; url: string };
+  import_posting: {
+    userId: string;
+    companyId: string;
+    url: string;
+    /**
+     * The action found the URL on a host the company does not own (not its homepage's domain, an
+     * HTML source's host or its own ATS board). The handler keeps such a posting to the account
+     * that pasted it rather than filing it under the company for every follower.
+     */
+    foreignHost?: boolean;
+  };
   /**
    * Review one account's evidence library for how well each entry evidences itself. The version
    * is what the save that enqueued it produced; the handler reads the newest one, because the

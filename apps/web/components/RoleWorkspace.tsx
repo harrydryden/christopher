@@ -4,7 +4,7 @@ import { Card } from "./Card";
 import { EmptyState } from "./EmptyState";
 import { RolesTable } from "./RolesTable";
 import { RolesFilterBar } from "./RolesFilterBar";
-import { appliedRoleCount, attachEvents, buildRoleRowVM, DEFAULT_SORT_DIR, fetchRecentEventsFor, fetchRolePage, fetchRoleCounts, filtersToQueryString, parseRolesFilters, resolveRoleView, type RawSearchParams, type RolesFilters, type SortKey } from "@/lib/queries/jobs";
+import { appliedRoleCount, attachEvents, buildRoleRowVM, DEFAULT_SORT_DIR, fetchRecentEventsFor, fetchRolePage, fetchRoleCounts, filtersToQueryString, parseRolesFilters, resolveRoleView, roleTabFor, type RawSearchParams, type RolesFilters, type SortKey } from "@/lib/queries/jobs";
 import { listCompanyOptions } from "@/lib/queries/companies";
 import { pipelineCompany, pipelineStageCounts } from "@/lib/queries/applications";
 
@@ -27,15 +27,17 @@ function sortLinksFor(path: string, view: RoleStatus, filters: RolesFilters): Pa
 export async function RoleWorkspace({ userId, searchParams, companyId }: { userId: string; searchParams: RawSearchParams; companyId?: string }) {
   const sp = searchParams;
   const scoped = companyId ? { company: companyId } : {};
-  // Counts first, then the page: a link that names no view opens on Matched unless this scope has
-  // no matched roles, so the counts are an input to every read below them.
-  const counts = await fetchRoleCounts(userId, parseRolesFilters({ ...sp, ...scoped }).company || undefined);
-  const view = resolveRoleView(sp, counts);
+  // A link that names no view opens on Matched unless this scope has no matched roles, so only such
+  // a link waits for the counts; one that names its view (every tab, sort and page link does) reads
+  // the counts beside the page.
+  const countsPending = fetchRoleCounts(userId, parseRolesFilters({ ...sp, ...scoped }).company || undefined);
+  const view = roleTabFor(sp) ?? resolveRoleView(sp, await countsPending);
   const dismissed = view === "user-dismissed";
   const filters = parseRolesFilters({ ...sp, view, ...scoped });
   const archivedFilters = parseRolesFilters({ ...sp, view: "archived", ...scoped });
   const path = companyId ? `/companies/${companyId}` : "/";
-  const [result, archivedResult, options, stageCounts] = await Promise.all([
+  const [counts, result, archivedResult, options, stageCounts] = await Promise.all([
+    countsPending,
     fetchRolePage(userId, filters, false, null, Number(sp.page)),
     // The archived section is only rendered under Dismissed, so nothing else pays for the read.
     dismissed ? fetchRolePage(userId, archivedFilters, true, null, Number(sp.archivedPage)) : null,

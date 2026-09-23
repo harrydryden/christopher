@@ -23,9 +23,19 @@ vi.mock("@/lib/db", () => ({ db: () => database }));
 vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (session ? { value: session } : undefined) }) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
+/** Something to run while a PDF is being rendered, to catch the draft changing underneath it. */
+const rendering = vi.hoisted(() => ({ during: null as null | (() => Promise<void>) }));
+vi.mock("@/lib/cv-pdf", async (original) => {
+  const actual = await original<typeof import("@/lib/cv-pdf")>();
+  return { ...actual, renderCvPdf: async (...args: Parameters<typeof actual.renderCvPdf>) => {
+    await rendering.during?.();
+    return actual.renderCvPdf(...args);
+  } };
+});
 
 import { manageRoleCv, recordApplication, setRoleStage, updateApplication } from "./applications";
-import { decide } from "./decisions";
+import { decide, decideRoles } from "./decisions";
+import { pipelineRowForJob } from "@/lib/queries/applications";
 import { finaliseCvDraft, requestCv, saveCvLibrary } from "./cv";
 import { GET as cvRedirect } from "@/app/(app)/cv/route";
 import { GET as workStatus } from "@/app/api/work-status/route";
@@ -49,6 +59,7 @@ beforeAll(async () => {
 }, 120_000);
 afterAll(async () => { await pool?.end(); });
 beforeEach(async () => {
+  rendering.during = null;
   await database.execute(sql`truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, user_settings, users restart identity cascade`);
   ({ user, cookie: session } = await signInTestUser(database, process.env.SESSION_SECRET!));
 });
@@ -407,4 +418,145 @@ it("sends the retired CV list to the applications table, carrying the role it wa
   expect(where(`?job=${id}`)).toBe(`/applications?job=${id}`);
   // A search over a list that no longer exists has no equivalent, and a bad id is not a role.
   expect(where("?job=nonsense&q=analyst")).toBe("/applications");
+});
+
+/** More roles of the fixture's company, each in this account's table. */
+async function moreRoles(companyId: string, count: number) {
+  const [source] = await database.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, companyId));
+  const jobs = await database.insert(schema.jobs).values(Array.from({ length: count }, (_, n) => ({
+    companyId, sourceId: source!.id, title: `Operations Lead ${n}`, normalizedTitle: `operations lead ${n}`,
+    externalKey: `more-${n}`, url: `https://acme.example/jobs/more-${n}`,
+  }))).returning();
+  await database.insert(schema.userJobs).values(jobs.map(job => ({ userId: user.id, jobId: job.id, inTable: true, keywordMatched: true })));
+  return jobs;
+}
+const activeDecisions = (jobId: string) => database.select().from(schema.decisions)
+  .where(and(eq(schema.decisions.userId, user.id), eq(schema.decisions.jobId, jobId), eq(schema.decisions.superseded, false)));
+const suggestFilterTasks = () => database.select().from(schema.tasks).where(eq(schema.tasks.type, "suggest_filters"));
+
+it("puts the application back where it stood when a dismissal is undone, so both pages agree", async () => {
+  const { job } = await fixture();
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "interview", appliedOn: "2026-09-03", notes: "" }))).toEqual({ ok: true });
+  expect(await decide(job.id, "skip", "Pressed by mistake")).toEqual({ ok: true });
+  expect((await applicationsOf())[0]!.status).toBe("withdrawn");
+
+  expect(await decide(job.id, null, "")).toEqual({ ok: true });
+  const [restored] = await applicationsOf();
+  expect(restored!.status).toBe("interview");
+  expect(restored!.history.map((entry) => entry.status)).toEqual(["interview", "withdrawn", "interview"]);
+  expect(restored!.history.at(-1)).toMatchObject({ notes: "Dismissal undone on Roles" });
+  expect((await pipelineRowForJob(user.id, job.id))!.stage).toBe("in_process");
+  // Undoing again finds nothing of the dismissal's to put back.
+  expect(await decide(job.id, null, "")).toEqual({ ok: true });
+  expect((await applicationsOf())[0]!.history).toHaveLength(3);
+});
+
+it("leaves a withdrawal made on Applications alone when a decision is undone on Roles", async () => {
+  const { job } = await fixture();
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "applied", appliedOn: "2026-09-03", notes: "" }))).toEqual({ ok: true });
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "withdrawn", appliedOn: "2026-09-03", notes: "Dismissed from Roles", confirm: "1" }))).toEqual({ ok: true });
+  expect(await decide(job.id, null, "")).toEqual({ ok: true });
+  const [row] = await applicationsOf();
+  expect(row!.status).toBe("withdrawn");
+  expect(row!.history.map((entry) => entry.status)).toEqual(["applied", "withdrawn"]);
+});
+
+it("restores, on a group undo, only the applications the group's dismissal withdrew", async () => {
+  const { company, job } = await fixture();
+  const [other] = await moreRoles(company.id, 1);
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "applied", appliedOn: "2026-09-03", notes: "" }))).toEqual({ ok: true });
+  expect(await decideRoles([job.id, other!.id], "skip", "Not this quarter")).toEqual({ ok: true });
+  expect(await decideRoles([job.id, other!.id], null, "")).toEqual({ ok: true });
+  const rows = await applicationsOf();
+  expect(rows).toHaveLength(1);
+  expect(rows[0]!.status).toBe("applied");
+  expect(await activeDecisions(job.id)).toHaveLength(0);
+});
+
+it("withdraws and records the skip in one transaction, or neither", async () => {
+  const { job } = await fixture();
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "applied", appliedOn: "2026-09-03", notes: "" }))).toEqual({ ok: true });
+  // A decision that cannot be written takes the withdrawal back with it.
+  await database.execute(sql`create or replace function refuse_decisions() returns trigger language plpgsql as $$ begin raise exception 'refused'; end $$`);
+  await database.execute(sql`create trigger refuse_decisions before insert on decisions for each row execute function refuse_decisions()`);
+  try {
+    expect(await setRoleStage(job.id, { ok: true }, form({ status: "withdrawn", appliedOn: "2026-09-03", notes: "", confirm: "1" }))).toMatchObject({ ok: false });
+  } finally {
+    await database.execute(sql`drop trigger refuse_decisions on decisions`);
+    await database.execute(sql`drop function refuse_decisions()`);
+  }
+  expect((await applicationsOf())[0]!.status).toBe("applied");
+  expect(await activeDecisions(job.id)).toHaveLength(0);
+});
+
+it("repairs a withdrawn role that lost its skip when the unchanged form is saved again, and never skips twice", async () => {
+  const { job } = await fixture();
+  // What the old two-transaction save left behind when its second half failed.
+  await database.insert(schema.applications).values({
+    userId: user.id, jobId: job.id, jobTitle: job.title, companyName: "Acme", appliedOn: "2026-09-03", status: "withdrawn",
+    notes: "", history: [{ status: "withdrawn", at: "2026-09-03T09:00:00.000Z", notes: "" }],
+  });
+  await database.insert(schema.decisions).values({ userId: user.id, jobId: job.id, decision: "apply", reason: "", jobTitle: job.title, companyName: "Acme" });
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "withdrawn", appliedOn: "2026-09-03", notes: "" }))).toEqual({ ok: true });
+  expect((await activeDecisions(job.id)).map((row) => row.decision)).toEqual(["skip"]);
+  expect((await applicationsOf())[0]!.history).toHaveLength(1);
+
+  const tasksBefore = (await database.select().from(schema.tasks)).length;
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "withdrawn", appliedOn: "2026-09-03", notes: "Took another offer" }))).toEqual({ ok: true });
+  expect(await database.select().from(schema.decisions).where(eq(schema.decisions.jobId, job.id))).toHaveLength(2);
+  expect(await database.select().from(schema.tasks)).toHaveLength(tasksBefore);
+});
+
+it("queues filter suggestions when decisions cross a fifth, and not on a re-decision or an undo", async () => {
+  const { company, job } = await fixture();
+  const roles = [job, ...(await moreRoles(company.id, 11))];
+  for (const role of roles.slice(0, 4)) expect(await decide(role.id, "apply", "")).toEqual({ ok: true });
+  expect(await suggestFilterTasks()).toHaveLength(0);
+  // Four to eleven crosses five and ten: one task, as the account's dedupe key holds.
+  expect(await decideRoles(roles.slice(4, 11).map((role) => role.id), "apply", "")).toEqual({ ok: true });
+  expect(await suggestFilterTasks()).toHaveLength(1);
+  await database.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.type, "suggest_filters"));
+
+  // Undo eleven to ten, then re-decide at ten, then edit that decision: the count never rises.
+  expect(await decide(roles[10]!.id, null, "")).toEqual({ ok: true });
+  expect(await decide(roles[0]!.id, "skip", "Changed my mind")).toEqual({ ok: true });
+  expect(await decide(roles[0]!.id, "skip", "Changed my mind, and why")).toEqual({ ok: true });
+  expect(await decideRoles([roles[1]!.id, roles[2]!.id], null, "")).toEqual({ ok: true });
+  expect((await suggestFilterTasks()).filter((task) => task.status === "queued")).toHaveLength(0);
+  // Back up across ten again is a real crossing, and queues again.
+  expect(await decideRoles([roles[1]!.id, roles[2]!.id, roles[11]!.id], "apply", "")).toEqual({ ok: true });
+  expect((await suggestFilterTasks()).filter((task) => task.status === "queued")).toHaveLength(1);
+}, 120_000);
+
+it("refuses to record a submitted CV whose draft changed while its PDF was rendered", async () => {
+  const { job } = await fixture();
+  await saveLibrary();
+  await expect(requestCv({ ok: true }, form({ jobId: job.id, description: DESCRIPTION }))).rejects.toThrow("redirect:/cv/");
+  const [draft] = await database.select().from(schema.cvDrafts);
+  const content = { name: "Test Candidate", contact: "London", summary: "Operations leader", sections: [{ entryId: "one", kind: "experience" as const, heading: "Director · Acme", bullets: ["Led an operations team"] }], gaps: [] };
+  await database.update(schema.cvDrafts).set({ status: "ready", content }).where(eq(schema.cvDrafts.id, draft!.id));
+  await completeAssessment(draft!.id);
+
+  // Finalised again from another tab while this one rendered: the bytes in hand are not of that revision.
+  rendering.during = async () => {
+    await database.update(schema.cvDrafts).set({ finalisedAt: new Date(Date.now() + 1_000) }).where(eq(schema.cvDrafts.id, draft!.id));
+  };
+  expect(await recordApplication(draft!.id, { ok: true }, form({ appliedOn: "2026-09-06" }))).toEqual({
+    ok: false, error: "This CV changed while its PDF was being prepared. Record the application again.",
+  });
+  const [unchanged] = await applicationsOf();
+  expect(unchanged).toMatchObject({ status: "applying", pdfBase64: null });
+  // Assessed again from another tab while this one rendered: the same refusal.
+  rendering.during = async () => {
+    const [current] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft!.id));
+    await database.update(schema.cvDrafts).set({ assessment: { ...current!.assessment!, assessedAt: new Date(Date.now() + 2_000).toISOString() } }).where(eq(schema.cvDrafts.id, draft!.id));
+  };
+  expect(await recordApplication(draft!.id, { ok: true }, form({ appliedOn: "2026-09-06" }))).toEqual({
+    ok: false, error: "This CV changed while its PDF was being prepared. Record the application again.",
+  });
+  expect((await applicationsOf())[0]).toMatchObject({ status: "applying", pdfBase64: null });
+
+  // Pressed again, it renders the revision that is there now and records it.
+  rendering.during = null;
+  expect(await recordApplication(draft!.id, { ok: true }, form({ appliedOn: "2026-09-06" }))).toEqual({ ok: true });
 });

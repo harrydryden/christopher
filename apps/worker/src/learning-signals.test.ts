@@ -17,9 +17,11 @@ import {
   handleReevaluateGate,
   handleRescoreAll,
   handleScoreJob,
+  handleTagReason,
   handleSuggestFilters,
   handleSynthesizeProfile,
   REJECTED_SUGGESTION_TTL_MS,
+  RESCORE_INTERVAL_MS,
 } from "./handlers/learning";
 import { handleSuggestFromScans } from "./handlers/suggest-from-scans";
 import { ensureTestUser } from "./test-users";
@@ -126,6 +128,58 @@ it("names every outcome of a scoring attempt on the view the table reads", async
   expect(scoreJob).toHaveBeenCalledTimes(1);
 });
 
+it("scores a role on the confirmed evidence that bears on it, bounded, never on the whole library", async () => {
+  const scoreJob = vi.fn().mockResolvedValue({ score: 70, verdict: "strong", rationale: "Fits." });
+  const scored = aiDeps({ scoreJob });
+  const { job } = await seedRole();
+  const row = (text: string) => `${text} `.repeat(12).trim();
+  const library = (hobby: string) => ({
+    name: "Candidate", contact: "", profile: "Operations leader",
+    entries: [
+      ...Array.from({ length: 60 }, (_, index) => ({
+        id: `design${index}`, kind: "experience" as const, heading: `Brand designer ${index}`,
+        details: row(`Designed identity ${index}`), confirmedResponsibilities: [row(`Designed identity ${index}`)],
+      })),
+      { id: "ops", kind: "experience" as const, heading: "Operations Manager", details: "Ran operations for a 40-person warehouse\nNot confirmed yet",
+        confirmedResponsibilities: ["Ran operations for a 40-person warehouse"] },
+      { id: "hobby", kind: "interest" as const, heading: "Interests", details: hobby },
+    ],
+  });
+  await db.insert(schema.cvLibraries).values({ userId, version: 1, content: library("Sailing") });
+  await handleScoreJob(task({ userId, jobId: job.id }), scored);
+  const input = scoreJob.mock.calls[0]![0] as { profileMarkdown: string; evidence: string };
+  // The library no longer rides along inside the profile.
+  expect(input.profileMarkdown).not.toContain("Designed identity");
+  // The operations evidence leads, confirmed rows only, and the whole of it fits a fixed bound.
+  expect(input.evidence.split("\n").slice(0, 2)).toEqual(["Operations Manager (experience)", "- Ran operations for a 40-person warehouse"]);
+  expect(input.evidence).not.toContain("Not confirmed yet");
+  expect(input.evidence.length).toBeLessThanOrEqual(8_100);
+  expect(input.evidence).toContain("(more evidence not shown)");
+
+  // An edit to evidence this role never sees leaves its inputs, and so its score, alone.
+  await db.insert(schema.cvLibraries).values({ userId, version: 2, content: library("Sailing and climbing") });
+  expect(await handleScoreJob(task({ userId, jobId: job.id }), scored)).toEqual({ skipped: "scoring inputs unchanged" });
+  expect(scoreJob).toHaveBeenCalledTimes(1);
+});
+
+it("skips a score whose own hold the account's budget refuses, and finishes rather than failing", async () => {
+  // The real shared engine and its per-call hold, with a client that must never be asked.
+  const create = vi.fn();
+  const engine = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0, aiClient: { messages: { create } } });
+  try {
+    const { job } = await seedRole();
+    await db.insert(schema.userSettings).values({ userId, key: "aiBudgetUsd", value: 1 });
+    // Less than a cent left: past the pre-check, which sees room, and short of what one A5 call holds.
+    await db.insert(schema.aiCalls).values({ userId, callSite: "A5", model: "fixture", costUsd: 0.9921875, at: now });
+    const withRealEngine = { ...engine, assertOwnership: undefined } as WorkerDeps;
+    expect(await handleScoreJob(task({ userId, jobId: job.id }), withRealEngine)).toEqual({ skipped: "account ai budget exceeded" });
+    expect(await viewOf(job.id)).toMatchObject({ scoreState: "budget" });
+    expect(create).not.toHaveBeenCalled();
+  } finally {
+    await engine.close();
+  }
+});
+
 it("marks a view queued in the statement that queues its score, from the gate and from a rescore", async () => {
   await setGate({});
   const { job } = await seedRole({ view: false });
@@ -141,7 +195,7 @@ it("marks a view queued in the statement that queues its score, from the gate an
   // A new profile version re-scores everything in the table, and every row says it is waiting.
   await db.update(schema.userJobs).set({ scoreState: "scored", fitScore: 60 });
   await db.execute(sql`truncate tasks`);
-  expect(await handleRescoreAll({ payload: { userId }, type: "rescore_all", attempts: 1 } as never, deps)).toEqual({ queued: 1 });
+  expect(await handleRescoreAll({ payload: { userId }, type: "rescore_all", attempts: 1 } as never, deps)).toMatchObject({ queued: 1 });
   expect((await viewOf(job.id)).scoreState).toBe("queued");
 });
 
@@ -243,4 +297,128 @@ it("offers a term from the scans again once its rejection has expired", async ()
   await reject(new Date(now.getTime() - REJECTED_SUGGESTION_TTL_MS - 86_400_000));
   await handleSuggestFromScans(fromScans, deps);
   expect((await filed()).filter(row => row.term === taken.term)).toHaveLength(2); // the expired rejection and a fresh proposal
+});
+
+// --- A7: resynthesis counts what changed since the last version ----------------------------
+
+/** `count` active decisions on roles of their own, made `at`, and the profile they are counted against. */
+async function seedDecisions(count: number, at: Date, offset = 0) {
+  const [company] = await db.insert(schema.companies).values({ name: `Many ${offset}`, domain: `many${offset}.test`, homepageUrl: `https://many${offset}.test` }).returning();
+  const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: `https://many${offset}.test/jobs` }).returning();
+  const jobs = await db.insert(schema.jobs).values(Array.from({ length: count }, (_, index) => ({
+    companyId: company!.id, sourceId: source!.id, externalKey: `id:${offset + index}`, title: `Role ${offset + index}`,
+    normalizedTitle: `role ${offset + index}`, url: `https://many${offset}.test/jobs/${index}`, status: "open" as const,
+  }))).returning({ id: schema.jobs.id });
+  return db.insert(schema.decisions).values(jobs.map(job => ({
+    userId, jobId: job.id, decision: "skip" as const, reason: "Not for me", jobTitle: "Role", companyName: "Many", createdAt: at,
+  }))).returning();
+}
+
+it("resynthesises an account past 500 decisions once five more are made, and counts a changed one", async () => {
+  await seedDecisions(520, daysAgo(30));
+  await db.insert(schema.preferenceProfiles).values({ userId, version: 1, markdown: "## Target roles\nOps", sourceDecisionCount: 500, generatedAt: daysAgo(20) });
+  const synthesizeProfile = vi.fn().mockResolvedValue({ markdown: "## Target roles\nOperations", openQuestions: [] });
+  const run = () => handleSynthesizeProfile({ payload: { userId }, type: "synthesize_profile", attempts: 1 } as never, aiDeps({ synthesizeProfile }));
+
+  // Three since the last version: not yet.
+  const recent = await seedDecisions(3, daysAgo(1), 1000);
+  expect(await run()).toEqual({ skipped: "only 3 new decisions" });
+  // Two minds changed: the old rows are superseded, the new ones count.
+  const [changed] = await db.update(schema.decisions).set({ superseded: true }).where(eq(schema.decisions.id, recent[0]!.id)).returning();
+  await db.insert(schema.decisions).values({ userId, jobId: changed!.jobId, decision: "apply", reason: "On reflection", jobTitle: "Role", companyName: "Many", createdAt: daysAgo(0.5) });
+  await seedDecisions(2, daysAgo(0.5), 2000);
+  // The old count of rows read (capped at 500) never moved past the stored 500; the real one does.
+  expect(await run()).toEqual({ version: 2, decisions: 525 });
+  expect(synthesizeProfile).toHaveBeenCalledTimes(1);
+  const [latest] = await db.select().from(schema.preferenceProfiles).where(eq(schema.preferenceProfiles.version, 2));
+  expect(latest!.sourceDecisionCount).toBe(525);
+  // A new version with new wording queues a rescore.
+  expect((await db.select().from(schema.tasks)).map(row => row.type)).toEqual(["rescore_all"]);
+});
+
+it("queues no rescore for a synthesis that wrote the profile it already had", async () => {
+  await db.insert(schema.preferenceProfiles).values({ userId, version: 1, markdown: "## Target roles\nOps", generatedAt: daysAgo(20) });
+  await db.insert(schema.userSettings).values({ userId, key: "seedProfile", value: "Operations." });
+  const synthesizeProfile = vi.fn().mockResolvedValue({ markdown: "## Target roles\nOps", openQuestions: [] });
+  await handleSynthesizeProfile({ payload: { userId, force: true }, type: "synthesize_profile", attempts: 1 } as never, aiDeps({ synthesizeProfile }));
+  expect(await db.select().from(schema.tasks)).toEqual([]);
+});
+
+// --- Rescore fan-out: once an hour at most, and not at all for unchanged inputs -------------
+
+it("rescores an account's roles at most once an hour, and not at all when nothing it scores from changed", async () => {
+  await setGate({});
+  await seedRole();
+  const rescore = { payload: { userId, onlyInTable: true }, type: "rescore_all", attempts: 1 } as never;
+  const finish = async (result: unknown, finishedAt: Date) => {
+    await db.insert(schema.tasks).values({ type: "rescore_all", payload: { userId, onlyInTable: true }, status: "done", result, finishedAt });
+  };
+  const first = await handleRescoreAll(rescore, deps) as { queued: number; inputsHash: string };
+  expect(first.queued).toBe(1);
+  await db.execute(sql`truncate tasks`);
+  await finish(first, daysAgo(0.01));
+
+  // Nothing it scores from has changed: no pass at all.
+  expect(await handleRescoreAll(rescore, deps)).toEqual({ skipped: "scoring inputs unchanged since the last rescore" });
+
+  // The profile changed a quarter of an hour after the last pass: one pass, at the end of the hour.
+  await db.insert(schema.preferenceProfiles).values({ userId, version: 1, markdown: "## Target roles\nLogistics", generatedAt: now });
+  const deferred = await handleRescoreAll(rescore, deps) as { skipped: string; retryAt: string };
+  expect(deferred.skipped).toBe("rescored within the hour");
+  expect(new Date(deferred.retryAt).getTime()).toBe(daysAgo(0.01).getTime() + RESCORE_INTERVAL_MS);
+  // A second save inside the hour coalesces into the same deferred pass.
+  await handleRescoreAll(rescore, deps);
+  const queued = await db.select().from(schema.tasks).where(eq(schema.tasks.status, "queued"));
+  expect(queued).toHaveLength(1);
+  expect(queued[0]!.runAfter.toISOString()).toBe(deferred.retryAt);
+  expect(queued.filter(row => row.type === "score_job")).toHaveLength(0);
+
+  // Past the hour, the changed profile is rescored.
+  await db.execute(sql`truncate tasks`);
+  await finish(first, daysAgo(1));
+  expect(await handleRescoreAll(rescore, deps)).toMatchObject({ queued: 1 });
+});
+
+// --- A8: suggestions a person can act on, and never the same one twice ----------------------
+
+it("files a pause for a followed company by its id, and never files a term the scans already filed", async () => {
+  const { company, job } = await seedRole();
+  await db.insert(schema.decisions).values({ userId, jobId: job.id, decision: "skip", reason: "Not Acme again", jobTitle: "Operations Manager", companyName: "Acme" });
+  await db.insert(schema.filterSuggestions).values({ userId, type: "keyword_include", value: { term: "strateg*", source: "scans" }, status: "pending" });
+  const suggestFilters = vi.fn().mockImplementation(async (input: { companies: Array<{ id: string; name: string }> }) => [
+    { type: "pause_company", value: { companyId: input.companies[0]!.id, companyName: "Acme" }, rationale: "Skipped twice.", evidence: [] },
+    { type: "keyword_include", value: { term: "Strateg*" }, rationale: "Already pending.", evidence: [] },
+  ]);
+  expect(await handleSuggestFilters({ payload: { userId }, type: "suggest_filters", attempts: 1 } as never, aiDeps({ suggestFilters }))).toEqual({ suggestions: 1 });
+  expect((suggestFilters.mock.calls[0]![0] as { companies: unknown }).companies).toEqual([{ id: company.id, name: "Acme" }]);
+  const filed = await db.select().from(schema.filterSuggestions).where(eq(schema.filterSuggestions.type, "pause_company"));
+  expect(filed.map(row => row.value)).toEqual([{ companyId: company.id, companyName: "Acme" }]);
+
+  // A paused company is not offered to be paused again.
+  await db.update(schema.companySubscriptions).set({ status: "paused" });
+  const again = vi.fn().mockResolvedValue([]);
+  await handleSuggestFilters({ payload: { userId }, type: "suggest_filters", attempts: 1 } as never, aiDeps({ suggestFilters: again }));
+  expect((again.mock.calls[0]![0] as { companies: unknown }).companies).toEqual([]);
+});
+
+it("writes a reason's tags behind the task's fence", async () => {
+  const { job } = await seedRole();
+  const [decision] = await db.insert(schema.decisions).values({ userId, jobId: job.id, decision: "skip", reason: "Too junior", jobTitle: "Operations Manager", companyName: "Acme" }).returning();
+  const tagReason = vi.fn().mockResolvedValue({ tags: ["seniority:too_junior"], proposedNewTags: [] });
+  const fenced = { ...aiDeps({ tagReason }), assertOwnership: async () => { throw new Error("Task lease lost; refusing stale writes"); } } as WorkerDeps;
+  await expect(handleTagReason({ payload: { decisionId: decision!.id }, type: "tag_reason", attempts: 1 } as never, fenced)).rejects.toThrow("lease lost");
+  const [after] = await db.select().from(schema.decisions).where(eq(schema.decisions.id, decision!.id));
+  expect(after!.tags).toEqual([]);
+});
+
+it("brings a shortlisted role's waiting score up to the shortlist's priority", async () => {
+  const { job } = await seedRole();
+  await db.insert(schema.decisions).values({ userId, jobId: job.id, decision: "apply", reason: "Keen", jobTitle: "Operations Manager", companyName: "Acme" });
+  // A background score for the role is already waiting at the ordinary priority.
+  const payload = { userId, jobId: job.id };
+  await db.insert(schema.tasks).values({ type: "score_job", payload, dedupeKey: `score_job:${userId}:${job.id}`, priority: 5 });
+  await handleRescoreAll({ payload: { userId, onlyInTable: true }, type: "rescore_all", attempts: 1 } as never, deps);
+  const scores = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"));
+  expect(scores).toHaveLength(1);
+  expect(scores[0]!.priority).toBe(1);
 });

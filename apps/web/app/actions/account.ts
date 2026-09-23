@@ -7,9 +7,9 @@ import { z } from "zod";
 import { MAX_ACCOUNT_AI_BUDGET_USD, passwordProblem } from "@ava/core";
 import { companySubscriptions, cvDrafts, users, sessions, type UserRole } from "@ava/db/schema";
 import { isPlaceholderEmail } from "@ava/db";
-import { changePassword as changeStoredPassword, issueResetLink, sendVerificationEmail } from "@/lib/accounts";
+import { changePassword as changeStoredPassword, deleteAccount, issueResetLink, sendVerificationEmail } from "@/lib/accounts";
 import { emailLinkOrigin } from "@/lib/origin";
-import { clientAddress, endAllSessions, endOtherSessions, getCurrentUser, requireAdmin, requireUser } from "@/lib/auth";
+import { clientAddress, endOtherSessions, getCurrentUser, requireAdmin, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { clearAttempts, LIMITS, reserveRateLimits } from "@/lib/rate-limit";
 import { setUserSetting } from "@/lib/settings";
@@ -103,12 +103,10 @@ export async function setUserRole(userId: string, role: UserRole): Promise<void>
 }
 
 /** Administrators: remove another account and everything it owns. Shared companies and postings stay. */
+/** Administrators: remove an account. `deleteAccount` holds the lock that keeps one administrator. */
 export async function deleteUser(userId: string): Promise<void> {
   const admin = await requireAdmin();
-  const id = zUuid().parse(userId);
-  if (id === admin.id) throw new UserFacingError("You cannot delete your own account here.");
-  await endAllSessions(id);
-  await db().delete(users).where(eq(users.id, id));
+  await deleteAccount(admin.id, zUuid().parse(userId));
   revalidatePath("/admin");
 }
 
@@ -128,8 +126,9 @@ export async function createResetLink(_prev: ActionResult, form: FormData): Prom
  * or not they were later archived; "companies" counts the boards the account still follows, which
  * is what an archived subscription stops being.
  */
-export async function listAccounts() {
+export async function listAccounts(page = 1, perPage = 50) {
   await requireAdmin();
+  const size = Math.max(1, Math.min(perPage, 200));
   return db().select({
     id: users.id, email: users.email, name: users.name, role: users.role, claimedAt: users.claimedAt, emailVerifiedAt: users.emailVerifiedAt,
     createdAt: users.createdAt, lastLoginAt: users.lastLoginAt,
@@ -138,7 +137,14 @@ export async function listAccounts() {
     sessions: sql<number>`(select count(*) from ${sessions} s where s.user_id = ${users}.id and s.expires_at > now())::int`,
     cvsProduced: sql<number>`(select count(*) from ${cvDrafts} cv where cv.user_id = ${users}.id and cv.status = 'ready')::int`,
     companies: sql<number>`(select count(*) from ${companySubscriptions} sub where sub.user_id = ${users}.id and sub.status <> 'archived')::int`,
-  }).from(users).orderBy(asc(users.createdAt));
+  }).from(users).orderBy(asc(users.createdAt), asc(users.id)).limit(size).offset((Math.max(1, page) - 1) * size);
+}
+
+/** How many accounts there are, for the pages above. */
+export async function accountCount(): Promise<number> {
+  await requireAdmin();
+  const [row] = await db().select({ n: sql<number>`count(*)::int` }).from(users);
+  return row?.n ?? 0;
 }
 
 /** A budget is money, so it is bounded on the way in as well as on the way out of settings. */

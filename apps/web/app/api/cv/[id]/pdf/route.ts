@@ -4,6 +4,7 @@ import { routeUser } from "@/lib/route-auth";
 import { getOwnCvDraft } from "@/lib/queries/cv";
 import { zUuid } from "@/lib/validation";
 import { renderCvPdf, renderCvPdfWithReport, CvLayoutError } from "@/lib/cv-pdf";
+import { refuseCvRender } from "@/lib/cv-render-limit";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -30,6 +31,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       );
     }
   }
+  const refused = await refuseCvRender(user.id);
+  if (refused) return refused;
   let pdf: Buffer;
   try {
     const content = CvContentSchema.parse(draft.content);

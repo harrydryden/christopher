@@ -10,7 +10,9 @@ import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import { actionCvs, enqueueTask, failOpenCvBuildSteps, listCvBuildSteps, schema, startCvBuildStep, type Db } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { InternalServerError, RateLimitError, type AiClientLike, type ParseResponse } from "@ava/ai";
-import { DEFAULT_CV_THEME } from "@ava/core/cv";
+import { DEFAULT_CV_THEME, materialiseCv } from "@ava/core/cv";
+import { createCvAssessment } from "@ava/core/cv-review";
+import { cvClaimItems, cvEvidenceItems, cvTextItems } from "@ava/core/cv-assessment";
 import type { CvBuildFailure, CvBuildStepView } from "@ava/core";
 import { dedupeKeyFor } from "@ava/core";
 import { eq, sql } from "drizzle-orm";
@@ -422,6 +424,36 @@ it("re-assesses a saved CV after a failed batch without paying for the rubric or
   const spentOnWriting = await db.execute<{ total: number }>(sql`select coalesce(sum(cost_usd::float8), 0) as total from ai_calls where stage in ('rubric', 'author')`);
   expect(Number(spentOnRetry.rows[0]!.total)).toBeGreaterThan(0);
   expect(Number(spentOnWriting.rows[0]!.total)).toBeGreaterThan(0);
+});
+
+it("publishes the saved baseline of a build stopped during its improvement, without assessing it again", async () => {
+  // The first attempt wrote, assessed and saved its baseline, set the one-shot fence, and was then
+  // interrupted while the optional improvement was being written.
+  const content = materialiseCv(library, plan);
+  const rubric = rubricFixture("Lead a team");
+  const assessment = createCvAssessment({
+    content, description: "Lead a team", library, rubric, model: "claude-sonnet-5", pageCount: 1,
+    review: reviewFixture({ rubric, cv: cvTextItems(content), claims: cvClaimItems(content), evidence: cvEvidenceItems(library) }),
+  });
+  const draft = await makeDraft({
+    status: "generating", content, assessment,
+    buildCheckpoint: { rubric, rubricAt: "2026-09-01T00:00:00.000Z", contentAt: "2026-09-01T00:01:00.000Z", improvementAttempted: true, tailoringEnabled: true, quizCompleted: true, attempt: 1 },
+  });
+  const scripted = scriptedClient();
+  deps.aiClient = scripted.client;
+  await db.update(schema.tasks).set({ attempts: 1 });
+
+  await queueFor().drain();
+
+  const published = await draftAfter(draft.id);
+  expect(published.status).toBe("ready");
+  expect(published.assessment).toEqual(assessment);
+  // Nothing was asked of a model, and nothing was held for it.
+  expect(scripted.calls).toEqual([]);
+  expect(await aiCallsByStage()).toEqual({});
+  const admit = (await steps(draft.id)).find(row => row.motion === "admit_budget")!;
+  expect(admit.detail.expectedUsd).toBe(0);
+  expect((await steps(draft.id)).some(row => row.motion === "assess_batch")).toBe(false);
 });
 
 it("closes the narrative of a build whose worker died, with the taxonomy the page reads", async () => {

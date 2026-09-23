@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
 /** Streams in beside the table rather than holding it back for one more round trip. */
 async function WorkNotice({ userId }: { userId: string }) {
   const work = await getCompanyWorkStatus(userId);
-  return work.active ? <AutoRefresh message="Scans, discovery or filter updates are pending. Results update as work completes." /> : null;
+  return work.active ? <AutoRefresh scope="company" initialVersion={work.version} message="Scans, discovery or filter updates are pending. Results update as work completes." /> : null;
 }
 
 /** At most this many terms on one line; the Learning card carries the rest with their evidence. */

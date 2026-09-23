@@ -3,23 +3,38 @@ import type { ScanRun } from "@ava/db/schema";
 import { db } from "./db";
 
 /**
- * The banner is read on every server render and again every 30 seconds in every open tab, and the
- * numbers only move when a scan finishes, so one account's summary of one run is held briefly
- * rather than recomputed per render. Nothing but counts is cached, and a stale count is at most
- * half a minute old.
+ * The banner is read on every server render and again by every open tab while a run is in
+ * progress, and the numbers only move when a scan finishes, so one account's summary of one run is
+ * held briefly rather than recomputed per render. Nothing but counts is cached, and a stale count
+ * is at most half a minute old.
+ *
+ * The entries are small and an instance can serve many accounts in half a minute, so the cache
+ * keeps the most recently used thousand and drops the least recently used one at a time: an
+ * instance busier than its bound still serves its recent accounts from memory, where emptying the
+ * whole map would serve none of them.
  */
 const TTL_MS = 30_000;
-const MAX_ENTRIES = 200;
+export const MAX_ENTRIES = 1000;
 const cache = new Map<string, { at: number; summary: ScanRunSummary }>();
 
 const keyFor = (runId: string, userId?: string) => `${runId}|${userId ?? ""}`;
 
+/** A fresh entry, moved to the most recently used end; a stale one is dropped. */
+function recall(key: string, now: number): ScanRunSummary | undefined {
+  const entry = cache.get(key);
+  if (!entry) return undefined;
+  cache.delete(key);
+  if (now - entry.at >= TTL_MS) return undefined;
+  cache.set(key, entry);
+  return entry.summary;
+}
+
 function remember(runId: string, userId: string | undefined, summary: ScanRunSummary, now: number): void {
-  if (cache.size >= MAX_ENTRIES) {
-    for (const [key, entry] of cache) if (now - entry.at >= TTL_MS) cache.delete(key);
-    if (cache.size >= MAX_ENTRIES) cache.clear();
-  }
-  cache.set(keyFor(runId, userId), { at: now, summary });
+  const key = keyFor(runId, userId);
+  // A map iterates in insertion order, so deleting before setting keeps the oldest entry first.
+  cache.delete(key);
+  cache.set(key, { at: now, summary });
+  while (cache.size > MAX_ENTRIES) cache.delete(cache.keys().next().value!);
 }
 
 /** Tests and anything that has just written a scan result read through to the database again. */
@@ -45,8 +60,8 @@ function report(run: ScanRun, summary: ScanRunSummary, userId?: string) {
 /** A run is shared; with a `userId` the counts cover only the companies that account follows. */
 export async function scanRunReport(run: ScanRun, userId?: string) {
   const now = Date.now();
-  const cached = cache.get(keyFor(run.id, userId));
-  if (cached && now - cached.at < TTL_MS) return report(run, cached.summary, userId);
+  const cached = recall(keyFor(run.id, userId), now);
+  if (cached) return report(run, cached, userId);
   const summary = (await scanRunSummaries(db(), [run.id], userId)).get(run.id)!;
   remember(run.id, userId, summary, now);
   return report(run, summary, userId);

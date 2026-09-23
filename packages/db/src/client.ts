@@ -11,6 +11,22 @@ export interface CreateDbOptions {
   ssl?: "disable" | "require" | "verify";
 }
 
+/**
+ * Whether a connection string names Render's PgBouncer endpoint, which pools by transaction: port
+ * 6432 on a Render database host, in the address or as a `port` parameter. Parsed without logging
+ * anything, because the string carries the password.
+ */
+export function isRenderPooledUrl(connectionString: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(connectionString);
+  } catch {
+    return false;
+  }
+  const port = url.searchParams.get("port") ?? url.port;
+  return (url.hostname.startsWith("dpg-") || url.hostname.endsWith(".render.com")) && port === "6432";
+}
+
 function sslFor(connectionString: string, opt?: CreateDbOptions["ssl"]) {
   const mode = opt ?? (process.env.DATABASE_SSL as CreateDbOptions["ssl"] | undefined) ?? inferSsl(connectionString);
   if (mode === "disable") return undefined;

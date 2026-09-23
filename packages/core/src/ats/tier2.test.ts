@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createFakeFetchContext } from "../testing";
+import { IncompleteListingError } from "../types";
 import * as fx from "../fixtures";
 import { getAdapter, isAtsHost, specFromAnyUrl } from "./registry";
 import { eightfoldSpec, icimsSpec, jazzhrSpec, jobviteSpec, ripplingSpec, successfactorsSpec, teamtailorSpec } from "./tier2";
@@ -129,5 +130,59 @@ describe("jazzhr", () => {
   });
   it("treats a page with no listing markers as a parse failure, never an empty scan", async () => {
     await expect(getAdapter("jazzhr").fetchPostings(jazzhrSpec("blank"), ctx)).rejects.toThrow(/listing markers/);
+  });
+});
+
+describe("tier-2 page budgets", () => {
+  it("reports a listing the page budget stops while pages still add roles as incomplete", async () => {
+    const page = (n: number) => `<body data-controller="teamtailor"><ul id="jobs_list_container"><li><a href="/jobs/${9000 + n}-role-${n}"><span>Role ${n}</span></a></li></ul></body>`;
+    const routes = Object.fromEntries(Array.from({ length: 201 }, (_, i) => [i === 0 ? "https://big.teamtailor.com/jobs" : `https://big.teamtailor.com/jobs?page=${i + 1}`, { body: page(i) }]));
+    const error = await getAdapter("teamtailor").fetchPostings(teamtailorSpec("https://big.teamtailor.com", "big"), createFakeFetchContext({ routes })).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(IncompleteListingError);
+    expect((error as IncompleteListingError).postings).toHaveLength(200);
+  });
+
+  it("verifies from the first page alone", async () => {
+    const one = createFakeFetchContext({ routes: {
+      "https://acme.teamtailor.com/jobs": { body: fx.TEAMTAILOR_PAGE_1 },
+      "https://acme.teamtailor.com/jobs?page=2": { body: fx.TEAMTAILOR_PAGE_2 },
+    } });
+    expect(await getAdapter("teamtailor").verify(teamtailorSpec("https://acme.teamtailor.com", "acme"), one)).toMatchObject({ ok: true, count: 2 });
+    expect(one.requestLog).toHaveLength(1);
+  });
+
+  it("pages SuccessFactors by the page size the tenant states", async () => {
+    const rows = (from: number, n: number) => Array.from({ length: n }, (_, i) => `<tr><td><a class="jobTitle-link" href="/job/Role-${from + i}/${7000 + from + i}/">Role ${from + i}</a></td></tr>`).join("");
+    const label = (from: number, to: number) => `<span class="paginationLabel">Results ${from} – ${to} of 23</span>`;
+    const tenant = createFakeFetchContext({ routes: {
+      "https://career2.successfactors.eu/small/search/?q=&startrow=0": { body: `<table>${label(1, 10)}${rows(0, 10)}</table>` },
+      "https://career2.successfactors.eu/small/search/?q=&startrow=10": { body: `<table>${label(11, 20)}${rows(10, 10)}</table>` },
+      "https://career2.successfactors.eu/small/search/?q=&startrow=20": { body: `<table>${label(21, 23)}${rows(20, 3)}</table>` },
+      "https://career2.successfactors.eu/small/search/?q=&startrow=30": { body: `<table>${label(31, 30)}</table>` },
+    } });
+    // Stepping by a fixed 25 skipped rows 11 to 25 on a tenant that shows ten a page.
+    const postings = await getAdapter("successfactors").fetchPostings(successfactorsSpec("https://career2.successfactors.eu/small", "small"), tenant);
+    expect(postings).toHaveLength(23);
+  });
+
+  it("reads only career sites as SuccessFactors boards", () => {
+    expect(specFromAnyUrl("https://performancemanager4.successfactors.com/login?company=acme")).toBeNull();
+    expect(specFromAnyUrl("https://www.successfactors.com/")).toBeNull();
+    expect(specFromAnyUrl("https://career10.successfactors.com/career?company=acme")?.type).toBe("successfactors");
+  });
+
+  it("keeps reading Eightfold pages when the feed gives no count", async () => {
+    const positions = (from: number, n: number) => Array.from({ length: n }, (_, i) => ({ id: from + i, name: `Role ${from + i}` }));
+    const board = createFakeFetchContext({ routes: {
+      "https://acme.eightfold.ai/api/apply/v2/jobs?domain=acme.com&start=0&num=100": { body: { positions: positions(0, 100) } },
+      "https://acme.eightfold.ai/api/apply/v2/jobs?domain=acme.com&start=100&num=100": { body: { positions: positions(100, 30) } },
+    } });
+    const spec = eightfoldSpec("acme.eightfold.ai", "acme.com");
+    expect(await getAdapter("eightfold").fetchPostings(spec, board)).toHaveLength(130);
+    const counted = createFakeFetchContext({ routes: {
+      "https://acme.eightfold.ai/api/apply/v2/jobs?domain=acme.com&start=0&num=100": { body: { count: 730, positions: positions(0, 100) } },
+    } });
+    expect(await getAdapter("eightfold").verify(spec, counted)).toMatchObject({ ok: true, count: 730 });
+    expect(counted.requestLog).toHaveLength(1);
   });
 });

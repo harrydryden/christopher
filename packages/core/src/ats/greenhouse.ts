@@ -1,6 +1,6 @@
 import { IncompleteListingError, type Adapter, type FetchContext, type RawPosting, type SourceSpec } from "../types";
 import { parseDate } from "../normalize";
-import { fetchJson, htmlToText, joinLocation, pathSegments, rec, safeUrl, slugOk, str, verifyFromFetch, MAX_POSTINGS } from "./common";
+import { fetchJson, htmlToText, joinLocation, pathSegments, rec, safeUrl, slugOk, str, verifyFromRead, MAX_POSTINGS } from "./common";
 
 const API = "https://boards-api.greenhouse.io/v1/boards";
 const EU_API = "https://boards-api.eu.greenhouse.io/v1/boards";
@@ -20,34 +20,44 @@ const LIST_MAX_BYTES = 8_000_000;
 const INDEX_MAX_BYTES = 4_000_000;
 const DETAIL_MAX_BYTES = 2_000_000;
 
-export function greenhouseSpec(slug: string): SourceSpec {
-  return { type: "greenhouse", url: `https://job-boards.greenhouse.io/${slug}`, apiUrl: `${API}/${slug}/jobs`, atsSlug: slug };
+/**
+ * A board hosted in Greenhouse's EU region is served by the EU board API for every call; the US
+ * API does not know it. `atsSite: "eu"` keeps the two regions' boards of one slug apart.
+ */
+export function greenhouseSpec(slug: string, eu = false): SourceSpec {
+  return eu
+    ? { type: "greenhouse", url: `https://job-boards.eu.greenhouse.io/${slug}`, apiUrl: `${EU_API}/${slug}/jobs`, atsSlug: slug, atsSite: "eu" }
+    : { type: "greenhouse", url: `https://job-boards.greenhouse.io/${slug}`, apiUrl: `${API}/${slug}/jobs`, atsSlug: slug };
 }
 
 /** Sources stored against the EU host keep using it; everything else is the default board API. */
 function apiBase(spec: SourceSpec): string {
   const host = spec.apiUrl ? safeUrl(spec.apiUrl)?.hostname.toLowerCase() : undefined;
-  return host === "boards-api.eu.greenhouse.io" ? EU_API : API;
+  return host === "boards-api.eu.greenhouse.io" || spec.atsSite === "eu" ? EU_API : API;
 }
 
-function slugFromUrl(url: string): string | null {
+/**
+ * The board a URL names. `grnh.se` short links are not read: their path is an opaque code, not a
+ * slug, and discovery follows such a link to the board it redirects to instead.
+ */
+function boardFromUrl(url: string): { slug: string; eu: boolean } | null {
   const u = safeUrl(url);
   if (!u) return null;
   const host = u.hostname.toLowerCase();
+  const eu = host.endsWith(".eu.greenhouse.io");
   const segs = pathSegments(u);
   if (host === "boards.greenhouse.io" || host === "job-boards.greenhouse.io" || host === "boards.eu.greenhouse.io" || host === "job-boards.eu.greenhouse.io") {
     if (segs[0] === "embed") {
       const forParam = u.searchParams.get("for");
-      return slugOk(forParam) ? forParam : null;
+      return slugOk(forParam) ? { slug: forParam, eu } : null;
     }
-    return slugOk(segs[0]) ? segs[0] : null;
+    return slugOk(segs[0]) ? { slug: segs[0], eu } : null;
   }
   if (host === "boards-api.greenhouse.io" || host === "boards-api.eu.greenhouse.io") {
     // /v1/boards/{slug}/...
-    if (segs[0] === "v1" && segs[1] === "boards" && slugOk(segs[2])) return segs[2];
+    if (segs[0] === "v1" && segs[1] === "boards" && slugOk(segs[2])) return { slug: segs[2], eu };
     return null;
   }
-  if (host === "grnh.se") return slugOk(segs[0]) ? segs[0] : null;
   return null;
 }
 
@@ -164,13 +174,30 @@ function mapJob(j: GhJob, extraDepartments: string[] = [], extraOffices: string[
   };
 }
 
-async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
+/** The board's job list, without descriptions, and the board's own count of its roles. */
+async function listJobs(spec: SourceSpec, ctx: FetchContext): Promise<{ jobs: GhJob[]; total?: number; base: string; slug: string }> {
   const slug = spec.atsSlug;
   if (!slug) throw new Error("greenhouse spec missing slug");
   const base = apiBase(spec);
   const { data } = await fetchJson<{ jobs?: GhJob[]; meta?: { total?: number } }>(ctx, `${base}/${slug}/jobs`, { maxBodyBytes: LIST_MAX_BYTES, timeoutMs: 60_000 });
   if (!Array.isArray(data.jobs)) throw new Error("Greenhouse response is missing its jobs array");
   if (data.jobs.length > MAX_POSTINGS) throw new Error(`Greenhouse board exceeds the ${MAX_POSTINGS}-role processing limit`);
+  return { jobs: data.jobs, total: typeof data.meta?.total === "number" ? data.meta.total : undefined, base, slug };
+}
+
+function mapJobs(jobs: GhJob[], departments?: NamesByJob, offices?: NamesByJob): RawPosting[] {
+  const postings = jobs
+    .map((job) => {
+      const id = str(job.id);
+      return mapJob(job, id ? departments?.get(id) : undefined, id ? offices?.get(id) : undefined);
+    })
+    .filter((p): p is RawPosting => !!p);
+  if (postings.length !== jobs.length) throw new Error("Greenhouse response contains invalid roles; refusing an incomplete reconciliation");
+  return postings;
+}
+
+async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
+  const { jobs, total, base, slug } = await listJobs(spec, ctx);
   // Department and office are what a gate matching on department needs, and neither request is
   // required: a board that does not answer them is listed without them rather than not at all.
   const empty: NamesByJob = new Map();
@@ -178,20 +205,19 @@ async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPo
     departmentsByJob(base, slug, ctx).catch((): NamesByJob => empty),
     officesByJob(base, slug, ctx).catch((): NamesByJob => empty),
   ]);
-  const postings = data.jobs
-    .map((job) => {
-      const id = str(job.id);
-      return mapJob(job, id ? departments.get(id) : undefined, id ? offices.get(id) : undefined);
-    })
-    .filter((p): p is RawPosting => !!p);
-  if (postings.length !== data.jobs.length) throw new Error("Greenhouse response contains invalid roles; refusing an incomplete reconciliation");
+  const postings = mapJobs(jobs, departments, offices);
   // `meta.total` is the board's own count. Fewer jobs than that means the listing was cut short,
   // and a short listing that reported itself complete is what closes roles that are still open.
-  const total = data.meta?.total;
-  if (typeof total === "number" && data.jobs.length < total) {
-    throw new IncompleteListingError(`Greenhouse listed ${data.jobs.length} of ${total} roles; this scan cannot close roles`, postings);
+  if (total !== undefined && jobs.length < total) {
+    throw new IncompleteListingError(`Greenhouse listed ${jobs.length} of ${total} roles; this scan cannot close roles`, postings);
   }
   return postings;
+}
+
+/** Verification reads the job list and the board's name, never the department and office indexes. */
+async function readForVerify(spec: SourceSpec, ctx: FetchContext) {
+  const { jobs, total } = await listJobs(spec, ctx);
+  return { postings: mapJobs(jobs), total: Math.max(total ?? 0, jobs.length) };
 }
 
 /**
@@ -216,11 +242,11 @@ export const greenhouse: Adapter = {
   type: "greenhouse",
   descriptionsPerPosting: true,
   specFromUrl(url) {
-    const slug = slugFromUrl(url);
-    return slug ? greenhouseSpec(slug) : null;
+    const board = boardFromUrl(url);
+    return board ? greenhouseSpec(board.slug, board.eu) : null;
   },
   fetchPostings,
-  verify: (spec, ctx) => verifyFromFetch(() => fetchPostings(spec, ctx), () => companyName(spec, ctx))(),
+  verify: (spec, ctx) => verifyFromRead(() => readForVerify(spec, ctx), () => companyName(spec, ctx))(),
 };
 
 export { joinLocation as _ghJoin };

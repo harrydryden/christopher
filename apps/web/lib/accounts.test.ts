@@ -9,7 +9,7 @@ import { eq, sql } from "drizzle-orm";
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { authenticateWithPassword, changePassword, confirmEmailWithToken, previewVerification, registerWithPassword, registrationAllowed, requestPasswordReset, resetPasswordWithToken, sendVerificationEmail, signInWithGoogle } from "./accounts";
+import { adminEmails, authenticateWithPassword, changePassword, confirmEmailWithToken, previewVerification, registerWithPassword, registrationAllowed, requestPasswordReset, resetPasswordWithToken, sendVerificationEmail, signInWithGoogle } from "./accounts";
 import { consumeAuthToken, issueAuthToken } from "./auth-tokens";
 import { clearAttempts, isRateLimited, LIMITS, recordAttempt } from "./rate-limit";
 
@@ -60,6 +60,22 @@ describe("who may register and what they get", () => {
     expect(adminEmailsFrom({ ADMIN_EMAILS: " " })).toEqual(DEFAULT_ADMIN_EMAILS);
     expect(adminEmailsFrom({ ADMIN_EMAILS: "A@Example.com, b@example.com" })).toEqual(["a@example.com", "b@example.com"]);
     expect(DEFAULT_ADMIN_EMAILS).toContain("harryddryden@gmail.com");
+  });
+
+  it("keeps the default in production when ADMIN_EMAILS is unset, and says so in the log once", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      vi.stubEnv("NODE_ENV", "production");
+      vi.stubEnv("ADMIN_EMAILS", " , ");
+      expect(adminEmails()).toEqual(DEFAULT_ADMIN_EMAILS);
+      expect(adminEmails()).toEqual(DEFAULT_ADMIN_EMAILS);
+      const warnings = warn.mock.calls.filter(([line]) => String(line).includes("admin_emails_default"));
+      expect(warnings).toHaveLength(1);
+    } finally {
+      vi.unstubAllEnvs();
+      warn.mockRestore();
+    }
+    expect(adminEmails()).toEqual([OWNER]);
   });
 
   it("keeps registration closed to everyone but administrator addresses until an administrator opens it", async () => {
@@ -279,6 +295,30 @@ describe("single-use links", () => {
       const stale = await issueAuthToken(user.id, "password_reset", new Date(Date.now() - 2 * 60 * 60 * 1000));
       expect(await consumeAuthToken(stale, "password_reset")).toBeNull();
       expect(await consumeAuthToken(newer, "email_verification")).toBeNull();
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("retires every outstanding link and every other session when the password changes", async () => {
+    const log = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      const { user } = await registerWithPassword({ email: "ada@example.com", password: PASSWORD });
+      const [kept] = await database.insert(schema.sessions)
+        .values([{ userId: user.id, expiresAt: new Date(Date.now() + 60_000) }, { userId: user.id, expiresAt: new Date(Date.now() + 60_000) }])
+        .returning();
+      // A reset link someone requested while they briefly had the mailbox, and a confirmation link.
+      await requestPasswordReset("ada@example.com", "https://app.example");
+      const reset = tokenFromLog(log, "/reset-password");
+      expect(reset).not.toBe("");
+      const confirmation = await confirmationToken(user.id);
+      expect(confirmation).not.toBe("");
+
+      await changePassword(user, PASSWORD, "another fine password", kept!.id);
+      expect(await resetPasswordWithToken(reset, "the attacker's password")).toBeNull();
+      expect((await confirmEmailWithToken(confirmation, { password: "another fine password" })).status).toBe("invalid");
+      expect((await sessionsFor(user.id)).map(row => row.id)).toEqual([kept!.id]);
+      expect((await authenticateWithPassword("ada@example.com", "another fine password")).status).toBe("ok");
     } finally {
       log.mockRestore();
     }

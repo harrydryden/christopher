@@ -1,6 +1,6 @@
 import type { Adapter, FetchContext, RawPosting, SourceSpec, SourceType, VerifyResult } from "../types";
 import { SourceFetchError } from "../types";
-import { absoluteUrl } from "../normalize";
+import { absoluteUrl, elementBlocks, scanWindow } from "../normalize";
 import { greenhouse, fetchGreenhouseDescription } from "./greenhouse";
 import { lever } from "./lever";
 import { ashby } from "./ashby";
@@ -52,21 +52,29 @@ function htmlLikeAdapter(type: Extract<SourceType, "html" | "jsonld" | "rss">): 
   };
 }
 
+/** The content of the first `<name>` element in `xml`, if any. */
+function firstElementText(xml: string, names: readonly string[]): string | undefined {
+  const [block] = elementBlocks(xml, names, { limit: 1 });
+  return block ? xml.slice(block.openEnd, block.closeStart) : undefined;
+}
+
 async function fetchRssPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
   const res = await ctx.fetchText(spec.apiUrl ?? spec.url, { headers: { accept: "application/rss+xml,application/xml,text/xml" } });
   if (res.status >= 400) throw new SourceFetchError(`HTTP ${res.status} from ${spec.url}`, "http", res.status);
-  const items = [...res.body.matchAll(/<(item|entry)\b[\s\S]*?<\/\1>/gi)].map((m) => m[0]);
+  // Items and their fields are found by `elementBlocks`, which is linear on a feed of unclosed tags;
+  // the feed is never truncated, because a short listing read as a complete one closes roles.
+  const items = elementBlocks(res.body, ["item", "entry"], { boundary: true }).map((block) => res.body.slice(block.start, block.end));
   const out: RawPosting[] = [];
   for (const item of items) {
-    const title = str(item.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.replace(/<!\[CDATA\[|\]\]>/g, ""));
+    const title = str(firstElementText(item, ["title"])?.replace(/<!\[CDATA\[|\]\]>/g, ""));
     const link =
-      str(item.match(/<link[^>]*>([\s\S]*?)<\/link>/i)?.[1]) ??
-      str(item.match(/<link[^>]+href=["']([^"']+)["']/i)?.[1]) ??
-      str(item.match(/<guid[^>]*>([\s\S]*?)<\/guid>/i)?.[1]);
+      str(firstElementText(item, ["link"])) ??
+      str(item.match(/<link[^<>]*?href=["']([^"']+)["']/i)?.[1]) ??
+      str(firstElementText(item, ["guid"]));
     if (!title || !link) continue;
     const url = absoluteUrl(link.trim(), spec.url);
     if (!url) continue;
-    const pub = str(item.match(/<(pubDate|published|updated)[^>]*>([\s\S]*?)<\/\1>/i)?.[2]);
+    const pub = str(firstElementText(item, ["pubDate", "published", "updated"]));
     out.push({ title: title.trim(), url, postedAt: pub ? new Date(pub) : undefined });
   }
   return out.filter((p) => !p.postedAt || !isNaN(p.postedAt.getTime()));
@@ -103,10 +111,18 @@ export function isAtsHost(hostname: string): boolean {
 
 // Matches URLs in HTML and in JavaScript sources, where slashes are often escaped as \/.
 const URL_RE = /(?:https?:(?:\\?\/){2}|\/\/)[A-Za-z0-9._~-]+\.[A-Za-z]{2,}(?:(?:\\?\/)[^\s"'<>`\\),;]*)*(?:\?[^\s"'<>`\\),;]*)?/g;
-const EMBED_PATTERNS: Array<{ re: RegExp; build: (slug: string) => SourceSpec | null }> = [
-  { re: /job_board\?[^"'\s]*\bfor=([A-Za-z0-9._-]+)/g, build: (s) => greenhouse.specFromUrl(`https://boards.greenhouse.io/${s}`) },
+// Every pattern's scan is bounded by something the next match cannot share (a quote, a brace, the
+// end of the query), so a page repeating a pattern's prefix is still read in linear time.
+const EMBED_PATTERNS: Array<{ re: RegExp; slugs?: (match: RegExpMatchArray) => string[]; build: (slug: string) => SourceSpec | null }> = [
+  {
+    // The whole query is taken and `for=` read from it: a regex that looked for `for=` itself
+    // rescanned the query from every `job_board?` repeated inside it.
+    re: /job_board\?([^"'\s]*)/g,
+    slugs: (m) => [...(m[1] ?? "").matchAll(/\bfor=([A-Za-z0-9._-]+)/g)].map((f) => f[1] ?? ""),
+    build: (s) => greenhouse.specFromUrl(`https://boards.greenhouse.io/${s}`),
+  },
   { re: /["']?boardToken["']?\s*:\s*["']([A-Za-z0-9._-]+)["']/g, build: (s) => greenhouse.specFromUrl(`https://boards.greenhouse.io/${s}`) },
-  { re: /Grnhse\.Settings\s*=\s*\{[^}]*\bfor\s*:\s*["']([A-Za-z0-9._-]+)["']/g, build: (s) => greenhouse.specFromUrl(`https://boards.greenhouse.io/${s}`) },
+  { re: /Grnhse\.Settings\s*=\s*\{[^{}]*\bfor\s*:\s*["']([A-Za-z0-9._-]+)["']/g, build: (s) => greenhouse.specFromUrl(`https://boards.greenhouse.io/${s}`) },
   { re: /["']?jobBoardName["']?\s*:\s*["']([A-Za-z0-9._-]+)["']/g, build: (s) => ashby.specFromUrl(`https://jobs.ashbyhq.com/${s}`) },
   { re: /["']?leverSite["']?\s*:\s*["']([A-Za-z0-9._-]+)["']/g, build: (s) => lever.specFromUrl(`https://jobs.lever.co/${s}`) },
 ];
@@ -115,21 +131,23 @@ function specKey(spec: SourceSpec): string {
   return `${spec.type}|${spec.atsSlug ?? ""}|${spec.atsSite ?? ""}`;
 }
 
-/** Scan arbitrary HTML or JS for references to an ATS board. */
-export function findAtsSpecsInText(text: string, baseUrl?: string): SourceSpec[] {
+/** Scan arbitrary HTML or JS for references to an ATS board. Reads at most `MAX_SCANNED_TEXT`. */
+export function findAtsSpecsInText(fullText: string, baseUrl?: string): SourceSpec[] {
   const found = new Map<string, SourceSpec>();
+  const text = scanWindow(fullText);
   for (const match of text.matchAll(URL_RE)) {
     let raw = match[0].replace(/\\\//g, "/");
     if (raw.startsWith("//")) raw = `https:${raw}`;
     const spec = specFromAnyUrl(raw);
     if (spec) found.set(specKey(spec), spec);
   }
-  for (const { re, build } of EMBED_PATTERNS) {
+  for (const { re, slugs, build } of EMBED_PATTERNS) {
     for (const match of text.matchAll(re)) {
-      const slug = match[1];
-      if (!slugOk(slug)) continue;
-      const spec = build(slug);
-      if (spec) found.set(specKey(spec), spec);
+      for (const slug of slugs ? slugs(match) : [match[1]]) {
+        if (!slugOk(slug)) continue;
+        const spec = build(slug);
+        if (spec) found.set(specKey(spec), spec);
+      }
     }
   }
   if (baseUrl) {

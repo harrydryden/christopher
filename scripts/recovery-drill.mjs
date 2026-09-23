@@ -23,18 +23,37 @@ export function validateRecoveryUrls(sourceInput, targetInput) {
     throw new Error('Recovery source and target must use the same local PostgreSQL server and user');
   return { source, target };
 }
+/**
+ * One reading of what a restore must bring back intact: row counts for every table an account's
+ * work lives in, order-independent fingerprints over the rows whose content matters (an account's
+ * roles, decisions and settings, and the catalogue's sources), and orphan counts for the
+ * relationships a partial restore would break. Compared before and after, a restore that lost the
+ * learning signal or everyone's gate settings fails even when the headline counts survive.
+ */
 export function coreIntegritySql() {
   return `select jsonb_build_object(
     'users',(select count(*) from users),'companies',(select count(*) from companies),
     'jobs',(select count(*) from jobs),'user_jobs',(select count(*) from user_jobs),
     'libraries',(select count(*) from cv_libraries),'cvs',(select count(*) from cv_drafts),
     'applications',(select count(*) from applications),'tasks',(select count(*) from tasks),
+    'decisions',(select count(*) from decisions),'userSettings',(select count(*) from user_settings),
+    'systemSettings',(select count(*) from settings),'preferenceProfiles',(select count(*) from preference_profiles),
+    'companyProfiles',(select count(*) from company_profiles),'subscriptions',(select count(*) from company_subscriptions),
+    'sources',(select count(*) from career_sources),'scans',(select count(*) from scans),
+    'authAccounts',(select count(*) from auth_accounts),'cvBuildSteps',(select count(*) from cv_build_steps),
     'userJobFingerprint',(select coalesce(sum(hashtextextended(user_id::text||':'||job_id::text,0)),0)::text from user_jobs),
+    'decisionFingerprint',(select coalesce(sum(hashtextextended(user_id::text||':'||coalesce(job_id::text,'-')||':'||decision||':'||superseded::text,0)),0)::text from decisions),
+    'userSettingsFingerprint',(select coalesce(sum(hashtextextended(user_id::text||':'||key||':'||value::text,0)),0)::text from user_settings),
+    'sourceFingerprint',(select coalesce(sum(hashtextextended(company_id::text||':'||url||':'||status,0)),0)::text from career_sources),
     'orphans',jsonb_build_object(
       'userJobs',(select count(*) from user_jobs uj left join users u on u.id=uj.user_id left join jobs j on j.id=uj.job_id where u.id is null or j.id is null),
       'libraries',(select count(*) from cv_libraries l left join users u on u.id=l.user_id where u.id is null),
       'applications',(select count(*) from applications a left join users u on u.id=a.user_id where u.id is null),
-      'subscriptions',(select count(*) from company_subscriptions s left join users u on u.id=s.user_id left join companies c on c.id=s.company_id where u.id is null or c.id is null)
+      'subscriptions',(select count(*) from company_subscriptions s left join users u on u.id=s.user_id left join companies c on c.id=s.company_id where u.id is null or c.id is null),
+      'decisions',(select count(*) from decisions d left join users u on u.id=d.user_id where u.id is null),
+      'userSettings',(select count(*) from user_settings us left join users u on u.id=us.user_id where u.id is null),
+      'sources',(select count(*) from career_sources cs left join companies c on c.id=cs.company_id where c.id is null),
+      'scans',(select count(*) from scans sc left join career_sources cs on cs.id=sc.source_id where cs.id is null)
     ),
     'invalidConstraints',(select count(*) from pg_constraint where not convalidated),
     'migrationCount',(select count(*) from drizzle.__drizzle_migrations)

@@ -2,7 +2,15 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 type Level = "debug" | "info" | "warn" | "error";
 const LEVELS: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40 };
-const threshold = LEVELS[(process.env.LOG_LEVEL as Level) ?? "info"] ?? 20;
+
+/** LOG_LEVEL as an operator writes it: any case, and `warning` for warn. Anything unrecognised is info. */
+export function parseLogLevel(value: string | undefined): Level {
+  const name = value?.trim().toLowerCase() ?? "";
+  if (name === "warning") return "warn";
+  return Object.hasOwn(LEVELS, name) ? (name as Level) : "info";
+}
+
+const threshold = LEVELS[parseLogLevel(process.env.LOG_LEVEL)];
 
 /** What the line was emitted for. Everything logged while a task runs carries its id and type. */
 export interface LogContext {

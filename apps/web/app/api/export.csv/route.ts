@@ -8,6 +8,8 @@ import {
   type RawSearchParams, scoreStateText } from "@/lib/queries/jobs";
 
 export const dynamic = "force-dynamic";
+/** Seconds: a 20,000-row export is read in 40 blocks, and 60 is the ceiling on every plan. */
+export const maxDuration = 60;
 
 function rawParamsFrom(sp: URLSearchParams): RawSearchParams {
   const out: RawSearchParams = {};
@@ -98,6 +100,9 @@ export async function GET(request: NextRequest) {
     headers: {
       "content-type": "text/csv; charset=utf-8",
       "content-disposition": `attachment; filename="ava-roles-${now.toISOString().slice(0, 10)}.csv"`,
+      // One account's whole table, decisions and reasons: no proxy or browser cache may keep it.
+      "cache-control": "private, no-store",
+      "x-content-type-options": "nosniff",
     },
   });
 }

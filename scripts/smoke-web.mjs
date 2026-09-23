@@ -16,7 +16,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 const nextBin = createRequire(new URL("../apps/web/package.json", import.meta.url)).resolve("next/dist/bin/next");
 
 const PORT = Number(process.env.SMOKE_PORT ?? 3123);
-const SECRET = "smoke-test-secret";
+const SECRET = "smoke-test-secret-0123456789abcdef0123456789abcdef";
 const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_dev";
 const skipBuild = process.argv.includes("--no-build");
 

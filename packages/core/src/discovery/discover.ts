@@ -2,13 +2,13 @@
  * Careers-source discovery. Given a homepage URL, find the page or feed that lists the company's jobs.
  * See docs/SPEC.md section 3.2. Every step adds candidates with a method; the best one decides the outcome.
  */
-import { absoluteUrl, ensureHttpUrl, extractDomain, normalizeUrl, sameDomain, stripHtml } from "../normalize";
+import { absoluteUrl, ensureHttpUrl, extractDomain, normalizeUrl, sameDomain, scanWindow, sha1, stripHtml } from "../normalize";
 import { isExplicitEmptyListing } from "../ats/html";
-import type { RawPosting, SourceSpec } from "../types";
+import type { FetchInit, RawPosting, SourceSpec } from "../types";
 import { confidenceFor, outcomeFor } from "./confidence";
 import { countAnchors, extractMeta, harvestLinks, scoreLink, WELL_KNOWN_PATHS } from "./links";
-import { companyNameFromTitle, looksLikeSoft404, nameFromSlug } from "./text";
-import type { DiscoveryCandidate, DiscoveryContext, DiscoveryResult, HarvestedLink } from "./types";
+import { companyNameFromTitle, companyNamesMatch, looksLikeSoft404, nameFromDomain, nameFromSlug } from "./text";
+import type { DiscoveryCandidate, DiscoveryContext, DiscoveryResult, DiscoveryVerification, HarvestedLink } from "./types";
 
 const JOB_DETAIL_RE = /\/(jobs?|careers?|positions?|openings?|vacanc(?:y|ies)|opportunit(?:y|ies))\//i;
 const MAX_CANDIDATE_PAGES = 6;
@@ -16,6 +16,18 @@ const MAX_CANDIDATE_PAGES = 6;
 const HUB_PATHS: readonly string[] = ["/about", "/about-us", "/company", "/team"];
 const MAX_BUNDLES = 8;
 const MAX_BUNDLE_BYTES = 2_000_000;
+/**
+ * Boards one run may verify. Verification has an allowance of its own, apart from the crawl's fetch
+ * and time budgets: a board found by the crawl's last fetch, or after a slow render, is still
+ * checked. Each verification reads one page of the board; the task deadline bounds the whole.
+ */
+const MAX_VERIFICATIONS = 10;
+/** Model page classifications (A2) one run may make. */
+const MAX_CLASSIFICATIONS = 6;
+/** Blind path probes stop once this many in a row found nothing: a 404, a soft 404 or a page already seen. */
+const MAX_CONSECUTIVE_MISSES = 8;
+/** A body larger than this is used by the step that fetched it and not kept for the rest of the run. */
+const MAX_CACHED_BODY = 2_000_000;
 
 interface Fetched {
   html: string;
@@ -36,14 +48,33 @@ class Run {
   readonly log: string[] = [];
   readonly candidates = new Map<string, RawCandidate>();
   private readonly pages = new Map<string, Fetched | null>();
-  private readonly verified = new Map<string, { ok: boolean; count?: number; sample?: RawPosting[]; companyName?: string; error?: string }>();
+  private readonly statuses = new Map<string, number>();
+  /** Pages that answered 404, looked like a soft 404, or served a body already inspected. */
+  private readonly missing = new Set<string>();
+  private readonly renders = new Map<string, { page: Fetched; requests: string[] } | null>();
+  private readonly inspectedUrls = new Set<string>();
+  private readonly inspectedBodies = new Set<string>();
+  private readonly verified = new Map<string, DiscoveryVerification>();
   fetches = 0;
+  verifications = 0;
+  classifications = 0;
   readonly maxFetches: number;
-  private readonly startedAt = Date.now();
+  private readonly maxVerifications: number;
+  private readonly startedAt: number;
   homepageCompanyName?: string;
 
   constructor(private readonly ctx: DiscoveryContext) {
     this.maxFetches = ctx.maxFetches ?? 40;
+    this.maxVerifications = ctx.maxVerifications ?? MAX_VERIFICATIONS;
+    this.startedAt = this.now();
+  }
+
+  private now(): number {
+    return this.ctx.now?.().getTime() ?? Date.now();
+  }
+
+  private sayOnce(msg: string): void {
+    if (!this.log.includes(msg)) this.say(msg);
   }
 
   say(msg: string): void {
@@ -51,9 +82,14 @@ class Run {
     this.ctx.log?.(`discovery: ${msg}`);
   }
 
+  /** The crawl's budget: fetches and renders, and its own time. Verification is not counted here. */
   budgetLeft(): boolean {
-    if (Date.now() - this.startedAt >= (this.ctx.maxDurationMs ?? 120_000)) {
-      if (!this.log.includes("discovery time budget exhausted")) this.say("discovery time budget exhausted");
+    if (this.ctx.signal?.aborted) {
+      this.sayOnce("discovery stopped: its task was cancelled");
+      return false;
+    }
+    if (this.now() - this.startedAt >= (this.ctx.maxDurationMs ?? 120_000)) {
+      this.sayOnce("discovery time budget exhausted");
       return false;
     }
     if (this.fetches < this.maxFetches) return true;
@@ -61,27 +97,111 @@ class Run {
     return false;
   }
 
-  async fetch(url: string): Promise<Fetched | null> {
+  /**
+   * Discovery follows only http(s) URLs without credentials, whatever a page or the model offers.
+   * The fetcher and the browser apply the address guard to every request they make as well.
+   */
+  permitted(url: string): boolean {
+    try {
+      const u = new URL(url);
+      return (u.protocol === "https:" || u.protocol === "http:") && !u.username && !u.password;
+    } catch {
+      return false;
+    }
+  }
+
+  async fetch(url: string, init?: FetchInit): Promise<Fetched | null> {
     const key = normalizeUrl(url);
     const cached = this.pages.get(key);
     if (cached !== undefined) return cached;
+    if (!this.permitted(url)) {
+      this.say(`not following ${url}`);
+      this.pages.set(key, null);
+      return null;
+    }
     if (!this.budgetLeft()) return null;
     this.fetches++;
     try {
-      const res = await this.ctx.fetchText(url);
+      const res = await this.ctx.fetchText(url, init);
+      this.statuses.set(key, res.status);
+      if (res.status === 404 || res.status === 410) this.missing.add(key);
       if (res.status >= 400) {
         this.say(`fetch ${url} -> HTTP ${res.status}`);
         this.pages.set(key, null);
         return null;
       }
       const page: Fetched = { html: res.body, url: res.url || url, status: res.status };
-      this.pages.set(key, page);
+      // A large body is used by the step that asked for it, not held for the rest of the run.
+      if (page.html.length <= MAX_CACHED_BODY) this.pages.set(key, page);
       return page;
     } catch (err) {
       this.say(`fetch ${url} failed: ${(err as Error).message}`);
       this.pages.set(key, null);
       return null;
     }
+  }
+
+  /** The HTTP status `url` answered with, when this run fetched it. */
+  statusOf(url: string): number | undefined {
+    return this.statuses.get(normalizeUrl(url));
+  }
+
+  markMissing(url: string): void {
+    this.missing.add(normalizeUrl(url));
+  }
+
+  /** Whether `url` turned out to have nothing of its own: a 404, a soft 404 or a repeated body. */
+  isMissing(url: string): boolean {
+    return this.missing.has(normalizeUrl(url));
+  }
+
+  /** Render a page once per run; a second request for the same URL gets the first render. */
+  async render(url: string, opts: { scrollAndExpand?: boolean }): Promise<{ page: Fetched; requests: string[] } | null> {
+    const key = normalizeUrl(url);
+    const cached = this.renders.get(key);
+    if (cached !== undefined) return cached;
+    if (!this.ctx.render || !this.permitted(url) || !this.budgetLeft()) return null;
+    this.fetches++;
+    this.renders.set(key, null);
+    try {
+      const rendered = await this.ctx.render(url, opts);
+      const result = { page: { html: rendered.html, url: rendered.finalUrl, status: rendered.status ?? 200 }, requests: rendered.requests };
+      if (result.page.html.length <= MAX_CACHED_BODY) this.renders.set(key, result);
+      return result;
+    } catch (err) {
+      this.say(`render ${url} failed: ${(err as Error).message}`);
+      return null;
+    }
+  }
+
+  /** Each page is inspected once per run, however many pages link to it. */
+  claimInspection(url: string): boolean {
+    const key = normalizeUrl(url);
+    if (this.inspectedUrls.has(key)) return false;
+    this.inspectedUrls.add(key);
+    return true;
+  }
+
+  /**
+   * A body identical to one already inspected (the homepage, a catch-all shell that every path
+   * answers with) says nothing new, so it is neither inspected, rendered nor classified again.
+   */
+  claimBody(html: string): boolean {
+    const hash = sha1(html);
+    if (this.inspectedBodies.has(hash)) return false;
+    this.inspectedBodies.add(hash);
+    return true;
+  }
+
+  /** Whether the run may make another model page classification. */
+  mayClassify(): boolean {
+    if (!this.budgetLeft()) return false;
+    if (this.classifications >= MAX_CLASSIFICATIONS) {
+      this.sayOnce(`model classification budget of ${MAX_CLASSIFICATIONS} spent`);
+      return false;
+    }
+    this.classifications++;
+    return true;
   }
 
   add(candidate: RawCandidate): void {
@@ -105,27 +225,57 @@ class Run {
     this.candidates.set(key, merged);
   }
 
-  /** A weak landing-page candidate must not stop the bounded fallback crawl. */
-  hasResolvableCandidate(): boolean {
-    return [...this.candidates.values()].some(candidate => rank(candidate.method) >= rank("listing_html"));
+  /** Candidates strongest method first; equal methods keep the order they were found in. */
+  ranked(): RawCandidate[] {
+    return [...this.candidates.values()].sort((a, b) => rank(b.method) - rank(a.method));
   }
 
-  async verify(spec: SourceSpec) {
+  /**
+   * Whether the crawl has found something worth stopping for: a listing page, or an ATS board that
+   * verified. An ATS reference that does not verify (a stale board link, a board that is down) stays
+   * a candidate but never stops the crawl: the hubs, probes, sitemaps and model after it are how a
+   * company whose careers link has gone stale is still found.
+   */
+  async hasResolvableCandidate(): Promise<boolean> {
+    for (const candidate of this.ranked()) {
+      if (rank(candidate.method) < rank("listing_html")) return false;
+      if (candidate.spec.type === "html") return true;
+      if ((await this.verify(candidate.spec)).ok) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Verify a board once per run. This has its own allowance and is not bound by the crawl's fetch
+   * or time budget; only the task's own cancellation stops it.
+   */
+  async verify(spec: SourceSpec): Promise<DiscoveryVerification> {
     const key = specKey(spec);
     const cached = this.verified.get(key);
     if (cached) return cached;
-    if (!this.budgetLeft()) return { ok: false, error: "fetch budget exhausted" };
-    this.fetches++;
-    try {
-      const result = await this.ctx.verifySpec(spec);
-      this.verified.set(key, result);
-      return result;
-    } catch (err) {
-      const result = { ok: false, error: (err as Error).message };
-      this.verified.set(key, result);
-      return result;
+    if (this.ctx.signal?.aborted) return { ok: false, error: "discovery was cancelled", transient: true };
+    if (this.verifications >= this.maxVerifications) {
+      this.sayOnce(`verification budget of ${this.maxVerifications} spent`);
+      return { ok: false, error: "verification budget exhausted" };
     }
+    this.verifications++;
+    let result: DiscoveryVerification;
+    try {
+      result = await this.ctx.verifySpec(spec);
+    } catch (err) {
+      result = { ok: false, error: (err as Error).message, transient: isTransientError(err) };
+    }
+    this.verified.set(key, result);
+    return result;
   }
+}
+
+/** A failure that says nothing about the board: the host asked us to come back later. */
+function isTransientError(err: unknown): boolean {
+  const e = err as { name?: string; kind?: string; status?: number };
+  if (e?.name === "HostBusyError") return true;
+  if (e?.name !== "SourceFetchError") return false;
+  return e.kind === "rate_limited" || e.kind === "timeout" || e.kind === "network" || (e.kind === "http" && (e.status ?? 0) >= 500);
 }
 
 function specKey(spec: SourceSpec): string {
@@ -141,11 +291,25 @@ function rank(method: string): number {
 }
 
 function hasJsonLdJobPosting(html: string): boolean {
-  return /application\/ld\+json/i.test(html) && /"JobPosting"/i.test(html);
+  const page = scanWindow(html);
+  return /application\/ld\+json/i.test(page) && /"JobPosting"/i.test(page);
 }
 
-function isJsShell(html: string): boolean {
+export function isJsShell(html: string): boolean {
   return countAnchors(html) < 5 || stripHtml(html).length < 400;
+}
+
+// An empty `<div>`/`<section>` whose id or class names jobs: a client-side listing not yet mounted.
+// The tag's attributes stop at the next `<` or `>` and are tested on their own, so every scan is
+// bounded by the tag it starts in.
+const EMPTY_ELEMENT_RE = /<(?:div|section)([^<>]*)>\s*<\/(?:div|section)>/gi;
+const JOBS_MOUNT_ATTR_RE = /(?:id|class)=["'][^"']*(?:jobs?|positions?|openings?)[^"']*["']/i;
+
+export function hasEmptyJobsMount(html: string): boolean {
+  for (const match of scanWindow(html).matchAll(EMPTY_ELEMENT_RE)) {
+    if (match[1] && JOBS_MOUNT_ATTR_RE.test(match[1])) return true;
+  }
+  return false;
 }
 
 function shouldRenderCandidate(html: string, url: string, via?: string): boolean {
@@ -154,8 +318,7 @@ function shouldRenderCandidate(html: string, url: string, via?: string): boolean
   // A careers-shaped path alone is not evidence that a content-rich informational page needs a
   // browser. Render shells and explicit empty client-side job mounts; static landing pages can be
   // followed from their harvested links without starving later candidates behind a slow render.
-  const emptyJobsMount = /<(?:div|section)[^>]+(?:id|class)=["'][^"']*(?:jobs?|positions?|openings?)[^"']*["'][^>]*>\s*<\/(?:div|section)>/i.test(html);
-  return isJsShell(html) || emptyJobsMount;
+  return isJsShell(html) || hasEmptyJobsMount(html);
 }
 
 function isCareersContentNavigation(posting: RawPosting): boolean {
@@ -207,7 +370,8 @@ async function scanBundles(run: Run, ctx: DiscoveryContext, links: HarvestedLink
   const scripts = links.filter((l) => l.kind === "script" && sameDomain(l.href, pageUrl)).slice(0, MAX_BUNDLES);
   for (const script of scripts) {
     if (!run.budgetLeft()) return;
-    const page = await run.fetch(script.href);
+    // A bundle over the size worth scanning is refused by the fetcher rather than read and dropped.
+    const page = await run.fetch(script.href, { maxBodyBytes: MAX_BUNDLE_BYTES });
     if (!page || page.html.length > MAX_BUNDLE_BYTES) continue;
     for (const spec of ctx.findSpecsInText(page.html, script.href)) {
       run.add({ spec, method: "ats_bundle", evidence: [`reference in bundle ${script.href}`] });
@@ -216,30 +380,35 @@ async function scanBundles(run: Run, ctx: DiscoveryContext, links: HarvestedLink
 }
 
 async function renderAndScan(run: Run, ctx: DiscoveryContext, url: string, via?: string): Promise<Fetched | null> {
-  if (!ctx.render || !run.budgetLeft()) return null;
-  run.fetches++;
-  try {
-    const rendered = await ctx.render(url, { scrollAndExpand: true });
-    run.say(`rendered ${url} (${rendered.requests.length} requests)`);
-    for (const request of rendered.requests) {
-      const spec = ctx.resolveSpec(request);
-      if (spec) run.add({ spec, method: "ats_network", evidence: [`network request from ${url}: ${request}`, ...(via ? [`via ${via}`] : [])] });
-    }
-    const links = harvestLinks(rendered.html, rendered.finalUrl);
-    collectAtsFromPage(run, ctx, rendered.html, rendered.finalUrl, links, via);
-    return { html: rendered.html, url: rendered.finalUrl, status: rendered.status ?? 200 };
-  } catch (err) {
-    run.say(`render ${url} failed: ${(err as Error).message}`);
-    return null;
+  // Discovery needs the page's links and the requests it makes, not every lazily loaded row, so it
+  // renders without the scroll-and-expand pass a scan uses.
+  const rendered = await run.render(url, { scrollAndExpand: false });
+  if (!rendered) return null;
+  const { page, requests } = rendered;
+  run.say(`rendered ${url} (${requests.length} requests)`);
+  for (const request of requests) {
+    const spec = ctx.resolveSpec(request);
+    if (spec) run.add({ spec, method: "ats_network", evidence: [`network request from ${url}: ${request}`, ...(via ? [`via ${via}`] : [])] });
   }
+  const links = harvestLinks(page.html, page.url);
+  collectAtsFromPage(run, ctx, page.html, page.url, links, via);
+  return page;
 }
 
 /** Inspect one candidate page: is it a listing, a landing page, or neither? */
 async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: number, via?: string): Promise<void> {
+  if (!run.claimInspection(url)) return;
   const page = await run.fetch(url);
   if (!page) return;
+  if (normalizeUrl(page.url) !== normalizeUrl(url) && !run.claimInspection(page.url)) return;
   if (looksLikeSoft404(page.html)) {
     run.say(`${url} looks like a soft 404; skipped`);
+    run.markMissing(url);
+    return;
+  }
+  if (!run.claimBody(page.html)) {
+    run.say(`${url} serves a page already inspected; skipped`);
+    run.markMissing(url);
     return;
   }
   let html = page.html;
@@ -335,9 +504,9 @@ async function inspectPage(run: Run, ctx: DiscoveryContext, url: string, depth: 
 
   // The heuristics could not settle it: a page with one or two roles, or a landing page whose links
   // led nowhere. This is where the model earns its place.
-  if (ctx.ai?.classifyPage) {
+  if (ctx.ai?.classifyPage && run.mayClassify()) {
     try {
-      const verdict = await ctx.ai.classifyPage({ url: finalUrl, text: stripHtml(html).slice(0, 6000), links: links.slice(0, 120) });
+      const verdict = await ctx.ai.classifyPage({ url: finalUrl, text: stripHtml(html).slice(0, 6000), links: links.slice(0, 120) }, ctx.aiRef);
       run.say(`model classified ${finalUrl} as ${verdict.kind} (${verdict.confidence})`);
       if (verdict.kind === "listing" && verdict.confidence >= 0.7) {
         run.add({ spec: { type: "html", url: finalUrl }, method: "ai_listing", evidence: [`model classified as a listing page`], sample: postings.slice(0, 3), count: postings.length });
@@ -368,23 +537,61 @@ function safeExtract(ctx: DiscoveryContext, html: string, url: string): RawPosti
   }
 }
 
-function parseSitemapUrls(xml: string): { sitemaps: string[]; urls: string[] } {
-  const sitemaps = [...xml.matchAll(/<sitemap>[\s\S]*?<loc>([\s\S]*?)<\/loc>[\s\S]*?<\/sitemap>/gi)].map((m) => (m[1] ?? "").trim());
-  const urls = [...xml.matchAll(/<url>[\s\S]*?<loc>([\s\S]*?)<\/loc>[\s\S]*?<\/url>/gi)].map((m) => (m[1] ?? "").trim());
-  if (sitemaps.length === 0 && urls.length === 0) {
-    const bare = [...xml.matchAll(/<loc>([\s\S]*?)<\/loc>/gi)].map((m) => (m[1] ?? "").trim());
-    return { sitemaps: [], urls: bare.slice(0, 2000) };
+/**
+ * The first `<loc>` of each `<sitemap>` (an index's child sitemaps) and each `<url>` (pages), read
+ * tag by tag: each `<loc>` belongs to the container opened most recently before it. With neither
+ * container, every `<loc>` is a page. A lazy `<url>[\s\S]*?<loc>` rescanned the rest of the file
+ * from every `<url>` that had no `<loc>`.
+ */
+/** Whether `text` has the lower-case `tag` at `at`, ignoring the case of its letters. */
+function tagAt(text: string, at: number, tag: string): boolean {
+  if (at + tag.length > text.length) return false;
+  for (let i = 0; i < tag.length; i++) {
+    let c = text.charCodeAt(at + i);
+    if (c >= 65 && c <= 90) c += 32;
+    if (c !== tag.charCodeAt(i)) return false;
   }
-  return { sitemaps: sitemaps.slice(0, 2), urls: urls.slice(0, 2000) };
+  return true;
+}
+
+export function parseSitemapUrls(xml: string): { sitemaps: string[]; urls: string[] } {
+  const text = scanWindow(xml);
+  const sitemaps: string[] = [];
+  const urls: string[] = [];
+  const bare: string[] = [];
+  let open: "sitemap" | "url" | undefined;
+  for (let at = text.indexOf("<"); at >= 0; at = text.indexOf("<", at + 1)) {
+    if (tagAt(text, at, "<url>")) open = "url";
+    else if (tagAt(text, at, "<sitemap>")) open = "sitemap";
+    else if (tagAt(text, at, "<loc>")) {
+      const close = text.indexOf("<", at + 5);
+      if (close < 0) break;
+      if (!tagAt(text, close, "</loc>")) continue;
+      const loc = text.slice(at + 5, close).trim();
+      if (bare.length < 2000) bare.push(loc);
+      if (open === "sitemap") sitemaps.push(loc);
+      else if (open === "url" && urls.length < 2000) urls.push(loc);
+      open = undefined;
+      at = close;
+    }
+  }
+  if (sitemaps.length === 0 && urls.length === 0) return { sitemaps: [], urls: bare };
+  return { sitemaps: sitemaps.slice(0, 2), urls };
+}
+
+/**
+ * `Sitemap:` lines from robots.txt. The spacing is spaces and tabs only: `^\s*` under the multiline
+ * flag ran on across blank lines, rescanning the rest of the file from each of them.
+ */
+export function sitemapsFromRobots(text: string): string[] {
+  return [...scanWindow(text).matchAll(/^[ \t]*sitemap:[ \t]*(\S+)[ \t]*$/gim)].map((m) => m[1] ?? "").filter(Boolean);
 }
 
 /** Look through robots.txt and sitemaps for a page that parents several job-detail URLs. */
 async function scanSitemaps(run: Run, ctx: DiscoveryContext, origin: string): Promise<string[]> {
   const found: string[] = [];
   const robots = await run.fetch(`${origin}/robots.txt`);
-  const sitemapUrls = robots
-    ? [...robots.html.matchAll(/^\s*sitemap:\s*(\S+)\s*$/gim)].map((m) => (m[1] ?? "").trim()).filter(Boolean)
-    : [];
+  const sitemapUrls = robots ? sitemapsFromRobots(robots.html) : [];
   if (sitemapUrls.length === 0) sitemapUrls.push(`${origin}/sitemap.xml`);
 
   const queue = sitemapUrls.slice(0, 2);
@@ -451,6 +658,16 @@ async function verifiedCatalogueCandidate(url: string, ctx: DiscoveryContext, ru
     sample: verified.sample ?? [], count: verified.count, companyName: verified.companyName };
 }
 
+/**
+ * Whether anything ties a verified board to this company when its feed names none: the board slug
+ * (or Workday tenant) read as a name matches the homepage's company name or the domain's label.
+ */
+function boardMatchesCompany(spec: SourceSpec, homepageCompanyName: string | undefined, domain: string): boolean {
+  const boardName = spec.atsSlug ? nameFromSlug(spec.atsSlug) : undefined;
+  if (!boardName) return false;
+  return [homepageCompanyName, nameFromDomain(domain)].some((name) => !!name?.trim() && companyNamesMatch(boardName, name));
+}
+
 export async function discoverCareersSources(homepageUrl: string, ctx: DiscoveryContext): Promise<DiscoveryResult> {
   const started = Date.now();
   const run = new Run(ctx);
@@ -463,10 +680,17 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
     fetches: 0,
     durationMs: 0,
   };
+  const finish = (): DiscoveryResult => {
+    result.fetches = run.fetches;
+    result.verifications = run.verifications;
+    result.durationMs = Date.now() - started;
+    return result;
+  };
 
   const catalogue = await verifiedCatalogueCandidate(normalized, ctx, run);
   if (catalogue) {
-    return { ...result, outcome: "resolved", best: catalogue, candidates: [catalogue], companyName: catalogue.companyName, fetches: run.fetches, durationMs: Date.now() - started };
+    Object.assign(result, { outcome: "resolved", best: catalogue, candidates: [catalogue], companyName: catalogue.companyName });
+    return finish();
   }
 
   let home = await run.fetch(normalized);
@@ -485,13 +709,12 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
   const domain = extractDomain(baseUrl);
   let links: HarvestedLink[] = [];
 
-  const visited = new Set<string>([normalizeUrl(baseUrl)]);
-  const visit = async (url: string, via?: string) => {
-    const key = normalizeUrl(url);
-    if (visited.has(key)) return;
-    visited.add(key);
-    await inspectPage(run, ctx, url, 1, via);
-  };
+  // The homepage is read here, never again as a candidate page, and a path that answers with the
+  // homepage's own body is not a careers page.
+  run.claimInspection(normalized);
+  run.claimInspection(baseUrl);
+  if (home) run.claimBody(home.html);
+  const visit = (url: string, via?: string) => inspectPage(run, ctx, url, 1, via);
 
   if (home) {
     result.finalHomepageUrl = home.url;
@@ -504,7 +727,10 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
     if (isJsShell(home.html) && ctx.render) {
       run.say("homepage looks like a JavaScript shell; rendering");
       const rendered = await renderAndScan(run, ctx, home.url);
-      if (rendered) home = rendered;
+      if (rendered) {
+        home = rendered;
+        run.claimBody(home.html);
+      }
     }
 
     links = harvestLinks(home.html, home.url);
@@ -520,19 +746,19 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
     for (const { link } of scored.filter((x) => sameDomain(x.link.href, home!.url)).slice(0, MAX_CANDIDATE_PAGES)) {
       if (!run.budgetLeft()) break;
       await visit(link.href, "homepage link");
-      if (run.hasResolvableCandidate()) break;
+      if (await run.hasResolvableCandidate()) break;
     }
     // Off-domain careers links (a hosted board on a different domain) are worth one visit each.
     for (const { link } of scored.filter((x) => !sameDomain(x.link.href, home!.url)).slice(0, 2)) {
       if (!run.budgetLeft()) break;
       if (ctx.resolveSpec(link.href)) continue;
       await visit(link.href, "homepage link (off-domain)");
-      if (run.hasResolvableCandidate()) break;
+      if (await run.hasResolvableCandidate()) break;
     }
     // Bundles are a comparatively expensive fallback on modern sites. Inspect the explicit
     // careers links first so a page that directly exposes its board is not starved by a row of
     // framework chunks under the same request and time budgets.
-    if (!run.hasResolvableCandidate()) await scanBundles(run, ctx, links, home.url);
+    if (!(await run.hasResolvableCandidate())) await scanBundles(run, ctx, links, home.url);
   } else {
     run.say(`could not fetch the homepage ${normalized}; probing careers paths, subdomains, sitemaps and ATS boards directly`);
   }
@@ -541,11 +767,11 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
   // mega-menu, show nothing careers-like on the homepage itself. Those hub
   // pages are a cheap second harvest — three fetches at most — and come before
   // the blind path probes and long before a model call.
-  if (home && !run.hasResolvableCandidate()) {
+  if (home && !(await run.hasResolvableCandidate())) {
     const origin = new URL(home.url).origin;
     let harvested = 0;
     for (const path of HUB_PATHS) {
-      if (!run.budgetLeft() || run.hasResolvableCandidate() || harvested >= 3) break;
+      if (!run.budgetLeft() || (await run.hasResolvableCandidate()) || harvested >= 3) break;
       const hub = await run.fetch(`${origin}${path}`);
       if (!hub || looksLikeSoft404(hub.html)) continue;
       harvested++;
@@ -560,12 +786,12 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
       for (const { link } of hubScored.slice(0, 2)) {
         if (!run.budgetLeft()) break;
         await visit(link.href, `hub page ${path}`);
-        if (run.hasResolvableCandidate()) break;
+        if (await run.hasResolvableCandidate()) break;
       }
     }
   }
 
-  if (!run.hasResolvableCandidate()) {
+  if (!(await run.hasResolvableCandidate())) {
     const origin = new URL(baseUrl).origin;
     const priorityProbes = [
       `${origin}/careers`, `https://careers.${domain}/`,
@@ -575,20 +801,30 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
     const remainingPathProbes = WELL_KNOWN_PATHS
       .map(path => `${origin}${path}`)
       .filter(url => !priorityProbes.some(priority => normalizeUrl(priority) === normalizeUrl(url)));
+    // A site that answers 404 (or its own catch-all page) to path after path has none of the
+    // well-known ones; the rest of the list would only spend the budget, two paced seconds a probe,
+    // that sitemaps and the model need.
+    let misses = 0;
     for (const url of [...priorityProbes, ...remainingPathProbes]) {
-      if (!run.budgetLeft() || run.hasResolvableCandidate()) break;
+      if (!run.budgetLeft() || (await run.hasResolvableCandidate())) break;
+      if (misses >= MAX_CONSECUTIVE_MISSES) {
+        run.say(`${misses} probes in a row found nothing; stopping path probes`);
+        break;
+      }
       await visit(url, new URL(url).origin === origin ? "probe_path" : "probe_subdomain");
+      if (run.isMissing(url)) misses++;
+      else if (run.statusOf(url) !== undefined) misses = 0;
     }
   }
 
-  if (!run.hasResolvableCandidate() && run.budgetLeft()) {
+  if (!(await run.hasResolvableCandidate()) && run.budgetLeft()) {
     const origin = new URL(baseUrl).origin;
     for (const url of await scanSitemaps(run, ctx, origin)) await visit(url, "sitemap");
   }
 
-  if (!run.hasResolvableCandidate() && home && ctx.ai?.chooseCareersLinks && run.budgetLeft()) {
+  if (!(await run.hasResolvableCandidate()) && home && ctx.ai?.chooseCareersLinks && run.budgetLeft()) {
     try {
-      const suggestions = await ctx.ai.chooseCareersLinks({ companyName: result.companyName ?? domain, homepageUrl: home.url, links: links.slice(0, 300) });
+      const suggestions = await ctx.ai.chooseCareersLinks({ companyName: result.companyName ?? domain, homepageUrl: home.url, links: links.slice(0, 300) }, ctx.aiRef);
       run.say(`model suggested ${suggestions.length} careers link(s)`);
       for (const suggestion of suggestions.slice(0, 2)) {
         const abs = absoluteUrl(suggestion.url, home!.url);
@@ -599,7 +835,7 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
     }
   }
 
-  if (!run.hasResolvableCandidate() && run.budgetLeft()) {
+  if (!(await run.hasResolvableCandidate()) && run.budgetLeft()) {
     const label = domain.split(".")[0];
     if (label) {
       run.say(`nothing found on the site; trying "${label}" as an ATS slug`);
@@ -622,9 +858,11 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
     }
   }
 
-  // Verify every ATS candidate before it is offered.
+  // Verify every ATS candidate before it is offered, strongest first, so the verification
+  // allowance goes to the candidates most likely to be chosen. Most were verified during the crawl.
   const finalCandidates: DiscoveryCandidate[] = [];
-  for (const candidate of run.candidates.values()) {
+  const failedForNow: Array<{ candidate: RawCandidate; error?: string }> = [];
+  for (const candidate of run.ranked()) {
     if (candidate.spec.type === "html") {
       finalCandidates.push({
         spec: candidate.spec,
@@ -639,17 +877,21 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
     const verification = candidate.method === "ats_guess" && candidate.count !== undefined ? { ok: true, count: candidate.count, sample: candidate.sample, companyName: candidate.companyName } : await run.verify(candidate.spec);
     if (!verification.ok) {
       run.say(`dropped ${candidate.spec.type}/${candidate.spec.atsSlug ?? candidate.spec.url}: ${verification.error ?? "verification failed"}`);
+      if ((verification as DiscoveryVerification).transient) failedForNow.push({ candidate, error: verification.error });
       continue;
     }
-    const enriched = { ...candidate, companyName: verification.companyName ?? candidate.companyName, count: verification.count ?? candidate.count };
+    const companyName = verification.companyName ?? candidate.companyName;
+    const enriched = { ...candidate, companyName, count: verification.count ?? candidate.count };
+    const identityUnconfirmed = !companyName && candidate.method !== "ats_guess" && !boardMatchesCompany(candidate.spec, run.homepageCompanyName, domain);
+    if (identityUnconfirmed) run.say(`${candidate.spec.type}/${candidate.spec.atsSlug ?? candidate.spec.url} names no company and its board does not match ${domain}; held for confirmation`);
     finalCandidates.push({
       spec: candidate.spec,
-      confidence: confidenceFor(enriched, { homepageCompanyName: run.homepageCompanyName, methodCount: methodCount(candidate) }),
+      confidence: confidenceFor(enriched, { homepageCompanyName: run.homepageCompanyName, methodCount: methodCount(candidate), identityUnconfirmed }),
       method: candidate.method,
-      evidence: candidate.evidence,
+      evidence: identityUnconfirmed ? [...candidate.evidence, "the feed names no company and the board does not match the company's name or domain"] : candidate.evidence,
       sample: verification.sample ?? candidate.sample ?? [],
       count: verification.count ?? candidate.count,
-      companyName: verification.companyName ?? candidate.companyName,
+      companyName,
     });
   }
 
@@ -667,11 +909,17 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
   result.outcome = outcomeFor(result.best?.confidence);
   // A refused homepage leaves no title to name the company by; the verified feed's name will do.
   if (!result.companyName && result.best?.companyName) result.companyName = result.best.companyName;
-  result.fetches = run.fetches;
-  result.durationMs = Date.now() - started;
+  // A board the host would not answer for now may well be the one: when it would have outranked
+  // everything that survived, the result is not trusted and the discovery is tried again later.
+  const bestConfidence = result.best?.confidence ?? 0;
+  const retryable = failedForNow.find(({ candidate }) => result.outcome !== "resolved" && confidenceFor(candidate, { methodCount: methodCount(candidate) }) > bestConfidence);
+  if (retryable) {
+    result.retry = `${retryable.candidate.spec.type}/${retryable.candidate.spec.atsSlug ?? retryable.candidate.spec.url} could not be verified for now (${retryable.error ?? "temporary failure"})`;
+    run.say(`retry later: ${result.retry}`);
+  }
   if (result.candidates.length === 0) run.say("no careers source found");
   else run.say(`best: ${result.best?.spec.type} ${result.best?.spec.atsSlug ?? result.best?.spec.url} at ${result.best?.confidence} (${result.best?.method}) -> ${result.outcome}`);
-  return result;
+  return finish();
 }
 
 function methodCount(candidate: RawCandidate): number {
@@ -684,10 +932,10 @@ export async function probeUrlAsSource(url: string, ctx: DiscoveryContext): Prom
   const started = Date.now();
   const normalized = ensureHttpUrl(url);
   const run = new Run(ctx);
+  const done = (result: Omit<DiscoveryResult, "homepageUrl" | "log" | "fetches" | "verifications" | "durationMs">): DiscoveryResult =>
+    ({ homepageUrl: normalized, ...result, log: run.log, fetches: run.fetches, verifications: run.verifications, durationMs: Date.now() - started });
   const catalogue = await verifiedCatalogueCandidate(normalized, ctx, run);
-  if (catalogue) {
-    return { homepageUrl: normalized, outcome: "resolved", best: catalogue, candidates: [catalogue], companyName: catalogue.companyName, log: run.log, fetches: run.fetches, durationMs: Date.now() - started };
-  }
+  if (catalogue) return done({ outcome: "resolved", best: catalogue, candidates: [catalogue], companyName: catalogue.companyName });
   const spec = ctx.resolveSpec(normalized);
   if (spec) {
     const verification = await run.verify(spec);
@@ -704,9 +952,13 @@ export async function probeUrlAsSource(url: string, ctx: DiscoveryContext): Prom
         companyName: verification.companyName ?? (spec.atsSlug ? nameFromSlug(spec.atsSlug) : undefined),
       };
       run.say(`${normalized} is a ${spec.type} board (${verification.count ?? 0} postings)`);
-      return { homepageUrl: normalized, outcome: "resolved", best: candidate, candidates: [candidate], companyName: candidate.companyName, log: run.log, fetches: run.fetches, durationMs: Date.now() - started };
+      return done({ outcome: "resolved", best: candidate, candidates: [candidate], companyName: candidate.companyName });
     }
+    // A pasted board is the answer or nothing: treating the vendor's URL as a homepage would crawl
+    // the vendor's own site and could offer the vendor's own board for this company.
     run.say(`${normalized} looks like a ${spec.type} board but verification failed: ${verification.error}`);
+    const retry = verification.transient ? `${spec.type}/${spec.atsSlug ?? spec.url} could not be verified for now (${verification.error ?? "temporary failure"})` : undefined;
+    return done({ outcome: "not_found", candidates: [], retry });
   }
 
   const page = await run.fetch(normalized);
@@ -718,20 +970,21 @@ export async function probeUrlAsSource(url: string, ctx: DiscoveryContext): Prom
       const rendered = await renderAndScan(run, ctx, page.url);
       if (rendered) postings = safeExtract(ctx, rendered.html, rendered.url);
     }
-    const atsCandidates = [...run.candidates.values()];
-    for (const candidate of atsCandidates) {
+    const domain = extractDomain(page.url);
+    for (const candidate of run.ranked()) {
       const verification = await run.verify(candidate.spec);
       if (!verification.ok) continue;
+      const identityUnconfirmed = !verification.companyName && !boardMatchesCompany(candidate.spec, undefined, domain);
       const best: DiscoveryCandidate = {
         spec: candidate.spec,
-        confidence: confidenceFor({ ...candidate, companyName: verification.companyName }, {}),
+        confidence: confidenceFor({ ...candidate, companyName: verification.companyName }, { methodCount: 1, identityUnconfirmed }),
         method: candidate.method,
         evidence: candidate.evidence,
         sample: verification.sample ?? [],
         count: verification.count,
         companyName: verification.companyName,
       };
-      return { homepageUrl: normalized, outcome: outcomeFor(best.confidence), best, candidates: [best], companyName: best.companyName, log: run.log, fetches: run.fetches, durationMs: Date.now() - started };
+      return done({ outcome: outcomeFor(best.confidence), best, candidates: [best], companyName: best.companyName });
     }
     if (postings.length >= 3) {
       const candidate: DiscoveryCandidate = {
@@ -742,7 +995,7 @@ export async function probeUrlAsSource(url: string, ctx: DiscoveryContext): Prom
         sample: postings.slice(0, 3),
         count: postings.length,
       };
-      return { homepageUrl: normalized, outcome: "resolved", best: candidate, candidates: [candidate], log: run.log, fetches: run.fetches, durationMs: Date.now() - started };
+      return done({ outcome: "resolved", best: candidate, candidates: [candidate] });
     }
   }
 
@@ -750,5 +1003,8 @@ export async function probeUrlAsSource(url: string, ctx: DiscoveryContext): Prom
   const full = await discoverCareersSources(normalized, { ...ctx, maxFetches: Math.min(ctx.maxFetches ?? 15, 15) });
   full.log = [...run.log, ...full.log];
   full.fetches += run.fetches;
+  full.verifications = (full.verifications ?? 0) + run.verifications;
   return full;
 }
+
+export { Run as _DiscoveryRunForTests };

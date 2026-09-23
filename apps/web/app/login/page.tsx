@@ -4,12 +4,12 @@ import { googleConfigured } from "@/lib/google";
 import { AuthDivider, AuthShell, GoogleButton } from "@/components/AuthShell";
 import { Button } from "@/components/Button";
 import { Field, Input } from "@/components/Field";
-import { sanitizeNextPath } from "@/lib/session";
+import { sanitizeNextPath, sessionSecret } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
 const ERROR_MESSAGES: Record<string, string> = {
-  not_configured: "The server has no SESSION_SECRET configured yet, so nobody can sign in. Set it and redeploy.",
+  not_configured: "The server has no usable SESSION_SECRET yet (at least 32 random characters), so nobody can sign in. Set it and redeploy.",
   rate_limited: "Too many attempts. Wait 15 minutes and try again.",
   invalid: "That email and password do not match.",
   google_not_configured: "Google sign-in is not set up on this deployment.",
@@ -27,7 +27,7 @@ export default async function LoginPage({
   searchParams: Promise<{ next?: string; error?: string; email?: string }>;
 }) {
   const sp = await searchParams;
-  const hasSecret = !!process.env.SESSION_SECRET;
+  const hasSecret = !!sessionSecret();
   const next = sanitizeNextPath(sp.next);
   const error = sp.error ? (ERROR_MESSAGES[sp.error] ?? "Something went wrong. Try again.") : null;
   const google = googleConfigured();

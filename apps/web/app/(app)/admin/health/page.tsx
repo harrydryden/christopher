@@ -10,6 +10,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { requireAdmin } from "@/lib/auth";
+import { RefusalNotice } from "@/components/RefusalNotice";
 import { db } from "@/lib/db";
 import { totalAiUsage } from "@/lib/ai-usage";
 import { formatBytes, formatCount, formatDelta, formatDuration, formatLatency, formatPercent, formatStepDuration, formatUsd, formatUsdPrecise, relativeTime, shortDate } from "@/lib/format";
@@ -47,8 +48,9 @@ const WORKER_EVENT_TONE: Partial<Record<string, "green" | "blue" | "amber" | "re
   vitals: "neutral",
 };
 
-export default async function AdminOperationsPage() {
+export default async function AdminOperationsPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   await requireAdmin();
+  const sp = await searchParams;
   const now = new Date();
   // Budgets belong to accounts and each has its own window; this page is the deployment's report,
   // so it counts the calendar month that everybody's budget resets on.
@@ -91,6 +93,7 @@ export default async function AdminOperationsPage() {
   return (
     <div className="space-y-6">
       <PageHeader title="Operations" description="Everything the shared worker is doing, across every account and every company in the catalogue." />
+      <RefusalNotice sentence={sp.error} className="mb-4" />
 
       <Card
         title="Background worker"

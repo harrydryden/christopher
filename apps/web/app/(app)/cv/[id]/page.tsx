@@ -329,7 +329,9 @@ export default async function CvDraftPage({
             costs={cvEditCosts(draft.model, cvDraftSize(draft))}
             blocked={blocked}
             commentCounts={commentCounts}
-            share={<CvShareCard draftId={id} shares={sharing.shares} now={now} />}
+            // A link is of a finished, assessed revision (the action refuses anything else), so the
+            // card is offered only then — or kept where links already exist, so they can be ended.
+            share={(draft.status === "ready" && draft.assessment) || sharing.shares.length > 0 ? <CvShareCard draftId={id} shares={sharing.shares} now={now} /> : undefined}
             buildLog={
               <CvBuildLog steps={steps} now={now} maxAttempts={maxAttempts} context={narrativeContext} />
             }

@@ -7,9 +7,9 @@ import { z } from "zod";
 import { MAX_ACCOUNT_AI_BUDGET_USD, passwordProblem } from "@ava/core";
 import { companySubscriptions, cvDrafts, users, sessions, type UserRole } from "@ava/db/schema";
 import { isPlaceholderEmail } from "@ava/db";
-import { changePassword as changeStoredPassword, issueResetLink, sendVerificationEmail } from "@/lib/accounts";
+import { changePassword as changeStoredPassword, deleteAccount, issueResetLink, sendVerificationEmail } from "@/lib/accounts";
 import { emailLinkOrigin } from "@/lib/origin";
-import { clientAddress, endAllSessions, endOtherSessions, getCurrentUser, requireAdmin, requireUser } from "@/lib/auth";
+import { clientAddress, endOtherSessions, getCurrentUser, requireAdmin, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { clearAttempts, LIMITS, reserveRateLimits } from "@/lib/rate-limit";
 import { setUserSetting } from "@/lib/settings";
@@ -103,12 +103,10 @@ export async function setUserRole(userId: string, role: UserRole): Promise<void>
 }
 
 /** Administrators: remove another account and everything it owns. Shared companies and postings stay. */
+/** Administrators: remove an account. `deleteAccount` holds the lock that keeps one administrator. */
 export async function deleteUser(userId: string): Promise<void> {
   const admin = await requireAdmin();
-  const id = zUuid().parse(userId);
-  if (id === admin.id) throw new UserFacingError("You cannot delete your own account here.");
-  await endAllSessions(id);
-  await db().delete(users).where(eq(users.id, id));
+  await deleteAccount(admin.id, zUuid().parse(userId));
   revalidatePath("/admin");
 }
 

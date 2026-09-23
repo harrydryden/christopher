@@ -15,6 +15,7 @@ import { requireUser, requireVerifiedUser } from "@/lib/auth";
 import { cvLibraryIssues } from "@/lib/cv-library-issues";
 import { latestLibrary, writeCvLibraryVersion, type Tx } from "@/lib/cv-library-write";
 import { assertCvBuildCapacity, lockCvBuildCapacity } from "@/lib/cv-build-capacity";
+import { lockRoleView } from "@/lib/decisions";
 import { cvBuildQuote } from "@/lib/cv-quote";
 import { db } from "@/lib/db";
 import { userSettings as userSettingsTable } from "@ava/db/schema";
@@ -389,11 +390,7 @@ export async function requestCv(
       // Then the role's row in this account's table, which `setRoleStage` and `decide` lock first:
       // a stage saved from the table and a Generate each looked for the role's application under
       // locks that did not exclude each other, both found none, and both wrote one.
-      const [view] = await tx
-        .select({ jobId: userJobs.jobId })
-        .from(userJobs)
-        .where(and(eq(userJobs.userId, user.id), eq(userJobs.jobId, id)))
-        .for("update");
+      const view = await lockRoleView(tx, user.id, id);
       if (!view) throw new UserFacingError("Role not found.");
       const revision = await nextCvRevision(tx, { userId: user.id, companyName: row.company, jobTitle: row.job.title });
       // Two clicks on Generate are two of these transactions, one behind the other. The second

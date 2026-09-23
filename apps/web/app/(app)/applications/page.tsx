@@ -4,6 +4,7 @@ import { z } from "zod";
 import { ROLE_STAGES, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS, type RoleStage } from "@ava/core";
 import { ApplicationsTable } from "@/components/ApplicationsTable";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { getCvWorkStatus } from "@/lib/work-status";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
@@ -49,9 +50,10 @@ export default async function ApplicationsPage({
   const company = z.string().uuid().safeParse(requestedCompany).success ? await pipelineCompany(requestedCompany!) : null;
   const now = new Date();
   // What the table holds, and what it owes this week. Both are scoped to the company a link names.
-  const [result, due] = await Promise.all([
+  const [result, due, cvWork] = await Promise.all([
     listPipeline(user.id, { filter, page, company: company ?? undefined }),
     pipelineDueCount(user.id, { company: company ?? undefined, now }),
+    getCvWorkStatus(user.id),
   ]);
   // What a build would cost, for the rows on this page, so the price is beside the button rather
   // than in the build log of a CV that has already been paid for. The figures are turned into
@@ -130,7 +132,7 @@ export default async function ApplicationsPage({
         ))}
       </nav>
       {/* A CV on this page is still being written: the cells follow it without a reload. */}
-      {building && <AutoRefresh message="A CV for one of these roles is being built. This page updates itself." />}
+      {building && <AutoRefresh scope="cv" initialVersion={cvWork.version} message="A CV for one of these roles is being built. This page updates itself." />}
       <ApplicationsTable
         key={`${filter}:${result.page}:${company?.id ?? ""}`}
         rows={result.rows}

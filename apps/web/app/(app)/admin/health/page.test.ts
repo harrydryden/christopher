@@ -57,7 +57,7 @@ it("renders every card in fewer than twenty statements, at most eight at a time"
     return query(...args).finally(() => { inFlight--; });
   }) as never);
   try {
-    const page = await AdminOperationsPage();
+    const page = await AdminOperationsPage({ searchParams: Promise.resolve({}) });
     expect(page).toBeTruthy();
     expect(spy.mock.calls.length).toBeLessThan(20);
     expect(widest).toBeLessThanOrEqual(8);

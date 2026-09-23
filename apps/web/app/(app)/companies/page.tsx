@@ -24,10 +24,11 @@ import { needsEmailConfirmation, requireUser } from "@/lib/auth";
 import { CompanyControls } from "./CompanyControls";
 import { nextScanSentence } from "./scan-line";
 import { VERIFY_SENTENCE, VerifyNotice } from "@/components/VerifyNotice";
+import { RefusalNotice } from "@/components/RefusalNotice";
 
 export const dynamic = "force-dynamic";
 
-export default async function CompaniesPage({ searchParams }: { searchParams: Promise<{ added?: string; followed?: string; skipped?: string; page?: string; q?: string }> }) {
+export default async function CompaniesPage({ searchParams }: { searchParams: Promise<{ added?: string; followed?: string; skipped?: string; page?: string; q?: string; error?: string }> }) {
   const user = await requireUser();
   const sp = await searchParams;
   const q = (sp.q ?? "").slice(0, 200);
@@ -47,6 +48,8 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
         title="Companies"
         description={`Companies are shared across every account and scanned once a day — ${nextScanSentence(system.scanTime, system.timezone)}. Following one gives you its roles through your own filters.`}
       />
+
+      <RefusalNotice sentence={sp.error} className="mb-4" />
 
       {sp.added !== undefined && (
         <div className="mb-4 border-2 border-ok px-3 py-2 text-14 text-ok">

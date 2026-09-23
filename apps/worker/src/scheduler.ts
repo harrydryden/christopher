@@ -1,5 +1,6 @@
-import { schema, abandonCvDraft, enqueueTask, listUserIds, pruneWorkerEvents, recordWorkerEvent, releaseAiHolds, releaseOrphanedCvHolds } from "@ava/db";
-import { dedupeKeyFor, localDateParts, priorityFor } from "@ava/core";
+import { schema, abandonCvDraft, enqueueTask, pruneWorkerEvents, recordWorkerEvent, releaseAiHolds, releaseOrphanedCvHolds } from "@ava/db";
+import { enqueueTasks, type EnqueueRow } from "@ava/db/tasks";
+import { dedupeKeyFor, localDateParts, priorityFor, resolveUserSettings, type TaskType } from "@ava/core";
 import { and, eq, lt, sql } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 import { maintainHistory } from "./maintenance";
@@ -7,8 +8,16 @@ import { log } from "./log";
 import { finaliseScanRuns } from "./handlers/daily";
 import { CV_ABANDONED_MESSAGE, cvInterruptedFailure, onAbandon } from "./handlers/abandon";
 import { failOpenCvBuildStepsQuietly } from "./handlers/cv-journal";
-import { agePriorities, requeueStale } from "./queue";
+import { agePriorities, failSpentTasks, requeueStale } from "./queue";
 import { getInternal, setInternal } from "./settings";
+
+/** Past this many due discovery sources, one tick leaves the rest for the next. */
+const DISCOVERY_SWEEP_LIMIT = 200;
+
+/** An account's own `suggestionsEnabled`, from its stored value, resolved as its settings are. */
+function suggestionsEnabled(stored: unknown): boolean {
+  return resolveUserSettings(stored === null || stored === undefined ? [] : [{ key: "suggestionsEnabled", value: stored }]).suggestionsEnabled;
+}
 
 function addMinutes(hm: string, minutes: number): string {
   const [h, m] = hm.split(":").map(Number);
@@ -16,8 +25,14 @@ function addMinutes(hm: string, minutes: number): string {
   return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
 }
 
-/** One scheduler tick. Idempotent: safe to call every minute and after restarts. */
-export async function schedulerTick(deps: WorkerDeps): Promise<void> {
+/**
+ * One scheduler tick. Idempotent: safe to call every minute and after restarts.
+ *
+ * `signal` is the scheduler being stopped: the tick returns at the next step rather than carrying
+ * on into a pool the shutdown is about to close. Every step is safe to leave for the next tick.
+ */
+export async function schedulerTick(deps: WorkerDeps, signal?: AbortSignal): Promise<void> {
+  const stopped = () => signal?.aborted === true;
   const settings = await deps.settings();
   const now = deps.now();
   const { ymd, hm, weekday } = localDateParts(now, settings.timezone);
@@ -37,80 +52,131 @@ export async function schedulerTick(deps: WorkerDeps): Promise<void> {
   }
 
   // Weekly learning jobs run per account, an hour after the daily run.
+  if (stopped()) return;
   if (weekday === settings.weeklyDay && hm >= addMinutes(settings.scanTime, 60)) {
     await deps.db.transaction(async tx => {
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('ava:weekly-jobs'))`);
-    const last = await getInternal<string>(tx as unknown as WorkerDeps["db"], "lastWeeklyYmd");
-    if (last !== ymd) {
-      await setInternal(tx as unknown as WorkerDeps["db"], "lastWeeklyYmd", ymd);
-      const users = await listUserIds(tx as unknown as WorkerDeps["db"]);
-      for (const userId of users) {
-        const account = await deps.userSettings(userId);
-        const jobs: Array<{ type: "suggest_filters" | "synthesize_profile" | "suggest_companies"; payload: Record<string, unknown> }> = [
-          { type: "suggest_filters", payload: { userId } },
-          { type: "synthesize_profile", payload: { userId, force: false } },
-        ];
-        if (account.suggestionsEnabled) jobs.push({ type: "suggest_companies", payload: { userId } });
-        for (const job of jobs) {
-          await enqueueTask(tx as unknown as WorkerDeps["db"], job.type, job.payload, { dedupeKey: dedupeKeyFor(job.type, job.payload as never), priority: priorityFor(job.type) });
-        }
-      }
-      log.info("scheduled weekly jobs", { ymd, accounts: users.length });
-    }
+      const writer = tx as unknown as WorkerDeps["db"];
+      await writer.execute(sql`select pg_advisory_xact_lock(hashtext('ava:weekly-jobs'))`);
+      if ((await getInternal<string>(writer, "lastWeeklyYmd")) === ymd) return;
+      await setInternal(writer, "lastWeeklyYmd", ymd);
+      // One read of every account's suggestions switch and one batched insert, inside the lock
+      // with the marker, so the week is scheduled whole or not at all. It used to be a settings
+      // read and three inserts per account, one after another, all under the lock.
+      const accounts = await writer.execute<{ id: string; suggestions: unknown }>(sql`select u.id, us.value as suggestions
+        from users u left join user_settings us on us.user_id = u.id and us.key = 'suggestionsEnabled'
+        where u.claimed_at is not null`);
+      const job = (type: TaskType, payload: Record<string, unknown>): EnqueueRow =>
+        ({ type, payload, dedupeKey: dedupeKeyFor(type, payload as never), priority: priorityFor(type) });
+      const rows = accounts.rows.flatMap(({ id: userId, suggestions }) => [
+        job("suggest_filters", { userId }),
+        job("synthesize_profile", { userId, force: false }),
+        ...(suggestionsEnabled(suggestions) ? [job("suggest_companies", { userId })] : []),
+      ]);
+      const queued = await enqueueTasks(writer, rows);
+      log.info("scheduled weekly jobs", { ymd, accounts: accounts.rows.length, queued });
     });
   }
 
-  // External discovery sources are checked on their own interval; the handler honours the owner's settings.
-  const due = await deps.db.select().from(schema.discoverySources).where(and(
-    eq(schema.discoverySources.enabled, true), sql`${schema.discoverySources.nextRunAt} <= ${now}`,
-  ));
-  for (const source of due) {
-    if (!(await deps.userSettings(source.userId)).suggestionsEnabled) continue;
-    await enqueueTask(deps.db, "monitor_source", { sourceId: source.id }, {
-      dedupeKey: dedupeKeyFor("monitor_source", { sourceId: source.id }), priority: 7,
-    });
-  }
+  // External discovery sources are checked on their own interval. A due source is leased a day
+  // ahead as it is read, and the handler moves it to its real next run when it finishes, so one
+  // whose task fails, times out or dies with its worker is not queued again on every tick. Its
+  // owner's suggestions switch comes from the same statement; a source whose owner has them off
+  // is looked at again in an hour, where it used to be read — with its owner's settings — every
+  // minute for as long as the switch stayed off.
+  if (stopped()) return;
+  const due = await deps.db.execute<{ id: string; suggestions: unknown }>(sql`
+    update discovery_sources ds
+    set next_run_at = ${now}::timestamptz + case when due.suggestions = 'false'::jsonb then interval '1 hour' else interval '1 day' end
+    from (
+      select s.id, us.value as suggestions
+      from discovery_sources s
+      left join user_settings us on us.user_id = s.user_id and us.key = 'suggestionsEnabled'
+      where s.enabled = true and s.next_run_at <= ${now}
+      order by s.next_run_at
+      limit ${DISCOVERY_SWEEP_LIMIT}
+      for update of s skip locked
+    ) due
+    where ds.id = due.id
+    returning ds.id, due.suggestions`);
+  await enqueueTasks(deps.db, due.rows.filter(source => suggestionsEnabled(source.suggestions)).map(source => ({
+    type: "monitor_source" as const, payload: { sourceId: source.id },
+    dedupeKey: dedupeKeyFor("monitor_source", { sourceId: source.id }), priority: 7,
+  })));
 
+  if (stopped()) return;
   await finaliseScanRuns(deps);
 
+  if (stopped()) return;
   const recovered = await requeueStale(deps.db, undefined, deps.env.workerId, { deps, onAbandon });
   if (recovered.requeued || recovered.failed) log.warn("recovered tasks from a lost worker", recovered);
+  // Boot sweeps these too; hourly is enough for a state nothing current produces.
+  await claimPeriodic(deps, "lastSpentSweep", 3600, async () => {
+    const spent = await failSpentTasks(deps.db, deps.env.workerId, { deps, onAbandon });
+    if (spent) log.warn("failed queued tasks that had spent every attempt", { spent });
+  });
 
   // Every few minutes, and once a day: the sweeps that catch what the queue itself could not.
+  if (stopped()) return;
   await claimPeriodic(deps, "lastCvReconcile", 300, async () => {
     const failed = await reconcileCvDrafts(deps);
     if (failed) log.warn("reconciled CV drafts nothing was building", { failed });
   });
   await prunePeriodically(deps);
 
+  if (stopped()) return;
   // Ageing, once a minute and bounded, so that a task which keeps losing to newer higher-priority
   // work still reaches the front. It lives here rather than in the claim because the claim's
-  // ordering has to be something an index can serve.
-  const aged = await agePriorities(deps.db);
-  if (aged) log.debug("aged queued tasks", { aged });
+  // ordering has to be something an index can serve. Claimed across the deployment, because every
+  // worker and the cron fallback tick: each sweep is one step, and two a minute is twice the rate.
+  await claimPeriodic(deps, "lastAgePriorities", 55, async () => {
+    const aged = await agePriorities(deps.db);
+    if (aged) log.debug("aged queued tasks", { aged });
+  });
 
-  await deps.db
-    .update(schema.companySuggestions)
-    .set({ status: "expired", resolvedAt: now })
-    .where(and(eq(schema.companySuggestions.status, "pending"), lt(schema.companySuggestions.createdAt, new Date(now.getTime() - 30 * 86_400_000))));
-
-  await maintainHistory(deps);
+  if (stopped()) return;
+  // Hourly, under the maintenance claim, with the retention it belongs beside: a month-old
+  // suggestion expires within the hour, and the update no longer runs on every tick.
+  if (await maintainHistory(deps, { signal }) && !stopped()) {
+    await deps.db
+      .update(schema.companySuggestions)
+      .set({ status: "expired", resolvedAt: now })
+      .where(and(eq(schema.companySuggestions.status, "pending"), lt(schema.companySuggestions.createdAt, new Date(now.getTime() - 30 * 86_400_000))));
+  }
 }
 
-export function startScheduler(deps: WorkerDeps, intervalMs = 60_000): { stop(): void } {
+/**
+ * Tick now and then every `intervalMs`, one tick at a time.
+ *
+ * The next tick is scheduled when the last one finishes, so a tick that outlasts the interval —
+ * the weekly fan-out, a maintenance batch, a lock the daily run holds — delays the next instead
+ * of running beside it and doubling its connections. `stop()` tells the tick in flight to return
+ * at its next step and resolves once it has, so a shutdown never closes the pool under it.
+ */
+export function startScheduler(
+  deps: WorkerDeps,
+  intervalMs = 60_000,
+  tick: (deps: WorkerDeps, signal: AbortSignal) => Promise<void> = schedulerTick,
+): { stop(): Promise<void> } {
+  const controller = new AbortController();
   let timer: NodeJS.Timeout | null = null;
-  const run = async () => {
-    try {
-      await schedulerTick(deps);
-    } catch (err) {
-      log.error("scheduler tick failed", err);
-    }
+  let current: Promise<void> | null = null;
+  const run = () => {
+    if (controller.signal.aborted) return;
+    timer = null;
+    const started = Date.now();
+    current = tick(deps, controller.signal)
+      .catch(err => log.error("scheduler tick failed", err))
+      .finally(() => {
+        current = null;
+        if (!controller.signal.aborted) timer = setTimeout(run, Math.max(0, intervalMs - (Date.now() - started)));
+      });
   };
-  void run();
-  timer = setInterval(run, intervalMs);
+  run();
   return {
-    stop() {
-      if (timer) clearInterval(timer);
+    async stop() {
+      controller.abort();
+      if (timer) clearTimeout(timer);
+      await current;
     },
   };
 }

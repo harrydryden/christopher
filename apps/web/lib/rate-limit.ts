@@ -17,8 +17,14 @@ export const LIMITS = {
   /** Failed password attempts per address, across every account. */
   loginAddress: { max: 30, windowMs: 15 * 60 * 1000 },
   signupAddress: { max: 10, windowMs: 60 * 60 * 1000 },
+  /** Links mailed to one address, by any path: reset, confirmation, or a signed-in resend. */
   resetEmail: { max: 3, windowMs: 60 * 60 * 1000 },
   resetAddress: { max: 20, windowMs: 60 * 60 * 1000 },
+  /**
+   * Wrong current passwords per account on the password form. A stolen session must not become an
+   * unthrottled password oracle, and each check is a full-cost scrypt.
+   */
+  passwordChange: { max: 5, windowMs: 15 * 60 * 1000 },
   /**
    * Opening a shared CV preview, counted per link and per caller. A reviewer reads a CV, reloads
    * it, and comes back to it; a crawler that found the link in a forwarded email does not. The

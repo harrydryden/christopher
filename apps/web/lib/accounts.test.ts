@@ -284,6 +284,30 @@ describe("single-use links", () => {
     }
   });
 
+  it("retires every outstanding link and every other session when the password changes", async () => {
+    const log = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      const { user } = await registerWithPassword({ email: "ada@example.com", password: PASSWORD });
+      const [kept] = await database.insert(schema.sessions)
+        .values([{ userId: user.id, expiresAt: new Date(Date.now() + 60_000) }, { userId: user.id, expiresAt: new Date(Date.now() + 60_000) }])
+        .returning();
+      // A reset link someone requested while they briefly had the mailbox, and a confirmation link.
+      await requestPasswordReset("ada@example.com", "https://app.example");
+      const reset = tokenFromLog(log, "/reset-password");
+      expect(reset).not.toBe("");
+      const confirmation = await confirmationToken(user.id);
+      expect(confirmation).not.toBe("");
+
+      await changePassword(user, PASSWORD, "another fine password", kept!.id);
+      expect(await resetPasswordWithToken(reset, "the attacker's password")).toBeNull();
+      expect((await confirmEmailWithToken(confirmation, { password: "another fine password" })).status).toBe("invalid");
+      expect((await sessionsFor(user.id)).map(row => row.id)).toEqual([kept!.id]);
+      expect((await authenticateWithPassword("ada@example.com", "another fine password")).status).toBe("ok");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("does not issue confirmation links for verified accounts or without an origin", async () => {
     const { user } = await registerWithPassword({ email: "ada@example.com", password: PASSWORD });
     expect(await sendVerificationEmail(user, null)).toEqual({ delivered: false });

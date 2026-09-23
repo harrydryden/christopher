@@ -44,7 +44,10 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
   // Two connections per slot plus a margin: a handler holds one for its transaction and asks for
   // more from inside it (a lease check, a nested read), and the scheduler, the heartbeat and
   // /healthz all need one at the same time. Sized under the pool the deployment's Postgres allows.
-  const { db, pool } = createDb(env.databaseUrl, { max: env.concurrency * 2 + 4 });
+  // The environment reads that ceiling once (`databasePoolMax`) and logs it at boot, so the pool
+  // opened here is the one it logged; the formula is what it reads when nothing overrides it.
+  const { databasePoolMax } = env as WorkerEnv & { databasePoolMax?: number };
+  const { db, pool } = createDb(env.databaseUrl, { max: databasePoolMax ?? env.concurrency * 2 + 4 });
   const now = overrides.now ?? (() => new Date());
   const settingsTtlMs = overrides.settingsTtlMs ?? 5000;
   let cached: { at: number; value: SystemSettings } | null = null;

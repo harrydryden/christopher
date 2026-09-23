@@ -45,7 +45,8 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
   // more from inside it (a lease check, a nested read), and the scheduler, the heartbeat and
   // /healthz all need one at the same time. Sized under the pool the deployment's Postgres allows.
   // The environment reads that ceiling once and logs it at boot, so the pool opened is the one logged.
-  const { db, pool } = createDb(env.databaseUrl, { max: env.databasePoolMax });
+  // Slow queries go through the worker's own log, so each line carries the task it happened in.
+  const { db, pool } = createDb(env.databaseUrl, { max: env.databasePoolMax, onSlowQuery: q => log.info("slow database query", q) });
   const now = overrides.now ?? (() => new Date());
   const settingsTtlMs = overrides.settingsTtlMs ?? 5000;
   let cached: { at: number; value: SystemSettings } | null = null;

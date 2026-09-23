@@ -546,6 +546,16 @@ it("refuses to record a submitted CV whose draft changed while its PDF was rende
   });
   const [unchanged] = await applicationsOf();
   expect(unchanged).toMatchObject({ status: "applying", pdfBase64: null });
+  // Assessed again from another tab while this one rendered: the same refusal.
+  rendering.during = async () => {
+    const [current] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft!.id));
+    await database.update(schema.cvDrafts).set({ assessment: { ...current!.assessment!, assessedAt: new Date(Date.now() + 2_000).toISOString() } }).where(eq(schema.cvDrafts.id, draft!.id));
+  };
+  expect(await recordApplication(draft!.id, { ok: true }, form({ appliedOn: "2026-09-06" }))).toEqual({
+    ok: false, error: "This CV changed while its PDF was being prepared. Record the application again.",
+  });
+  expect((await applicationsOf())[0]).toMatchObject({ status: "applying", pdfBase64: null });
+
   // Pressed again, it renders the revision that is there now and records it.
   rendering.during = null;
   expect(await recordApplication(draft!.id, { ok: true }, form({ appliedOn: "2026-09-06" }))).toEqual({ ok: true });

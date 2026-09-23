@@ -286,7 +286,10 @@ export async function recordApplication(cvId: string, _prev: ActionResult, form:
       if (submitted.length) throw new UserFacingError("This CV revision already has an application record.");
       const [locked] = await tx.select().from(cvDrafts).where(and(eq(cvDrafts.id, cvId), eq(cvDrafts.userId, user.id))).for("share");
       const draft = assertRecordable(locked);
-      if (draft.finalisedAt?.getTime() !== rendered.finalisedAt?.getTime() || JSON.stringify(draft.content) !== JSON.stringify(rendered.content)) {
+      // The assessment covers the exact wording and appearance, as `finaliseCvDraft` relies on: the
+      // same assessment, finalisation and content are the revision that was rendered.
+      if (draft.assessment?.inputHash !== rendered.assessment?.inputHash || draft.assessment?.assessedAt !== rendered.assessment?.assessedAt
+        || draft.finalisedAt?.getTime() !== rendered.finalisedAt?.getTime() || JSON.stringify(draft.content) !== JSON.stringify(rendered.content)) {
         throw new UserFacingError("This CV changed while its PDF was being prepared. Record the application again.");
       }
       jobId = draft.jobId;

@@ -1,4 +1,5 @@
 import { withResourceLease } from "../lease";
+import { enqueueTasks } from "@ava/db/tasks";
 import { schema, enqueueTask, latestApplicationFor, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, type ScoreState, type Task } from "@ava/db";
 import { decisionDigest } from "@ava/ai";
 import { eligibleCvEvidence, evidenceHeading, responsibilityRows, scoringEvidence, sha1, dedupeKeyFor, modelForCallSite, priorityFor, type CvLibrary, type ScoringEvidenceBlock, type TaskPayloads } from "@ava/core";
@@ -51,7 +52,7 @@ export async function handleTagReason(task: Task, deps: WorkerDeps): Promise<unk
       job: { title: decision.jobTitle, company: decision.companyName, location: decision.jobLocation ?? undefined, department: decision.jobDepartment ?? undefined },
       vocabulary: vocab.map((v) => v.tag),
     },
-    { refType: "decision", refId: decision.id, userId: decision.userId },
+    { refType: "decision", refId: decision.id, userId: decision.userId, signal: deps.signal },
   ));
   if (result === REFUSED) return BUDGET_SKIP;
   if (!result) return { skipped: "no ai result" };
@@ -143,7 +144,7 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
     return { skipped: "scoring inputs unchanged" };
   }
   const result = await withinBudget(deps.ai.scoreJob(input,
-    { refType: "job", refId: job.id, userId },
+    { refType: "job", refId: job.id, userId, signal: deps.signal },
   ));
   if (result === REFUSED) {
     await markScoreState(deps, userId, jobId, "budget");
@@ -301,7 +302,7 @@ export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Pro
     disagreements,
     rejectedCompanySuggestions: rejected.filter((r) => r.reason).map((r) => ({ name: r.name, reason: r.reason ?? "" })),
     outcomes,
-  }, { refType: "profile", refId: userId, userId }));
+  }, { refType: "profile", refId: userId, userId, signal: deps.signal }));
   if (result === REFUSED) return BUDGET_SKIP;
   if (!result) return { skipped: "no ai result" };
 
@@ -403,7 +404,7 @@ export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promis
     decisions: decisions.map(map),
     previouslyRejected: previouslyRejected.map((r) => ({ type: r.type, value: r.value })),
     companies,
-  }, { refType: "filters", refId: userId, userId }));
+  }, { refType: "filters", refId: userId, userId, signal: deps.signal }));
   if (result === REFUSED) return BUDGET_SKIP;
   if (!result) return { skipped: "no ai result" };
 
@@ -490,11 +491,12 @@ export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<un
   if (last && (last.result as { inputsHash?: string } | null)?.inputsHash === inputsHash)
     return { skipped: "scoring inputs unchanged since the last rescore" };
   if (last?.finishedAt && deps.now().getTime() - last.finishedAt.getTime() < RESCORE_INTERVAL_MS) {
-    // Coalesced: one pass at the end of the hour picks up everything that changed within it. Its
-    // key is its own, because this task still holds the ordinary one while it runs.
+    // Coalesced: one pass at the end of the hour picks up everything that changed within it, and
+    // any other save in the hour folds into the same waiting row by its key.
     const retryAt = new Date(last.finishedAt.getTime() + RESCORE_INTERVAL_MS);
-    await enqueueTask(deps.db, "rescore_all", { userId, onlyInTable: onlyInTable ?? true },
-      { dedupeKey: `rescore_all:${userId}:deferred`, priority: priorityFor("rescore_all"), runAfter: retryAt });
+    const deferred = { userId, onlyInTable: onlyInTable ?? true };
+    await enqueueTask(deps.db, "rescore_all", deferred,
+      { dedupeKey: dedupeKeyFor("rescore_all", deferred), priority: priorityFor("rescore_all"), runAfter: retryAt });
     return { skipped: "rescored within the hour", retryAt: retryAt.toISOString() };
   }
   const shortlisted = sql<boolean>`exists (select 1 from decisions d where d.user_id = ${schema.userJobs.userId} and d.job_id = ${schema.userJobs.jobId} and d.superseded = false and d.decision = 'apply')`;
@@ -504,12 +506,14 @@ export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<un
   let queued = 0;
   for (let offset = 0; offset < rows.length; offset += 250) {
     const batch = rows.slice(offset, offset + 250);
-    const values = batch.map(row => {
+    const rowFor = (row: (typeof batch)[number]) => {
       const payload = { userId, jobId: row.id };
-      return { type: 'score_job' as const, payload, dedupeKey: dedupeKeyFor('score_job', payload), priority: row.shortlisted ? 1 : priorityFor('score_job') };
-    });
-    const inserted = await deps.db.insert(schema.tasks).values(values).onConflictDoNothing().returning({ id: schema.tasks.id });
-    queued += inserted.length;
+      return { type: "score_job" as const, payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: row.shortlisted ? 1 : priorityFor("score_job") };
+    };
+    // A shortlisted role's score is the one the person is waiting on: a background score already
+    // queued for it is brought up to that priority rather than left where it was.
+    queued += await enqueueTasks(deps.db, batch.filter(row => row.shortlisted).map(rowFor), 250, true);
+    queued += await enqueueTasks(deps.db, batch.filter(row => !row.shortlisted).map(rowFor));
     // Every role a new profile version will re-score reads "scoring" until its turn comes.
     await deps.db.update(schema.userJobs).set({ scoreState: "queued", scoreStateAt: deps.now() })
       .where(and(eq(schema.userJobs.userId, userId), inArray(schema.userJobs.jobId, batch.map(row => row.id))));

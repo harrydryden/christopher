@@ -410,3 +410,15 @@ it("writes a reason's tags behind the task's fence", async () => {
   const [after] = await db.select().from(schema.decisions).where(eq(schema.decisions.id, decision!.id));
   expect(after!.tags).toEqual([]);
 });
+
+it("brings a shortlisted role's waiting score up to the shortlist's priority", async () => {
+  const { job } = await seedRole();
+  await db.insert(schema.decisions).values({ userId, jobId: job.id, decision: "apply", reason: "Keen", jobTitle: "Operations Manager", companyName: "Acme" });
+  // A background score for the role is already waiting at the ordinary priority.
+  const payload = { userId, jobId: job.id };
+  await db.insert(schema.tasks).values({ type: "score_job", payload, dedupeKey: `score_job:${userId}:${job.id}`, priority: 5 });
+  await handleRescoreAll({ payload: { userId, onlyInTable: true }, type: "rescore_all", attempts: 1 } as never, deps);
+  const scores = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"));
+  expect(scores).toHaveLength(1);
+  expect(scores[0]!.priority).toBe(1);
+});

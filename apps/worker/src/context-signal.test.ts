@@ -42,6 +42,18 @@ describe("the fetch context under a run's signal", () => {
     expect(seen[1]).toEqual({ scrollAndExpand: true, signal: stop.signal });
   });
 
+  it("takes the run's signal from the deps the queue handed the task", async () => {
+    const seen: Array<FetchInit | undefined> = [];
+    const run = new AbortController();
+    const { deps } = depsWith(async (url, init) => { seen.push(init); return page(url); });
+    const runDeps = { ...deps, signal: run.signal } as WorkerDeps;
+    await makeFetchContext(runDeps).fetchText("https://acme.example/careers");
+    expect(seen[0]).toEqual({ signal: run.signal });
+    run.abort(lease());
+    await expect(makeFetchContext(runDeps).fetchText("https://acme.example/careers")).rejects.toThrow("Task lease lost");
+    await expect(makeDiscoveryContext(runDeps).fetchText("https://acme.example/careers")).rejects.toThrow("Task lease lost");
+  });
+
   it("starts nothing once the run has been stopped", async () => {
     let fetched = 0;
     const stop = new AbortController();

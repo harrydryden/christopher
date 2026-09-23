@@ -20,6 +20,11 @@ export interface WorkerDeps {
   traffic: HttpTrafficLedger;
   browser: BrowserRenderer | null;
   ai: AiEngine;
+  /**
+   * The run's own signal, when these are the deps the queue handed one task (`RunDeps`). Fetch and
+   * discovery contexts built from them stop with the run without being told again.
+   */
+  signal?: AbortSignal;
   /** A stand-in for the Anthropic client, so a test can drive the real CV engine with scripted answers. */
   aiClient?: AiClientLike;
   /** System settings from the database; cached for a few seconds to avoid hammering the table. */
@@ -195,11 +200,12 @@ function untilStopped<T>(signal: AbortSignal | undefined, work: () => Promise<T>
 }
 
 /**
- * The fetches and renders a handler makes. With `signal` — the run's own — every one of them is
- * refused once the run has been told to stop, and one in flight is let go at once.
+ * The fetches and renders a handler makes. With a signal — the one given, else the run's own from
+ * `deps` — every one of them is refused once the run has been told to stop, and one in flight is
+ * let go at once.
  */
 export function makeFetchContext(deps: WorkerDeps, opts: { signal?: AbortSignal } = {}): FetchContext {
-  const { signal } = opts;
+  const signal = opts.signal ?? deps.signal;
   // The fetcher and the renderer cancel the transfer themselves when told; a request that carries
   // its own signal keeps it, and every other one carries the run's.
   return {
@@ -221,11 +227,12 @@ export function makeDiscoveryContext(
   deps: WorkerDeps,
   opts: { maxFetches?: number; useAi?: boolean; userId?: string; signal?: AbortSignal } = {},
 ): DiscoveryContext {
-  const fetchCtx = makeFetchContext(deps, { signal: opts.signal });
+  const signal = opts.signal ?? deps.signal;
+  const fetchCtx = makeFetchContext(deps, { signal });
   const useAi = opts.useAi ?? true;
   // What every model call of the run carries; the ref discovery hands each hook (its `aiRef`,
   // naming the company and the account) is laid over it.
-  const base = { ...(opts.userId ? { userId: opts.userId } : {}), ...(opts.signal ? { signal: opts.signal } : {}) };
+  const base = { ...(opts.userId ? { userId: opts.userId } : {}), ...(signal ? { signal } : {}) };
   const refFor = (ref?: Parameters<NonNullable<DiscoveryAiHooks["classifyPage"]>>[1]): Ref => ({ ...base, ...ref });
   return {
     ...fetchCtx,

@@ -551,9 +551,12 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     const saveButton = page.getByRole("button", { name: "Save Direct Edits", exact: true });
     await saveButton.click();
     try {
+      // Longer than the database's thirty-second statement timeout, so a render held up by a lock
+      // fails as one, and the failure below names it, rather than this wait giving up first.
       await page.waitForURL(
         (url) =>
           url.pathname.startsWith("/cv/") && !url.pathname.endsWith(readyId),
+        { timeout: 45_000 },
       );
     } catch (error) {
       // The failure names what the page said instead of navigating: the action's refusal, if any,

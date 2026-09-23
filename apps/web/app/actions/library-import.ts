@@ -19,6 +19,7 @@ import {
   LIBRARY_IMPORT_MIN_CHARS,
   libraryImportUrl,
   proposalToLibraryAdditions,
+  stripControlCharacters,
   stripHtml,
   validateLibraryProposal,
 } from "@ava/core";
@@ -106,7 +107,8 @@ async function prepareImport(
   userId: string,
 ): Promise<{ input: CreateLibraryImportInput } | { error: string }> {
   if (kind === "paste") {
-    const content = stripHtml(String(form.get("content") ?? "").trim());
+    // NUL and the other control characters a copied PDF can carry: Postgres refuses NUL in text.
+    const content = stripControlCharacters(stripHtml(String(form.get("content") ?? "").trim()));
     if (content.length < LIBRARY_IMPORT_MIN_CHARS) {
       return { error: `Paste at least ${LIBRARY_IMPORT_MIN_CHARS} characters of your CV or profile.` };
     }
@@ -166,7 +168,11 @@ export async function acceptLibraryImport(importId: string, form: FormData): Pro
     const version = z.coerce.number().int().min(0).safeParse(form.get("version"));
     if (!version.success) return fail("Reload the page before adding these items.");
 
-    const { proposal } = validateLibraryProposal(row.content ?? "", row.proposal);
+    const { proposal, dropped } = validateLibraryProposal(row.content ?? "", row.proposal);
+    // The ticked items are named by their place in the proposal, so one that no longer anchors
+    // would move every id after it onto a different item. Nothing is added from a proposal that
+    // does not check out whole; it was read under an older, looser check, and is read afresh.
+    if (dropped) return fail("That proposal was read under an older check and no longer matches its document. Dismiss it and import the document again to read it afresh.");
     let added = { jobs: 0, rows: 0, education: 0, skills: 0 };
     await db().transaction(async tx => {
       await writeCvLibraryVersion(tx, user.id, version.data, current => {

@@ -1,11 +1,55 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
-import type { Db } from "@ava/db";
+import { recordAiCall, type AiCallRecord, type Db } from "@ava/db";
 import type { AiBudgetRefusal } from "@ava/core";
+import { log } from "./log";
 
 export type { AiBudgetRefusal };
 
 const discoverySites = ["A7", "A8", "A10"];
+
+/**
+ * A deployment cap at or above this is no cap. It is what the environment reads when an operator
+ * sets neither DAILY_AI_BUDGET_USD nor DISCOVERY_AI_BUDGET_USD, so it is the ordinary case, and
+ * summing every account's calls for the day to compare against a million dollars was work — under
+ * a lock every model call in the deployment queued behind — that could never refuse anything.
+ */
+export const UNLIMITED_AI_BUDGET_USD = 1_000_000;
+
+const capped = (limit: number | undefined): limit is number => limit !== undefined && limit < UNLIMITED_AI_BUDGET_USD;
+
+/**
+ * A hold refused mid-handler, with the limit that refused it.
+ *
+ * Typed so a handler can tell "this account has no room" — work to skip, finishing done — from a
+ * fault worth a retry. Before, it was a plain Error thrown out of the engine, so every task an
+ * account near its month's end queued failed three times and filled Health's failed list.
+ */
+export class BudgetRefusedError extends Error {
+  constructor(readonly refusal: AiBudgetRefusal, message: string) {
+    super(message);
+    this.name = "BudgetRefusedError";
+  }
+}
+
+/** True when `err` is a hold the account's own budget refused, which a handler skips rather than retries. */
+export function isAccountBudgetRefusal(err: unknown): err is BudgetRefusedError {
+  return err instanceof BudgetRefusedError && err.refusal.limit === "account";
+}
+
+/**
+ * What an account has spent in its window, and what its calls in flight are holding: the two
+ * figures every admission reads. One statement, so the pre-check a handler makes before it starts
+ * and the hold the engine takes for each call do the same arithmetic on the same numbers.
+ */
+export async function accountAiStanding(db: Pick<Db, "execute">, userId: string, since: Date): Promise<{ spent: number; held: number }> {
+  // cost_usd and amount are real: summed as they are, a month of small calls drifts in single
+  // precision. Each value is widened before it is added, as the reports do.
+  const rows = await db.execute<{ spent: number; held: number }>(sql`select
+    (select coalesce(sum(cost_usd::float8), 0) from ai_calls where user_id = ${userId} and at >= ${since}) as spent,
+    (select coalesce(sum(amount::float8), 0) from ai_reservations where user_id = ${userId} and expires_at > now()) as held`);
+  return { spent: Number(rows.rows[0]?.spent ?? 0), held: Number(rows.rows[0]?.held ?? 0) };
+}
 
 /**
  * Hold capacity against an account's AI budget for one model call, then release it.
@@ -20,7 +64,8 @@ const discoverySites = ["A7", "A8", "A10"];
  * call its estimate. Nothing ever reconciled the two, so every timeout quietly ate budget that was
  * never spent, until the worker refused work while Health still reported the month almost unused.
  *
- * Reservations share one short lock across processes; no lock survives a model request.
+ * An account's reservations share one short lock per account across processes, and the
+ * deployment's caps, when an operator has set one, one more; no lock survives a model request.
  */
 export async function reserveAi(db: Db, callSite: string, amount: number, limits: AiBudgetLimits, now = new Date(), ttlMinutes = 15) {
   const hold = await tryReserveAi(db, callSite, amount, limits, now, ttlMinutes);
@@ -34,9 +79,12 @@ export type AiBudgetLimits = {
    * no account — extraction, discovery — passes none and is bounded by the caps below alone.
    */
   account?: { userId: string; budgetUsd: number; since: Date };
-  /** Optional operator caps on the whole deployment for today, unlimited unless the environment sets them. */
-  daily: number;
-  discovery: number;
+  /**
+   * Optional operator caps on the whole deployment for today. Unset, or at or above
+   * UNLIMITED_AI_BUDGET_USD, is no cap, and then no day total is read at all.
+   */
+  daily?: number;
+  discovery?: number;
   /**
    * The worker taking the hold. A shutting-down worker releases its own holds by this id, so a
    * killed build does not leave its estimate held against the account until the reservation
@@ -53,8 +101,20 @@ export type AiBudgetLimits = {
 
 /** A hold taken, with the figures it was measured against — read inside the lock that took it. */
 export interface AiHold {
-  /** Release the hold. The call's real cost is already in `ai_calls`, so nothing is charged here. */
+  /**
+   * Release the hold. The call's real cost is already in `ai_calls`, so nothing is charged here —
+   * unless a call it covered could not be recorded (`keep`), when the hold is left to expire, so
+   * the spend that exists nowhere else goes on counting until then.
+   */
   release: () => Promise<void>;
+  /**
+   * Take a recorded call's cost off a hold taken for a whole build, in the transaction that
+   * recorded it, so the budget never sees that spend twice — once in `ai_calls`, again as held.
+   * Clamped at zero and never deleted: `renew` reads a missing row as the hold having been let go.
+   */
+  consume: (costUsd: number, tx?: Pick<Db, "execute">) => Promise<void>;
+  /** A call this hold covered could not be recorded: keep the hold until it expires rather than release it. */
+  keep: () => void;
   /**
    * Keep a hold alive through a long build. False when the row is no longer there — it expired, or
    * something released it — which means the budget has forgotten this work and the caller must
@@ -75,47 +135,66 @@ export async function tryReserveAi(db: Db, callSite: string, amount: number, lim
   const dayStart = new Date(`${now.toISOString().slice(0, 10)}T00:00:00Z`);
   const id = randomUUID();
   const isDiscovery = discoverySites.includes(callSite);
+  const daily = capped(limits.daily) ? limits.daily : undefined;
+  const discoveryCap = isDiscovery && capped(limits.discovery) ? limits.discovery : undefined;
+  const deploymentCapped = daily !== undefined || discoveryCap !== undefined;
   type Measured = { spent: number; held: number; limitUsd: number };
   let measured: Measured | undefined;
   const outcome = await db.transaction(async (tx): Promise<{ refused: AiBudgetRefusal } | { measured: Measured }> => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('ava:ai-budget'))`);
-    await tx.execute(sql`delete from ai_reservations where expires_at <= now()`);
+    // Always in this order, so two holds can never wait on each other: the deployment's lock, only
+    // when a cap applies to this call, then the account's. An account's budget is judged under its
+    // own lock whatever the caps are, so two processes configured differently still serialise it.
+    if (deploymentCapped) {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('ava:ai-budget'))`);
+      await tx.execute(sql`delete from ai_reservations where expires_at <= now()`);
+    }
     if (account) {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`ava:ai-budget:${account.userId}`}))`);
+      await tx.execute(sql`delete from ai_reservations where user_id = ${account.userId} and expires_at <= now()`);
       // This account's own month: what it has spent, plus what its calls in flight are holding.
       // Its holds alone, so one account's build can never be refused by another's.
-      const own = await tx.execute<{ spent: number; held: number }>(sql`select
-        (select coalesce(sum(cost_usd), 0) from ai_calls where user_id = ${account.userId} and at >= ${account.since}) as spent,
-        (select coalesce(sum(amount), 0) from ai_reservations where user_id = ${account.userId}) as held`);
-      const spent = Number(own.rows[0]?.spent ?? 0);
-      const held = Number(own.rows[0]?.held ?? 0);
+      const { spent, held } = await accountAiStanding(tx, account.userId, account.since);
       if (spent + held + amount > account.budgetUsd) return { refused: { limit: "account", limitUsd: account.budgetUsd, spent, held } };
       measured = { spent, held, limitUsd: account.budgetUsd };
     }
     // The operator's caps, which keep their own day whatever an account's window is, and count
-    // every account's calls together with the work that belongs to none.
-    const spent = await tx.execute<{ day: number; discovery: number }>(sql`select
-      coalesce(sum(cost_usd), 0) as day,
-      coalesce(sum(cost_usd) filter (where call_site in ('A7','A8','A10')), 0) as discovery
-      from ai_calls where at >= ${dayStart}`);
-    const held = await tx.execute<{ total: number; discovery: number }>(sql`select coalesce(sum(amount), 0) as total,
-      coalesce(sum(amount) filter (where call_site in ('A7','A8','A10')), 0) as discovery from ai_reservations`);
-    const day = Number(spent.rows[0]?.day ?? 0);
-    const pending = Number(held.rows[0]?.total ?? 0);
-    const discovery = Number(spent.rows[0]?.discovery ?? 0);
-    const discoveryHeld = Number(held.rows[0]?.discovery ?? 0);
-    if (day + pending + amount > limits.daily) return { refused: { limit: "day", limitUsd: limits.daily, spent: day, held: pending } };
-    if (isDiscovery && discovery + discoveryHeld + amount > limits.discovery) return { refused: { limit: "discovery", limitUsd: limits.discovery, spent: discovery, held: discoveryHeld } };
+    // every account's calls together with the work that belongs to none. Read only when one is set.
+    let day = 0;
+    let pending = 0;
+    if (deploymentCapped) {
+      const totals = await tx.execute<{ day: number; discovery: number; held: number; discovery_held: number }>(sql`select
+        (select coalesce(sum(cost_usd::float8), 0) from ai_calls where at >= ${dayStart}) as day,
+        (select coalesce(sum(cost_usd::float8), 0) from ai_calls where at >= ${dayStart} and call_site in (${sql.join(discoverySites.map(site => sql`${site}`), sql`, `)})) as discovery,
+        (select coalesce(sum(amount::float8), 0) from ai_reservations where expires_at > now()) as held,
+        (select coalesce(sum(amount::float8), 0) from ai_reservations where expires_at > now() and call_site in (${sql.join(discoverySites.map(site => sql`${site}`), sql`, `)})) as discovery_held`);
+      day = Number(totals.rows[0]?.day ?? 0);
+      pending = Number(totals.rows[0]?.held ?? 0);
+      const discovery = Number(totals.rows[0]?.discovery ?? 0);
+      const discoveryHeld = Number(totals.rows[0]?.discovery_held ?? 0);
+      if (daily !== undefined && day + pending + amount > daily) return { refused: { limit: "day", limitUsd: daily, spent: day, held: pending } };
+      if (discoveryCap !== undefined && discovery + discoveryHeld + amount > discoveryCap)
+        return { refused: { limit: "discovery", limitUsd: discoveryCap, spent: discovery, held: discoveryHeld } };
+    }
     await tx.execute(sql`insert into ai_reservations (id, user_id, call_site, amount, expires_at, worker_id, ref_id)
       values (${id}, ${account?.userId ?? null}, ${callSite}, ${amount}, now() + make_interval(mins => ${ttlMinutes}::int), ${limits.workerId ?? null}, ${limits.refId ?? null})`);
     // Work with no account of its own is judged by the deployment's day cap, so that is what its
     // figures are. Either way they are the ones this hold was actually admitted against: a second
     // reading taken outside the lock could disagree with the decision it is meant to explain.
-    return { measured: measured ?? { spent: day, held: pending, limitUsd: limits.daily } };
+    return { measured: measured ?? { spent: day, held: pending, limitUsd: daily ?? UNLIMITED_AI_BUDGET_USD } };
   });
   if ("refused" in outcome) return outcome;
+  let kept = false;
   return {
     ...outcome.measured,
-    release: async () => { await db.execute(sql`delete from ai_reservations where id = ${id}`); },
+    release: async () => {
+      if (kept) return;
+      await db.execute(sql`delete from ai_reservations where id = ${id}`);
+    },
+    consume: async (costUsd, tx) => {
+      if (!(costUsd > 0)) return;
+      await (tx ?? db).execute(sql`update ai_reservations set amount = greatest(0, amount - ${costUsd}) where id = ${id}`);
+    },
+    keep: () => { kept = true; },
     renew: async () => {
       // A hold whose process died still expires on its own; one released by something else is
       // already gone, and this is how its build finds out rather than spending on regardless.
@@ -123,4 +202,49 @@ export async function tryReserveAi(db: Db, callSite: string, amount: number, lim
       return rows.rows.length === 1;
     },
   };
+}
+
+/** How long to wait before each further attempt to record a call. Three retries after the first. */
+const RECORD_RETRY_MS = [100, 400, 1_600];
+
+/**
+ * Write one finished call to `ai_calls`, the only record of what was spent, and settle the hold it
+ * was made under.
+ *
+ * A write that fails is tried three more times under one id, so an insert that committed but whose
+ * acknowledgement was lost is not counted twice. With a `hold` taken for a whole build, the row and
+ * the hold's reduction are one transaction: a concurrent admission reads either both or neither.
+ * If every attempt fails, the hold is kept (it goes on counting the spend until it expires, the
+ * conservative direction), the record is logged at error with everything needed to reconcile it,
+ * and the error is thrown so the engine keeps its per-call hold too.
+ */
+export async function recordAiUsage(
+  db: Db,
+  userId: string | null,
+  usage: AiCallRecord,
+  opts: { hold?: AiHold; retryDelaysMs?: readonly number[] } = {},
+): Promise<void> {
+  const record = { ...usage, id: usage.id ?? randomUUID() };
+  const delays = opts.retryDelaysMs ?? RECORD_RETRY_MS;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      if (opts.hold) {
+        const hold = opts.hold;
+        await db.transaction(async tx => {
+          await recordAiCall(tx, userId, record);
+          await hold.consume(record.costUsd, tx);
+        });
+      } else {
+        await recordAiCall(db, userId, record);
+      }
+      return;
+    } catch (err) {
+      if (attempt >= delays.length) {
+        opts.hold?.keep();
+        log.error("ai usage unrecorded", { userId, ...record, error: (err as Error)?.message });
+        throw err;
+      }
+      await new Promise(resolve => setTimeout(resolve, delays[attempt]));
+    }
+  }
 }

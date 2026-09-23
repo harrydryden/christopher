@@ -12,6 +12,8 @@ export type ExtractedSuggestionValue =
   | { kind: "company"; companyId: string }
   | { kind: "unknown" };
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function firstString(value: Record<string, unknown>, keys: string[]): string | null {
   for (const key of keys) {
     const v = value[key];
@@ -36,8 +38,11 @@ export function extractSuggestionValue(s: Pick<FilterSuggestion, "type" | "value
       return Number.isFinite(n) ? { kind: "threshold", threshold: n } : { kind: "unknown" };
     }
     case "pause_company": {
+      // Only an id, never a name: the worker resolves a pause to a company the account follows
+      // before filing it. Anything else is unknown rather than passed on, because a value that is
+      // not a uuid fails the company lookup it is read into and takes the Learning page with it.
       const id = firstString(v, ["companyId", "company_id", "id"]);
-      return id ? { kind: "company", companyId: id } : { kind: "unknown" };
+      return id && UUID.test(id) ? { kind: "company", companyId: id } : { kind: "unknown" };
     }
     default:
       return { kind: "unknown" };

@@ -1,11 +1,32 @@
 import { withResourceLease } from "../lease";
+import { enqueueTasks } from "@ava/db/tasks";
 import { schema, enqueueTask, latestApplicationFor, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, type ScoreState, type Task } from "@ava/db";
 import { decisionDigest } from "@ava/ai";
-import { eligibleCvEvidence, evidenceHeading, sha1, dedupeKeyFor, modelForCallSite, priorityFor, type TaskPayloads } from "@ava/core";
+import { eligibleCvEvidence, evidenceHeading, responsibilityRows, scoringEvidence, sha1, dedupeKeyFor, modelForCallSite, priorityFor, type CvLibrary, type ScoringEvidenceBlock, type TaskPayloads } from "@ava/core";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { aiBudgetStop } from "../context";
+import { isAccountBudgetRefusal } from "../budget";
 import { log } from "../log";
+
+/** What a handler finishes with when its account has no room left for the call it was about to make. */
+const BUDGET_SKIP = { skipped: "account ai budget exceeded" } as const;
+const REFUSED = Symbol("refused by the account's budget");
+
+/**
+ * A model call whose hold the account's own budget may refuse. The pre-check (`aiBudgetStop`)
+ * catches an account with nothing left; this catches one with too little left for this call, so
+ * the task finishes done and skipped instead of failing, retrying and failing again. Any other
+ * refusal — a deployment cap — is still thrown, and backs off as a failure does.
+ */
+async function withinBudget<T>(call: Promise<T>): Promise<T | typeof REFUSED> {
+  try {
+    return await call;
+  } catch (err) {
+    if (isAccountBudgetRefusal(err)) return REFUSED;
+    throw err;
+  }
+}
 
 /** Every account carries the seed vocabulary; new accounts get it at creation, this covers older ones. */
 export async function ensureSeedTags(deps: WorkerDeps): Promise<void> {
@@ -24,24 +45,29 @@ export async function handleTagReason(task: Task, deps: WorkerDeps): Promise<unk
   await seedTagVocabulary(deps.db, decision.userId);
   const vocab = await deps.db.select({ tag: schema.tagVocabulary.tag }).from(schema.tagVocabulary)
     .where(and(eq(schema.tagVocabulary.userId, decision.userId), eq(schema.tagVocabulary.accepted, true)));
-  const result = await deps.ai.tagReason(
+  const result = await withinBudget(deps.ai.tagReason(
     {
       reason: decision.reason,
       decision: decision.decision,
       job: { title: decision.jobTitle, company: decision.companyName, location: decision.jobLocation ?? undefined, department: decision.jobDepartment ?? undefined },
       vocabulary: vocab.map((v) => v.tag),
     },
-    { refType: "decision", refId: decision.id, userId: decision.userId },
-  );
+    { refType: "decision", refId: decision.id, userId: decision.userId, signal: deps.signal },
+  ));
+  if (result === REFUSED) return BUDGET_SKIP;
   if (!result) return { skipped: "no ai result" };
 
-  await deps.db.update(schema.decisions).set({ tags: result.tags }).where(and(eq(schema.decisions.id, decision.id), eq(schema.decisions.tagsEdited, false), eq(schema.decisions.superseded, false)));
-  if (result.proposedNewTags.length) {
-    await deps.db
-      .insert(schema.tagVocabulary)
-      .values(result.proposedNewTags.map((t) => ({ userId: decision.userId, tag: t.tag, description: t.description, createdBy: "model" as const, accepted: false })))
-      .onConflictDoNothing();
-  }
+  // Behind the task's fence, so a run the queue has given up on writes nothing after its retry began.
+  await deps.db.transaction(async tx => {
+    await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
+    await tx.update(schema.decisions).set({ tags: result.tags }).where(and(eq(schema.decisions.id, decision.id), eq(schema.decisions.userId, decision.userId), eq(schema.decisions.tagsEdited, false), eq(schema.decisions.superseded, false)));
+    if (result.proposedNewTags.length) {
+      await tx
+        .insert(schema.tagVocabulary)
+        .values(result.proposedNewTags.map((t) => ({ userId: decision.userId, tag: t.tag, description: t.description, createdBy: "model" as const, accepted: false })))
+        .onConflictDoNothing();
+    }
+  });
   return { tags: result.tags, proposed: result.proposedNewTags.length };
 }
 
@@ -90,27 +116,24 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
 
   const [library] = await deps.db.select({ content: schema.cvLibraries.content }).from(schema.cvLibraries)
     .where(eq(schema.cvLibraries.userId, userId)).orderBy(desc(schema.cvLibraries.version)).limit(1);
+  const role = {
+    title: job.title,
+    company: company?.name ?? "",
+    location: job.location ?? undefined,
+    department: job.department ?? undefined,
+    employmentType: job.employmentType ?? undefined,
+    // Near-miss candidates are scored on metadata only (no description fetch for roles outside the gate).
+    description: view.inTable ? job.descriptionText ?? undefined : undefined,
+    keywordTerms: view.keywordTerms,
+  };
   const input = {
-      profileMarkdown: profile?.markdown ?? settings.seedProfile ?? "",
-      decisionDigest: digest,
-      job: {
-        title: job.title,
-        company: company?.name ?? "",
-        location: job.location ?? undefined,
-        department: job.department ?? undefined,
-        employmentType: job.employmentType ?? undefined,
-        // Near-miss candidates are scored on metadata only (no description fetch for roles outside the gate).
-        description: view.inTable ? job.descriptionText ?? undefined : undefined,
-        keywordTerms: view.keywordTerms,
-      },
-    };
-  if (library) {
-    const entries = library.content.entries.flatMap(entry => {
-      const eligible = eligibleCvEvidence(entry);
-      return eligible ? [{ ...eligible, heading: evidenceHeading(library.content, eligible) }] : [];
-    });
-    input.profileMarkdown += "\nEvidence library (absence is not proof of inability):\n" + JSON.stringify({ profile: library.content.profile, employment: library.content.employment?.filter(job => entries.some(entry => entry.employmentId === job.id)), entries });
-  }
+    profileMarkdown: profile?.markdown ?? settings.seedProfile ?? "",
+    decisionDigest: digest,
+    // The confirmed evidence that bears on this role, bounded: never the whole library.
+    evidence: library ? scoringEvidence(scoringEvidenceBlocks(library.content),
+      [role.title, role.department, ...(role.keywordTerms ?? []), role.description].filter(Boolean).join(" ")) : "",
+    job: role,
+  };
   // What the score was computed from. It is kept on this account's own view of the role, so an
   // unchanged rerun costs one row read rather than a row per (account, role) accumulating forever.
   const fingerprint = sha1(JSON.stringify([input, modelForCallSite(settings, "A5")]));
@@ -120,9 +143,13 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
     await markScoreState(deps, userId, jobId, "scored");
     return { skipped: "scoring inputs unchanged" };
   }
-  const result = await deps.ai.scoreJob(input,
-    { refType: "job", refId: job.id, userId },
-  );
+  const result = await withinBudget(deps.ai.scoreJob(input,
+    { refType: "job", refId: job.id, userId, signal: deps.signal },
+  ));
+  if (result === REFUSED) {
+    await markScoreState(deps, userId, jobId, "budget");
+    return BUDGET_SKIP;
+  }
   if (!result) return { skipped: "no ai result" };
 
   return deps.db.transaction(async tx => {
@@ -145,6 +172,25 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
   await tx.insert(schema.jobEvents).values({ jobId: job.id, userId, type: "scored", payload: { score: result.score, verdict: result.verdict } });
   return { score: result.score, verdict: result.verdict };
   });
+}
+
+/**
+ * A library as the blocks scoring may be shown: only evidence the person has confirmed, each block
+ * under the heading a reader knows it by, with its rows and skills once each.
+ */
+function scoringEvidenceBlocks(library: CvLibrary): ScoringEvidenceBlock[] {
+  const blocks: ScoringEvidenceBlock[] = [];
+  if (library.profile.trim()) blocks.push({ heading: "Profile", rows: [library.profile.trim()] });
+  for (const entry of library.entries) {
+    const eligible = eligibleCvEvidence(entry);
+    if (!eligible) continue;
+    const rows = eligible.kind === "experience" ? eligible.confirmedResponsibilities ?? [] : responsibilityRows(eligible.details);
+    blocks.push({
+      heading: `${evidenceHeading(library, eligible)} (${eligible.kind})`,
+      rows: [...rows, ...(eligible.skillItems?.length ? [`Skills: ${eligible.skillItems.join(", ")}`] : [])],
+    });
+  }
+  return blocks;
 }
 
 export async function latestProfile(deps: WorkerDeps, userId: string) {
@@ -217,10 +263,12 @@ export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Pro
   if (profileStop) return { skipped: profileStop };
   const settings = await deps.userSettings(userId);
   const current = await latestProfile(deps, userId);
-  const decisions = await decisionRows(deps, userId, 500);
-  if (decisions.length === 0 && !settings.seedProfile.trim()) return { skipped: "nothing to synthesise from" };
-  const since = current ? decisions.length - current.sourceDecisionCount : decisions.length;
+  const counts = await decisionCounts(deps, userId, current?.generatedAt ?? null);
+  if (counts.total === 0 && !settings.seedProfile.trim()) return { skipped: "nothing to synthesise from" };
+  const since = current ? counts.since : counts.total;
   if (!force && current && since < RESYNTHESIS_THRESHOLD) return { skipped: `only ${since} new decisions` };
+  // The newest decisions are the prompt's; the count above is over every one of them.
+  const decisions = await decisionRows(deps, userId, 500);
 
   const disagreements = decisions
     .filter((d) => d.fitScoreAtDecision !== null && ((d.fitScoreAtDecision >= 70 && d.decision === "skip") || (d.fitScoreAtDecision < 30 && d.decision === "apply")))
@@ -235,7 +283,7 @@ export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Pro
 
   const outcomes = await accountOutcomes(deps, userId);
 
-  const result = await deps.ai.synthesizeProfile({
+  const result = await withinBudget(deps.ai.synthesizeProfile({
     seedProfile: settings.seedProfile,
     pinnedStatements: current?.pinnedStatements ?? [],
     currentProfile: current?.markdown,
@@ -254,24 +302,46 @@ export async function handleSynthesizeProfile(task: Task, deps: WorkerDeps): Pro
     disagreements,
     rejectedCompanySuggestions: rejected.filter((r) => r.reason).map((r) => ({ name: r.name, reason: r.reason ?? "" })),
     outcomes,
-  }, { refType: "profile", refId: userId, userId });
+  }, { refType: "profile", refId: userId, userId, signal: deps.signal }));
+  if (result === REFUSED) return BUDGET_SKIP;
   if (!result) return { skipped: "no ai result" };
 
   const version = (current?.version ?? 0) + 1;
   const openQuestions = result.openQuestions.map((q) => ({ id: q.id, question: q.question }));
-  await appendProfile(deps.db, userId, current?.version ?? 0, {
-    markdown: result.markdown,
-    pinnedStatements: current?.pinnedStatements ?? [],
-    openQuestions,
-    sourceDecisionCount: decisions.length,
-    model: modelForCallSite(settings, "A7"),
-    generatedAt: deps.now(),
+  // A profile that reads as it did scores every role as it did: no rescore for a tag edit or an
+  // undo that moved nothing.
+  const changed = result.markdown !== current?.markdown;
+  // Behind the task's fence: a run the queue has given up on must not write a version, or queue a
+  // rescore, after its retry has already started.
+  await deps.db.transaction(async tx => {
+    await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
+    await appendProfile(tx as unknown as WorkerDeps["db"], userId, current?.version ?? 0, {
+      markdown: result.markdown,
+      pinnedStatements: current?.pinnedStatements ?? [],
+      openQuestions,
+      sourceDecisionCount: counts.total,
+      model: modelForCallSite(settings, "A7"),
+      generatedAt: deps.now(),
+    });
+    if (changed) {
+      const p = { userId, onlyInTable: true };
+      await enqueueTask(tx, "rescore_all", p, { dedupeKey: dedupeKeyFor("rescore_all", p), priority: priorityFor("rescore_all") });
+    }
   });
-  log.info("profile synthesised", { userId, version, decisions: decisions.length, questions: openQuestions.length });
+  log.info("profile synthesised", { userId, version, decisions: counts.total, questions: openQuestions.length, changed });
+  return { version, decisions: counts.total };
+}
 
-  const p = { userId, onlyInTable: true };
-  await enqueueTask(deps.db, "rescore_all", p, { dedupeKey: dedupeKeyFor("rescore_all", p), priority: priorityFor("rescore_all") });
-  return { version, decisions: decisions.length };
+/**
+ * How many decisions this account has in force, and how many of them were made since `after`
+ * (the last profile version): new ones, and changed ones, since changing a decision supersedes the
+ * old row and writes a new one. Counted, not read: an account past 500 decisions still counts.
+ */
+async function decisionCounts(deps: WorkerDeps, userId: string, after: Date | null): Promise<{ total: number; since: number }> {
+  const rows = await deps.db.execute<{ total: number; since: number }>(sql`select count(*)::int as total,
+    count(*) filter (where ${after === null ? sql`true` : sql`${schema.decisions.createdAt} > ${after}`})::int as since
+    from ${schema.decisions} where ${schema.decisions.userId} = ${userId} and ${schema.decisions.superseded} = false`);
+  return { total: Number(rows.rows[0]?.total ?? 0), since: Number(rows.rows[0]?.since ?? 0) };
 }
 
 /**
@@ -320,31 +390,46 @@ export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promis
     at: d.createdAt.toISOString(),
   });
 
-  const result = await deps.ai.suggestFilters({
+  // The companies a pause may name: the ones this account follows and has not already paused.
+  const companies = await deps.db.select({ id: schema.companies.id, name: schema.companies.name })
+    .from(schema.companySubscriptions)
+    .innerJoin(schema.companies, eq(schema.companies.id, schema.companySubscriptions.companyId))
+    .where(and(eq(schema.companySubscriptions.userId, userId), eq(schema.companySubscriptions.status, "active")))
+    .orderBy(schema.companies.name);
+
+  const result = await withinBudget(deps.ai.suggestFilters({
     includeKeywords: settings.gate.includeKeywords,
     excludeKeywords: settings.gate.excludeKeywords,
     locationTerms: settings.gate.locationTerms,
     decisions: decisions.map(map),
     previouslyRejected: previouslyRejected.map((r) => ({ type: r.type, value: r.value })),
-  }, { refType: "filters", refId: userId, userId });
+    companies,
+  }, { refType: "filters", refId: userId, userId, signal: deps.signal }));
+  if (result === REFUSED) return BUDGET_SKIP;
   if (!result) return { skipped: "no ai result" };
 
-  let inserted = 0;
-  for (const s of result) {
-    const duplicate = await deps.db
-      .select({ id: schema.filterSuggestions.id })
-      .from(schema.filterSuggestions)
-      .where(and(eq(schema.filterSuggestions.userId, userId), eq(schema.filterSuggestions.type, s.type), // Compared as jsonb, not as text: `{"term":"x"}::text` renders with a space after the
-        // colon, so a text comparison against compact JSON never matched and every duplicate was
-        // filed again.
-        sql`${schema.filterSuggestions.value} = ${JSON.stringify(s.value)}::jsonb`,
-        sql`(${schema.filterSuggestions.status} = 'pending' or (${schema.filterSuggestions.status} = 'rejected' and ${liveRejection}))`))
-      .limit(1);
-    if (duplicate.length) continue;
-    await deps.db.insert(schema.filterSuggestions).values({ userId, type: s.type, value: s.value, evidence: s.evidence, rationale: s.rationale });
-    inserted++;
-  }
-  return { suggestions: inserted };
+  // Behind the task's fence, so a run the queue has given up on files nothing after its retry began.
+  return deps.db.transaction(async tx => {
+    await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
+    let inserted = 0;
+    for (const s of result) {
+      // Compared by what the suggestion names, not by its whole value: one the scans filed carries
+      // a `source` beside its term, and the same term in another case is the same term.
+      const names = s.type === "pause_company"
+        ? sql`${schema.filterSuggestions.value}->>'companyId' = ${String(s.value.companyId)}`
+        : sql`lower(${schema.filterSuggestions.value}->>'term') = ${String(s.value.term).toLowerCase()}`;
+      const duplicate = await tx
+        .select({ id: schema.filterSuggestions.id })
+        .from(schema.filterSuggestions)
+        .where(and(eq(schema.filterSuggestions.userId, userId), eq(schema.filterSuggestions.type, s.type), names,
+          sql`(${schema.filterSuggestions.status} = 'pending' or (${schema.filterSuggestions.status} = 'rejected' and ${liveRejection}))`))
+        .limit(1);
+      if (duplicate.length) continue;
+      await tx.insert(schema.filterSuggestions).values({ userId, type: s.type, value: s.value, evidence: s.evidence, rationale: s.rationale });
+      inserted++;
+    }
+    return { suggestions: inserted };
+  });
 }
 
 /** Re-evaluate the keyword and location gate for one account, or every account, after a settings change. */
@@ -358,7 +443,8 @@ export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promis
  */
 export async function handleReevaluateGate(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { userId, companyId } = (task.payload ?? {}) as TaskPayloads["reevaluate_gate"];
-  deps.invalidateSettings();
+  // This account's settings when the task names one; every account's only for the all-accounts run.
+  deps.invalidateSettings(userId);
   const users = userId ? [userId] : await listUserIds(deps.db);
   const outcomes: Record<string, unknown> = {};
   for (const id of users) {
@@ -373,9 +459,47 @@ export async function handleReevaluateGate(task: Task, deps: WorkerDeps): Promis
   return { accounts: users.length, outcomes };
 }
 
+/**
+ * How often one account's roles may all be re-scored. A Library save, a settings save and every
+ * profile version each asked for a full pass, one A5 call per open role, so an editing session
+ * paid for the same table several times over.
+ */
+export const RESCORE_INTERVAL_MS = 60 * 60_000;
+
+/** What a full re-score is computed from for one account: its profile, gate, scoring model and evidence. */
+async function rescoreInputs(deps: WorkerDeps, userId: string): Promise<string> {
+  const settings = await deps.userSettings(userId);
+  const profile = await latestProfileFor(deps.db, userId);
+  const [library] = await deps.db.select({ content: schema.cvLibraries.content }).from(schema.cvLibraries)
+    .where(eq(schema.cvLibraries.userId, userId)).orderBy(desc(schema.cvLibraries.version)).limit(1);
+  return sha1(JSON.stringify([
+    profile?.markdown ?? settings.seedProfile ?? "",
+    settings.gate,
+    modelForCallSite(settings, "A5"),
+    library ? scoringEvidenceBlocks(library.content) : [],
+  ]));
+}
+
 export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<unknown> {
-  const { userId } = (task.payload ?? {}) as TaskPayloads["rescore_all"];
+  const { userId, onlyInTable } = (task.payload ?? {}) as TaskPayloads["rescore_all"];
   if (!userId) return { skipped: "no account on task" };
+  const inputsHash = await rescoreInputs(deps, userId);
+  // The last full pass this account actually ran: when it finished, and what it scored from.
+  const [last] = await deps.db.select({ finishedAt: schema.tasks.finishedAt, result: schema.tasks.result }).from(schema.tasks)
+    .where(and(eq(schema.tasks.type, "rescore_all"), eq(schema.tasks.status, "done"),
+      sql`${schema.tasks.payload}->>'userId' = ${userId}`, sql`${schema.tasks.result} ? 'queued'`))
+    .orderBy(desc(schema.tasks.finishedAt)).limit(1);
+  if (last && (last.result as { inputsHash?: string } | null)?.inputsHash === inputsHash)
+    return { skipped: "scoring inputs unchanged since the last rescore" };
+  if (last?.finishedAt && deps.now().getTime() - last.finishedAt.getTime() < RESCORE_INTERVAL_MS) {
+    // Coalesced: one pass at the end of the hour picks up everything that changed within it, and
+    // any other save in the hour folds into the same waiting row by its key.
+    const retryAt = new Date(last.finishedAt.getTime() + RESCORE_INTERVAL_MS);
+    const deferred = { userId, onlyInTable: onlyInTable ?? true };
+    await enqueueTask(deps.db, "rescore_all", deferred,
+      { dedupeKey: dedupeKeyFor("rescore_all", deferred), priority: priorityFor("rescore_all"), runAfter: retryAt });
+    return { skipped: "rescored within the hour", retryAt: retryAt.toISOString() };
+  }
   const shortlisted = sql<boolean>`exists (select 1 from decisions d where d.user_id = ${schema.userJobs.userId} and d.job_id = ${schema.userJobs.jobId} and d.superseded = false and d.decision = 'apply')`;
   const rows = await deps.db.select({ id: schema.userJobs.jobId, shortlisted }).from(schema.userJobs)
     .innerJoin(schema.jobs, eq(schema.jobs.id, schema.userJobs.jobId))
@@ -383,15 +507,17 @@ export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<un
   let queued = 0;
   for (let offset = 0; offset < rows.length; offset += 250) {
     const batch = rows.slice(offset, offset + 250);
-    const values = batch.map(row => {
+    const rowFor = (row: (typeof batch)[number]) => {
       const payload = { userId, jobId: row.id };
-      return { type: 'score_job' as const, payload, dedupeKey: dedupeKeyFor('score_job', payload), priority: row.shortlisted ? 1 : priorityFor('score_job') };
-    });
-    const inserted = await deps.db.insert(schema.tasks).values(values).onConflictDoNothing().returning({ id: schema.tasks.id });
-    queued += inserted.length;
+      return { type: "score_job" as const, payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: row.shortlisted ? 1 : priorityFor("score_job") };
+    };
+    // A shortlisted role's score is the one the person is waiting on: a background score already
+    // queued for it is brought up to that priority rather than left where it was.
+    queued += await enqueueTasks(deps.db, batch.filter(row => row.shortlisted).map(rowFor), 250, true);
+    queued += await enqueueTasks(deps.db, batch.filter(row => !row.shortlisted).map(rowFor));
     // Every role a new profile version will re-score reads "scoring" until its turn comes.
     await deps.db.update(schema.userJobs).set({ scoreState: "queued", scoreStateAt: deps.now() })
       .where(and(eq(schema.userJobs.userId, userId), inArray(schema.userJobs.jobId, batch.map(row => row.id))));
   }
-  return { queued };
+  return { queued, inputsHash };
 }

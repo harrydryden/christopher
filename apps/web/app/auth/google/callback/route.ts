@@ -3,13 +3,13 @@ import { cookies } from "next/headers";
 import { signInWithGoogle } from "@/lib/accounts";
 import { startSession } from "@/lib/auth";
 import { appOrigin, exchangeGoogleCode, fetchGoogleProfile, googleConfigured } from "@/lib/google";
-import { OAUTH_COOKIE_NAME, readSignedValue, sanitizeNextPath } from "@/lib/session";
+import { OAUTH_COOKIE_NAME, readSignedValue, sanitizeNextPath, sessionSecret } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
 /** Finish the Google round trip: check state, exchange the code, read the profile, sign in. */
 export async function GET(request: Request) {
-  const secret = process.env.SESSION_SECRET;
+  const secret = sessionSecret();
   const fail = (error: string) => NextResponse.redirect(new URL(`/login?error=${error}`, request.url));
   if (!secret || !googleConfigured()) return fail("google_not_configured");
   const url = new URL(request.url);

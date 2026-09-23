@@ -66,6 +66,38 @@ export function sniffImageType(bytes: Uint8Array): string | null {
   return null;
 }
 
+/** A reference inside an SVG that stays inside it: a fragment, or an embedded raster image. */
+const INTERNAL_REFERENCE = /^\s*(?:#|data:image\/(?:png|jpe?g|gif|webp);base64,)/i;
+
+/**
+ * Why an SVG may not be stored as a logo, or null when it may.
+ *
+ * An SVG is a document, not a picture: opened on its own it runs its scripts in whatever origin
+ * served it, and the interface serves logos from its own. The catalogue is shared, so one company
+ * whose site declares a scripted icon would be one link away from every account. A logo needs none
+ * of what is refused here — scripts, event handlers, embedded HTML, `javascript:` URLs, entities
+ * that can expand into any of those, stylesheet instructions, or references to anything outside
+ * the file — so an SVG with any of it is passed over and the next candidate (the icon services
+ * answer with a raster image) is used instead. The route that serves logos also sandboxes them;
+ * this keeps the bytes out of the table in the first place.
+ */
+export function unsafeSvgReason(bytes: Uint8Array): string | null {
+  const text = Buffer.from(bytes).toString("utf8");
+  // Element names may carry a namespace prefix (`<svg:script>`, `<h:script>`), and a script in the
+  // XHTML namespace runs in an SVG document as surely as one in SVG's own.
+  if (/<(?:[\w.-]+:)?script/i.test(text)) return "it contains a script";
+  if (/<(?:[\w.-]+:)?foreignObject/i.test(text) || /www\.w3\.org\/1999\/xhtml/i.test(text)) return "it embeds HTML";
+  if (/(?:^|[\s"'/;:])on[a-z]+\s*=/i.test(text)) return "it has an event handler";
+  if (/javascript:/i.test(text)) return "it has a javascript: URL";
+  if (/<!ENTITY/i.test(text)) return "it declares an entity";
+  if (/<\?xml-stylesheet/i.test(text)) return "it names a stylesheet";
+  if (/attributeName\s*=\s*["']?(?:xlink:)?href/i.test(text)) return "it animates a reference";
+  for (const match of text.matchAll(/(?:xlink:)?href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi)) {
+    if (!INTERNAL_REFERENCE.test(match[1] ?? match[2] ?? match[3] ?? "")) return "it refers to something outside itself";
+  }
+  return null;
+}
+
 function iconHost(domain: string): string {
   return domain.trim().toLowerCase().replace(/^www\./, "");
 }
@@ -176,6 +208,11 @@ export async function captureCompanyLogo(
       const contentType = sniffImageType(bytes);
       if (!contentType) {
         tried.push(`${candidate.url}: not an image`);
+        continue;
+      }
+      const unsafe = contentType === "image/svg+xml" ? unsafeSvgReason(bytes) : null;
+      if (unsafe) {
+        tried.push(`${candidate.url}: SVG refused because ${unsafe}`);
         continue;
       }
       return { bytes, contentType, source: candidate.source, sourceUrl: res.url || candidate.url };

@@ -5,8 +5,8 @@
  * user ever sees it (SPEC R-8.3).
  */
 import { schema, enqueueTask, type Task } from "@ava/db";
-import { dedupeKeyFor, discovery, ensureHttpUrl, extractDomain, priorityFor, stripHtml, type DiscoveryResult, type TaskPayloads } from "@ava/core";
-import { and, eq, isNull, or, sql } from "drizzle-orm";
+import { dedupeKeyFor, discovery, ensureHttpUrl, evaluateGate, extractDomain, priorityFor, SourceFetchError, stripHtml, type DiscoveryResult, type TaskPayloads } from "@ava/core";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { aiBudgetStop, makeDiscoveryContext, makeFetchContext, type WorkerDeps } from "../context";
 import { serialiseCandidate } from "./discover";
 import { latestProfile } from "./learning";
@@ -109,7 +109,11 @@ export async function handleSuggestCompanies(task: Task, deps: WorkerDeps): Prom
   const companies = await followedCompanies(deps, userId);
   if (companies.length === 0) return { skipped: "no companies to compare against" };
 
-  const profiles = await deps.db.select().from(schema.companyProfiles).where(sql`${schema.companyProfiles.companyId} is not null`);
+  // Only the followed companies' profiles, and only the columns the portfolio shows.
+  const profiles = await deps.db.select({
+    companyId: schema.companyProfiles.companyId, oneLiner: schema.companyProfiles.oneLiner, sector: schema.companyProfiles.sector,
+    stage: schema.companyProfiles.stage, sizeBand: schema.companyProfiles.sizeBand, hqCountry: schema.companyProfiles.hqCountry, tags: schema.companyProfiles.tags,
+  }).from(schema.companyProfiles).where(inArray(schema.companyProfiles.companyId, companies.map((c) => c.id)));
   const profileByCompany = new Map(profiles.map((p) => [p.companyId!, p]));
   const portfolio = companies.map((c) => {
     const p = profileByCompany.get(c.id);
@@ -169,26 +173,50 @@ interface VerificationResult {
   openRoles?: number;
   matchingRoles?: number;
   error?: string;
+  /**
+   * The failure says nothing final about the company: the host asked us to come back later, a
+   * request timed out, or the careers board could not be verified for now. Only such a failure is
+   * worth retrying; every other outcome, a 404 or a parked domain included, is the answer.
+   */
+  transient?: boolean;
 }
 
-/** A suggestion is only shown once we have confirmed the company is real and hiring. Matches use the account's gate. */
+/** What is cached for a domain: everything that holds for every account, and the sampled roles. */
+interface DomainVerification extends Omit<VerificationResult, "matchingRoles"> {
+  sample?: Array<{ title: string; location?: string; remote?: boolean }>;
+}
+
+/** A 429 or 503, a 5xx, a timeout or a busy host. A DNS failure is not: that is what an invented domain does. */
+function transientFailure(err: unknown): boolean {
+  if (err instanceof SourceFetchError) return err.kind === "rate_limited" || err.kind === "timeout" || (err.status ?? 0) >= 500;
+  return err instanceof Error && err.name === "HostBusyError";
+}
+
+/**
+ * A suggestion is only shown once we have confirmed the company is real and hiring. The company's
+ * verification is shared by every account and cached per domain (seven days when a careers source
+ * was found, one day otherwise); only the count of sampled roles that pass the account's own gate
+ * is worked out per call. A transient failure is not cached.
+ */
 export async function verifyCandidate(deps: WorkerDeps, userId: string, homepageUrl: string, countMatching: boolean): Promise<VerificationResult> {
-  const settings = await deps.userSettings(userId);
-  const key = sha1(`${extractDomain(homepageUrl)}:${JSON.stringify(settings.gate)}:${countMatching}`);
-  return withResourceLease(deps, `verification:${key}`, async locked => {
+  const key = sha1(`domain:${extractDomain(homepageUrl)}`);
+  const { sample, ...verification } = await withResourceLease(deps, `verification:${key}`, async (locked): Promise<DomainVerification> => {
     const [cached] = await deps.db.select().from(schema.verificationCache).where(eq(schema.verificationCache.key, key));
-    if (cached && cached.expiresAt > deps.now()) return cached.result;
-    const result = await verifyUncached(deps, homepageUrl, countMatching, settings.gate);
-    if (!result.error) await deps.db.transaction(async tx => {
+    if (cached && cached.expiresAt > deps.now()) return cached.result as DomainVerification;
+    const result = await verifyUncached(deps, homepageUrl);
+    if (!result.transient) await deps.db.transaction(async tx => {
       await locked.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
       const expiresAt = new Date(deps.now().getTime() + (result.careersSource ? 7 : 1) * 86400000);
       await tx.insert(schema.verificationCache).values({ key, result, expiresAt }).onConflictDoUpdate({ target: schema.verificationCache.key, set: { result, expiresAt } });
     });
     return result;
   });
+  if (!countMatching || !verification.careersSource || !sample?.length) return verification;
+  const { gate } = await deps.userSettings(userId);
+  return { ...verification, matchingRoles: sample.filter((p) => evaluateGate({ title: p.title, location: p.location, remote: p.remote }, gate).inTable).length };
 }
 
-async function verifyUncached(deps: WorkerDeps, homepageUrl: string, countMatching: boolean, gate: Awaited<ReturnType<WorkerDeps["userSettings"]>>["gate"]): Promise<VerificationResult> {
+async function verifyUncached(deps: WorkerDeps, homepageUrl: string): Promise<DomainVerification> {
   let url: string;
   try {
     url = ensureHttpUrl(homepageUrl);
@@ -198,33 +226,30 @@ async function verifyUncached(deps: WorkerDeps, homepageUrl: string, countMatchi
   const ctx = makeFetchContext(deps);
   try {
     const res = await ctx.fetchText(url);
-    if (res.status >= 400) return { homepageOk: false, error: `HTTP ${res.status}` };
+    if (res.status >= 400) return { homepageOk: false, error: `HTTP ${res.status}`, ...(res.status === 429 || res.status >= 500 ? { transient: true } : {}) };
     if (PARKED_MARKERS.test(res.body.slice(0, 20_000))) return { homepageOk: false, error: "parked domain" };
   } catch (err) {
-    return { homepageOk: false, error: (err as Error).message };
+    return { homepageOk: false, error: (err as Error).message, ...(transientFailure(err) ? { transient: true } : {}) };
   }
 
   let result: DiscoveryResult;
   try {
-    // Probe mode: a small fetch budget and no model calls, since this runs for many candidates.
-    result = await discovery.discoverCareersSources(url, makeDiscoveryContext(deps, { maxFetches: 12, useAi: false }));
+    // Probe mode: small fetch and verification budgets and no model calls, since this runs for
+    // many candidates.
+    result = await discovery.discoverCareersSources(url, { ...makeDiscoveryContext(deps, { maxFetches: 12, useAi: false }), maxVerifications: 4 });
   } catch (err) {
-    return { homepageOk: true, careersSource: null, error: (err as Error).message };
+    return { homepageOk: true, careersSource: null, error: (err as Error).message, transient: true };
   }
+  // The best board could not be verified for now: not evidence that there is none.
+  if (result.retry && result.outcome !== "resolved") return { homepageOk: true, careersSource: null, error: result.retry, transient: true };
   if (!result.best) return { homepageOk: true, careersSource: null };
 
   const sample = result.best.sample ?? [];
-  const openRoles = result.best.count ?? sample.length;
-  let matchingRoles: number | undefined;
-  if (countMatching && sample.length > 0) {
-    const { evaluateGate } = await import("@ava/core");
-    matchingRoles = sample.filter((p) => evaluateGate({ title: p.title, location: p.location, remote: p.remote }, gate).inTable).length;
-  }
   return {
     homepageOk: true,
     careersSource: { type: result.best.spec.type, url: result.best.spec.url, confidence: result.best.confidence },
-    openRoles,
-    matchingRoles,
+    openRoles: result.best.count ?? sample.length,
+    sample: sample.slice(0, 3).map((p) => ({ title: p.title, location: p.location, remote: p.remote })),
   };
 }
 

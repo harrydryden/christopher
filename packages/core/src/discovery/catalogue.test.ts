@@ -13,7 +13,9 @@ function context(companyName: string): DiscoveryContext {
 }
 it("resolves Anduril's verified board without a slow homepage crawl", async () => {
   const result = await discoverCareersSources("https://www.anduril.com", context("Anduril Industries"));
-  expect(result.outcome).toBe("resolved"); expect(result.best?.spec.atsSlug).toBe("andurilindustries"); expect(result.fetches).toBe(1);
+  expect(result.outcome).toBe("resolved"); expect(result.best?.spec.atsSlug).toBe("andurilindustries");
+  // One verification of the feed and not a single crawl fetch.
+  expect(result.fetches).toBe(0); expect(result.verifications).toBe(1);
 });
 it("rejects a catalogue board with a different company identity", async () => {
   const result = await discoverCareersSources("https://anduril.com", context("Some Other Company"));
@@ -29,7 +31,8 @@ it.each(["https://waymo.com/", "https://www.waymo.com/", "https://careers.withwa
     expect(result.best?.spec.atsSlug).toBe("waymo");
     expect(result.best?.spec.apiUrl).toBe("https://boards-api.greenhouse.io/v1/boards/waymo/jobs");
     expect(result.best?.method).toBe("verified_catalogue");
-    expect(result.fetches).toBe(1);
+    expect(result.fetches).toBe(0);
+    expect(result.verifications).toBe(1);
     expect(ctx.render).not.toHaveBeenCalled();
   }
 });

@@ -4,7 +4,8 @@ import * as fx from "../fixtures";
 import { adapters, descriptionsFetchedPerPosting, fetchDescriptionFor, findAtsSpecsInText, getAdapter, isAtsHost, specFromAnyUrl } from "./registry";
 import { extractJsonLdPostings } from "./jsonld";
 import { applyRecipe, compactDomForModel, extractPostingsFromHtml, findJobLinks, isExplicitEmptyListing, validateRecipe } from "./html";
-import { IncompleteListingError, type HtmlRecipe } from "../types";
+import { IncompleteListingError, type FetchContext, type HtmlRecipe } from "../types";
+import { INLINE_DESCRIPTIONS_MAX_BYTES } from "./common";
 
 const ctx = createFakeFetchContext({
   routes: {
@@ -168,6 +169,35 @@ describe("greenhouse adapter", () => {
     expect(result.companyName).toBe("Acme Robotics");
     expect(result.sample).toHaveLength(3);
   });
+  it("verifies from the job list and the board's name alone", async () => {
+    const listing = createFakeFetchContext({ routes: {
+      "https://boards-api.greenhouse.io/v1/boards/acme/jobs": { body: { jobs: fx.GREENHOUSE_JOBS.jobs, meta: { total: 6 } } },
+      "https://boards-api.greenhouse.io/v1/boards/acme": { body: fx.GREENHOUSE_BOARD },
+    } });
+    expect(await getAdapter("greenhouse").verify(spec, listing)).toMatchObject({ ok: true, count: 6 });
+    expect(listing.requestLog.map((r) => r.url)).toEqual([
+      "https://boards-api.greenhouse.io/v1/boards/acme/jobs",
+      "https://boards-api.greenhouse.io/v1/boards/acme",
+    ]);
+  });
+  it("reads an EU-hosted board from the EU board API", async () => {
+    for (const url of ["https://job-boards.eu.greenhouse.io/acme", "https://boards.eu.greenhouse.io/acme/jobs/4001001", "https://boards-api.eu.greenhouse.io/v1/boards/acme/jobs"]) {
+      expect(specFromAnyUrl(url)).toMatchObject({ type: "greenhouse", atsSlug: "acme", atsSite: "eu", apiUrl: "https://boards-api.eu.greenhouse.io/v1/boards/acme/jobs", url: "https://job-boards.eu.greenhouse.io/acme" });
+    }
+    const eu = createFakeFetchContext({ routes: {
+      "https://boards-api.eu.greenhouse.io/v1/boards/acme/jobs": { body: fx.GREENHOUSE_JOBS },
+      "https://boards-api.eu.greenhouse.io/v1/boards/acme": { body: fx.GREENHOUSE_BOARD },
+    } });
+    const euSpec = specFromAnyUrl("https://job-boards.eu.greenhouse.io/acme")!;
+    expect(await getAdapter("greenhouse").fetchPostings(euSpec, eu)).toHaveLength(6);
+    expect(await getAdapter("greenhouse").verify(euSpec, eu)).toMatchObject({ ok: true, count: 6, companyName: "Acme Robotics" });
+    expect(eu.requestLog.every((r) => r.url.startsWith("https://boards-api.eu.greenhouse.io/"))).toBe(true);
+    // The two regions' boards of one slug are different sources.
+    expect(specFromAnyUrl("https://job-boards.greenhouse.io/acme")?.atsSite).toBeUndefined();
+  });
+  it("does not read a grnh.se short link's opaque code as a board slug", () => {
+    expect(specFromAnyUrl("https://grnh.se/abc123us")).toBeNull();
+  });
   it("reports failure rather than throwing on a 404", async () => {
     const result = await getAdapter("greenhouse").verify(specFromAnyUrl("https://boards.greenhouse.io/missing")!, ctx);
     expect(result.ok).toBe(false);
@@ -220,29 +250,41 @@ describe("other adapters", () => {
     // matching role inside a 180-second task; a 500-role board with a description gate never ends.
     expect(descriptionsFetchedPerPosting("smartrecruiters")).toBe(true);
   });
-  it("smartrecruiters reports a board larger than its page budget as incomplete", async () => {
-    // Ten pages of 100 with 1,500 roles on the board: the 500 unread roles must not look closed.
-    const page = (offset: number) => ({
+  it("smartrecruiters reads a 1,500-role board whole and reports one past the posting cap as incomplete", async () => {
+    const page = (offset: number, totalFound: number) => ({
       body: {
         offset,
         limit: 100,
-        totalFound: 1500,
-        content: Array.from({ length: 100 }, (_, i) => ({ id: `sr-${offset + i}`, name: `Role ${offset + i}`, location: { city: "London", country: "UK" } })),
+        totalFound,
+        content: Array.from({ length: 100 }, (_, i) => ({ id: `sr-${offset + i}`, name: `Role ${offset + i}`, location: { city: "London", country: "UK" }, company: { name: "Acme" } })),
       },
     });
-    const routes = Object.fromEntries(
-      Array.from({ length: 10 }, (_, i) => [`https://api.smartrecruiters.com/v1/companies/acme/postings?limit=100&offset=${i * 100}`, page(i * 100)]),
-    );
-    const bigCtx = createFakeFetchContext({ routes });
+    const board = (pages: number, totalFound: number) => createFakeFetchContext({ routes: Object.fromEntries(
+      Array.from({ length: pages }, (_, i) => [`https://api.smartrecruiters.com/v1/companies/acme/postings?limit=100&offset=${i * 100}`, page(i * 100, totalFound)]),
+    ) });
     const spec = specFromAnyUrl("https://jobs.smartrecruiters.com/acme")!;
-    const error = await getAdapter("smartrecruiters").fetchPostings(spec, bigCtx).catch((e: unknown) => e);
+    // Ten pages used to be the budget: roles 1,001 to 1,500 were never read, so they never closed.
+    expect(await getAdapter("smartrecruiters").fetchPostings(spec, board(15, 1500))).toHaveLength(1500);
+    const huge = board(100, 25_000);
+    const error = await getAdapter("smartrecruiters").fetchPostings(spec, huge).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(IncompleteListingError);
-    expect((error as IncompleteListingError).postings).toHaveLength(1000);
-    expect((error as IncompleteListingError).message).toContain("500 roles unread");
-    // The board still verifies: it exists and lists roles, it is only too long to read in one pass.
-    const verified = await getAdapter("smartrecruiters").verify(spec, bigCtx);
-    expect(verified.ok).toBe(true);
-    expect(verified.count).toBe(1000);
+    expect((error as IncompleteListingError).postings).toHaveLength(10_000);
+    expect((error as IncompleteListingError).message).toContain("15000 roles unread");
+    // Verification reads one page, which names the company and gives the board's own total.
+    const once = board(100, 25_000);
+    const verified = await getAdapter("smartrecruiters").verify(spec, once);
+    expect(verified).toMatchObject({ ok: true, count: 25_000, companyName: "Acme" });
+    expect(once.requestLog).toHaveLength(1);
+  });
+  it("smartrecruiters keeps reading full pages when the feed gives no total", async () => {
+    const rows = (from: number, n: number) => Array.from({ length: n }, (_, i) => ({ id: `sr-${from + i}`, name: `Role ${from + i}` }));
+    const noTotal = createFakeFetchContext({ routes: {
+      "https://api.smartrecruiters.com/v1/companies/acme/postings?limit=100&offset=0": { body: { content: rows(0, 100) } },
+      "https://api.smartrecruiters.com/v1/companies/acme/postings?limit=100&offset=100": { body: { content: rows(100, 40) } },
+    } });
+    // A full first page with no total used to read as the whole board, closing the other forty.
+    const postings = await getAdapter("smartrecruiters").fetchPostings(specFromAnyUrl("https://jobs.smartrecruiters.com/acme")!, noTotal);
+    expect(postings).toHaveLength(140);
   });
   it("workable reports a board with an eleventh page as incomplete", async () => {
     const paged = createFakeFetchContext({
@@ -256,6 +298,64 @@ describe("other adapters", () => {
     // The legacy widget feed must not quietly stand in for the truncated listing either.
     expect(error).toBeInstanceOf(IncompleteListingError);
     expect((error as IncompleteListingError).postings.length).toBeGreaterThan(0);
+  });
+  it("workable reports a failure on a later page as incomplete and never falls back to the widget", async () => {
+    const pages = createFakeFetchContext({ routes: {
+      "https://apply.workable.com/api/v3/accounts/acme/jobs": [
+        { bodyContains: '"token":"p2"', status: 429, body: { error: "slow down" } },
+        { body: { total: 4, nextPage: "p2", results: fx.WORKABLE_V3.results } },
+      ],
+      "https://www.workable.com/api/accounts/acme?details=true": { body: { jobs: fx.WORKABLE_V3.results } },
+    } });
+    const error = await getAdapter("workable").fetchPostings(specFromAnyUrl("https://apply.workable.com/acme/")!, pages).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(IncompleteListingError);
+    expect((error as IncompleteListingError).message).toContain("page 2 failed");
+    expect((error as IncompleteListingError).postings.length).toBeGreaterThan(0);
+    expect(pages.requestLog.some((r) => r.url.includes("www.workable.com"))).toBe(false);
+  });
+  it("workable uses the widget feed only for a board the v3 feed does not have", async () => {
+    const absent = createFakeFetchContext({ routes: {
+      "https://apply.workable.com/api/v3/accounts/acme/jobs": { status: 404, body: { error: "not found" } },
+      "https://www.workable.com/api/accounts/acme?details=true": { body: { jobs: fx.WORKABLE_V3.results } },
+    } });
+    expect((await getAdapter("workable").fetchPostings(specFromAnyUrl("https://apply.workable.com/acme/")!, absent)).length).toBeGreaterThan(0);
+    const limited = createFakeFetchContext({ routes: {
+      "https://apply.workable.com/api/v3/accounts/acme/jobs": { status: 429, body: { error: "slow down" } },
+      "https://www.workable.com/api/accounts/acme?details=true": { body: { jobs: fx.WORKABLE_V3.results } },
+    } });
+    await expect(getAdapter("workable").fetchPostings(specFromAnyUrl("https://apply.workable.com/acme/")!, limited)).rejects.toThrow(/429/);
+  });
+  it("workday verifies from its first page and the tenant's own total", async () => {
+    const page = { total: 500, jobPostings: Array.from({ length: 20 }, (_, i) => ({ title: `Role ${i}`, externalPath: `/job/London/Role-${i}_R-${i}`, locationsText: "London" })) };
+    const tenant = createFakeFetchContext({ routes: { "https://acmecorp.wd1.myworkdayjobs.com/wday/cxs/acmecorp/External/jobs": { body: page } } });
+    const verified = await getAdapter("workday").verify(specFromAnyUrl("https://acmecorp.wd1.myworkdayjobs.com/en-US/External")!, tenant);
+    // Twenty-five pages on the board, one request to prove it exists.
+    expect(verified).toMatchObject({ ok: true, count: 500 });
+    expect(verified.sample).toHaveLength(3);
+    expect(tenant.requestLog).toHaveLength(1);
+  });
+  it("marks a verification that the host refused for now as transient, and a missing board as not", async () => {
+    const refusing = createFakeFetchContext({ routes: {
+      "https://api.lever.co/v0/postings/busy?mode=json": { status: 503, body: "unavailable" },
+      "https://api.lever.co/v0/postings/gone?mode=json": { status: 404, body: "missing" },
+    } });
+    expect(await getAdapter("lever").verify(specFromAnyUrl("https://jobs.lever.co/busy")!, refusing)).toMatchObject({ ok: false, transient: true });
+    expect(await getAdapter("lever").verify(specFromAnyUrl("https://jobs.lever.co/gone")!, refusing)).toMatchObject({ ok: false, transient: false });
+  });
+  it("asks for the raised body cap on every feed that carries descriptions inline", async () => {
+    const asked: Array<{ url: string; maxBodyBytes?: number }> = [];
+    const recording: FetchContext = {
+      fetchText: async (url, init) => {
+        asked.push({ url, maxBodyBytes: init?.maxBodyBytes });
+        return { status: 200, url, headers: {}, body: url.includes("personio") ? fx.PERSONIO_XML : "[]" };
+      },
+    };
+    for (const url of ["https://jobs.lever.co/acme", "https://jobs.ashbyhq.com/acme", "https://acme.recruitee.com/", "https://acme.jobs.personio.de/", "https://acme.pinpointhq.com/", "https://acme.bamboohr.com/careers"]) {
+      const spec = specFromAnyUrl(url)!;
+      await getAdapter(spec.type).fetchPostings(spec, recording).catch(() => undefined);
+    }
+    expect(asked).toHaveLength(6);
+    for (const request of asked) expect(request.maxBodyBytes).toBe(INLINE_DESCRIPTIONS_MAX_BYTES);
   });
   it("workday takes the total from the first page only", async () => {
     // Some tenants report the total once and send 0 on every page after it; believing the zero

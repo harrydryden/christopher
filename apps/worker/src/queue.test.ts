@@ -2,14 +2,15 @@
 import { renewTask, completeTask, assertTaskOwnership } from "./queue";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {createDb, enqueueTask, listUserIds, listWorkerEvents, schema, setSubscriptionStatus, subscribeToCompany, type Db} from "@ava/db";
-import { dedupeKeyFor, isUserSettingsKey } from "@ava/core";
+import { AGEING_PRIORITY_FLOOR, dedupeKeyFor, isUserSettingsKey, priorityFor } from "@ava/core";
 import { ensureTestUser } from "./test-users";
 import { runMigrations } from "@ava/db/migrate";
 import { desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
-import { agePriorities, backoffMs, claimTask, deadlineMsFor, failTask, laneSlots, recoverFromCrash, requeueStale, TASK_STALE_AFTER_MS, TaskQueue } from "./queue";
-import { reconcileCvDrafts, schedulerTick } from "./scheduler";
+import { agePriorities, assertRunOwnership, backoffMs, BUSY_REFUND_WINDOW_MS, claimTask, deadlineMsFor, failSpentTasks, failTask, laneSlots, recoverFromCrash, requeueStale, ShutdownError, sleep, TASK_STALE_AFTER_MS, TaskQueue } from "./queue";
+import { LeaseBusyError, withResourceLease, type RunDeps } from "./lease";
+import { reconcileCvDrafts, schedulerTick, startScheduler } from "./scheduler";
 import { CV_ABANDONED_MESSAGE, onAbandon, onInterrupted } from "./handlers";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
@@ -83,6 +84,53 @@ describe("task queue", () => {
     // Once it finishes, the same key can be queued again.
     await db.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.id, first!));
     expect(await enqueueTask(db, "scan_company", { companyId: "a" }, { dedupeKey: "scan_company:a" })).toBeTruthy();
+  });
+
+  it("holds a follow-up back while the task it follows is still running", async () => {
+    // A library saved while its review runs gets one follow-up; running them side by side would
+    // have two passes write the same entries.
+    const payload = { userId: "account", libraryVersion: 1 };
+    const key = dedupeKeyFor("review_library", payload);
+    await enqueueTask(db, "review_library", payload, { dedupeKey: key });
+    const first = (await claimTask(db, "w1", "interactive"))!;
+    const followUp = await enqueueTask(db, "review_library", { ...payload, libraryVersion: 2 }, { dedupeKey: key });
+    expect(followUp).not.toBeNull();
+    // Unrelated work is still claimed around it.
+    await enqueueTask(db, "discover", { companyId: "elsewhere" }, { dedupeKey: "discover:elsewhere" });
+    expect((await claimTask(db, "w2"))!.type).toBe("discover");
+    expect(await claimTask(db, "w2")).toBeNull();
+    expect(await completeTask(db, first, {})).toBe(true);
+    expect((await claimTask(db, "w2"))!.id).toBe(followUp);
+  });
+
+  it("puts a started task back beside its follow-up on every path, keeping when it started", async () => {
+    // A retry, a stale sweep and a shutdown hand-back each return a running row to the queue while
+    // its follow-up holds the key: none may collide with it, and the two still never run at once.
+    const key = "review_library:account";
+    const cycle = async (putBack: (task: schema.Task) => Promise<unknown>) => {
+      await db.execute(sql`truncate tasks`);
+      await enqueueTask(db, "review_library", { userId: "account", libraryVersion: 1 }, { dedupeKey: key });
+      const task = (await claimTask(db, "back#0", "interactive"))!;
+      const followUp = await enqueueTask(db, "review_library", { userId: "account", libraryVersion: 2 }, { dedupeKey: key });
+      await putBack(task);
+      const [row] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, task.id));
+      expect(row!.status).toBe("queued");
+      expect(row!.startedAt).not.toBeNull();
+      await db.update(schema.tasks).set({ runAfter: sql`now()` });
+      const next = (await claimTask(db, "back#1"))!;
+      expect([task.id, followUp]).toContain(next.id);
+      expect(await claimTask(db, "back#2")).toBeNull();
+    };
+    await cycle(task => failTask(db, task, new Error("transient")));
+    await cycle(async task => {
+      await db.update(schema.tasks).set({ lockedAt: new Date(Date.now() - 60 * 60_000) }).where(eq(schema.tasks.id, task.id));
+      expect(await requeueStale(db)).toEqual({ requeued: 1, failed: 0 });
+    });
+    await cycle(async task => {
+      const queue = new TaskQueue(deps, {}, { concurrency: 1, workerId: "back" });
+      (queue as unknown as { running: Map<string, schema.Task> }).running.set(task.id, task);
+      await queue.stop(0);
+    });
   });
 
   it("retries with a growing delay, then gives up", async () => {
@@ -229,6 +277,16 @@ describe("scheduler", () => {
     await schedulerTick(deps);
     const again = await db.select().from(schema.tasks).where(eq(schema.tasks.status, "queued"));
     expect(again.filter((t) => t.type === "suggest_filters")).toHaveLength(0);
+  });
+
+  it("ages the queue one step a minute however many ticks run in it", async () => {
+    // Every worker and the cron fallback tick; ageing is claimed once for all of them.
+    const id = await enqueueTask(db, "suggest_filters", { userId: "aged" }, { priority: 6 });
+    const hourAgo = new Date(Date.now() - 3600_000);
+    await db.update(schema.tasks).set({ createdAt: hourAgo, runAfter: hourAgo }).where(eq(schema.tasks.id, id!));
+    await schedulerTick(deps);
+    await schedulerTick(deps);
+    expect((await db.select().from(schema.tasks).where(eq(schema.tasks.id, id!)))[0]!.priority).toBe(5);
   });
 
   it("leaves the weekly suggestion job out when suggestions are switched off", async () => {
@@ -408,6 +466,37 @@ describe("execution model", () => {
     await queueUnderTest.stop(5_000);
   }, 15_000);
 
+  it("lets CV builds take at most their share of the slots, so other work still runs beside a backlog of them", async () => {
+    let building = 0;
+    let maxBuilding = 0;
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let discovered!: () => void;
+    const sawDiscover = new Promise<void>(resolve => { discovered = resolve; });
+    queueUnderTest = new TaskQueue(deps, {
+      generate_cv: async () => {
+        building++;
+        maxBuilding = Math.max(maxBuilding, building);
+        await held;
+        building--;
+        return {};
+      },
+      discover: async () => { discovered(); return {}; },
+    }, { concurrency: 3, workerId: "capped-builds", pollMs: 10, maxActiveByType: { generate_cv: 2 } });
+    for (const draftId of ["a", "b", "c", "d", "e"]) await enqueueTask(db, "generate_cv", { draftId }, { priority: 2 });
+    queueUnderTest.start();
+    while (building < 2) await sleep(10);
+    // Queued behind five builds, at a less urgent priority than any of them, it still runs.
+    await enqueueTask(db, "discover", { companyId: "behind-the-builds" }, { priority: 6 });
+    await Promise.race([sawDiscover, new Promise((_, reject) => setTimeout(() => reject(new Error("the builds held every slot")), 5_000))]);
+    await sleep(100);
+    expect(maxBuilding).toBe(2);
+    const running = await db.select().from(schema.tasks).where(eq(schema.tasks.status, "running"));
+    expect(running.filter(task => task.type === "generate_cv")).toHaveLength(2);
+    release();
+    await queueUnderTest.stop(5_000);
+  }, 15_000);
+
   it("releases the verification slot after a handler fails", async () => {
     let calls = 0;
     let secondStarted!: () => void;
@@ -513,6 +602,139 @@ describe("execution model", () => {
   }, 20_000);
 });
 
+describe("stopping", () => {
+  beforeEach(async () => { await db.execute(sql`truncate worker_events, ai_reservations`); });
+  const theTask = async () => (await db.select().from(schema.tasks))[0]!;
+  const holdsFor = async (workerId: string) =>
+    Number((await db.execute<{ n: number }>(sql`select count(*)::int as n from ai_reservations where worker_id = ${workerId}`)).rows[0]!.n);
+
+  it("stops every run as it begins, and hands its task back whatever the handler did on the way out", async () => {
+    // A CV build on its last attempt reads the abort as a failure and writes the draft failed, then
+    // returns normally. Aborting before handing back used to let that write through the fence and
+    // mark the task done: every deploy would have failed someone's CV for good.
+    let reason: unknown;
+    let write: string | undefined;
+    let started!: () => void;
+    const running = new Promise<void>(resolve => { started = resolve; });
+    const queue = new TaskQueue(deps, {
+      generate_cv: async (_task, runDeps, ctx) => {
+        started();
+        await new Promise(resolve => ctx.signal.addEventListener("abort", resolve, { once: true }));
+        reason = ctx.signal.reason;
+        write = await db.transaction(async tx => runDeps.assertOwnership!(tx as unknown as Db)).then(() => "written", (e: Error) => e.message);
+        return { failed: true };
+      },
+    }, { concurrency: 1, workerId: "deploying", pollMs: 10 });
+    await enqueueTask(db, "generate_cv", { draftId: "last-attempt" }, { maxAttempts: 1 });
+    queue.start();
+    await running;
+    const began = Date.now();
+    await queue.stop(5_000);
+    expect(Date.now() - began).toBeLessThan(2_000);
+    expect(reason).toBeInstanceOf(ShutdownError);
+    expect(write).toBe("Run was stopped; refusing its writes");
+    const row = await theTask();
+    expect(row.status).toBe("queued");
+    expect(row.attempts).toBe(0);
+    expect(row.error).toContain("shutting down");
+    expect(await listWorkerEvents(db, { kinds: ["task_abandoned"] })).toHaveLength(0);
+  }, 15_000);
+
+  it("hands the rows back before the grace, and releases the holds only once the stopped runs settle", async () => {
+    const user = await ensureTestUser(db, "stopping@example.com");
+    await db.execute(sql`insert into ai_reservations (user_id, call_site, amount, expires_at, worker_id)
+      values (${user.id}, 'CV', 1, now() + interval '30 minutes', 'settling')`);
+    let statusDuringGrace: string | undefined;
+    let holdsDuringGrace: number | undefined;
+    let started!: () => void;
+    const running = new Promise<void>(resolve => { started = resolve; });
+    const queue = new TaskQueue(deps, {
+      generate_cv: async (_task, _deps, ctx) => {
+        started();
+        await new Promise(resolve => ctx.signal.addEventListener("abort", resolve, { once: true }));
+        // The run is still closing its streams: its task is already safe, its hold not yet gone.
+        await sleep(200);
+        statusDuringGrace = (await theTask()).status;
+        holdsDuringGrace = await holdsFor("settling");
+        throw ctx.signal.reason;
+      },
+    }, { concurrency: 1, workerId: "settling", pollMs: 10 });
+    await enqueueTask(db, "generate_cv", { draftId: "settling" });
+    queue.start();
+    await running;
+    await queue.stop(5_000);
+    expect(statusDuringGrace).toBe("queued");
+    expect(holdsDuringGrace).toBe(1);
+    expect(await holdsFor("settling")).toBe(0);
+    expect((await theTask()).attempts).toBe(0);
+  }, 15_000);
+
+  it("puts back what it held after an uncaught exception, spending the attempt as a crash does", async () => {
+    const user = await ensureTestUser(db, "crashing@example.com");
+    await db.execute(sql`insert into ai_reservations (user_id, call_site, amount, expires_at, worker_id)
+      values (${user.id}, 'CV', 1, now() + interval '30 minutes', 'crashing')`);
+    let aborted = false;
+    let finish!: () => void;
+    const hang = new Promise<void>(resolve => { finish = resolve; });
+    let started!: () => void;
+    const running = new Promise<void>(resolve => { started = resolve; });
+    let abandoned = 0;
+    const queue = new TaskQueue(deps, {
+      scan_company: async (_task, _deps, ctx) => {
+        started();
+        ctx.signal.addEventListener("abort", () => { aborted = true; }, { once: true });
+        await hang;
+        return {};
+      },
+    }, { concurrency: 1, workerId: "crashing", pollMs: 10, onAbandon: { scan_company: async () => { abandoned++; } } });
+    await enqueueTask(db, "scan_company", { companyId: "culprit" });
+    queue.start();
+    await running;
+    await queue.releaseAfterCrash();
+    const row = await theTask();
+    // Back on the queue at once rather than after a stale lock, but with its attempt spent: the
+    // task that was running may be the one that threw, and must not be retried for ever.
+    expect(row.status).toBe("queued");
+    expect(row.attempts).toBe(1);
+    expect(row.runAfter.getTime()).toBeGreaterThan(Date.now());
+    expect(aborted).toBe(true);
+    expect(abandoned).toBe(0);
+    expect(await holdsFor("crashing")).toBe(0);
+    finish();
+    await queue.stop(1_000);
+  }, 15_000);
+});
+
+describe("scheduler loop", () => {
+  it("never runs two ticks at once, and stops only once the tick in flight has returned", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let ticks = 0;
+    let sawAbort = false;
+    const tick = async (_deps: WorkerDeps, signal: AbortSignal) => {
+      ticks++;
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      // Three intervals long, so an interval timer would have started three more beside it.
+      for (let step = 0; step < 6 && !signal.aborted; step++) await sleep(10);
+      if (signal.aborted) sawAbort = true;
+      await sleep(30);
+      inFlight--;
+    };
+    const scheduler = startScheduler(deps, 20, tick);
+    while (ticks < 3) await sleep(5);
+    const stopping = scheduler.stop();
+    expect(inFlight).toBe(1);
+    await stopping;
+    expect(inFlight).toBe(0);
+    expect(maxInFlight).toBe(1);
+    expect(sawAbort).toBe(true);
+    const after = ticks;
+    await sleep(100);
+    expect(ticks).toBe(after);
+  }, 10_000);
+});
+
 /**
  * A scan queued for today is one row for the day. Every path that puts work back on the queue —
  * a handler that outruns its deadline, a lock left behind by a crashed worker, an orderly
@@ -592,24 +814,106 @@ it("keeps a requeued company scan on one task row, through a deadline, a stale l
 }, 20_000);
 
 describe("claim ordering", () => {
+  const hourAgo = () => new Date(Date.now() - 3600_000);
+  /** Queued an hour ago and ready all that time: the shape of a task that has really waited. */
+  const backdate = (id: string) => db.update(schema.tasks).set({ createdAt: hourAgo(), runAfter: hourAgo() }).where(eq(schema.tasks.id, id));
+  const priorityOf = async (id: string) => (await db.select().from(schema.tasks).where(eq(schema.tasks.id, id)))[0]!.priority;
+  const ageFully = async () => { for (let sweep = 0; sweep < 20; sweep++) await agePriorities(db); };
+
   it("claims by stored priority, and ages a waiting task up in a sweep rather than in the claim", async () => {
     // The old claim ordered by an ageing expression no index could serve, so an old task overtook
     // a newer one on every claim. The order is now the stored priority; the sweep is what moves a
     // task that has waited, and it is bounded.
     const old = await enqueueTask(db, "suggest_companies", { n: 1 }, { priority: 5 });
     await enqueueTask(db, "suggest_filters", { n: 2 }, { priority: 4 });
-    await db.update(schema.tasks).set({ createdAt: new Date(Date.now() - 3600_000) }).where(eq(schema.tasks.id, old!));
+    await backdate(old!);
 
     expect(await agePriorities(db, 300, 1)).toBe(1);
-    expect((await db.select().from(schema.tasks).where(eq(schema.tasks.id, old!)))[0]!.priority).toBe(4);
-    // Same priority now, so the older task goes first.
+    expect(await priorityOf(old!)).toBe(4);
+    // Same priority now, so the task that has been ready longer goes first.
     expect((await claimTask(db, "w1"))!.id).toBe(old);
+  });
 
-    // A task already at the front of the queue is left alone however long it has waited.
-    await db.update(schema.tasks).set({ status: "queued", priority: 0, createdAt: new Date(Date.now() - 3600_000) });
+  it("never lifts waiting work past the least urgent interactive priority, so fresh requests still come first", async () => {
+    // The floor is where a CV build is queued; nothing a person asks for is queued behind it.
+    expect(AGEING_PRIORITY_FLOOR).toBe(priorityFor("generate_cv"));
+    const score = await enqueueTask(db, "score_job", { userId: "u", jobId: "rescored" }, { priority: priorityFor("score_job") });
+    const scan = await enqueueTask(db, "scan_company", { companyId: "a" }, { priority: priorityFor("scan_company") });
+    const discover = await enqueueTask(db, "discover", { companyId: "old" }, { priority: priorityFor("discover") });
+    for (const id of [score!, scan!, discover!]) await backdate(id);
+
+    await ageFully();
+    // Converging on 0 used to put the whole backlog ahead of everything queued after it.
+    expect(await priorityOf(score!)).toBe(AGEING_PRIORITY_FLOOR);
+    expect(await priorityOf(scan!)).toBe(AGEING_PRIORITY_FLOOR);
+    // Work already at the front is never lifted further.
+    expect(await priorityOf(discover!)).toBe(priorityFor("discover"));
+
+    // A shortlist score queued now, at the priority the interface gives it, beats the aged
+    // backlog in the background lane, and so does a fresh discovery in the fall-through claim.
+    const shortlisted = await enqueueTask(db, "score_job", { userId: "u", jobId: "shortlisted" }, { priority: 1 });
+    expect((await claimTask(db, "w1", "background"))!.id).toBe(shortlisted);
+    await db.delete(schema.tasks).where(eq(schema.tasks.id, discover!));
+    const fresh = await enqueueTask(db, "discover", { companyId: "fresh" }, { priority: priorityFor("discover") });
+    expect((await claimTask(db, "w1"))!.id).toBe(fresh);
+  });
+
+  it("ages only what has been ready for the period, and the longest-waiting first", async () => {
+    // A scan spread across the morning is not starving while it waits for its own slot.
+    const scheduled = await enqueueTask(db, "scan_company", { companyId: "later" }, { priority: 5 });
+    await db.update(schema.tasks).set({ createdAt: hourAgo(), runAfter: new Date(Date.now() + 30 * 60_000) }).where(eq(schema.tasks.id, scheduled!));
+    // Queued long ago, but only just past its backoff.
+    const retried = await enqueueTask(db, "scan_company", { companyId: "retried" }, { priority: 5 });
+    await db.update(schema.tasks).set({ createdAt: hourAgo(), runAfter: new Date(Date.now() - 60_000) }).where(eq(schema.tasks.id, retried!));
     expect(await agePriorities(db)).toBe(0);
-    const priorities = (await db.select().from(schema.tasks)).map(t => t.priority);
-    expect(priorities.sort()).toEqual([0, 0]);
+
+    const newer = await enqueueTask(db, "suggest_filters", { n: 1 }, { priority: 6 });
+    await db.update(schema.tasks).set({ createdAt: new Date(Date.now() - 20 * 60_000), runAfter: new Date(Date.now() - 20 * 60_000) }).where(eq(schema.tasks.id, newer!));
+    const oldest = await enqueueTask(db, "suggest_filters", { n: 2 }, { priority: 3 });
+    await backdate(oldest!);
+    // The limit takes the one that has waited longest, not the one nearest the front.
+    expect(await agePriorities(db, 300, 1)).toBe(1);
+    expect(await priorityOf(oldest!)).toBe(2);
+    expect(await priorityOf(newer!)).toBe(6);
+    expect(await priorityOf(scheduled!)).toBe(5);
+  });
+
+  it("keeps a boot-time gate re-evaluation behind a CV build however long it waits", async () => {
+    const boot = await enqueueTask(db, "reevaluate_gate", { userId: "u", reason: "boot" }, { dedupeKey: "reevaluate_gate:u:boot", priority: 7 });
+    const asked = await enqueueTask(db, "reevaluate_gate", { userId: "v" }, { priority: 6 });
+    for (const id of [boot!, asked!]) await backdate(id);
+    await ageFully();
+    expect(await priorityOf(boot!)).toBe(AGEING_PRIORITY_FLOOR + 1);
+    expect(await priorityOf(asked!)).toBe(AGEING_PRIORITY_FLOOR);
+    await db.delete(schema.tasks).where(eq(schema.tasks.id, asked!));
+    const cv = await enqueueTask(db, "generate_cv", { draftId: "d" }, { priority: priorityFor("generate_cv") });
+    expect((await claimTask(db, "w1", "interactive"))!.id).toBe(cv);
+  });
+
+  it("skips a row a claim has locked instead of waiting for it", async () => {
+    const locked = await enqueueTask(db, "suggest_filters", { n: 1 }, { priority: 6 });
+    const free = await enqueueTask(db, "suggest_filters", { n: 2 }, { priority: 6 });
+    for (const id of [locked!, free!]) await backdate(id);
+    const other = createDb(DATABASE_URL, { max: 1 });
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let lockTaken!: () => void;
+    const taken = new Promise<void>(resolve => { lockTaken = resolve; });
+    const holder = other.db.transaction(async tx => {
+      await tx.execute(sql`select id from tasks where id = ${locked!} for update`);
+      lockTaken();
+      await held;
+    });
+    try {
+      await taken;
+      expect(await agePriorities(db)).toBe(1);
+      expect(await priorityOf(free!)).toBe(5);
+    } finally {
+      release();
+      await holder;
+      await other.pool.end();
+    }
+    expect(await priorityOf(locked!)).toBe(6);
   });
 });
 
@@ -679,10 +983,116 @@ describe("crash recovery", () => {
     expect(await claimTask(db, "w1")).toBeNull();
     expect(await claimTask(db, "w1", "interactive")).toBeNull();
     // Left alone it would sit queued for ever, so the sweep fails it too.
-    expect(await requeueStale(db, TASK_STALE_AFTER_MS, "sweeper")).toEqual({ requeued: 0, failed: 1 });
+    expect(await failSpentTasks(db, "sweeper")).toBe(1);
     const [row] = await db.select().from(schema.tasks);
     expect(row!.status).toBe("failed");
     expect(row!.error).toContain("out of attempts (2 of 2 spent)");
+  });
+
+  it("sweeps spent tasks at boot and hourly, not on every tick", async () => {
+    await ensureTestUser(db, "spent-sweep@example.com");
+    const spend = async (companyId: string) => {
+      const id = await enqueueTask(db, "discover", { companyId }, { maxAttempts: 1 });
+      await db.update(schema.tasks).set({ attempts: 1 }).where(eq(schema.tasks.id, id!));
+      return id!;
+    };
+    const statusOf = async (id: string) => (await db.select().from(schema.tasks).where(eq(schema.tasks.id, id)))[0]!.status;
+    const atBoot = await spend("boot");
+    expect(await recoverFromCrash(deps, { workerId: "spent-pod", onAbandon })).toMatchObject({ requeued: 0, failed: 1 });
+    expect(await statusOf(atBoot)).toBe("failed");
+
+    const first = await spend("first");
+    await schedulerTick(deps);
+    expect(await statusOf(first)).toBe("failed");
+    // The read walks every queued row, so a second tick within the hour does not repeat it.
+    const second = await spend("second");
+    await schedulerTick(deps);
+    expect(await statusOf(second)).toBe("queued");
+  });
+
+  it("leaves a lost-looking task alone when its owner renews it before the sweep writes", async () => {
+    // The sweep reads the row as stale; the owner's renewal, queued behind its own write
+    // transaction, lands first. The sweep's write used to match on status and attempts alone and
+    // requeue the live run anyway — or, at its last attempt, fail it and run its hook.
+    let abandoned = 0;
+    for (const attempts of [1, 3]) {
+      await db.execute(sql`truncate tasks`);
+      await enqueueTask(db, "discover", { companyId: `renewed-${attempts}` }, {});
+      const task = (await claimTask(db, "owner#0", "interactive"))!;
+      await db.update(schema.tasks).set({ attempts, lockedAt: past() }).where(eq(schema.tasks.id, task.id));
+      const owner = createDb(DATABASE_URL, { max: 1 });
+      try {
+        let renew!: () => void;
+        const renewed = new Promise<void>(resolve => { renew = resolve; });
+        let locked!: () => void;
+        const holding = new Promise<void>(resolve => { locked = resolve; });
+        const ownerWrite = owner.db.transaction(async tx => {
+          await tx.execute(sql`select id from tasks where id = ${task.id} for update`);
+          await tx.execute(sql`update tasks set locked_at = now() where id = ${task.id}`);
+          locked();
+          await renewed;
+        });
+        await holding;
+        const sweep = requeueStale(db, TASK_STALE_AFTER_MS, "sweeper", { deps, onAbandon: { discover: async () => { abandoned++; } } });
+        // Commit the renewal only once the sweep's write is waiting on the row.
+        for (let tick = 0; tick < 500; tick++) {
+          const waiting = await db.execute(sql`select 1 from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()`);
+          if (waiting.rows.length) break;
+          await sleep(10);
+        }
+        renew();
+        await ownerWrite;
+        expect(await sweep).toEqual({ requeued: 0, failed: 0 });
+      } finally {
+        await owner.pool.end();
+      }
+      const [row] = await db.select().from(schema.tasks);
+      expect(row!.status).toBe("running");
+      expect(row!.lockedBy).toBe("owner#0");
+    }
+    expect(abandoned).toBe(0);
+  });
+
+  it("reclaims its own earlier incarnation's rows at boot, and nobody else's live ones", async () => {
+    await enqueueTask(db, "scan_company", { companyId: "theirs" }, {});
+    const theirs = (await claimTask(db, "other-pod#0", "scan"))!;
+    await enqueueTask(db, "scan_company", { companyId: "ours" }, {});
+    const ours = (await claimTask(db, "this-pod#1", "scan"))!;
+    // Both locks are fresh; the list names both, as a boot that read one of them stale would.
+    const outcome = await requeueStale(db, TASK_STALE_AFTER_MS, "this-pod", { ids: [theirs.id, ours.id] });
+    expect(outcome).toEqual({ requeued: 1, failed: 0 });
+    const status = async (id: string) => (await db.select().from(schema.tasks).where(eq(schema.tasks.id, id)))[0]!.status;
+    expect(await status(theirs.id)).toBe("running");
+    expect(await status(ours.id)).toBe("queued");
+  });
+
+  it("leaves a task whose failure could not be written to the stale sweep, hooks and all", async () => {
+    // A failTask that throws is not a task failed for good: the row is still running, and the
+    // sweep that later finds it is the one that decides and closes off what it was for.
+    let abandoned = 0;
+    let broken = false;
+    const flaky = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop === "update" && broken) return () => { throw new Error("connection terminated unexpectedly"); };
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as Db;
+    const hooks = { discover: async () => { abandoned++; } };
+    const queue = new TaskQueue({ ...deps, db: flaky }, {
+      discover: async () => { broken = true; throw new Error("handler failed"); },
+    }, { concurrency: 1, workerId: "flaky", onAbandon: hooks });
+    await enqueueTask(db, "discover", { companyId: "flaky" }, { maxAttempts: 1 });
+    await queue.runTask((await claimTask(db, "flaky"))!);
+    broken = false;
+
+    expect(abandoned).toBe(0);
+    expect(await listWorkerEvents(db, { kinds: ["task_abandoned"] })).toHaveLength(0);
+    expect((await db.select().from(schema.tasks))[0]!.status).toBe("running");
+
+    expect(await requeueStale(db, 0, "sweeper", { deps, onAbandon: hooks })).toEqual({ requeued: 0, failed: 1 });
+    expect(abandoned).toBe(1);
+    expect((await db.select().from(schema.tasks))[0]!.status).toBe("failed");
   });
 
   it("fails the CV draft and releases its account's hold when the build task is given up on", async () => {
@@ -877,6 +1287,101 @@ describe("keeping a run alive, and stopping one that is over", () => {
     expect(row!.lockedBy).toBe("another-pod#0");
   }, 15_000);
 
+  it("refuses a stopped run's writes while its row still says it owns the task", async () => {
+    // Between the deadline and `failTask`, the row is still this run's: only the signal says the
+    // run has been given up on, and an unwinding handler must not commit what the abort left it.
+    await enqueueTask(db, "scan_company", { companyId: "cut-off" });
+    const task = (await claimTask(db, "fenced#0", "scan"))!;
+    const run = new AbortController();
+    await db.transaction(async tx => assertRunOwnership(tx as unknown as Db, task, run.signal));
+    run.abort(new Error("deadline"));
+    await expect(db.transaction(async tx => assertRunOwnership(tx as unknown as Db, task, run.signal))).rejects.toThrow("Run was stopped");
+    expect((await db.select().from(schema.tasks))[0]!.status).toBe("running");
+  });
+
+  it("hands a handler the run's signal with its deps, and a timed-out run stops renewing its lease", async () => {
+    const key = `zombie-${Date.now()}`;
+    const expiresAt = async () => (await db.execute<{ at: string }>(sql`select expires_at::text as at from resource_leases where key = ${key}`)).rows[0]?.at;
+    let finish!: () => void;
+    const zombie = new Promise<void>(resolve => { finish = resolve; });
+    let observed!: { sameSignal: boolean; renewedBefore: boolean; renewedAfter: boolean; fenced: string };
+    let settled!: () => void;
+    const done = new Promise<void>(resolve => { settled = resolve; });
+    const queue = new TaskQueue(deps, {
+      discover: (_task, runDeps, ctx) => withResourceLease(runDeps, key, async locked => {
+        const first = await expiresAt();
+        let renewedBefore = false;
+        for (let tick = 0; tick < 100 && !renewedBefore; tick++) { await sleep(10); renewedBefore = (await expiresAt()) !== first; }
+        // The handler ignores its abort, as a scan or a discovery does today.
+        await new Promise(resolve => ctx.signal.addEventListener("abort", resolve, { once: true }));
+        await sleep(60); // any renewal already in flight lands
+        const atAbort = await expiresAt();
+        await sleep(150); // seven renewal intervals
+        const renewedAfter = (await expiresAt()) !== atAbort;
+        const fenced = await db.transaction(async tx => locked.assertOwnership!(tx as unknown as Db)).then(() => "passed", (e: Error) => e.message);
+        observed = { sameSignal: (runDeps as RunDeps).signal === ctx.signal, renewedBefore, renewedAfter, fenced };
+        settled();
+        await zombie;
+        return {};
+      }, { renewEveryMs: 20 }),
+    }, { concurrency: 1, workerId: "zombie", deadlines: { discover: 400 } });
+    await enqueueTask(db, "discover", { companyId: "slow" }, { maxAttempts: 2 });
+    await queue.runTask((await claimTask(db, "zombie"))!);
+    await done;
+    expect(observed).toEqual({ sameSignal: true, renewedBefore: true, renewedAfter: false, fenced: "Run was stopped; refusing its writes" });
+    finish();
+    await db.execute(sql`delete from resource_leases where key = ${key}`);
+  }, 15_000);
+
+  it("stops refunding busy bounces once a task has been bouncing for hours", async () => {
+    // A bounce is normally free: someone else is doing the same thing. One that never ends is
+    // waiting on something that is not finishing, and must not be retried for ever.
+    await enqueueTask(db, "scan_company", { companyId: "busy" }, { maxAttempts: 2 });
+    let task = (await claimTask(db, "busy#0", "scan"))!;
+    expect(await failTask(db, task, new LeaseBusyError("Operation already running: scan:busy"))).toBe("retry");
+    expect((await db.select().from(schema.tasks))[0]!.attempts).toBe(0);
+
+    await db.update(schema.tasks).set({ runAfter: sql`now()`, createdAt: new Date(Date.now() - BUSY_REFUND_WINDOW_MS - 60_000) });
+    for (const expected of ["retry", "failed"] as const) {
+      task = (await claimTask(db, "busy#0", "scan"))!;
+      expect(await failTask(db, task, new LeaseBusyError("Operation already running: scan:busy"))).toBe(expected);
+      await db.update(schema.tasks).set({ runAfter: sql`now()` });
+    }
+    const [row] = await db.select().from(schema.tasks);
+    expect(row!.status).toBe("failed");
+    expect(row!.attempts).toBe(2);
+  });
+
+  it("gives up on a renewal the row lock blocks, without stopping the run or pinning a connection", async () => {
+    // The fence holds the task row `for update` for the length of a write transaction. A renewal
+    // used to wait out the whole transaction on a pooled connection, one more every beat.
+    await enqueueTask(db, "reevaluate_gate", { userId: "long-walk" });
+    const task = (await claimTask(db, "walker#0", "interactive"))!;
+    const holder = createDb(DATABASE_URL, { max: 1 });
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let locked!: () => void;
+    const holding = new Promise<void>(resolve => { locked = resolve; });
+    const transaction = holder.db.transaction(async tx => {
+      await tx.execute(sql`select id from tasks where id = ${task.id} for update`);
+      locked();
+      await held;
+    });
+    try {
+      await holding;
+      const started = Date.now();
+      expect(await renewTask(db, task)).toBeNull();
+      expect(Date.now() - started).toBeLessThan(4_000);
+      const waiting = await db.execute(sql`select 1 from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()`);
+      expect(waiting.rows).toHaveLength(0);
+    } finally {
+      release();
+      await transaction;
+      await holder.pool.end();
+    }
+    expect(await renewTask(db, task)).toBe(true);
+  }, 15_000);
+
   it("keeps renewing a claim when one renewal never comes back", async () => {
     await enqueueTask(db, "generate_cv", { draftId: "22222222-2222-2222-2222-222222222222" });
     const task = (await claimTask(db, "hung#0", "interactive"))!;
@@ -884,18 +1389,21 @@ describe("keeping a run alive, and stopping one that is over", () => {
     // A database that answers the completion but never the renewals: one hung query used to latch
     // the heartbeat off for good, the claim went stale in five minutes, and a second attempt ran
     // beside the first.
-    const hangingDb = {
-      update: () => ({
-        set: (values: Record<string, unknown>) => ({
-          where: () => ({
-            returning: () => {
-              if ("status" in values) return Promise.resolve([{ id: task.id }]);
-              renewals++;
-              return new Promise(() => {});
-            },
-          }),
+    const update = () => ({
+      set: (values: Record<string, unknown>) => ({
+        where: () => ({
+          returning: () => {
+            if ("status" in values) return Promise.resolve([{ id: task.id }]);
+            renewals++;
+            return new Promise(() => {});
+          },
         }),
       }),
+    });
+    // A renewal runs in its own short transaction, so its lock wait is bounded.
+    const hangingDb = {
+      update,
+      transaction: (work: (tx: unknown) => Promise<unknown>) => work({ update, execute: async () => ({ rows: [] }) }),
     } as unknown as Db;
     const queue = new TaskQueue({ ...deps, db: hangingDb }, {
       generate_cv: () => new Promise(resolve => setTimeout(() => resolve({ ok: true }), 250)),

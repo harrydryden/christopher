@@ -53,6 +53,11 @@ export interface FetchInit {
   headers?: Record<string, string>;
   body?: string;
   timeoutMs?: number;
+  /**
+   * The body cap for this request, in bytes: a body over it is refused, never truncated. The
+   * fetcher's default is 5 MB and its ceiling 16 MB, which no caller can raise, so a feed that
+   * carries every description inline asks for what it needs up to that ceiling.
+   */
   maxBodyBytes?: number;
   /**
    * Revalidate this URL even though its body is too large to cache. The fetcher keeps the
@@ -61,6 +66,13 @@ export interface FetchInit {
    * from somewhere else (the scan, from its last snapshot) may ask for this.
    */
   revalidateLargeBody?: boolean;
+  /**
+   * Stops the request — the wait for the host's turn, the connection and the body read — alongside
+   * the fetcher's own timeout. The task's signal belongs here, so work the queue has abandoned stops
+   * spending a host's patience. An abort rejects with the signal's reason, never as a timeout the
+   * host would be blamed for.
+   */
+  signal?: AbortSignal;
 }
 
 export interface FetchResponse {
@@ -112,8 +124,11 @@ export interface FetchContext {
    * over it is rejected, because half an image is worse than none.
    */
   fetchBytes?(url: string, init?: FetchInit): Promise<FetchBytesResponse>;
-  /** Headless-browser render. Optional: when absent, discovery and scanning fall back to plain HTTP. */
-  render?: (url: string, opts?: { scrollAndExpand?: boolean }) => Promise<RenderedPage>;
+  /**
+   * Headless-browser render. Optional: when absent, discovery and scanning fall back to plain HTTP.
+   * `signal` gives up the render: a queued one leaves the queue, a running one closes its page.
+   */
+  render?: (url: string, opts?: { scrollAndExpand?: boolean; signal?: AbortSignal }) => Promise<RenderedPage>;
   log?: (msg: string, data?: unknown) => void;
   now?: () => Date;
 }

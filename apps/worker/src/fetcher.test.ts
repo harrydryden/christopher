@@ -1,4 +1,5 @@
 /** The polite fetcher: identification, robots.txt, rate limiting, and bot-protection detection. */
+import http from "node:http";
 import net from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SourceFetchError } from "@ava/core";
@@ -6,7 +7,7 @@ import { createDb, listHttpHostDaily } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { sql } from "drizzle-orm";
 import { sha1 } from "@ava/core";
-import { ATS_API_DELAY_MS, DEFAULT_HOST_DELAY_MS, HARD_MAX_BODY_BYTES, hostDelayMs, HttpTrafficLedger, PoliteFetcher, userAgentFor } from "./fetcher";
+import { ATS_API_DELAY_MS, DEFAULT_HOST_DELAY_MS, HARD_MAX_BODY_BYTES, hostDelayMs, HttpTrafficLedger, PoliteFetcher, PrivateAddressError, userAgentFor } from "./fetcher";
 import { startTestServer, type TestServer } from "./test-server";
 
 let server: TestServer;
@@ -462,6 +463,21 @@ describe("outbound traffic counters", () => {
     expect(row!.requests).toBe(1);
   });
 
+  it("writes a refused private address although no request was made for it", async () => {
+    await client.db.execute(sql`delete from http_host_daily where host = '10.9.8.7'`);
+    const ledger = new HttpTrafficLedger(client.db, { flushIntervalMs: 3_600_000 });
+    try {
+      const f = new PoliteFetcher({ userAgent: "test", perHostDelayMs: 0, traffic: ledger });
+      await expect(f.fetchText("http://10.9.8.7/admin")).rejects.toBeInstanceOf(PrivateAddressError);
+      await ledger.flush();
+      const [row] = (await listHttpHostDaily(client.db, 1)).filter(r => r.host === "10.9.8.7");
+      expect(row).toMatchObject({ requests: 0, blocked: 1 });
+    } finally {
+      await ledger.close();
+      await client.db.execute(sql`delete from http_host_daily where host = '10.9.8.7'`);
+    }
+  });
+
   it("flushes one row per day, host and via, and a second flush adds to it", async () => {
     await client.db.execute(sql`delete from http_host_daily where host in ('traffic.test','slow.test')`);
     const ledger = new HttpTrafficLedger(client.db, { flushIntervalMs: 3_600_000 });
@@ -490,4 +506,179 @@ describe("outbound traffic counters", () => {
       await client.db.execute(sql`delete from http_host_daily where host in ('traffic.test','slow.test')`);
     }
   }, 60_000);
+});
+
+/** A plain server on one loopback address that counts what reaches it: the thing a guard protects. */
+async function internalService(host = "127.0.0.1") {
+  const hits: string[] = [];
+  const service = http.createServer((req, res) => { hits.push(req.url ?? "/"); res.writeHead(200, { "content-type": "text/html" }); res.end("<html><body>internal secret</body></html>"); });
+  await new Promise<void>(resolve => service.listen(0, host, resolve));
+  const port = (service.address() as net.AddressInfo).port;
+  return { hits, port, url: (path = "/secret") => `http://${host}:${port}${path}`, close: () => new Promise<void>(resolve => service.close(() => resolve())) };
+}
+
+describe("private and local destinations", () => {
+  it("refuses loopback, link-local and private literals without connecting, however they are spelled", async () => {
+    const service = await internalService();
+    try {
+      const ledger = new HttpTrafficLedger(null);
+      const f = new PoliteFetcher({ userAgent: "test", perHostDelayMs: 0, traffic: ledger, respectRobots: () => true });
+      for (const url of [service.url(), `http://2130706433:${service.port}/secret`, `http://[::ffff:127.0.0.1]:${service.port}/`, "http://169.254.169.254/latest/meta-data/", "http://[::1]/", "http://10.0.0.5:8080/"]) {
+        const error = await f.fetchText(url).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(PrivateAddressError);
+        expect((error as SourceFetchError).kind).toBe("blocked");
+        expect((error as Error).message).toContain("private or local network address");
+      }
+      await expect(f.fetchBytes(service.url("/favicon.ico"))).rejects.toBeInstanceOf(PrivateAddressError);
+      // Nothing reached the service, robots.txt included.
+      expect(service.hits).toEqual([]);
+      // No request was made, and the refusal is still visible per host.
+      const loopback = ledger.snapshot().find(r => r.host === "127.0.0.1")!;
+      expect(loopback.requests).toBe(0);
+      expect(loopback.blocked).toBe(3);
+    } finally { await service.close(); }
+  });
+
+  it("refuses schemes other than http and https, and names that only mean the local network", async () => {
+    const f = new PoliteFetcher({ userAgent: "test", perHostDelayMs: 0, resolveHost: async () => { throw new Error("DNS must not be asked"); } });
+    for (const url of ["file:///etc/passwd", "data:text/html,<title>x</title>", "http://localhost:8080/", "http://metadata.google.internal/computeMetadata/v1/", "http://ava-worker:8080/healthz"]) {
+      await expect(f.fetchText(url)).rejects.toBeInstanceOf(PrivateAddressError);
+    }
+  });
+
+  it("resolves a name before connecting and refuses it when any address is private", async () => {
+    const asked: string[] = [];
+    const answers: Record<string, string[]> = { "intranet.example.com": ["10.1.2.3"], "split.example.com": ["93.184.216.34", "127.0.0.1"], "rebound.example.com": ["::ffff:169.254.169.254"] };
+    const f = new PoliteFetcher({ userAgent: "test", perHostDelayMs: 0, resolveHost: async host => { asked.push(host); return answers[host] ?? []; } });
+    for (const [host, address] of [["intranet.example.com", "10.1.2.3"], ["split.example.com", "127.0.0.1"], ["rebound.example.com", "::ffff:169.254.169.254"]] as const) {
+      const error = await f.fetchText(`https://${host}/careers`).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(PrivateAddressError);
+      expect((error as Error).message).toContain(`${host} resolves to ${address}`);
+    }
+    expect(asked).toEqual(["intranet.example.com", "split.example.com", "rebound.example.com"]);
+    // A name with no address is a network failure, which retries; it is not a refusal.
+    await expect(f.fetchText("https://gone.example.com/")).rejects.toMatchObject({ kind: "network" });
+  });
+
+  it("refuses a redirect into the private network at the hop, before the destination is asked", async () => {
+    const service = await internalService();
+    const site = await startTestServer({ "public.test": {
+      "/robots.txt": { status: 404, body: "" },
+      "/to-loopback": { status: 302, body: "", headers: { location: service.url() } },
+      "/to-metadata": { status: 301, body: "", headers: { location: "http://169.254.169.254/latest/meta-data/" } },
+      "/to-name": { status: 307, body: "", headers: { location: "http://localhost/admin" } },
+    } }, ["public.test"]);
+    try {
+      const f = new PoliteFetcher({ userAgent: "test", perHostDelayMs: 0, hostMap: site.hostMap, respectRobots: () => true });
+      for (const path of ["/to-loopback", "/to-metadata", "/to-name"]) {
+        const error = await f.fetchText(`https://public.test${path}`).catch((e: unknown) => e);
+        // Refused as a private address, not as "not in the test host map": the guard runs first.
+        expect(error).toBeInstanceOf(PrivateAddressError);
+        expect((error as SourceFetchError).kind).toBe("blocked");
+      }
+      await expect(f.fetchBytes("https://public.test/to-loopback")).rejects.toBeInstanceOf(PrivateAddressError);
+      expect(service.hits).toEqual([]);
+    } finally { await site.close(); await service.close(); }
+  });
+
+  it("guards every hop without a host map too, with the address policy deciding what is public", async () => {
+    // The page is on 127.0.0.1, which this test's policy treats as public; the service is on
+    // 127.0.0.2, which it does not. That is the production shape: a public page redirecting inward.
+    const service = await internalService("127.0.0.2");
+    const page = http.createServer((req, res) => {
+      if (req.url === "/robots.txt") { res.writeHead(404); return res.end(); }
+      res.writeHead(302, { location: service.url() });
+      res.end();
+    });
+    await new Promise<void>(resolve => page.listen(0, "127.0.0.1", resolve));
+    const port = (page.address() as net.AddressInfo).port;
+    try {
+      const f = new PoliteFetcher({ userAgent: "test", perHostDelayMs: 0, respectRobots: () => true, isAllowedAddress: a => a === "127.0.0.1" });
+      const error = await f.fetchText(`http://127.0.0.1:${port}/careers`).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(PrivateAddressError);
+      expect((error as Error).message).toContain("127.0.0.2");
+      expect(service.hits).toEqual([]);
+    } finally { await new Promise<void>(resolve => page.close(() => resolve())); await service.close(); }
+  });
+});
+
+describe("redirects", () => {
+  let site: TestServer;
+  const seen: Array<{ path: string; method: string; body: string; authorization?: string; host: string }> = [];
+
+  beforeAll(async () => {
+    const record = (req: http.IncomingMessage, body: string) => {
+      seen.push({ path: req.url ?? "", method: req.method ?? "", body, authorization: req.headers.authorization, host: String(req.headers["x-forwarded-host"]) });
+    };
+    const hop = (location: string, status = 302) => (req: http.IncomingMessage, body: string) => { record(req, body); return { status, body: "", headers: { location } }; };
+    site = await startTestServer({
+      "www.careers.test": {
+        "/robots.txt": { body: "User-agent: *\nDisallow: /private/\n", contentType: "text/plain" },
+        "/moved": hop("/jobs"),
+        "/jobs": (req, body) => { record(req, body); return { body: "<html><body>jobs</body></html>" }; },
+        "/to-private": hop("/private/list"),
+        "/private/list": (req, body) => { record(req, body); return { body: "private" }; },
+        "/to-board": hop("https://boards.other.test/acme"),
+        "/to-unmapped": hop("https://api.lever.co/v0/postings/acme"),
+        "/loop/0": hop("/loop/1"), "/loop/1": hop("/loop/2"), "/loop/2": hop("/loop/3"),
+        "/loop/3": hop("/loop/4"), "/loop/4": hop("/loop/5"), "/loop/5": hop("/loop/6"), "/loop/6": hop("/jobs"),
+        "/post-303": hop("/echo", 303),
+        "/post-307": hop("/echo", 307),
+        "/echo": (req, body) => { record(req, body); return { body: JSON.stringify({ method: req.method, body }) }; },
+      },
+      "boards.other.test": {
+        "/acme": (req, body) => { record(req, body); return { body: "<html><body>board</body></html>" }; },
+      },
+    }, ["www.careers.test", "boards.other.test"]);
+  });
+  afterAll(async () => { await site?.close(); });
+
+  const make = (over: Partial<ConstructorParameters<typeof PoliteFetcher>[0]> = {}) =>
+    new PoliteFetcher({ userAgent: "test", perHostDelayMs: 0, hostMap: site.hostMap, respectRobots: () => true, ...over });
+
+  it("follows a redirect and reports where it ended, counting each hop", async () => {
+    const ledger = new HttpTrafficLedger(null);
+    const res = await make({ traffic: ledger }).fetchText("https://www.careers.test/moved");
+    expect(res.status).toBe(200);
+    expect(res.body).toContain("jobs");
+    expect(res.url).toBe("https://www.careers.test/jobs");
+    const row = ledger.snapshot().find(r => r.host === "www.careers.test")!;
+    // robots.txt, the redirect and the page.
+    expect(row.redirects3xx).toBe(1);
+    expect(row.ok2xx).toBe(2);
+  });
+
+  it("checks robots.txt at every hop, so a redirect cannot reach a disallowed path", async () => {
+    seen.length = 0;
+    const error = await make().fetchText("https://www.careers.test/to-private").catch((e: unknown) => e);
+    expect(error).toMatchObject({ kind: "blocked", status: 999 });
+    expect(seen.map(r => r.path)).toEqual(["/to-private"]);
+  });
+
+  it("paces each hop against its own host, in order", async () => {
+    const reserved: string[] = [];
+    const res = await make({ reserveHost: async (host) => { reserved.push(host); return 0; } }).fetchText("https://www.careers.test/to-board");
+    expect(res.url).toBe("https://boards.other.test/acme");
+    // robots.txt and the page on the first host, then robots.txt and the page on the second.
+    expect(reserved).toEqual(["www.careers.test", "www.careers.test", "boards.other.test", "boards.other.test"]);
+  });
+
+  it("refuses a redirect to a host the test map does not name, and a chain longer than five hops", async () => {
+    await expect(make().fetchText("https://www.careers.test/to-unmapped")).rejects.toThrow("not in the test host map");
+    await expect(make().fetchText("https://www.careers.test/loop/0")).rejects.toThrow("too many redirects");
+  });
+
+  it("turns a POST into a GET on a 303 and keeps it on a 307", async () => {
+    const f = make({ respectRobots: () => false });
+    const after303 = JSON.parse((await f.fetchText("https://www.careers.test/post-303", { method: "POST", body: "q=1", headers: { "content-type": "application/x-www-form-urlencoded" } })).body);
+    expect(after303).toEqual({ method: "GET", body: "" });
+    const after307 = JSON.parse((await f.fetchText("https://www.careers.test/post-307", { method: "POST", body: "q=1" })).body);
+    expect(after307).toEqual({ method: "POST", body: "q=1" });
+  });
+
+  it("never carries credentials to another origin", async () => {
+    seen.length = 0;
+    await make({ respectRobots: () => false }).fetchText("https://www.careers.test/to-board", { headers: { authorization: "Bearer secret" } });
+    expect(seen.map(r => [r.host, r.authorization])).toEqual([["www.careers.test", "Bearer secret"], ["boards.other.test", undefined]]);
+  });
 });

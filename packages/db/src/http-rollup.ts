@@ -48,7 +48,8 @@ export interface HttpHostDailyDelta extends HttpHostCounters {
  */
 export async function addHttpHostDaily(db: Db, deltas: HttpHostDailyDelta[]): Promise<void> {
   for (const d of deltas) {
-    if (d.requests === 0 && d.robotsDenied === 0) continue;
+    // A robots denial and a refused private address make no request, and are still worth a row.
+    if (d.requests === 0 && d.robotsDenied === 0 && d.blocked === 0) continue;
     try {
       await db.execute(sql`
         insert into http_host_daily (day, host, via, requests, bytes_in, ok_2xx, not_modified_304, redirects_3xx, client_4xx, server_5xx,

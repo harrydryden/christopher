@@ -5,6 +5,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { BrowserRenderer } from "./browser";
 import { startTestServer, type TestServer } from "./test-server";
 import { ats, discovery, renamedEnv, SourceFetchError } from "@ava/core";
@@ -128,6 +129,8 @@ describe.skipIf(skip)("headless rendering", () => {
     const guarded = new BrowserRenderer({
       userAgent: "AVAJobMonitor/0.1 (test)",
       executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
+      // The fixture is on loopback, which the address guard would otherwise refuse outright.
+      isAllowedAddress: address => address === "127.0.0.1",
       beforeNavigate: async host => { paced.push(host); },
       allowNavigate: async url => {
         checked.push(url);
@@ -148,6 +151,47 @@ describe.skipIf(skip)("headless rendering", () => {
     } finally {
       await guarded.close();
       await new Promise<void>(resolve => redirectServer.close(() => resolve()));
+    }
+  }, 120_000);
+
+  it("keeps the page from reaching the private network: no script, frame, redirect or websocket gets through", async () => {
+    // The page is on 127.0.0.1, which this renderer's policy treats as public; the service on
+    // 127.0.0.2 plays the worker's private network. Anything that reaches it is a hit.
+    const hits: string[] = [];
+    const internal = createServer((req, res) => { hits.push(req.url ?? "/"); res.writeHead(200, { "content-type": "text/html", "access-control-allow-origin": "*" }); res.end("internal secret"); });
+    internal.on("upgrade", (req, socket) => { hits.push(`upgrade ${req.url}`); socket.destroy(); });
+    await new Promise<void>(resolve => internal.listen(0, "127.0.0.2", resolve));
+    const inside = `http://127.0.0.2:${(internal.address() as AddressInfo).port}`;
+    const page = createServer((req, res) => {
+      if (req.url === "/redirect") { res.writeHead(302, { location: `${inside}/redirected` }); return res.end(); }
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(`<html><body><div id="out">waiting</div><iframe src="${inside}/frame"></iframe><script>
+        try { new WebSocket(${JSON.stringify(inside.replace("http", "ws") + "/socket")}); } catch (e) {}
+        fetch(${JSON.stringify(inside + "/fetched")}).then(function (r) { return r.text(); })
+          .then(function (t) { document.getElementById("out").textContent = t; })
+          .catch(function () { document.getElementById("out").textContent = "refused"; });
+      </script></body></html>`);
+    });
+    await new Promise<void>(resolve => page.listen(0, "127.0.0.1", resolve));
+    const outside = `http://127.0.0.1:${(page.address() as AddressInfo).port}`;
+    const guarded = new BrowserRenderer({
+      userAgent: "AVAJobMonitor/0.1 (test)",
+      executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
+      isAllowedAddress: address => address === "127.0.0.1",
+    });
+    try {
+      const rendered = await guarded.render(`${outside}/careers`);
+      expect(rendered.html).toContain("refused");
+      expect(rendered.html).not.toContain("internal secret");
+      await expect(guarded.render(`${outside}/redirect`)).rejects.toMatchObject({ kind: "blocked" });
+      // Refused in Node before any browser work, as the fetcher would.
+      await expect(guarded.render(`${inside}/direct`)).rejects.toMatchObject({ kind: "blocked" });
+      await expect(guarded.render("http://169.254.169.254/latest/meta-data/")).rejects.toMatchObject({ kind: "blocked" });
+      expect(hits).toEqual([]);
+    } finally {
+      await guarded.close();
+      await new Promise<void>(resolve => page.close(() => resolve()));
+      await new Promise<void>(resolve => internal.close(() => resolve()));
     }
   }, 120_000);
 });

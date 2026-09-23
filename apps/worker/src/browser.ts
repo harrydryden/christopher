@@ -1,9 +1,14 @@
 /**
  * Headless Chromium rendering with network sniffing. Used when a careers page is a JavaScript shell.
  * One browser per process, one context per render, images/fonts/media blocked.
+ *
+ * The page is somebody else's code running inside the worker's network, so every request it makes
+ * — the navigation, each redirect hop, every script, fetch and frame, every WebSocket — passes the
+ * same address guard as the fetcher before it is sent. Chromium resolves names itself, so a name
+ * that answers public to the guard and private to Chromium a moment later is not caught here.
  */
 import type { RenderedPage } from "@ava/core";
-import type { HttpTrafficLedger } from "./fetcher";
+import { AddressGuard, type HttpTrafficLedger, type ResolveHost } from "./fetcher";
 import { log } from "./log";
 
 type Playwright = typeof import("playwright");
@@ -25,7 +30,14 @@ export interface BrowserOptions {
    * doing, not ours, and counting them would drown the number that says what a board costs us.
    */
   traffic?: HttpTrafficLedger;
+  /** Every address a name has, asked before a request is let through. Tests inject one. */
+  resolveHost?: ResolveHost;
+  /** Which addresses may be reached. Defaults to `isPublicAddress`; a test substitutes one for a local fixture. */
+  isAllowedAddress?: (address: string) => boolean;
 }
+
+/** Schemes whose content never leaves the browser, so there is no destination to guard. */
+const LOCAL_SCHEMES = /^(?:data|blob|about):/i;
 
 const COOKIE_BUTTON_TEXT = /^(accept( all)?( cookies)?|allow all|i agree|agree|got it|ok(ay)?|accept and close|accept & close)$/i;
 const LOAD_MORE_TEXT = /^(?:(?:load|show|view|see) more(?: (?:jobs|roles|positions|openings|results))?|more (?:jobs|roles|positions|openings))$/i;
@@ -36,8 +48,21 @@ export class BrowserRenderer {
   private active = 0;
   private waiters: Array<() => void> = [];
   private launching: Promise<Browser> | null = null;
+  private readonly guard: AddressGuard;
 
-  constructor(private readonly opts: BrowserOptions) {}
+  constructor(private readonly opts: BrowserOptions) {
+    this.guard = new AddressGuard({ resolveHost: opts.resolveHost, isAllowedAddress: opts.isAllowedAddress });
+  }
+
+  /**
+   * Refuse a request the page makes to a private or local destination. A test host map is
+   * exhaustive and already refuses every host it does not name, so under one there is nothing
+   * left for the guard to do.
+   */
+  private async guardRequest(url: string): Promise<void> {
+    if (Object.keys(this.opts.hostMap ?? {}).length > 0 || LOCAL_SCHEMES.test(url)) return;
+    await this.guard.check(url.replace(/^ws(s?):/i, "http$1:"));
+  }
 
   private async getBrowser(): Promise<Browser> {
     if (this.browser && this.browser.isConnected()) return this.browser;
@@ -78,6 +103,8 @@ export class BrowserRenderer {
   private async renderPage(url: string, opts: { scrollAndExpand?: boolean }): Promise<RenderedPage> {
     const started = Date.now();
     const host = new URL(url).hostname;
+    // Resolved here, in Node, before a browser is involved: a private address costs nothing.
+    await this.guardRequest(url);
     const browser = await this.getBrowser();
     const context = await browser.newContext({
       userAgent: this.opts.userAgent,
@@ -93,24 +120,36 @@ export class BrowserRenderer {
       const page = await context.newPage();
       page.setDefaultNavigationTimeout(this.opts.navigationTimeoutMs ?? 30_000);
       // Playwright's route handler is not invoked again for a server redirect after route.continue.
-      // Chromium Fetch interception is: guard each Document request before any bytes reach the
-      // destination, including every hop in a redirect chain.
+      // Chromium Fetch interception is: guard each request before any bytes reach the destination,
+      // including every hop in a redirect chain, and pace and robots-check the page's own
+      // navigations, never its subresources.
       const cdp = await context.newCDPSession(page);
-      await cdp.send("Fetch.enable", { patterns: [{ resourceType: "Document", requestStage: "Request" }] });
+      await cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] });
       const frameTree = await cdp.send("Page.getFrameTree") as { frameTree: { frame: { id: string } } };
       const mainFrameId = frameTree.frameTree.frame.id;
       cdp.on("Fetch.requestPaused", async (event: { requestId: string; frameId?: string; request: { url: string }; resourceType?: string }) => {
+        const navigation = event.frameId === mainFrameId && event.resourceType === "Document";
         try {
-          if (event.frameId !== mainFrameId) {
-            await cdp.send("Fetch.continueRequest", { requestId: event.requestId });
-            return;
+          await this.guardRequest(event.request.url);
+          if (navigation) {
+            await this.opts.beforeNavigate?.(new URL(event.request.url).hostname);
+            await this.opts.allowNavigate?.(event.request.url);
           }
-          await this.opts.beforeNavigate?.(new URL(event.request.url).hostname);
-          await this.opts.allowNavigate?.(event.request.url);
           await cdp.send("Fetch.continueRequest", { requestId: event.requestId });
         } catch (error) {
-          navigationError = error;
+          if (navigation) navigationError = error;
+          else log.info("render refused a request", { url: event.request.url, error: (error as Error).message });
           await cdp.send("Fetch.failRequest", { requestId: event.requestId, errorReason: "BlockedByClient" }).catch(() => undefined);
+        }
+      });
+      // Neither interception sees a WebSocket, so it is guarded where Playwright hands it over.
+      await page.routeWebSocket(/.*/, async (ws) => {
+        try {
+          await this.guardRequest(ws.url());
+          ws.connectToServer();
+        } catch (error) {
+          log.info("render refused a websocket", { url: ws.url(), error: (error as Error).message });
+          await ws.close({ code: 1008, reason: "blocked" }).catch(() => undefined);
         }
       });
       const hostMap = this.opts.hostMap ?? {};

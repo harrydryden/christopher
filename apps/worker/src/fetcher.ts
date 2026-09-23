@@ -3,10 +3,13 @@
  *  - identifies itself, paces each host (2s for a company's own site, 250ms for a shared ATS API), timeouts, size cap
  *  - optional robots.txt compliance for HTML pages (ATS feed hosts are exempt: they publish JSON for boards)
  *  - host mapping (tests point real hostnames at a local fake server)
+ *  - refuses private and local destinations, and follows redirects itself so every hop is guarded,
+ *    paced, robots-checked and host-mapped
  *  - maps 403 and challenge pages to SourceFetchError("blocked"), 429/503 to "rate_limited"
  *  - counts every outcome per host per day into `http_host_daily`
  */
-import { sha1, SourceFetchError, type FetchBytesResponse, type FetchContext, type FetchInit, type FetchResponse } from "@ava/core";
+import { lookup } from "node:dns/promises";
+import { assertPublicHttpUrl, isIpLiteral, isPublicAddress, sha1, SourceFetchError, UnsafeUrlError, type FetchBytesResponse, type FetchContext, type FetchInit, type FetchResponse } from "@ava/core";
 import { ats } from "@ava/core";
 import { addHttpHostDaily, emptyHttpCounters, latencyBucketIndex, type Db, type HttpHostDailyDelta, type HttpVia } from "@ava/db";
 import { log } from "./log";
@@ -22,6 +25,79 @@ export interface FetcherOptions {
   respectRobots?: () => boolean | Promise<boolean>;
   /** Where outbound traffic is counted. Omitted (tests, the CLI probe) nothing is recorded. */
   traffic?: HttpTrafficLedger;
+  /** Every address a name has, asked before connecting. Defaults to the system resolver; tests inject one. */
+  resolveHost?: ResolveHost;
+  /** Which addresses may be reached. Defaults to `isPublicAddress`; a test substitutes one for a local fixture. */
+  isAllowedAddress?: (address: string) => boolean;
+}
+
+/** Every address `hostname` resolves to. */
+export type ResolveHost = (hostname: string) => Promise<string[]>;
+
+const systemResolve: ResolveHost = async (hostname) => (await lookup(hostname, { all: true, verbatim: true })).map(a => a.address);
+
+/**
+ * A destination the worker will not reach: a private or local network address, a name that means
+ * one, or a scheme other than http(s). Reported as `blocked` — no retry makes the address public,
+ * and a source pointing at one needs a person, not tomorrow's scan.
+ */
+export class PrivateAddressError extends SourceFetchError {
+  constructor(url: string, reason: string) {
+    super(`refusing to fetch ${url}: ${reason}`, "blocked");
+    this.name = "PrivateAddressError";
+  }
+}
+
+/** How long a name that resolved only to public addresses is taken as vetted without asking again. */
+const VETTED_HOST_TTL_MS = 60_000;
+const MAX_VETTED_HOSTS = 2000;
+
+/**
+ * The address half of the SSRF guard, shared by the fetcher and the browser: the URL's own rule
+ * (`assertPublicHttpUrl`), then every address the name resolves to, all of which must be public.
+ *
+ * A name is resolved here and again by the connection that follows, so a name that answers public
+ * and then private (DNS rebinding) can still slip between the two. Pinning the vetted address
+ * needs the connection's own lookup, which the platform `fetch` does not expose.
+ */
+export class AddressGuard {
+  private vetted = new Map<string, number>();
+  /** One lookup per name at a time: a page asking for twenty scripts from one CDN resolves it once. */
+  private resolving = new Map<string, Promise<string[]>>();
+
+  constructor(private readonly opts: { resolveHost?: ResolveHost; isAllowedAddress?: (address: string) => boolean } = {}) {}
+
+  /** Throws `PrivateAddressError` unless `url` may be fetched. `resolve: false` checks only what the URL says. */
+  async check(url: string, opts: { resolve?: boolean } = {}): Promise<void> {
+    let parsed: URL;
+    try {
+      parsed = assertPublicHttpUrl(url, { isAllowedAddress: this.opts.isAllowedAddress });
+    } catch (error) {
+      if (error instanceof UnsafeUrlError) throw new PrivateAddressError(url, error.message);
+      throw error;
+    }
+    const host = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    if (opts.resolve === false || isIpLiteral(host)) return;
+    const now = Date.now();
+    if ((this.vetted.get(host) ?? 0) > now) return;
+    let addresses: string[];
+    try {
+      let pending = this.resolving.get(host);
+      if (!pending) {
+        pending = (this.opts.resolveHost ?? systemResolve)(host).finally(() => this.resolving.delete(host));
+        this.resolving.set(host, pending);
+      }
+      addresses = await pending;
+    } catch (error) {
+      throw new SourceFetchError(`network error fetching ${url}: ${(error as Error).message}`, "network");
+    }
+    if (addresses.length === 0) throw new SourceFetchError(`network error fetching ${url}: ${host} has no address`, "network");
+    const refused = addresses.find(address => !(this.opts.isAllowedAddress ?? isPublicAddress)(address));
+    if (refused) throw new PrivateAddressError(url, `${host} resolves to ${refused}, a private or local network address`);
+    this.vetted.delete(host);
+    this.vetted.set(host, now + VETTED_HOST_TTL_MS);
+    while (this.vetted.size > MAX_VETTED_HOSTS) this.vetted.delete(this.vetted.keys().next().value!);
+  }
 }
 
 /** How long a request took, and what came back. `status` is null when nothing arrived. */
@@ -53,11 +129,20 @@ interface ReadBody {
   /** Bytes read off the wire. The text path re-counts them after decoding. */
   size: number;
   headers: Record<string, string>;
-  /** The final URL after redirects, un-mapped back to the logical host. */
+  /** The final URL after redirects, as the logical host (never the test map's local address). */
   finalUrl: string;
   started: number;
   originalHost: string;
   counted: RequestCounters;
+}
+
+/** At most this many redirects are followed for one request; the fetch spec allows 20, robots.txt's RFC 5. */
+const MAX_REDIRECTS = 5;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+/** `headers` without the named ones, compared case-insensitively. */
+function withoutHeaders(headers: Record<string, string>, names: string[]): Record<string, string> {
+  return Object.fromEntries(Object.entries(headers).filter(([k]) => !names.includes(k.toLowerCase())));
 }
 
 const TEXT_ACCEPT = "text/html,application/xhtml+xml,application/json;q=0.9,application/xml;q=0.8,*/*;q=0.7";
@@ -219,7 +304,11 @@ export class PoliteFetcher {
   /** Validators for bodies too large to cache: enough to ask "has it changed?", never the body. */
   private validators = new Map<string, { etag?: string; lastModified?: string; hash: string; bytes: number; at: number }>();
 
-  constructor(private readonly opts: FetcherOptions) {}
+  private readonly guard: AddressGuard;
+
+  constructor(private readonly opts: FetcherOptions) {
+    this.guard = new AddressGuard({ resolveHost: opts.resolveHost, isAllowedAddress: opts.isAllowedAddress });
+  }
 
   /** Enforce the configured robots policy before a browser top-level navigation. */
   async assertRobotsAllowed(url: string): Promise<void> {
@@ -240,7 +329,7 @@ export class PoliteFetcher {
    * to present. When a map is configured it is exhaustive: a host it does not name is reported as
    * unmapped so the caller can refuse it rather than reach the real internet from a test.
    */
-  mapUrl(url: string): { target: string; originalHost: string; unmapped: boolean } {
+  mapUrl(url: string): { target: string; originalHost: string; unmapped: boolean; mapped: boolean } {
     const u = new URL(url);
     const originalHost = u.hostname;
     const hostMap = this.opts.hostMap ?? {};
@@ -251,7 +340,7 @@ export class PoliteFetcher {
       u.hostname = h ?? "127.0.0.1";
       u.port = p ?? "";
     }
-    return { target: u.toString(), originalHost, unmapped: !mapped && Object.keys(hostMap).length > 0 };
+    return { target: u.toString(), originalHost, unmapped: !mapped && Object.keys(hostMap).length > 0, mapped: Boolean(mapped) };
   }
 
   async waitForHost(host: string): Promise<void> {
@@ -306,7 +395,9 @@ export class PoliteFetcher {
       try {
         const res = await this.rawFetch(`${origin}/robots.txt`, { timeoutMs: 8000 });
         entry = res.status === 200 ? { fetchedAt: Date.now(), ...this.parseRobots(res.body) } : null;
-      } catch {
+      } catch (error) {
+        // A robots.txt the guard refused says the site itself is somewhere we will not go.
+        if (error instanceof PrivateAddressError) throw error;
         entry = null;
       }
       this.robotsCache.set(origin, entry);
@@ -325,9 +416,14 @@ export class PoliteFetcher {
   }
 
   /**
-   * One outbound request, with everything a text body and a binary body share: the host map, the
-   * per-host pacing, the timeout, the size cap, the redirect un-mapping, the traffic counters and
-   * the error mapping. The body arrives as bytes; only the text path decodes it.
+   * One outbound request, with everything a text body and a binary body share: the address guard,
+   * the host map, the per-host pacing, the timeout, the size cap, the traffic counters and the
+   * error mapping. The body arrives as bytes; only the text path decodes it.
+   *
+   * Redirects are followed here rather than by `fetch`, because every hop is a new destination: it
+   * is guarded, mapped and paced like the first, and `hooks.hop` (the robots policy, for a page
+   * fetch) sees it before any bytes are sent. At most `MAX_REDIRECTS` hops; a 303, or a 301/302 to
+   * a POST, continues as a GET without its body, and credentials never cross to another origin.
    *
    * `short` answers before any body is read — the 304 the text path serves from its own cache,
    * where there is no body to read at all.
@@ -340,17 +436,80 @@ export class PoliteFetcher {
       accept?: string;
       /** Applied after `init.headers`: the conditional request the text path makes. */
       headers?: Record<string, string>;
+      /** Checked before a redirect's destination is requested. The robots.txt fetch passes none. */
+      hop?: (url: string) => Promise<void>;
       short?: (res: HttpResponse, started: number, originalHost: string) => T | undefined;
       body: (read: ReadBody) => T;
     },
   ): Promise<T> {
-    const { target, originalHost, unmapped } = this.mapUrl(url);
+    let logical = url;
+    let method = init.method ?? "GET";
+    let body = init.body;
+    let callerHeaders: Record<string, string> = { ...(init.headers ?? {}) };
+    await this.assertDestination(logical);
+    for (let hops = 0; ; hops++) {
+      const { target, originalHost } = this.mapUrl(logical);
+      await this.waitForHost(originalHost);
+      const sent = await this.send(logical, target, originalHost, { ...init, method, body, headers: callerHeaders }, hooks);
+      if ("value" in sent) return sent.value;
+      if (hops >= MAX_REDIRECTS) throw new SourceFetchError(`too many redirects fetching ${url}`, "network");
+      let next: URL;
+      try {
+        next = new URL(sent.location, logical);
+      } catch {
+        throw new SourceFetchError(`unusable redirect from ${logical} to ${sent.location}`, "network");
+      }
+      if (next.origin !== new URL(logical).origin) callerHeaders = withoutHeaders(callerHeaders, ["authorization", "proxy-authorization", "cookie"]);
+      if ((sent.status === 303 && method !== "HEAD") || ((sent.status === 301 || sent.status === 302) && method === "POST")) {
+        method = "GET";
+        body = undefined;
+        callerHeaders = withoutHeaders(callerHeaders, ["content-type", "content-length", "content-encoding", "content-language", "content-location"]);
+      }
+      logical = next.toString();
+      await this.assertDestination(logical);
+      await hooks.hop?.(logical);
+    }
+  }
+
+  /**
+   * Refuse a destination before anything is sent to it, robots.txt included: an address on a
+   * private or local network, or — under a test host map — a host the map does not name. A mapped
+   * host points at the test's own server and is the one exception. Under a map only the URL itself
+   * is checked, so no test ever asks real DNS.
+   */
+  private async assertDestination(url: string): Promise<void> {
+    const { originalHost, unmapped, mapped } = this.mapUrl(url);
+    if (!mapped) {
+      try {
+        await this.guard.check(url, { resolve: !unmapped });
+      } catch (error) {
+        if (error instanceof PrivateAddressError) {
+          this.opts.traffic?.reason(originalHost, "http", "blocked");
+          log.warn("http refused a private address", { host: originalHost, url });
+        }
+        throw error;
+      }
+    }
     if (unmapped) {
       // Only reachable under a test host map. Failing here keeps a test hermetic: without it a
       // discovery run that guesses an applicant tracking slug would query the real board.
       throw new SourceFetchError(`refusing to fetch ${originalHost}: not in the test host map`, "network");
     }
-    await this.waitForHost(originalHost);
+  }
+
+  /** One hop of `request`: a redirect answers with where it points, anything else with the body. */
+  private async send<T>(
+    logical: string,
+    target: string,
+    originalHost: string,
+    init: FetchInit,
+    hooks: {
+      accept?: string;
+      headers?: Record<string, string>;
+      short?: (res: HttpResponse, started: number, originalHost: string) => T | undefined;
+      body: (read: ReadBody) => T;
+    },
+  ): Promise<{ value: T } | { location: string; status: number }> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), init.timeoutMs ?? this.opts.defaultTimeoutMs ?? 20_000);
     const headers: Record<string, string> = {
@@ -359,7 +518,7 @@ export class PoliteFetcher {
       "accept-language": "en-GB,en;q=0.9",
       ...(init.headers ?? {}),
     };
-    if (target !== url) headers["x-forwarded-host"] = originalHost;
+    if (target !== logical) headers["x-forwarded-host"] = originalHost;
     Object.assign(headers, hooks.headers ?? {});
     const started = Date.now();
     // Filled in as the request resolves and recorded once, in the `finally` below, so that every
@@ -370,12 +529,17 @@ export class PoliteFetcher {
         method: init.method ?? "GET",
         headers,
         body: init.body,
-        redirect: "follow",
+        redirect: "manual",
         signal: controller.signal,
       });
       counted.status = res.status;
+      const location = res.headers.get("location");
+      if (REDIRECT_STATUSES.has(res.status) && location) {
+        await res.body?.cancel().catch(() => undefined);
+        return { location, status: res.status };
+      }
       const short = hooks.short?.(res, started, originalHost);
-      if (short !== undefined) return short;
+      if (short !== undefined) return { value: short };
       // The per-request cap wins: each adapter asks for what its feed needs, and the fetcher-wide
       // option is only the default for callers that ask for nothing. `HARD_MAX_BODY_BYTES` is the
       // ceiling neither can raise.
@@ -399,33 +563,19 @@ export class PoliteFetcher {
       }
       const outHeaders: Record<string, string> = {};
       res.headers.forEach((v, k) => (outHeaders[k] = v));
-      // Un-map the final URL so callers see the logical host.
-      let finalUrl = res.url || url;
-      if (target !== url) {
-        try {
-          const fu = new URL(finalUrl);
-          const ou = new URL(url);
-          fu.protocol = ou.protocol;
-          fu.hostname = ou.hostname;
-          fu.port = ou.port;
-          finalUrl = fu.toString();
-        } catch {
-          finalUrl = url;
-        }
-      }
-      return hooks.body({ res, chunks, size, headers: outHeaders, finalUrl, started, originalHost, counted });
+      return { value: hooks.body({ res, chunks, size, headers: outHeaders, finalUrl: logical, started, originalHost, counted }) };
     } catch (err) {
       if (err instanceof SourceFetchError) throw err;
-      if ((err as Error).name === "AbortError") { counted.failure = "timeouts"; throw new SourceFetchError(`timeout fetching ${url}`, "timeout"); }
+      if ((err as Error).name === "AbortError") { counted.failure = "timeouts"; throw new SourceFetchError(`timeout fetching ${logical}`, "timeout"); }
       counted.failure = "networkErrors";
-      throw new SourceFetchError(`network error fetching ${url}: ${(err as Error).message}`, "network");
+      throw new SourceFetchError(`network error fetching ${logical}: ${(err as Error).message}`, "network");
     } finally {
       clearTimeout(timeout);
       this.opts.traffic?.request(originalHost, "http", { status: counted.status, bytes: counted.bytes, durationMs: Date.now() - started, failure: counted.failure });
     }
   }
 
-  private async rawFetch(url: string, init: FetchInit = {}): Promise<FetchResponse> {
+  private async rawFetch(url: string, init: FetchInit = {}, hop?: (url: string) => Promise<void>): Promise<FetchResponse> {
     const reqHeaders = init.headers ?? {};
     const cacheKey = JSON.stringify([url, reqHeaders, init.maxBodyBytes ?? null]);
     const cacheable = (init.method ?? "GET") === "GET" && !init.body;
@@ -445,6 +595,7 @@ export class PoliteFetcher {
 
     return this.request<FetchResponse>(url, init, {
       headers: conditional,
+      hop,
       short: (res, started, originalHost) => {
         if (res.status === 304 && usable) {
           log.info("http revalidated", { host: originalHost, durationMs: Date.now() - started, bytes: 0 });
@@ -502,9 +653,10 @@ export class PoliteFetcher {
    * The same request as `rawFetch`, kept as bytes. No body cache and no validators: an icon is
    * read once every few months, and what is stored of it is the image itself.
    */
-  private async rawFetchBytes(url: string, init: FetchInit = {}): Promise<FetchBytesResponse> {
+  private async rawFetchBytes(url: string, init: FetchInit = {}, hop?: (url: string) => Promise<void>): Promise<FetchBytesResponse> {
     return this.request<FetchBytesResponse>(url, init, {
       accept: BINARY_ACCEPT,
+      hop,
       body: ({ res, chunks, headers, finalUrl, started, originalHost }) => {
         const joined = Buffer.concat(chunks);
         // A view rather than a copy, and a plain Uint8Array rather than a Buffer, so that what a
@@ -524,9 +676,11 @@ export class PoliteFetcher {
   }
 
   async fetchText(url: string, init: FetchInit = {}): Promise<FetchResponse> {
-    const u = new URL(url);
+    await this.assertDestination(url);
     await this.assertRobotsAllowedFor(url, "http");
-    const res = await this.rawFetch(url, init);
+    const res = await this.rawFetch(url, init, next => this.assertRobotsAllowedFor(next, "http"));
+    // The host that answered, which after a redirect is not always the one asked.
+    const u = new URL(res.url || url);
     const challenge = () => CHALLENGE_MARKERS.some((re) => re.test(res.body.slice(0, 20_000)));
     if (res.status === 429 || res.status === 503) {
       await this.opts.deferHost?.(u.hostname, retryAfterMs(res.headers));
@@ -560,9 +714,10 @@ export class PoliteFetcher {
    * caught where it matters, by the caller refusing bytes that are not an image.
    */
   async fetchBytes(url: string, init: FetchInit = {}): Promise<FetchBytesResponse> {
-    const u = new URL(url);
+    await this.assertDestination(url);
     await this.assertRobotsAllowedFor(url, "http");
-    const res = await this.rawFetchBytes(url, init);
+    const res = await this.rawFetchBytes(url, init, next => this.assertRobotsAllowedFor(next, "http"));
+    const u = new URL(res.url || url);
     if (res.status === 429 || res.status === 503) {
       await this.opts.deferHost?.(u.hostname, retryAfterMs(res.headers));
       this.opts.traffic?.reason(u.hostname, "http", "rateLimited");

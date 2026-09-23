@@ -402,6 +402,9 @@ export const jobs = pgTable(
     index("jobs_company_status_idx").on(t.companyId, t.status),
     index("jobs_first_seen_idx").on(t.firstSeenAt),
     index("jobs_company_origin_idx").on(t.companyId, t.origin),
+    // Created by migration 0036: a pasted posting's importer, and a source's new roles by day.
+    index("jobs_added_by_idx").on(t.addedBy).where(sql`${t.addedBy} is not null`),
+    index("jobs_source_first_seen_idx").on(t.sourceId, t.firstSeenAt),
   ],
 );
 

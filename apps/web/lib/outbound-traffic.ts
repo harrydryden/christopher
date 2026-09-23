@@ -80,14 +80,17 @@ export function p95FromBuckets(buckets: readonly number[]): number | null {
 }
 
 /**
- * Fold `days * 2` days of rows into one line per host: the last `days` days, and the `days` before
- * them for the delta. Hosts seen only in the older window are kept, because a board that stopped
- * being fetched at all is the change worth noticing.
+ * Fold rows into one line per host: the last `days` UTC days, today included, and the `days`
+ * before them for the delta, each window exactly `days` long so a steady week reads as steady.
+ * Anything older is ignored. Hosts seen only in the older window are kept, because a board that
+ * stopped being fetched at all is the change worth noticing.
  */
 export function foldOutboundTraffic(rows: readonly HttpHostDailyRow[], days = 7, now: Date = new Date()): HostTraffic[] {
-  const boundary = dayKey(now.getTime() - days * 86_400_000);
+  const boundary = dayKey(now.getTime() - (days - 1) * 86_400_000);
+  const oldest = dayKey(now.getTime() - (days * 2 - 1) * 86_400_000);
   const hosts = new Map<string, Accumulator>();
   for (const row of rows) {
+    if (row.day < oldest) continue;
     let host = hosts.get(row.host);
     if (!host) {
       host = empty();

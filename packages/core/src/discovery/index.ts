@@ -7,6 +7,8 @@ export type {
   DiscoveryResult,
   DiscoveryOutcome,
   DiscoveryAiHooks,
+  DiscoveryAiRef,
+  DiscoveryVerification,
   HarvestedLink,
 } from "./types";
 export { discoverCareersSources, probeUrlAsSource } from "./discover";

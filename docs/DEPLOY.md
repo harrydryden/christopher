@@ -26,8 +26,9 @@ the same learning loop.
 
 ## Before either shape: the database
 
-1. In Render, **New → Postgres**. Any paid instance is fine; the free tier expires after 30 days.
-   Note the region, and put the interface in a nearby Vercel region later.
+1. In Render, **New → Postgres**, named `ava-db` (the name `render.yaml` and the rest of this guide
+   use). Any paid instance is fine; the free tier expires after 30 days. Note the region, and put
+   the interface in a nearby Vercel region later.
 2. Copy the **External Database URL**. It already carries `?sslmode=require`.
 3. Create the tables from your own machine:
 
@@ -77,7 +78,25 @@ Render can read `render.yaml` from the repository: **New → Blueprint**, point 
 creates the worker service (it will also offer to create a database; skip that if you made one
 above). Or create it by hand: **New → Web Service**, runtime **Docker**, Dockerfile path
 `Dockerfile`, Docker context `.`, health check path `/healthz`, instance type
-**Starter** (the free type sleeps, which stops the scheduler).
+**Starter** (the free type sleeps, which stops the scheduler), in the database's region
+(`render.yaml` says Frankfurt, beside the interface's `fra1`).
+
+Two more settings a service made by hand does not get from the blueprint:
+
+- **Build Filters** (Settings → Build & Deploy): include only `apps/worker/**`, `packages/**`,
+  `Dockerfile`, `.dockerignore`, `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `.npmrc`
+  and `tsconfig.base.json`, the list in `render.yaml`. A merge that touches only the interface or
+  the documentation then leaves the worker running, instead of restarting it and interrupting the
+  scans and CV builds in flight. The release check accepts a worker still on the last commit that
+  changed one of these paths (see [Continuous integration](#continuous-integration)), so the two
+  lists must match; `scripts/deploy-config.test.mjs` holds `render.yaml` to it.
+- **Docker Command**: leave it empty. The image starts `tini` as PID 1 and Node under it, as the
+  unprivileged `pwuser`; a command set here replaces that.
+
+The image runs under `tini` so that the renderer, GPU and zygote processes a crashed Chromium
+leaves behind are reaped rather than accumulating, and as `pwuser` rather than root because
+Chromium renders untrusted careers pages with its sandbox off (containers rarely allow the user
+namespaces the sandbox needs) in a process that holds the database URL and the API key.
 
 ### Linking the database
 
@@ -94,9 +113,16 @@ Set these on the service:
 |---|---|
 | `DATABASE_URL` | linked from the database as above; use the **Internal** string when the service and database share a region |
 | `ANTHROPIC_API_KEY` | your key. Without it, scanning still works and scoring is skipped |
-| `SCRAPER_CONTACT_EMAIL` | an address you read; it goes in the user agent |
+| `SCRAPER_CONTACT_EMAIL` | an address you read; it goes in the user agent. **Required**: in production the worker refuses to start without one, or with a placeholder such as `you@example.com` |
+| `ADMIN_EMAILS` | the same list as the interface's. The worker warns at boot when it is unset |
 | `TZ` | e.g. `Europe/London` |
 | `WORKER_CONCURRENCY` | `3` — the supported value for the 512 MB Starter instance shared with Chromium. It gives a database pool of `2 × concurrency + 4` = 10 connections. Six slots caused an observed ten-hour out-of-memory restart loop on a 41 MB listing; use six only after increasing the instance size and proving memory and database headroom under a representative soak |
+| `WORKER_STATUS_TOKEN` | a long random string; the bearer token the worker's `/status` figures require. Give the operational check the same value (see [Release gates](RELEASE-GATES.md)) |
+| `LOG_LEVEL` | `info` (the default), or `debug`, `warn` or `error`, in any case |
+
+The first line a production worker writes, `worker environment`, records the slots, the browser
+slots, the database pool's ceiling and the V8 heap limit it was given, so a restart loop can be read
+against what the process actually had.
 
 The worker and migration runner must use Render’s **direct port 5432** database URL: the session advisory migration lock is incompatible with transaction pooling. The migration runner rejects known Render pooled URLs on port 6432 before connecting. Vercel request-serving functions can use the **pooled port 6432** URL; enabling PgBouncer alone does not switch existing clients. See [Render’s connection-pooling documentation](https://render.com/docs/postgresql-connection-pooling).
 
@@ -130,7 +156,9 @@ left at that checkpoint. A database missing migrations altogether is a different
 Vercel's egress addresses vary, so the database is protected by TLS and a strong password rather
 than an IP allowlist. Leave `CRON_SECRET` unset and the daily cron in `apps/web/vercel.json` is
 harmless: without the secret the route refuses anonymous calls, and the worker is doing the work
-anyway. Set it if you want the cron as a safety net; duplicate runs are deduplicated per day.
+anyway. Set it if you want the cron as a safety net; duplicate runs are deduplicated per day. A
+safety net also needs `SCRAPER_CONTACT_EMAIL` on Vercel, because the route runs the worker's code
+when the worker is down, and that code refuses to fetch anything without a real contact address.
 
 ---
 
@@ -142,7 +170,7 @@ Deploy the interface exactly as above, and add:
 |---|---|
 | `CRON_SECRET` | `openssl rand -hex 32`. Vercel sends it as `Authorization: Bearer …` on every cron call |
 | `ANTHROPIC_API_KEY` | your key |
-| `SCRAPER_CONTACT_EMAIL` | an address you read |
+| `SCRAPER_CONTACT_EMAIL` | an address you read. Required: the cron route runs the worker's code, which refuses a missing or placeholder address in production |
 | `AVA_DISABLE_BROWSER` | `1`. There is no Chromium in the Vercel runtime |
 | `AVA_SERVERLESS_FALLBACK` | `1`. Without it the route only queues work; with it the route also runs the queue itself (see below) |
 | `TZ` | e.g. `Europe/London` |
@@ -198,21 +226,42 @@ every company, role and decision.
 6. **Admin › Accounts** lists everyone sharing the deployment, what each has produced and follows,
    and what each may spend on AI in a month. New accounts start at $25; raise one there.
 
+## The operational CLI
+
+`apps/worker`'s CLI (`pnpm cli <command>`, listed in the README) is run by hand, often from a
+checkout on a laptop against the production database, so it is careful in two ways.
+
+- **Only `cli migrate` migrates.** Every other command — the dry-run `probe` and the read-only
+  `users`, `list` and `table` included — first compares the checkout's migration journal with the
+  database's ledger and refuses, changing nothing, when the database is behind the checkout (it
+  names the migrations that are not applied) or was migrated by a newer release. Looking at
+  production from a branch that carries an unreleased migration therefore cannot apply it.
+- **It never widens a mistyped target.** `cli discover <company> [careers-url]` acts on exactly one
+  company, found by id, domain (or a URL on it) or exact name, and refuses a needle that matches
+  none or several. The whole active catalogue is `cli discover --all`, which refuses a careers URL.
+
+Inside the worker's container (Render's Shell), run it without pnpm, from `/app/apps/worker`:
+`node --import tsx src/cli.ts users`.
+
 ## Continuous integration
 
 Two workflows. **CI** (`.github/workflows/ci.yml`) runs on every pull request and again on
 every push to `main`; **Release** (`.github/workflows/release.yml`) runs only after CI has
 passed on `main`.
 
-CI is two jobs side by side, each on its own runner with its own throwaway PostgreSQL 16:
+CI is three jobs side by side, each on its own runner with its own throwaway PostgreSQL 16:
 
 | Job | What it runs | Typical |
 |---|---|---|
-| `check` | `pnpm -r typecheck`, then `pnpm -r test` | ~2.5 min |
+| `check` | `pnpm -r typecheck`, then `pnpm -r test`, then the release and deployment script tests | ~2.5 min |
 | `browser-and-smoke` | Chromium install, the headless browser test, `pnpm db:migrate`, `pnpm smoke:web` (a production `next build`, sign-in, every page, and the CV workspace driven through Playwright) | ~2.5 min |
+| `worker-image` | `docker build` of the image Render deploys, then boots it against the job's database and waits for `/healthz`, and checks it runs as a non-root user under `tini` | ~4 min cold (estimated, not yet measured on a runner), less with the dependency layer cached |
 
-So a pull request is green in about two and a half minutes of wall clock for about five
-billed minutes. A pull request is checked once, on its merge result: pushing to a branch no
+So a pull request is green in about four minutes of wall clock for about nine billed minutes.
+`worker-image` is what catches a Dockerfile that no longer builds, a workspace manifest the image
+does not copy, a Playwright bump without the matching base image, or an import that fails only
+when the worker starts — all of which would otherwise surface first as a failed Render deploy
+after the merge. A pull request is checked once, on its merge result: pushing to a branch no
 longer starts a second, identical run. A new push cancels the run still working on the commit
 it replaced, so only the newest commit holds a runner. Runs on `main` are never cancelled,
 because the release check is gated on them.
@@ -227,13 +276,20 @@ it is the `main` run that fills them for everyone; the first run after a change 
 is a cold one.
 
 `worker-release` is the last thing to go green after a merge. It polls the live worker's
-`/healthz` — up to eight minutes — until it reports the merged commit, and fails if it never
-does. That is the only check that a *worker* deployment happened: Vercel deploying the
-interface says nothing about CV generation or scanning, which the worker alone does. It is
+`/healthz` — up to eight minutes — until it reports the merged commit, or an earlier commit from
+which no worker input has changed, and fails if it never does. That is the only check that a
+*worker* deployment happened: Vercel deploying the interface says nothing about CV generation or
+scanning, which the worker alone does. It is
 deliberately not on pull requests, where nothing has been deployed and there is nothing to
 verify; before, it appeared there as a skipped job, which reads like a problem. It runs from
 the `Release` workflow on the commit CI passed on, named explicitly through `RELEASE_SHA`
 because a `workflow_run` job's own `GITHUB_SHA` is the branch tip rather than that commit.
+
+The earlier-commit case is a merge that touched only the interface or the documentation: Render's
+build filter skips the deploy, so the worker correctly stays on the last commit that changed it,
+and neither this check nor the scheduled operational check calls that stale. Both check out full
+history to make the comparison. The list of worker inputs is `WORKER_INPUT_PATHS` in
+`scripts/release-checks.mjs`, the same list as `render.yaml`'s build filter.
 
 ## Costs
 
@@ -260,6 +316,29 @@ Work no account asked for — extraction, discovery — is charged to no budget.
 and `DISCOVERY_AI_BUDGET_USD` in the worker's environment are the safety valves for the deployment
 as a whole: unlimited unless set, they cap a day's spend and a day's discovery spend across every
 account, and they refuse any call, a CV build included, so leave them unset unless you want that.
+
+### The database disk
+
+Render's smallest Postgres plans start with **1 GB of storage and storage autoscaling off**, which
+is what the live database had on 20 September 2026 (15% used under light load). That is not enough
+for the deployment this guide describes. Every posting ever observed stays in `jobs` with a
+description of up to 30,000 characters; each account's view of a role is a `user_jobs` row with its
+own rationale and indexes (about a million rows at 1,000 accounts and 150,000 postings); scans keep
+raw snapshots; `tasks` keeps thirty days of finished work; `ai_calls` keeps thirteen months; and
+every Library save and CV keeps its own copy of the Library. A reasonable estimate at that scale is
+well over 1 GB, and **a full disk stops every write**: sign-ins (a session is a row), task claims and
+scans all fail at once, until someone changes the plan by hand.
+
+- Before onboarding beyond a handful of accounts, set the database's storage to at least **15 GB**
+  (the flexible plans size storage separately from RAM and CPU; `render.yaml` writes 15) and turn
+  on **storage autoscaling** in the dashboard, which the blueprint cannot. Storage can grow later but
+  never shrink. At that scale also move off `basic-256mb`: 256 MB of RAM cannot keep `user_jobs`'
+  indexes in memory.
+- Watch the disk figure on the database's Metrics page, and treat 70% as the point to add storage.
+  Nothing in the product alerts on it yet; add it to the alert list below.
+- Connections are a separate budget from disk: the worker opens up to `2 × WORKER_CONCURRENCY + 4` direct
+  connections (10 at three slots), and the interface should use the pooled URL, as the connection
+  guidance above describes.
 
 ## Observability
 
@@ -352,11 +431,14 @@ delivery are still outstanding. See [current gate evidence](RELEASE-GATES.md#con
 - [ ] Have the service owner supply the required recovery point objective (**RPO**) and recovery
   time objective (**RTO**). Do not invent them from the provider plan.
 - [ ] In Render, confirm the worker plan, region, `/healthz` path, database link, auto-deploy setting,
-  `WORKER_CONCURRENCY=3`, timezone and required secrets. Compare them with `render.yaml`; resolve any
+  build filter, empty Docker Command, `WORKER_CONCURRENCY=3`, timezone and required secrets
+  (`SCRAPER_CONTACT_EMAIL` above all: without a real address the new worker will not start). The
+  live services are not linked to `render.yaml`, so compare them with it by hand and resolve any
   drift deliberately.
 - [ ] In Vercel, confirm the production branch, region, root directory, database URL, session secret,
   application URL and any Google, Resend, cron or newsletter credentials in use.
-- [ ] In PostgreSQL, confirm the plan's connection limit, storage headroom, backup/PITR settings,
+- [ ] In PostgreSQL, confirm the plan's connection limit, storage size and headroom, that storage
+  autoscaling is on (see [The database disk](#the-database-disk)), backup/PITR settings,
   retention and restore destination. **These provider settings and their adequacy are unverified
   until an operator records them.**
 - [ ] Review every migration since the deployed commit. State whether it is backwards-compatible
@@ -365,10 +447,25 @@ delivery are still outstanding. See [current gate evidence](RELEASE-GATES.md#con
 - [ ] Confirm CI is green for the exact commit. Take a pre-release backup or provider restore point
   consistent with the supplied RPO.
 
+**The release that renamed the product (`4fc3ba4`)** also renamed the transaction advisory-lock keys
+the worker and the interface serialise on (`christopher:ai-budget`, `christopher:daily-runs`,
+`christopher:weekly-jobs`, `christopher:users` and `christopher:profiles:<account>` became
+`ava:…`). A lock only excludes holders of the same key, so while an old and a new process overlap —
+Render starts the new worker before it stops the old one, and old and new Vercel deployments serve
+side by side for a moment — the budget check, the daily run's fan-out and finalising, and the
+first-owner takeover are not serialised between them. The overlap is short (the new worker's
+health check, then the old one's shutdown, about a minute), so deploy that release when it has
+nothing to serialise: away from the scheduled run time, with no CV build running (Operations ›
+Running tasks), and with registration closed. What remains is a window in which two model calls
+could both pass an account's budget check, a bounded overspend. The same applies to any later
+release that changes a lock key; keep lock keys stable otherwise. `pnpm-lock.yaml` already names
+the `@ava/*` packages, so frozen installs are unaffected.
+
 ### Roll out
 
-- [ ] Apply the reviewed migrations through the direct PostgreSQL endpoint on port 5432. For the CV
-  quiz release, verify that `public.cv_drafts.gap_quiz` exists before changing either application.
+- [ ] Apply the reviewed migrations through the direct PostgreSQL endpoint on port 5432
+  (`pnpm db:migrate`, or `pnpm cli migrate` from `apps/worker`). For the CV quiz release, verify
+  that `public.cv_drafts.gap_quiz` exists before changing either application.
 - [ ] Deploy the web application and verify its exact commit through the production origin. Only
   then deploy the worker. This order ensures the quiz interface exists before the worker can write
   `awaiting_evidence`. Do not infer web success from the worker release check: verify both deployed
@@ -421,9 +518,9 @@ There is no external alerting stack in this repository. Before unattended produc
 owner must either configure provider/external alerts or adopt a staffed inspection schedule. At a
 minimum, cover: worker stopped for over two minutes, two or more crash recoveries in an hour, heap at
 or above 85%, oldest ready task beyond its service target, overdue daily scans, failed tasks,
-database storage/connections near the provider limit, and unexpected AI spend. Record the delivery
-channel, primary/backup owner, acknowledgement target and escalation action for each signal. An
-Admin › Operations page that nobody is assigned to inspect is evidence, not an alert.
+database storage above 70% or connections near the provider limit, and unexpected AI spend. Record
+the delivery channel, primary/backup owner, acknowledgement target and escalation action for each
+signal. An Admin › Operations page that nobody is assigned to inspect is evidence, not an alert.
 
 ## When something is wrong
 
@@ -440,6 +537,9 @@ Admin › Operations page that nobody is assigned to inspect is evidence, not an
 | A source says "blocked" | Bot protection | Paste the underlying board URL; the tool does not try to evade protection |
 | Cron returns 503 | `CRON_SECRET` is unset | Set it, or ignore it in shape A |
 | Worker exits with `DATABASE_URL is required` | The database is not linked | Add `DATABASE_URL` to the service, picking the database's internal connection string |
+| Worker exits with `SCRAPER_CONTACT_EMAIL must be a real address` | It is unset, or still a placeholder such as `you@example.com` | Set it to an address you read and redeploy |
+| A CLI command refuses with `The database is behind this checkout` or `migrated by a newer release` | The checkout is not the deployed commit | Check out the deployed commit, or, if this checkout is the release being rolled out, run `pnpm cli migrate` at the migration step |
+| `pnpm seed:demo` refuses a database | It truncates every account, so it only runs against a local database | Point `DATABASE_URL` at a local database, or set `SEED_DEMO_DATABASE` to the target's exact name if you really mean to wipe it |
 | Pushing to the branch does not deploy | Render is not connected to the GitHub account, so there is no webhook | Connect GitHub in Render, or trigger the deploy by hand |
 | Worker cannot reach the database over TLS | The internal endpoint negotiated differently than expected | Set `DATABASE_SSL=disable` for an internal URL, or `require` for an external one |
 
@@ -480,6 +580,20 @@ Change the value in the dashboard, and in `render.yaml` so a rebuilt service inh
 only moves the failure from a V8 abort to the kernel's OOM killer, which is less visible, and
 lowering it makes the process die sooner. The size of the input and the number of slots are the
 two levers.
+
+**The worker runs its TypeScript through `tsx`, and that costs memory.** Measured with Node 22, the
+loader roughly doubles a trivial module's resident size (about 89 MB against 43 MB for the same file
+as plain JavaScript) and keeps an `esbuild` service process of about 14 MB alive beside it: some 60 MB
+of the 512 MB instance before any worker code runs, all of it outside the V8 heap the Operations
+reading shows. Compiling ahead of time (an `esbuild --bundle --packages=external` step in the
+Dockerfile, including the lazily imported browser and document-text modules, and `node dist/index.mjs`
+as the command) would return most of it and skip the transpile on every boot and crash restart. It
+has not been done because it is a second build of the worker to keep correct: the tests, the CLI
+and the drills run from source through `tsx`, so the compiled image would be the one artefact they
+never exercise, and a dynamic import the bundler misses fails only in production. It is the first
+lever to reach for, before a larger instance, if the unclean exits recorded in
+`docs/HOSTED-CAPACITY-2026-09-20.md` recur with the heap well under its ceiling. The `worker-image`
+CI job would then boot the compiled entry point on every pull request.
 
 A CV build has its own view of the same thing: while it is building, its page shows when it
 started, the stage it reached, how long since it last advanced and which attempt it is on, and

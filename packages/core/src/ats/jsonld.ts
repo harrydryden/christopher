@@ -1,8 +1,18 @@
 import type { RawPosting } from "../types";
-import { absoluteUrl, parseDate } from "../normalize";
+import { absoluteUrl, elementBlocks, parseDate } from "../normalize";
 import { asArray, htmlToText, joinLocation, rec, str } from "./common";
 
-const SCRIPT_RE = /<script[^>]+type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+const JSON_LD_TYPE_RE = /type\s*=\s*["']application\/ld\+json["']/i;
+
+/**
+ * The bodies of `<script type="application/ld+json">` blocks. Found with `elementBlocks`, which is
+ * linear on a page of unclosed script tags, and never truncated: this reads listings.
+ */
+function jsonLdScripts(html: string): string[] {
+  return elementBlocks(html, ["script"])
+    .filter((block) => JSON_LD_TYPE_RE.test(html.slice(block.start, block.openEnd)))
+    .map((block) => html.slice(block.openEnd, block.closeStart));
+}
 
 function typeOf(node: Record<string, unknown>): string[] {
   const t = node["@type"];
@@ -51,8 +61,8 @@ function salaryText(node: unknown): string | undefined {
 
 export function extractJsonLdPostings(html: string, pageUrl: string): RawPosting[] {
   const nodes: Record<string, unknown>[] = [];
-  for (const m of html.matchAll(SCRIPT_RE)) {
-    const body = (m[1] ?? "").trim();
+  for (const script of jsonLdScripts(html)) {
+    const body = script.trim();
     if (!body) continue;
     try {
       collectJobPostings(JSON.parse(body), nodes);

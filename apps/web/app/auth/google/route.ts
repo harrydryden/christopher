@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { appOrigin, googleAuthorizationUrl, googleConfigured, pkcePair, randomState } from "@/lib/google";
-import { createSignedValue, isSecureHost, OAUTH_COOKIE_NAME, sanitizeNextPath } from "@/lib/session";
+import { createSignedValue, isSecureHost, OAUTH_COOKIE_NAME, sanitizeNextPath, sessionSecret } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
 /** Start the Google round trip: remember state, the PKCE verifier and where to return, then redirect. */
 export async function GET(request: Request) {
-  const secret = process.env.SESSION_SECRET;
+  const secret = sessionSecret();
   if (!secret || !googleConfigured()) return NextResponse.redirect(new URL("/login?error=google_not_configured", request.url));
   const origin = appOrigin(request);
   const next = sanitizeNextPath(new URL(request.url).searchParams.get("next"));

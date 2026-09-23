@@ -2,25 +2,47 @@
 # The Next.js interface is deployed separately on Vercel and talks to the same database.
 #
 # This file is a template for creating the services, not a description of the live ones. The
-# running worker is not linked to this blueprint — its health check path and environment were set
-# in the Render dashboard and have drifted from what is written here. The dashboard is the source
-# of truth for the deployed service; change a value there as well as here, or it does nothing.
+# running worker (christopher-worker) and database (christopher-db) are not linked to this
+# blueprint: their health check path, environment, disk and build filter were set in the Render
+# dashboard, and a change here does nothing to them. The dashboard is the source of truth for the
+# deployed service; change a value there as well as here. docs/DEPLOY.md lists what to compare.
 databases:
   - name: ava-db
     databaseName: ava
     user: ava
+    region: frankfurt        # beside the interface, which Vercel runs in fra1 (apps/web/vercel.json)
     plan: basic-256mb        # the free tier expires after 30 days; do not use it here
+    # Storage is set apart from the plan. 1 GB, the smallest, is outgrown well before 1,000 accounts
+    # (docs/DEPLOY.md, "The database disk"); a full disk stops every write. Turn on storage
+    # autoscaling in the dashboard as well: the blueprint cannot.
+    diskSizeGB: 15
     postgresMajorVersion: "16"
 
 services:
   - type: web                # a web service, not a cron job: the scheduler must always be running
     name: ava-worker
     runtime: docker
+    region: frankfurt        # the same region as the database, so the internal URL works
     plan: starter            # starter never sleeps; the free tier does
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /healthz
     autoDeploy: true
+    # Deploy only when something the image is built from changes, so a merge that touches only the
+    # interface or the documentation does not restart the worker and interrupt the scans and CV
+    # builds it is running. Keep this list equal to WORKER_INPUT_PATHS in scripts/release-checks.mjs:
+    # the release checks accept a worker still on the last commit that changed one of these.
+    buildFilter:
+      paths:
+        - apps/worker/**
+        - packages/**
+        - Dockerfile
+        - .dockerignore
+        - package.json
+        - pnpm-lock.yaml
+        - pnpm-workspace.yaml
+        - .npmrc
+        - tsconfig.base.json
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -29,7 +51,11 @@ services:
       - key: ANTHROPIC_API_KEY
         sync: false          # set this in the Render dashboard
       - key: SCRAPER_CONTACT_EMAIL
-        sync: false
+        sync: false          # required: the worker refuses to start in production without a real address
+      - key: ADMIN_EMAILS
+        sync: false          # the same list as the interface's; the worker warns at boot when it is unset
+      - key: WORKER_STATUS_TOKEN
+        sync: false          # the bearer token /status requires; the operational gate sends it
       - key: TZ
         value: Europe/London
       - key: WORKER_CONCURRENCY

@@ -102,9 +102,12 @@ Full instructions, including what to set where and what to do when something is 
 | `RESEND_API_KEY`, `EMAIL_FROM` | web | optional; sends confirmation and password-reset emails through Resend (set `APP_URL` with them). Without a provider the links are written to the server log, `AUTH_EMAIL_LOG=0` keeps them out, and an administrator can mint reset links from Admin |
 | `AVA_CLI_USER` | worker | email of the account the CLI acts for; default is the earliest administrator |
 | `ANTHROPIC_API_KEY` | worker | optional; without it scanning still works and scoring is skipped |
-| `SCRAPER_CONTACT_EMAIL` | worker | included in the user agent so site owners can reach you |
+| `SCRAPER_CONTACT_EMAIL` | worker | included in the user agent so site owners can reach you. Required in production (`NODE_ENV=production`, as in the Docker image): the worker refuses to start without a real address, and refuses placeholders such as `you@example.com` |
 | `TZ` | worker | the timezone the daily run is scheduled in |
-| `WORKER_CONCURRENCY` | worker | parallel tasks, default 3 |
+| `WORKER_CONCURRENCY` | worker | parallel tasks, default 3; the worker's database pool is `2 × WORKER_CONCURRENCY + 4` connections |
+| `WORKER_STATUS_TOKEN` | worker | bearer token for the worker's `/status` figures, which the operational check sends |
+| `LOG_LEVEL` | worker | `debug`, `info` (default), `warn` or `error`, in any case |
+| `SEED_DEMO_DATABASE` | worker | `pnpm seed:demo` wipes the database it seeds, so it runs only against a local one; set this to a remote database's exact name to seed it anyway |
 | `CHROMIUM_EXECUTABLE_PATH` | worker | only needed outside the Docker image |
 | `CRON_SECRET` | web | required only for the Vercel-cron deployment; Vercel sends it as a bearer token |
 | `AVA_DISABLE_BROWSER` | both | set to `1` where there is no Chromium, such as Vercel |

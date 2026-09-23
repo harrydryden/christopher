@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { readReleaseHealth, RELEASE_VERIFY_DEADLINE_MS, requiredReleaseConfig } from "./release-checks.mjs";
+import { readReleaseHealth, RELEASE_VERIFY_DEADLINE_MS, requiredReleaseConfig, sameWorkerInputs } from "./release-checks.mjs";
 
 const { expected, url } = requiredReleaseConfig(process.env, "WORKER_HEALTH_URL");
 let reported = "unavailable";
@@ -11,8 +11,12 @@ while (Date.now() < deadline) {
     if (response.ok) {
       const health = readReleaseHealth(await response.json());
       reported = health.commit;
-      if (health.healthy && health.commit === expected) {
-        console.log(`Worker is healthy and running merged commit ${expected}.`);
+      // A merge that changes no worker input does not redeploy the worker (render.yaml's
+      // buildFilter), so the commit it already runs is the right one for this merge.
+      if (health.healthy && sameWorkerInputs(health.commit, expected)) {
+        console.log(health.commit === expected
+          ? `Worker is healthy and running merged commit ${expected}.`
+          : `Worker is healthy and running ${health.commit}, which builds the same worker as merged commit ${expected}: the merge changed none of its inputs.`);
         process.exit(0);
       }
     } else reported = `HTTP ${response.status}`;

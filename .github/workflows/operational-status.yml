@@ -17,7 +17,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
+      # Full history, to tell a worker that a web-only merge left on an earlier commit (current)
+      # from one that is really behind.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -25,4 +29,6 @@ jobs:
         run: node scripts/verify-operational-status.mjs
         env:
           WORKER_HEALTH_URL: ${{ vars.WORKER_HEALTH_URL }}
+          WORKER_STATUS_URL: ${{ vars.WORKER_STATUS_URL }}
+          WORKER_STATUS_TOKEN: ${{ secrets.WORKER_STATUS_TOKEN }}
           OPERATIONAL_EXPECTED_SHA: ${{ github.sha }}

@@ -1,5 +1,5 @@
 import { recordWorkerEvent, releaseAiHolds, schema, type Db, type ReleasedHolds, type Task } from "@ava/db";
-import { deadlineMsFor, TASK_DEADLINES_MS, taskSubject, taskUserId, type TaskDeadlines } from "@ava/core";
+import { AGEING_PRIORITY_FLOOR, deadlineMsFor, INTERACTIVE_TASK_TYPES, SCAN_TASK_TYPES, TASK_DEADLINES_MS, taskSubject, taskUserId, type TaskDeadlines } from "@ava/core";
 import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 import { finaliseScanRuns } from "./handlers/daily";
@@ -90,8 +90,8 @@ export function backoffMs(attempts: number): number {
   return Math.min(60_000 * 2 ** Math.max(0, attempts - 1), 30 * 60_000);
 }
 
-export const scanTypes = ["scan_company", "run_daily"];
-export const interactiveTypes = ["generate_cv", "discover", "tag_reason", "reevaluate_gate", "import_posting", "review_library", "import_library_document"];
+export const scanTypes: string[] = [...SCAN_TASK_TYPES];
+export const interactiveTypes: string[] = [...INTERACTIVE_TASK_TYPES];
 export type QueueLane = "all" | "scan" | "interactive" | "background";
 
 export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all", excludedTypes: Task["type"][] = []): Promise<Task | null> {
@@ -128,14 +128,26 @@ export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all
  * The claim itself orders by the stored priority alone, so something has to move a task that keeps
  * losing to newer, higher-priority work. Running it from the scheduler keeps the claim indexed and
  * the sweep bounded; `limit` caps how much one sweep rewrites.
+ *
+ * Waiting is measured from when the task could first have run, not from when it was queued: a
+ * scan spread across the morning, or a retry backing off, is not starving while it waits for its
+ * own `run_after`. The longest-waiting go first, and nothing is lifted past
+ * `AGEING_PRIORITY_FLOOR`, so a backlog can never overtake work someone has just asked for. A
+ * boot-time gate re-evaluation stops one step further back: a thousand of them arrive at once, and
+ * none of them is anyone's request. A row a claim has locked is skipped rather than waited on.
  */
 export async function agePriorities(db: Db, olderThanSeconds = 300, limit = 500): Promise<number> {
   const rows = await db.execute<{ id: string }>(sql`
     update tasks set priority = priority - 1
     where id in (
       select id from tasks
-      where status = 'queued' and priority > 0 and created_at < now() - make_interval(secs => ${olderThanSeconds}::int)
-      order by priority asc, created_at asc limit ${limit}
+      where status = 'queued'
+        and greatest(created_at, run_after) < now() - make_interval(secs => ${olderThanSeconds}::int)
+        and priority > case when type = 'reevaluate_gate' and payload->>'reason' = 'boot'
+          then ${AGEING_PRIORITY_FLOOR + 1}::int else ${AGEING_PRIORITY_FLOOR}::int end
+      order by greatest(created_at, run_after) asc
+      limit ${limit}
+      for update skip locked
     ) returning id`);
   return rows.rows.length;
 }

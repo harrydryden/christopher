@@ -2,7 +2,7 @@
 import { renewTask, completeTask, assertTaskOwnership } from "./queue";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {createDb, enqueueTask, listUserIds, listWorkerEvents, schema, setSubscriptionStatus, subscribeToCompany, type Db} from "@ava/db";
-import { dedupeKeyFor, isUserSettingsKey } from "@ava/core";
+import { AGEING_PRIORITY_FLOOR, dedupeKeyFor, isUserSettingsKey, priorityFor } from "@ava/core";
 import { ensureTestUser } from "./test-users";
 import { runMigrations } from "@ava/db/migrate";
 import { desc, eq, sql } from "drizzle-orm";
@@ -229,6 +229,16 @@ describe("scheduler", () => {
     await schedulerTick(deps);
     const again = await db.select().from(schema.tasks).where(eq(schema.tasks.status, "queued"));
     expect(again.filter((t) => t.type === "suggest_filters")).toHaveLength(0);
+  });
+
+  it("ages the queue one step a minute however many ticks run in it", async () => {
+    // Every worker and the cron fallback tick; ageing is claimed once for all of them.
+    const id = await enqueueTask(db, "suggest_filters", { userId: "aged" }, { priority: 6 });
+    const hourAgo = new Date(Date.now() - 3600_000);
+    await db.update(schema.tasks).set({ createdAt: hourAgo, runAfter: hourAgo }).where(eq(schema.tasks.id, id!));
+    await schedulerTick(deps);
+    await schedulerTick(deps);
+    expect((await db.select().from(schema.tasks).where(eq(schema.tasks.id, id!)))[0]!.priority).toBe(5);
   });
 
   it("leaves the weekly suggestion job out when suggestions are switched off", async () => {
@@ -592,24 +602,106 @@ it("keeps a requeued company scan on one task row, through a deadline, a stale l
 }, 20_000);
 
 describe("claim ordering", () => {
+  const hourAgo = () => new Date(Date.now() - 3600_000);
+  /** Queued an hour ago and ready all that time: the shape of a task that has really waited. */
+  const backdate = (id: string) => db.update(schema.tasks).set({ createdAt: hourAgo(), runAfter: hourAgo() }).where(eq(schema.tasks.id, id));
+  const priorityOf = async (id: string) => (await db.select().from(schema.tasks).where(eq(schema.tasks.id, id)))[0]!.priority;
+  const ageFully = async () => { for (let sweep = 0; sweep < 20; sweep++) await agePriorities(db); };
+
   it("claims by stored priority, and ages a waiting task up in a sweep rather than in the claim", async () => {
     // The old claim ordered by an ageing expression no index could serve, so an old task overtook
     // a newer one on every claim. The order is now the stored priority; the sweep is what moves a
     // task that has waited, and it is bounded.
     const old = await enqueueTask(db, "suggest_companies", { n: 1 }, { priority: 5 });
     await enqueueTask(db, "suggest_filters", { n: 2 }, { priority: 4 });
-    await db.update(schema.tasks).set({ createdAt: new Date(Date.now() - 3600_000) }).where(eq(schema.tasks.id, old!));
+    await backdate(old!);
 
     expect(await agePriorities(db, 300, 1)).toBe(1);
-    expect((await db.select().from(schema.tasks).where(eq(schema.tasks.id, old!)))[0]!.priority).toBe(4);
-    // Same priority now, so the older task goes first.
+    expect(await priorityOf(old!)).toBe(4);
+    // Same priority now, so the task that has been ready longer goes first.
     expect((await claimTask(db, "w1"))!.id).toBe(old);
+  });
 
-    // A task already at the front of the queue is left alone however long it has waited.
-    await db.update(schema.tasks).set({ status: "queued", priority: 0, createdAt: new Date(Date.now() - 3600_000) });
+  it("never lifts waiting work past the least urgent interactive priority, so fresh requests still come first", async () => {
+    // The floor is where a CV build is queued; nothing a person asks for is queued behind it.
+    expect(AGEING_PRIORITY_FLOOR).toBe(priorityFor("generate_cv"));
+    const score = await enqueueTask(db, "score_job", { userId: "u", jobId: "rescored" }, { priority: priorityFor("score_job") });
+    const scan = await enqueueTask(db, "scan_company", { companyId: "a" }, { priority: priorityFor("scan_company") });
+    const discover = await enqueueTask(db, "discover", { companyId: "old" }, { priority: priorityFor("discover") });
+    for (const id of [score!, scan!, discover!]) await backdate(id);
+
+    await ageFully();
+    // Converging on 0 used to put the whole backlog ahead of everything queued after it.
+    expect(await priorityOf(score!)).toBe(AGEING_PRIORITY_FLOOR);
+    expect(await priorityOf(scan!)).toBe(AGEING_PRIORITY_FLOOR);
+    // Work already at the front is never lifted further.
+    expect(await priorityOf(discover!)).toBe(priorityFor("discover"));
+
+    // A shortlist score queued now, at the priority the interface gives it, beats the aged
+    // backlog in the background lane, and so does a fresh discovery in the fall-through claim.
+    const shortlisted = await enqueueTask(db, "score_job", { userId: "u", jobId: "shortlisted" }, { priority: 1 });
+    expect((await claimTask(db, "w1", "background"))!.id).toBe(shortlisted);
+    await db.delete(schema.tasks).where(eq(schema.tasks.id, discover!));
+    const fresh = await enqueueTask(db, "discover", { companyId: "fresh" }, { priority: priorityFor("discover") });
+    expect((await claimTask(db, "w1"))!.id).toBe(fresh);
+  });
+
+  it("ages only what has been ready for the period, and the longest-waiting first", async () => {
+    // A scan spread across the morning is not starving while it waits for its own slot.
+    const scheduled = await enqueueTask(db, "scan_company", { companyId: "later" }, { priority: 5 });
+    await db.update(schema.tasks).set({ createdAt: hourAgo(), runAfter: new Date(Date.now() + 30 * 60_000) }).where(eq(schema.tasks.id, scheduled!));
+    // Queued long ago, but only just past its backoff.
+    const retried = await enqueueTask(db, "scan_company", { companyId: "retried" }, { priority: 5 });
+    await db.update(schema.tasks).set({ createdAt: hourAgo(), runAfter: new Date(Date.now() - 60_000) }).where(eq(schema.tasks.id, retried!));
     expect(await agePriorities(db)).toBe(0);
-    const priorities = (await db.select().from(schema.tasks)).map(t => t.priority);
-    expect(priorities.sort()).toEqual([0, 0]);
+
+    const newer = await enqueueTask(db, "suggest_filters", { n: 1 }, { priority: 6 });
+    await db.update(schema.tasks).set({ createdAt: new Date(Date.now() - 20 * 60_000), runAfter: new Date(Date.now() - 20 * 60_000) }).where(eq(schema.tasks.id, newer!));
+    const oldest = await enqueueTask(db, "suggest_filters", { n: 2 }, { priority: 3 });
+    await backdate(oldest!);
+    // The limit takes the one that has waited longest, not the one nearest the front.
+    expect(await agePriorities(db, 300, 1)).toBe(1);
+    expect(await priorityOf(oldest!)).toBe(2);
+    expect(await priorityOf(newer!)).toBe(6);
+    expect(await priorityOf(scheduled!)).toBe(5);
+  });
+
+  it("keeps a boot-time gate re-evaluation behind a CV build however long it waits", async () => {
+    const boot = await enqueueTask(db, "reevaluate_gate", { userId: "u", reason: "boot" }, { dedupeKey: "reevaluate_gate:u:boot", priority: 7 });
+    const asked = await enqueueTask(db, "reevaluate_gate", { userId: "v" }, { priority: 6 });
+    for (const id of [boot!, asked!]) await backdate(id);
+    await ageFully();
+    expect(await priorityOf(boot!)).toBe(AGEING_PRIORITY_FLOOR + 1);
+    expect(await priorityOf(asked!)).toBe(AGEING_PRIORITY_FLOOR);
+    await db.delete(schema.tasks).where(eq(schema.tasks.id, asked!));
+    const cv = await enqueueTask(db, "generate_cv", { draftId: "d" }, { priority: priorityFor("generate_cv") });
+    expect((await claimTask(db, "w1", "interactive"))!.id).toBe(cv);
+  });
+
+  it("skips a row a claim has locked instead of waiting for it", async () => {
+    const locked = await enqueueTask(db, "suggest_filters", { n: 1 }, { priority: 6 });
+    const free = await enqueueTask(db, "suggest_filters", { n: 2 }, { priority: 6 });
+    for (const id of [locked!, free!]) await backdate(id);
+    const other = createDb(DATABASE_URL, { max: 1 });
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let lockTaken!: () => void;
+    const taken = new Promise<void>(resolve => { lockTaken = resolve; });
+    const holder = other.db.transaction(async tx => {
+      await tx.execute(sql`select id from tasks where id = ${locked!} for update`);
+      lockTaken();
+      await held;
+    });
+    try {
+      await taken;
+      expect(await agePriorities(db)).toBe(1);
+      expect(await priorityOf(free!)).toBe(5);
+    } finally {
+      release();
+      await holder;
+      await other.pool.end();
+    }
+    expect(await priorityOf(locked!)).toBe(6);
   });
 });
 

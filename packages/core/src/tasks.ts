@@ -24,8 +24,12 @@ export interface TaskPayloads {
   profile_company: { companyId: string };
   suggest_companies: { userId: string; limit?: number };
   rescore_all: { userId: string; onlyInTable?: boolean };
-  /** Without a `userId` every account is re-evaluated; `companyId` narrows it to one company's postings. */
-  reevaluate_gate: { userId?: string; companyId?: string };
+  /**
+   * Without a `userId` every account is re-evaluated; `companyId` narrows it to one company's
+   * postings. `reason: "boot"` marks the re-evaluation a release queues when the gate's meaning
+   * changed (see `GATE_REEVALUATION_VERSION`): nobody asked for it, so it waits behind what they did.
+   */
+  reevaluate_gate: { userId?: string; companyId?: string; reason?: "boot" };
   /**
    * One posting a follower pasted the URL of, fetched and extracted into the shared catalogue.
    * The row it stores is shared like any other posting; the view it creates is this account's.
@@ -46,6 +50,18 @@ export interface TaskPayloads {
 }
 
 export type TaskType = keyof TaskPayloads;
+
+/**
+ * The version of what the keyword and location gate means. A worker that boots on a newer version
+ * than the one last applied re-runs every account's gate once, so tables built by the old rules
+ * are brought into line; a boot on the same version queues nothing.
+ *
+ * Every table used to be re-walked on every boot — each deploy and each crash-loop restart — which
+ * put a thousand whole-account walks in the interactive lane for work that had not changed. Any
+ * change to what `evaluateGate` (gate.ts) decides for a posting must bump this number, and
+ * `gate-reevaluation-version.test.ts` fails until it is bumped and its digest recorded.
+ */
+export const GATE_REEVALUATION_VERSION = 1;
 
 export function dedupeKeyFor<T extends TaskType>(type: T, payload: TaskPayloads[T]): string | null {
   switch (type) {
@@ -97,9 +113,25 @@ export function dedupeKeyFor<T extends TaskType>(type: T, payload: TaskPayloads[
   }
 }
 
+/**
+ * The types a person is waiting for. The queue's interactive lane serves these first, and ageing
+ * reads its floor from their priorities. Defined here rather than in the worker so the floor and
+ * the lane cannot disagree about which types count.
+ */
+export const INTERACTIVE_TASK_TYPES = [
+  "generate_cv", "discover", "tag_reason", "reevaluate_gate", "import_posting", "review_library", "import_library_document",
+] as const satisfies readonly TaskType[];
+
+/** The shared daily scan and its fan-out: the scan lane's own work. */
+export const SCAN_TASK_TYPES = ["scan_company", "run_daily"] as const satisfies readonly TaskType[];
+
 /** Lower runs first. Interactive tasks jump the queue. */
 export function priorityFor(type: TaskType): number {
   switch (type) {
+    // Someone asked for this CV and is watching it build. One step behind the quick interactive
+    // work, as the interface has always queued it, because a build holds its slot for minutes.
+    case "generate_cv":
+      return 2;
     case "discover":
     case "tag_reason":
     case "reevaluate_gate":
@@ -127,6 +159,18 @@ export function priorityFor(type: TaskType): number {
       return 5;
   }
 }
+
+/**
+ * How far ageing may lift a waiting task: the least urgent priority any interactive type is
+ * enqueued at, which is where a CV build waits.
+ *
+ * Ageing used to have no floor, so everything that waited converged on 0 and a person's fresh
+ * import, discovery or shortlist score (priority 1) queued behind the whole backlog. Stopping here
+ * keeps waiting work moving up without ever letting it overtake what someone has just asked for:
+ * at best it ties with a queued CV build, and the claim then takes the one that has been ready
+ * longer.
+ */
+export const AGEING_PRIORITY_FLOOR = Math.max(...INTERACTIVE_TASK_TYPES.map(priorityFor));
 
 /**
  * How long one handler may run before its task is abandoned and failed.

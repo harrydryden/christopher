@@ -2,15 +2,14 @@
  * Worker entry point. One always-on process that runs the scheduler, the task queue and every
  * outbound fetch and model call. See docs/SPEC.md section 6.
  */
-import { enqueueTask, listUserIds, recordWorkerEvent, type Db } from "@ava/db";
-import { dedupeKeyFor } from "@ava/core";
+import { recordWorkerEvent, type Db } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { sql } from "drizzle-orm";
+import { enqueueBootGateReevaluation, seedTagVocabularies } from "./boot";
 import { createDeps } from "./context";
 import { readEnv } from "./env";
 import { startHealthServer } from "./health";
 import { handlers, onAbandon, onInterrupted } from "./handlers";
-import { ensureSeedTags } from "./handlers/learning";
 import { log } from "./log";
 import { setInternal } from "./settings";
 import { recoverFromCrash, TaskQueue } from "./queue";
@@ -34,14 +33,10 @@ async function main() {
   // last process being the first thing this one claims.
   await recoverFromCrash(deps, { workerId: env.workerId, onAbandon });
   await reviveRateLimitedSources(deps.db);
-  await ensureSeedTags(deps);
-  // Gate semantics can change between releases: re-run every account's gate once on boot. One task
-  // per account, so each takes only its own lease and they run across the queue's slots instead of
-  // queueing behind a single account-by-account task.
-  for (const userId of await listUserIds(deps.db)) {
-    const payload = { userId };
-    await enqueueTask(deps.db, "reevaluate_gate", payload, { dedupeKey: dedupeKeyFor("reevaluate_gate", payload), priority: 6 });
-  }
+  await seedTagVocabularies(deps.db);
+  // Gate semantics can change between releases; when they have, every account's gate is re-run
+  // once. A boot on the same semantics queues nothing.
+  await enqueueBootGateReevaluation(deps.db);
 
   const queue = new TaskQueue(deps, handlers, { concurrency: env.concurrency, workerId: env.workerId, onAbandon, onInterrupted });
   queue.start();

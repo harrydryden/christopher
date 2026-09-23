@@ -85,9 +85,12 @@ export async function schedulerTick(deps: WorkerDeps): Promise<void> {
 
   // Ageing, once a minute and bounded, so that a task which keeps losing to newer higher-priority
   // work still reaches the front. It lives here rather than in the claim because the claim's
-  // ordering has to be something an index can serve.
-  const aged = await agePriorities(deps.db);
-  if (aged) log.debug("aged queued tasks", { aged });
+  // ordering has to be something an index can serve. Claimed across the deployment, because every
+  // worker and the cron fallback tick: each sweep is one step, and two a minute is twice the rate.
+  await claimPeriodic(deps, "lastAgePriorities", 55, async () => {
+    const aged = await agePriorities(deps.db);
+    if (aged) log.debug("aged queued tasks", { aged });
+  });
 
   await deps.db
     .update(schema.companySuggestions)

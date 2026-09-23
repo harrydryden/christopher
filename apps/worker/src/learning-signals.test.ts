@@ -126,6 +126,40 @@ it("names every outcome of a scoring attempt on the view the table reads", async
   expect(scoreJob).toHaveBeenCalledTimes(1);
 });
 
+it("scores a role on the confirmed evidence that bears on it, bounded, never on the whole library", async () => {
+  const scoreJob = vi.fn().mockResolvedValue({ score: 70, verdict: "strong", rationale: "Fits." });
+  const scored = aiDeps({ scoreJob });
+  const { job } = await seedRole();
+  const row = (text: string) => `${text} `.repeat(12).trim();
+  const library = (hobby: string) => ({
+    name: "Candidate", contact: "", profile: "Operations leader",
+    entries: [
+      ...Array.from({ length: 60 }, (_, index) => ({
+        id: `design${index}`, kind: "experience" as const, heading: `Brand designer ${index}`,
+        details: row(`Designed identity ${index}`), confirmedResponsibilities: [row(`Designed identity ${index}`)],
+      })),
+      { id: "ops", kind: "experience" as const, heading: "Operations Manager", details: "Ran operations for a 40-person warehouse\nNot confirmed yet",
+        confirmedResponsibilities: ["Ran operations for a 40-person warehouse"] },
+      { id: "hobby", kind: "interest" as const, heading: "Interests", details: hobby },
+    ],
+  });
+  await db.insert(schema.cvLibraries).values({ userId, version: 1, content: library("Sailing") });
+  await handleScoreJob(task({ userId, jobId: job.id }), scored);
+  const input = scoreJob.mock.calls[0]![0] as { profileMarkdown: string; evidence: string };
+  // The library no longer rides along inside the profile.
+  expect(input.profileMarkdown).not.toContain("Designed identity");
+  // The operations evidence leads, confirmed rows only, and the whole of it fits a fixed bound.
+  expect(input.evidence.split("\n").slice(0, 2)).toEqual(["Operations Manager (experience)", "- Ran operations for a 40-person warehouse"]);
+  expect(input.evidence).not.toContain("Not confirmed yet");
+  expect(input.evidence.length).toBeLessThanOrEqual(8_100);
+  expect(input.evidence).toContain("(more evidence not shown)");
+
+  // An edit to evidence this role never sees leaves its inputs, and so its score, alone.
+  await db.insert(schema.cvLibraries).values({ userId, version: 2, content: library("Sailing and climbing") });
+  expect(await handleScoreJob(task({ userId, jobId: job.id }), scored)).toEqual({ skipped: "scoring inputs unchanged" });
+  expect(scoreJob).toHaveBeenCalledTimes(1);
+});
+
 it("marks a view queued in the statement that queues its score, from the gate and from a rescore", async () => {
   await setGate({});
   const { job } = await seedRole({ view: false });

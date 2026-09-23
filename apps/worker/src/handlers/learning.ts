@@ -1,7 +1,7 @@
 import { withResourceLease } from "../lease";
 import { schema, enqueueTask, latestApplicationFor, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, type ScoreState, type Task } from "@ava/db";
 import { decisionDigest } from "@ava/ai";
-import { eligibleCvEvidence, evidenceHeading, sha1, dedupeKeyFor, modelForCallSite, priorityFor, type TaskPayloads } from "@ava/core";
+import { eligibleCvEvidence, evidenceHeading, responsibilityRows, scoringEvidence, sha1, dedupeKeyFor, modelForCallSite, priorityFor, type CvLibrary, type ScoringEvidenceBlock, type TaskPayloads } from "@ava/core";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { aiBudgetStop } from "../context";
@@ -90,27 +90,24 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
 
   const [library] = await deps.db.select({ content: schema.cvLibraries.content }).from(schema.cvLibraries)
     .where(eq(schema.cvLibraries.userId, userId)).orderBy(desc(schema.cvLibraries.version)).limit(1);
+  const role = {
+    title: job.title,
+    company: company?.name ?? "",
+    location: job.location ?? undefined,
+    department: job.department ?? undefined,
+    employmentType: job.employmentType ?? undefined,
+    // Near-miss candidates are scored on metadata only (no description fetch for roles outside the gate).
+    description: view.inTable ? job.descriptionText ?? undefined : undefined,
+    keywordTerms: view.keywordTerms,
+  };
   const input = {
-      profileMarkdown: profile?.markdown ?? settings.seedProfile ?? "",
-      decisionDigest: digest,
-      job: {
-        title: job.title,
-        company: company?.name ?? "",
-        location: job.location ?? undefined,
-        department: job.department ?? undefined,
-        employmentType: job.employmentType ?? undefined,
-        // Near-miss candidates are scored on metadata only (no description fetch for roles outside the gate).
-        description: view.inTable ? job.descriptionText ?? undefined : undefined,
-        keywordTerms: view.keywordTerms,
-      },
-    };
-  if (library) {
-    const entries = library.content.entries.flatMap(entry => {
-      const eligible = eligibleCvEvidence(entry);
-      return eligible ? [{ ...eligible, heading: evidenceHeading(library.content, eligible) }] : [];
-    });
-    input.profileMarkdown += "\nEvidence library (absence is not proof of inability):\n" + JSON.stringify({ profile: library.content.profile, employment: library.content.employment?.filter(job => entries.some(entry => entry.employmentId === job.id)), entries });
-  }
+    profileMarkdown: profile?.markdown ?? settings.seedProfile ?? "",
+    decisionDigest: digest,
+    // The confirmed evidence that bears on this role, bounded: never the whole library.
+    evidence: library ? scoringEvidence(scoringEvidenceBlocks(library.content),
+      [role.title, role.department, ...(role.keywordTerms ?? []), role.description].filter(Boolean).join(" ")) : "",
+    job: role,
+  };
   // What the score was computed from. It is kept on this account's own view of the role, so an
   // unchanged rerun costs one row read rather than a row per (account, role) accumulating forever.
   const fingerprint = sha1(JSON.stringify([input, modelForCallSite(settings, "A5")]));
@@ -145,6 +142,25 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
   await tx.insert(schema.jobEvents).values({ jobId: job.id, userId, type: "scored", payload: { score: result.score, verdict: result.verdict } });
   return { score: result.score, verdict: result.verdict };
   });
+}
+
+/**
+ * A library as the blocks scoring may be shown: only evidence the person has confirmed, each block
+ * under the heading a reader knows it by, with its rows and skills once each.
+ */
+function scoringEvidenceBlocks(library: CvLibrary): ScoringEvidenceBlock[] {
+  const blocks: ScoringEvidenceBlock[] = [];
+  if (library.profile.trim()) blocks.push({ heading: "Profile", rows: [library.profile.trim()] });
+  for (const entry of library.entries) {
+    const eligible = eligibleCvEvidence(entry);
+    if (!eligible) continue;
+    const rows = eligible.kind === "experience" ? eligible.confirmedResponsibilities ?? [] : responsibilityRows(eligible.details);
+    blocks.push({
+      heading: `${evidenceHeading(library, eligible)} (${eligible.kind})`,
+      rows: [...rows, ...(eligible.skillItems?.length ? [`Skills: ${eligible.skillItems.join(", ")}`] : [])],
+    });
+  }
+  return blocks;
 }
 
 export async function latestProfile(deps: WorkerDeps, userId: string) {

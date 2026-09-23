@@ -81,9 +81,10 @@ it("opens a link onto one preview, finds it by its hash, and counts what the rea
   const share = await createCvShare(db, { userId, draftId, tokenHash: "hash-one", expiresAt: at(60) }, at(0));
   expect(share).toMatchObject({ userId, draftId, allowComments: true, viewCount: 0, revokedAt: null, lastViewedAt: null });
 
-  // The lookup yields the owner to scope the read by, the draft to render, and nothing else.
+  // The lookup yields the owner to scope the read by, the draft to render, when the link was
+  // opened — which pins the revision it shows — and nothing else.
   const live = await findLiveCvShareByHash(db, "hash-one", at(1));
-  expect(live).toEqual({ id: share.id, userId, draftId, allowComments: true, expiresAt: share.expiresAt });
+  expect(live).toEqual({ id: share.id, userId, draftId, allowComments: true, expiresAt: share.expiresAt, createdAt: share.createdAt });
   expect(live).not.toHaveProperty("tokenHash");
   // An unknown link is simply nothing.
   expect(await findLiveCvShareByHash(db, "hash-nobody-issued", at(1))).toBeNull();

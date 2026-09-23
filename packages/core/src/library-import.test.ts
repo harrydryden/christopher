@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import {
   countProposedItems,
+  libraryImportUrl,
   parseLibraryAdditions,
   proposalToLibraryAdditions,
   proposedItemIds,
@@ -185,6 +186,112 @@ describe("validateLibraryProposal", () => {
 
   it("refuses output that is not a proposal at all", () => {
     expect(() => validateLibraryProposal(DOCUMENT, { employment: "everything" })).toThrow();
+  });
+});
+
+describe("validateLibraryProposal anchors each job as one passage", () => {
+  const job = (over: Record<string, unknown>) => ({ ...plan().employment[0], responsibilities: [], ...over });
+
+  it("drops a job whose title and employer come from two different jobs' lines", () => {
+    // Both are real, on lines of their own: "Director of Operations" at Acme, "Northwind" below it.
+    const { proposal, dropped } = validateLibraryProposal(DOCUMENT, plan({
+      employment: [job({ company: "Northwind", title: "Director of Operations", quote: "Director of Operations, Acme Logistics, Mar 2020 – Jun 2022" })],
+    }));
+    expect(proposal.employment).toEqual([]);
+    expect(dropped).toBe(1);
+  });
+
+  it("files a responsibility only under the job whose passage carries it", () => {
+    const { proposal, dropped } = validateLibraryProposal(DOCUMENT, plan({
+      employment: [
+        job({
+          responsibilities: [
+            { text: "Cut handover time from two days to four hours", quote: "Cut handover time" },
+            // Northwind's row, in the document, but under the next job rather than this one.
+            { text: "Reduced stockouts by 18% in one quarter", quote: "Reduced stockouts by 18%" },
+          ],
+        }),
+        job({ company: "Northwind", title: "Head of Delivery", quote: "Head of Delivery, Northwind, 2017 – 2020", startDate: "2017", endDate: "2020",
+          responsibilities: [{ text: "Cut handover time from two days to four hours", quote: "Cut handover time" }] }),
+      ],
+    }));
+    expect(proposal.employment.map(item => item.responsibilities.map(row => row.text)))
+      .toEqual([["Cut handover time from two days to four hours"], []]);
+    expect(dropped).toBe(2);
+  });
+
+  it("dates a job only from its own heading, and keeps a month only when it is written there", () => {
+    const { proposal } = validateLibraryProposal(DOCUMENT, plan({
+      employment: [
+        // 2014 is the degree's year, not this job's; June is written beside 2022, January is not.
+        job({ startDate: "2014", endDate: "2022-01" }),
+        job({ company: "Northwind", title: "Head of Delivery", quote: "Head of Delivery, Northwind, 2017 – 2020", startDate: "2017-05", endDate: "2020" }),
+      ],
+    }));
+    expect(proposal.employment.map(item => [item.startDate, item.endDate])).toEqual([["", "2022"], ["2017", "2020"]]);
+    // A month written as a number beside its year counts as written.
+    const numeric = validateLibraryProposal("Head of Delivery, Northwind, 05/2017 – 2020", plan({
+      employment: [job({ company: "Northwind", title: "Head of Delivery", quote: "Head of Delivery, Northwind, 05/2017 – 2020", startDate: "2017-05" })],
+      education: [], skills: [],
+    }));
+    expect(numeric.proposal.employment[0]!.startDate).toBe("2017-05");
+  });
+
+  it("anchors every role under an employer named once above them, as LinkedIn's export writes it", () => {
+    const linkedIn = [
+      "Experience",
+      "Acme Logistics",
+      "5 years 2 months",
+      "Director of Operations",
+      "March 2020 - June 2022",
+      ...Array.from({ length: 6 }, (_, i) => `Led the regional operations review number ${i + 1} across every warehouse site`),
+      "Operations Manager",
+      "January 2017 - March 2020",
+      "Ran the night shift across two distribution centres",
+      "Northwind",
+      "Analyst",
+      "2015 - 2017",
+      "Consultant",
+      "2013 - 2015",
+    ].join("\n");
+    const { proposal } = validateLibraryProposal(linkedIn, {
+      employment: [
+        { company: "Acme Logistics", title: "Director of Operations", quote: "Director of Operations", startDate: "2020-03", endDate: "2022-06", responsibilities: [] },
+        { company: "Acme Logistics", title: "Operations Manager", quote: "Operations Manager", startDate: "2017-01", endDate: "2020-03",
+          responsibilities: [{ text: "Ran the night shift across two distribution centres", quote: "Ran the night shift" }] },
+        { company: "Northwind", title: "Analyst", quote: "Analyst", startDate: "2015", endDate: "2017", responsibilities: [] },
+        // Named as Acme's, but Northwind's role comes between: Acme's name does not reach this far.
+        { company: "Acme Logistics", title: "Consultant", quote: "Consultant", startDate: "2013", endDate: "2015", responsibilities: [] },
+      ],
+      education: [], skills: [],
+    });
+    expect(proposal.employment.map(item => [item.company, item.title, item.startDate, item.endDate])).toEqual([
+      ["Acme Logistics", "Director of Operations", "2020-03", "2022-06"],
+      ["Acme Logistics", "Operations Manager", "2017-01", "2020-03"],
+      ["Northwind", "Analyst", "2015", "2017"],
+    ]);
+    expect(proposal.employment[1]!.responsibilities).toHaveLength(1);
+  });
+
+  it("anchors a skill as a word, not as letters inside another one", () => {
+    const { proposal } = validateLibraryProposal(`${DOCUMENT}\nGood communication, NoSQL`, plan({
+      skills: [{ text: "Go" }, { text: "SQL" }, { text: "Kanban" }],
+    }));
+    expect(proposal.skills.map(item => item.text)).toEqual(["Kanban"]);
+  });
+});
+
+describe("libraryImportUrl", () => {
+  it("takes the person's own public page", () => {
+    expect(libraryImportUrl("jane.example.com/about")).toEqual({ url: "https://jane.example.com/about" });
+  });
+
+  it("refuses an address inside a private network, saying why", () => {
+    for (const address of ["https://10.0.0.8/cv", "https://192.168.1.10/about", "https://[::1]/me", "https://printer.local/cv", "https://localhost/cv"]) {
+      const result = libraryImportUrl(address);
+      expect(result, address).toHaveProperty("error");
+      expect((result as { error: string }).error, address).toMatch(/(private or local network address|local network name)\. Use the address of your own public page/);
+    }
   });
 });
 

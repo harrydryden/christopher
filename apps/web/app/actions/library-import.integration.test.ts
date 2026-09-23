@@ -253,18 +253,30 @@ it("anchors the proposal against the document again before writing any of it", a
     },
   });
 
-  // The job alone would leave a library with no blocks at all, which is not a Library.
-  expect(await acceptLibraryImport(row.id, form({ version: "0", accept: ["job-0", "job-0-row-0"] })))
-    .toMatchObject({ ok: false, error: expect.stringContaining("a job on its own cannot start your Library") });
-
+  // Items are named by their place in the proposal, so one that no longer anchors would move the
+  // ids after it onto other items: nothing is added from a proposal that does not check out whole.
   const result = await acceptLibraryImport(row.id, form({ version: "0", accept: ["job-0", "job-0-row-0", "education-0"] }));
 
-  expect(result).toMatchObject({ ok: true });
+  expect(result).toMatchObject({ ok: false, error: expect.stringContaining("Dismiss it and import the document again") });
+  expect(await latestLibrary()).toBeUndefined();
+  expect((await imports())[0]!.resolvedAt).toBeNull();
+});
+
+it("adds the ticked items of a proposal that checks out whole", async () => {
+  const row = await proposed();
+  // The job alone would leave a library with no blocks at all, which is not a Library.
+  expect(await acceptLibraryImport(row.id, form({ version: "0", accept: ["job-0"] })))
+    .toMatchObject({ ok: false, error: expect.stringContaining("a job on its own cannot start your Library") });
+  expect(await acceptLibraryImport(row.id, form({ version: "0", accept: ["job-0", "job-0-row-1", "education-0"] }))).toMatchObject({ ok: true });
   const library = (await latestLibrary())!.content;
-  // The job and the qualification were in the document and land; the invented row did not and does not.
   expect(library.employment).toHaveLength(1);
-  expect(library.entries.map(entry => entry.kind)).toEqual(["education"]);
-  expect(library.entries.some(entry => entry.details.includes("2.4m"))).toBe(false);
+  expect(library.entries.find(entry => entry.kind === "experience")!.details).toBe(ROWS.handover);
+});
+
+it("stores a pasted document without the control characters a database refuses", async () => {
+  const pasted = `${DOCUMENT}\u0000\u0007 and a line more to read`;
+  expect(await importLibraryDocument(form({ kind: "paste", content: pasted }))).toMatchObject({ ok: true });
+  expect((await imports())[0]!.content).toBe(`${DOCUMENT} and a line more to read`);
 });
 
 it("refuses to write over a library that changed while the card was open", async () => {

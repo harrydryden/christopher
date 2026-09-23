@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { CvBuildFailure } from "@ava/core";
 import type { Db } from "./client";
-import { cvDrafts } from "./schema";
+import { cvDrafts, cvShareComments, cvShares } from "./schema";
 import { cvRoleKey } from "./cv-role-key";
 import {
   archiveRetention,
@@ -81,6 +81,34 @@ export async function lockCvDraft(tx: Transaction, id: string) {
 }
 
 /**
+ * The drafts among `ids` that someone is still reading or still waiting to hear back on: a link to
+ * them that is neither revoked nor expired, or a note left through one that the owner has not yet
+ * resolved. Retention leaves these alone, because deleting a draft takes its links and every note
+ * with it — a reviewer's feedback on the revision it was written about, lost to the owner's next
+ * two edits without their doing anything. Resolving the notes and ending the links hands the
+ * draft back to retention; deleting it by hand is still the owner's choice and still cascades.
+ *
+ * The share rows are locked, so a note being written through one of them now either lands before
+ * this decides, and spares the draft, or finds the draft gone.
+ */
+async function sparedForReview(tx: Transaction, userId: string, ids: string[]): Promise<Set<string>> {
+  if (!ids.length) return new Set();
+  const rows = await tx
+    .select({ draftId: cvShares.draftId })
+    .from(cvShares)
+    .where(and(
+      eq(cvShares.userId, userId),
+      inArray(cvShares.draftId, ids),
+      sql`((${cvShares.revokedAt} is null and ${cvShares.expiresAt} > now()) or exists (
+        select 1 from ${cvShareComments}
+        where ${cvShareComments.shareId} = ${cvShares.id} and ${cvShareComments.userId} = ${userId}
+          and ${cvShareComments.resolvedAt} is null))`,
+    ))
+    .for("update");
+  return new Set(rows.map(row => row.draftId));
+}
+
+/**
  * One saved CV and one archive per role, and never a pile of dead attempts beside them: the
  * retention plans keep the ready pair, and this removes the failures they leave behind — `keep`
  * is how many of the newest are still worth reopening (one while the next attempt runs, none once
@@ -104,10 +132,12 @@ async function pruneFailedCvDrafts(
       and(sameRole(role), eq(cvDrafts.status, "failed"), isNull(cvDrafts.archivedAt)),
     )
     .orderBy(...newest);
-  const obsolete = failed
+  const candidates = failed
     .slice(keep)
     .map((row) => row.id)
     .filter((id) => id !== spare);
+  const spared = await sparedForReview(tx, role.userId, candidates);
+  const obsolete = candidates.filter((id) => !spared.has(id));
   if (obsolete.length)
     await tx.delete(cvDrafts).where(inArray(cvDrafts.id, obsolete));
 }
@@ -136,9 +166,18 @@ export async function nextCvRevision(
   return (row?.revision ?? 0) + 1;
 }
 
-async function applyRetention(tx: Transaction, plan: CvRetentionPlan) {
-  if (plan.deleteIds.length)
-    await tx.delete(cvDrafts).where(inArray(cvDrafts.id, plan.deleteIds));
+async function applyRetention(tx: Transaction, userId: string, plan: CvRetentionPlan) {
+  // A revision someone is still reviewing is archived instead of deleted: it stays out of the
+  // way of the role's current CV, and keeps its links and notes until they are done with.
+  const spared = await sparedForReview(tx, userId, plan.deleteIds);
+  const deleteIds = plan.deleteIds.filter((id) => !spared.has(id));
+  if (deleteIds.length)
+    await tx.delete(cvDrafts).where(inArray(cvDrafts.id, deleteIds));
+  if (spared.size)
+    await tx
+      .update(cvDrafts)
+      .set({ archivedAt: new Date() })
+      .where(and(inArray(cvDrafts.id, [...spared]), isNull(cvDrafts.archivedAt)));
   // Preserve the time of an existing archive when an older build merely completes late.
   if (plan.archiveId)
     await tx
@@ -177,7 +216,7 @@ export async function completeCv(
     .from(cvDrafts)
     .where(sameRole(draft))
     .orderBy(...newest);
-  await applyRetention(tx, completionRetention(rows, id));
+  await applyRetention(tx, draft.userId, completionRetention(rows, id));
   return true;
 }
 
@@ -200,23 +239,6 @@ export async function actionCvs(
   const selectedIds = new Set(ids);
   await database.transaction(async (tx) => {
     await lockLegacyLifecycle(tx);
-    // Read under the same transaction the action runs in, so a build that starts after this is
-    // fenced by the role lock below rather than slipping between the read and the write.
-    const building = await tx
-      .select({ id: cvDrafts.id, status: cvDrafts.status })
-      .from(cvDrafts)
-      .where(and(inArray(cvDrafts.id, [...selectedIds]), eq(cvDrafts.userId, userId), eq(cvDrafts.status, "generating")));
-    if (action === "delete" && building.length)
-      throw new CvBuildInFlightError(
-        building.length === 1
-          ? "This CV is still being built. Wait for the build to finish or fail, then delete it."
-          : `${building.length} of the selected CVs are still being built. Wait for those builds to finish or fail, then delete them.`,
-      );
-    // Archiving is what runs a retention plan over the role, so a build in flight is left out of
-    // the selection it decides. Restoring one is harmless — it moves that draft's own marker and
-    // nothing else — and the plans can no longer delete an in-flight row whatever the action.
-    if (action === "archive") for (const row of building) selectedIds.delete(row.id);
-    if (!selectedIds.size) return;
     // Lock all affected roles in a stable order, preventing crossed bulk requests deadlocking.
     const roles = await tx
       .selectDistinct({ key: roleKey(cvDrafts) })
@@ -229,6 +251,30 @@ export async function actionCvs(
         sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`,
       );
     }
+    // Which of them a worker is building is read only now, behind the role locks, and with the
+    // selected rows themselves locked. A worker starting a queued build moves it to generating
+    // with a plain row update, which takes no role lock: read before the locks, a build could
+    // start between the read and the delete, and its model calls were paid for on a row that went.
+    // Locked here, that update waits for this transaction, and then finds the row gone — before it
+    // spends anything — or it came first, and the build is seen and refused.
+    const selected = await tx
+      .select({ id: cvDrafts.id, status: cvDrafts.status })
+      .from(cvDrafts)
+      .where(and(inArray(cvDrafts.id, [...selectedIds]), eq(cvDrafts.userId, userId)))
+      .orderBy(cvDrafts.id)
+      .for("update");
+    const building = selected.filter((row) => row.status === "generating");
+    if (action === "delete" && building.length)
+      throw new CvBuildInFlightError(
+        building.length === 1
+          ? "This CV is still being built. Wait for the build to finish or fail, then delete it."
+          : `${building.length} of the selected CVs are still being built. Wait for those builds to finish or fail, then delete them.`,
+      );
+    // Archiving is what runs a retention plan over the role, so a build in flight is left out of
+    // the selection it decides. Restoring one is harmless — it moves that draft's own marker and
+    // nothing else — and the plans can no longer delete an in-flight row whatever the action.
+    if (action === "archive") for (const row of building) selectedIds.delete(row.id);
+    if (!selectedIds.size) return;
     if (action === "delete") {
       await tx.delete(cvDrafts).where(and(inArray(cvDrafts.id, [...selectedIds]), eq(cvDrafts.userId, userId)));
       return;
@@ -259,7 +305,7 @@ export async function actionCvs(
         action === "archive"
           ? archiveRetention(group, selectedIds)
           : restoreRetention(group, selectedIds);
-      if (plan) await applyRetention(tx, plan);
+      if (plan) await applyRetention(tx, userId, plan);
     }
   });
 }

@@ -1,8 +1,13 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import {
   actionCvs,
+  addCvShareComment,
   completeCv,
+  createCvShare,
   createDb,
+  CvBuildInFlightError,
+  resolveCvShareComment,
+  revokeCvShare,
   cvRoleKey,
   nextCvRevision,
   schema,
@@ -11,7 +16,7 @@ import {
 import { runMigrations } from "@ava/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { readFile } from "node:fs/promises";
-import { signInTestUser } from "@/test/auth";
+import { ensureTestUser, signInTestUser } from "@/test/auth";
 import type { User } from "@ava/db/schema";
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
@@ -700,4 +705,88 @@ it("allocates daily versions atomically and preserves numbers after deletion", a
   await actionCvs(database, user.id, [fourth.id], "archive");
   await actionCvs(database, user.id, [fourth.id], "restore");
   expect((await dailyCvVersions(database, [fourth.id])).get(fourth.id)).toBe(4);
+});
+
+/** A link onto one revision, as the workspace opens one, and optionally a note left through it. */
+async function shareOf(draftId: string, owner = user.id, note?: string) {
+  const share = await createCvShare(database, {
+    userId: owner, draftId, tokenHash: `hash-${draftId}-${owner}`,
+    expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+  });
+  const comment = note
+    ? await addCvShareComment(database, { shareId: share.id, userId: owner, anchor: "profile", authorName: "Sam", body: note })
+    : undefined;
+  return { share, comment };
+}
+const ids = async () => (await rows()).map((row) => [row.id, Boolean(row.archivedAt)]);
+
+it("keeps a revision under review through later publishes, and lets it go once the review is done", async () => {
+  const reviewed = await draft(1, { status: "generating" });
+  await finish(reviewed.id);
+  const { share, comment } = await shareOf(reviewed.id, user.id, "The profile buries the operations work.");
+  // Two edits later the rolling archive would have deleted it, and its link and note with it.
+  const second = await draft(2, { status: "generating" });
+  await finish(second.id);
+  const third = await draft(3, { status: "generating" });
+  await finish(third.id);
+  expect(await ids()).toEqual([[reviewed.id, true], [second.id, true], [third.id, false]]);
+  expect(await database.select().from(schema.cvShares)).toHaveLength(1);
+  expect(await database.select().from(schema.cvShareComments)).toHaveLength(1);
+
+  // The note is dealt with, but the link is still open: someone may still be reading it.
+  await resolveCvShareComment(database, user.id, comment!.id);
+  const fourth = await draft(4, { status: "generating" });
+  await finish(fourth.id);
+  expect((await ids()).map(([id]) => id)).toContain(reviewed.id);
+
+  // With the link ended too, the next publish takes the revision as it takes any other.
+  await revokeCvShare(database, user.id, share.id);
+  const fifth = await draft(5, { status: "generating" });
+  await finish(fifth.id);
+  expect(await ids()).toEqual([[fourth.id, true], [fifth.id, false]]);
+  expect(await database.select().from(schema.cvShares)).toEqual([]);
+});
+
+it("keeps a failed revision with an open note when the next attempt is allocated, and only for its owner", async () => {
+  const noted = await draft(1, { status: "failed" });
+  await shareOf(noted.id, user.id, "Name the team size.");
+  const plain = await draft(2, { status: "failed" });
+  const newest = await draft(3, { status: "failed" });
+  // Another account's link onto this draft is not this account's review, and spares nothing.
+  const stranger = await ensureTestUser(database, "stranger@example.com", "member");
+  await shareOf(plain.id, stranger.id, "Not the owner's reader.");
+  await allocate();
+  expect((await rows()).map((row) => row.id)).toEqual([noted.id, newest.id]);
+});
+
+it("still deletes a revision under review when its owner deletes it", async () => {
+  const reviewed = await draft(1, { status: "ready" });
+  await shareOf(reviewed.id, user.id, "A note.");
+  await actionCvs(database, user.id, [reviewed.id], "delete");
+  expect(await rows()).toEqual([]);
+  expect(await database.select().from(schema.cvShareComments)).toEqual([]);
+});
+
+it("refuses to delete a build that starts while the delete waits for its locks", async () => {
+  const queued = await draft(1, { status: "queued" });
+  // A worker claims the build and moves it to generating in a transaction of its own.
+  const worker = await pool.connect();
+  try {
+    await worker.query("begin");
+    await worker.query("update cv_drafts set status = 'generating' where id = $1", [queued.id]);
+    const deleting = actionCvs(database, user.id, [queued.id], "delete").then(() => "deleted", (error) => error);
+    // Wait until the delete is queued behind the worker's row lock, then let the worker commit.
+    for (;;) {
+      const waiting = await database.execute(
+        sql`select 1 from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock' limit 1`,
+      );
+      if (waiting.rows.length) break;
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    await worker.query("commit");
+    expect(await deleting).toBeInstanceOf(CvBuildInFlightError);
+  } finally {
+    worker.release();
+  }
+  expect((await rows()).map((row) => [row.id, row.status])).toEqual([[queued.id, "generating"]]);
 });

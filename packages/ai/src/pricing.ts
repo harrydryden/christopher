@@ -52,6 +52,15 @@ export function priceFor(model: string): { input: number; output: number; cacheR
 /** How many assessment batches a calibrated build is expected to run. */
 const CV_ASSESSMENT_BATCHES = 5;
 
+/**
+ * How many times one writing pass may call the author: the fitter rewrites when the pages
+ * overflow, up to three attempts (`buildFittedCv` in core). The build is held for all three.
+ */
+export const CV_FITTER_ATTEMPTS = 3;
+
+/** The most one author call is calibrated to write: recorded two-page builds reach 15.6k. */
+const CV_AUTHOR_OUTPUT_TOKENS = 16_000;
+
 /** What a CV build is measured in: the two inputs every one of its calls is sized from. */
 export interface CvBuildSize {
   libraryBytes: number;
@@ -83,21 +92,27 @@ function cvBuildUsage(size: CvBuildSize, parts: CvBuildParts): TokenUsage {
   };
   if (parts === "assessment") return assessment;
   return {
-    // The rubric reads the description; the author reads the library and the description.
-    inputTokens: description + (library + description) + assessment.inputTokens,
+    // The rubric reads the description; each of the fitter's author calls reads the library and
+    // the description again, and writes up to the calibrated most a call writes.
+    inputTokens: description + CV_FITTER_ATTEMPTS * (library + description) + assessment.inputTokens,
     cacheWriteTokens: assessment.cacheWriteTokens,
     cacheReadTokens: assessment.cacheReadTokens,
-    outputTokens: 4_500 + 12_000 + assessment.outputTokens,
+    outputTokens: 4_500 + CV_FITTER_ATTEMPTS * CV_AUTHOR_OUTPUT_TOKENS + assessment.outputTokens,
   };
 }
 
 /**
- * What a CV build is expected to cost, for admitting it against the budget. Calibrated on recorded
- * builds of a 35 KB library against a 7.7 KB description, which cost $3.0–3.4 on Fable 5.1: the
- * rubric reads the description and writes about 4.5k tokens; the author reads the library and
- * description and writes 8–16k; the assessment writes the CV-sized context to the cache once,
- * reads it back for the other four batches, and writes about 7k tokens a batch. A hold at the
- * calls' ceilings instead refused builds the month could plainly afford, and only part-way through.
+ * What a CV build may cost, for admitting it against the budget. Calibrated on recorded builds of
+ * a 35 KB library against a 7.7 KB description, which cost $3.0–3.4 on Fable 5.1: the rubric reads
+ * the description and writes about 4.5k tokens; the author reads the library and description and
+ * writes 8–16k; the assessment writes the CV-sized context to the cache once, reads it back for
+ * the other four batches, and writes about 7k tokens a batch. A hold at the calls' ceilings (32k
+ * a write) refused builds the month could plainly afford, and only part-way through.
+ *
+ * The writing is held at the fitter's worst case, though: three author calls at the calibrated
+ * most a call writes. Held at one call, a build that had to rewrite twice spent several dollars
+ * beyond what it was admitted at, and two such builds at once put a month past its budget. The
+ * hold is taken off as each call is recorded, so the margin costs nothing once it is spent.
  *
  * `parts` narrows it to what a resumed attempt has left to pay for: on that calibration the audit
  * alone is about two thirds of a build, and the share is derived from the same figures rather than

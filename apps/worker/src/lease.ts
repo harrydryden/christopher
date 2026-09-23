@@ -88,9 +88,16 @@ export async function withResourceLease<T>(
   const renewEveryMs = options.renewEveryMs ?? LEASE_RENEWAL_MS;
   let renewal: Promise<unknown> = Promise.resolve();
   let renewing = false;
+  // Bounded like the task heartbeat: the fence holds this row `for update` for the length of a
+  // write transaction, and a renewal queued behind it would hold a pooled connection all the while.
+  // One that gives up on the lock leaves the lease as it is, and the next tick tries again.
   const renewOnce = async () => {
-    const rows = await deps.db.execute(sql`update resource_leases set expires_at = now() + interval '5 minutes'
-      where key = ${key} and owner = ${owner} returning key`);
+    const rows = await deps.db.transaction(async tx => {
+      await tx.execute(sql`set local lock_timeout = '2s'`);
+      await tx.execute(sql`set local statement_timeout = '5s'`);
+      return tx.execute(sql`update resource_leases set expires_at = now() + interval '5 minutes'
+        where key = ${key} and owner = ${owner} returning key`);
+    });
     if (rows.rows.length || signal?.aborted) return;
     log.warn("operation lease lost", { key });
     options.onLost?.(new LeaseLostError(`Operation lease lost; refusing stale writes: ${key}`));

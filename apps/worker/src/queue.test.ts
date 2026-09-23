@@ -1305,6 +1305,36 @@ describe("keeping a run alive, and stopping one that is over", () => {
     expect(row!.attempts).toBe(2);
   });
 
+  it("gives up on a renewal the row lock blocks, without stopping the run or pinning a connection", async () => {
+    // The fence holds the task row `for update` for the length of a write transaction. A renewal
+    // used to wait out the whole transaction on a pooled connection, one more every beat.
+    await enqueueTask(db, "reevaluate_gate", { userId: "long-walk" });
+    const task = (await claimTask(db, "walker#0", "interactive"))!;
+    const holder = createDb(DATABASE_URL, { max: 1 });
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let locked!: () => void;
+    const holding = new Promise<void>(resolve => { locked = resolve; });
+    const transaction = holder.db.transaction(async tx => {
+      await tx.execute(sql`select id from tasks where id = ${task.id} for update`);
+      locked();
+      await held;
+    });
+    try {
+      await holding;
+      const started = Date.now();
+      expect(await renewTask(db, task)).toBeNull();
+      expect(Date.now() - started).toBeLessThan(4_000);
+      const waiting = await db.execute(sql`select 1 from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()`);
+      expect(waiting.rows).toHaveLength(0);
+    } finally {
+      release();
+      await transaction;
+      await holder.pool.end();
+    }
+    expect(await renewTask(db, task)).toBe(true);
+  }, 15_000);
+
   it("keeps renewing a claim when one renewal never comes back", async () => {
     await enqueueTask(db, "generate_cv", { draftId: "22222222-2222-2222-2222-222222222222" });
     const task = (await claimTask(db, "hung#0", "interactive"))!;
@@ -1312,18 +1342,21 @@ describe("keeping a run alive, and stopping one that is over", () => {
     // A database that answers the completion but never the renewals: one hung query used to latch
     // the heartbeat off for good, the claim went stale in five minutes, and a second attempt ran
     // beside the first.
-    const hangingDb = {
-      update: () => ({
-        set: (values: Record<string, unknown>) => ({
-          where: () => ({
-            returning: () => {
-              if ("status" in values) return Promise.resolve([{ id: task.id }]);
-              renewals++;
-              return new Promise(() => {});
-            },
-          }),
+    const update = () => ({
+      set: (values: Record<string, unknown>) => ({
+        where: () => ({
+          returning: () => {
+            if ("status" in values) return Promise.resolve([{ id: task.id }]);
+            renewals++;
+            return new Promise(() => {});
+          },
         }),
       }),
+    });
+    // A renewal runs in its own short transaction, so its lock wait is bounded.
+    const hangingDb = {
+      update,
+      transaction: (work: (tx: unknown) => Promise<unknown>) => work({ update, execute: async () => ({ rows: [] }) }),
     } as unknown as Db;
     const queue = new TaskQueue({ ...deps, db: hangingDb }, {
       generate_cv: () => new Promise(resolve => setTimeout(() => resolve({ ok: true }), 250)),

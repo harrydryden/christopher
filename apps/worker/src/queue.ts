@@ -200,9 +200,34 @@ export function ownedTask(task: Task) {
     eq(schema.tasks.attempts, task.attempts), eq(schema.tasks.lockedBy, task.lockedBy ?? ""));
 }
 
-export async function renewTask(db: Db, task: Task): Promise<boolean> {
-  const rows = await db.update(schema.tasks).set({ lockedAt: new Date() }).where(ownedTask(task)).returning({ id: schema.tasks.id });
-  return rows.length === 1;
+/** The Postgres code for a statement that gave up on a lock, or on its own statement timeout. */
+function isLockTimeout(err: unknown): boolean {
+  const code = (e: unknown) => (e && typeof e === "object" && "code" in e ? (e as { code?: unknown }).code : undefined);
+  const found = code(err) ?? code((err as { cause?: unknown } | null)?.cause);
+  return found === "55P03" || found === "57014";
+}
+
+/**
+ * Renew a running task's lock: true when renewed, false when the task is no longer this run's,
+ * null when the renewal could not get at the row in time.
+ *
+ * The row can be locked by this run's own write transaction — the fence takes it `for update` and
+ * holds it until commit — and a renewal used to wait out the whole transaction holding a pooled
+ * connection, one more every beat, until the pool ran dry. It now gives up after two seconds and
+ * frees its connection; the run is neither renewed nor stopped, and the next beat tries again.
+ */
+export async function renewTask(db: Db, task: Task): Promise<boolean | null> {
+  try {
+    return await db.transaction(async tx => {
+      await tx.execute(sql`set local lock_timeout = '2s'`);
+      await tx.execute(sql`set local statement_timeout = '5s'`);
+      const rows = await tx.update(schema.tasks).set({ lockedAt: new Date() }).where(ownedTask(task)).returning({ id: schema.tasks.id });
+      return rows.length === 1;
+    });
+  } catch (err) {
+    if (isLockTimeout(err)) return null;
+    throw err;
+  }
 }
 
 export async function assertTaskOwnership(db: Db, task: Task): Promise<void> {
@@ -788,6 +813,8 @@ export class TaskQueue {
       if (renewing) return;
       renewing = true;
       const renewal = renewTask(this.deps.db, task).then(renewed => {
+        // Blocked behind a write transaction on the row, most often this run's own: try again.
+        if (renewed === null) { log.debug("task heartbeat waited on the row lock", { id: task.id, type: task.type }); return; }
         // The task is someone else's now: this run's writes are stale and it must not spend more.
         if (!renewed && !stop.signal.aborted) {
           log.warn("task heartbeat lost the task", { id: task.id, type: task.type });

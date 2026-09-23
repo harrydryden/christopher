@@ -33,19 +33,38 @@ const DEFAULT_STATEMENT_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_IDLE_IN_TRANSACTION_TIMEOUT_MS = 60_000;
 
 /**
- * Whether a connection string names Render's PgBouncer endpoint, which pools by transaction: port
- * 6432 on a Render database host, in the address or as a `port` parameter. Parsed without logging
+ * Which of a Render database's two endpoints a connection string names: `pooled` is PgBouncer on
+ * port 6432, which pools by transaction, in the address or as a `port` parameter; `direct` is
+ * anything else on a Render database host; null is not Render at all. Parsed without logging
  * anything, because the string carries the password.
  */
-export function isRenderPooledUrl(connectionString: string): boolean {
+export function renderEndpoint(connectionString: string): "pooled" | "direct" | null {
   let url: URL;
   try {
     url = new URL(connectionString);
   } catch {
-    return false;
+    return null;
   }
-  const port = url.searchParams.get("port") ?? url.port;
-  return (url.hostname.startsWith("dpg-") || url.hostname.endsWith(".render.com")) && port === "6432";
+  if (!url.hostname.startsWith("dpg-") && !url.hostname.endsWith(".render.com")) return null;
+  return (url.searchParams.get("port") ?? url.port) === "6432" ? "pooled" : "direct";
+}
+
+export function isRenderPooledUrl(connectionString: string): boolean {
+  return renderEndpoint(connectionString) === "pooled";
+}
+
+let warnedDirectEndpoint = false;
+
+/**
+ * The interface belongs on Render's pooled endpoint: every warm serverless instance keeps its own
+ * pool, and about thirty of them on the direct endpoint exhaust the database's backends for every
+ * account at once. Nothing else would notice a deployment configured the other way until then, so
+ * a Vercel process that opens a pool on the direct endpoint says so, once.
+ */
+function warnOnDirectServerlessEndpoint(connectionString: string): void {
+  if (warnedDirectEndpoint || !process.env.VERCEL || renderEndpoint(connectionString) !== "direct") return;
+  warnedDirectEndpoint = true;
+  logLine("warn", "database_direct_endpoint", { hint: "Point this deployment's DATABASE_URL at Render's pooled URL on port 6432; see docs/DEPLOY.md." });
 }
 
 function sslFor(connectionString: string, opt?: CreateDbOptions["ssl"]) {
@@ -157,6 +176,7 @@ export function serverTimeouts(connectionString: string, options: Pick<CreateDbO
 }
 
 export function createDb(connectionString: string, options: CreateDbOptions = {}) {
+  warnOnDirectServerlessEndpoint(connectionString);
   const pool = new pg.Pool({
     connectionString,
     max: options.max ?? 5,

@@ -143,3 +143,27 @@ describe("the slow-query report", () => {
     }
   });
 });
+
+describe("the endpoint a serverless deployment connects to", () => {
+  afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+
+  it("is flagged once when a Vercel process opens a pool on Render's direct endpoint", async () => {
+    const writes = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const flagged = () => writes.mock.calls.filter(([line]) => String(line).includes("database_direct_endpoint")).length;
+    const open = (url: string) => { const { pool } = createDb(url); void pool.end(); };
+    const direct = "postgres://u:p@dpg-example-a.frankfurt-postgres.render.com:5432/ava";
+    open(direct);
+    expect(flagged()).toBe(0);
+    vi.stubEnv("VERCEL", "1");
+    open("postgres://u:p@dpg-example-a.frankfurt-postgres.render.com:6432/ava");
+    open("postgres://u:p@127.0.0.1:5432/ava");
+    expect(flagged()).toBe(0);
+    open(direct);
+    open(direct);
+    expect(flagged()).toBe(1);
+    // The line names the fix and never the address, which carries the password.
+    const line = writes.mock.calls.map(([text]) => String(text)).find(text => text.includes("database_direct_endpoint"))!;
+    expect(line).toContain("6432");
+    expect(line).not.toContain("u:p@");
+  });
+});

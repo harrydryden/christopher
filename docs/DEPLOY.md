@@ -38,7 +38,10 @@ the same learning loop.
    ```
 
    Migrations are safe to re-run; they take an advisory lock, so nothing is damaged if the worker
-   starts at the same moment.
+   starts at the same moment. A run waits about a minute at most for another to finish, and gives
+   up on any table lock after ten seconds (then retries, six times in all) rather than queue the
+   interface's reads behind it. It refuses to finish if any migration in the journal was left
+   unapplied; writing a migration is covered in `packages/db/README.md`.
 
 4. Generate the secret the interface needs:
 
@@ -66,6 +69,42 @@ the same learning loop.
    **Without Resend.** Confirmation and reset links are written to the server log (Vercel's
    function logs); copy the link from there. An administrator can also mint a reset link for any
    account from Admin › Accounts; using it confirms the address as well.
+
+5. Decide which endpoint each client uses. Render gives the database two: **direct** on port 5432
+   (the Internal and External URLs), and **pooled** through PgBouncer on port 6432, which pools by
+   transaction (see [Render's connection-pooling documentation](https://render.com/docs/postgresql-connection-pooling)).
+
+   | Client | Endpoint | Why |
+   |---|---|---|
+   | The interface on Vercel, `/api/cron` included | pooled, 6432 | Every warm function instance keeps a pool of up to 3 connections. It uses only transaction-scoped locks, so transaction pooling is safe for it. |
+   | The worker | direct, 5432 (Internal) | It migrates at boot under a session advisory lock, which transaction pooling cannot hold; the migration runner refuses a pooled URL. |
+   | `pnpm db:migrate`, `seed:demo`, the drills | direct, 5432 (External) | The same lock, from your machine. |
+
+   **The arithmetic.** The database allows 103 backends (`max_connections`), three of them reserved
+   for superusers. The worker holds up to `2 × WORKER_CONCURRENCY + 4` = 10 at the supported
+   concurrency of 3. On the direct endpoint every warm interface instance holds up to 3 more, so
+   about 30 instances (fewer during a rollout, when old and new are both warm, or with the cron
+   fallback's own pool of 6) exhaust the database, and every page fails with "too many clients" for
+   every account at once. Through PgBouncer an instance's connections are clients, which hold no
+   backend while idle; PgBouncer opens backends only for transactions in flight, up to Render's
+   default of `max_connections − 10` = 93. Keep PostgreSQL's active backends under about 70 in
+   steady state (`select count(*) from pg_stat_activity where state = 'active'`), leaving room for
+   the worker, migrations and your own `psql`.
+
+   **Time limits.** The worker and the scripts start every connection with a `statement_timeout` of
+   five minutes and an `idle_in_transaction_session_timeout` of one (`DATABASE_STATEMENT_TIMEOUT_MS`
+   overrides the first). PgBouncer refuses such startup parameters, so a pooled connection sends
+   none. Set them once on the database role instead, so the interface's statements are bounded too
+   and a query left behind by a function the platform killed does not run on holding its locks:
+
+   ```sql
+   ALTER ROLE <database user> SET statement_timeout = '30s';
+   ALTER ROLE <database user> SET idle_in_transaction_session_timeout = '60s';
+   ```
+
+   Direct connections replace the role's values with their own, and migrations set their own for
+   the migration session. A `psql` session inherits the 30 seconds: `SET statement_timeout = 0`
+   first for anything long, such as building an index `CONCURRENTLY` by hand.
 
 ---
 
@@ -98,7 +137,7 @@ Set these on the service:
 | `TZ` | e.g. `Europe/London` |
 | `WORKER_CONCURRENCY` | `3` — the supported value for the 512 MB Starter instance shared with Chromium. It gives a database pool of `2 × concurrency + 4` = 10 connections. Six slots caused an observed ten-hour out-of-memory restart loop on a 41 MB listing; use six only after increasing the instance size and proving memory and database headroom under a representative soak |
 
-The worker and migration runner must use Render’s **direct port 5432** database URL: the session advisory migration lock is incompatible with transaction pooling. The migration runner rejects known Render pooled URLs on port 6432 before connecting. Vercel request-serving functions can use the **pooled port 6432** URL; enabling PgBouncer alone does not switch existing clients. See [Render’s connection-pooling documentation](https://render.com/docs/postgresql-connection-pooling).
+The worker and migration runner must use Render’s **direct port 5432** database URL: the session advisory migration lock is incompatible with transaction pooling. The migration runner rejects known Render pooled URLs on port 6432 before connecting. The interface uses the **pooled port 6432** URL (step 5 of the database section has the reasons and the arithmetic); enabling PgBouncer alone does not switch existing clients. See [Render’s connection-pooling documentation](https://render.com/docs/postgresql-connection-pooling).
 
 The worker runs migrations on boot under an advisory lock. That makes concurrent migration attempts
 safe; it does not by itself prove that an older release can run against every newer schema. Follow
@@ -113,7 +152,7 @@ repository root.
 
 | Variable | Value |
 |---|---|
-| `DATABASE_URL` | the **External** database URL |
+| `DATABASE_URL` | the **pooled** External database URL, on port 6432 (see step 5 of the database section). Not the direct 5432 URL: about 30 warm instances on it exhaust the database |
 | `SESSION_SECRET` | from above |
 | `APP_URL` | `https://<your vercel host>`; used in emailed links and the Google redirect |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | optional, for Google sign-in |

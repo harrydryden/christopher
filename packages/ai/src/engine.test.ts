@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { a3OutputCeiling, createAiEngine, decisionDigest, extractJsonBlock, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, NO_OUTPUT_ERROR, OUTPUT_LIMIT_ERROR, REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, STREAM_CEILING_MS, type AiClientLike, type AiUsageRecord, type DecisionForDigest, type ParseResponse } from "./engine";
+import { a3OutputCeiling, createAiEngine, decisionDigest, MAX_PAUSE_CONTINUATIONS, PAUSED_ERROR, extractJsonBlock, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, NO_OUTPUT_ERROR, OUTPUT_LIMIT_ERROR, REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, STREAM_CEILING_MS, type AiClientLike, type AiEngineOptions, type AiUsageRecord, type DecisionForDigest, type ParseResponse } from "./engine";
 import { APIConnectionError, APIConnectionTimeoutError, APIError, AuthenticationError, BadRequestError, InternalServerError, NotFoundError, PermissionDeniedError, RateLimitError } from "@anthropic-ai/sdk";
 import { estimateCostUsd, estimateCvBuildUsd, estimateLibraryImportUsd, estimateLibraryReviewUsd, serverToolCostUsd, SERVER_TOOL_USD } from "./pricing";
 import type { CvLibrary } from "@ava/core";
@@ -1356,5 +1356,74 @@ describe("library document import (A11)", () => {
     expect(large).toBeGreaterThan(small);
     expect(large).toBeLessThan(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 40_000, descriptionBytes: 7_700 }));
     expect(estimateLibraryImportUsd("claude-fable-5-1", { documentBytes: 0 })).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * A server-tool turn that pauses (A10's web search reaching the server's own iteration limit) is
+ * resumed, not billed and thrown away: the turn goes back as it stands, and the one record the call
+ * leaves carries every request it made.
+ */
+describe("paused server-tool turns", () => {
+  const candidate = { name: "Good Co", homepageUrl: "https://goodco.example", similarTo: [], rationale: "Same sector.", confidence: 0.8 };
+  const paused = (searches: number): ParseResponse => ({
+    stop_reason: "pause_turn",
+    content: [{ type: "server_tool_use", id: `srv_${searches}`, name: "web_search", input: { query: "similar companies" } } as never],
+    usage: { input_tokens: 1000, output_tokens: 100, server_tool_use: { web_search_requests: searches } },
+  });
+  /** Answers in turn, keeping a copy of what each request sent: the engine reuses one request object. */
+  function scripted(answers: Array<ParseResponse | Error>) {
+    const sent: Array<Record<string, unknown>> = [];
+    const client: AiClientLike = { messages: { create: async params => {
+      sent.push(structuredClone(params));
+      const answer = answers[sent.length - 1]!;
+      if (answer instanceof Error) throw answer;
+      return answer;
+    } } };
+    return { client, sent };
+  }
+  const suggest = (client: AiClientLike, usage: AiUsageRecord[], reserve?: AiEngineOptions["reserve"]) =>
+    createAiEngine({ client, getModel: () => "claude-opus-5", onUsage: record => { usage.push(record); }, ...(reserve ? { reserve } : {}) })
+      .suggestCompanies({ portfolio: [{ name: "Acme", domain: "acme.example" }], excludeDomains: [], rejected: [], limit: 5 });
+
+  it("resumes a paused turn by sending it back, and records one call with every request's cost", async () => {
+    const { client, sent } = scripted([paused(6), { stop_reason: "end_turn", parsed_output: { candidates: [candidate] },
+      usage: { input_tokens: 3000, output_tokens: 400, server_tool_use: { web_search_requests: 4 } } }]);
+    const usage: AiUsageRecord[] = [];
+    expect((await suggest(client, usage))!.map(c => c.name)).toEqual(["Good Co"]);
+    expect(sent).toHaveLength(2);
+    const resumed = sent[1]!.messages as Array<{ role: string; content: unknown }>;
+    // The user turn, then the paused assistant turn as it came back; nothing added after it.
+    expect(resumed.map(message => message.role)).toEqual(["user", "assistant"]);
+    expect(resumed[1]!.content).toEqual(paused(6).content);
+    expect(usage).toHaveLength(1);
+    expect(usage[0]).toMatchObject({ ok: true, inputTokens: 4000, outputTokens: 500 });
+    const tokens = estimateCostUsd("claude-opus-5", { inputTokens: 4000, outputTokens: 500, cacheReadTokens: 0, cacheWriteTokens: 0 });
+    expect(usage[0]!.costUsd).toBeCloseTo(tokens + 10 * SERVER_TOOL_USD.web_search_requests!, 6);
+  });
+
+  it("gives up on a turn still paused after its continuations, naming it and charging all of it", async () => {
+    const { client, sent } = scripted([paused(5), paused(5), paused(5)]);
+    const usage: AiUsageRecord[] = [];
+    expect(await suggest(client, usage)).toBeNull();
+    expect(sent).toHaveLength(1 + MAX_PAUSE_CONTINUATIONS);
+    expect(usage).toHaveLength(1);
+    expect(usage[0]).toMatchObject({ ok: false, error: PAUSED_ERROR, failure: { kind: "output_invalid" }, inputTokens: 3000, outputTokens: 300 });
+  });
+
+  it("keeps the first request's cost when a continuation fails", async () => {
+    const { client } = scripted([paused(6), new Error("socket hang up")]);
+    const usage: AiUsageRecord[] = [];
+    expect(await suggest(client, usage)).toBeNull();
+    expect(usage[0]).toMatchObject({ ok: false, error: "socket hang up", inputTokens: 1000, outputTokens: 100 });
+    expect(usage[0]!.costUsd).toBeGreaterThan(6 * SERVER_TOOL_USD.web_search_requests!);
+  });
+
+  it("holds for every request and search a tool call may make", async () => {
+    const held: number[] = [];
+    const { client } = scripted([{ stop_reason: "end_turn", parsed_output: { candidates: [] }, usage: {} }]);
+    await suggest(client, [], async (_site, estimate) => { held.push(estimate); return async () => {}; });
+    // Fifteen searches a request, on each of the three requests the call may make.
+    expect(held[0]).toBeGreaterThan(3 * 15 * SERVER_TOOL_USD.web_search_requests!);
   });
 });

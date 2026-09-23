@@ -37,7 +37,7 @@ import Anthropic, {
 } from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
-import { estimateCostUsd, serverToolCostUsd } from "./pricing";
+import { estimateCostUsd, SERVER_TOOL_USD, serverToolCostUsd } from "./pricing";
 import { modelSupportsEffort } from "./model-capabilities";
 import * as P from "./prompts";
 import * as S from "./schemas";
@@ -243,6 +243,29 @@ export const NO_OUTPUT_ERROR = "no parseable output";
 export const SCHEMA_ERROR_PREFIX = "schema rejected:";
 /** No answer legitimately takes this long, so a stream still open at the ceiling has stalled. */
 export const STREAM_CEILING_MS = 15 * 60_000;
+/**
+ * How many times a turn a server tool paused (`stop_reason: "pause_turn"`, the server's own
+ * iteration limit) is resumed before the call is given up as unfinished.
+ */
+export const MAX_PAUSE_CONTINUATIONS = 2;
+/** The label of a server-tool turn still paused after every continuation it was allowed. */
+export const PAUSED_ERROR = `Server tool turn still paused after ${MAX_PAUSE_CONTINUATIONS} continuations.`;
+
+type Usage = NonNullable<ParseResponse["usage"]>;
+
+/** Two requests' usage as one: every token count added, and every server-tool count by its name. */
+function addUsage(a: Usage, b: Usage): Usage {
+  const tools: Record<string, unknown> = { ...(a.server_tool_use ?? {}) };
+  for (const [field, value] of Object.entries(b.server_tool_use ?? {}))
+    tools[field] = typeof value === "number" ? (typeof tools[field] === "number" ? (tools[field] as number) : 0) + value : value;
+  return {
+    input_tokens: (a.input_tokens ?? 0) + (b.input_tokens ?? 0),
+    output_tokens: (a.output_tokens ?? 0) + (b.output_tokens ?? 0),
+    cache_read_input_tokens: (a.cache_read_input_tokens ?? 0) + (b.cache_read_input_tokens ?? 0),
+    cache_creation_input_tokens: (a.cache_creation_input_tokens ?? 0) + (b.cache_creation_input_tokens ?? 0),
+    ...(Object.keys(tools).length ? { server_tool_use: tools } : {}),
+  };
+}
 
 /**
  * Why a call was cut off by this process rather than by the provider: the stall ceiling, a sibling
@@ -536,14 +559,31 @@ export class AiEngine {
       // A generous reading of the prompt: English runs about four bytes per token, so a third of
       // the byte count leaves roughly 30% of headroom. Output is reserved at the cap it may reach.
       const promptBytes = Buffer.byteLength(params.system + blocks.map(block => block.text).join(""));
-      const estimate = estimateCostUsd(model, { inputTokens: promptBytes / 3,
-        outputTokens: params.maxTokens ?? 4096, cacheReadTokens: 0, cacheWriteTokens: 0 }) + (params.tools?.length ? 1 : 0);
+      // A call with a server tool may be resumed after a pause, each time sending its growing turn
+      // again and searching again, so it holds for every request it may make and every search each
+      // may run, rather than a flat dollar that three long rounds could pass.
+      const requests = params.tools?.length ? 1 + MAX_PAUSE_CONTINUATIONS : 1;
+      const searches = (params.tools ?? []).reduce((sum, tool) => sum + (typeof tool.max_uses === "number" ? tool.max_uses : 10), 0);
+      const estimate = requests * estimateCostUsd(model, { inputTokens: promptBytes / 3,
+        outputTokens: params.maxTokens ?? 4096, cacheReadTokens: 0, cacheWriteTokens: 0 })
+        + requests * searches * (SERVER_TOOL_USD.web_search_requests ?? 0);
       settle = await this.options.reserve(callSite, estimate, recorded);
       if (settle === null) throw new Error("AI budget reserved or exhausted; retry later");
     }
+    // What the requests before the last one used: a paused turn is resumed as a new request, and
+    // every one of them is billed, so the one record this call leaves carries them all.
+    let prior: Usage = {};
     try {
-      const response = await this.complete(request, { ...params, ...(signal ? { signal } : {}) });
-      const usage = response.usage ?? {};
+      const call = { ...params, ...(signal ? { signal } : {}) };
+      let response = await this.complete(request, call);
+      // A server tool that reached its iteration limit pauses the turn; sending the turn back, as
+      // it stands, lets it carry on from there. No extra user turn: the assistant's is resumed.
+      for (let resumed = 0; response.stop_reason === "pause_turn" && resumed < MAX_PAUSE_CONTINUATIONS && !signal?.aborted; resumed++) {
+        prior = addUsage(prior, response.usage ?? {});
+        request.messages = [...(request.messages as unknown[]), { role: "assistant", content: response.content ?? [] }];
+        response = await this.complete(request, call);
+      }
+      const usage = addUsage(prior, response.usage ?? {});
       const tokens = {
         inputTokens: usage.input_tokens ?? 0,
         outputTokens: usage.output_tokens ?? 0,
@@ -552,11 +592,14 @@ export class AiEngine {
       };
       const refused = response.stop_reason === "refusal";
       const truncated = response.stop_reason === "max_tokens";
-      const parsed = refused || truncated ? null : (response.parsed_output ?? extractJsonBlock(textOf(response)));
+      const paused = response.stop_reason === "pause_turn";
+      const parsed = refused || truncated || paused ? null : (response.parsed_output ?? extractJsonBlock(textOf(response)));
       const outcome = refused
         ? { error: `${REFUSAL_ERROR_PREFIX}${response.stop_details?.category ?? "unknown"}` }
         : truncated
           ? { error: OUTPUT_LIMIT_ERROR }
+        : paused
+          ? { error: PAUSED_ERROR }
         : parsed === null || parsed === undefined
           ? { error: NO_OUTPUT_ERROR }
           : validate<T>(params.schema, parsed);
@@ -589,7 +632,7 @@ export class AiEngine {
       // A call that failed before it began spent nothing. One cut off part-way was billed for the
       // prompt it had processed, which is in the snapshot the cut-off carries.
       const snapshot = err instanceof CallCutOff ? err.snapshot : undefined;
-      const partial: NonNullable<ParseResponse["usage"]> = snapshot?.usage ?? {};
+      const partial: Usage = addUsage(prior, snapshot?.usage ?? {});
       const tokens = {
         inputTokens: partial.input_tokens ?? 0,
         outputTokens: partial.output_tokens ?? 0,

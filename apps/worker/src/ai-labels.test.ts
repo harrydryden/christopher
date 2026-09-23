@@ -3,7 +3,7 @@ import { aiOutcome, aiUsageByAccount, createDb, schema } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import {
   CANCELLED_ERROR, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, NO_OUTPUT_ERROR, OUTPUT_LIMIT_ERROR,
-  REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, STREAM_CEILING_MS,
+  PAUSED_ERROR, REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, STREAM_CEILING_MS,
 } from "@ava/ai";
 import { sql } from "drizzle-orm";
 // Not re-exported from the package: its consumer, the outage query, lives beside it.
@@ -33,6 +33,7 @@ const LABELS: Array<{ error: string | null; ok: boolean; outcome: string; provid
   { ok: false, error: OUTPUT_LIMIT_ERROR, outcome: "failed", provider: false },
   { ok: false, error: `${SCHEMA_ERROR_PREFIX} score: Invalid input`, outcome: "failed", provider: false },
   { ok: false, error: NO_OUTPUT_ERROR, outcome: "failed", provider: false },
+  { ok: false, error: PAUSED_ERROR, outcome: "failed", provider: false },
   { ok: false, error: "529 {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\"}}", outcome: "failed", provider: true },
   { ok: false, error: "Connection error.", outcome: "failed", provider: true },
   { ok: false, error: null, outcome: "failed", provider: true },
@@ -45,7 +46,7 @@ it("classifies every label the engine writes the same way in a row and in SQL", 
     expect(isAiProviderFailure(label)).toBe(label.provider);
   }
   const [usage] = await aiUsageByAccount(db, new Date(0));
-  expect(usage).toMatchObject({ calls: LABELS.length, cancelled: 3, stalled: 1, failed: 7 });
+  expect(usage).toMatchObject({ calls: LABELS.length, cancelled: 3, stalled: 1, failed: 8 });
   const rows = await db.execute<{ ok: boolean; error: string | null; provider: boolean }>(sql`select ok, error, ${aiProviderFailureSql} as provider from ai_calls`);
   expect(rows.rows).toHaveLength(LABELS.length);
   for (const row of rows.rows) expect(row.provider).toBe(LABELS.find(label => label.ok === row.ok && label.error === row.error)!.provider);

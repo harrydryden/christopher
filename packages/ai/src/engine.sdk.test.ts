@@ -92,6 +92,19 @@ describe("streamed answers through the SDK", () => {
   });
 });
 
+describe("a paused server-tool turn through the SDK", () => {
+  it("resolves the paused stream and resumes it, sending the turn back", async () => {
+    const { engine, bodies, usage } = sdkEngine(attempt => attempt === 1
+      ? streamed("Searching for similar companies.", { reason: "pause_turn" })
+      : streamed(JSON.stringify({ candidates: [{ name: "Good Co", homepageUrl: "https://goodco.example", rationale: "Same sector.", confidence: 0.8 }] }), { reason: "end_turn" }));
+    const found = await engine.suggestCompanies({ portfolio: [{ name: "Acme", domain: "acme.example" }], excludeDomains: [], rejected: [], limit: 5 });
+    expect(found!.map(company => company.name)).toEqual(["Good Co"]);
+    expect(bodies).toHaveLength(2);
+    expect((bodies[1]!.messages as Array<{ role: string }>).map(message => message.role)).toEqual(["user", "assistant"]);
+    expect(usage[0]).toMatchObject({ ok: true, inputTokens: 2400, outputTokens: 600 });
+  });
+});
+
 describe("a call's signal reaches the SDK request", () => {
   it("retries an overloaded provider on its own when nothing stops it", async () => {
     const { engine, bodies, usage } = sdkEngine(() => overloaded(1));

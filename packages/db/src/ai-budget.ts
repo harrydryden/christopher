@@ -56,11 +56,11 @@ export type AiOutcome = (typeof AI_OUTCOMES)[number];
 const CANCELLED_PREFIXES = ["Cancelled because another call", "Stopped at the task deadline:", "Stopped by the worker:"];
 const STALLED_PREFIX = "Stream timed out:";
 /**
- * The labels of an answer the model gave that could not be used: it declined, ran out of room, or
- * returned something the schema rejects. Each is a failure of the call, but the provider served
+ * The labels of an answer the model gave that could not be used: it declined, ran out of room,
+ * left a server-tool turn unfinished, or returned something the schema rejects. Each is a failure of the call, but the provider served
  * it, so none of them is evidence of an outage.
  */
-const ANSWER_PREFIXES = ["refusal:", "Model output limit reached", "schema rejected:", "no parseable output"];
+const ANSWER_PREFIXES = ["refusal:", "Model output limit reached", "schema rejected:", "no parseable output", "Server tool turn still paused"];
 
 /** What one recorded call actually was. `ok` and `error` are all it takes. */
 export function aiOutcome(row: { ok: boolean; error?: string | null }): AiOutcome {

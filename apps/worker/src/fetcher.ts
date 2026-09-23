@@ -258,7 +258,7 @@ interface RequestCounters {
 interface ReadBody {
   res: HttpResponse;
   chunks: Uint8Array[];
-  /** Bytes read off the wire. The text path re-counts them after decoding. */
+  /** Bytes read, after the platform has undone any content encoding. */
   size: number;
   headers: Record<string, string>;
   /** The final URL after redirects, as the logical host (never the test map's local address). */
@@ -697,6 +697,12 @@ export class PoliteFetcher {
           } finally { reader.releaseLock(); }
         }
       }
+      // What crossed the wire: a compressed body is decoded as it is read, so the count of what was
+      // read overstates a gzipped feed several times over. The declared length is the transfer when
+      // there is one; a body compressed on the fly is chunked and declares none, and for that the
+      // platform `fetch` leaves nothing better than the decoded count.
+      const declared = Number(res.headers.get("content-length") ?? NaN);
+      if (init.method !== "HEAD" && Number.isFinite(declared) && declared >= 0) counted.bytes = declared;
       const outHeaders: Record<string, string> = {};
       res.headers.forEach((v, k) => (outHeaders[k] = v));
       return { value: hooks.body({ res, chunks, size, headers: outHeaders, finalUrl: logical, started, originalHost, counted }) };
@@ -752,11 +758,11 @@ export class PoliteFetcher {
         }
         return undefined;
       },
-      body: ({ res, chunks, headers: outHeaders, finalUrl, started, originalHost, counted }) => {
+      body: ({ res, chunks, headers: outHeaders, finalUrl, started, originalHost }) => {
         const body = decodeBody(Buffer.concat(chunks), outHeaders["content-type"]);
         const response: FetchResponse = { status: res.status, url: finalUrl, headers: outHeaders, body };
+        // What the cache holds, which is the decoded string; the ledger has the wire bytes already.
         const bytes = Buffer.byteLength(body);
-        counted.bytes = bytes;
         if (res.status === 200 && bytes > MAX_CACHED_BODY_BYTES && this.responses.has(cacheKey)) {
           // The body outgrew the cache. Leaving the old one there would keep sending its validator
           // for ever, and a 304 against it would hand a caller a listing that is months out of date.

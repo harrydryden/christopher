@@ -85,9 +85,9 @@ export async function addHttpHostDaily(db: Db, deltas: HttpHostDailyDelta[]): Pr
 /** One accumulated day of traffic to one host through one path, as it is stored. */
 export type HttpHostDailyRow = typeof httpHostDaily.$inferSelect;
 
-/** Rows for the last `days` days (UTC), newest first. */
+/** Rows for the last `days` UTC days, today included, newest first: `days` = 1 is today alone. */
 export async function listHttpHostDaily(db: Db, days = 7): Promise<HttpHostDailyRow[]> {
-  const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+  const since = new Date(Date.now() - (days - 1) * 86_400_000).toISOString().slice(0, 10);
   return db.select().from(httpHostDaily).where(gte(httpHostDaily.day, since)).orderBy(desc(httpHostDaily.day), httpHostDaily.host);
 }
 

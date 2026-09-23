@@ -1,6 +1,7 @@
 /** The polite fetcher: identification, robots.txt, rate limiting, and bot-protection detection. */
 import http from "node:http";
 import net from "node:net";
+import { gzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SourceFetchError } from "@ava/core";
 import { createDb, listHttpHostDaily } from "@ava/db";
@@ -657,6 +658,44 @@ describe("outbound traffic counters", () => {
     expect(row!.robotsDenied).toBe(1);
     // One request was made: robots.txt itself. The page was never asked for.
     expect(row!.requests).toBe(1);
+  });
+
+  it("counts the bytes that crossed the wire, not the decompressed or re-encoded body", async () => {
+    // A JSON feed compresses several times over; counting it decoded overstated what a board costs.
+    const feed = JSON.stringify({ jobs: Array.from({ length: 200 }, (_, i) => ({ id: i, title: "Operations Manager", location: "London" })) });
+    const packed = gzipSync(feed);
+    const latin1 = Buffer.from("<p>M\u00fcnchen</p>", "latin1");
+    const site = await startTestServer({ "gzip.test": {
+      "/feed": { body: packed, contentType: "application/json", headers: { "content-encoding": "gzip", "content-length": String(packed.length) } },
+      "/legacy": { body: latin1, contentType: "text/html; charset=windows-1252" },
+    } }, ["gzip.test"]);
+    try {
+      const ledger = new HttpTrafficLedger(null);
+      const f = new PoliteFetcher({ userAgent: "test", perHostDelayMs: 0, traffic: ledger, hostMap: site.hostMap });
+      const res = await f.fetchText("https://gzip.test/feed");
+      expect(res.body).toBe(feed);
+      expect(ledger.snapshot()[0]!.bytesIn).toBe(packed.length);
+      expect(packed.length).toBeLessThan(feed.length / 5);
+      // Decoded, the page is a byte longer in UTF-8 than it was on the wire; the wire is what counts.
+      await f.fetchText("https://gzip.test/legacy");
+      expect(ledger.snapshot()[0]!.bytesIn).toBe(packed.length + latin1.length);
+    } finally { await site.close(); }
+  });
+
+  it("lists exactly the days it is asked for, today included", async () => {
+    await client.db.execute(sql`delete from http_host_daily where host = 'window.test'`);
+    try {
+      for (let daysAgo = 0; daysAgo < 16; daysAgo++) {
+        const day = new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
+        await client.db.execute(sql`insert into http_host_daily (day, host, via, requests) values (${day}, 'window.test', 'http', 1)`);
+      }
+      const rows = (await listHttpHostDaily(client.db, 14)).filter(r => r.host === "window.test");
+      expect(rows).toHaveLength(14);
+      expect(rows.at(-1)!.day).toBe(new Date(Date.now() - 13 * 86_400_000).toISOString().slice(0, 10));
+      expect((await listHttpHostDaily(client.db, 1)).filter(r => r.host === "window.test").map(r => r.day)).toEqual([today()]);
+    } finally {
+      await client.db.execute(sql`delete from http_host_daily where host = 'window.test'`);
+    }
   });
 
   it("writes a refused private address although no request was made for it", async () => {

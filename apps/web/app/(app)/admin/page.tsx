@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createResetLink, deleteUser, listAccounts, resetAccountAiSpend, setAccountAiBudget, setUserRole } from "@/app/actions/account";
 import { saveRegistrationSettings } from "@/app/actions/settings";
 import { ResetLinkButton } from "@/components/ResetLinkButton";
+import { RunScheduledWork } from "@/components/RunScheduledWork";
 import { adminEmails } from "@/lib/accounts";
 import { isPlaceholderEmail } from "@ava/db";
 import { MAX_ACCOUNT_AI_BUDGET_USD } from "@ava/core";
@@ -48,6 +49,13 @@ export default async function AdminAccountsPage({ searchParams }: { searchParams
             Open registration to anyone who has this deployment&apos;s address
           </label>
         </SettingsForm>
+      </Card>
+
+      <Card title="Scheduled work">
+        <p className="mb-3 text-14 text-muted">
+          The daily run and the weekly jobs start on schedule. Run the scheduler now to queue anything that is due. On a deployment without a worker service (<code>AVA_SERVERLESS_FALLBACK=1</code>) it also works through the queue for up to a minute; beside a worker that is running, it does nothing.
+        </p>
+        <RunScheduledWork />
       </Card>
 
       <Card title="Accounts">

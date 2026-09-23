@@ -577,7 +577,7 @@ async function scanSource(
       id: schema.jobs.id, url: schema.jobs.url, externalKey: schema.jobs.externalKey,
       location: schema.jobs.location, locations: schema.jobs.locations, department: schema.jobs.department,
       employmentType: schema.jobs.employmentType, remote: schema.jobs.remote, salaryText: schema.jobs.salaryText,
-      postedAt: schema.jobs.postedAt,
+      postedAt: schema.jobs.postedAt, descriptionText: schema.jobs.descriptionText,
     })
     .from(schema.jobs)
     .where(and(eq(schema.jobs.companyId, company.id), eq(schema.jobs.origin, "user")));
@@ -623,31 +623,38 @@ async function scanSource(
         descriptionFetchedAt: insert.descriptionText ? deps.now() : null,
       });
   }
+  const adopted: Array<{ id: string; url: string; title: string; department: string | null; location: string | null; locations: string[]; remote: boolean | null; descriptionText: string | null }> = [];
   for (const { job, insert } of adoptions) {
+    const fields = {
+      title: insert.title,
+      url: insert.url,
+      location: insert.location ?? job.location,
+      locations: insert.locations ?? (insert.location ? [insert.location] : job.locations),
+      department: insert.department ?? job.department,
+      remote: insert.remote ?? job.remote,
+    };
     await deps.db.update(schema.jobs).set({
       sourceId: source.id,
       externalKey: insert.externalKey,
       // From here it belongs to the listing, and `added_by` stays: the person who found it keeps
-      // the credit, and their view of it keeps its place.
+      // the credit, and their view of it keeps its place. The company's own listing carries it, so
+      // it is the company's posting, shared like any other, even if it was pasted from elsewhere.
       origin: "scan",
+      shared: true,
       lastSeenAt: deps.now(),
       missingScans: 0,
       firstMissedAt: null,
       status: "open",
       closedAt: null,
-      title: insert.title,
+      ...fields,
       normalizedTitle: normalizeTitle(insert.title),
-      url: insert.url,
-      location: insert.location ?? job.location,
-      locations: insert.locations ?? (insert.location ? [insert.location] : job.locations),
-      department: insert.department ?? job.department,
       employmentType: insert.employmentType ?? job.employmentType,
-      remote: insert.remote ?? job.remote,
       salaryText: insert.salaryText ?? job.salaryText,
       postedAt: insert.postedAt ?? job.postedAt,
       updatedAt: deps.now(),
     }).where(eq(schema.jobs.id, job.id));
     await deps.db.insert(schema.jobEvents).values({ jobId: job.id, type: "updated", payload: { action: "adopted", method: fetchMethod } });
+    adopted.push({ id: job.id, ...fields, descriptionText: job.descriptionText });
   }
   for (let offset = 0; offset < newRows.length; offset += 100) {
     const created = await deps.db.insert(schema.jobs).values(newRows.slice(offset, offset + 100)).onConflictDoNothing()
@@ -673,6 +680,25 @@ async function scanSource(
       // A role whose description is on its way is scored once, when the text lands: the
       // description task re-runs every follower's gate and queues the score then, text or no text.
       // Scoring it now on the title alone would pay for the same role twice.
+      else for (const userId of admitted) scoreQueue.push({ userId, jobId: row.id });
+    }
+  }
+  // An adopted role is new to every follower but whoever pasted it, so each follower without a
+  // view of it meets it now, exactly as they would a new posting, rather than a day later.
+  if (adopted.length) {
+    const held = new Set((await deps.db.select({ userId: schema.userJobs.userId, jobId: schema.userJobs.jobId }).from(schema.userJobs)
+      .where(inArray(schema.userJobs.jobId, adopted.map(row => row.id)))).map(view => `${view.userId}:${view.jobId}`));
+    for (const row of adopted) {
+      const admitted: string[] = [];
+      for (const follower of followers) {
+        if (held.has(`${follower.userId}:${row.id}`)) continue;
+        if (undecided(row.url) && needsDescription(follower.settings.gate)) continue;
+        const verdict = follower.gate.evaluate({ title: row.title, department: row.department, description: follower.gate.matchesDescription ? row.descriptionText : undefined, location: row.location, locations: row.locations, remote: row.remote });
+        if (!verdict.inTable) continue;
+        admitted.push(follower.userId);
+        viewInserts.push({ userId: follower.userId, jobId: row.id, keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms, excluded: verdict.excluded, locationOk: verdict.locationOk, inTable: true, nearMiss: false, seeded: false, createdAt: deps.now(), updatedAt: deps.now() });
+      }
+      if (!row.descriptionText && (admitted.length || deferred.has(row.url))) descriptionQueue.add(row.id);
       else for (const userId of admitted) scoreQueue.push({ userId, jobId: row.id });
     }
   }

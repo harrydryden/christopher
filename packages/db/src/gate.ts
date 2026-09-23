@@ -58,7 +58,8 @@ export const GATE_RESTORE_EVENT = '{"action":"unarchived","actor":"system","reas
 
 /**
  * Re-run one account's keyword and location gate over the shared postings of the companies it
- * follows. A posting that passes gets a `user_jobs` row if it had none (store matching roles only,
+ * follows (a posting pasted from a host that is not the company's is offered only to whoever asked
+ * for it by its URL). A posting that passes gets a `user_jobs` row if it had none (store matching roles only,
  * per account); a row that stops passing is archived unless it carries a decision or a saved CV,
  * or the account added the posting itself by pasting its URL.
  * Shared by synchronous settings saves, new subscriptions and the background `reevaluate_gate` task.
@@ -92,6 +93,7 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
           select 1 from company_subscriptions s where s.company_id = j.company_id and s.user_id = ${userId} and s.status <> 'archived')
         and (j.status = 'open' or j.closed_at >= ${closedSince} or uj.job_id is not null)`}
         and (${scope.companyId ?? null}::uuid is null or j.company_id = ${scope.companyId ?? null}::uuid)
+        and (j.shared or j.added_by = ${userId} or uj.added_by_url)
         and (${cursor ?? null}::uuid is null or j.id > ${cursor ?? null}::uuid)
       order by j.id limit 250`);
     const rows = page.rows;

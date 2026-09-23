@@ -116,7 +116,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
       (payload.improvements !== undefined && (!Array.isArray(payload.improvements) || !payload.improvements.every(value => typeof value === "string")))) {
     throw new Error("Invalid CV generation task.");
   }
-  const { draftId, mode, rubric: sourceRubric, improvements: sourceImprovements } = payload as {
+  const { draftId, mode: requestedMode, rubric: suppliedRubric, improvements: suppliedImprovements } = payload as {
     draftId: string;
     rubric?: Parameters<typeof validateCvRubric>[1];
     improvements?: string[];
@@ -194,6 +194,11 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
     // What this build has already paid for. A retry reads it and skips those calls; publication
     // clears it, because a published CV has nothing left to resume.
     let checkpoint: CvBuildCheckpoint = draft.buildCheckpoint ?? {};
+    // What the revision's first task asked for, when this task is a retry that was not told: the
+    // mode, the improvements and the parent's rubric are kept on the checkpoint for exactly this.
+    const mode = requestedMode ?? checkpoint.mode;
+    const sourceRubric = suppliedRubric ?? checkpoint.sourceRubric;
+    const sourceImprovements = suppliedImprovements ?? checkpoint.improvements;
     let generationError: string | undefined;
     // The last failure each call site reported, and the last record it wrote. A cancelled sibling
     // records no failure of its own, so the batch that actually ended the audit is the one read.

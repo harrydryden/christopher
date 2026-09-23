@@ -6,6 +6,8 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb, schema, subscribeToCompany, type Db } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
+import { CV_THEMES, DEFAULT_CV_THEME } from "@ava/core/cv";
+import { rubricFixture } from "../../../../packages/core/test/cv-review-fixture";
 import { eq, sql } from "drizzle-orm";
 import { signInTestUser } from "@/test/auth";
 import type { User } from "@ava/db/schema";
@@ -119,6 +121,50 @@ it("writes a rebuild and a direct edit with the CV model chosen now, not the par
   const children = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
   expect(children.map(child => child.model)).toEqual(["claude-opus-5", "claude-opus-5"]);
   expect((await draftRow(parent.id)).model).toBe("claude-haiku-4-5");
+});
+
+it("retries a rebuild that stopped before writing with its rubric and improvements kept", async () => {
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+  const rubric = rubricFixture("Finance operations");
+  // The rebuild's first attempt extracted its rubric, then stopped before any wording was written.
+  const checkpoint = {
+    tailoringEnabled: true, quizCompleted: true, rubric, rubricAt: "2026-09-01T00:00:00.000Z", attempt: 3,
+    tailoringPlan: { requirements: [], gapQuestions: [] },
+    mode: "improve" as const, improvements: ["Name the budget"], sourceRubric: rubric,
+  };
+  const draft = await failedDraft({ content: null, buildCheckpoint: checkpoint });
+
+  expect(await assessCvDraft(draft.id, { ok: true }, new FormData())).toEqual({ ok: true });
+  const retried = await draftRow(draft.id);
+  // The Library is read afresh, so the evidence plan goes; what the description and the rebuild
+  // asked for does not change, so the rubric and the improvements stay.
+  expect(retried.buildCheckpoint).toEqual({
+    tailoringEnabled: true, quizCompleted: true, rubric, rubricAt: checkpoint.rubricAt,
+    mode: "improve", improvements: ["Name the budget"], sourceRubric: rubric,
+  });
+  const [task] = await buildTasks();
+  expect(task!.payload).toEqual({ draftId: draft.id });
+});
+
+it("retries a page-limit failure against the page limit set since, keeping the CV's own appearance", async () => {
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+  const theme = { ...CV_THEMES.Navy!, font: "Arial" as const, maxPages: 1 };
+  const draft = await failedDraft({
+    content: { ...content, theme },
+    failure: {
+      kind: "page_limit_unfittable", resolvedBy: "user", retryable: false, action: "shorten_or_raise_pages",
+      message: "The CV is 2 pages after three attempts; the limit is 1.", motion: "shorten", attempt: 1, maxAttempts: 3,
+    },
+  });
+  // What the failure asks for: raise the page limit in Settings, then retry.
+  await database.insert(schema.userSettings).values({ userId: user.id, key: "cvTheme", value: { ...DEFAULT_CV_THEME, maxPages: 3 }, updatedAt: new Date() });
+
+  expect(await assessCvDraft(draft.id, { ok: true }, new FormData())).toEqual({ ok: true });
+  const retried = await draftRow(draft.id);
+  // The saved wording is measured against its own theme, so that is where the new limit goes.
+  expect(retried.content!.theme).toEqual({ ...theme, maxPages: 3 });
+  expect(retried.content!.sections).toEqual(content.sections);
+  expect(retried.librarySnapshot.theme!.maxPages).toBe(3);
 });
 
 it("refuses a retry the account's current CV model cannot run, and queues nothing", async () => {

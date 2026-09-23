@@ -593,7 +593,11 @@ export async function saveCvDraft(
             archivedAt: null,
             parentId: id,
             revision,
-            buildCheckpoint: { tailoringEnabled: true, quizCompleted: true },
+            // What this rebuild was asked for, where a retry of it can find it again.
+            buildCheckpoint: {
+              tailoringEnabled: true, quizCompleted: true, mode: "improve", improvements,
+              ...(draft.assessment ? { sourceRubric: draft.assessment.rubric } : {}),
+            },
           })
           .returning();
         await enqueueTask(
@@ -707,6 +711,14 @@ export async function assessCvDraft(
       const settings = await getSettingsFor(user.id, tx);
       const model = cvModelFor(settings);
       const refreshed = stale ? await currentLibrarySnapshot(tx, user.id, settings) : undefined;
+      const checkpoint = draft.buildCheckpoint ?? {};
+      // A page limit the build could not meet is raised in Settings, so that is where the retry
+      // reads it. Saved wording carries its own limit in its theme, and is measured against that,
+      // so the limit is the one thing moved onto it; its colours and font stay as they were.
+      const maxPages = refreshed?.librarySnapshot.theme?.maxPages;
+      const content = draft.failure?.kind === "page_limit_unfittable" && draft.content?.theme && maxPages
+        ? { ...draft.content, theme: { ...draft.content.theme, maxPages } }
+        : undefined;
       await tx
         .update(cvDrafts)
         .set({
@@ -714,16 +726,26 @@ export async function assessCvDraft(
           error: null,
           buildStage: null,
           model,
+          ...(content ? { content } : {}),
           ...(refreshed ? {
             ...refreshed,
+            // The Library and the settings are new; the rubric is the description's, which has not
+            // changed, and what the revision's task asked for is still what it asks for.
             buildCheckpoint: {
-              tailoringEnabled: draft.buildCheckpoint?.tailoringEnabled ?? true,
-              ...(draft.buildCheckpoint?.quizCompleted ? { quizCompleted: true } : {}),
+              tailoringEnabled: checkpoint.tailoringEnabled ?? true,
+              ...(checkpoint.quizCompleted ? { quizCompleted: true } : {}),
+              ...(checkpoint.rubric ? { rubric: checkpoint.rubric } : {}),
+              ...(checkpoint.rubricAt ? { rubricAt: checkpoint.rubricAt } : {}),
+              ...(checkpoint.mode ? { mode: checkpoint.mode } : {}),
+              ...(checkpoint.improvements ? { improvements: checkpoint.improvements } : {}),
+              ...(checkpoint.sourceRubric ? { sourceRubric: checkpoint.sourceRubric } : {}),
             },
             failure: null,
           } : {}),
         })
         .where(eq(cvDrafts.id, id));
+      // Saved wording is assessed as it stands. A revision with none is written again as its task
+      // first asked, which the worker reads from the checkpoint kept above.
       const queued = await enqueueTask(
         tx,
         "generate_cv",

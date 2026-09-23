@@ -26,11 +26,11 @@
     }
   },
   "scripts": {
-    "generate": "drizzle-kit generate",
+    "generate": "echo 'Migrations are written by hand; see packages/db/README.md' && exit 1",
     "migrate": "tsx src/migrate-cli.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build": "echo 'source package, nothing to build'",
-    "test": "echo 'no tests in db package'",
+    "test": "vitest run",
     "lint": "echo 'no lint configured'"
   },
   "dependencies": {
@@ -42,6 +42,7 @@
     "@types/pg": "8.23.1",
     "drizzle-kit": "0.31.10",
     "tsx": "4.23.13",
-    "typescript": "~5.9.0"
+    "typescript": "~5.9.0",
+    "vitest": "5.0.0"
   }
 }

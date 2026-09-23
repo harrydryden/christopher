@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { a3OutputCeiling, createAiEngine, decisionDigest, MAX_PAUSE_CONTINUATIONS, PAUSED_ERROR, extractJsonBlock, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, NO_OUTPUT_ERROR, OUTPUT_LIMIT_ERROR, REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, STREAM_CEILING_MS, type AiClientLike, type AiEngineOptions, type AiUsageRecord, type DecisionForDigest, type ParseResponse } from "./engine";
+import { a3OutputCeiling, createAiEngine, decisionDigest, MAX_PAUSE_CONTINUATIONS, PAUSED_ERROR, SDK_MAX_RETRIES, extractJsonBlock, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, NO_OUTPUT_ERROR, OUTPUT_LIMIT_ERROR, REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, STREAM_CEILING_MS, type AiClientLike, type AiEngineOptions, type AiUsageRecord, type DecisionForDigest, type ParseResponse } from "./engine";
 import { APIConnectionError, APIConnectionTimeoutError, APIError, AuthenticationError, BadRequestError, InternalServerError, NotFoundError, PermissionDeniedError, RateLimitError } from "@anthropic-ai/sdk";
 import { estimateCostUsd, estimateCvBuildUsd, estimateLibraryImportUsd, estimateLibraryReviewUsd, serverToolCostUsd, SERVER_TOOL_USD } from "./pricing";
 import type { CvLibrary } from "@ava/core";
@@ -329,6 +329,23 @@ describe("engine plumbing", () => {
     ledgerDown = false;
     await engine.scoreJob({ profileMarkdown: "", decisionDigest: "", job: { title: "Ops", company: "Acme" } });
     expect(released).toEqual(["A5"]);
+  });
+
+  it("tells the hold how long its call may run, and awaits the model it is given", async () => {
+    const hints: number[] = [];
+    const { client, calls } = fakeClient({ score: 80, verdict: "strong", rationale: "Fits.", flags: [] });
+    const engine = createAiEngine({ client, getModel: async () => "claude-haiku-4-5",
+      reserve: async (_site, _estimate, _ref, hint) => { hints.push(hint!.maxDurationMs); return async () => {}; } });
+    await engine.scoreJob({ profileMarkdown: "", decisionDigest: "", job: { title: "Ops", company: "Acme" } });
+    expect(calls[0]!.params.model).toBe("claude-haiku-4-5");
+    const perRequest = (SDK_MAX_RETRIES + 1) * 30_000 + STREAM_CEILING_MS + 60_000;
+    expect(hints[0]).toBe(perRequest);
+    // A call with a server tool may be resumed after a pause, so it may run for each request.
+    const toolHints: number[] = [];
+    const withTools = createAiEngine({ client: fakeClient({ candidates: [] }).client, getModel: () => "claude-opus-5",
+      reserve: async (_site, _estimate, _ref, hint) => { toolHints.push(hint!.maxDurationMs); return async () => {}; } });
+    await withTools.suggestCompanies({ portfolio: [], excludeDomains: [], rejected: [], limit: 5 });
+    expect(toolHints[0]).toBe((1 + MAX_PAUSE_CONTINUATIONS) * ((SDK_MAX_RETRIES + 1) * 60_000 + STREAM_CEILING_MS + 60_000));
   });
 
   it("gives a run its own engine that shares the client, the budget and the ledger", async () => {

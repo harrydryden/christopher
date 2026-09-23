@@ -443,7 +443,8 @@ export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promis
  */
 export async function handleReevaluateGate(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { userId, companyId } = (task.payload ?? {}) as TaskPayloads["reevaluate_gate"];
-  deps.invalidateSettings();
+  // This account's settings when the task names one; every account's only for the all-accounts run.
+  deps.invalidateSettings(userId);
   const users = userId ? [userId] : await listUserIds(deps.db);
   const outcomes: Record<string, unknown> = {};
   for (const id of users) {

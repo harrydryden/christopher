@@ -1,8 +1,8 @@
 export {
   AiEngine, a3OutputCeiling, createAiEngine, classifyAiFailure, decisionDigest, extractJsonBlock, filterSuggestionKey, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX,
-  INTERRUPTED_ERROR_PREFIX, MAX_PAUSE_CONTINUATIONS, NO_OUTPUT_ERROR, OUTPUT_LIMIT_ERROR, PAUSED_ERROR, REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, STREAM_CEILING_MS,
+  INTERRUPTED_ERROR_PREFIX, MAX_PAUSE_CONTINUATIONS, NO_OUTPUT_ERROR, OUTPUT_LIMIT_ERROR, PAUSED_ERROR, REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, SDK_MAX_RETRIES, STREAM_CEILING_MS,
 } from "./engine";
-export type { AiEngineOptions, AiFailure, AiFailureKind, AiUsageRecord, AiClientLike, AiStreamLike, CvAssessBatchEvent, CvAssessHooks, DecisionForDigest, Effort, LibraryReviewBatchEvent, LibraryReviewHooks, ParseResponse, Ref, UserBlock } from "./engine";
+export type { AiEngineOptions, AiFailure, AiFailureKind, AiUsageRecord, AiClientLike, AiStreamLike, CvAssessBatchEvent, CvAssessHooks, DecisionForDigest, Effort, LibraryReviewBatchEvent, LibraryReviewHooks, ParseResponse, Ref, ReserveHint, UserBlock } from "./engine";
 /**
  * The provider's own error classes, re-exported from the one module that talks to it. The engine
  * classifies a failed call by these, so anything that needs to recognise one — or raise one, as a

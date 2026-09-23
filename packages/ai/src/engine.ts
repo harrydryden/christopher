@@ -170,9 +170,13 @@ export interface AiEngineOptions {
    * Returning null refuses the call; throwing refuses it too, and is how a caller says which of
    * its budgets ran out.
    */
-  reserve?: (callSite: string, estimateUsd: number, ref: Ref) => Promise<(() => Promise<void>) | null>;
+  reserve?: (callSite: string, estimateUsd: number, ref: Ref, hint?: ReserveHint) => Promise<(() => Promise<void>) | null>;
   apiKey?: string;
-  getModel: (callSite: string) => string;
+  /**
+   * The model for a call site. May read through a settings cache that has gone cold: it is
+   * awaited, so an administrator's choice is never replaced by a fallback for want of a warm cache.
+   */
+  getModel: (callSite: string) => string | Promise<string>;
   /** Record one finished call. Throw when the record did not land, so its hold is kept. */
   onUsage?: (record: AiUsageRecord) => void | Promise<void>;
   client?: AiClientLike;
@@ -188,6 +192,19 @@ export interface AiEngineOptions {
   useServerFallback?: boolean;
   logger?: (msg: string, data?: unknown) => void;
 }
+
+/** What a hold is told about the call it covers, so it can outlive it. */
+export interface ReserveHint {
+  /**
+   * The longest this call may run: every SDK attempt's wait for a response to begin, the stream's
+   * ceiling, and each continuation of a paused turn. A hold that expires sooner is swept while its
+   * call is still spending.
+   */
+  maxDurationMs: number;
+}
+
+/** The SDK's own retries of a request that failed before its response began. */
+export const SDK_MAX_RETRIES = 2;
 
 /** One block of the user turn. `cache: true` closes a prefix that other calls send byte for byte. */
 export interface UserBlock {
@@ -441,7 +458,7 @@ export class AiEngine {
     } else if (options.apiKey) {
       // The SDK retries only before a response begins (rate limits, overload, connection errors),
       // so a retried call is never billed twice and a streamed answer is never re-requested part-way.
-      this.client = new Anthropic({ apiKey: options.apiKey, maxRetries: 2 }) as unknown as AiClientLike;
+      this.client = new Anthropic({ apiKey: options.apiKey, maxRetries: SDK_MAX_RETRIES }) as unknown as AiClientLike;
     } else {
       this.client = null;
     }
@@ -531,7 +548,7 @@ export class AiEngine {
     // run's and the caller's), otherwise the caller's and the run's together.
     const signal = params.signal ?? anySignal(callerSignal, this.options.signal);
     if (!this.client || signal?.aborted) return null;
-    const model = params.model ?? this.options.getModel(callSite);
+    const model = params.model ?? await this.options.getModel(callSite);
     const started = Date.now();
     const blocks = typeof params.user === "string" ? [{ text: params.user }] : params.user;
     // The format goes without its parser. Given one, the SDK parses inside the stream and rejects
@@ -567,7 +584,9 @@ export class AiEngine {
       const estimate = requests * estimateCostUsd(model, { inputTokens: promptBytes / 3,
         outputTokens: params.maxTokens ?? 4096, cacheReadTokens: 0, cacheWriteTokens: 0 })
         + requests * searches * (SERVER_TOOL_USD.web_search_requests ?? 0);
-      settle = await this.options.reserve(callSite, estimate, recorded);
+      // Held for as long as the call can possibly run, with a minute's slack for the SDK's back-off.
+      const maxDurationMs = requests * ((SDK_MAX_RETRIES + 1) * (params.timeoutMs ?? 30_000) + STREAM_CEILING_MS + 60_000);
+      settle = await this.options.reserve(callSite, estimate, recorded, { maxDurationMs });
       if (settle === null) throw new Error("AI budget reserved or exhausted; retry later");
     }
     // What the requests before the last one used: a paused turn is resumed as a new request, and

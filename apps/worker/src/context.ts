@@ -1,6 +1,6 @@
 import { createDb, totalAiSpend, type Db } from "@ava/db";
 import { aiBudgetRefusalMessage, aiBudgetWindowStart, aiFeatureLabel, ats, discovery, modelForCallSite, type AppSettings, type DiscoveryAiHooks, type DiscoveryContext, type FetchContext, type SystemSettings } from "@ava/core";
-import { createAiEngine, type AiClientLike, type AiEngine, type AiUsageRecord, type Ref } from "@ava/ai";
+import { createAiEngine, type AiClientLike, type AiEngine, type AiUsageRecord, type Ref, type ReserveHint } from "@ava/ai";
 import { sql } from "drizzle-orm";
 import { BrowserRenderer } from "./browser";
 import type { WorkerEnv } from "./env";
@@ -31,11 +31,17 @@ export interface WorkerDeps {
   settings(): Promise<SystemSettings>;
   /** One account's settings merged onto the system ones, cached the same way. */
   userSettings(userId: string): Promise<AppSettings>;
-  /** Drop the cached settings so the next read hits the database. */
-  invalidateSettings(): void;
+  /**
+   * Drop cached settings so the next read hits the database: one account's, with the shared
+   * settings they are merged onto, or with no account, everyone's.
+   */
+  invalidateSettings(userId?: string): void;
   now(): Date;
   close(): Promise<void>;
 }
+
+/** Accounts whose merged settings stay cached at once; past it the least recently used goes. */
+export const USER_SETTINGS_CACHE_MAX = 2_000;
 
 export interface DepsOverrides {
   now?: () => Date;
@@ -62,12 +68,26 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
     cached = { at: Date.now(), value };
     return value;
   };
+  // Bumped by every invalidation, so a read that began before one never writes its stale result
+  // back after it: gate re-evaluation right after a settings save must see the saved gate.
+  let epoch = 0;
   const userSettings = async (userId: string) => {
     const hit = userCache.get(userId);
-    if (hit && Date.now() - hit.at < settingsTtlMs) return hit.value;
+    if (hit && Date.now() - hit.at < settingsTtlMs) {
+      // Least recently used last out: a hit moves to the back of the map's order.
+      userCache.delete(userId);
+      userCache.set(userId, hit);
+      return hit.value;
+    }
+    const began = epoch;
     const value = await loadUserSettings(db, userId);
-    if (userCache.size > 1000) userCache.clear();
-    userCache.set(userId, { at: Date.now(), value });
+    if (began === epoch) {
+      userCache.delete(userId);
+      userCache.set(userId, { at: Date.now(), value });
+      // The oldest go first. Clearing the whole cache at a thousand entries threw away every
+      // account's settings once a deployment had more accounts than that.
+      while (userCache.size > USER_SETTINGS_CACHE_MAX) userCache.delete(userCache.keys().next().value!);
+    }
     return value;
   };
   const traffic = new HttpTrafficLedger(db);
@@ -103,11 +123,7 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
    * refusal throws rather than returning null, so the error the task records names the budget that
    * stopped it instead of leaving the reader to guess which figure to raise.
    */
-  const reserve = async (callSite: string, estimate: number, ref: Ref) => {
-    // The system settings are read here although no limit comes from them any more: `getModel`
-    // below picks a model synchronously from this cache, so something on the path of every call
-    // has to keep it warm, or an administrator's per-call-site overrides would never be seen.
-    await settings();
+  const reserve = async (callSite: string, estimate: number, ref: Ref, hint?: ReserveHint) => {
     const at = now();
     const account = ref.userId ? await userSettings(ref.userId) : null;
     const hold = await tryReserveAi(db, callSite, estimate, {
@@ -118,7 +134,8 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
       daily: env.dailyAiBudgetUsd,
       discovery: env.discoveryAiBudgetUsd,
       workerId: env.workerId,
-    }, at);
+      // Never shorter than the call may run, so a live call's hold is not swept from under it.
+    }, at, holdMinutesFor(hint));
     if ("refused" in hold)
       // One sentence for a refused hold, wherever it was refused: the CV build and this composed
       // their own, and the two drifted into telling the person different things about one budget.
@@ -130,7 +147,9 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
     reserve,
     apiKey: env.anthropicApiKey,
     ...(overrides.aiClient ? { client: overrides.aiClient } : {}),
-    getModel: (callSite) => modelForCallSite(cached?.value ?? { defaultModel: "claude-sonnet-5", modelOverrides: {} }, callSite),
+    // Read through the settings loader, so a cold cache — at boot, or after an invalidation — reads
+    // the administrator's choice rather than falling back to a model nobody chose.
+    getModel: async (callSite) => modelForCallSite(await settings(), callSite),
     onUsage,
     logger: (msg, data) => log.debug(`ai ${msg}`, data),
   });
@@ -146,9 +165,11 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
     ...(overrides.aiClient ? { aiClient: overrides.aiClient } : {}),
     settings,
     userSettings,
-    invalidateSettings() {
+    invalidateSettings(userId?: string) {
+      epoch++;
       cached = null;
-      userCache.clear();
+      if (userId) userCache.delete(userId);
+      else userCache.clear();
     },
     now,
     async close() {
@@ -158,6 +179,11 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
       await pool.end();
     },
   };
+}
+
+/** How long a per-call hold lives: at least the default fifteen minutes, and never less than its call may run. */
+export function holdMinutesFor(hint?: ReserveHint): number {
+  return Math.max(15, Math.ceil((hint?.maxDurationMs ?? 0) / 60_000));
 }
 
 /**

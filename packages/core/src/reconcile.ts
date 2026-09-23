@@ -173,19 +173,40 @@ export function reconcile(existing: ExistingJob[], postings: RawPosting[], opts:
   return result;
 }
 
+/** The smallest previous ok listing a collapse is judged against (R-3.8). */
+export const SHRINK_FLOOR = 5;
+
+/**
+ * Whether a listing collapsed against the last ok scan: under 30% of what a board of at least
+ * `SHRINK_FLOOR` roles listed then. An empty listing is `suspect_empty` instead.
+ */
+export function listingShrank(previousOkCount: number | null, postingsFound: number): boolean {
+  return previousOkCount !== null && previousOkCount >= SHRINK_FLOOR && postingsFound > 0 && postingsFound < previousOkCount * 0.3;
+}
+
 /** Decide a scan's status from what the fetch and parse produced, relative to the previous ok scan. */
 export function classifyScan(params: {
   fetchOk: boolean;
   postingsFound: number;
   previousOkCount: number | null;
   droppedByValidation?: number;
+  /**
+   * The posting counts of the source's latest scans, newest first, for as long as each was partial
+   * because its listing had collapsed. A board that really did shrink would otherwise be partial
+   * for ever, because only an ok scan moves the count it is judged against: two collapsed scans
+   * with this same count make a third one ok.
+   */
+  recentShrunkCounts?: number[];
 }): "ok" | "partial" | "suspect_empty" | "failed" {
   if (!params.fetchOk) return "failed";
   const prev = params.previousOkCount;
   if (params.postingsFound === 0 && prev !== null && prev >= 3) return "suspect_empty";
   const dropped = params.droppedByValidation ?? 0;
   if (dropped > 0 && dropped / Math.max(1, params.postingsFound + dropped) > 0.2) return "partial";
-  if (prev !== null && prev >= 10 && params.postingsFound < prev * 0.3) return "partial";
+  if (listingShrank(prev, params.postingsFound)) {
+    const [last, before] = params.recentShrunkCounts ?? [];
+    return last === params.postingsFound && before === params.postingsFound ? "ok" : "partial";
+  }
   return "ok";
 }
 

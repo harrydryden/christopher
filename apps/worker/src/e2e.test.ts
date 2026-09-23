@@ -423,7 +423,8 @@ describe("end to end", () => {
     const company = await addCompany("https://www.acme.example/", "acme.example");
     await queue.drain();
 
-    setJobs([JOB_ENGINEER]);
+    // Only the one role comes down: a board cut to a fraction of itself would be a collapse, not a close.
+    setJobs([JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
     for (let i = 0; i < 2; i++) {
       now = new Date(now.getTime() + 86_400_000);
       await enqueueTask(db, "scan_company", { companyId: company.id, trigger: "manual" }, { dedupeKey: dedupeKeyFor("scan_company", { companyId: company.id }), priority: 5 });
@@ -431,7 +432,7 @@ describe("end to end", () => {
     }
     expect((await jobsInTable()).find((r) => r.title === "Operations Manager")!.status).toBe("closed");
 
-    setJobs([JOB_OPERATIONS_MANAGER, JOB_ENGINEER]);
+    setJobs([JOB_OPERATIONS_MANAGER, JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
     now = new Date(now.getTime() + 86_400_000);
     await enqueueTask(db, "scan_company", { companyId: company.id, trigger: "manual" }, { dedupeKey: dedupeKeyFor("scan_company", { companyId: company.id }), priority: 5 });
     await queue.drain();
@@ -1195,6 +1196,15 @@ describe("HTML extraction completion", () => {
     expect(await db.select().from(schema.jobs)).toHaveLength(2);
     const scans = await db.select().from(schema.scans);
     expect(scans.filter(scan => scan.rawSnapshot !== null)).toHaveLength(3);
+    // A fifth scan prunes the one snapshot that aged out, and rewrites no row pruned already.
+    const pruned = async () => (await db.execute<{ id: string; xmin: string }>(sql`select id, xmin::text as xmin from scans where source_id = ${source.id} and raw_snapshot is null order by id`)).rows;
+    const before = await pruned();
+    expect(before).toHaveLength(1);
+    await _scanSourceForTests(deps, company, source, await deps.settings(), null);
+    const after = await pruned();
+    expect(after).toHaveLength(2);
+    expect(after.find(row => row.id === before[0]!.id)).toEqual(before[0]);
+    expect((await db.select().from(schema.scans)).filter(scan => scan.rawSnapshot !== null)).toHaveLength(3);
   }, 60_000);
   it("never closes roles when a later listing page fails", async () => {
     const { company, source } = await htmlFixture();
@@ -1238,17 +1248,17 @@ it("re-discovers a source whose listing collapses and stays collapsed, without c
 
   // The old board keeps serving a shrinking remainder after a migration; the
   // roles we know about are not in it.
-  setJobs(filler.slice(0, 3));
-  const scanAt = async (day: string) => {
+  const scanAt = async (day: string, remainder: number) => {
+    setJobs(filler.slice(0, remainder));
     now = new Date(`${day}T06:00:00Z`);
     await enqueueTask(db, "scan_company", { companyId: company.id, trigger: "manual" }, { dedupeKey: dedupeKeyFor("scan_company", { companyId: company.id }), priority: 5 });
     await queue.drain();
   };
-  await scanAt("2026-09-06");
-  await scanAt("2026-09-07");
+  await scanAt("2026-09-06", 3);
+  await scanAt("2026-09-07", 2);
   let discovers = await db.select().from(schema.tasks).where(sql`type = 'discover' and payload->>'reason' = 'shrunk'`);
   expect(discovers).toHaveLength(0);
-  await scanAt("2026-09-08");
+  await scanAt("2026-09-08", 1);
   discovers = await db.select().from(schema.tasks).where(sql`type = 'discover' and payload->>'reason' = 'shrunk'`);
   expect(discovers.length).toBeGreaterThanOrEqual(1);
   const scans = await db.select().from(schema.scans).orderBy(schema.scans.startedAt);
@@ -1257,6 +1267,53 @@ it("re-discovers a source whose listing collapses and stays collapsed, without c
   expect(manager.status).toBe("open");
   expect(manager.missingScans).toBe(0);
 }, 120_000);
+
+it("takes a collapsed count read three times running as the board's size, and looks for a new board", async () => {
+  await setGate({});
+  const filler = Array.from({ length: 12 }, (_, i) => ({
+    ...JOB_ENGINEER, id: 6_100_000 + i, title: `Engineer ${i}`, absolute_url: `https://job-boards.greenhouse.io/acme/jobs/${6_100_000 + i}`,
+  }));
+  setJobs([JOB_OPERATIONS_MANAGER, ...filler]);
+  const company = await addCompany("https://www.acme.example/", "acme.example");
+  await queue.drain();
+  const [source] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
+  setJobs(filler.slice(0, 3));
+  const scanOn = async (day: string) => {
+    now = new Date(`${day}T06:00:00Z`);
+    const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+    return _scanSourceForTests(deps, company, current!, await deps.settings(), null);
+  };
+  expect((await scanOn("2026-09-06")).status).toBe("partial");
+  expect((await scanOn("2026-09-07")).status).toBe("partial");
+  // The third identical reading: the board shrank, and a board that shrank must be able to close roles.
+  expect((await scanOn("2026-09-08")).status).toBe("ok");
+  const manager = (await jobsInTable()).find(r => r.title === "Operations Manager")!;
+  expect(manager).toMatchObject({ status: "open", missingScans: 1 });
+  expect(await db.select().from(schema.tasks).where(sql`type = 'discover' and payload->>'reason' = 'shrunk'`)).toHaveLength(1);
+  // Judged against its new size from here: the next reading is ok and closes what it lacks.
+  const next = await scanOn("2026-09-09");
+  expect(next.status).toBe("ok");
+  expect(next.closedCount).toBeGreaterThan(0);
+}, 120_000);
+
+it("backs a failing source off to the next daily run, not the one after", async () => {
+  await setGate({});
+  const company = await addCompany("https://www.acme.example/", "acme.example");
+  await queue.drain();
+  const [source] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
+  server.setRoutes({ "www.acme.example": acmeRoutes(), "acme.example": acmeRoutes(), "job-boards.greenhouse.io": {},
+    "boards-api.greenhouse.io": { "/v1/boards/acme/jobs": { status: 500, body: { error: "boom" } } } });
+  // The scheduled run starts at 06:00; this source's turn comes forty minutes in, and it fails.
+  now = new Date("2026-09-06T06:40:00Z");
+  expect((await _scanSourceForTests(deps, company, source!, await deps.settings(), null)).status).toBe("failed");
+  const [failed] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+  expect(failed!.consecutiveFailures).toBe(1);
+  // Tomorrow's 06:00 run finds it due.
+  now = new Date("2026-09-07T06:00:00Z");
+  await handleRunDaily({ payload: { trigger: "schedule", runDate: "2026-09-07" } } as never, deps);
+  const [run] = await db.select().from(schema.scanRuns).where(eq(schema.scanRuns.runDate, "2026-09-07"));
+  expect(run!.companiesTotal).toBe(1);
+}, 60_000);
 
 it("marks a listing that reaches the adapter cap partial and never closes roles from it", async () => {
   await setGate({});
@@ -1519,7 +1576,7 @@ describe("shared catalogue", () => {
     const [source] = await db.select().from(schema.careerSources);
 
     // A feed that stops supplying descriptions, and a posting that has none stored yet.
-    setJobs([{ ...JOB_OPERATIONS_MANAGER, content: undefined }]);
+    setJobs([{ ...JOB_OPERATIONS_MANAGER, content: undefined }, JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
     const [target] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, "id:4001001"));
     await db.update(schema.jobs).set({ descriptionText: null, descriptionHash: null, descriptionFetchedAt: null }).where(eq(schema.jobs.id, target!.id));
 

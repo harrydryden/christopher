@@ -15,6 +15,7 @@ import {
   compileGate,
   dedupeKeyFor,
   keyPostings,
+  listingShrank,
   looksRemote,
   MANUAL_RESCAN_INTERVAL_MS,
   modeForScanStatus,
@@ -86,6 +87,12 @@ const budgetSpentReason = (limit: number) => `Scan stopped after its budget of $
  * wait. Past this the source records a failed scan for the day (counted against nothing).
  */
 const MAX_HOST_BUSY_DEFERRALS = 6;
+
+/**
+ * Taken off a failing source's backoff so that "one day" means the next daily run: the scan ran
+ * after its run began (spread across the hour, then queued), and the next run checks at its start.
+ */
+const BACKOFF_MARGIN_MS = 12 * 3_600_000;
 
 /** The adapters that read a structured feed rather than a page. */
 const PAGE_TYPES = new Set(["html", "jsonld", "rss"]);
@@ -487,12 +494,23 @@ async function scanSource(
     incomplete = true;
     error = budgetSpentReason(requestLimit);
   }
-  const classified = classifyScan({ fetchOk, postingsFound: postings.length, previousOkCount, droppedByValidation });
+  // The source's latest scans, newest first, while each was partial because its listing collapsed.
+  const recentShrunkCounts: number[] = [];
+  for (const scan of await deps.db.select({ status: schema.scans.status, error: schema.scans.error, postingsFound: schema.scans.postingsFound }).from(schema.scans)
+    .where(eq(schema.scans.sourceId, source.id)).orderBy(desc(schema.scans.startedAt)).limit(2)) {
+    if (scan.status !== "partial" || !/shrank/.test(scan.error ?? "")) break;
+    recentShrunkCounts.push(scan.postingsFound);
+  }
+  const classified = classifyScan({ fetchOk, postingsFound: postings.length, previousOkCount, droppedByValidation, recentShrunkCounts });
   // A listing that collapsed against the last ok scan is what an ATS migration
   // looks like while the old board is still up: it keeps serving, just a
   // shrinking remainder. classifyScan already makes this partial so nothing
   // closes; the message lets the persistence check below recognise it.
-  const shrunk = fetchOk && previousOkCount !== null && previousOkCount >= 10 && postings.length > 0 && postings.length < previousOkCount * 0.3;
+  const collapsed = fetchOk && listingShrank(previousOkCount, postings.length);
+  // Unless the same collapsed count has now been read three times running: that board did shrink,
+  // and this scan is ok. It is worth looking for a new board all the same.
+  const settledShrink = collapsed && classified === "ok";
+  const shrunk = collapsed && !settledShrink;
   if (shrunk) error ??= `Listing shrank from ${previousOkCount} to ${postings.length} postings against the last ok scan; treated as partial`;
   // A scan that knows it did not read the whole listing is `partial`, never `suspect_empty`: it is
   // not evidence that the board went empty, and it must not trigger re-discovery on that reading.
@@ -905,7 +923,7 @@ async function scanSource(
   });
 
   // Keep bounded debugging evidence from the three most recent source scans.
-  await deps.db.execute(sql`update scans set raw_snapshot = null where source_id = ${source.id}
+  await deps.db.execute(sql`update scans set raw_snapshot = null where source_id = ${source.id} and raw_snapshot is not null
     and id not in (select id from scans where source_id = ${source.id} order by started_at desc, id desc limit 3)
     and id not in (select id from scans where source_id = ${source.id} and status='ok' order by started_at desc, id desc limit 1)`);
 
@@ -916,7 +934,9 @@ async function scanSource(
     .update(schema.careerSources)
     .set({
       consecutiveFailures: failures,
-      nextScanAt: hostBusy ? source.nextScanAt : failures ? new Date(deps.now().getTime() + Math.min(7, 2 ** Math.min(failures - 1, 3)) * 86400000) : null,
+      // Backed off by whole daily runs (1, 2, 4, then 7 days): measured from this scan, which ran
+      // some time after its run began, the next run would find it not yet due and add a day.
+      nextScanAt: hostBusy ? source.nextScanAt : failures ? new Date(deps.now().getTime() + Math.min(7, 2 ** Math.min(failures - 1, 3)) * 86400000 - BACKOFF_MARGIN_MS) : null,
       status: hostBusy ? source.status : blocked ? "blocked" : failures >= SOURCE_FAILING_AFTER ? "failing" : source.status === "failing" && status === "ok" ? "active" : source.status,
       lastOkScanAt: status === "ok" ? deps.now() : source.lastOkScanAt,
       lastPostingsCount: status === "ok" ? postings.length : source.lastPostingsCount,
@@ -927,9 +947,9 @@ async function scanSource(
   // A source that keeps failing, or that suddenly went empty, is worth re-discovering.
   // So is one that shrank and stayed shrunk: three consecutive collapsed scans
   // is a migration in progress, not a quiet week.
-  const persistentlyShrunk = shrunk && (await deps.db.select({ error: schema.scans.error, status: schema.scans.status }).from(schema.scans)
+  const persistentlyShrunk = settledShrink || (shrunk && (await deps.db.select({ error: schema.scans.error, status: schema.scans.status }).from(schema.scans)
     .where(eq(schema.scans.sourceId, source.id)).orderBy(desc(schema.scans.startedAt)).limit(3))
-    .filter((scan) => scan.status === "partial" && /shrank/.test(scan.error ?? "")).length >= 3;
+    .filter((scan) => scan.status === "partial" && /shrank/.test(scan.error ?? "")).length >= 3);
   if ((failures >= SOURCE_FAILING_AFTER && !hostBusy) || status === "suspect_empty" || persistentlyShrunk) {
     await enqueueTask(deps.db, "discover", { companyId: company.id, reason: status === "suspect_empty" ? "suspect_empty" : persistentlyShrunk ? "shrunk" : "failing" }, {
       dedupeKey: dedupeKeyFor("discover", { companyId: company.id }),

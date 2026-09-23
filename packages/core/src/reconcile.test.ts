@@ -149,6 +149,20 @@ describe("classifyScan", () => {
     expect(classifyScan({ fetchOk: true, postingsFound: 8, previousOkCount: 10, droppedByValidation: 5 })).toBe("partial");
     expect(classifyScan({ fetchOk: true, postingsFound: 10, previousOkCount: 10 })).toBe("ok");
   });
+  it("judges a collapse against any board of five or more roles", () => {
+    expect(classifyScan({ fetchOk: true, postingsFound: 2, previousOkCount: 9 })).toBe("partial");
+    expect(classifyScan({ fetchOk: true, postingsFound: 1, previousOkCount: 5 })).toBe("partial");
+    expect(classifyScan({ fetchOk: true, postingsFound: 1, previousOkCount: 4 })).toBe("ok");
+    expect(classifyScan({ fetchOk: true, postingsFound: 3, previousOkCount: 9 })).toBe("ok");
+  });
+  it("accepts a collapsed count read three times running as the board's real size", () => {
+    const at = (recentShrunkCounts: number[]) => classifyScan({ fetchOk: true, postingsFound: 5, previousOkCount: 20, recentShrunkCounts });
+    expect(at([])).toBe("partial");
+    expect(at([5])).toBe("partial");
+    expect(at([5, 4])).toBe("partial");
+    expect(at([4, 5])).toBe("partial");
+    expect(at([5, 5])).toBe("ok");
+  });
   it("maps statuses to reconciliation modes", () => {
     expect(modeForScanStatus("ok")).toBe("ok");
     expect(modeForScanStatus("partial")).toBe("partial");

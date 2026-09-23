@@ -1,10 +1,11 @@
 import { CvContentSchema } from "@ava/core/cv";
 import { routeUser } from "@/lib/route-auth";
 import { renderCvPdfWithReport, CvLayoutError } from "@/lib/cv-pdf";
+import { refuseCvRender } from "@/lib/cv-render-limit";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** A bounded, authenticated render only: no database writes and no AI calls. */
+/** A bounded, authenticated, throttled render: no AI calls, and no writes but the throttle's count. */
 export async function POST(request: Request) {
   const auth = await routeUser();
   if (!auth.ok) return auth.response;
@@ -26,6 +27,8 @@ export async function POST(request: Request) {
   catch { return new Response("Invalid CV content.", { status: 400 }); }
   const parsed = CvContentSchema.safeParse(payload);
   if (!parsed.success) return new Response(parsed.error.issues.map(issue => issue.message).join(" "), { status: 400 });
+  const refused = await refuseCvRender(auth.user.id);
+  if (refused) return refused;
   let result;
   try { result = await renderCvPdfWithReport(parsed.data); }
   catch (error) {

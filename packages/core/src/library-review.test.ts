@@ -227,6 +227,16 @@ describe("validateLibraryReview", () => {
     expect(() => validateLibraryReview(entry, { ...plan([said()]), entryId: "somewhere-else" })).toThrow(/not given/);
   });
 
+  it("marks an entry the model classified none of the rows of as unread, and no other", () => {
+    // Left out of the answer: the engine hands on an empty plan for it.
+    expect(validateLibraryReview(entry, plan([]))).toMatchObject({ unread: true, score: 0 });
+    // Answered only for rows the entry does not have.
+    expect(validateLibraryReview(entry, plan([said({ row: "A row nobody wrote", quote: null })])).unread).toBe(true);
+    // One row classified, even with a quote that does not anchor, is an answer about this entry.
+    expect(validateLibraryReview(entry, plan([said({ quote: "Rebuilt the Globex onboarding flow" })]))).not.toHaveProperty("unread");
+    expect(validateLibraryReview(entry, plan([said()]))).not.toHaveProperty("unread");
+  });
+
   it("bounds what the model may return", () => {
     const valid = { entries: [plan([said()], ["Ask something"])] };
     expect(LibraryReviewPlanSchema.parse(valid).entries[0]!.rows[0]!.facets).toEqual(["outcome"]);

@@ -2,7 +2,7 @@
  * Careers-source discovery. Given a homepage URL, find the page or feed that lists the company's jobs.
  * See docs/SPEC.md section 3.2. Every step adds candidates with a method; the best one decides the outcome.
  */
-import { absoluteUrl, ensureHttpUrl, extractDomain, normalizeUrl, sameDomain, stripHtml } from "../normalize";
+import { absoluteUrl, ensureHttpUrl, extractDomain, normalizeUrl, sameDomain, scanWindow, stripHtml } from "../normalize";
 import { isExplicitEmptyListing } from "../ats/html";
 import type { RawPosting, SourceSpec } from "../types";
 import { confidenceFor, outcomeFor } from "./confidence";
@@ -141,11 +141,25 @@ function rank(method: string): number {
 }
 
 function hasJsonLdJobPosting(html: string): boolean {
-  return /application\/ld\+json/i.test(html) && /"JobPosting"/i.test(html);
+  const page = scanWindow(html);
+  return /application\/ld\+json/i.test(page) && /"JobPosting"/i.test(page);
 }
 
-function isJsShell(html: string): boolean {
+export function isJsShell(html: string): boolean {
   return countAnchors(html) < 5 || stripHtml(html).length < 400;
+}
+
+// An empty `<div>`/`<section>` whose id or class names jobs: a client-side listing not yet mounted.
+// The tag's attributes stop at the next `<` or `>` and are tested on their own, so every scan is
+// bounded by the tag it starts in.
+const EMPTY_ELEMENT_RE = /<(?:div|section)([^<>]*)>\s*<\/(?:div|section)>/gi;
+const JOBS_MOUNT_ATTR_RE = /(?:id|class)=["'][^"']*(?:jobs?|positions?|openings?)[^"']*["']/i;
+
+export function hasEmptyJobsMount(html: string): boolean {
+  for (const match of scanWindow(html).matchAll(EMPTY_ELEMENT_RE)) {
+    if (match[1] && JOBS_MOUNT_ATTR_RE.test(match[1])) return true;
+  }
+  return false;
 }
 
 function shouldRenderCandidate(html: string, url: string, via?: string): boolean {
@@ -154,8 +168,7 @@ function shouldRenderCandidate(html: string, url: string, via?: string): boolean
   // A careers-shaped path alone is not evidence that a content-rich informational page needs a
   // browser. Render shells and explicit empty client-side job mounts; static landing pages can be
   // followed from their harvested links without starving later candidates behind a slow render.
-  const emptyJobsMount = /<(?:div|section)[^>]+(?:id|class)=["'][^"']*(?:jobs?|positions?|openings?)[^"']*["'][^>]*>\s*<\/(?:div|section)>/i.test(html);
-  return isJsShell(html) || emptyJobsMount;
+  return isJsShell(html) || hasEmptyJobsMount(html);
 }
 
 function isCareersContentNavigation(posting: RawPosting): boolean {
@@ -368,23 +381,51 @@ function safeExtract(ctx: DiscoveryContext, html: string, url: string): RawPosti
   }
 }
 
-function parseSitemapUrls(xml: string): { sitemaps: string[]; urls: string[] } {
-  const sitemaps = [...xml.matchAll(/<sitemap>[\s\S]*?<loc>([\s\S]*?)<\/loc>[\s\S]*?<\/sitemap>/gi)].map((m) => (m[1] ?? "").trim());
-  const urls = [...xml.matchAll(/<url>[\s\S]*?<loc>([\s\S]*?)<\/loc>[\s\S]*?<\/url>/gi)].map((m) => (m[1] ?? "").trim());
-  if (sitemaps.length === 0 && urls.length === 0) {
-    const bare = [...xml.matchAll(/<loc>([\s\S]*?)<\/loc>/gi)].map((m) => (m[1] ?? "").trim());
-    return { sitemaps: [], urls: bare.slice(0, 2000) };
+/**
+ * The first `<loc>` of each `<sitemap>` (an index's child sitemaps) and each `<url>` (pages), read
+ * tag by tag: each `<loc>` belongs to the container opened most recently before it. With neither
+ * container, every `<loc>` is a page. A lazy `<url>[\s\S]*?<loc>` rescanned the rest of the file
+ * from every `<url>` that had no `<loc>`.
+ */
+export function parseSitemapUrls(xml: string): { sitemaps: string[]; urls: string[] } {
+  const text = scanWindow(xml);
+  const tagAt = (at: number, tag: string) => text.slice(at, at + tag.length).toLowerCase() === tag;
+  const sitemaps: string[] = [];
+  const urls: string[] = [];
+  const bare: string[] = [];
+  let open: "sitemap" | "url" | undefined;
+  for (let at = text.indexOf("<"); at >= 0; at = text.indexOf("<", at + 1)) {
+    if (tagAt(at, "<url>")) open = "url";
+    else if (tagAt(at, "<sitemap>")) open = "sitemap";
+    else if (tagAt(at, "<loc>")) {
+      const close = text.indexOf("<", at + 5);
+      if (close < 0) break;
+      if (!tagAt(close, "</loc>")) continue;
+      const loc = text.slice(at + 5, close).trim();
+      if (bare.length < 2000) bare.push(loc);
+      if (open === "sitemap") sitemaps.push(loc);
+      else if (open === "url" && urls.length < 2000) urls.push(loc);
+      open = undefined;
+      at = close;
+    }
   }
-  return { sitemaps: sitemaps.slice(0, 2), urls: urls.slice(0, 2000) };
+  if (sitemaps.length === 0 && urls.length === 0) return { sitemaps: [], urls: bare };
+  return { sitemaps: sitemaps.slice(0, 2), urls };
+}
+
+/**
+ * `Sitemap:` lines from robots.txt. The spacing is spaces and tabs only: `^\s*` under the multiline
+ * flag ran on across blank lines, rescanning the rest of the file from each of them.
+ */
+export function sitemapsFromRobots(text: string): string[] {
+  return [...scanWindow(text).matchAll(/^[ \t]*sitemap:[ \t]*(\S+)[ \t]*$/gim)].map((m) => m[1] ?? "").filter(Boolean);
 }
 
 /** Look through robots.txt and sitemaps for a page that parents several job-detail URLs. */
 async function scanSitemaps(run: Run, ctx: DiscoveryContext, origin: string): Promise<string[]> {
   const found: string[] = [];
   const robots = await run.fetch(`${origin}/robots.txt`);
-  const sitemapUrls = robots
-    ? [...robots.html.matchAll(/^\s*sitemap:\s*(\S+)\s*$/gim)].map((m) => (m[1] ?? "").trim()).filter(Boolean)
-    : [];
+  const sitemapUrls = robots ? sitemapsFromRobots(robots.html) : [];
   if (sitemapUrls.length === 0) sitemapUrls.push(`${origin}/sitemap.xml`);
 
   const queue = sitemapUrls.slice(0, 2);

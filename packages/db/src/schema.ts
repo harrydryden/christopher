@@ -655,7 +655,12 @@ export const tasks = pgTable(
     index("tasks_user_idx").on(sql`(${t.payload}->>'userId')`, t.type, t.createdAt).where(sql`(${t.payload}->>'userId') is not null`),
     // Retention and the failed-task list.
     index("tasks_status_finished_idx").on(t.status, t.finishedAt),
-    uniqueIndex("tasks_dedupe_active_uidx").on(t.dedupeKey).where(sql`${t.status} in ('queued', 'running') and ${t.dedupeKey} is not null`),
+    // At most one task per key that is queued and has never started. A running task does not absorb
+    // an enqueue, so work asked for while it runs gets one follow-up that reads the state by then;
+    // a started task handed back to the queue keeps `started_at`, so it never collides with that
+    // follow-up. The plain index answers "is anything queued or running for this key".
+    uniqueIndex("tasks_dedupe_queued_uidx").on(t.dedupeKey).where(sql`${t.status} = 'queued' and ${t.startedAt} is null and ${t.dedupeKey} is not null`),
+    index("tasks_dedupe_active_idx").on(t.dedupeKey).where(sql`${t.status} in ('queued', 'running') and ${t.dedupeKey} is not null`),
   ],
 );
 

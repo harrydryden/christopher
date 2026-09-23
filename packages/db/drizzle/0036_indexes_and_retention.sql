@@ -1,4 +1,5 @@
--- Indexes for the lookups and sweeps that read whole tables at a thousand accounts.
+-- Indexes for the lookups and sweeps that read whole tables at a thousand accounts, and a narrower
+-- dedupe rule for the task queue.
 --
 -- Nothing here is CONCURRENTLY: the migrator runs every pending file in one transaction, where
 -- PostgreSQL refuses it. A plain build blocks writes to its table while it runs, which takes
@@ -46,4 +47,13 @@ CREATE INDEX IF NOT EXISTS "auth_tokens_used_idx" ON "auth_tokens" USING btree (
 CREATE INDEX IF NOT EXISTS "ai_reservations_expires_idx" ON "ai_reservations" USING btree ("expires_at");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "discovery_runs_started_idx" ON "discovery_runs" USING btree ("started_at");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "verification_cache_expires_idx" ON "verification_cache" USING btree ("expires_at");--> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "discovery_documents_processed_idx" ON "discovery_documents" USING btree ("processed_at") WHERE "content" <> '';
+CREATE INDEX IF NOT EXISTS "discovery_documents_processed_idx" ON "discovery_documents" USING btree ("processed_at") WHERE "content" <> '';--> statement-breakpoint
+-- Dedupe covers the tasks that are queued and have never started. With running tasks included, an
+-- enqueue made while a task ran (a library saved during its review, a description fetched during a
+-- score) was dropped, and the run finished on the state it had read; now it leaves one follow-up
+-- that reads the state as it is by then. A task that has started keeps `started_at` when a retry,
+-- the stale sweep or a shutdown hands it back to the queue, so it never collides with its own
+-- follow-up. The plain index keeps "is anything queued or running for this key" an index lookup.
+CREATE UNIQUE INDEX IF NOT EXISTS "tasks_dedupe_queued_uidx" ON "tasks" USING btree ("dedupe_key") WHERE "status" = 'queued' AND "started_at" IS NULL AND "dedupe_key" IS NOT NULL;--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "tasks_dedupe_active_idx" ON "tasks" USING btree ("dedupe_key") WHERE "status" IN ('queued', 'running') AND "dedupe_key" IS NOT NULL;--> statement-breakpoint
+DROP INDEX IF EXISTS "tasks_dedupe_active_uidx";

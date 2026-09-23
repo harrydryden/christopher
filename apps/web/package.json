@@ -15,26 +15,26 @@
     "@ava/core": "workspace:*",
     "@ava/db": "workspace:*",
     "@ava/worker": "workspace:*",
-    "drizzle-orm": "latest",
+    "drizzle-orm": "0.45.2",
     "next": "15",
     "pdfkit": "^0.20.2",
-    "pg": "latest",
+    "pg": "8.23.0",
     "react": "19",
     "react-dom": "19",
-    "zod": "latest"
+    "zod": "4.5.4"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "latest",
-    "@types/node": "latest",
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "26.4.1",
     "@types/pdfkit": "^0.17.6",
-    "@types/pg": "latest",
+    "@types/pg": "8.23.1",
     "@types/react": "19",
     "@types/react-dom": "19",
-    "postcss": "latest",
-    "tailwindcss": "latest",
-    "tsx": "latest",
+    "postcss": "8.5.28",
+    "tailwindcss": "4.3.3",
+    "tsx": "4.23.13",
     "typescript": "~5.9.0",
-    "vitest": "latest"
+    "vitest": "5.0.0"
   },
   "engines": {
     "node": "22.x"

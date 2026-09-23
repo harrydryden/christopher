@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import {
-  captureCompanyLogo, logoCandidates, logoRetryDelayMs, sniffImageType,
+  captureCompanyLogo, logoCandidates, logoRetryDelayMs, sniffImageType, unsafeSvgReason,
   LogoCaptureError, LOGO_MAX_BYTES,
 } from "./logo-capture";
 import type { FetchBytesResponse, FetchContext, FetchInit, FetchResponse } from "./types";
@@ -161,4 +161,55 @@ it("widens the retry after each failure and stops at a month", () => {
     3_600_000, 21_600_000, 86_400_000, 259_200_000, 604_800_000, 2_592_000_000, 2_592_000_000, 2_592_000_000,
   ]);
   expect(logoRetryDelayMs(0)).toBe(3_600_000);
+});
+
+const svg = (inner: string, attrs = "") => new TextEncoder().encode(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 64 64"${attrs}>${inner}</svg>`.padEnd(200, " "));
+
+it("passes over a scripted SVG icon for the next candidate, and says why", async () => {
+  // The catalogue is shared, so a scripted icon on one company's site would be served to everyone.
+  const { ctx, urls } = scripted({
+    homepage: page("https://evil.example/", '<link rel="icon" href="/i.svg">'),
+    assets: {
+      "https://evil.example/i.svg": asset("https://evil.example/i.svg", svg("<script>fetch('/cv')</script><rect width='64' height='64'/>"), 200, "image/svg+xml"),
+      "https://evil.example/favicon.ico": asset("https://evil.example/favicon.ico", PNG),
+    },
+  });
+  const logo = await captureCompanyLogo("https://evil.example/", "evil.example", ctx);
+  expect(logo).toMatchObject({ contentType: "image/png", sourceUrl: "https://evil.example/favicon.ico" });
+  expect(urls()).toEqual(["https://evil.example/i.svg", "https://evil.example/favicon.ico"]);
+
+  const refused = scripted({
+    homepage: page("https://evil.example/", '<link rel="icon" href="/i.svg">'),
+    assets: { "https://evil.example/i.svg": asset("https://evil.example/i.svg", svg("", ' onload="alert(1)"')) },
+  });
+  const error = await captureCompanyLogo("https://evil.example/", "evil.example", refused.ctx).catch((e: unknown) => e);
+  expect((error as LogoCaptureError).tried[0]).toBe("https://evil.example/i.svg: SVG refused because it has an event handler");
+});
+
+it("keeps a plain SVG logo", async () => {
+  const plain = svg('<defs><linearGradient id="g"/></defs><use href="#g"/><image href="data:image/png;base64,iVBORw0KGgo="/><path d="M0 0h64v64H0z" fill="url(#g)"/>');
+  expect(unsafeSvgReason(plain)).toBeNull();
+  const { ctx } = scripted({
+    homepage: page("https://example.com/", '<link rel="icon" href="/logo.svg">'),
+    assets: { "https://example.com/logo.svg": asset("https://example.com/logo.svg", plain, 200, "image/svg+xml") },
+  });
+  expect(await captureCompanyLogo("https://example.com/", "example.com", ctx)).toMatchObject({ contentType: "image/svg+xml" });
+});
+
+it.each([
+  ["a script element", svg("<script>alert(1)</script>"), "it contains a script"],
+  ["a namespaced script", svg('<svg:script xmlns:svg="http://www.w3.org/2000/svg">alert(1)</svg:script>'), "it contains a script"],
+  ["an event handler", svg('<rect onclick="alert(1)"/>'), "it has an event handler"],
+  ["an event handler after a quote", svg('<rect x="0"onmouseover="alert(1)"/>'), "it has an event handler"],
+  ["embedded HTML", svg("<foreignObject><iframe src='https://evil.example/'></iframe></foreignObject>"), "it embeds HTML"],
+  ["HTML without a foreignObject", svg('<h:iframe xmlns:h="http://www.w3.org/1999/xhtml" src="https://evil.example/"/>'), "it embeds HTML"],
+  ["a javascript: link", svg('<a href="JavaScript:alert(1)"><rect/></a>'), "it has a javascript: URL"],
+  ["an entity that can expand into markup", new TextEncoder().encode('<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY x "&#60;script&#62;">]><svg>&x;</svg>'), "it declares an entity"],
+  ["an XSLT stylesheet", new TextEncoder().encode('<?xml version="1.0"?><?xml-stylesheet type="text/xsl" href="#x"?><svg xmlns="http://www.w3.org/2000/svg"></svg>'), "it names a stylesheet"],
+  ["an animated link target", svg('<a><set attributeName="href" to="&#106;avascript:alert(1)"/><rect/></a>'), "it animates a reference"],
+  ["an external image", svg('<image href="https://tracker.example/pixel.png"/>'), "it refers to something outside itself"],
+  ["an external xlink reference", svg("<use xlink:href='https://evil.example/sprite.svg#a'/>"), "it refers to something outside itself"],
+  ["an embedded SVG", svg('<image href="data:image/svg+xml;base64,PHN2Zz4="/>'), "it refers to something outside itself"],
+])("refuses an SVG with %s", (_, bytes, reason) => {
+  expect(unsafeSvgReason(bytes)).toBe(reason);
 });

@@ -2,14 +2,16 @@
 
 import { and, asc, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { z } from "zod";
-import { MAX_ACCOUNT_AI_BUDGET_USD } from "@ava/core";
+import { MAX_ACCOUNT_AI_BUDGET_USD, passwordProblem } from "@ava/core";
 import { companySubscriptions, cvDrafts, users, sessions, type UserRole } from "@ava/db/schema";
 import { isPlaceholderEmail } from "@ava/db";
 import { changePassword as changeStoredPassword, issueResetLink, sendVerificationEmail } from "@/lib/accounts";
 import { emailLinkOrigin } from "@/lib/origin";
-import { endAllSessions, endOtherSessions, getCurrentUser, requireAdmin, requireUser } from "@/lib/auth";
+import { clientAddress, endAllSessions, endOtherSessions, getCurrentUser, requireAdmin, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { clearAttempts, LIMITS, reserveRateLimits } from "@/lib/rate-limit";
 import { setUserSetting } from "@/lib/settings";
 import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
 
@@ -19,13 +21,21 @@ export async function changePassword(_prev: ActionResult, form: FormData): Promi
   const next = String(form.get("password") ?? "");
   const confirm = String(form.get("confirm") ?? "");
   if (next !== confirm) return fail("The two passwords do not match.");
+  // The cheap checks first, so a typo in the new password costs no attempt.
+  const problem = passwordProblem(next);
+  if (problem) return fail(problem);
+  // Only a current password is worth guessing; an account that never had one has nothing to find.
+  const attemptKey = `password-change:user:${current.user.id}`;
+  if (current.user.passwordHash && !(await reserveRateLimits([{ key: attemptKey, limit: LIMITS.passwordChange }]))) {
+    return fail("Too many attempts. Try again in 15 minutes.");
+  }
   try {
-    await changeStoredPassword(current.user, String(form.get("currentPassword") ?? ""), next);
+    // Every other browser signed in with the old password is signed out in the same commit.
+    await changeStoredPassword(current.user, String(form.get("currentPassword") ?? ""), next, current.sessionId);
   } catch (error) {
     return actionError(error, "Could not change the password. Please try again.");
   }
-  // Every other browser signed in with the old password is signed out.
-  await endOtherSessions(current.user.id, current.sessionId);
+  await clearAttempts(attemptKey);
   revalidatePath("/account");
   return ok();
 }
@@ -37,8 +47,22 @@ export async function signOutEverywhere(): Promise<void> {
   revalidatePath("/account");
 }
 
+/**
+ * Send the confirmation link again. Throttled like the public forms: a throwaway account registered
+ * to somebody else's address could otherwise mail them without limit and spend the sending quota
+ * every other account's resets depend on. The address shares its budget with the public
+ * confirmation and reset forms, so no path adds to what that mailbox receives.
+ */
 export async function resendVerification(): Promise<void> {
   const user = await requireUser();
+  // Nothing would be sent, so no capacity is spent.
+  if (user.emailVerifiedAt || isPlaceholderEmail(user.email)) return;
+  const reserved = await reserveRateLimits([
+    { key: `verify:user:${user.id}`, limit: LIMITS.resetEmail },
+    { key: `reset:email:${user.email}`, limit: LIMITS.resetEmail },
+    { key: `reset:ip:${await clientAddress()}`, limit: LIMITS.resetAddress },
+  ]);
+  if (!reserved) redirect("/account?verify=rate_limited");
   await sendVerificationEmail(user, await emailLinkOrigin());
   revalidatePath("/account");
 }

@@ -32,7 +32,7 @@ async function main() {
   const idleSeconds = Number(process.env.USERS_IDLE_SECONDS ?? 30);
   if (!Number.isSafeInteger(soakSeconds) || soakSeconds < 30 || soakSeconds > 300) throw new Error('USERS_SOAK_SECONDS must be 30..300');
   if (!Number.isSafeInteger(idleSeconds) || idleSeconds < 10 || idleSeconds > 120) throw new Error('USERS_IDLE_SECONDS must be 10..120');
-  const secret = 'local-benchmark-only';
+  const secret = 'local-benchmark-only-0123456789abcdef0123456789abcdef';
   let server, sampler;
   let serverLog = '', resourcePhase = 'startup';
   const phases = [], resources = [];

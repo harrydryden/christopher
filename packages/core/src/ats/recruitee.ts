@@ -1,6 +1,6 @@
 import type { Adapter, FetchContext, RawPosting, SourceSpec } from "../types";
 import { parseDate } from "../normalize";
-import { fetchJson, htmlToText, joinLocation, safeUrl, slugOk, str, verifyFromFetch, MAX_POSTINGS } from "./common";
+import { fetchJson, htmlToText, joinLocation, safeUrl, slugOk, str, verifyFromFetch, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS } from "./common";
 
 export function recruiteeSpec(slug: string): SourceSpec {
   return { type: "recruitee", url: `https://${slug}.recruitee.com`, apiUrl: `https://${slug}.recruitee.com/api/offers/`, atsSlug: slug };
@@ -55,7 +55,7 @@ function mapOffer(o: RtOffer, slug: string): RawPosting | null {
 async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
   const slug = spec.atsSlug;
   if (!slug) throw new Error("recruitee spec missing slug");
-  const { data } = await fetchJson<{ offers?: RtOffer[] }>(ctx, `https://${slug}.recruitee.com/api/offers/`);
+  const { data } = await fetchJson<{ offers?: RtOffer[] }>(ctx, `https://${slug}.recruitee.com/api/offers/`, INLINE_DESCRIPTIONS_FETCH);
   const offers = Array.isArray(data.offers) ? data.offers : [];
   return offers.map((o) => mapOffer(o, slug)).filter((p): p is RawPosting => !!p).slice(0, MAX_POSTINGS);
 }

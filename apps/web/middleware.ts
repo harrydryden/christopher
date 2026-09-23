@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { sessionCookieValue, verifySessionCookieValue } from "@/lib/session";
+import { sessionCookieValue, sessionSecret, verifySessionCookieValue } from "@/lib/session";
 
 /**
  * Everything is behind the session cookie except the sign-in pages, the Google round trip, the
@@ -34,14 +34,14 @@ export async function middleware(req: NextRequest) {
     response.headers.set("cache-control", "private, no-store");
     return response;
   }
-  const secret = process.env.SESSION_SECRET;
+  const secret = sessionSecret();
   const cookie = sessionCookieValue(req.cookies);
   const authenticated = secret ? await verifySessionCookieValue(cookie, secret) : false;
 
   if (authenticated) return NextResponse.next();
 
   if (req.nextUrl.pathname.startsWith("/api/")) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    return NextResponse.json({ error: "unauthorized" }, { status: 401, headers: { "cache-control": "private, no-store" } });
   }
 
   const loginUrl = new URL("/login", req.url);

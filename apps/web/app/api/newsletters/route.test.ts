@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ values: vi.fn(), rows: [] as object[], source: { id: "11111111-1111-1111-1111-111111111111", kind: "email" } as { id: string; kind: string } | undefined }));
+const mocks = vi.hoisted(() => ({ values: vi.fn(), rows: [] as object[], source: { id: "11111111-1111-1111-1111-111111111111", kind: "email" } as { id: string; kind: string } | undefined, admitted: true, limited: [] as string[][] }));
+vi.mock("@/lib/rate-limit", async (original) => ({
+  ...(await original<typeof import("@/lib/rate-limit")>()),
+  consumeRateLimit: async (keys: string[]) => { mocks.limited.push(keys); return mocks.admitted; },
+}));
 vi.mock("@/lib/db", () => ({ db: () => ({
   select: () => ({ from: () => ({ where: async () => mocks.source ? [mocks.source] : [] }) }),
   insert: () => ({ values: (value: unknown) => { mocks.values(value); return { onConflictDoNothing: () => ({ returning: async () => mocks.rows }) }; } }),
@@ -9,7 +13,7 @@ const sourceId = "11111111-1111-1111-1111-111111111111";
 function request(body: unknown, secret = "test-secret") {
   return new Request("http://localhost/api/newsletters", { method: "POST", headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify(body) });
 }
-beforeEach(() => { vi.stubEnv("NEWSLETTER_INGEST_SECRET", "test-secret"); mocks.values.mockClear(); mocks.source = { id: sourceId, kind: "email" }; mocks.rows = [{ id: "document" }]; });
+beforeEach(() => { vi.stubEnv("NEWSLETTER_INGEST_SECRET", "test-secret"); mocks.values.mockClear(); mocks.source = { id: sourceId, kind: "email" }; mocks.rows = [{ id: "document" }]; mocks.admitted = true; mocks.limited = []; });
 afterEach(() => vi.unstubAllEnvs());
 it("rejects unauthorised requests without writing content", async () => {
   expect((await POST(request({}, "wrong"))).status).toBe(401); expect(mocks.values).not.toHaveBeenCalled();
@@ -32,5 +36,16 @@ it("accepts readable text and reports redelivery as a duplicate", async () => {
 });
 it("caps actual bytes even without a Content-Length header", async () => {
   expect((await POST(request({ content: "a".repeat(500001) }))).status).toBe(413);
+  expect(mocks.values).not.toHaveBeenCalled();
+});
+it("takes a bounded number of documents into one source a day, and counts only real sources", async () => {
+  const payload = { sourceId, title: "Edition", content: "<p>Acme Robotics is expanding its team in London.</p>".repeat(5) };
+  mocks.source = undefined;
+  expect((await POST(request(payload))).status).toBe(404);
+  expect(mocks.limited).toEqual([]);
+  mocks.source = { id: sourceId, kind: "email" };
+  mocks.admitted = false;
+  expect((await POST(request(payload))).status).toBe(429);
+  expect(mocks.limited).toEqual([[`newsletter:source:${sourceId}`]]);
   expect(mocks.values).not.toHaveBeenCalled();
 });

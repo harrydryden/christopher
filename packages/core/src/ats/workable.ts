@@ -1,7 +1,7 @@
 /** VERIFY: apply.workable.com/api/v3 is undocumented; www.workable.com/api/accounts is the legacy widget feed. */
-import { IncompleteListingError, type Adapter, type FetchContext, type RawPosting, type SourceSpec } from "../types";
+import { IncompleteListingError, SourceFetchError, type Adapter, type FetchContext, type RawPosting, type SourceSpec } from "../types";
 import { parseDate } from "../normalize";
-import { fetchJson, htmlToText, joinLocation, pathSegments, rec, safeUrl, slugOk, str, verifyFromFetch, MAX_POSTINGS } from "./common";
+import { fetchJson, htmlToText, joinLocation, pathSegments, rec, safeUrl, slugOk, str, verifyFromRead, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS, type ListingRead } from "./common";
 
 export function workableSpec(slug: string): SourceSpec {
   return { type: "workable", url: `https://apply.workable.com/${slug}/`, apiUrl: `https://apply.workable.com/api/v3/accounts/${slug}/jobs`, atsSlug: slug };
@@ -77,46 +77,65 @@ function mapJob(j: WkJob, slug: string): RawPosting | null {
   };
 }
 
-/** Ten pages of the v3 feed; a board with an eleventh page is read as incomplete, not as complete. */
-const MAX_PAGES = 10;
+/** Two hundred pages of the v3 feed; a board with more is read as incomplete, not as complete. */
+const MAX_PAGES = 200;
 
-async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
+/** The v3 feed does not have this board: the legacy widget feed is its listing instead. */
+function boardAbsent(err: unknown): boolean {
+  return err instanceof SourceFetchError && (err.status === 404 || err.kind === "parse");
+}
+
+/**
+ * Up to `maxPages` pages of the v3 feed, or the legacy widget feed when v3 does not have the board.
+ * The widget stands in only for a board v3 has nothing for: once a v3 page has been read, a later
+ * page that fails leaves the listing incomplete, because the widget does not list the unread pages
+ * the same way and a role it spells differently would register a miss.
+ */
+async function readListing(spec: SourceSpec, ctx: FetchContext, maxPages: number): Promise<ListingRead & { more?: string }> {
   const slug = spec.atsSlug;
   if (!slug) throw new Error("workable spec missing slug");
-  // Set when the page budget ran out with a next-page token still in hand. Thrown after the try,
-  // so the fallback below cannot swallow it and hand back a short listing as a complete one.
-  let truncated: RawPosting[] | undefined;
-  try {
-    const out: RawPosting[] = [];
-    let token: string | undefined;
-    for (let page = 0; page < MAX_PAGES; page++) {
-      const body: Record<string, unknown> = { query: "", location: [], department: [], worktype: [], remote: [] };
-      if (token) body.token = token;
-      const { data } = await fetchJson<{ results?: WkJob[]; nextPage?: string; total?: number }>(ctx, `https://apply.workable.com/api/v3/accounts/${slug}/jobs`, {
+  const out: RawPosting[] = [];
+  let token: string | undefined;
+  let total: number | undefined;
+  let page = 0;
+  for (; page < maxPages; page++) {
+    const body: Record<string, unknown> = { query: "", location: [], department: [], worktype: [], remote: [] };
+    if (token) body.token = token;
+    let data: { results?: WkJob[]; nextPage?: string; total?: number };
+    try {
+      ({ data } = await fetchJson<{ results?: WkJob[]; nextPage?: string; total?: number }>(ctx, `https://apply.workable.com/api/v3/accounts/${slug}/jobs`, {
         method: "POST",
         body,
-      });
-      const results = Array.isArray(data.results) ? data.results : [];
-      for (const j of results) {
-        const mapped = mapJob(j, slug);
-        if (mapped) out.push(mapped);
-      }
-      token = str(data.nextPage);
-      if (!token || results.length === 0 || out.length >= MAX_POSTINGS) break;
+      }));
+    } catch (err) {
+      if (page === 0 && boardAbsent(err)) break;
+      if (page === 0) throw err;
+      throw new IncompleteListingError(`Workable page ${page + 1} failed (${(err as Error).message}); this scan cannot close roles`, out.slice(0, MAX_POSTINGS));
     }
-    if (out.length > 0) {
-      const postings = out.slice(0, MAX_POSTINGS);
-      if (token) truncated = postings;
-      else return postings;
+    if (typeof data.total === "number") total = data.total;
+    const results = Array.isArray(data.results) ? data.results : [];
+    for (const j of results) {
+      const mapped = mapJob(j, slug);
+      if (mapped) out.push(mapped);
     }
-  } catch {
-    // fall through to the widget feed
+    token = str(data.nextPage);
+    if (!token || results.length === 0 || out.length >= MAX_POSTINGS) break;
   }
-  if (truncated) throw new IncompleteListingError(`Workable listing stopped after ${MAX_PAGES} pages with more pages to read; this scan cannot close roles`, truncated);
-  const { data } = await fetchJson<unknown>(ctx, `https://www.workable.com/api/accounts/${slug}?details=true`);
+  if (out.length > 0) {
+    // A next-page token still in hand means the page budget ran out with more to read.
+    const more = token ? `Workable listing stopped after ${Math.min(page + 1, maxPages)} pages with more pages to read; this scan cannot close roles` : undefined;
+    return { postings: out.slice(0, MAX_POSTINGS), total, more };
+  }
+  const { data } = await fetchJson<unknown>(ctx, `https://www.workable.com/api/accounts/${slug}?details=true`, INLINE_DESCRIPTIONS_FETCH);
   const jobs = rec(data)?.jobs;
   const list = Array.isArray(jobs) ? (jobs as WkJob[]) : [];
-  return list.map((j) => mapJob(j, slug)).filter((p): p is RawPosting => !!p).slice(0, MAX_POSTINGS);
+  return { postings: list.map((j) => mapJob(j, slug)).filter((p): p is RawPosting => !!p).slice(0, MAX_POSTINGS) };
+}
+
+async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
+  const { postings, more } = await readListing(spec, ctx, MAX_PAGES);
+  if (more) throw new IncompleteListingError(more, postings);
+  return postings;
 }
 
 async function companyName(spec: SourceSpec, ctx: FetchContext): Promise<string | undefined> {
@@ -131,5 +150,5 @@ export const workable: Adapter = {
     return slug ? workableSpec(slug) : null;
   },
   fetchPostings,
-  verify: (spec, ctx) => verifyFromFetch(() => fetchPostings(spec, ctx), () => companyName(spec, ctx))(),
+  verify: (spec, ctx) => verifyFromRead(() => readListing(spec, ctx, 1), () => companyName(spec, ctx))(),
 };

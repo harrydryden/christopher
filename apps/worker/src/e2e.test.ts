@@ -87,7 +87,7 @@ function smartRecruitersRoutes(mode: "small" | "capped"): RouteTable[string] {
       const offset = Number(new URL(req.url ?? "/", "https://api.smartrecruiters.com").searchParams.get("offset") ?? "0");
       if (mode === "small") return { body: { offset, limit: 100, totalFound: followed.length, content: offset === 0 ? followed : [] } };
       const content = Array.from({ length: 100 }, (_, i) => posting(`filler-${offset + i}`, `Systems Technician ${offset + i}`));
-      return { body: { offset, limit: 100, totalFound: 1500, content } };
+      return { body: { offset, limit: 100, totalFound: 25_000, content } };
     },
   };
 }
@@ -603,7 +603,7 @@ describe("functional review regressions", () => {
       const outcome = await _scanSourceForTests(deps, company!, current!, settings, null);
       expect(outcome.status).toBe("partial");
       expect(outcome.closedCount).toBe(0);
-      expect(outcome.postingsFound).toBe(1000);
+      expect(outcome.postingsFound).toBe(10_000);
     }
 
     const rows = await jobsInTable();

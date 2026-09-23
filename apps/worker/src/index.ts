@@ -2,18 +2,17 @@
  * Worker entry point. One always-on process that runs the scheduler, the task queue and every
  * outbound fetch and model call. See docs/SPEC.md section 6.
  */
-import { enqueueTask, listUserIds, recordWorkerEvent, type Db } from "@ava/db";
-import { dedupeKeyFor } from "@ava/core";
+import { recordWorkerEvent, type Db } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { sql } from "drizzle-orm";
+import { enqueueBootGateReevaluation, seedTagVocabularies } from "./boot";
 import { createDeps } from "./context";
 import { readEnv } from "./env";
 import { startHealthServer } from "./health";
 import { handlers, onAbandon, onInterrupted } from "./handlers";
-import { ensureSeedTags } from "./handlers/learning";
 import { log } from "./log";
 import { setInternal } from "./settings";
-import { recoverFromCrash, TaskQueue } from "./queue";
+import { recoverFromCrash, settleWithin, TaskQueue } from "./queue";
 import { startScheduler } from "./scheduler";
 import { vitals } from "./vitals";
 
@@ -34,16 +33,17 @@ async function main() {
   // last process being the first thing this one claims.
   await recoverFromCrash(deps, { workerId: env.workerId, onAbandon });
   await reviveRateLimitedSources(deps.db);
-  await ensureSeedTags(deps);
-  // Gate semantics can change between releases: re-run every account's gate once on boot. One task
-  // per account, so each takes only its own lease and they run across the queue's slots instead of
-  // queueing behind a single account-by-account task.
-  for (const userId of await listUserIds(deps.db)) {
-    const payload = { userId };
-    await enqueueTask(deps.db, "reevaluate_gate", payload, { dedupeKey: dedupeKeyFor("reevaluate_gate", payload), priority: 6 });
-  }
+  await seedTagVocabularies(deps.db);
+  // Gate semantics can change between releases; when they have, every account's gate is re-run
+  // once. A boot on the same semantics queues nothing.
+  await enqueueBootGateReevaluation(deps.db);
 
-  const queue = new TaskQueue(deps, handlers, { concurrency: env.concurrency, workerId: env.workerId, onAbandon, onInterrupted });
+  // CV builds hold a slot for many minutes, so they may take at most half the slots: the rest stay
+  // free for the discoveries, imports and scans queued behind a run of builds.
+  const queue = new TaskQueue(deps, handlers, {
+    concurrency: env.concurrency, workerId: env.workerId, onAbandon, onInterrupted,
+    maxActiveByType: { generate_cv: Math.max(1, Math.ceil(env.concurrency / 2)) },
+  });
   queue.start();
   // Written only by the persistent worker, never the short-lived web cron runner.
   const reportHeartbeat = async () => {
@@ -64,28 +64,39 @@ async function main() {
   await reportHeartbeat();
   const heartbeatTimer = setInterval(() => void reportHeartbeat(), 30_000);
   const scheduler = startScheduler(deps);
-  const server = startHealthServer(deps, env.port, () => ({ active: queue.activeCount, commit: process.env.RENDER_GIT_COMMIT ?? null }));
+  const server = startHealthServer(deps, env.port, () => ({ active: queue.activeCount, commit: process.env.RENDER_GIT_COMMIT ?? null }),
+    { isRunning: () => queue.isRunning });
 
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
-    log.info("shutting down", { signal, active: queue.activeCount, vitals: vitals() });
-    await recordWorkerEvent(deps.db, {
-      workerId: env.workerId, kind: "shutdown",
-      detail: { signal, handedBack: queue.activeCount, uptimeSeconds: vitals().uptimeSeconds, commit, vitals: vitals() },
-    });
-    clearInterval(heartbeatTimer);
-    // Before the queue stops claiming: the counters are worth more written than complete.
-    await deps.traffic.flush();
-    scheduler.stop();
-    server.close();
+    // Armed before anything waits on the database. The platform kills the process thirty seconds
+    // after SIGTERM, and this timer used to start only after two unbounded writes, so a slow
+    // database pushed the hand-back past the kill and left every task `running` for five minutes.
     const timeout = setTimeout(() => {
       log.warn("shutdown timed out; exiting");
       process.exit(1);
-    }, 30_000);
-    await queue.stop();
-    await deps.close();
+    }, SHUTDOWN_DEADLINE_MS);
+    const handedBack = queue.activeCount;
+    log.info("shutting down", { signal, active: handedBack, vitals: vitals() });
+    clearInterval(heartbeatTimer);
+    // The queue first: every run is stopped and its task handed back at once. The scheduler's tick
+    // returns at its next step, and the ledger entry and the traffic counters are written beside
+    // the hand-back rather than ahead of it, each within a bound.
+    const queueStopped = queue.stop();
+    const schedulerStopped = scheduler.stop();
+    server.close();
+    await settleWithin(Promise.allSettled([
+      recordWorkerEvent(deps.db, {
+        workerId: env.workerId, kind: "shutdown",
+        detail: { signal, handedBack, uptimeSeconds: vitals().uptimeSeconds, commit, vitals: vitals() },
+      }),
+      deps.traffic.flush(),
+    ]), SHUTDOWN_WRITE_MS);
+    await queueStopped;
+    await settleWithin(schedulerStopped, SHUTDOWN_WRITE_MS);
+    await settleWithin(deps.close(), SHUTDOWN_WRITE_MS);
     clearTimeout(timeout);
     process.exit(0);
   };
@@ -93,16 +104,35 @@ async function main() {
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("unhandledRejection", (reason) => log.error("unhandled rejection", reason));
   // An uncaught exception has already unwound whatever was running, so the process cannot be
-  // trusted to carry on: record why it went, then let the platform restart it. Without this the
-  // default exit leaves no worker event at all, and Health shows a gap nobody can explain.
+  // trusted to carry on: record why it went, put back what it held, then let the platform restart
+  // it. Without the ledger entry Health shows a gap nobody can explain; without the hand-back the
+  // tasks wait out a stale lock and the holds refuse their accounts' work until they expire. Both
+  // are bounded, and the tasks spend their attempt as after any crash.
+  let crashing = false;
   process.on("uncaughtException", (error) => {
     log.error("uncaught exception", { error: { name: error.name, message: error.message, stack: error.stack }, vitals: vitals() });
-    void recordWorkerEvent(deps.db, {
-      workerId: env.workerId, kind: "shutdown",
-      detail: { signal: "uncaughtException", error: error.message, commit, vitals: vitals() },
-    }).catch(() => undefined).finally(() => process.exit(1));
+    if (crashing) return;
+    crashing = true;
+    setTimeout(() => process.exit(1), CRASH_HAND_BACK_MS);
+    void Promise.allSettled([
+      queue.releaseAfterCrash(CRASH_HAND_BACK_MS - 500),
+      recordWorkerEvent(deps.db, {
+        workerId: env.workerId, kind: "shutdown",
+        detail: { signal: "uncaughtException", error: error.message, commit, vitals: vitals() },
+      }),
+    ]).finally(() => process.exit(1));
   });
 }
+
+/**
+ * The whole shutdown, under the platform's thirty seconds: the queue's hand-back, grace and hold
+ * release, then the pool.
+ */
+const SHUTDOWN_DEADLINE_MS = 28_000;
+/** The most any one of the shutdown's other writes may take. */
+const SHUTDOWN_WRITE_MS = 2_000;
+/** How long an uncaught exception may spend putting back what the process held. */
+const CRASH_HAND_BACK_MS = 5_000;
 
 /**
  * One-off repair, idempotent and cheap. Until 429 and 503 became a back-off, a single burst of

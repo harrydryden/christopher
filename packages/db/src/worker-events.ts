@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 import type { Db } from "./client";
 import { workerEvents, type WorkerEventKind } from "./schema";
 
@@ -35,8 +35,18 @@ export async function countWorkerEvents(db: Db, kind: WorkerEventKind, since: Da
   return rows[0]?.n ?? 0;
 }
 
-/** Thirty days is enough to see a pattern; the ledger is not an audit trail. */
-export async function pruneWorkerEvents(db: Db, olderThan = new Date(Date.now() - 30 * 86_400_000)): Promise<number> {
-  const rows = await db.delete(workerEvents).where(lt(workerEvents.at, olderThan)).returning({ id: workerEvents.id });
-  return rows.length;
+/**
+ * Thirty days is enough to see a pattern; the ledger is not an audit trail. Deleted in batches of
+ * `batch`, each its own statement, until one comes back short or `budgetMs` is spent, so a backlog
+ * never holds one statement open over all of it.
+ */
+export async function pruneWorkerEvents(db: Db, olderThan = new Date(Date.now() - 30 * 86_400_000), batch = 5_000, budgetMs = 20_000): Promise<number> {
+  const deadline = performance.now() + budgetMs;
+  let total = 0;
+  for (;;) {
+    const result = await db.execute(sql`delete from worker_events where id in (select id from worker_events where at < ${olderThan.toISOString()}::timestamptz limit ${batch})`);
+    const removed = result.rowCount ?? 0;
+    total += removed;
+    if (removed < batch || performance.now() >= deadline) return total;
+  }
 }

@@ -11,7 +11,7 @@
  * library, and the reviewer's findings — and none of them belongs to the reader. Selecting the two
  * columns the page needs is what keeps them out, rather than a rule about what to render.
  */
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import {
   countOpenCvShareComments,
   findLiveCvShareByHash,
@@ -48,17 +48,28 @@ const COMMENT_LIMIT = 200;
  * has since been archived or deleted, a build that never produced content — because from outside
  * they are one answer: the link no longer works. A share is of one revision, so an archived draft
  * takes its links with it rather than quietly following the person's newer CV.
+ *
+ * And the revision is the one the link was opened on. A draft can be sent back to the worker and
+ * written again in place, so the link shows the draft only while it is ready and its assessment is
+ * no newer than the link: a rebuild in progress, or one that has since published different
+ * wording, reads as closed rather than showing a reader what they were never sent.
  */
 export async function sharedCvByToken(token: string, now: Date = new Date()): Promise<SharedCv | null> {
   if (!isCvShareToken(token)) return null;
   const share = await findLiveCvShareByHash(db(), hashCvShareToken(token), now);
   if (!share) return null;
   const [draft] = await db()
-    .select({ content: cvDrafts.content })
+    .select({
+      content: cvDrafts.content,
+      status: cvDrafts.status,
+      // The one field of the assessment this reads, so the rest of it never leaves the row.
+      assessedAt: sql<string | null>`${cvDrafts.assessment}->>'assessedAt'`,
+    })
     .from(cvDrafts)
     .where(and(eq(cvDrafts.id, share.draftId), eq(cvDrafts.userId, share.userId), isNull(cvDrafts.archivedAt)))
     .limit(1);
-  if (!draft?.content) return null;
+  if (!draft?.content || draft.status !== "ready") return null;
+  if (draft.assessedAt && new Date(draft.assessedAt).getTime() > share.createdAt.getTime()) return null;
   // This link's own thread, not the draft's: two reviewers given two links see their own notes.
   const comments = await db()
     .select({

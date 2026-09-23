@@ -6,6 +6,7 @@ import {
 } from "@ava/core/cv-pdf";
 import {
   createCvAssessment,
+  cvAssessmentCurrent,
   validateCvRubric,
 } from "@ava/core/cv-review";
 import {
@@ -255,6 +256,13 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
         }
       });
       const { library } = inputs;
+      // A build stopped during its optional improvement had already written, assessed and saved
+      // its baseline, and the fence says the improvement is not tried twice. Its saved assessment
+      // still describes the saved wording, so it is published as it stands: re-running the audit
+      // bought the dearest stage of the build a second time for the same answer.
+      const baseline = inputs.reusedContent && checkpoint.improvementAttempted &&
+        cvAssessmentCurrent(draft.assessment, inputs.saved!, draft.jobDescription, library)
+        ? draft.assessment! : undefined;
       // One hold for the whole build, at what it is expected to cost, against the budget of the
       // account that asked for it. A build that account can afford is admitted and never fails
       // part-way over budget accounting; one it cannot afford is refused here, before it spends
@@ -266,7 +274,8 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
       // three times what it can spend refused resumptions the month could plainly afford. Such an
       // attempt may still pay for a rubric it has not inherited, which is cents against a hold
       // measured in dollars, and the hold covers the calls where the money actually is.
-      const expected = estimateCvBuildUsd(draft.model, {
+      // Publishing a saved baseline calls no model at all, so it holds nothing.
+      const expected = baseline ? 0 : estimateCvBuildUsd(draft.model, {
         libraryBytes: Buffer.byteLength(JSON.stringify(library)),
         descriptionBytes: Buffer.byteLength(draft.jobDescription),
       }, inputs.reusedContent
@@ -587,7 +596,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
       });
       return checked;
       };
-      let assessment = await assessContent(content!);
+      let assessment = baseline ?? await assessContent(content!);
       const opportunityIds = new Set(diagnoseCvQuality(assessment, content!).evidencedOpportunityGap.requirementIds);
       const opportunities = assessment.review.matches.filter(match => opportunityIds.has(match.requirementId));
       if (semantic && mode !== "assess" && !checkpoint.improvementAttempted && opportunities.length > 0) {

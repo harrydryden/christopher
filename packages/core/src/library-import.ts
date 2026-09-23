@@ -32,6 +32,16 @@ import { cvQuoteIsAnchored } from "./cv-review";
 
 type CvEntry = CvLibrary["entries"][number];
 
+/**
+ * Text as a database and a model can both take it: every C0 control character and DEL removed,
+ * except the tab and the line breaks that are a document's own layout. A PDF writes NUL for a
+ * glyph it cannot map, and Postgres refuses NUL in a text column, so a document carrying one
+ * failed on the write that followed the model call — and was paid for again on every retry.
+ */
+export function stripControlCharacters(text: string): string {
+  return text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "");
+}
+
 /** Shortest paste worth reading: less than this is a note, not a document. */
 export const LIBRARY_IMPORT_MIN_CHARS = 100;
 

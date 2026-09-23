@@ -423,6 +423,7 @@ async function scanSource(
       externalKey: schema.jobs.externalKey,
       status: schema.jobs.status,
       missingScans: schema.jobs.missingScans,
+      firstMissedAt: schema.jobs.firstMissedAt,
       title: schema.jobs.title,
       location: schema.jobs.location,
       normalizedTitle: schema.jobs.normalizedTitle,
@@ -510,6 +511,7 @@ async function scanSource(
       origin: "scan",
       lastSeenAt: deps.now(),
       missingScans: 0,
+      firstMissedAt: null,
       status: "open",
       closedAt: null,
       title: insert.title,
@@ -555,7 +557,7 @@ async function scanSource(
   // proves it is still there as surely as an ok one does, so either resets the miss count. What a
   // partial scan may not do is count a miss or close anything, and reconcile() gives it neither.
   if (result.seen.length > 0) {
-    await deps.db.update(schema.jobs).set({ lastSeenAt: deps.now(), missingScans: 0 }).where(inArray(schema.jobs.id, result.seen));
+    await deps.db.update(schema.jobs).set({ lastSeenAt: deps.now(), missingScans: 0, firstMissedAt: null }).where(inArray(schema.jobs.id, result.seen));
   }
   // Refresh every observed posting, including fields the identity reconciliation does not compare.
   const observed = new Map(keyPostings(postings).keyed.map((p) => [p.externalKey, p]));
@@ -657,15 +659,28 @@ async function scanSource(
       .update(schema.jobs)
       // A reopened role starts its two-miss count afresh, whichever scan saw it. A closed row carries
       // the count that closed it, so leaving that in place would let a single later miss close it again.
-      .set({ status: "open", closedAt: null, missingScans: 0, reopenedCount: sql`${schema.jobs.reopenedCount} + 1` })
+      .set({ status: "open", closedAt: null, missingScans: 0, firstMissedAt: null, reopenedCount: sql`${schema.jobs.reopenedCount} + 1` })
       .where(inArray(schema.jobs.id, result.reopened));
     await deps.db.insert(schema.jobEvents).values(result.reopened.map(jobId => ({ jobId, type: "reopened" as const, payload: {} })));
   }
   if (result.missing.length > 0) {
+    // The first miss records when it happened; the closing one is measured from it.
     await deps.db
       .update(schema.jobs)
-      .set({ missingScans: sql`${schema.jobs.missingScans} + 1` })
+      .set({
+        missingScans: sql`${schema.jobs.missingScans} + 1`,
+        firstMissedAt: sql`case when ${schema.jobs.missingScans} = 0 then ${deps.now()}::timestamptz else coalesce(${schema.jobs.firstMissedAt}, ${deps.now()}::timestamptz) end`,
+      })
       .where(inArray(schema.jobs.id, result.missing));
+  }
+  if (result.awaitingSeparation.length > 0) {
+    // Missed again too soon after the first miss to be a second observation: nothing is counted.
+    // A row missed before with no time recorded gets one now, so it can close no sooner than
+    // six hours from here.
+    await deps.db
+      .update(schema.jobs)
+      .set({ firstMissedAt: deps.now() })
+      .where(and(inArray(schema.jobs.id, result.awaitingSeparation), isNull(schema.jobs.firstMissedAt)));
   }
   if (result.closed.length > 0) {
     await deps.db

@@ -240,7 +240,7 @@ Pipeline, in order. Every step adds candidates with a confidence; the best candi
 ### 3.4 Change detection, statuses, "live for"
 
 - **R-4.1** Job identity key, per source: the ATS `external_id` when present; otherwise the normalised URL (lowercase host, strip fragment, strip tracking parameters such as `utm_*`, `gh_src`, `lever-source`, `source`, `ref`, strip trailing slash); otherwise a hash of normalised title + location.
-- **R-4.2** On an `ok` scan: new key → insert job (`first_seen_at = now`, `posted_at` from the feed if present, `status = open`); existing key → update `last_seen_at`, refresh changed fields, log an `updated` event if title, location or description changed; open job absent → `missing_scans += 1`; when `missing_scans` reaches 2 → `status = closed`, `closed_at = last_seen_at`.
+- **R-4.2** On an `ok` scan: new key → insert job (`first_seen_at = now`, `posted_at` from the feed if present, `status = open`); existing key → update `last_seen_at`, refresh changed fields, log an `updated` event if title, location or description changed; open job absent → `missing_scans += 1`, the first miss recording `first_missed_at`; when `missing_scans` reaches 2 → `status = closed`, `closed_at = last_seen_at`. The two misses must be independent evidence: the closing miss comes at least six hours after the first (`MIN_CLOSE_SEPARATION_MS`), so a role closes only when it is absent from two consecutive successful scans at least six hours apart. A miss inside those six hours counts nothing (a rescan minutes after the daily scan, or a retried task, is the same observation made twice). A scan that lists the role resets both.
 - **R-4.3** A closed job whose key reappears is reopened (`reopened_count += 1`, event logged). A new posting whose normalised title and location match a job at the same company closed within 30 days is linked as `repost_of` (informational).
 - **R-4.4** Display status is derived: **New** = open and `coalesce(posted_at, first_seen_at)` within the last 7 days; **Active** = open and older; **Closed** = closed. Closed roles are shown for 30 days by default and retained indefinitely.
 - **R-4.5** `live for` = today − `coalesce(posted_at, first_seen_at)` while open, or `closed_at` − that start once closed. The UI marks values derived from first-seen with a small indicator and a tooltip ("Source does not publish a posted date; counted from when this tool first saw the role").
@@ -708,8 +708,9 @@ Discovery vocabulary and path lists are configuration files in `packages/core`, 
 stateDiagram-v2
   [*] --> open: discovered on ok scan
   open --> open: present (missing_scans = 0)
-  open --> open: absent on 1 ok scan (missing_scans = 1)
-  open --> closed: absent on 2 consecutive ok scans
+  open --> open: absent on 1 ok scan (missing_scans = 1, first_missed_at = now)
+  open --> open: absent again within 6 hours of the first miss (nothing counted)
+  open --> closed: absent from 2 consecutive ok scans at least 6 hours apart
   closed --> open: key reappears (reopened_count += 1)
   note right of open
     Display: New if start ≤ 7 days ago, else Active.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyScan, keyPostings, modeForScanStatus, reconcile, type ExistingJob } from "./reconcile";
+import { classifyScan, keyPostings, MIN_CLOSE_SEPARATION_MS, modeForScanStatus, reconcile, type ExistingJob } from "./reconcile";
 import { deriveExternalKey, normalizeUrl } from "./normalize";
 import { displayStatus, formatDuration, liveFor } from "./status";
 import type { RawPosting } from "./types";
@@ -61,8 +61,27 @@ describe("reconcile", () => {
     const first = reconcile([job()], [], { mode: "ok", now });
     expect(first.missing).toEqual(["job-1"]);
     expect(first.closed).toEqual([]);
-    const second = reconcile([job({ missingScans: 1 })], [], { mode: "ok", now });
+    const second = reconcile([job({ missingScans: 1, firstMissedAt: daysAgo(1) })], [], { mode: "ok", now });
     expect(second.closed).toEqual(["job-1"]);
+  });
+  it("counts a second miss inside six hours of the first as nothing, and closes on one after them", () => {
+    const hoursAgo = (h: number) => new Date(now.getTime() - h * 3_600_000);
+    // A rescan forty minutes after the daily scan is the same observation made twice.
+    const soon = reconcile([job({ missingScans: 1, firstMissedAt: hoursAgo(2 / 3) })], [], { mode: "ok", now });
+    expect(soon.closed).toEqual([]);
+    expect(soon.missing).toEqual([]);
+    expect(soon.awaitingSeparation).toEqual(["job-1"]);
+    const almost = reconcile([job({ missingScans: 1, firstMissedAt: new Date(now.getTime() - MIN_CLOSE_SEPARATION_MS + 1) })], [], { mode: "ok", now });
+    expect(almost.closed).toEqual([]);
+    const apart = reconcile([job({ missingScans: 1, firstMissedAt: new Date(now.getTime() - MIN_CLOSE_SEPARATION_MS) })], [], { mode: "ok", now });
+    expect(apart.closed).toEqual(["job-1"]);
+    expect(apart.awaitingSeparation).toEqual([]);
+  });
+  it("never closes a once-missed role whose first miss has no recorded time", () => {
+    const r = reconcile([job({ missingScans: 1, firstMissedAt: null })], [], { mode: "ok", now });
+    expect(r.closed).toEqual([]);
+    expect(r.missing).toEqual([]);
+    expect(r.awaitingSeparation).toEqual(["job-1"]);
   });
   it("never closes anything on a failed or suspicious scan", () => {
     for (const mode of ["none", "partial"] as const) {
@@ -108,8 +127,11 @@ describe("reconcile", () => {
     expect(result.missing).toEqual(["job-1"]);
   });
   it("honours a custom close threshold", () => {
-    const r = reconcile([job({ missingScans: 2 })], [], { mode: "ok", now, closeAfterMissing: 3 });
+    const r = reconcile([job({ missingScans: 2, firstMissedAt: daysAgo(2) })], [], { mode: "ok", now, closeAfterMissing: 3 });
     expect(r.closed).toEqual(["job-1"]);
+    const below = reconcile([job({ missingScans: 1, firstMissedAt: daysAgo(1) })], [], { mode: "ok", now, closeAfterMissing: 3 });
+    expect(below.missing).toEqual(["job-1"]);
+    expect(below.closed).toEqual([]);
   });
 });
 

@@ -7,11 +7,22 @@ import { deriveExternalKey, normalizeTitle } from "./normalize";
 
 export type ScanMode = "ok" | "partial" | "none";
 
+/**
+ * The least time between a role's first miss and the miss that closes it. Two successful scans an
+ * hour apart — a rescan after the daily scan, a retried task, a backlog that ran two days' tasks
+ * back to back — are one observation of the board made twice: a role unpublished for an edit, or a
+ * cache serving a stale listing, would be absent from both. Six hours makes the second miss a
+ * different moment of the board's life, which is what "two consecutive misses" is for.
+ */
+export const MIN_CLOSE_SEPARATION_MS = 6 * 3_600_000;
+
 export interface ExistingJob {
   id: string;
   externalKey: string;
   status: "open" | "closed";
   missingScans: number;
+  /** When the current run of misses began (`jobs.first_missed_at`); null when there is none recorded. */
+  firstMissedAt?: Date | null;
   title: string;
   location: string | null;
   normalizedTitle: string;
@@ -39,9 +50,21 @@ export interface ReconcileResult {
   updates: JobUpdate[];
   /** Closed jobs present in the scan (ok or partial): reopen them with a fresh miss count. */
   reopened: string[];
-  /** Open jobs absent from an ok scan whose missing_scans is still below the threshold. */
+  /**
+   * Open jobs absent from an ok scan whose miss counts, still below the threshold: missing_scans
+   * += 1, and a first miss records when it happened.
+   */
   missing: string[];
-  /** Open jobs absent for `closeAfterMissing` consecutive ok scans (this one included). */
+  /**
+   * Open jobs absent again before `MIN_CLOSE_SEPARATION_MS` has passed since their first miss, or
+   * missed before with no record of when. Nothing is counted: the caller only records the moment
+   * where none is recorded, so the separation is measured from a known time.
+   */
+  awaitingSeparation: string[];
+  /**
+   * Open jobs absent for `closeAfterMissing` consecutive ok scans (this one included), the last at
+   * least `MIN_CLOSE_SEPARATION_MS` after the first.
+   */
   closed: string[];
   duplicateKeysInScan: string[];
 }
@@ -90,6 +113,7 @@ export function reconcile(existing: ExistingJob[], postings: RawPosting[], opts:
     updates: [],
     reopened: [],
     missing: [],
+    awaitingSeparation: [],
     closed: [],
     duplicateKeysInScan: [],
   };
@@ -132,6 +156,16 @@ export function reconcile(existing: ExistingJob[], postings: RawPosting[], opts:
   if (opts.mode === "ok") {
     for (const job of existing) {
       if (job.status !== "open" || presentIds.has(job.id)) continue;
+      // The first miss always counts (the threshold is at least two, so it never closes).
+      if (job.missingScans <= 0) {
+        result.missing.push(job.id);
+        continue;
+      }
+      const first = job.firstMissedAt ?? null;
+      if (first === null || now.getTime() - first.getTime() < MIN_CLOSE_SEPARATION_MS) {
+        result.awaitingSeparation.push(job.id);
+        continue;
+      }
       if (job.missingScans + 1 >= closeAfter) result.closed.push(job.id);
       else result.missing.push(job.id);
     }

@@ -246,6 +246,13 @@
       "when": 1790762400000,
       "tag": "0034_cv_gap_quiz",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1790848800000,
+      "tag": "0035_scan_closure_evidence",
+      "breakpoints": true
     }
   ]
 }

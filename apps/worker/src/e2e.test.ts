@@ -748,6 +748,38 @@ describe("functional review regressions", () => {
     expect(await manager()).toMatchObject({ status: "open", missingScans: 1 });
   }, 90_000);
 
+  it("counts two successful misses forty minutes apart as one, and closes on the next day's", async () => {
+    // A rescan after the daily scan, a retried task or a backlog that runs two days' tasks back to
+    // back all make two complete scans within the hour. A role briefly unpublished is absent from
+    // both, so they are one observation, not two.
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources);
+    const scanAt = async (at: string) => {
+      now = new Date(at);
+      const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+      return _scanSourceForTests(deps, company, current!, await deps.settings(), null);
+    };
+    const manager = async () => (await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, `id:${JOB_OPERATIONS_MANAGER.id}`)))[0]!;
+
+    setJobs([JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
+    expect((await scanAt("2026-09-06T06:00:00Z")).status).toBe("ok");
+    expect(await manager()).toMatchObject({ status: "open", missingScans: 1, firstMissedAt: new Date("2026-09-06T06:00:00Z") });
+    const rescan = await scanAt("2026-09-06T06:40:00Z");
+    expect(rescan).toMatchObject({ status: "ok", closedCount: 0 });
+    expect(await manager()).toMatchObject({ status: "open", missingScans: 1, firstMissedAt: new Date("2026-09-06T06:00:00Z") });
+
+    const nextDay = await scanAt("2026-09-07T06:00:00Z");
+    expect(nextDay.closedCount).toBe(1);
+    expect(await manager()).toMatchObject({ status: "closed", missingScans: 2 });
+
+    // Listed again: open, with no miss and no first-miss time left over.
+    setJobs([JOB_OPERATIONS_MANAGER, JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
+    await scanAt("2026-09-08T06:00:00Z");
+    expect(await manager()).toMatchObject({ status: "open", missingScans: 0, firstMissedAt: null });
+  }, 90_000);
+
   it("closes nothing when a board that listed roles comes back empty, twice", async () => {
     await setGate({});
     const company = await addCompany("https://www.acme.example/", "acme.example");

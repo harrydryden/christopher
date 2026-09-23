@@ -16,6 +16,35 @@ export function articleLinks(html: string, base: string): string[] {
   }))].slice(0, 10);
 }
 
+/** Letters and digits only, lower-cased: "Hims & Hers" and "hims-and-hers" compare on "himshers" and "himsandhers". */
+function squash(text: string): string {
+  return text.toLowerCase().replace(/&/g, "and").replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+const LEGAL_SUFFIX_RE = /\b(?:inc|incorporated|ltd|limited|llc|plc|gmbh|ag|corp|corporation|co|company|group|holdings)\b\.?/gi;
+
+/**
+ * Whether a quoted passage is evidence for this candidate: the passage names the company (legal
+ * suffixes aside), and the homepage is tied to the passage too, either named in it (the address,
+ * or the domain's own label: monzo.com in "Monzo raised…") or through the company's name (the label
+ * of acme.example is part of "Acme Robotics"). A quote that exists in the document but is about
+ * something else, or a homepage the model paired with a genuine sentence, is not evidence.
+ */
+export function quoteSupportsCandidate(quote: string, name: string, homepageUrl: string): boolean {
+  const passage = squash(quote);
+  const company = squash(name.replace(LEGAL_SUFFIX_RE, " "));
+  if (!company || !passage.includes(company)) return false;
+  let host: string;
+  try {
+    host = new URL(homepageUrl).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return false;
+  }
+  const label = squash(extractDomain(host).split(".")[0] ?? "");
+  if (quote.toLowerCase().includes(host)) return true;
+  return label.length >= 3 && (passage.includes(label) || company.includes(label));
+}
+
 /** A company the account already follows, or has already been offered, is never suggested again. */
 async function alreadyKnown(db: WorkerDeps["db"], userId: string, domain: string): Promise<boolean> {
   const rows = await db.execute(sql`select 1 from companies c join company_subscriptions s on s.company_id = c.id
@@ -102,6 +131,7 @@ export async function handleExtractDocument(task: Task, deps: WorkerDeps): Promi
         const candidates = [];
         for (const candidate of result.candidates) {
           if (!candidate.recommended || !candidate.quote.trim() || !document.content.includes(candidate.quote)) continue;
+          if (!quoteSupportsCandidate(candidate.quote, candidate.name, candidate.homepageUrl)) continue;
           let domain: string;
           try { const url = new URL(candidate.homepageUrl); if (!/^https?:$/.test(url.protocol)) continue; domain = extractDomain(url.href); } catch { continue; }
           if (await alreadyKnown(tx as unknown as WorkerDeps["db"], userId, domain)) continue;
@@ -131,7 +161,11 @@ export async function handleVerifyCompany(task: Task, deps: WorkerDeps): Promise
   const document = candidate.documentId ? (await deps.db.select().from(schema.discoveryDocuments).where(eq(schema.discoveryDocuments.id, candidate.documentId)))[0] : undefined;
   if (candidate.documentId && (!document || document.sourceId !== sourceId)) return { skipped: true };
   const verification = (await alreadyKnown(deps.db, userId, candidate.domain)) ? null : await verifyCandidate(deps, userId, candidate.homepageUrl, true);
-  if (verification?.error) throw new Error(verification.error);
+  // Only a failure that says nothing final is retried. A 404, a parked or invalid homepage and a
+  // company with no careers source are answers: the candidate is recorded as processed and never
+  // verified again, where throwing retried it three times on every monitor cycle for ever.
+  if (verification?.error && verification.transient) throw new Error(verification.error);
+  const rejected = verification && !(verification.homepageOk && verification.careersSource) ? verification.error ?? "no careers source found" : undefined;
   return deps.db.transaction(async tx => {
     await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
     let stored = 0;
@@ -144,6 +178,6 @@ export async function handleVerifyCompany(task: Task, deps: WorkerDeps): Promise
       }).onConflictDoNothing().returning({ id: schema.companySuggestions.id })).length;
     }
     await tx.update(schema.discoveryCandidates).set({ processedAt: deps.now() }).where(eq(schema.discoveryCandidates.id, candidateId));
-    return { stored };
+    return rejected ? { stored, rejected } : { stored };
   });
 }

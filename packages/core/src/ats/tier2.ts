@@ -17,9 +17,9 @@
  */
 import * as cheerio from "cheerio";
 import type { Adapter, FetchContext, RawPosting, SourceSpec } from "../types";
-import { SourceFetchError } from "../types";
+import { IncompleteListingError, SourceFetchError } from "../types";
 import { absoluteUrl, parseDate } from "../normalize";
-import { fetchJson, htmlToText, pathSegments, rec, safeUrl, slugOk, str, verifyFromFetch, MAX_POSTINGS } from "./common";
+import { fetchJson, htmlToText, pathSegments, rec, safeUrl, slugOk, str, verifyFromRead, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS, type ListingRead } from "./common";
 
 /** Most listing pages one HTML source is walked through; 50 rows a page covers the cap. */
 const MAX_PAGES = 200;
@@ -40,18 +40,23 @@ async function fetchHtml(ctx: FetchContext, url: string): Promise<string> {
 /**
  * Walk numbered listing pages until a page adds nothing new. Each adapter
  * supplies the page URL and the row parser; this owns the loop, the cap and
- * the "markers present but no rows" parse failure.
+ * the "markers present but no rows" parse failure. A walk the page budget
+ * stops while pages are still adding rows is incomplete, never complete:
+ * the rows past the budget are unread, not closed.
  */
 async function paginate(
   ctx: FetchContext,
   pageUrl: (index: number) => string,
   parse: (html: string, url: string) => { postings: RawPosting[]; markers: boolean },
-  opts: { firstIndex?: number; step?: number } = {},
+  opts: { firstIndex?: number; step?: number; stepFromFirstPage?: (html: string, postings: RawPosting[]) => number; maxPages?: number } = {},
 ): Promise<RawPosting[]> {
   const seen = new Map<string, RawPosting>();
   const first = opts.firstIndex ?? 0;
-  const step = opts.step ?? 1;
-  for (let page = 0; page < MAX_PAGES && seen.size < MAX_POSTINGS; page++) {
+  const maxPages = opts.maxPages ?? MAX_PAGES;
+  let step = opts.step ?? 1;
+  let lastAdded = 0;
+  let page = 0;
+  for (; page < maxPages && seen.size < MAX_POSTINGS; page++) {
     const index = first + page * step;
     const url = pageUrl(index);
     const html = await fetchHtml(ctx, url);
@@ -59,6 +64,7 @@ async function paginate(
     if (page === 0 && postings.length === 0 && !markers) {
       throw new SourceFetchError(`no listing markers found at ${url}; the board may have changed shape`, "parse");
     }
+    if (page === 0 && opts.stepFromFirstPage) step = Math.max(1, opts.stepFromFirstPage(html, postings));
     let added = 0;
     for (const posting of postings) {
       const key = posting.externalId ?? posting.url;
@@ -66,13 +72,27 @@ async function paginate(
       seen.set(key, posting);
       added++;
     }
+    lastAdded = added;
     if (added === 0) break;
   }
-  return [...seen.values()].slice(0, MAX_POSTINGS);
+  const out = [...seen.values()].slice(0, MAX_POSTINGS);
+  if (page >= maxPages && lastAdded > 0) {
+    throw new IncompleteListingError(`listing stopped after ${maxPages} pages with pages still adding roles; this scan cannot close roles`, out);
+  }
+  return out;
 }
 
-function adapterFor(type: SourceType2, specFromUrl: Adapter["specFromUrl"], fetchPostings: Adapter["fetchPostings"]): Adapter {
-  return { type, specFromUrl, fetchPostings, verify: (spec, ctx) => verifyFromFetch(() => fetchPostings(spec, ctx))() };
+/** Reads a listing, as far as `maxPages` pages when it pages at all. */
+type Reader = (spec: SourceSpec, ctx: FetchContext, maxPages?: number) => Promise<RawPosting[]>;
+
+/** Verification reads one page (`verifyRead` when the feed reports a total); the scan reads them all. */
+function adapterFor(type: SourceType2, specFromUrl: Adapter["specFromUrl"], read: Reader, verifyRead?: (spec: SourceSpec, ctx: FetchContext) => Promise<ListingRead>): Adapter {
+  return {
+    type,
+    specFromUrl,
+    fetchPostings: (spec, ctx) => read(spec, ctx),
+    verify: (spec, ctx) => verifyFromRead(verifyRead ? () => verifyRead(spec, ctx) : async () => ({ postings: await read(spec, ctx, 1) }))(),
+  };
 }
 type SourceType2 = "teamtailor" | "icims" | "jobvite" | "jazzhr" | "rippling" | "successfactors" | "eightfold";
 
@@ -110,13 +130,20 @@ function eightfoldFromUrl(url: string): SourceSpec | null {
 
 interface EfPosition { id?: number | string; name?: string; location?: string; locations?: string[]; department?: string; canonicalPositionUrl?: string; t_create?: number; job_description?: string }
 
-async function eightfoldPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
+const EIGHTFOLD_PAGE = 100;
+
+/** Up to `maxPages` pages; `more` says the board holds roles past the last page read. */
+async function eightfoldRead(spec: SourceSpec, ctx: FetchContext, maxPages: number): Promise<ListingRead & { more: boolean }> {
   const host = spec.atsSite, domain = spec.atsSlug;
   if (!host || !domain) throw new Error("eightfold spec missing host/domain");
   const out: RawPosting[] = [];
-  const num = 100;
-  for (let start = 0; start < MAX_POSTINGS; start += num) {
-    const { data } = await fetchJson<{ count?: number; positions?: EfPosition[] }>(ctx, `https://${host}/api/apply/v2/jobs?domain=${encodeURIComponent(domain)}&start=${start}&num=${num}`);
+  const num = EIGHTFOLD_PAGE;
+  let total: number | undefined;
+  let more = false;
+  for (let page = 0; page < maxPages; page++) {
+    const start = page * num;
+    // Descriptions come inline, so a page of a hundred can pass the default body cap.
+    const { data } = await fetchJson<{ count?: number; positions?: EfPosition[] }>(ctx, `https://${host}/api/apply/v2/jobs?domain=${encodeURIComponent(domain)}&start=${start}&num=${num}`, INLINE_DESCRIPTIONS_FETCH);
     const positions = Array.isArray(data.positions) ? data.positions : [];
     for (const p of positions) {
       const title = str(p.name), id = str(p.id);
@@ -135,12 +162,19 @@ async function eightfoldPostings(spec: SourceSpec, ctx: FetchContext): Promise<R
         descriptionText: htmlToText(p.job_description),
       });
     }
-    const total = typeof data.count === "number" ? data.count : out.length;
-    if (positions.length === 0 || start + num >= total) break;
+    if (typeof data.count === "number") total = data.count;
+    // Without a count, only a short page proves the board has ended.
+    more = positions.length > 0 && (total !== undefined ? start + num < total : positions.length === num);
+    if (!more || out.length >= MAX_POSTINGS) break;
   }
-  return out.slice(0, MAX_POSTINGS);
+  return { postings: out.slice(0, MAX_POSTINGS), total, more };
 }
-export const eightfold = adapterFor("eightfold", eightfoldFromUrl, eightfoldPostings);
+async function eightfoldPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
+  const { postings, more } = await eightfoldRead(spec, ctx, MAX_POSTINGS / EIGHTFOLD_PAGE);
+  if (more) throw new IncompleteListingError(`Eightfold listing stopped at ${postings.length} roles with more pages to read; this scan cannot close roles`, postings);
+  return postings;
+}
+export const eightfold = adapterFor("eightfold", eightfoldFromUrl, eightfoldPostings, (spec, ctx) => eightfoldRead(spec, ctx, 1));
 
 // ---------------------------------------------------------------------------
 // Rippling — JSON. `GET https://api.rippling.com/platform/api/ats/v1/board/{slug}/jobs`
@@ -219,9 +253,9 @@ export function parseTeamtailor(html: string, pageUrl: string): { postings: RawP
   }
   return { postings, markers: /teamtailor|data-controller|\/jobs\b/i.test(html) };
 }
-async function teamtailorPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
+async function teamtailorPostings(spec: SourceSpec, ctx: FetchContext, maxPages?: number): Promise<RawPosting[]> {
   const base = spec.url.replace(/\/+$/, "").replace(/\?.*$/, "");
-  return paginate(ctx, (page) => (page === 1 ? base : `${base}?page=${page}`), parseTeamtailor, { firstIndex: 1 });
+  return paginate(ctx, (page) => (page === 1 ? base : `${base}?page=${page}`), parseTeamtailor, { firstIndex: 1, maxPages });
 }
 export const teamtailor = adapterFor("teamtailor", teamtailorFromUrl, teamtailorPostings);
 
@@ -263,19 +297,21 @@ export function parseIcims(html: string, pageUrl: string): { postings: RawPostin
   }
   return { postings, markers: /icims/i.test(html) };
 }
-async function icimsPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
+async function icimsPostings(spec: SourceSpec, ctx: FetchContext, maxPages?: number): Promise<RawPosting[]> {
   const host = spec.atsSite ?? safeUrl(spec.url)?.hostname;
   if (!host) throw new Error("icims spec missing host");
-  return paginate(ctx, (page) => `https://${host}/jobs/search?ss=1&in_iframe=1&pr=${page}`, parseIcims);
+  return paginate(ctx, (page) => `https://${host}/jobs/search?ss=1&in_iframe=1&pr=${page}`, parseIcims, { maxPages });
 }
 export const icims = adapterFor("icims", icimsFromUrl, icimsPostings);
 
 // ---------------------------------------------------------------------------
 // SAP SuccessFactors — `https://{site}/search/?q=&startrow={n}` on
-// career*.successfactors.com / *.successfactors.eu and on custom domains
-// (jobs.company.com) that a pasted URL reaches. Rows are
-// `a.jobTitle-link` with `span.jobLocation` / `span.jobDate` siblings; 25 rows
-// a page, paginated by `startrow`.
+// career*.successfactors.com / career*.successfactors.eu and on custom domains
+// (jobs.company.com) that a pasted URL reaches. Other successfactors hosts are
+// the product itself (performancemanager*, the marketing site), not a board.
+// Rows are `a.jobTitle-link` with `span.jobLocation` / `span.jobDate`
+// siblings, paginated by `startrow` in steps of the tenant's page size
+// (usually 25), which the "Results 1 – 25 of N" label states.
 // ---------------------------------------------------------------------------
 export function successfactorsSpec(origin: string, company?: string): SourceSpec {
   return { type: "successfactors", url: `${origin}/search/`, apiUrl: `${origin}/search/?q=&startrow=0`, atsSlug: company, atsSite: origin };
@@ -284,7 +320,7 @@ function successfactorsFromUrl(url: string): SourceSpec | null {
   const u = safeUrl(url);
   if (!u) return null;
   const host = u.hostname.toLowerCase();
-  if (!/(^|\.)successfactors\.(com|eu)$/.test(host)) return null;
+  if (!/^careers?\d*\.successfactors\.(com|eu)$/.test(host)) return null;
   const company = u.searchParams.get("company") ?? undefined;
   const origin = `https://${host}`;
   return successfactorsSpec(company ? `${origin}/${company}` : origin, company ?? undefined);
@@ -307,9 +343,15 @@ export function parseSuccessfactors(html: string, pageUrl: string): { postings: 
   const dedup = new Map(postings.map(p => [p.externalId ?? p.url, p]));
   return { postings: [...dedup.values()], markers: /jobTitle-link|successfactors|paginationLabel/i.test(html) };
 }
-async function successfactorsPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
+/** The page size a listing states in its "Results 1 – 25 of 26" label, or the rows on its first page. */
+function successfactorsPageSize(html: string, postings: RawPosting[]): number {
+  const label = html.match(/Results\s+(\d+)\s*[–-]\s*(\d+)\s+of\s+\d+/i);
+  const stated = label ? Number(label[2]) - Number(label[1]) + 1 : 0;
+  return stated > 0 ? stated : postings.length || 25;
+}
+async function successfactorsPostings(spec: SourceSpec, ctx: FetchContext, maxPages?: number): Promise<RawPosting[]> {
   const origin = (spec.atsSite ?? spec.url).replace(/\/search\/?.*$/, "").replace(/\/+$/, "");
-  return paginate(ctx, (startrow) => `${origin}/search/?q=&startrow=${startrow}`, parseSuccessfactors, { step: 25 });
+  return paginate(ctx, (startrow) => `${origin}/search/?q=&startrow=${startrow}`, parseSuccessfactors, { stepFromFirstPage: successfactorsPageSize, maxPages });
 }
 export const successfactors = adapterFor("successfactors", successfactorsFromUrl, successfactorsPostings);
 

@@ -1,6 +1,6 @@
 import type { Adapter, FetchContext, RawPosting, SourceSpec } from "../types";
 import { parseDate } from "../normalize";
-import { fetchJson, htmlToText, pathSegments, rec, safeUrl, slugOk, str, verifyFromFetch, MAX_POSTINGS } from "./common";
+import { fetchJson, htmlToText, pathSegments, rec, safeUrl, slugOk, str, verifyFromFetch, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS } from "./common";
 
 export function ashbySpec(slug: string): SourceSpec {
   return {
@@ -65,7 +65,7 @@ function mapJob(j: AshbyJob): RawPosting | null {
 
 async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
   if (!spec.atsSlug) throw new Error("ashby spec missing slug");
-  const { data } = await fetchJson<unknown>(ctx, ashbySpec(spec.atsSlug).apiUrl!);
+  const { data } = await fetchJson<unknown>(ctx, ashbySpec(spec.atsSlug).apiUrl!, INLINE_DESCRIPTIONS_FETCH);
   const jobs = rec(data)?.jobs;
   const list = Array.isArray(jobs) ? (jobs as AshbyJob[]) : [];
   return list.map(mapJob).filter((p): p is RawPosting => !!p).slice(0, MAX_POSTINGS);

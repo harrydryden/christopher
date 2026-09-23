@@ -38,6 +38,8 @@ import { createCvAssessment } from "@ava/core/cv-review";
 import { cvClaimItems, cvEvidenceItems, cvTextItems } from "@ava/core/cv-assessment";
 import { reviewFixture } from "../../../../packages/core/test/cv-review-fixture";
 import { CV_BUILD_CAP_MESSAGE, MAX_CV_BUILDS_IN_FLIGHT } from "@/lib/cv-build-capacity";
+import { CV_WORKER_STOPPED_MESSAGE, cvBuildState } from "@/lib/cv-build-state";
+import { getOwnCvBuildTask } from "@/lib/queries/cv";
 import { ensureTestUser } from "@/test/auth";
 
 beforeAll(async () => {
@@ -369,4 +371,23 @@ it("refuses to finalise a revision that was assessed again while its PDF was bei
     ok: false, error: "This revision changed while it was being checked. Reload it before finalising.",
   });
   expect((await draftRow(draft.id)).finalisedAt).toBeNull();
+});
+
+it("queues a Generate while no worker is running, and the CV page says it will start when one is", async () => {
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+  const [role] = await visibleRoles(1);
+  // No worker has ever reported: a deployment with only the interface running.
+  expect(await outcome(requestCv({ ok: true }, generate(role!.job.id)))).toMatch(/^redirect:\/cv\//);
+  const [draft] = await database.select().from(schema.cvDrafts);
+  const stopped = await getOwnCvBuildTask(user.id, draft!.id);
+  expect(stopped).toMatchObject({ status: "queued", workerStopped: true });
+  expect(cvBuildState(draft!, stopped!, new Date()).message).toBe(CV_WORKER_STOPPED_MESSAGE);
+
+  // A worker that reported a moment ago is picking queued work up: the ordinary wait.
+  await database.insert(schema.settings).values({ key: "internal:workerHeartbeat", value: { at: new Date().toISOString() } });
+  const running = await getOwnCvBuildTask(user.id, draft!.id);
+  expect(running).toMatchObject({ workerStopped: false });
+  expect(cvBuildState(draft!, running!, new Date()).message).toBe("Waiting for the worker.");
+  // Another account's draft is still nobody's to read.
+  expect(await getOwnCvBuildTask(crypto.randomUUID(), draft!.id)).toBeNull();
 });

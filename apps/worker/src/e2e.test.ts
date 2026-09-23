@@ -657,6 +657,98 @@ describe("functional review regressions", () => {
     expect(views.every(v => !v.inTable && v.archivedAt !== null)).toBe(true);
   }, 60_000);
 
+  it("brings back on a later scan what the gate archived, never what the person archived", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources);
+    const scan = async () => {
+      now = new Date(now.getTime() + 86_400_000);
+      const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+      return _scanSourceForTests(deps, company, current!, await deps.settings(), null);
+    };
+    await setGate({ includeKeywords: ["no-match"] });
+    await scan();
+    const archived = await db.select().from(schema.userJobs);
+    expect(archived).toHaveLength(4);
+    expect(archived.every(v => !v.inTable && v.archivedAt !== null && v.gateArchivedAt?.getTime() === v.archivedAt.getTime())).toBe(true);
+    // The person restored one and put it away again themselves: that archive is theirs now.
+    const theirs = archived[0]!;
+    await db.update(schema.userJobs).set({ archivedAt: new Date(now.getTime() + 60_000) })
+      .where(and(eq(schema.userJobs.userId, user.id), eq(schema.userJobs.jobId, theirs.jobId)));
+
+    await setGate({});
+    expect((await scan()).status).toBe("ok");
+    const views = await db.select().from(schema.userJobs);
+    expect(views.every(v => v.inTable)).toBe(true);
+    expect(views.filter(v => v.archivedAt === null)).toHaveLength(3);
+    expect(views.find(v => v.jobId === theirs.jobId)!.archivedAt).not.toBeNull();
+  }, 90_000);
+
+  it("rewrites no view on a scan that changes nothing", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources);
+    const before = await db.select({ jobId: schema.userJobs.jobId, updatedAt: schema.userJobs.updatedAt, xmin: sql<string>`xmin::text` }).from(schema.userJobs).orderBy(schema.userJobs.jobId);
+    now = new Date(now.getTime() + 86_400_000);
+    expect((await _scanSourceForTests(deps, company, source!, await deps.settings(), null)).status).toBe("ok");
+    const after = await db.select({ jobId: schema.userJobs.jobId, updatedAt: schema.userJobs.updatedAt, xmin: sql<string>`xmin::text` }).from(schema.userJobs).orderBy(schema.userJobs.jobId);
+    expect(after).toEqual(before);
+  }, 60_000);
+
+  it("does not queue a view again whose scoring completed without a score", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources);
+    const aiDeps = { ...deps, ai: { ...deps.ai, enabled: true } } as unknown as WorkerDeps;
+    await db.insert(schema.userSettings).values({ userId: user.id, key: "aiBudgetUsd", value: 25 });
+    const views = await db.select().from(schema.userJobs).orderBy(schema.userJobs.jobId);
+    // The model was asked about the first and gave nothing usable; the rest were never scored.
+    await db.update(schema.userJobs).set({ fitScore: null, scoredAt: now }).where(eq(schema.userJobs.jobId, views[0]!.jobId));
+    await db.update(schema.userJobs).set({ fitScore: null, scoredAt: null }).where(sql`${schema.userJobs.jobId} <> ${views[0]!.jobId}`);
+    await db.delete(schema.tasks);
+    const queuedFor = async () => (await db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"))).map(t => (t.payload as { jobId: string }).jobId);
+
+    now = new Date(now.getTime() + 86_400_000);
+    await _scanSourceForTests(aiDeps, company, source!, await deps.settings(), null);
+    expect(await queuedFor()).not.toContain(views[0]!.jobId);
+    expect(await queuedFor()).toHaveLength(views.length - 1);
+
+    // Nor does re-evaluating the gate, which every boot and settings save does.
+    await db.delete(schema.tasks);
+    await reevaluateGate(db, user.id, await deps.userSettings(user.id), now);
+    expect(await queuedFor()).not.toContain(views[0]!.jobId);
+  }, 60_000);
+
+  it("creates no view for a role that closed long ago, and still puts older views away", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const late = await ensureTestUser(db, "late-closed@example.com", "member");
+    await db.insert(schema.userSettings).values({ userId: late.id, key: "gate", value: { includeKeywords: ["operations", "engineer"], excludeKeywords: [], matchFields: ["title"], locationTerms: [], includeRemote: true } });
+    await subscribeToCompany(db, late.id, company.id);
+    const byKey = async (id: number) => (await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, `id:${id}`)))[0]!;
+    const longAgo = await byKey(JOB_OPERATIONS_MANAGER.id);
+    const lately = await byKey(JOB_ENGINEER.id);
+    await db.update(schema.jobs).set({ status: "closed", closedAt: new Date(now.getTime() - 60 * 86_400_000) }).where(eq(schema.jobs.id, longAgo.id));
+    await db.update(schema.jobs).set({ status: "closed", closedAt: new Date(now.getTime() - 10 * 86_400_000) }).where(eq(schema.jobs.id, lately.id));
+
+    await reevaluateGate(db, late.id, await deps.userSettings(late.id), now, { companyId: company.id });
+    const lateViews = new Set((await db.select().from(schema.userJobs).where(eq(schema.userJobs.userId, late.id))).map(v => v.jobId));
+    expect(lateViews.has(longAgo.id)).toBe(false);
+    expect(lateViews.has(lately.id)).toBe(true);
+    expect(lateViews.size).toBe(4);
+
+    // The first account already had a view of the role closed long ago: narrowing still reaches it.
+    await setGate({ includeKeywords: ["no-match"] });
+    await reevaluateGate(db, user.id, await deps.userSettings(user.id), now);
+    const [oldView] = await db.select().from(schema.userJobs).where(and(eq(schema.userJobs.userId, user.id), eq(schema.userJobs.jobId, longAgo.id)));
+    expect(oldView).toMatchObject({ inTable: false });
+    expect(oldView!.archivedAt).not.toBeNull();
+  }, 60_000);
+
   it("limits description gate refreshes to their role and rechecks old closed roles globally", async () => {
     await setGate({});
     await addCompany("https://www.acme.example/", "acme.example");
@@ -1375,6 +1467,22 @@ describe("shared catalogue", () => {
     expect(mine).toHaveLength(4);
     expect(mine.every(v => v.inTable && v.archivedAt === null)).toBe(true);
     expect(await db.select().from(schema.scans)).toHaveLength(1);
+
+    // Widening again brings back what the gate put away, and only that: the role the person
+    // archived by hand stays where they put it.
+    const engineerRole = engineerRows.find(r => r.title === "Software Engineer, Platform")!;
+    await db.update(schema.userJobs).set({ archivedAt: new Date(now.getTime() + 60_000) })
+      .where(and(eq(schema.userJobs.userId, engineer.id), eq(schema.userJobs.jobId, engineerRole.jobId)));
+    await setEngineerGate(["engineer", "operations"]);
+    await reevaluateGate(db, engineer.id, await deps.userSettings(engineer.id), now);
+    const rewidened = await db.select().from(schema.userJobs).where(eq(schema.userJobs.userId, engineer.id));
+    expect(rewidened.every(v => v.inTable)).toBe(true);
+    for (const jobId of archived) expect(rewidened.find(v => v.jobId === jobId)).toMatchObject({ archivedAt: null, gateArchivedAt: null });
+    expect(rewidened.find(v => v.jobId === engineerRole.jobId)!.archivedAt).not.toBeNull();
+    expect(rewidened.filter(v => v.archivedAt !== null)).toHaveLength(1);
+    const restoredEvents = await db.select().from(schema.jobEvents)
+      .where(and(eq(schema.jobEvents.userId, engineer.id), sql`${schema.jobEvents.payload}->>'action' = 'unarchived'`));
+    expect(restoredEvents.map(e => e.jobId).sort()).toEqual([...archived].sort());
   }, 120_000);
 
   it("writes its verdicts from the gate saved while it was fetching, not the one it started with", async () => {

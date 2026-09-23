@@ -7,7 +7,7 @@
  * follows the company. What each person sees of the listing lives in `user_jobs`, one row per
  * follower and posting, created only once the posting passes that follower's gate.
  */
-import { schema, enqueueTask, archiveNonMatches, type Task } from "@ava/db";
+import { schema, enqueueTask, archiveNonMatches, isGateArchive, restoreGateArchive, GATE_RESTORE_EVENT, type Task } from "@ava/db";
 import {
   ats,
   aiBudgetWindowStart,
@@ -603,8 +603,14 @@ async function scanSource(
       .from(schema.jobs).where(inArray(schema.jobs.id, restale.map(j => j.id)));
     for (const row of fresh) savedTextByKey.set(row.externalKey, row.text);
   }
+  // Only what the comparison below needs: a popular company's views are tens of thousands of rows.
   const views = seenRows.length && followers.length
-    ? await deps.db.select().from(schema.userJobs).where(and(inArray(schema.userJobs.jobId, seenRows.map(j => j.id)), inArray(schema.userJobs.userId, followers.map(f => f.userId))))
+    ? await deps.db.select({
+        userId: schema.userJobs.userId, jobId: schema.userJobs.jobId, inTable: schema.userJobs.inTable, nearMiss: schema.userJobs.nearMiss,
+        keywordMatched: schema.userJobs.keywordMatched, keywordTerms: schema.userJobs.keywordTerms, excluded: schema.userJobs.excluded,
+        locationOk: schema.userJobs.locationOk, fitScore: schema.userJobs.fitScore, scoredAt: schema.userJobs.scoredAt,
+        archivedAt: schema.userJobs.archivedAt, gateArchivedAt: schema.userJobs.gateArchivedAt, addedByUrl: schema.userJobs.addedByUrl,
+      }).from(schema.userJobs).where(and(inArray(schema.userJobs.jobId, seenRows.map(j => j.id)), inArray(schema.userJobs.userId, followers.map(f => f.userId))))
     : [];
   const viewByKey = new Map(views.map(v => [`${v.userId}:${v.jobId}`, v]));
   const viewUpdates: Array<Record<string, unknown>> = [];
@@ -643,14 +649,20 @@ async function scanSource(
       const gate = follower.settings.gate;
       if (undecided(posting.url) && needsDescription(gate)) continue;
       const verdict = follower.gate.evaluate({ ...fields, description: follower.gate.matchesDescription ? fields.descriptionText : undefined });
-      // The account that added this role by pasting its URL keeps it, whatever their gate says and
-      // whether or not a later scan adopted the row: they asked for that one by name.
-      const inTable = verdict.inTable || job.addedBy === follower.userId;
       const view = viewByKey.get(`${follower.userId}:${job.id}`);
+      // An account that asked for this role by pasting its URL keeps it, whatever their gate says
+      // and whether or not a later scan adopted the row: they asked for that one by name.
+      const inTable = verdict.inTable || job.addedBy === follower.userId || view?.addedByUrl === true;
       if (view) {
-        viewUpdates.push({ userId: follower.userId, jobId: job.id, keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms,
-          excluded: verdict.excluded, locationOk: verdict.locationOk, inTable });
-        if (inTable && (changedFields.length || !view.inTable || view.fitScore === null)) scoreQueue.push({ userId: follower.userId, jobId: job.id });
+        // Written only when something moved: most views of most roles are the same every day, and
+        // `updated_at` is what dates a change the person sees.
+        const values = { keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms, excluded: verdict.excluded, locationOk: verdict.locationOk, inTable };
+        const restore = inTable && isGateArchive(view);
+        if (restore || view.nearMiss || (Object.keys(values) as Array<keyof typeof values>).some(key => JSON.stringify(values[key]) !== JSON.stringify(view[key]))) {
+          viewUpdates.push({ userId: follower.userId, jobId: job.id, ...values, restore });
+        }
+        // A view whose scoring completed without a score is not paid for again on unchanged inputs.
+        if (inTable && (changedFields.length || !view.inTable || (view.fitScore === null && view.scoredAt === null))) scoreQueue.push({ userId: follower.userId, jobId: job.id });
       } else if (inTable) {
         viewInserts.push({ userId: follower.userId, jobId: job.id, keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms, excluded: verdict.excluded, locationOk: verdict.locationOk, inTable: true, nearMiss: false, seeded: false, createdAt: deps.now(), updatedAt: deps.now() });
         scoreQueue.push({ userId: follower.userId, jobId: job.id });
@@ -675,11 +687,17 @@ async function scanSource(
       where j.id=v.id`);
   }
   for (let offset = 0; offset < viewUpdates.length; offset += 250) {
-    await deps.db.execute(sql`update user_jobs uj set keyword_matched=v."keywordMatched", keyword_terms=v."keywordTerms",
-      excluded=v.excluded, location_ok=v."locationOk", in_table=v."inTable", near_miss=false, updated_at=${deps.now()}
+    // A view the gate archived and this listing's gate admits again comes back (`restoreGateArchive`).
+    await deps.db.execute(sql`with changed as (
+      update user_jobs uj set keyword_matched=v."keywordMatched", keyword_terms=v."keywordTerms",
+        excluded=v.excluded, location_ok=v."locationOk", in_table=v."inTable", near_miss=false, ${restoreGateArchive}, updated_at=${deps.now()}
       from jsonb_to_recordset(${JSON.stringify(viewUpdates.slice(offset, offset + 250))}::jsonb) as v("userId" uuid, "jobId" uuid,
-        "keywordMatched" boolean, "keywordTerms" jsonb, excluded boolean, "locationOk" boolean, "inTable" boolean)
-      where uj.user_id=v."userId" and uj.job_id=v."jobId"`);
+        "keywordMatched" boolean, "keywordTerms" jsonb, excluded boolean, "locationOk" boolean, "inTable" boolean, restore boolean)
+      where uj.user_id=v."userId" and uj.job_id=v."jobId"
+      returning uj.user_id, uj.job_id, (v.restore and uj.archived_at is null) as restored
+    )
+    insert into job_events (job_id, user_id, type, payload)
+    select job_id, user_id, 'updated', ${GATE_RESTORE_EVENT}::jsonb from changed where restored`);
   }
   for (let offset = 0; offset < viewInserts.length; offset += 250) await deps.db.insert(schema.userJobs).values(viewInserts.slice(offset, offset + 250)).onConflictDoNothing();
   for (let offset = 0; offset < updateEvents.length; offset += 250) await deps.db.insert(schema.jobEvents).values(updateEvents.slice(offset, offset + 250));

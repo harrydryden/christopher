@@ -4,7 +4,6 @@ import {
   aiUsageByAccount,
   costPerCvBuild,
   costPerScoredRole,
-  countWorkerEvents,
   cvBuildMotionStats,
   type CvBuildMotionStat,
   listHttpHostDaily,
@@ -15,9 +14,7 @@ import {
 } from "@ava/db";
 import {
   cvBuildSteps,
-  cvDrafts,
   discoveryRuns,
-  jobs,
   settings,
   careerSources,
   companies,
@@ -25,7 +22,6 @@ import {
   scanRuns,
   scans,
   tasks,
-  users,
   workerEvents,
   type CareerSource,
   type Task,
@@ -249,7 +245,11 @@ function readVitals(value: unknown): WorkerVitals | null {
 export async function getWorkerHeartbeat(): Promise<WorkerHeartbeat | null> {
   const [row] = await db().select({ value: settings.value }).from(settings)
     .where(eq(settings.key, "internal:workerHeartbeat")).limit(1);
-  const value = row?.value as Record<string, unknown> | undefined;
+  return readHeartbeat(row?.value);
+}
+
+function readHeartbeat(stored: unknown): WorkerHeartbeat | null {
+  const value = (stored && typeof stored === "object" ? stored : undefined) as Record<string, unknown> | undefined;
   const at = isoDate(value?.at);
   if (!value || !at) return null;
   return {
@@ -283,20 +283,79 @@ async function ifLedger<T>(read: () => Promise<T>, fallback: T): Promise<T> {
  * cannot answer this alone; the crash-recovery ledger can. See lib/worker-status.ts for the rules.
  */
 export async function getWorkerStatus(now: Date = new Date()): Promise<WorkerStatus> {
-  const hour = new Date(now.getTime() - 3_600_000);
-  const day = new Date(now.getTime() - 86_400_000);
-  const [heartbeat, restartsLastHour, restartsLastDay, boots] = await Promise.all([
-    getWorkerHeartbeat(),
-    ifLedger(() => countWorkerEvents(db(), "crash_recovery", hour), 0),
-    ifLedger(() => countWorkerEvents(db(), "crash_recovery", day), 0),
-    ifLedger(() => listWorkerEvents(db(), { kinds: ["boot"], limit: 1 }), [] as Awaited<ReturnType<typeof listWorkerEvents>>),
-  ]);
+  return workerStatusFrom(await readWorkerState(now, 0), now);
+}
+
+function workerStatusFrom(state: WorkerState, now: Date): WorkerStatus {
   // The heartbeat does not carry how many slots the process was given; its boot line does.
-  const boot = boots[0];
+  const { heartbeat, boot } = state;
   const withBoot = heartbeat && heartbeat.concurrency === null && boot?.workerId === heartbeat.workerId
     ? { ...heartbeat, concurrency: finite(boot.detail?.concurrency) }
     : heartbeat;
-  return deriveWorkerStatus({ heartbeat: withBoot, restartsLastHour, restartsLastDay, now });
+  return deriveWorkerStatus({ heartbeat: withBoot, restartsLastHour: state.restartsLastHour, restartsLastDay: state.restartsLastDay, now });
+}
+
+type WorkerEvent = typeof workerEvents.$inferSelect;
+
+interface WorkerState {
+  heartbeat: WorkerHeartbeat | null;
+  restartsLastHour: number;
+  restartsLastDay: number;
+  boot: WorkerEvent | null;
+  lastCrash: WorkerEvent | null;
+  events: WorkerEvent[];
+}
+
+/** A ledger row as `to_jsonb` spells it, read back into the row the table would have returned. */
+function ledgerEvent(raw: unknown): WorkerEvent | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const at = operationDate(r.at);
+  if (!at || typeof r.id !== "string") return null;
+  const text = (value: unknown) => (typeof value === "string" ? value : null);
+  return {
+    id: r.id,
+    at,
+    workerId: text(r.worker_id) ?? "",
+    kind: r.kind as WorkerEventKind,
+    taskId: text(r.task_id),
+    taskType: text(r.task_type),
+    userId: text(r.user_id),
+    detail: (r.detail && typeof r.detail === "object" ? r.detail : {}) as Record<string, unknown>,
+  };
+}
+
+/**
+ * The worker's state in one statement: its heartbeat and, from its ledger, the crash recoveries of
+ * the last hour and day, its latest boot and crash recovery, and its newest `eventLimit` events.
+ * Health and Operations render these together, and each was a round trip of its own.
+ */
+async function readWorkerState(now: Date, eventLimit: number): Promise<WorkerState> {
+  const hour = new Date(now.getTime() - 3_600_000);
+  const day = new Date(now.getTime() - 86_400_000);
+  try {
+    const result = await db().execute(sql`select
+      (select value from settings where key = 'internal:workerHeartbeat') as heartbeat,
+      (select count(*)::int from worker_events where kind = 'crash_recovery' and at >= ${hour}) as restarts_hour,
+      (select count(*)::int from worker_events where kind = 'crash_recovery' and at >= ${day}) as restarts_day,
+      (select to_jsonb(e) from (select * from worker_events where kind = 'boot' order by at desc limit 1) e) as boot,
+      (select to_jsonb(e) from (select * from worker_events where kind = 'crash_recovery' order by at desc limit 1) e) as crash,
+      (select coalesce(jsonb_agg(to_jsonb(e) order by e.at desc), '[]'::jsonb)
+        from (select * from worker_events order by at desc limit ${eventLimit}) e) as events`);
+    const row = result.rows[0] as { heartbeat: unknown; restarts_hour: number; restarts_day: number; boot: unknown; crash: unknown; events: unknown } | undefined;
+    return {
+      heartbeat: readHeartbeat(row?.heartbeat),
+      restartsLastHour: Number(row?.restarts_hour ?? 0),
+      restartsLastDay: Number(row?.restarts_day ?? 0),
+      boot: ledgerEvent(row?.boot),
+      lastCrash: ledgerEvent(row?.crash),
+      events: (Array.isArray(row?.events) ? row.events : []).flatMap((raw) => ledgerEvent(raw) ?? []),
+    };
+  } catch {
+    // The interface can be serving before the worker has run the migration that creates the
+    // ledger. The heartbeat is still read; the ledger is "nothing recorded".
+    return { heartbeat: await getWorkerHeartbeat(), restartsLastHour: 0, restartsLastDay: 0, boot: null, lastCrash: null, events: [] };
+  }
 }
 
 /* ---------------------------------------------------------------------------------------------
@@ -304,7 +363,7 @@ export async function getWorkerStatus(now: Date = new Date()): Promise<WorkerSta
  *
  * A task row says `scan_company` and a uuid. Operations needs the company, the CV or the account,
  * because "which company was the worker holding when it died" is the whole question during a crash
- * loop. Subjects are resolved in one batch per kind, for the whole page.
+ * loop. Subjects are resolved in one statement, for the whole page.
  * ------------------------------------------------------------------------------------------- */
 
 export type SubjectKind = "company" | "cv" | "user" | "source" | "job";
@@ -352,44 +411,31 @@ export type SubjectNames = Map<string, string>;
 const subjectKey = (ref: SubjectRef) => `${ref.kind}:${ref.id}`;
 
 /**
- * Human names for a page's worth of subjects, one query per kind. CV drafts are per-account data:
- * they are read here only for an administrator, and each is labelled with the account that owns it
- * rather than being shown loose.
+ * Human names for a page's worth of subjects, every kind in one statement. CV drafts are
+ * per-account data: they are read here only for an administrator, and each is labelled with the
+ * account that owns it rather than being shown loose.
  */
 export async function resolveSubjects(refs: Array<SubjectRef | null>): Promise<SubjectNames> {
   const names: SubjectNames = new Map();
-  const ids = (kind: SubjectKind) => [...new Set(refs.filter((r): r is SubjectRef => r?.kind === kind).map((r) => r.id))];
+  const ids = (kind: SubjectKind) => {
+    const unique = [...new Set(refs.filter((r): r is SubjectRef => r?.kind === kind && UUID.test(r.id)).map((r) => r.id))];
+    return unique.length ? sql.join(unique.map((id) => sql`${id}::uuid`), sql`, `) : null;
+  };
   const companyIds = ids("company");
   const cvIds = ids("cv");
   const userIds = ids("user");
   const sourceIds = ids("source");
   const jobIds = ids("job");
-  await Promise.all([
-    companyIds.length
-      ? db().select({ id: companies.id, name: companies.name }).from(companies).where(inArray(companies.id, companyIds))
-          .then((rows) => rows.forEach((r) => names.set(`company:${r.id}`, r.name)))
-      : null,
-    cvIds.length
-      ? db().select({ id: cvDrafts.id, company: cvDrafts.companyName, title: cvDrafts.jobTitle, userId: cvDrafts.userId })
-          .from(cvDrafts).where(inArray(cvDrafts.id, cvIds))
-          .then((rows) => rows.forEach((r) => names.set(`cv:${r.id}`, `CV: ${r.company} · ${r.title}`)))
-      : null,
-    userIds.length
-      ? db().select({ id: users.id, email: users.email }).from(users).where(inArray(users.id, userIds))
-          .then((rows) => rows.forEach((r) => names.set(`user:${r.id}`, r.email)))
-      : null,
-    sourceIds.length
-      ? db().select({ id: careerSources.id, type: careerSources.type, name: companies.name })
-          .from(careerSources).innerJoin(companies, eq(careerSources.companyId, companies.id))
-          .where(inArray(careerSources.id, sourceIds))
-          .then((rows) => rows.forEach((r) => names.set(`source:${r.id}`, `${r.name} (${r.type})`)))
-      : null,
-    jobIds.length
-      ? db().select({ id: jobs.id, title: jobs.title, name: companies.name })
-          .from(jobs).innerJoin(companies, eq(jobs.companyId, companies.id)).where(inArray(jobs.id, jobIds))
-          .then((rows) => rows.forEach((r) => names.set(`job:${r.id}`, `${r.name} · ${r.title}`)))
-      : null,
-  ]);
+  const branches = [
+    companyIds && sql`select 'company:' || c.id::text as key, c.name as label from companies c where c.id in (${companyIds})`,
+    cvIds && sql`select 'cv:' || d.id::text as key, 'CV: ' || d.company_name || ' · ' || d.job_title as label from cv_drafts d where d.id in (${cvIds})`,
+    userIds && sql`select 'user:' || u.id::text as key, u.email as label from users u where u.id in (${userIds})`,
+    sourceIds && sql`select 'source:' || s.id::text as key, c.name || ' (' || s.type || ')' as label from career_sources s join companies c on c.id = s.company_id where s.id in (${sourceIds})`,
+    jobIds && sql`select 'job:' || j.id::text as key, c.name || ' · ' || j.title as label from jobs j join companies c on c.id = j.company_id where j.id in (${jobIds})`,
+  ].filter((branch): branch is NonNullable<typeof branch> => !!branch);
+  if (!branches.length) return names;
+  const result = await db().execute(sql.join(branches, sql` union all `));
+  for (const row of result.rows as Array<{ key: string; label: string }>) names.set(row.key, row.label);
   return names;
 }
 
@@ -524,8 +570,11 @@ function eventRef(row: { userId: string | null; detail: Record<string, unknown> 
 /** The last 30 things the worker did, newest first, with each one's subject named. */
 export async function listRecentWorkerEvents(limit = 30): Promise<WorkerEventRow[]> {
   const rows = await ifLedger(() => listWorkerEvents(db(), { limit }), [] as Awaited<ReturnType<typeof listWorkerEvents>>);
+  return workerEventRows(rows, await resolveSubjects(rows.map((row) => eventRef(row))));
+}
+
+function workerEventRows(rows: WorkerEvent[], names: SubjectNames): WorkerEventRow[] {
   const refs = rows.map((row) => eventRef(row));
-  const names = await resolveSubjects(refs);
   return rows.map((row, i) => {
     const at = requiredOperationDate(row.at, "worker event");
     return {
@@ -547,11 +596,13 @@ export async function getLastCrashRecovery(): Promise<CrashRecovery | null> {
     [] as Awaited<ReturnType<typeof listWorkerEvents>>,
   );
   if (!row) return null;
-  const at = operationDate(row.at);
-  if (!at) return null;
-  const detail = row.detail ?? {};
-  const names = await resolveSubjects(crashSuspectRefs(detail));
-  return { at, workerId: row.workerId, suspects: readSuspects(detail, names) };
+  return crashRecoveryFrom(row, await resolveSubjects(crashSuspectRefs(row.detail ?? {})));
+}
+
+function crashRecoveryFrom(row: WorkerEvent | null, names: SubjectNames): CrashRecovery | null {
+  const at = row ? operationDate(row.at) : null;
+  if (!row || !at) return null;
+  return { at, workerId: row.workerId, suspects: readSuspects(row.detail ?? {}, names) };
 }
 
 /* ---------------------------------------------------------------------------------------------
@@ -572,10 +623,16 @@ export interface RunningTaskRow {
 
 /** Everything claimed right now: the tasks a crash would take with it. */
 export async function listRunningTasks(limit = 25): Promise<RunningTaskRow[]> {
-  const rows = await db().select().from(tasks).where(eq(tasks.status, "running"))
-    .orderBy(asc(tasks.startedAt)).limit(limit);
+  const rows = await runningTasks(limit);
+  return runningTaskRows(rows, await resolveSubjects(rows.map((row) => taskSubjectRef(row.type, row.payload))));
+}
+
+function runningTasks(limit: number) {
+  return db().select().from(tasks).where(eq(tasks.status, "running")).orderBy(asc(tasks.startedAt)).limit(limit);
+}
+
+function runningTaskRows(rows: Task[], names: SubjectNames): RunningTaskRow[] {
   const refs = rows.map((row) => taskSubjectRef(row.type, row.payload));
-  const names = await resolveSubjects(refs);
   return rows.map((row, i) => ({
     id: row.id,
     type: row.type,
@@ -604,11 +661,18 @@ export interface RetryingTaskRow {
  * being retried to death is told apart from a queue that is merely busy.
  */
 export async function listRetryingTasks(limit = 25): Promise<RetryingTaskRow[]> {
-  const rows = await db().select().from(tasks)
+  const rows = await retryingTasks(limit);
+  return retryingTaskRows(rows, await resolveSubjects(rows.map((row) => taskSubjectRef(row.type, row.payload))));
+}
+
+function retryingTasks(limit: number) {
+  return db().select().from(tasks)
     .where(and(eq(tasks.status, "queued"), gte(tasks.attempts, 1), isNotNull(tasks.error)))
     .orderBy(desc(tasks.attempts), asc(tasks.runAfter)).limit(limit);
+}
+
+function retryingTaskRows(rows: Task[], names: SubjectNames): RetryingTaskRow[] {
   const refs = rows.map((row) => taskSubjectRef(row.type, row.payload));
-  const names = await resolveSubjects(refs);
   return rows.map((row, i) => {
     const runAfter = requiredOperationDate(row.runAfter, "task retry");
     return {
@@ -621,6 +685,50 @@ export async function listRetryingTasks(limit = 25): Promise<RetryingTaskRow[]> 
       runAfter,
     };
   });
+}
+
+export interface OperationsActivity {
+  status: WorkerStatus;
+  crash: CrashRecovery | null;
+  running: RunningTaskRow[];
+  retrying: RetryingTaskRow[];
+  events: WorkerEventRow[];
+  /** The address of an account the page names elsewhere (the spend table), or null. */
+  accountEmail: (userId: string) => string | null;
+}
+
+/**
+ * Operations' worker and queue cards in four statements: the worker's state, the running and the
+ * retried tasks, and then one statement naming every subject they mention together with the
+ * `accounts` the page lists beside them. Each list naming its own subjects, and the page reading
+ * every account for the spend table, was up to twenty-two more.
+ */
+export async function operationsActivity(
+  now: Date,
+  accounts: Promise<ReadonlyArray<string | null>>,
+  limits = { running: 25, retrying: 25, events: 30 },
+): Promise<OperationsActivity> {
+  const [state, running, retrying, accountIds] = await Promise.all([
+    readWorkerState(now, limits.events),
+    runningTasks(limits.running),
+    retryingTasks(limits.retrying),
+    accounts,
+  ]);
+  const names = await resolveSubjects([
+    ...crashSuspectRefs(state.lastCrash?.detail ?? {}),
+    ...running.map((row) => taskSubjectRef(row.type, row.payload)),
+    ...retrying.map((row) => taskSubjectRef(row.type, row.payload)),
+    ...state.events.map((row) => eventRef(row)),
+    ...accountIds.flatMap((id) => (id ? [{ kind: "user" as const, id }] : [])),
+  ]);
+  return {
+    status: workerStatusFrom(state, now),
+    crash: crashRecoveryFrom(state.lastCrash, names),
+    running: runningTaskRows(running, names),
+    retrying: retryingTaskRows(retrying, names),
+    events: workerEventRows(state.events, names),
+    accountEmail: (userId) => names.get(subjectKey({ kind: "user", id: userId })) ?? null,
+  };
 }
 
 export interface ScanInputRow {

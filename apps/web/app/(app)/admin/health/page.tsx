@@ -1,7 +1,6 @@
 import { workloadMetrics } from "@ava/db";
 import { aiBudgetWindowStart, CV_BUILD_MOTIONS, CV_FAILURE_POLICIES, type CvFailureKind } from "@ava/core";
 import { CV_STAGE_LABELS } from "@/lib/cv-build-narrative";
-import { users } from "@ava/db/schema";
 import Link from "next/link";
 import { retryTask } from "@/app/actions/health";
 import { Badge, scanStatusTone, sourceStatusTone, taskStatusTone } from "@/components/Badge";
@@ -21,20 +20,15 @@ import {
   getCvBuildCosts,
   getCvBuildFailureKinds,
   getCvBuildMotions,
-  getLastCrashRecovery,
   getQueueCounts,
   getScoredRoleCost,
-  getTotalAiSpend,
-  getWorkerStatus,
   listCompaniesWithNoSource,
   listFailedTasks,
   listLargestScanInputs,
   listRecentProblemScans,
   listRecentScanRuns,
-  listRecentWorkerEvents,
-  listRetryingTasks,
-  listRunningTasks,
   listSourcesNeedingAttention,
+  operationsActivity,
   outboundTraffic,
 } from "@/lib/queries/health";
 
@@ -59,32 +53,39 @@ export default async function AdminOperationsPage() {
   // Budgets belong to accounts and each has its own window; this page is the deployment's report,
   // so it counts the calendar month that everybody's budget resets on.
   const since = aiBudgetWindowStart(now, null);
-  const [metrics, status, crash, running, retrying, events, largestInputs, attentionSources, noSourceCompanies, problemScans, failedTasks, queueCounts, spend, usage, scanRuns, accounts, traffic, cvCosts, scoredRoles, cvMotions, cvFailures] = await Promise.all([
+  // Nineteen statements in three groups of at most eight, rather than every card's queries at once
+  // into a pool of three connections, where the ones still waiting after ten seconds fail the page.
+  // The worker and the queue first; the activity names its subjects and the spend table's accounts
+  // in one statement once the usage has been read.
+  const usagePending = getAiUsage(since);
+  const [metrics, activity, failedTasks, queueCounts, usage] = await Promise.all([
     workloadMetrics(db()),
-    getWorkerStatus(now),
-    getLastCrashRecovery(),
-    listRunningTasks(25),
-    listRetryingTasks(25),
-    listRecentWorkerEvents(30),
+    operationsActivity(now, usagePending.then((groups) => groups.map((group) => group.userId))),
+    listFailedTasks(50),
+    getQueueCounts(),
+    usagePending,
+  ]);
+  // Then the catalogue and its scans.
+  const [largestInputs, attentionSources, noSourceCompanies, problemScans, scanRuns] = await Promise.all([
     listLargestScanInputs(7, 10),
     listSourcesNeedingAttention(),
     listCompaniesWithNoSource(),
     listRecentProblemScans(undefined, 7),
-    listFailedTasks(50),
-    getQueueCounts(),
-    getTotalAiSpend(since),
-    getAiUsage(since),
     listRecentScanRuns(10),
-    db().select({ id: users.id, email: users.email }).from(users),
+  ]);
+  // Then what the spend bought.
+  const [traffic, cvCosts, scoredRoles, cvMotions, cvFailures] = await Promise.all([
     outboundTraffic(7),
     getCvBuildCosts(20),
     getScoredRoleCost(30),
     getCvBuildMotions(30),
     getCvBuildFailureKinds(30),
   ]);
-  const emailById = new Map(accounts.map((a) => [a.id, a.email]));
+  const { status, crash, running, retrying, events } = activity;
   const totals = totalAiUsage(usage);
-  const accountName = (userId: string | null) => (userId ? emailById.get(userId) ?? userId : "Shared");
+  // Every call since the month began, whoever it was for: the usage table's own total.
+  const spend = totals.costUsd;
+  const accountName = (userId: string | null) => (userId ? activity.accountEmail(userId) ?? userId : "Shared");
   const heartbeat = status.heartbeat;
 
   return (

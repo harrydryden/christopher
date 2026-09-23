@@ -14,7 +14,8 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { handlers } from "./handlers";
-import { _scanSourceForTests } from "./handlers/scan";
+import { _scanSourceForTests, handleScanCompany } from "./handlers/scan";
+import { handleSuggestFromScans } from "./handlers/suggest-from-scans";
 import { handleScoreJob, handleTagReason } from "./handlers/learning";
 import { anchoredInPage, handleFetchDescription } from "./handlers/description";
 import { handleRunDaily, finaliseScanRuns } from "./handlers/daily";
@@ -2046,24 +2047,29 @@ describe("what a scan asks for and when", () => {
 
 /** How many statements matching `pattern` the body sends, pooled or inside a transaction. */
 async function countingQueries(pattern: RegExp, body: () => Promise<unknown>): Promise<number> {
-  type Queryable = { query: (...args: unknown[]) => unknown; release: () => void };
-  const pool = db.$client as unknown as { connect: () => Promise<Queryable> };
-  // Every statement goes through a pooled client's `query`, whether the pool checked it out for
-  // one statement or a transaction holds it, so the count is taken on the clients' prototype.
-  const client = await pool.connect();
-  const prototype = Object.getPrototypeOf(client) as Queryable;
-  client.release();
-  const original = prototype.query;
+  type Client = { query: (...args: unknown[]) => unknown };
+  type Pool = { on: (event: "acquire", listener: (client: Client) => void) => void; removeListener: (event: "acquire", listener: (client: Client) => void) => void };
+  const pool = db.$client as unknown as Pool;
   let n = 0;
-  prototype.query = function (this: unknown, ...args: unknown[]) {
-    const text = typeof args[0] === "string" ? args[0] : (args[0] as { text?: string } | undefined)?.text ?? "";
-    if (pattern.test(text)) n++;
-    return original.apply(this, args);
+  // Each client the pool hands out, for one statement or a whole transaction, is counted while the
+  // body runs; the pool wraps every client's own `query`, so the count wraps that in turn.
+  const counted = new Map<Client, Client["query"]>();
+  const onAcquire = (client: Client) => {
+    if (counted.has(client)) return;
+    const query = client.query;
+    counted.set(client, query);
+    client.query = function (this: unknown, ...args: unknown[]) {
+      const text = typeof args[0] === "string" ? args[0] : (args[0] as { text?: string } | undefined)?.text ?? "";
+      if (pattern.test(text)) n++;
+      return query.apply(this, args);
+    };
   };
+  pool.on("acquire", onAcquire);
   try {
     await body();
   } finally {
-    prototype.query = original;
+    pool.removeListener("acquire", onAcquire);
+    for (const [client, query] of counted) client.query = query;
   }
   return n;
 }
@@ -2095,6 +2101,7 @@ describe("a description arriving", () => {
     for (let n = 2; n < 29; n++) followers.push(await follow(company.id, n, n % 3 === 0 ? descriptionGate : titleGate));
     await clear(engineer.id);
     const many = await countingQueries(perFollower, () => handleFetchDescription({ payload: { jobId: engineer.id } } as never, deps));
+    expect(few).toBeGreaterThan(0);
     expect(many).toBe(few);
 
     // And the verdicts are every follower's own: all 29 match the engineer role, by title or by
@@ -2292,3 +2299,51 @@ it("closes the roles of a retired source and of a company nobody follows, and sa
   expect(await retireSourceRoles(db, { sourceId: superseded!.id })).toBe(0);
   expect(await retireSourceRoles(db, { sourceId: live!.id })).toBe(5);
 }, 60_000);
+
+describe("mining the scans for suggestions", () => {
+  it("queues a week's mining only for accounts whose companies the run scanned, in one pass", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const bystander = await ensureTestUser(db, "follows-nothing@example.com", "member");
+    await db.delete(schema.tasks);
+
+    await handleRunDaily({ payload: { trigger: "manual" } } as never, deps);
+    // Run the scan the fan-out queued, then finalise the run by hand, so the mining tasks stay queued.
+    const [scanTask] = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "scan_company"));
+    await handleScanCompany(scanTask!, deps);
+    await db.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.id, scanTask!.id));
+    expect(await finaliseScanRuns(deps)).toBe(1);
+    const mining = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "suggest_from_scans"));
+    expect(mining.map(t => t.payload)).toEqual([{ userId: user.id, scheduled: true }]);
+    expect(mining.some(t => (t.payload as { userId: string }).userId === bystander.id)).toBe(false);
+
+    // Mined now, so a scheduled run tomorrow skips it, while asking on Learning still mines.
+    expect(await handleSuggestFromScans(mining[0]!, deps)).not.toMatchObject({ skipped: expect.anything() });
+    now = new Date(now.getTime() + 86_400_000);
+    expect(await handleSuggestFromScans({ ...mining[0]!, payload: { userId: user.id, scheduled: true } } as never, deps)).toEqual({ skipped: "suggested within the week" });
+    expect(await handleSuggestFromScans({ ...mining[0]!, payload: { userId: user.id } } as never, deps)).not.toMatchObject({ skipped: expect.anything() });
+    // And the next run's finalise does not queue it at all.
+    await db.delete(schema.tasks);
+    await handleRunDaily({ payload: { trigger: "manual", runDate: "2026-09-06" } } as never, deps);
+    const [again] = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "scan_company"));
+    await handleScanCompany(again!, deps);
+    await db.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.id, again!.id));
+    await finaliseScanRuns(deps);
+    expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "suggest_from_scans"))).toHaveLength(0);
+    void company;
+  }, 90_000);
+
+  it("reads a snapshot two followers share once, not once each", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    const second = await ensureTestUser(db, "second-miner@example.com", "member");
+    await db.insert(schema.userSettings).values({ userId: second.id, key: "gate", value: { includeKeywords: ["engineer"], excludeKeywords: [], matchFields: ["title"], locationTerms: [], includeRemote: true } });
+    await subscribeToCompany(db, second.id, company.id);
+    await queue.drain();
+    const snapshotReads = await countingQueries(/select "raw_snapshot" from "scans"/, async () => {
+      for (const account of [user, second]) await handleSuggestFromScans({ payload: { userId: account.id } } as never, deps);
+    });
+    expect(snapshotReads).toBe(1);
+  }, 60_000);
+});

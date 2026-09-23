@@ -235,7 +235,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
         </div>
       )}
 
-      {work.active && <AutoRefresh message="Work is pending for your companies. Status updates automatically." />}
+      {work.active && <AutoRefresh scope="company" initialVersion={work.version} message="Work is pending for your companies. Status updates automatically." />}
 
       {needsSetup ? (
         <Card title="What has happened so far">

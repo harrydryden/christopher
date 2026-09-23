@@ -30,7 +30,7 @@ const NAV_ITEMS: Array<{ href: string; label: string; indent?: boolean }> = [
 
 async function ScanBanner({ userId }: { userId: string }) {
   const status = await getScanStatus(userId);
-  return <ScanStatusBanner initialText={status.text} />;
+  return <ScanStatusBanner initialText={status.text} initialLive={status.live} initialWakeInMs={status.wakeInMs} />;
 }
 
 export default async function AppLayout({ children }: { children: ReactNode }) {

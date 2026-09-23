@@ -21,6 +21,12 @@ vi.mock("next/headers", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 const sent = vi.hoisted(() => [] as Array<{ to: string; subject: string; text: string }>);
+/** `after()` work, started at once and awaited by `outcome`: these tests count links, not when they go. */
+const afterWork = vi.hoisted(() => [] as Promise<unknown>[]);
+vi.mock("next/server", async (original) => ({
+  ...(await original<typeof import("next/server")>()),
+  after: (task: () => Promise<unknown>) => { afterWork.push(Promise.resolve().then(task)); },
+}));
 vi.mock("@/lib/email", async (original) => ({
   ...(await original<typeof import("@/lib/email")>()),
   sendEmail: vi.fn(async (mail: { to: string; subject: string; text: string }) => { sent.push(mail); return { delivered: true }; }),
@@ -57,7 +63,11 @@ async function signIn(email: string, verified: boolean, password?: string) {
   return { user, sessionId: row!.id };
 }
 
-const outcome = (work: Promise<void>) => work.then(() => "sent", (error: Error) => error.message);
+const outcome = async (work: Promise<void>) => {
+  const result = await work.then(() => "sent", (error: Error) => error.message);
+  await Promise.all(afterWork.splice(0));
+  return result;
+};
 const verificationMails = () => sent.filter(mail => mail.subject.startsWith("Confirm your email"));
 
 it("sends the confirmation link again only as often as the public form would, then says so", async () => {

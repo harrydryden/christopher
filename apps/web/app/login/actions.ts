@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { normaliseEmail } from "@ava/db";
 import { authenticateWithPassword, emailProblem, registerWithPassword, registrationAllowed, requestPasswordReset, resetPasswordWithToken, sendVerificationEmail } from "@/lib/accounts";
 import { clientAddress, endSession, startSession } from "@/lib/auth";
@@ -21,9 +22,11 @@ export async function login(formData: FormData): Promise<void> {
   if (!sessionSecret()) back("not_configured");
   if (emailProblem(email) || !password) back("invalid");
   const address = await clientAddress();
+  const pairKey = `login:email-ip:${email}:${address}`;
   const emailKey = `login:email:${email}`;
   const addressKey = `login:ip:${address}`;
   const reservation = await reserveRateLimits([
+    { key: pairKey, limit: LIMITS.loginEmailAddress },
     { key: emailKey, limit: LIMITS.loginEmail },
     { key: addressKey, limit: LIMITS.loginAddress },
   ]);
@@ -37,6 +40,7 @@ export async function login(formData: FormData): Promise<void> {
   // A successful password clears this account's failures. The address is shared, so remove only
   // this request's reservation and preserve failures from other concurrent sign-in attempts.
   await releaseRateLimitReservations(reservation!.filter(({ key }) => key === addressKey));
+  await clearAttempts(pairKey);
   await clearAttempts(emailKey);
   await startSession(result.user.id);
   redirect(next);
@@ -51,8 +55,10 @@ export async function signup(formData: FormData): Promise<void> {
 
   if (!sessionSecret()) back("not_configured");
   if (emailProblem(email)) back("invalid_email");
-  if (!(await registrationAllowed(email))) back("closed");
+  // The password first: checked after the registration rule, a weak password told an administrator
+  // address (which may always register) apart from every other address while registration is closed.
   if (passwordProblem(password)) back("weak_password");
+  if (!(await registrationAllowed(email))) back("closed");
   const address = await clientAddress();
   if (!(await reserveRateLimits([{ key: `signup:ip:${address}`, limit: LIMITS.signupAddress }]))) back("rate_limited");
 
@@ -84,9 +90,17 @@ export async function resendConfirmation(formData: FormData): Promise<void> {
   ]))) {
     redirect(withParams("/signup", { pending: "1", email, error: "rate_limited" }));
   }
-  const [user] = await db().select().from(users).where(eq(users.email, email)).limit(1);
-  // Silent about whether the address is known, like the reset form.
-  if (user && !user.emailVerifiedAt) await sendVerificationEmail(user, await emailLinkOrigin());
+  // Silent about whether the address is known, like the reset form, and as quick either way: the
+  // lookup and the send happen after the answer, so its timing says nothing about the address.
+  const origin = await emailLinkOrigin();
+  after(async () => {
+    try {
+      const [user] = await db().select().from(users).where(eq(users.email, email)).limit(1);
+      if (user && !user.emailVerifiedAt) await sendVerificationEmail(user, origin);
+    } catch (error) {
+      console.error(JSON.stringify({ event: "confirmation_email_failed", error: error instanceof Error ? error.message : String(error) }));
+    }
+  });
   redirect(withParams("/signup", { pending: "1", email, sent: "1" }));
 }
 
@@ -105,7 +119,16 @@ export async function requestReset(formData: FormData): Promise<void> {
   ]))) {
     redirect(withParams("/forgot-password", { error: "rate_limited" }));
   }
-  await requestPasswordReset(email, await emailLinkOrigin());
+  // A known address used to cost a token and a round trip to the email provider before the answer,
+  // an unknown one a single read: the reset now runs after the answer, so both take the same time.
+  const origin = await emailLinkOrigin();
+  after(async () => {
+    try {
+      await requestPasswordReset(email, origin);
+    } catch (error) {
+      console.error(JSON.stringify({ event: "reset_email_failed", error: error instanceof Error ? error.message : String(error) }));
+    }
+  });
   redirect(withParams("/forgot-password", { sent: "1" }));
 }
 

@@ -12,8 +12,13 @@ export interface RateLimit {
 }
 
 export const LIMITS = {
-  /** Failed password attempts per email address. */
-  loginEmail: { max: 5, windowMs: 15 * 60 * 1000 },
+  /**
+   * Failed password attempts per email address from one caller. Keyed on the pair, so a stranger
+   * failing five times cannot turn away the owner's correct password from the owner's own address.
+   */
+  loginEmailAddress: { max: 5, windowMs: 15 * 60 * 1000 },
+  /** Failed password attempts per email address from anywhere: the bound on distributed guessing. */
+  loginEmail: { max: 25, windowMs: 15 * 60 * 1000 },
   /** Failed password attempts per address, across every account. */
   loginAddress: { max: 30, windowMs: 15 * 60 * 1000 },
   signupAddress: { max: 10, windowMs: 60 * 60 * 1000 },

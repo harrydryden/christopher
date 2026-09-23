@@ -115,6 +115,47 @@ describe("batched enqueue", () => {
   });
 });
 
+describe("promotion on a duplicate key", () => {
+  const key = "score_job:account:role";
+  const payload = { userId: "account", jobId: "role" };
+  const theRow = async () => { const rows = await db.select().from(schema.tasks); expect(rows).toHaveLength(1); return rows[0]!; };
+
+  it("brings a queued background row up to a person's request instead of absorbing it", async () => {
+    const later = new Date(Date.now() + 3600_000);
+    const queued = await enqueueTask(db, "score_job", payload, { dedupeKey: key, priority: 4, runAfter: later });
+    // Without promotion the request is dropped, and waits at the background row's place.
+    expect(await enqueueTask(db, "score_job", payload, { dedupeKey: key, priority: 1 })).toBeNull();
+    expect((await theRow()).priority).toBe(4);
+    // With it, the one row moves up, and is reported as not inserted.
+    expect(await enqueueTask(db, "score_job", { ...payload, extra: "ignored" }, { dedupeKey: key, priority: 1, promote: true })).toBeNull();
+    const row = await theRow();
+    expect(row.id).toBe(queued);
+    expect(row.priority).toBe(1);
+    expect(row.runAfter.getTime()).toBeLessThan(later.getTime());
+    expect(row.payload).toEqual(payload);
+    // A less urgent request never demotes it.
+    await enqueueTask(db, "score_job", payload, { dedupeKey: key, priority: 6, promote: true });
+    expect((await theRow()).priority).toBe(1);
+  });
+
+  it("inserts when nothing is queued, and leaves a running task alone", async () => {
+    const id = await enqueueTask(db, "score_job", payload, { dedupeKey: key, priority: 4, promote: true });
+    expect(id).not.toBeNull();
+    await db.update(schema.tasks).set({ status: "running" });
+    expect(await enqueueTask(db, "score_job", payload, { dedupeKey: key, priority: 1, promote: true })).toBeNull();
+    expect((await theRow()).priority).toBe(4);
+  });
+
+  it("promotes in a batch that names one key twice without failing the statement", async () => {
+    await enqueueTask(db, "score_job", payload, { dedupeKey: key, priority: 4 });
+    const rows = [5, 1, 3].map(priority => ({ type: "score_job" as const, payload, dedupeKey: key, priority }));
+    expect(await enqueueTasks(db, [...rows, { type: "score_job" as const, payload: { userId: "account", jobId: "other" }, dedupeKey: "score_job:account:other", priority: 1 }], 250, true)).toBe(1);
+    const all = await db.select().from(schema.tasks);
+    expect(all.find(t => t.dedupeKey === key)!.priority).toBe(1);
+    expect(all).toHaveLength(2);
+  });
+});
+
 describe("discovery sources", () => {
   async function source(userId: string, name: string) {
     const [row] = await db.insert(schema.discoverySources).values({ userId, name, kind: "email", nextRunAt: now }).returning();

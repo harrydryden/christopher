@@ -1,7 +1,7 @@
 import { cache } from "react";
 import { and, eq, inArray, notLike, sql } from "drizzle-orm";
 import { settings as settingsTable, userSettings as userSettingsTable } from "@ava/db/schema";
-import { isSystemSettingsKey, isUserSettingsKey, resolveSettings, resolveSystemSettings, type AppSettings, type SystemSettings, type UserSettings } from "@ava/core";
+import { dedupeKeyFor, isSystemSettingsKey, isUserSettingsKey, priorityFor, resolveSettings, resolveSystemSettings, type AppSettings, type GateSettings, type SystemSettings, type UserSettings } from "@ava/core";
 import { enqueueTask, reevaluateGate } from "@ava/db";
 import { requireUser } from "./auth";
 import { db } from "./db";
@@ -44,22 +44,43 @@ export async function setUserSetting(userId: string, key: keyof UserSettings, va
     .onConflictDoUpdate({ target: [userSettingsTable.userId, userSettingsTable.key], set: { value: value as object, updatedAt: new Date() } });
 }
 
-/** Persist one account's settings and its gate membership in one transaction before returning to the interface. */
-export async function saveSettingsAndGate(userId: string, entries: Partial<UserSettings>): Promise<void> {
+/** A gate's settings as one comparable string, whatever order its keys were stored in. */
+function gateFingerprint(gate: GateSettings): string {
+  return JSON.stringify(Object.fromEntries(Object.entries(gate).sort(([a], [b]) => a.localeCompare(b))));
+}
+
+/**
+ * Persist one account's settings and its gate membership in one transaction before returning to the
+ * interface. Only a save that changes the gate re-evaluates it and re-scores the table: every pass
+ * reads every posting of every followed company, and a display setting reads none of that.
+ * `rescore` is false for an account that has not confirmed its address: re-scoring is model work,
+ * and filters are the one thing such an account sets at once (the gate itself spends nothing).
+ *
+ * A large account's re-evaluation runs in the background. One queued pass is enough however many
+ * saves arrive before it starts, because it reads the settings when it runs; a save made while a
+ * pass is already running queues the next one, so no change is ever left unapplied.
+ */
+export async function saveSettingsAndGate(userId: string, entries: Partial<UserSettings>, options: { rescore?: boolean } = {}): Promise<void> {
   await db().transaction(async (tx) => {
+    // One save per account at a time, so the queued-pass check below cannot race another save.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`settings:${userId}`}))`);
+    const before = await getSettingsFor(userId, tx as unknown as Writer);
     for (const [key, value] of Object.entries(entries)) {
       if (!isUserSettingsKey(key)) throw new Error(`Not a user setting: ${key}`);
       await tx.insert(userSettingsTable).values({ userId, key, value: value as object, updatedAt: new Date() })
         .onConflictDoUpdate({ target: [userSettingsTable.userId, userSettingsTable.key], set: { value: value as object, updatedAt: new Date() } });
     }
     const settings = await getSettingsFor(userId, tx as unknown as Writer);
+    if (gateFingerprint(settings.gate) === gateFingerprint(before.gate)) return;
     const size = await tx.execute(sql`select count(*)::int as n from (
       select j.id from jobs j where exists (select 1 from company_subscriptions s where s.company_id = j.company_id and s.user_id = ${userId} and s.status <> 'archived') limit 501) bounded`);
     if (Number(size.rows[0]?.n) > 500) {
-      // Every save gets a task, including changes made during an earlier re-evaluation.
-      await enqueueTask(tx, "reevaluate_gate", { userId }, { priority: 1 });
+      // The account's key holds only a pass that has not started, so a running one never absorbs
+      // this; a waiting one — the boot pass, say — is brought up to a person's priority instead.
+      const payload = { userId };
+      await enqueueTask(tx, "reevaluate_gate", payload, { dedupeKey: dedupeKeyFor("reevaluate_gate", payload), priority: priorityFor("reevaluate_gate"), promote: true });
     } else await reevaluateGate(tx as unknown as ReturnType<typeof db>, userId, settings);
-    await enqueueTask(tx, "rescore_all", { userId, onlyInTable: true }, { dedupeKey: `rescore_all:${userId}`, priority: 5 });
+    if (options.rescore ?? true) await enqueueTask(tx, "rescore_all", { userId, onlyInTable: true }, { dedupeKey: `rescore_all:${userId}`, priority: 5, promote: true });
   });
 }
 

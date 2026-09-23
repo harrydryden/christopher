@@ -142,3 +142,29 @@ it("rolls back acceptance if queuing careers setup fails", async () => {
     expect((await database.select().from(schema.companySuggestions))[0]!.status).toBe("pending");
   } finally { failure.mockRestore(); }
 });
+it("holds a member who already follows 200 companies to that when accepting a recommendation", async () => {
+  const member = await ensureTestUser(database, "full@example.com", "member");
+  auth.requireUser.mockImplementation(async () => member);
+  await database.insert(schema.userSettings).values({ userId: member.id, key: "gate", value: { includeKeywords: ["operations"], excludeKeywords: [], matchFields: ["title"], locationTerms: [], includeRemote: true } });
+  const held = await database.insert(schema.companies).values(Array.from({ length: 200 }, (_, n) => ({ name: `Held ${n}`, domain: `held${n}.example`, homepageUrl: `https://held${n}.example` }))).returning({ id: schema.companies.id });
+  await database.insert(schema.companySubscriptions).values(held.map(row => ({ userId: member.id, companyId: row.id })));
+  const [row] = await database.insert(schema.companySuggestions).values({ userId: member.id, name: "Acme", domain: "acme.example", homepageUrl: "https://acme.example" }).returning();
+  expect(await acceptSuggestion(row!.id)).toEqual({ ok: false, error: expect.stringContaining("up to 200 companies") });
+  expect(await database.select().from(schema.companies).where(eq(schema.companies.domain, "acme.example"))).toHaveLength(0);
+  expect((await database.select().from(schema.companySuggestions))[0]!.status).toBe("pending");
+});
+it("refuses a discovery source on an address the worker will never fetch", async () => {
+  expect(await saveDiscoverySource(form({ name: "Intranet", kind: "website", intervalDays: "7", url: "http://127.0.0.1/news" })))
+    .toEqual({ ok: false, error: "127.0.0.1 is a private or local network address." });
+  expect(await database.select().from(schema.discoverySources)).toHaveLength(0);
+  const [row] = await database.insert(schema.discoverySources).values({ userId: user.id, name: "Blog", kind: "website", url: "https://news.example/blog" }).returning();
+  expect(await updateDiscoverySource(row!.id, form({ intervalDays: "7", url: "http://wiki.internal/jobs" })))
+    .toEqual({ ok: false, error: "wiki.internal is a local network name." });
+  expect((await database.select().from(schema.discoverySources))[0]!.url).toBe("https://news.example/blog");
+});
+it("keeps an account to 20 discovery sources", async () => {
+  await database.insert(schema.discoverySources).values(Array.from({ length: 20 }, (_, n) => ({ userId: user.id, name: `Source ${n}`, kind: "website" as const, url: `https://news${n}.example/` })));
+  expect(await saveDiscoverySource(form({ name: "One more", kind: "website", intervalDays: "7", url: "https://more.example/blog" })))
+    .toEqual({ ok: false, error: "You can keep up to 20 sources, and this list is full. Point one you no longer read at the new address instead." });
+  expect(await database.select().from(schema.discoverySources)).toHaveLength(20);
+});

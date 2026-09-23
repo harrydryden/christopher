@@ -23,7 +23,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
 import { disableSource, markSourceConfirmed, pasteDiscoveryUrl, pauseCompany, rediscoverCompany, useDiscoveryCandidate } from "./companies";
-import { keepCurrentSource } from "./health";
+import { keepCurrentSource, retryTask } from "./health";
 import { countHealthItems, healthItems } from "@/lib/queries/health";
 
 const CANDIDATES = [
@@ -154,4 +154,25 @@ it("refuses to resolve a company this account does not follow", async () => {
   await expect(keepCurrentSource(run!.id)).rejects.toThrow("You do not follow this company.");
   const [untouched] = await database.select().from(schema.discoveryRuns).where(eq(schema.discoveryRuns.id, run!.id));
   expect(untouched!.status).toBe("needs_confirmation");
+});
+
+it("retries only a failed task, keeps its attempts counting, and says so when the work is already queued again", async () => {
+  const [failed] = await database.insert(schema.tasks).values({ type: "discover", payload: { companyId: crypto.randomUUID(), reason: "manual" }, dedupeKey: "discover:one", status: "failed", attempts: 3, error: "boom", finishedAt: new Date() }).returning();
+  const [running] = await database.insert(schema.tasks).values({ type: "discover", payload: { companyId: crypto.randomUUID(), reason: "manual" }, dedupeKey: "discover:two", status: "running", attempts: 1, lockedBy: "worker#1", lockedAt: new Date(), startedAt: new Date() }).returning();
+
+  await retryTask(failed!.id);
+  const [retried] = await database.select().from(schema.tasks).where(eq(schema.tasks.id, failed!.id));
+  expect(retried).toMatchObject({ status: "queued", attempts: 3, maxAttempts: 6, error: null, lockedBy: null, startedAt: null });
+  // A second press from the same page finds nothing failed and changes nothing.
+  await retryTask(failed!.id);
+  expect((await database.select().from(schema.tasks).where(eq(schema.tasks.id, failed!.id)))[0]).toMatchObject({ status: "queued", maxAttempts: 6 });
+
+  // A running task is never pulled out from under its worker.
+  await retryTask(running!.id);
+  expect((await database.select().from(schema.tasks).where(eq(schema.tasks.id, running!.id)))[0]).toMatchObject({ status: "running", attempts: 1, lockedBy: "worker#1" });
+
+  // A failure whose work was queued again since has nothing to retry.
+  const [stale] = await database.insert(schema.tasks).values({ type: "discover", payload: { companyId: crypto.randomUUID(), reason: "manual" }, dedupeKey: "discover:one", status: "failed", attempts: 3, finishedAt: new Date() }).returning();
+  await expect(retryTask(stale!.id)).rejects.toThrow("redirect:/admin/health?error=This+task+is+already+queued+or+running+again");
+  expect((await database.select().from(schema.tasks).where(eq(schema.tasks.id, stale!.id)))[0]!.status).toBe("failed");
 });

@@ -762,19 +762,19 @@ it("returns only the newest requested events per role", async () => {
   expect(events.get(job.id)!.map((e) => e.payload.i)).toEqual([29, 28, 27]);
 });
 
-it("atomically adds 1,000 companies and queues setup, with a bounded response for duplicate imports", async () => {
+it("atomically adds a full submission of companies and queues setup, with a bounded response for duplicate imports", async () => {
   const form = new FormData();
   form.set(
     "urls",
-    Array.from({ length: 1000 }, (_, n) => `https://bulk${n}.example`).join(
+    Array.from({ length: 25 }, (_, n) => `https://bulk${n}.example`).join(
       "\n",
     ),
   );
-  await expect(addCompanies(form)).rejects.toThrow("redirect:/companies?added=1000");
-  expect(await database.select({id:schema.companies.id}).from(schema.companies)).toHaveLength(1000);
-  expect(await database.select({id:schema.tasks.id}).from(schema.tasks).where(eq(schema.tasks.type,"discover"))).toHaveLength(1000);
+  await expect(addCompanies(form)).rejects.toThrow("redirect:/companies?added=25");
+  expect(await database.select({id:schema.companies.id}).from(schema.companies)).toHaveLength(25);
+  expect(await database.select({id:schema.tasks.id}).from(schema.tasks).where(eq(schema.tasks.type,"discover"))).toHaveLength(25);
   await expect(addCompanies(form)).rejects.toThrow("added=0");
-  expect(await database.select({id:schema.tasks.id}).from(schema.tasks)).toHaveLength(1000);
+  expect(await database.select({id:schema.tasks.id}).from(schema.tasks)).toHaveLength(25);
 });
 
 describe("four-status role workflow", () => {

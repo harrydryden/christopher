@@ -141,7 +141,6 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
       const result = await archiveRoles([id], !archived);
       if (!result.ok) setFlashError(result.error);
       else setRemovedIds(ids => new Set([...ids, id]));
-      router.refresh();
     } catch { setFlashError("Could not save. Reload to check the current state before retrying."); }
     finally { actionsInFlight.current.delete(id); setArchivingId(null); }
     });

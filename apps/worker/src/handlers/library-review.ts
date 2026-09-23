@@ -34,7 +34,6 @@ import { createAiEngine, estimateLibraryReviewUsd } from "@ava/ai";
 import {
   latestLibraryReviews,
   pruneLibraryReviews,
-  recordAiCall,
   schema,
   upsertLibraryReviews,
   type Db,
@@ -42,7 +41,7 @@ import {
   type Task,
 } from "@ava/db";
 import { desc, eq } from "drizzle-orm";
-import { tryReserveAi } from "../budget";
+import { recordAiUsage, tryReserveAi, type AiHold } from "../budget";
 import type { TaskRunContext } from "../queue";
 import type { WorkerDeps } from "../context";
 import { log } from "../log";
@@ -129,6 +128,8 @@ export async function handleReviewLibrary(task: Task, deps: WorkerDeps, ctx?: Ta
   // the same evidence, made earlier and far more cheaply.
   const model = settings.cvModel;
   let cost = 0;
+  /** The hold this pass is admitted against, once it is; each call's record reduces it in the same transaction. */
+  let hold: AiHold | undefined;
   const ai = createAiEngine({
     apiKey: deps.env.anthropicApiKey,
     client: deps.aiClient,
@@ -138,7 +139,7 @@ export async function handleReviewLibrary(task: Task, deps: WorkerDeps, ctx?: Ta
     ...(ctx?.signal ? { signal: ctx.signal } : {}),
     onUsage: async usage => {
       cost += usage.costUsd;
-      await recordAiCall(deps.db, userId, usage);
+      await recordAiUsage(deps.db, userId, usage, { hold });
     },
     logger: (msg, data) => log.debug(`ai ${msg}`, data),
   });
@@ -173,6 +174,7 @@ export async function handleReviewLibrary(task: Task, deps: WorkerDeps, ctx?: Ta
       cost: 0,
     };
   }
+  hold = admitted;
 
   try {
     const reviews = await ai.reviewLibraryEntries(

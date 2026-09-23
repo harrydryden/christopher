@@ -166,8 +166,11 @@ export async function acceptFilterSuggestionWithReport(suggestionId: string): Pr
       await db().update(filterSuggestions).set({ status: "rejected", resolvedAt: new Date() }).where(eq(filterSuggestions.id, id));
       revalidatePath("/learning");
       return { ok: true, message: "Settled: hiding roles by score is retired." };
-    } else if (suggestion.type === "pause_company" && extracted.kind === "company") {
-      await setSubscriptionStatus(db(), user.id, extracted.companyId, "paused");
+    } else if (suggestion.type === "pause_company") {
+      // A pause names one of the account's followed companies by id; a suggestion that names none
+      // (stored before the id was kept, or by a model that made one up) settles nothing.
+      if (extracted.kind !== "company") return fail("This suggestion does not name a company you follow. Reject it and pause the company from Companies instead.");
+      if (!(await setSubscriptionStatus(db(), user.id, extracted.companyId, "paused"))) return fail("You no longer follow that company, so there is nothing to pause.");
     }
 
     // The gate save above already re-evaluated the table, or queued the pass that will.

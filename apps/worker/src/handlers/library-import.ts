@@ -43,11 +43,10 @@ import {
   completeLibraryImport,
   enqueueTask,
   getLibraryImportForWorker,
-  recordAiCall,
   type Db,
   type Task,
 } from "@ava/db";
-import { tryReserveAi } from "../budget";
+import { recordAiUsage, tryReserveAi, type AiHold } from "../budget";
 import { makeFetchContext, type WorkerDeps } from "../context";
 import { capDocumentText, DocumentReadError, documentToText, tidyDocumentText } from "../document-text";
 import { HostBusyError, PrivateAddressError } from "../fetcher";
@@ -163,6 +162,8 @@ export async function handleImportLibraryDocument(task: Task, deps: WorkerDeps, 
   let cost = 0;
   /** Why the call produced nothing, as the engine classified it; the engine returns null either way. */
   let failure: AiFailure | undefined;
+  /** The hold this call is admitted against, once it is; its record reduces the hold in the same transaction. */
+  let hold: AiHold | undefined;
   const ai = createAiEngine({
     apiKey: deps.env.anthropicApiKey,
     client: deps.aiClient,
@@ -172,7 +173,7 @@ export async function handleImportLibraryDocument(task: Task, deps: WorkerDeps, 
     onUsage: async ({ failure: failed, ...usage }) => {
       cost += usage.costUsd;
       failure = failed;
-      await recordAiCall(deps.db, userId, usage);
+      await recordAiUsage(deps.db, userId, usage, { hold });
     },
     logger: (msg, data) => log.debug(`ai ${msg}`, data),
   });
@@ -199,6 +200,7 @@ export async function handleImportLibraryDocument(task: Task, deps: WorkerDeps, 
     await complete({ error: message, content: text });
     return { skipped: "budget", message, cost: 0 };
   }
+  hold = admitted;
 
   // ---- One call, then the post-check ----------------------------------------------------------
   try {

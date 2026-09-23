@@ -44,12 +44,28 @@ function inferSsl(connectionString: string): NonNullable<CreateDbOptions["ssl"]>
   return "require";
 }
 
+type LogLevel = "debug" | "info" | "warn" | "error";
+const LOG_LEVELS: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };
+
+/**
+ * One JSON line from this package, at the same thresholds as the worker's log: nothing below
+ * `LOG_LEVEL` (default `info`) is written, and warnings and errors go to stderr.
+ */
+export function logLine(level: LogLevel, event: string, fields: Record<string, unknown> = {}): void {
+  const threshold = LOG_LEVELS[(process.env.LOG_LEVEL as LogLevel) ?? "info"] ?? LOG_LEVELS.info;
+  if (LOG_LEVELS[level] < threshold) return;
+  const line = JSON.stringify({ t: new Date().toISOString(), level, event, ...fields });
+  if (level === "warn" || level === "error") process.stderr.write(line + "\n");
+  else process.stdout.write(line + "\n");
+}
+
 /**
  * Process-wide counts the worker reports as vitals. A pool with connections waiting and a rising
  * slow-query count is the shape of "the database is the bottleneck", and neither is visible from
  * the outside: `pg` keeps its own queue, and a slow query is only a log line nothing adds up.
  */
 let slowQueries = 0;
+let connectionErrors = 0;
 const livePools = new Set<pg.Pool>();
 
 /** How many queries this process has seen take longer than the slow threshold. */
@@ -57,8 +73,13 @@ export function slowQueryCount(): number {
   return slowQueries;
 }
 
+/** How many connection errors this process's pools have absorbed: dropped idle connections, terminated backends. */
+export function poolErrorCount(): number {
+  return connectionErrors;
+}
+
 /** Connections across every pool this process still holds open, or null when it holds none. */
-export function poolStats(): { total: number; idle: number; waiting: number } | null {
+export function poolStats(): { total: number; idle: number; waiting: number; errors: number } | null {
   if (livePools.size === 0) return null;
   let total = 0, idle = 0, waiting = 0;
   for (const pool of livePools) {
@@ -66,7 +87,27 @@ export function poolStats(): { total: number; idle: number; waiting: number } | 
     idle += pool.idleCount;
     waiting += pool.waitingCount;
   }
-  return { total, idle, waiting };
+  return { total, idle, waiting, errors: connectionErrors };
+}
+
+const failedConnections = new WeakSet<object>();
+
+/**
+ * A connection that fails is dropped by the pool, and the next query opens a new one. The error
+ * still has to be listened for: `pg` emits it on the pool when the connection was idle and on the
+ * client when it was checked out, and an `error` event that nothing listens to throws, which ends
+ * the process — every request a serverless instance is serving, or every task the worker is
+ * running. Idle connections are dropped routinely (a pooler's idle timeout, a failover, a reset
+ * keepalive socket, a server-side timeout), so this is the ordinary case. One dying connection can
+ * raise several errors by both routes (the server's goodbye, then the closed socket); it is
+ * counted and logged once.
+ */
+function absorbConnectionError(error: unknown, connection: object): void {
+  if (failedConnections.has(connection)) return;
+  failedConnections.add(connection);
+  connectionErrors += 1;
+  const { message, code } = (error ?? {}) as { message?: unknown; code?: unknown };
+  logLine("warn", "database_pool_error", { message: typeof message === "string" ? message : String(error), ...(typeof code === "string" ? { code } : {}) });
 }
 
 export function createDb(connectionString: string, options: CreateDbOptions = {}) {
@@ -81,7 +122,9 @@ export function createDb(connectionString: string, options: CreateDbOptions = {}
     // handshake again.
     keepAlive: true,
   });
+  pool.on("error", (error, client) => absorbConnectionError(error, client));
   pool.on("connect", client => {
+    client.on("error", error => absorbConnectionError(error, client));
     const original = client.query.bind(client);
     client.query = ((...args: unknown[]) => {
       const started = performance.now();

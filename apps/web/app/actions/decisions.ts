@@ -3,7 +3,7 @@
 import { needsEmailConfirmation, requireUser, requireVerifiedUser } from "@/lib/auth";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { companies, decisions, jobEvents, jobs, tagVocabulary, userJobs } from "@ava/db/schema";
+import { decisions, jobEvents, tagVocabulary, userJobs } from "@ava/db/schema";
 import { evaluateLocation } from "@ava/core";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -13,28 +13,8 @@ import { cvBuildQuote, cvQuoteButtonLine } from "@/lib/cv-quote";
 import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
 import { fetchRoleDetails, locationReasonText, type CvQuoteVM, type RoleDetailsVM } from "@/lib/queries/jobs";
 import { getSettingsFor } from "@/lib/settings";
+import { countStandingDecisions, queueFilterSuggestionsOnCrossing, recordDecision, restoreDismissedApplications, withdrawLiveApplications } from "@/lib/decisions";
 import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
-
-/**
- * How many decisions pass before the filter-suggestion call is queued again (R-6.9 asks for a
- * weekly call; the scheduler owns that). A review session of thirty roles used to queue the model
- * on every one of them, deduped only by the account, so it became a per-decision call.
- */
-const SUGGEST_FILTERS_EVERY = 5;
-
-type Tx = Parameters<Parameters<ReturnType<typeof db>["transaction"]>[0]>[0];
-
-/**
- * Queue A8 after every fifth decision this account has standing, counted inside the transaction
- * that wrote the decision. The dedupe key is the account, so a group decision that crosses the
- * fifth queues exactly one task, as the same roles decided one at a time would.
- */
-async function queueFilterSuggestionsEveryFifth(tx: Tx, userId: string): Promise<void> {
-  const [counted] = await tx.select({ n: sql<number>`count(*)::int` }).from(decisions)
-    .where(and(eq(decisions.userId, userId), eq(decisions.superseded, false)));
-  const n = counted?.n ?? 0;
-  if (n > 0 && n % SUGGEST_FILTERS_EVERY === 0) await enqueue("suggest_filters", { userId }, tx);
-}
 
 export type RoleDetailsResult = { ok: true; details: RoleDetailsVM } | { ok: false; error: string };
 
@@ -116,9 +96,22 @@ const DecideSchema = z
   .refine((v) => v.decision !== "skip" || v.reason.trim().length > 0, { message: SKIP_REASON_REQUIRED, path: ["reason"] });
 
 /**
- * Record (or edit) a decision on a role, or undo it when `decision` is null.
- * Always supersedes the previous active decision; a new decision is inserted with a
- * denormalised snapshot so the learning corpus survives job/company deletion.
+ * The pages a decision changes: the roles table on Roles and on each company page (whichever the
+ * person decided from is re-rendered in the action's own response), the companies list's counts
+ * and the applications pipeline. Not the whole layout: nothing in it reads a decision, and
+ * invalidating it made every later navigation render in full.
+ */
+function revalidateDecided(): void {
+  revalidatePath("/");
+  revalidatePath("/applications");
+  revalidatePath("/companies");
+  revalidatePath("/companies/[id]", "page");
+}
+
+/**
+ * Record (or edit) a decision on a role, or undo it when `decision` is null — `recordDecision`,
+ * behind this account's authentication. Undoing a dismissal also puts back the application the
+ * dismissal withdrew.
  */
 export async function decide(jobId: string, decision: "apply" | "skip" | null, reason: string): Promise<ActionResult> {
   const user = await requireUser();
@@ -127,81 +120,13 @@ export async function decide(jobId: string, decision: "apply" | "skip" | null, r
   const input = parsed.data;
   const trimmedReason = input.reason.trim();
 
-  let decisionId: string | null = null;
-
   try {
-    await db().transaction(async (tx) => {
-      const [locked] = await tx.select({ jobId: userJobs.jobId, inTable: userJobs.inTable, archivedAt: userJobs.archivedAt }).from(userJobs)
-        .where(and(eq(userJobs.userId, user.id), eq(userJobs.jobId, input.jobId))).for("update");
-      if (!locked) throw new UserFacingError("Role not found.");
-      const existingRows = await tx
-        .select()
-        .from(decisions)
-        .where(and(eq(decisions.userId, user.id), eq(decisions.jobId, input.jobId), eq(decisions.superseded, false)))
-        .limit(1);
-      const existing = existingRows[0] ?? null;
-
-      if (input.decision === null) {
-        if (existing) await tx.update(decisions).set({ superseded: true }).where(eq(decisions.id, existing.id));
-        if (!locked.inTable && !locked.archivedAt) {
-          await tx.update(userJobs).set({ archivedAt: new Date(), updatedAt: new Date() }).where(and(eq(userJobs.userId, user.id), eq(userJobs.jobId, input.jobId)));
-          await tx.insert(jobEvents).values({ jobId: input.jobId, userId: user.id, type: "updated", payload: { action: "archived", actor: "system", reason: "No longer matches your criteria" } });
-        }
-        await tx.insert(jobEvents).values({ jobId: input.jobId, userId: user.id, type: "decided", payload: { decision: null } });
-        await enqueue("synthesize_profile", { userId: user.id, force: true }, tx);
-        await queueFilterSuggestionsEveryFifth(tx, user.id);
-        return;
-      }
-
-      await tx.update(userJobs).set({ archivedAt: null, updatedAt: new Date() }).where(and(eq(userJobs.userId, user.id), eq(userJobs.jobId, input.jobId)));
-      if (existing) {
-        await tx.update(decisions).set({ superseded: true }).where(eq(decisions.id, existing.id));
-      }
-
-      const jobRows = await tx.select({ job: jobs, fitScore: userJobs.fitScore }).from(jobs)
-        .innerJoin(userJobs, and(eq(userJobs.jobId, jobs.id), eq(userJobs.userId, user.id)))
-        .where(eq(jobs.id, input.jobId)).limit(1);
-      const row = jobRows[0];
-      if (!row) throw new UserFacingError("Role not found.");
-      const job = row.job;
-      const companyRows = await tx.select({ name: companies.name }).from(companies).where(eq(companies.id, job.companyId)).limit(1);
-      const companyName = companyRows[0]?.name ?? "";
-
-      const inserted = await tx
-        .insert(decisions)
-        .values({
-          userId: user.id,
-          jobId: input.jobId,
-          decision: input.decision,
-          reason: trimmedReason,
-          jobTitle: job.title,
-          companyName,
-          jobLocation: job.location,
-          jobDepartment: job.department,
-          descriptionSnippet: job.descriptionText ? job.descriptionText.slice(0, 300) : null,
-          fitScoreAtDecision: row.fitScore,
-        })
-        .returning({ id: decisions.id });
-      decisionId = inserted[0]?.id ?? null;
-
-      await tx.insert(jobEvents).values({
-        jobId: input.jobId,
-        userId: user.id,
-        type: "decided",
-        payload: { decision: input.decision, reason: trimmedReason },
-      });
-      if (input.decision === "apply") await enqueue("score_job", { userId: user.id, jobId: input.jobId }, tx);
-      if (input.decision === "skip") await withdrawLiveApplications(tx, user.id, [input.jobId]);
-      if (decisionId && trimmedReason) await enqueue("tag_reason", { decisionId }, tx);
-      await enqueue("synthesize_profile", { userId: user.id, force: false }, tx);
-      await queueFilterSuggestionsEveryFifth(tx, user.id);
-    });
+    await db().transaction(async (tx) => { await recordDecision(tx, user.id, input.jobId, input.decision, trimmedReason); });
   } catch (err) {
     return actionError(err, "Could not save your decision. Please try again.");
   }
 
-
-  revalidatePath("/", "layout");
+  revalidateDecided();
   return ok();
 }
 
@@ -219,7 +144,6 @@ export async function saveDecisionTags(decisionId: string, formData: FormData): 
   if (!updated.length) throw new UserFacingError("This decision has changed. Reload before editing its tags.");
   await enqueue("synthesize_profile", { userId: user.id, force: true });
   revalidatePath("/learning");
-  revalidatePath("/", "layout");
 }
 
 /** Archive is a user preference, independent of source status and future scans. */
@@ -256,7 +180,7 @@ export async function archiveRoles(jobIds: string[], archived: boolean): Promise
         where v.user_id = ${user.id}::uuid and v.job_id in (${sql.join(ids.map(id => sql`${id}::uuid`), sql`, `)})`);
     });
   } catch (error) { return actionError(error, "Could not update the archive."); }
-  revalidatePath("/", "layout");
+  revalidateDecided();
   return ok();
 }
 
@@ -298,12 +222,16 @@ export async function decideRoles(jobIds: string[], decision: "apply" | "skip" |
       const rows = await tx.select({ jobId: userJobs.jobId, inTable: userJobs.inTable, archivedAt: userJobs.archivedAt }).from(userJobs)
         .where(and(eq(userJobs.userId, user.id), inArray(userJobs.jobId, ids))).orderBy(userJobs.jobId).for("update");
       if (rows.length !== ids.length) throw new UserFacingError("A selected role no longer exists.");
+      const before = await countStandingDecisions(tx, user.id);
 
       // Undo keeps the audit record: the previous decision is superseded, never deleted.
-      await tx.update(decisions).set({ superseded: true })
-        .where(and(eq(decisions.userId, user.id), inArray(decisions.jobId, ids), eq(decisions.superseded, false)));
+      const superseded = await tx.update(decisions).set({ superseded: true })
+        .where(and(eq(decisions.userId, user.id), inArray(decisions.jobId, ids), eq(decisions.superseded, false)))
+        .returning({ jobId: decisions.jobId, decision: decisions.decision });
 
       if (input.decision === null) {
+        // What undoing each dismissal puts back, as `decide` does for one role.
+        await restoreDismissedApplications(tx, user.id, superseded.filter(row => row.decision === "skip" && row.jobId).map(row => row.jobId!));
         // A role the gate no longer admits was only in the table because a decision held it.
         const drops = rows.filter(row => !row.inTable && !row.archivedAt).map(row => row.jobId);
         if (drops.length) {
@@ -316,7 +244,6 @@ export async function decideRoles(jobIds: string[], decision: "apply" | "skip" |
         }
         await tx.insert(jobEvents).values(ids.map(jobId => ({ jobId, userId: user.id, type: "decided" as const, payload: { decision: null } })));
         await enqueue("synthesize_profile", { userId: user.id, force: true }, tx);
-        await queueFilterSuggestionsEveryFifth(tx, user.id);
         return;
       }
 
@@ -347,31 +274,12 @@ export async function decideRoles(jobIds: string[], decision: "apply" | "skip" |
       if (input.decision === "skip") await withdrawLiveApplications(tx, user.id, ids);
       if (trimmedReason) await enqueueMany("tag_reason", insertedRows.map(row => ({ decisionId: row.id })), tx);
       await enqueue("synthesize_profile", { userId: user.id, force: false }, tx);
-      await queueFilterSuggestionsEveryFifth(tx, user.id);
+      await queueFilterSuggestionsOnCrossing(tx, user.id, before);
     });
   } catch (error) {
     return actionError(error, "Could not save your decisions. Please try again.");
   }
 
-  revalidatePath("/", "layout");
+  revalidateDecided();
   return ok();
-}
-
-/**
- * Dismissing a role is also the end of any application still open for it, the mirror of
- * Withdrawn on the applications table recording a skip: the two pages must not disagree about a
- * role the person has passed on. Only the newest application of each role moves, only while it
- * is live — an accepted or rejected outcome is history, and stands whatever is decided later.
- */
-async function withdrawLiveApplications(tx: { execute: (query: ReturnType<typeof sql>) => Promise<unknown> }, userId: string, jobIds: string[]): Promise<void> {
-  if (!jobIds.length) return;
-  const idList = sql.join(jobIds.map(id => sql`${id}::uuid`), sql`, `);
-  await tx.execute(sql`update applications set status = 'withdrawn',
-      history = history || jsonb_build_array(jsonb_build_object('status', 'withdrawn',
-        'at', to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'notes', 'Dismissed from Roles'))
-    where id in (
-      select distinct on (job_id) id from applications
-      where user_id = ${userId}::uuid and job_id in (${idList})
-      order by job_id, created_at desc, id desc)
-      and status not in ('accepted', 'rejected', 'withdrawn')`);
 }

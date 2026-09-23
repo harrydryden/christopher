@@ -1,14 +1,14 @@
 "use server";
 import { assertCvFinalisable } from "@ava/core/cv-review";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
-import { actionCvs, applications, companies, cvDrafts, jobs, userJobs, type ApplicationStatus } from "@ava/db";
+import { actionCvs, applications, companies, cvDrafts, decisions, jobs, type ApplicationStatus } from "@ava/db";
 import { pipelineRowForJob, type PipelineRow } from "@/lib/queries/applications";
 import { APPLICATION_STATUSES, APPLICATION_STATUS_LABELS, CvContentSchema, applicationStage, roleStageRank } from "@ava/core";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { isRecordableDay, todayDay } from "@/lib/application-dates";
 import { renderCvPdf } from "@/lib/cv-pdf";
-import { decide } from "@/app/actions/decisions";
+import { lockRoleView, recordDecision } from "@/lib/decisions";
 import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
 import { revalidatePath } from "next/cache";
 
@@ -160,25 +160,16 @@ async function latestApplicationRow(tx: Transaction, userId: string, jobId: stri
 export async function setRoleStage(jobId: string, _prev: ActionResult, form: FormData): Promise<ActionResult> {
   const user = await requireUser();
   let companyId: string | null = null;
-  let withdrawn = false;
-  // A save that changed nothing writes nothing, and a withdrawal that was already recorded is not
-  // withdrawn again: the skip decision behind it is already on the role.
-  let settled = false;
   try {
     zUuid().parse(jobId);
     const read = readStageForm(form, { insistOnAppliedOn: true });
     if (!read.ok) return fail(read.error);
     const fields = read.fields;
     const { status, notes, appliedOn: supplied } = fields;
-    withdrawn = status === "withdrawn";
     await db().transaction(async (tx) => {
-      // The same lock `decide` takes, in the same order, so a stage change and a decision on one
-      // role cannot interleave.
-      const [view] = await tx
-        .select({ jobId: userJobs.jobId })
-        .from(userJobs)
-        .where(and(eq(userJobs.userId, user.id), eq(userJobs.jobId, jobId)))
-        .for("update");
+      // The role lock `decide` and a CV build take, first, so a stage change, a decision and the
+      // first application row of a build never interleave on one role.
+      const view = await lockRoleView(tx, user.id, jobId);
       if (!view) throw new UserFacingError("Role not found.");
       const [role] = await tx
         .select({ title: jobs.title, companyId: companies.id, companyName: companies.name })
@@ -207,40 +198,59 @@ export async function setRoleStage(jobId: string, _prev: ActionResult, form: For
           ...nextActionColumns(fields),
           history: [historyEntry(fields, at, appliedOn)] satisfies HistoryEntry[],
         });
-        return;
+      } else {
+        const refusal = confirmBackwards(form, existing.status, status);
+        if (refusal) throw new UserFacingError(refusal);
+        // A save that changed nothing writes nothing.
+        if (!unchanged(existing, fields)) {
+          const appliedOn = supplied || existing.appliedOn;
+          await tx
+            .update(applications)
+            .set({
+              status,
+              notes,
+              ...(supplied ? { appliedOn: supplied } : {}),
+              ...nextActionColumns(fields),
+              ...(recordsEvent(existing, fields) ? { history: [...existing.history, historyEntry(fields, at, appliedOn)] } : {}),
+            })
+            .where(eq(applications.id, existing.id));
+        }
       }
-      const refusal = confirmBackwards(form, existing.status, status);
-      if (refusal) throw new UserFacingError(refusal);
-      if (unchanged(existing, fields)) {
-        settled = true;
-        return;
+      // Withdrawing is a decision about the role as well as a status, and it is recorded in this
+      // same transaction, after the application write, so the two pages can never disagree about
+      // it. It is asked on every save rather than only when the status changes, so a role an
+      // earlier failure left without its skip is repaired by saving again, and one that already
+      // carries the skip gets no second one.
+      if (status === "withdrawn") {
+        const [active] = await tx.select({ decision: decisions.decision }).from(decisions)
+          .where(and(eq(decisions.userId, user.id), eq(decisions.jobId, jobId), eq(decisions.superseded, false))).limit(1);
+        if (active?.decision !== "skip") await recordDecision(tx, user.id, jobId, "skip", "Withdrawn from application");
       }
-      const appliedOn = supplied || existing.appliedOn;
-      await tx
-        .update(applications)
-        .set({
-          status,
-          notes,
-          ...(supplied ? { appliedOn: supplied } : {}),
-          ...nextActionColumns(fields),
-          ...(recordsEvent(existing, fields) ? { history: [...existing.history, historyEntry(fields, at, appliedOn)] } : {}),
-        })
-        .where(eq(applications.id, existing.id));
     });
   } catch (error) {
     return actionError(error, "Could not update this role. Please try again.");
-  }
-  // Withdrawing is a decision about the role as well as a status, and `decide` is what writes one:
-  // it supersedes the previous decision, records the event and re-teaches the ranking. It takes
-  // the same row lock, so it runs after the transaction above rather than inside it.
-  if (withdrawn && !settled) {
-    const result = await decide(jobId, "skip", "Withdrawn from application");
-    if (!result.ok) return result;
   }
   revalidatePath("/applications");
   revalidatePath("/", "layout");
   if (companyId) revalidatePath(`/companies/${companyId}`);
   return ok();
+}
+
+/**
+ * A draft an application may be recorded from: completed, saved, finalised and, by the reviewer's
+ * own rule, still finalisable. The reviewer's words about what is missing are written for the
+ * person reading them.
+ */
+function assertRecordable(draft: typeof cvDrafts.$inferSelect | undefined) {
+  if (!draft || draft.status !== "ready" || !draft.content) throw new UserFacingError("Choose a completed, saved CV.");
+  if (!draft.finalisedAt) throw new UserFacingError("Review the assessment and finalise this CV before recording an application.");
+  const recordable = { ...draft, content: draft.content };
+  try {
+    assertCvFinalisable(recordable);
+  } catch (error) {
+    throw new UserFacingError(error instanceof Error ? error.message : "This CV cannot be finalised yet.");
+  }
+  return recordable;
 }
 
 /**
@@ -259,6 +269,12 @@ export async function recordApplication(cvId: string, _prev: ActionResult, form:
     if (!isRecordableDay(appliedOn)) return fail("Enter a valid application date.");
     const notes = String(form.get("notes") ?? "").trim();
     if (notes.length > 4000) return fail("Keep notes under 4,000 characters.");
+    // Rendering is CPU-bound and can take seconds, so it happens before the transaction opens,
+    // from a read of the draft; the transaction then re-reads it under lock and writes only if it
+    // is still the revision that was rendered.
+    const [rendered] = await db().select().from(cvDrafts).where(and(eq(cvDrafts.id, cvId), eq(cvDrafts.userId, user.id)));
+    if (!rendered) throw new UserFacingError("Choose a completed, saved CV.");
+    const pdf = await renderCvPdf(CvContentSchema.parse(assertRecordable(rendered).content));
     await db().transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`application:${cvId}`}))`);
       // Only a row that already stores the submitted bytes is a duplicate; a row with a stage on
@@ -268,19 +284,11 @@ export async function recordApplication(cvId: string, _prev: ActionResult, form:
         .from(applications)
         .where(and(eq(applications.cvId, cvId), sql`${applications.pdfBase64} is not null`));
       if (submitted.length) throw new UserFacingError("This CV revision already has an application record.");
-      const [draft] = await tx.select().from(cvDrafts).where(and(eq(cvDrafts.id, cvId), eq(cvDrafts.userId, user.id))).for("share");
-      if (!draft || draft.status !== "ready" || !draft.content) throw new UserFacingError("Choose a completed, saved CV.");
-      if (!draft.finalisedAt)
-        throw new UserFacingError(
-          "Review the assessment and finalise this CV before recording an application.",
-        );
-      // The reviewer's own words about what is missing are written for the person reading them.
-      try {
-        assertCvFinalisable({ ...draft, content: draft.content });
-      } catch (error) {
-        throw new UserFacingError(error instanceof Error ? error.message : "This CV cannot be finalised yet.");
+      const [locked] = await tx.select().from(cvDrafts).where(and(eq(cvDrafts.id, cvId), eq(cvDrafts.userId, user.id))).for("share");
+      const draft = assertRecordable(locked);
+      if (draft.finalisedAt?.getTime() !== rendered.finalisedAt?.getTime() || JSON.stringify(draft.content) !== JSON.stringify(rendered.content)) {
+        throw new UserFacingError("This CV changed while its PDF was being prepared. Record the application again.");
       }
-      const pdf = await renderCvPdf(CvContentSchema.parse(draft.content));
       jobId = draft.jobId;
       const at = new Date().toISOString();
       const existing = jobId ? await latestApplicationRow(tx, user.id, jobId) : null;

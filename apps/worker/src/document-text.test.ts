@@ -73,7 +73,7 @@ function docx(paragraphs: string[], extra: Array<{ name: string; data: Buffer; d
  * A one-page PDF assembled by hand around one content stream, deflated, so a test can say exactly
  * what the stream expands to. `trailer` adds keys to the trailer dictionary.
  */
-function pdfAround(content: Buffer, trailer = ""): Buffer {
+function pdfAround(content: Buffer, trailer = "", font?: Buffer): Buffer {
   const stream = deflateSync(content);
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
@@ -89,8 +89,15 @@ function pdfAround(content: Buffer, trailer = ""): Buffer {
   add(Buffer.concat([Buffer.from(`4 0 obj\n<< /Length ${stream.length} /Filter /FlateDecode >>\nstream\n`), stream, Buffer.from("\nendstream\nendobj\n")]));
   offsets.push(length);
   add(Buffer.from("5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"));
+  if (font) {
+    // A font program, as a FontFile2 stream carries one: unreferenced, so only the size check sees it.
+    const program = deflateSync(font);
+    offsets.push(length);
+    add(Buffer.concat([Buffer.from(`6 0 obj\n<< /Length ${program.length} /Length1 ${font.length} /Filter /FlateDecode >>\nstream\n`), program, Buffer.from("\nendstream\nendobj\n")]));
+  }
   const xref = length;
-  add(Buffer.from(`xref\n0 6\n0000000000 65535 f \n${offsets.map(offset => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size 6 /Root 1 0 R ${trailer}>>\nstartxref\n${xref}\n%%EOF\n`));
+  const size = offsets.length + 1;
+  add(Buffer.from(`xref\n0 ${size}\n0000000000 65535 f \n${offsets.map(offset => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size ${size} /Root 1 0 R ${trailer}>>\nstartxref\n${xref}\n%%EOF\n`));
   return Buffer.concat(parts);
 }
 
@@ -189,6 +196,17 @@ describe("documentToText", () => {
     const file = pdfAround(padded);
     expect(file.length).toBeLessThan(100_000);
     await expect(documentToText(file, "application/pdf")).rejects.toThrow("far more than a CV");
+  });
+
+  it("reads a PDF that embeds whole fonts, which are held only to the overall cap", async () => {
+    // Twelve megabytes of font program: past the content cap, well inside the document's.
+    const result = await documentToText(pdfAround(drawnText(3), "", Buffer.alloc(PDF_MAX_CONTENT_BYTES + 4 * 1024 * 1024, 0x41)), "application/pdf");
+    expect(result.text).toContain("Ran the team");
+    await expect(documentToText(pdfAround(drawnText(3), "", Buffer.alloc(DOCUMENT_MAX_EXPANDED_BYTES + 1024, 0x41)), "application/pdf"))
+      .rejects.toThrow("far more than a CV");
+    // Drawn text that calls itself a font is still counted as drawn text.
+    await expect(documentToText(pdfAround(drawnText(3), "", drawnText(PDF_MAX_TEXT_OPERATORS + 1)), "application/pdf"))
+      .rejects.toThrow("far more than a CV");
   });
 
   it("refuses an encrypted PDF, whose streams cannot be measured before it is read", async () => {

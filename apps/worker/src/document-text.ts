@@ -245,10 +245,11 @@ function assertDocxWithinCaps(buffer: Buffer): void {
 
 /**
  * A PDF's streams, measured the same way before the parser decodes them. Pictures are left out:
- * reading text never decodes one, and a photograph is often most of a CV's bytes. What is counted
- * against the tighter caps is everything else, with the text-drawing operators counted on their
- * own, since those are what the parser keeps one object for each of. A stream whose filters this
- * cannot undo is counted at its stored size. An encrypted PDF is refused, because its streams
+ * reading text never decodes one, and a photograph is often most of a CV's bytes. Embedded fonts
+ * are held to the overall cap, and everything else to the tighter content cap. Text-drawing
+ * operators are counted in every stream, fonts included, since those are what the parser keeps
+ * one object for each of, and a stream that only calls itself a font is still read if a page
+ * draws it. A stream whose filters this cannot undo is counted at its stored size. An encrypted PDF is refused, because its streams
  * cannot be measured before the parser decrypts and inflates them.
  */
 function assertPdfWithinCaps(buffer: Buffer): void {
@@ -259,6 +260,7 @@ function assertPdfWithinCaps(buffer: Buffer): void {
   }
   const opening = /(?<!end)stream(?:\r\n|\r|\n)/g;
   let content = 0;
+  let fonts = 0;
   let operators = 0;
   for (let match = opening.exec(source); match; match = opening.exec(source)) {
     const start = match.index + match[0].length;
@@ -269,15 +271,22 @@ function assertPdfWithinCaps(buffer: Buffer): void {
     const before = source.slice(Math.max(0, match.index - 2048), match.index);
     const dictionary = before.slice(Math.max(0, before.lastIndexOf(" obj")));
     if (/\/Subtype\s*\/Image\b/.test(dictionary)) continue;
+    // An embedded font program is read as a font, not drawn: held to the document's overall cap,
+    // since a PDF that embeds a few whole fonts is ordinary and costs the parser only their size.
+    const font = /\/Length[123]\b|\/Subtype\s*\/(?:Type1C|CIDFontType0C|OpenType)\b/.test(dictionary);
     const data = buffer.subarray(start, close);
-    const inflated = /\/FlateDecode\b|\/Fl\b/.test(dictionary)
-      ? inflateWithin(inflateSync, data, PDF_MAX_CONTENT_BYTES - content, "pdf")
-      : null;
+    const allowance = font ? DOCUMENT_MAX_EXPANDED_BYTES - fonts : PDF_MAX_CONTENT_BYTES - content;
+    const inflated = /\/FlateDecode\b|\/Fl\b/.test(dictionary) ? inflateWithin(inflateSync, data, allowance, "pdf") : null;
     const decoded = inflated ?? data;
-    content += decoded.length;
-    if (content > PDF_MAX_CONTENT_BYTES) throw new DocumentReadError(tooLarge);
     operators += countMatches(decoded.toString("latin1"), /(?:\)|\]|>)\s*(?:Tj|TJ|'|")/g);
     if (operators > PDF_MAX_TEXT_OPERATORS) throw new DocumentReadError(tooLarge);
+    if (font) {
+      fonts += decoded.length;
+      if (fonts > DOCUMENT_MAX_EXPANDED_BYTES) throw new DocumentReadError(tooLarge);
+      continue;
+    }
+    content += decoded.length;
+    if (content > PDF_MAX_CONTENT_BYTES) throw new DocumentReadError(tooLarge);
   }
 }
 

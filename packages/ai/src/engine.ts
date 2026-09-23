@@ -1,5 +1,6 @@
 import { CvRubricSchema, CvReviewPlanSchema, type CvRubric, type CvReviewPlan, type CvTextItem, type CvClaimItem } from "@ava/core/cv-assessment";
 import { CvBuildStop } from "@ava/core/cv-build-failure";
+import { mentionsDemographicAttribute } from "@ava/core/cv-review";
 import { CV_RUBRIC_PROMPT, CV_REVIEW_PROMPT, CV_AUTHOR_PROMPT, CV_TAILORING_PROMPT } from "./cv-prompts";
 import { cvReviewBatches, reviewBatchIssues, markUnverifiedFindings, type CvReviewBatch } from "./cv-review-batch";
 import {
@@ -1459,8 +1460,19 @@ export class AiEngine {
       const said = new Map(plan!.entries.map(entry => [entry.entryId, entry]));
       // Every entry is answered for, covered or not: an entry the model never mentioned reads as
       // rows nobody classified, which is what the Library shows as unread rather than as absent.
-      const reviews = entries.map(entry =>
-        validateLibraryReview(entry, said.get(entry.id) ?? { entryId: entry.id, rows: [], prompts: [] }));
+      // So does one whose answer asked the person about a demographic attribute: that answer is
+      // refused for that entry alone, which keeps its rules baseline and asks about it again next
+      // pass, instead of throwing away every other entry the pass read.
+      const unread = (entry: CvEntry) => validateLibraryReview(entry, { entryId: entry.id, rows: [], prompts: [] });
+      const reviews = entries.map(entry => {
+        const answer = said.get(entry.id);
+        if (!answer) return unread(entry);
+        if (answer.prompts.some(prompt => mentionsDemographicAttribute(prompt))) {
+          this.log("library review asked about a demographic attribute; entry left unread", { entryId: entry.id });
+          return unread(entry);
+        }
+        return validateLibraryReview(entry, answer);
+      });
       await say("done", { usage, ...(uncovered.length ? { uncovered: uncovered.length } : {}) });
       return reviews;
     };

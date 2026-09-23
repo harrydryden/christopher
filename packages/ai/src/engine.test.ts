@@ -1229,14 +1229,21 @@ describe("library evidence review (A12)", () => {
     expect(review!).toMatchObject({ score: 88, rating: "strong", missing: ["problem", "style"] });
   });
 
-  it("refuses an answer that asks the person about a demographic attribute", async () => {
-    const library = libraryOf(1);
-    const { client } = fakeClient({
-      entries: [{ entryId: "entry0", rows: [], prompts: ["What is your date of birth?"] }],
-    });
+  it("leaves unread an entry whose answer asks about a demographic attribute, and keeps the others", async () => {
+    const library = libraryOf(2);
+    const { client } = fakeClient({ entries: [
+      { entryId: "entry0", rows: [], prompts: ["What is your date of birth?"] },
+      { entryId: "entry1", rows: ROWS.map(row => ({ row, facets: ["outcome"], specific: true, quantified: true, outcomeLinked: true, quote: row })), prompts: [] },
+    ] });
     const engine = createAiEngine({ getModel: () => "claude-sonnet-5", client });
-    await expect(engine.reviewLibraryEntries({ library, entries: library.entries }, ref))
-      .rejects.toThrow("Demographic attributes cannot be evidence prompts.");
+    const [refused, kept] = await engine.reviewLibraryEntries({ library, entries: library.entries }, ref);
+    // The question is never put to the person, and nothing the answer said about the entry is kept.
+    expect(refused).toMatchObject({ entryId: "entry0", unread: true, prompts: [] });
+    expect(refused!.rows.every(row => !row.verified)).toBe(true);
+    // One entry's refusal no longer costs the pass every other entry it read.
+    expect(kept!.entryId).toBe("entry1");
+    expect(kept!.unread).toBeUndefined();
+    expect(kept!.rows.every(row => row.verified)).toBe(true);
   });
 
   it("asks once more for an entry left out, and marks what is still uncovered unread", async () => {

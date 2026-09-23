@@ -24,8 +24,12 @@ export interface TaskPayloads {
   profile_company: { companyId: string };
   suggest_companies: { userId: string; limit?: number };
   rescore_all: { userId: string; onlyInTable?: boolean };
-  /** Without a `userId` every account is re-evaluated; `companyId` narrows it to one company's postings. */
-  reevaluate_gate: { userId?: string; companyId?: string };
+  /**
+   * Without a `userId` every account is re-evaluated; `companyId` narrows it to one company's
+   * postings. `reason: "boot"` marks the re-evaluation a release queues when the gate's meaning
+   * changed (see `GATE_REEVALUATION_VERSION`): nobody asked for it, so it waits behind what they did.
+   */
+  reevaluate_gate: { userId?: string; companyId?: string; reason?: "boot" };
   /**
    * One posting a follower pasted the URL of, fetched and extracted into the shared catalogue.
    * The row it stores is shared like any other posting; the view it creates is this account's.
@@ -46,6 +50,18 @@ export interface TaskPayloads {
 }
 
 export type TaskType = keyof TaskPayloads;
+
+/**
+ * The version of what the keyword and location gate means. A worker that boots on a newer version
+ * than the one last applied re-runs every account's gate once, so tables built by the old rules
+ * are brought into line; a boot on the same version queues nothing.
+ *
+ * Every table used to be re-walked on every boot — each deploy and each crash-loop restart — which
+ * put a thousand whole-account walks in the interactive lane for work that had not changed. Any
+ * change to what `evaluateGate` (gate.ts) decides for a posting must bump this number, and
+ * `gate-reevaluation-version.test.ts` fails until it is bumped and its digest recorded.
+ */
+export const GATE_REEVALUATION_VERSION = 1;
 
 export function dedupeKeyFor<T extends TaskType>(type: T, payload: TaskPayloads[T]): string | null {
   switch (type) {
@@ -97,9 +113,25 @@ export function dedupeKeyFor<T extends TaskType>(type: T, payload: TaskPayloads[
   }
 }
 
+/**
+ * The types a person is waiting for. The queue's interactive lane serves these first, and ageing
+ * reads its floor from their priorities. Defined here rather than in the worker so the floor and
+ * the lane cannot disagree about which types count.
+ */
+export const INTERACTIVE_TASK_TYPES = [
+  "generate_cv", "discover", "tag_reason", "reevaluate_gate", "import_posting", "review_library", "import_library_document",
+] as const satisfies readonly TaskType[];
+
+/** The shared daily scan and its fan-out: the scan lane's own work. */
+export const SCAN_TASK_TYPES = ["scan_company", "run_daily"] as const satisfies readonly TaskType[];
+
 /** Lower runs first. Interactive tasks jump the queue. */
 export function priorityFor(type: TaskType): number {
   switch (type) {
+    // Someone asked for this CV and is watching it build. One step behind the quick interactive
+    // work, as the interface has always queued it, because a build holds its slot for minutes.
+    case "generate_cv":
+      return 2;
     case "discover":
     case "tag_reason":
     case "reevaluate_gate":
@@ -129,6 +161,18 @@ export function priorityFor(type: TaskType): number {
 }
 
 /**
+ * How far ageing may lift a waiting task: the least urgent priority any interactive type is
+ * enqueued at, which is where a CV build waits.
+ *
+ * Ageing used to have no floor, so everything that waited converged on 0 and a person's fresh
+ * import, discovery or shortlist score (priority 1) queued behind the whole backlog. Stopping here
+ * keeps waiting work moving up without ever letting it overtake what someone has just asked for:
+ * at best it ties with a queued CV build, and the claim then takes the one that has been ready
+ * longer.
+ */
+export const AGEING_PRIORITY_FLOOR = Math.max(...INTERACTIVE_TASK_TYPES.map(priorityFor));
+
+/**
  * How long one handler may run before its task is abandoned and failed.
  *
  * Nothing else bounds a handler: a fetch that hangs past its own timeouts, or a model call that
@@ -156,6 +200,15 @@ export const TASK_DEADLINES_MS: Partial<Record<TaskType, number>> & { default: n
   review_library: 4 * 60_000,
   // A conversion or a page fetch, then one model call over a document of up to 40,000 characters.
   import_library_document: 4 * 60_000,
+  // One high-effort call of up to 8,000 streamed tokens with up to five web searches: a minute to
+  // begin, two or more to write, and the searches between. Two minutes failed it mid-answer, so
+  // the call was paid for and made again.
+  extract_document: 6 * 60_000,
+  // One high-effort call of up to 6,000 tokens over the account's decisions: a minute to begin and
+  // up to two to write, with room for the client's own retry before the answer starts.
+  synthesize_profile: 5 * 60_000,
+  // The same shape as extraction with up to fifteen web searches.
+  suggest_companies: 7 * 60_000,
   default: 2 * 60_000,
 };
 
@@ -186,6 +239,28 @@ export function deadlineMsFor(type: TaskType, overrides: TaskDeadlines = {}): nu
 
 /** The same function under the shorter name the interface calls it by. */
 export { deadlineMsFor as deadlineFor };
+
+/** Every task type, checked against `TaskPayloads` by the compiler in both directions. */
+const EVERY_TASK_TYPE: Record<TaskType, true> = {
+  extract_document: true, verify_company: true, monitor_source: true, generate_cv: true, discover: true,
+  scan_company: true, run_daily: true, fetch_description: true, score_job: true, tag_reason: true,
+  synthesize_profile: true, suggest_filters: true, suggest_from_scans: true, profile_company: true,
+  suggest_companies: true, rescore_all: true, reevaluate_gate: true, import_posting: true,
+  review_library: true, import_library_document: true,
+};
+export const TASK_TYPE_NAMES = Object.keys(EVERY_TASK_TYPE) as TaskType[];
+
+/** The longest deadline a task may have and still count as short. */
+export const SHORT_TASK_DEADLINE_MS = 45_000;
+
+/**
+ * The types whose deadline is at most `SHORT_TASK_DEADLINE_MS`, read from the table above: what a
+ * runner with well under a minute to spend — a serverless invocation — can claim and still see
+ * finish or fail inside its own time. A type that no longer fits drops out of the list when its
+ * deadline moves; nothing else has to change. With every deadline at two minutes or more, no type
+ * is short today.
+ */
+export const SHORT_TASK_TYPES: readonly TaskType[] = TASK_TYPE_NAMES.filter(type => deadlineMsFor(type) <= SHORT_TASK_DEADLINE_MS);
 
 /**
  * A short human label for what a task is for, read from its payload: the company, draft or

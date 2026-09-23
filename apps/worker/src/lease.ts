@@ -51,18 +51,34 @@ export interface ResourceLeaseOptions {
   onLost?: (error: LeaseLostError) => void;
 }
 
+/**
+ * The deps a handler is given for one run: the worker's own, plus the run's signal. It aborts when
+ * the queue gives up on the run — its deadline passed, or the task was taken by another worker —
+ * and everything that holds something on the run's behalf lets go when it does.
+ */
+export type RunDeps = WorkerDeps & { signal?: AbortSignal };
+
 /** Resolves after `ms` without holding the process open. */
 function after(ms: number): Promise<void> {
   return new Promise(resolve => { const timer = setTimeout(resolve, ms); timer.unref?.(); });
 }
 
-/** Short renewable database lease, with a fencing check in every result transaction. */
+/**
+ * Short renewable database lease, with a fencing check in every result transaction.
+ *
+ * A run the queue has given up on stops renewing at once, so the lease runs out within its five
+ * minutes instead of being kept alive by a handler nobody is waiting for — the retry used to be
+ * refused as busy for as long as the abandoned run lived — and the fence refuses its writes from
+ * that moment, not only once the lease has gone to someone else.
+ */
 export async function withResourceLease<T>(
-  deps: WorkerDeps,
+  deps: RunDeps,
   key: string,
   work: (deps: WorkerDeps) => Promise<T>,
   options: ResourceLeaseOptions = {},
 ): Promise<T> {
+  const signal = deps.signal;
+  if (signal?.aborted) throw new LeaseLostError(`Run was stopped before it took its lease: ${key}`);
   const owner = randomUUID();
   const claimed = await deps.db.execute(sql`insert into resource_leases (key, owner, expires_at)
     values (${key}, ${owner}, now() + interval '5 minutes')
@@ -72,15 +88,22 @@ export async function withResourceLease<T>(
   const renewEveryMs = options.renewEveryMs ?? LEASE_RENEWAL_MS;
   let renewal: Promise<unknown> = Promise.resolve();
   let renewing = false;
+  // Bounded like the task heartbeat: the fence holds this row `for update` for the length of a
+  // write transaction, and a renewal queued behind it would hold a pooled connection all the while.
+  // One that gives up on the lock leaves the lease as it is, and the next tick tries again.
   const renewOnce = async () => {
-    const rows = await deps.db.execute(sql`update resource_leases set expires_at = now() + interval '5 minutes'
-      where key = ${key} and owner = ${owner} returning key`);
-    if (rows.rows.length) return;
+    const rows = await deps.db.transaction(async tx => {
+      await tx.execute(sql`set local lock_timeout = '2s'`);
+      await tx.execute(sql`set local statement_timeout = '5s'`);
+      return tx.execute(sql`update resource_leases set expires_at = now() + interval '5 minutes'
+        where key = ${key} and owner = ${owner} returning key`);
+    });
+    if (rows.rows.length || signal?.aborted) return;
     log.warn("operation lease lost", { key });
     options.onLost?.(new LeaseLostError(`Operation lease lost; refusing stale writes: ${key}`));
   };
   const timer = setInterval(() => {
-    if (renewing) return;
+    if (renewing || signal?.aborted) return;
     renewing = true;
     // A renewal that never settles used to latch renewal off for good: the lease then expired
     // under work that was still running, another worker claimed it, and two processes wrote for
@@ -90,13 +113,17 @@ export async function withResourceLease<T>(
     void Promise.race([renewal, after(Math.min(renewEveryMs, LEASE_RENEWAL_TIMEOUT_MS))]).finally(() => { renewing = false; });
   }, renewEveryMs);
   timer.unref();
+  const stopRenewing = () => clearInterval(timer);
+  signal?.addEventListener("abort", stopRenewing, { once: true });
   try {
     return await work({ ...deps, assertOwnership: async (db: Db) => {
       await deps.assertOwnership?.(db);
+      if (signal?.aborted) throw new LeaseLostError("Run was stopped; refusing its writes");
       const rows = await db.execute(sql`select key from resource_leases where key = ${key} and owner = ${owner} and expires_at > now() for update`);
       if (!rows.rows.length) throw new LeaseLostError("Operation lease lost; refusing stale writes");
     } });
   } finally {
+    signal?.removeEventListener("abort", stopRenewing);
     clearInterval(timer);
     await renewal.catch(() => undefined);
     await deps.db.execute(sql`delete from resource_leases where key = ${key} and owner = ${owner}`);

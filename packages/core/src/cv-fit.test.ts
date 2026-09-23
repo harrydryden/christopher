@@ -3,6 +3,12 @@ import { createCvWritingBudget, cvBudgetViolations } from './cv-budget';
 import { buildFittedCv, selectCvToFit, type CvFitEvent } from './cv-fit';
 import { DEFAULT_CV_THEME, materialiseCv, type CvLibrary, type CvPlan } from './cv';
 import { renderCvPdfWithReport } from './cv-pdf';
+// Every render the fitter asks for, counted, so a test can say how many it took.
+const renders = vi.hoisted(() => ({ count: 0 }));
+vi.mock('./cv-pdf', async (actual) => {
+ const real = await actual<typeof import('./cv-pdf')>();
+ return { ...real, renderCvPdfWithReport: async (...args: Parameters<typeof real.renderCvPdfWithReport>) => { renders.count++; return real.renderCvPdfWithReport(...args); } };
+});
 // The allocations below were calibrated on two pages; the page limit tests scale from there.
 const library: CvLibrary = { name:'Example', contact:'London', profile:'Finance leader', theme:{ ...DEFAULT_CV_THEME, maxPages: 2 }, entries:[
  ...Array.from({length:6},(_,i)=>({id:`r${i}`,kind:'experience' as const,heading:`Director · Employer ${i} · 202${i}`,details:i===0?'Financial planning budget reporting':'Operations delivery',confirmedResponsibilities:[i===0?'Financial planning budget reporting':'Operations delivery']})),
@@ -28,6 +34,21 @@ it('fits a long CV through measured achievement selection, preserving every role
  expect(fitted.content.sections.find(s=>s.entryId==='e')!.bullets).toEqual(['BSc Economics, University.']);
  expect(fitted.content.sections.find(s=>s.entryId==='r0')!.bullets).toContain('Owned financial planning, budgets and reporting.');
  expect(plan.sections[0]!.bullets).toHaveLength(6);
+});
+it('finds the fewest removals that fit by bisection, rendering a handful of plans rather than one per bullet',async()=>{
+ // Six long bullets a role, well past two pages, and no per-block selection to take any first.
+ const long: CvPlan = plan;
+ const budget = createCvWritingBudget(library,'Financial planning budgets reporting');
+ const wide = { ...budget, blocks: budget.blocks.map(block => ({ ...block, maxBullets: 6, maxSkills: 20 })) };
+ renders.count = 0;
+ const fitted = await selectCvToFit(library, long, 'Financial planning budgets reporting', wide);
+ const removed = fitted.changes.filter(change => change.includes('omitted a lower-priority')).length;
+ expect(fitted.pageCount).toBeLessThanOrEqual(2);
+ // One removal fewer would not have fitted: bisection found the same answer the one-by-one loop did.
+ expect(removed).toBeGreaterThan(8);
+ const candidates = long.sections.reduce((sum, section) => sum + section.bullets.length, 0);
+ expect(renders.count).toBeLessThanOrEqual(2 + Math.ceil(Math.log2(candidates)));
+ expect(renders.count).toBeLessThan(removed + 1);
 });
 it('gives the writer budgets before its first attempt and avoids unnecessary model retries',async()=>{
  const write=vi.fn().mockResolvedValue(plan);

@@ -33,7 +33,8 @@ import {
 } from "@ava/db/schema";
 // The deadline table lives in packages/core so the interface can say how long a running task has
 // left without importing the worker.
-import { deadlineFor } from "@ava/core";
+import { aiBudgetWindowStart, deadlineFor } from "@ava/core";
+import { cache } from "react";
 import { groupAiUsage, type AiUsageGroup } from "@/lib/ai-usage";
 import { accountAiBudget } from "@/lib/queries/accounts";
 import { formatUsd } from "@/lib/format";
@@ -902,8 +903,17 @@ export async function healthItems(userId: string, now: Date = new Date()): Promi
 /**
  * How many items there are, for the sidebar. One statement, because every page in the interface
  * renders the sidebar: the union below is the same one `healthItems` walks company by company.
+ * Beside it, in the same round trip, the account's budget, which is itself one statement.
+ *
+ * Kept for the request, so Health's own count reuses the sidebar's. It is keyed by account and
+ * budget month, the only part of the clock the count depends on, so callers with their own `now`
+ * share one answer.
  */
-export async function countHealthItems(userId: string, now: Date = new Date()): Promise<number> {
+export function countHealthItems(userId: string, now: Date = new Date()): Promise<number> {
+  return countHealthItemsForMonth(userId, aiBudgetWindowStart(now, null).getTime());
+}
+
+const countHealthItemsForMonth = cache(async (userId: string, monthStart: number): Promise<number> => {
   const [rows, budget] = await Promise.all([
     db().execute(sql`
       select count(*)::int as n
@@ -923,7 +933,7 @@ export async function countHealthItems(userId: string, now: Date = new Date()): 
               and r.started_at = (select max(r2.started_at) from discovery_runs r2 where r2.company_id = c.id)
           )
         )`),
-    accountAiBudget(userId, now),
+    accountAiBudget(userId, new Date(monthStart)),
   ]);
   return Number(rows.rows[0]?.n ?? 0) + (budget.spentUsd >= budget.limitUsd ? 1 : 0);
-}
+});

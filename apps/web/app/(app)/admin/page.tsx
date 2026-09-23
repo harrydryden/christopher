@@ -12,6 +12,7 @@ import { Card } from "@/components/Card";
 import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
 import { inputClass } from "@/components/Field";
 import { PageHeader } from "@/components/PageHeader";
+import { Pagination, pageNumber } from "@/components/Pagination";
 import { SettingsForm } from "@/components/SettingsForm";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { requireAdmin } from "@/lib/auth";
@@ -19,11 +20,18 @@ import { formatUsd, relativeTime, shortDate } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
-export default async function AdminAccountsPage() {
+/** Every row carries several forms, so a page of a thousand accounts would be megabytes. */
+const ACCOUNTS_PER_PAGE = 50;
+
+export default async function AdminAccountsPage({ searchParams }: { searchParams: Promise<{ page?: string }> }) {
   const admin = await requireAdmin();
   const now = new Date();
-  const [accounts, system] = await Promise.all([listAccounts(), getSystemSettings()]);
-  const budgets = await accountAiBudgets(accounts.map((account) => account.id), now);
+  const [accounts, system, params] = await Promise.all([listAccounts(), getSystemSettings(), searchParams]);
+  const pages = Math.max(1, Math.ceil(accounts.length / ACCOUNTS_PER_PAGE));
+  const page = Math.min(pageNumber(params.page), pages);
+  const shown = accounts.slice((page - 1) * ACCOUNTS_PER_PAGE, page * ACCOUNTS_PER_PAGE);
+  // One statement for the page's accounts, however many there are.
+  const budgets = await accountAiBudgets(shown.map((account) => account.id), now);
 
   return (
     <div className="space-y-6">
@@ -45,6 +53,7 @@ export default async function AdminAccountsPage() {
         <p className="mb-3 text-14 text-muted">
           Everyone with an account. Each has its own monthly AI budget, the only budget there is: it resets on the 1st, its holder sets it on Settings and you can set it for anyone here. <a href="/admin/health" className="text-fg underline">Operations</a> shows what the spend bought. Deleting an account removes everything it owns; shared companies and postings stay. A reset link lets you onboard or unblock someone when email delivery is not set up: it works once, for an hour, and confirms their address.
         </p>
+        {pages > 1 && <Pagination page={page} total={accounts.length} size={ACCOUNTS_PER_PAGE} path="/admin" label="Account pages" />}
         <Table>
           <THead>
             <tr>
@@ -59,7 +68,7 @@ export default async function AdminAccountsPage() {
             </tr>
           </THead>
           <TBody>
-            {accounts.map((account) => {
+            {shown.map((account) => {
               const budget = budgets.get(account.id) ?? defaultAccountAiBudget(now);
               return (
               <TR key={account.id}>

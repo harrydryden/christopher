@@ -1788,6 +1788,162 @@ describe("what a scan asks for and when", () => {
     expect(closed!.closedAt).toBeInstanceOf(Date);
   }, 180_000);
 
+  it("rewrites no job row on an unchanged board, and only the row that moved when one does", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
+    const snapshot = async () => (await db.select({ key: schema.jobs.externalKey, updatedAt: schema.jobs.updatedAt, hash: schema.jobs.descriptionHash, fetchedAt: schema.jobs.descriptionFetchedAt }).from(schema.jobs).orderBy(schema.jobs.externalKey));
+    const before = await snapshot();
+    now = new Date(now.getTime() + 86_400_000);
+    expect((await _scanSourceForTests(deps, company, await currentSource(source!.id), await deps.settings(), null)).status).toBe("ok");
+    expect(await snapshot()).toEqual(before);
+
+    setJobs([{ ...JOB_OPERATIONS_MANAGER, title: "Senior Operations Manager" }, JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
+    now = new Date(now.getTime() + 86_400_000);
+    await _scanSourceForTests(deps, company, await currentSource(source!.id), await deps.settings(), null);
+    const after = await snapshot();
+    const moved = after.filter((row, i) => row.updatedAt.getTime() !== before[i]!.updatedAt.getTime()).map(row => row.key);
+    expect(moved).toEqual([`id:${JOB_OPERATIONS_MANAGER.id}`]);
+    expect(after.map(row => row.hash)).toEqual(before.map(row => row.hash));
+  }, 90_000);
+
+  it("keeps a description stored while its commit was running, not the older text it read", async () => {
+    // fetch_description takes no lock on the source, so it can commit between the commit reading a
+    // row and writing it. The scan must never put back the older text it read.
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
+    const [target] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, `id:${JOB_OPERATIONS_MANAGER.id}`));
+    await db.update(schema.jobs).set({ descriptionText: null, descriptionHash: null, descriptionFetchedAt: null }).where(eq(schema.jobs.id, target!.id));
+    const text = "Own operations for our London site, written while the commit ran.";
+    // Fire the concurrent write just before the commit's first write to `jobs`, which is after it
+    // has read every row it reconciles.
+    let fired = false;
+    const race = async () => {
+      fired = true;
+      await db.update(schema.jobs).set({ descriptionText: text, descriptionHash: sha1(text), descriptionFetchedAt: new Date(now.getTime() + 1000) }).where(eq(schema.jobs.id, target!.id));
+    };
+    const racingDb = new Proxy(deps.db, { get(base, prop, receiver) {
+      if (prop !== "transaction") return Reflect.get(base, prop, receiver);
+      return (body: (tx: unknown) => Promise<unknown>) => base.transaction(tx => body(new Proxy(tx, { get(inner, key, innerReceiver) {
+        const value = Reflect.get(inner, key, innerReceiver) as unknown;
+        if (key === "update") return (table: unknown) => {
+          const builder = (value as (t: unknown) => { set: (v: unknown) => { where: (w: unknown) => Promise<unknown> } }).call(inner, table);
+          if (table !== schema.jobs || fired) return builder;
+          return { set: (values: unknown) => ({ where: async (where: unknown) => { await race(); return builder.set(values).where(where); } }) };
+        };
+        return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(inner) : value;
+      } })));
+    } });
+    now = new Date(now.getTime() + 86_400_000);
+    const outcome = await _scanSourceForTests({ ...deps, db: racingDb as WorkerDeps["db"] }, company, await currentSource(source!.id), await deps.settings(), null);
+    expect(outcome.status).toBe("ok");
+    expect(fired).toBe(true);
+    const [after] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, target!.id));
+    expect(after!.descriptionText).toBe(text);
+    expect(after!.descriptionHash).toBe(sha1(text));
+  }, 60_000);
+
+  it("reads the stored descriptions of the roles it lists, not the source's closed history", async () => {
+    // A description-matching follower on a board that lists roles without text.
+    await setGate({ includeKeywords: ["robotics"], matchFields: ["title", "description"] });
+    setJobs([JOB_OPERATIONS_MANAGER, JOB_ENGINEER]);
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
+    // Years of closed roles, every one with its description kept.
+    await db.insert(schema.jobs).values(Array.from({ length: 60 }, (_, n) => ({
+      companyId: company.id, sourceId: source!.id, externalKey: `id:${9_000_000 + n}`, title: `Closed role ${n}`, normalizedTitle: `closed role ${n}`,
+      url: `https://job-boards.greenhouse.io/acme/jobs/${9_000_000 + n}`, status: "closed" as const, closedAt: new Date("2026-09-02"),
+      // Read after the board last edited the role, so nothing asks for it again.
+      descriptionText: `Robotics work, long gone. ${"x".repeat(500)}`, descriptionHash: `hash-${n}`, descriptionFetchedAt: new Date("2026-09-01"),
+    })));
+    // One of them comes back.
+    const returning = { ...JOB_ENGINEER, id: 9_000_007, title: "Closed role 7", absolute_url: "https://job-boards.greenhouse.io/acme/jobs/9000007" };
+    setJobs([JOB_OPERATIONS_MANAGER, JOB_ENGINEER, returning]);
+
+    let largest = 0;
+    const pool = db.$client as unknown as { query: (...args: unknown[]) => Promise<{ rows?: unknown[] }> };
+    const original = pool.query.bind(pool);
+    pool.query = (async (...args: unknown[]) => {
+      const text = typeof args[0] === "string" ? args[0] : (args[0] as { text?: string })?.text ?? "";
+      const result = await original(...args);
+      if (/"description_text"/.test(text) && /"source_id"/.test(text)) largest = Math.max(largest, result.rows?.length ?? 0);
+      return result;
+    }) as typeof pool.query;
+    try {
+      now = new Date(now.getTime() + 86_400_000);
+      await db.delete(schema.tasks);
+      expect((await _scanSourceForTests(deps, company, await currentSource(source!.id), await deps.settings(), null)).status).toBe("ok");
+    } finally {
+      pool.query = original as typeof pool.query;
+    }
+    expect(largest).toBeLessThanOrEqual(3);
+    // The reopened role's stored text is what its gate reads: admitted with no fetch queued for it.
+    const [back] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, "id:9000007"));
+    expect(back!.status).toBe("open");
+    expect(await db.select().from(schema.userJobs).where(and(eq(schema.userJobs.userId, user.id), eq(schema.userJobs.jobId, back!.id)))).toHaveLength(1);
+    const fetches = (await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"))).map(t => (t.payload as { jobId: string }).jobId);
+    expect(fetches).not.toContain(back!.id);
+  }, 90_000);
+
+  it("reuses the text an unchanged listing carried, however old, instead of reading every role again", async () => {
+    // A JSON-LD listing large enough to be revalidated by validator carries each role's text. When
+    // it comes back unchanged a week later, the text it carried is the text stored.
+    const roles = Array.from({ length: 300 }, (_, i) => i + 1);
+    const page = `<!doctype html><html><head><script type="application/ld+json">${JSON.stringify({ "@context": "https://schema.org", "@graph": roles.map(n => ({
+      "@type": "JobPosting", title: `Operations Role ${n}`, url: `https://pager.example/jobs/${n}`, identifier: { value: `role-${n}` },
+      description: `Warehouse operations on the night shift, role ${n}. ${"Keep the floor moving. ".repeat(90)}`,
+      jobLocation: { address: { addressLocality: "London", addressCountry: "UK" } },
+    })) })}</script></head><body></body></html>`;
+    expect(page.length).toBeGreaterThan(512 * 1024);
+    const etag = "listing-1";
+    server.setRoutes({ "pager.example": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /\n", contentType: "text/plain" },
+      "/postings": (req: import("node:http").IncomingMessage) => req.headers["if-none-match"] === etag
+        ? { status: 304, body: "", headers: { etag } } : { body: page, headers: { etag }, contentType: "text/html" },
+    } });
+    await setGate({ includeKeywords: ["warehouse"], matchFields: ["title", "description"] });
+    const [company] = await db.insert(schema.companies).values({ name: "Pager", domain: "pager.example", homepageUrl: "https://pager.example/" }).returning();
+    await subscribeToCompany(db, user.id, company!.id);
+    const [created] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "jsonld", url: "https://pager.example/postings", status: "active" }).returning();
+
+    expect((await _scanSourceForTests(deps, company!, created!, await deps.settings(), null)).status).toBe("ok");
+    expect((await latestScan(created!.id)).requests).toBe(1);
+    expect((await db.select().from(schema.jobs)).every(job => job.descriptionText?.startsWith("Warehouse operations"))).toBe(true);
+
+    now = new Date(now.getTime() + 8 * 86_400_000);
+    const outcome = await _scanSourceForTests(deps, company!, await currentSource(created!.id), await deps.settings(), null);
+    expect(outcome.status).toBe("ok");
+    const reused = await latestScan(created!.id);
+    expect(reused.requests).toBe(1);
+    expect(reused.revalidated).toBe(1);
+    expect((await db.select().from(schema.userJobs)).filter(v => v.inTable)).toHaveLength(300);
+  }, 120_000);
+
+  it("scores a new role once, after its description arrives, not also before it", async () => {
+    await setGate({});
+    const [company] = await db.insert(schema.companies).values({ name: "Acme Robotics", domain: "acme.example", homepageUrl: "https://www.acme.example/" }).returning();
+    await subscribeToCompany(db, user.id, company!.id);
+    await db.insert(schema.userSettings).values({ userId: user.id, key: "aiBudgetUsd", value: 25 });
+    const [source] = await db.insert(schema.careerSources).values({
+      companyId: company!.id, type: "greenhouse", url: "https://job-boards.greenhouse.io/acme",
+      apiUrl: "https://boards-api.greenhouse.io/v1/boards/acme/jobs", atsSlug: "acme", status: "active",
+    }).returning();
+    const aiDeps = { ...deps, ai: { ...deps.ai, enabled: true } } as unknown as WorkerDeps;
+    await _scanSourceForTests(aiDeps, company!, source!, await deps.settings(), null);
+    const scores = async () => (await db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"))).map(t => (t.payload as { jobId: string }).jobId);
+    // The listing carries no text, so every admitted role waits for its description.
+    expect(await scores()).toEqual([]);
+    expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"))).toHaveLength(4);
+    await queue.drain();
+    const queued = await scores();
+    expect(queued).toHaveLength(4);
+    expect(new Set(queued).size).toBe(4);
+  }, 90_000);
+
   it("stops at its request budget and records a partial scan that closes nothing", async () => {
     // A description-matching gate on a listing that carries no descriptions is one request per
     // role. Unbounded, that scan runs until its three-minute deadline kills it; bounded, it stops

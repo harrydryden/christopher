@@ -347,21 +347,51 @@ async function scanSource(
     incomplete = true;
     error ??= `Listing reached the ${ats.MAX_POSTINGS}-posting cap; roles beyond it are not tracked and this scan cannot close roles`;
   }
-  // One read of the stored descriptions, taken here and reused by the commit below, so the largest
-  // column on the table is not read a second time while the commit holds the source's row lock.
-  const descriptionsReadAt = deps.now();
-  const savedDescriptions = await deps.db.select({ externalKey: schema.jobs.externalKey, url: schema.jobs.url, text: schema.jobs.descriptionText, at: schema.jobs.descriptionFetchedAt }).from(schema.jobs).where(eq(schema.jobs.sourceId, source.id));
-  const reusedDescriptions = new Set<string>();
-  const savedByUrl = new Map(savedDescriptions.map(row => [row.url, row]));
-  for (const posting of postings) {
-    const saved = savedByUrl.get(posting.url);
-    if (posting.externalId && saved?.externalKey === `id:${posting.externalId}` && !posting.descriptionText && saved?.text && saved.at && deps.now().getTime() - saved.at.getTime() < 7 * 86400000 && (!posting.updatedAt || posting.updatedAt <= saved.at)) { posting.descriptionText = saved.text; reusedDescriptions.add(posting.url); }
+  // The description text each posting carried in the listing itself, before anything below fills
+  // one in: its hash goes into the snapshot, so a byte-identical listing reused later still knows
+  // which roles it gave text for, and that the text was the one stored.
+  const inlineHash = new Map<string, string>();
+  for (const posting of postings as StoredPosting[]) {
+    if (inlineHash.has(posting.url)) continue;
+    const hash = reusedListing ? posting.descriptionHash : posting.descriptionText ? sha1(posting.descriptionText.slice(0, 30_000)) : undefined;
+    if (hash) inlineHash.set(posting.url, hash);
   }
   // Followers decide admission. Only the distinct description-matching gates cost detail fetches;
   // a posting fetched for one follower is already in hand for the next. These gates only plan what
   // to read: the verdicts are written from the gates the commit reads under lock, below.
   const followersAtFetch = await loadFollowers(deps.db, company.id);
   const descriptionGates = [...new Map(followersAtFetch.filter(f => needsDescription(f.settings.gate)).map(f => [JSON.stringify(f.settings.gate), f.settings.gate])).values()];
+  // One read of what is stored about the listed roles, taken here and reused by the commit below,
+  // so it is not repeated while the commit holds the source's row lock. Only rows this listing
+  // carries: a source's closed history can run to thousands of descriptions nothing here uses. And
+  // the text itself, the largest column on the table, only where a follower's gate reads it and
+  // the listing did not carry it.
+  const descriptionsReadAt = deps.now();
+  const observedKeys = keyPostings(postings).keyed.map(p => p.externalKey);
+  const savedDescriptions = observedKeys.length ? await deps.db.select({
+    externalKey: schema.jobs.externalKey, url: schema.jobs.url, hash: schema.jobs.descriptionHash, at: schema.jobs.descriptionFetchedAt,
+    hasText: sql<boolean>`${schema.jobs.descriptionText} is not null`,
+  }).from(schema.jobs).where(and(eq(schema.jobs.sourceId, source.id), inArray(schema.jobs.externalKey, observedKeys))) : [];
+  const readsDescriptions = followersAtFetch.some(f => f.gate.matchesDescription);
+  const textWanted = readsDescriptions ? keyPostings(postings).keyed.filter(p => !p.descriptionText).map(p => p.externalKey) : [];
+  const savedText = new Map<string, string | null>();
+  for (let offset = 0; offset < textWanted.length; offset += 1000) {
+    const rows = await deps.db.select({ externalKey: schema.jobs.externalKey, text: schema.jobs.descriptionText }).from(schema.jobs)
+      .where(and(eq(schema.jobs.sourceId, source.id), inArray(schema.jobs.externalKey, textWanted.slice(offset, offset + 1000))));
+    for (const row of rows) savedText.set(row.externalKey, row.text);
+  }
+  const reusedDescriptions = new Set<string>();
+  const savedByUrl = new Map(savedDescriptions.map(row => [row.url, row]));
+  for (const posting of postings) {
+    const saved = savedByUrl.get(posting.url);
+    const text = saved ? savedText.get(saved.externalKey) : undefined;
+    if (!saved || !text || posting.descriptionText) continue;
+    // The listing is the one behind the stored text, byte for byte: what it carried then, it
+    // carries now, however long ago that was.
+    const sameInline = reusedListing && inlineHash.get(posting.url) === saved.hash;
+    const recent = !!posting.externalId && saved.externalKey === `id:${posting.externalId}` && !!saved.at && deps.now().getTime() - saved.at.getTime() < 7 * 86400000 && (!posting.updatedAt || posting.updatedAt <= saved.at);
+    if (sameInline || recent) { posting.descriptionText = text; reusedDescriptions.add(posting.url); }
+  }
   const rejectionCache = await loadAdmissionCache(deps.db, source.id, deps.now());
   // Two ways a description-matching gate can fail to decide about a posting, and they are not the
   // same thing. `unresolved`: the detail text was read inline and could not be had, so the listing
@@ -376,7 +406,7 @@ async function scanSource(
   if (fetchOk && descriptionGates.length) {
     if (ats.descriptionsFetchedPerPosting(source.type)) {
       for (const posting of postings) {
-        if (!posting.descriptionText && !savedByUrl.get(posting.url)?.text) deferred.add(posting.url);
+        if (!posting.descriptionText && !savedByUrl.get(posting.url)?.hasText) deferred.add(posting.url);
       }
     } else {
       for (const gate of descriptionGates) for (const url of await prepareForAdmission(postings, spec, ctx, gate, rejectionCache)) unresolved.add(url);
@@ -409,7 +439,7 @@ async function scanSource(
 
   // Compressing the evidence is synchronous and the snapshot can be megabytes, so it happens
   // before the transaction opens rather than with the source's row lock held.
-  const rawSnapshot = gzipSync(JSON.stringify(snapshotFor(postings, responses, htmlPages, listingHash))).toString("base64");
+  const rawSnapshot = gzipSync(JSON.stringify(snapshotFor(postings, responses, htmlPages, listingHash, inlineHash))).toString("base64");
 
   let committed = false;
   const outcome = await deps.db.transaction(async (tx): Promise<SourceOutcome> => {
@@ -563,44 +593,48 @@ async function scanSource(
     newCount += created.length;
     if (created.length) await deps.db.insert(schema.jobEvents).values(created.map(row => ({ jobId: row.id, type: "discovered" as const, payload: { method: fetchMethod, seeded: isFirstScan } })));
     for (const row of created) {
-      let wanted = false;
+      const admitted: string[] = [];
       for (const follower of followers) {
         const gate = follower.settings.gate;
         if (undecided(row.url) && needsDescription(gate)) continue;
         const verdict = follower.gate.evaluate({ title: row.title, department: row.department, description: follower.gate.matchesDescription ? row.descriptionText : undefined, location: row.location, locations: row.locations, remote: row.remote });
         if (!verdict.inTable) continue;
-        wanted = true;
+        admitted.push(follower.userId);
         viewInserts.push({ userId: follower.userId, jobId: row.id, keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms, excluded: verdict.excluded, locationOk: verdict.locationOk, inTable: true, nearMiss: false, seeded: isFirstScan, createdAt: deps.now(), updatedAt: deps.now() });
-        scoreQueue.push({ userId: follower.userId, jobId: row.id });
       }
       // A posting a follower admitted needs its description stored; a deferred posting needs it
       // before any description gate can decide. The first scan of a 2,331-role Greenhouse board
       // with a description-matching follower therefore queues 2,331 tasks, once: dedupe keys stop
       // duplicates and later scans queue only postings that are new or still have no text. That
       // cost is accepted rather than capped, because a silent cap would hide roles from the gate.
-      if (!row.descriptionText && (wanted || deferred.has(row.url))) descriptionQueue.add(row.id);
+      if (!row.descriptionText && (admitted.length || deferred.has(row.url))) descriptionQueue.add(row.id);
+      // A role whose description is on its way is scored once, when the text lands: the
+      // description task re-runs every follower's gate and queues the score then, text or no text.
+      // Scoring it now on the title alone would pay for the same role twice.
+      else for (const userId of admitted) scoreQueue.push({ userId, jobId: row.id });
     }
   }
 
-  // Being seen is positive evidence in every mode that reconciles: a partial scan that lists a role
-  // proves it is still there as surely as an ok one does, so either resets the miss count. What a
-  // partial scan may not do is count a miss or close anything, and reconcile() gives it neither.
-  if (result.seen.length > 0) {
-    await deps.db.update(schema.jobs).set({ lastSeenAt: deps.now(), missingScans: 0, firstMissedAt: null }).where(inArray(schema.jobs.id, result.seen));
-  }
   // Refresh every observed posting, including fields the identity reconciliation does not compare.
   const observed = new Map(keyPostings(postings).keyed.map((p) => [p.externalKey, p]));
   const updates: Array<Record<string, unknown>> = [];
+  const descriptionWrites: Array<Record<string, unknown>> = [];
+  // Rows whose description the listing gave again unchanged: their `description_fetched_at` moves
+  // with `last_seen_at`, in the one write every seen row gets anyway.
+  const descriptionConfirmed: string[] = [];
   const updateEvents: Array<typeof schema.jobEvents.$inferInsert> = [];
   const seenIds = new Set(result.seen);
   const seenRows = existingRows.filter((j) => seenIds.has(j.id));
-  // The copy taken before the listing was fetched, topped up for any row a `fetch_description`
-  // task has written (or created) since. Usually no row qualifies and nothing is read.
-  const savedTextByKey = new Map(savedDescriptions.map(row => [row.externalKey, row.text]));
-  const restale = seenRows.filter(j => !savedTextByKey.has(j.externalKey) || (j.descriptionFetchedAt !== null && j.descriptionFetchedAt > descriptionsReadAt));
-  if (restale.length) {
+  // Stored text is only read for a gate that matches on it, and only where the listing gave none.
+  // The copy taken before the listing was fetched is topped up for any row a `fetch_description`
+  // task has written since, and for every row when no follower read descriptions back then.
+  const readsDescriptionsNow = followers.some(f => f.gate.matchesDescription);
+  const savedTextByKey = new Map(savedText);
+  const restale = readsDescriptionsNow ? seenRows.filter(j => observed.get(j.externalKey)!.descriptionText === undefined
+    && (!savedTextByKey.has(j.externalKey) || (j.descriptionFetchedAt !== null && j.descriptionFetchedAt > descriptionsReadAt))) : [];
+  for (let offset = 0; offset < restale.length; offset += 1000) {
     const fresh = await deps.db.select({ externalKey: schema.jobs.externalKey, text: schema.jobs.descriptionText })
-      .from(schema.jobs).where(inArray(schema.jobs.id, restale.map(j => j.id)));
+      .from(schema.jobs).where(inArray(schema.jobs.id, restale.slice(offset, offset + 1000).map(j => j.id)));
     for (const row of fresh) savedTextByKey.set(row.externalKey, row.text);
   }
   // Only what the comparison below needs: a popular company's views are tens of thousands of rows.
@@ -615,7 +649,7 @@ async function scanSource(
   const viewByKey = new Map(views.map(v => [`${v.userId}:${v.jobId}`, v]));
   const viewUpdates: Array<Record<string, unknown>> = [];
   for (const row of seenRows) {
-    const job = { ...row, descriptionText: savedTextByKey.get(row.externalKey) ?? null };
+    const job = row;
     const posting = observed.get(job.externalKey)!;
     const fields = {
       title: posting.title, url: posting.url,
@@ -626,18 +660,29 @@ async function scanSource(
       remote: posting.remote ?? job.remote,
       salaryText: posting.salaryText ?? job.salaryText,
       postedAt: posting.postedAt ?? job.postedAt,
-      descriptionText: posting.descriptionText?.slice(0, 30_000) ?? job.descriptionText,
-      descriptionSource: posting.descriptionText !== undefined && !reusedDescriptions.has(posting.url) ? "direct" as const : job.descriptionSource,
-      descriptionTruncated: posting.descriptionText !== undefined && !reusedDescriptions.has(posting.url) ? posting.descriptionText.length > 30_000 : job.descriptionTruncated,
     };
-    const changedFields = Object.keys(fields).filter((key) =>
-      JSON.stringify(fields[key as keyof typeof fields]) !== JSON.stringify(job[key as keyof typeof job]));
-    updates.push({ id: job.id,
-      ...fields, normalizedTitle: normalizeTitle(fields.title),
-      descriptionHash: fields.descriptionText ? sha1(fields.descriptionText) : null,
-      descriptionFetchedAt: posting.descriptionText !== undefined && !reusedDescriptions.has(posting.url) ? deps.now() : job.descriptionFetchedAt,
-      updatedAt: deps.now(),
-    });
+    const changedFields: string[] = (Object.keys(fields) as Array<keyof typeof fields>).filter((key) => JSON.stringify(fields[key]) !== JSON.stringify(job[key]));
+    // Written only when something moved. A role's row carries its description, up to 30,000
+    // characters, and rewriting every observed role every day re-stored all of them for nothing.
+    if (changedFields.length) updates.push({ id: job.id, ...fields, normalizedTitle: normalizeTitle(fields.title) });
+    // Text this scan read for the role (the listing's own, or a detail page read for admission),
+    // as opposed to stored text put back on the posting above to spare a fetch.
+    const freshText = posting.descriptionText !== undefined && !reusedDescriptions.has(posting.url) ? posting.descriptionText.slice(0, 30_000) : undefined;
+    const freshHash = freshText !== undefined ? sha1(freshText) : undefined;
+    // The description is set only from fresh text that differs from what is stored, and only if no
+    // `fetch_description` wrote since this commit read the row: a newer stored description wins.
+    if (freshText !== undefined && freshHash !== job.descriptionHash) {
+      const truncated = posting.descriptionText!.length > 30_000;
+      descriptionWrites.push({ id: job.id, text: freshText, hash: freshHash, truncated, prevFetchedAt: job.descriptionFetchedAt });
+      changedFields.push("descriptionText");
+      if (job.descriptionSource !== "direct") changedFields.push("descriptionSource");
+      if (job.descriptionTruncated !== truncated) changedFields.push("descriptionTruncated");
+    } else if (freshHash !== undefined || (inlineHash.has(posting.url) && inlineHash.get(posting.url) === job.descriptionHash)) {
+      descriptionConfirmed.push(job.id);
+    }
+    const descriptionText = posting.descriptionText?.slice(0, 30_000) ?? savedTextByKey.get(job.externalKey) ?? null;
+    // Whether this scan has the role's text in hand, read or reused, so no detail fetch is needed.
+    const textInHand = posting.descriptionText !== undefined || (inlineHash.has(posting.url) && inlineHash.get(posting.url) === job.descriptionHash);
     if (changedFields.length) updateEvents.push({ jobId: job.id, type: "updated", payload: { fields: changedFields } });
     // When the feed carries the vendor's own `updated_at`, that is the refresh rule: the text is
     // re-read when the posting moved and not otherwise. Age only stands in for it where the feed
@@ -648,7 +693,7 @@ async function scanSource(
     for (const follower of followers) {
       const gate = follower.settings.gate;
       if (undecided(posting.url) && needsDescription(gate)) continue;
-      const verdict = follower.gate.evaluate({ ...fields, description: follower.gate.matchesDescription ? fields.descriptionText : undefined });
+      const verdict = follower.gate.evaluate({ ...fields, description: follower.gate.matchesDescription ? descriptionText : undefined });
       const view = viewByKey.get(`${follower.userId}:${job.id}`);
       // An account that asked for this role by pasting its URL keeps it, whatever their gate says
       // and whether or not a later scan adopted the row: they asked for that one by name.
@@ -667,7 +712,7 @@ async function scanSource(
         viewInserts.push({ userId: follower.userId, jobId: job.id, keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms, excluded: verdict.excluded, locationOk: verdict.locationOk, inTable: true, nearMiss: false, seeded: false, createdAt: deps.now(), updatedAt: deps.now() });
         scoreQueue.push({ userId: follower.userId, jobId: job.id });
       } else continue;
-      if (inTable && posting.descriptionText === undefined && descriptionMoved) descriptionQueue.add(job.id);
+      if (inTable && !textInHand && descriptionMoved) descriptionQueue.add(job.id);
     }
     // A stored posting still without text, whose description was never attempted or whose last
     // attempt is 14 days old, is queued again so a description gate is not deferred for ever.
@@ -676,15 +721,31 @@ async function scanSource(
     // move `description_fetched_at`, and `updated_at` will never move on our account.
     if (deferred.has(posting.url) && descriptionAged) descriptionQueue.add(job.id);
   }
+  // Being seen is positive evidence in every mode that reconciles: a partial scan that lists a role
+  // proves it is still there as surely as an ok one does, so either resets the miss count. What a
+  // partial scan may not do is count a miss or close anything, and reconcile() gives it neither.
+  if (result.seen.length > 0) {
+    const confirmed = descriptionConfirmed.length
+      ? sql`case when ${inArray(schema.jobs.id, descriptionConfirmed)} then ${deps.now()}::timestamptz else ${schema.jobs.descriptionFetchedAt} end`
+      : undefined;
+    for (let offset = 0; offset < result.seen.length; offset += 5000) {
+      await deps.db.update(schema.jobs).set({ lastSeenAt: deps.now(), missingScans: 0, firstMissedAt: null, ...(confirmed ? { descriptionFetchedAt: confirmed } : {}) })
+        .where(inArray(schema.jobs.id, result.seen.slice(offset, offset + 5000)));
+    }
+  }
   for (let offset = 0; offset < updates.length; offset += 250) {
     await deps.db.execute(sql`update jobs j set title=v.title, url=v.url, location=v.location, locations=v.locations,
       department=v.department, employment_type=v."employmentType", remote=v.remote, salary_text=v."salaryText", posted_at=v."postedAt",
-      description_text=v."descriptionText", description_source=v."descriptionSource", description_truncated=v."descriptionTruncated", normalized_title=v."normalizedTitle",
-      description_hash=v."descriptionHash", description_fetched_at=v."descriptionFetchedAt", updated_at=${deps.now()}
+      normalized_title=v."normalizedTitle", updated_at=${deps.now()}
       from jsonb_to_recordset(${JSON.stringify(updates.slice(offset, offset + 250))}::jsonb) as v(id uuid, title text, url text, location text, locations jsonb,
-        department text, "employmentType" text, remote boolean, "salaryText" text, "postedAt" timestamptz, "descriptionText" text, "descriptionSource" text, "descriptionTruncated" boolean, "normalizedTitle" text,
-        "descriptionHash" text, "descriptionFetchedAt" timestamptz)
+        department text, "employmentType" text, remote boolean, "salaryText" text, "postedAt" timestamptz, "normalizedTitle" text)
       where j.id=v.id`);
+  }
+  for (let offset = 0; offset < descriptionWrites.length; offset += 100) {
+    await deps.db.execute(sql`update jobs j set description_text=v.text, description_hash=v.hash, description_source='direct',
+      description_truncated=v.truncated, description_fetched_at=${deps.now()}, updated_at=${deps.now()}
+      from jsonb_to_recordset(${JSON.stringify(descriptionWrites.slice(offset, offset + 100))}::jsonb) as v(id uuid, text text, hash text, truncated boolean, "prevFetchedAt" timestamptz)
+      where j.id=v.id and date_trunc('milliseconds', j.description_fetched_at) is not distinct from v."prevFetchedAt"`);
   }
   for (let offset = 0; offset < viewUpdates.length; offset += 250) {
     // A view the gate archived and this listing's gate admits again comes back (`restoreGateArchive`).
@@ -831,30 +892,34 @@ async function scanSource(
  * response; version 1 stored raw bodies up to 2MB, which for a large feed was
  * the first 5% of the listing and nothing anyone could replay.
  */
-function snapshotFor(postings: RawPosting[], responses: Array<{ url: string; status: number; body: string }>, htmlPages: CachedHtmlPage[], listingHash?: string) {
+function snapshotFor(postings: RawPosting[], responses: Array<{ url: string; status: number; body: string }>, htmlPages: CachedHtmlPage[], listingHash?: string, inlineHash?: Map<string, string>) {
   return {
     version: 2,
     listingHash,
-    postings: postings.map(p => ({ externalId: p.externalId, title: p.title, url: p.url, location: p.location, locations: p.locations, department: p.department, postedAt: p.postedAt, updatedAt: p.updatedAt })),
+    // `descriptionHash` is the text the listing itself carried for the role, when it carried any.
+    postings: postings.map(p => ({ externalId: p.externalId, title: p.title, url: p.url, location: p.location, locations: p.locations, department: p.department, postedAt: p.postedAt, updatedAt: p.updatedAt, descriptionHash: inlineHash?.get(p.url) })),
     responses: responses.map(r => ({ url: r.url, status: r.status, bytes: r.body.length, head: r.body.slice(0, 20_000) })),
     htmlPages,
   };
 }
 
 /** A posting as the snapshot holds it: JSON, so every date has been through a string. */
-type StoredPosting = Omit<RawPosting, "postedAt" | "updatedAt"> & { postedAt?: string; updatedAt?: string };
+type SnapshotPosting = Omit<RawPosting, "postedAt" | "updatedAt"> & { postedAt?: string; updatedAt?: string; descriptionHash?: string };
+
+/** A posting revived from a snapshot, still carrying the hash of the text its listing carried. */
+type StoredPosting = RawPosting & { descriptionHash?: string };
 
 interface StoredSnapshot {
   /** The hash of the listing body these postings were parsed from, when it was large enough to be
    * revalidated at all. Reuse is allowed only against bytes that hash to this. */
   listingHash?: string;
   /** The listing exactly as the last successful scan parsed it. */
-  postings: RawPosting[];
+  postings: StoredPosting[];
   /** That scan's per-page HTML cache, carried forward so reusing it costs the next scan nothing. */
   htmlPages: CachedHtmlPage[];
 }
 
-function revivePosting(p: StoredPosting): RawPosting {
+function revivePosting(p: SnapshotPosting): StoredPosting {
   return { ...p, postedAt: p.postedAt ? new Date(p.postedAt) : undefined, updatedAt: p.updatedAt ? new Date(p.updatedAt) : undefined };
 }
 
@@ -871,15 +936,15 @@ async function readLastOkSnapshot(deps: WorkerDeps, sourceId: string): Promise<S
     const snapshot = JSON.parse(gunzipSync(Buffer.from(last.rawSnapshot, "base64"), { maxOutputLength: 8_000_000 }).toString()) as {
       version?: number;
       listingHash?: string;
-      postings?: StoredPosting[];
-      htmlPages?: Array<Omit<CachedHtmlPage, "postings"> & { postings?: StoredPosting[] }>;
+      postings?: SnapshotPosting[];
+      htmlPages?: Array<Omit<CachedHtmlPage, "postings"> & { postings?: SnapshotPosting[] }>;
     };
     // Version 1 stored raw bodies and no parsed listing; its per-page cache is still usable.
     if (snapshot.version !== 1 && snapshot.version !== 2) return null;
     return {
       listingHash: typeof snapshot.listingHash === "string" ? snapshot.listingHash : undefined,
       postings: (Array.isArray(snapshot.postings) ? snapshot.postings : [])
-        .filter((p): p is StoredPosting => typeof p?.title === "string" && typeof p?.url === "string")
+        .filter((p): p is SnapshotPosting => typeof p?.title === "string" && typeof p?.url === "string")
         .map(revivePosting),
       htmlPages: (Array.isArray(snapshot.htmlPages) ? snapshot.htmlPages : [])
         .map(page => ({ ...page, postings: (page.postings ?? []).map(revivePosting) })),

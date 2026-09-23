@@ -64,6 +64,9 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
     await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
   if (!text) {
     await tx.update(schema.jobs).set({ descriptionFetchedAt: deps.now() }).where(eq(schema.jobs.id, job.id));
+    // A new role's score waits for this task (the scan does not score what it is fetching text
+    // for), so no text still means the gate runs and the role is scored on what there is.
+    for (const follower of followerSettings) await reevaluateGate(tx as unknown as WorkerDeps["db"], follower.userId, follower.settings, deps.now(), { jobId });
     return { jobId, stored: false };
   }
   const trimmed = text.slice(0, MAX_DESCRIPTION);

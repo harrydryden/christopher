@@ -1,11 +1,11 @@
-import { accountAiSpend, createDb, recordAiCall, totalAiSpend, type Db } from "@ava/db";
+import { createDb, recordAiCall, totalAiSpend, type Db } from "@ava/db";
 import { aiBudgetRefusalMessage, aiBudgetWindowStart, aiFeatureLabel, ats, discovery, modelForCallSite, type AppSettings, type DiscoveryContext, type FetchContext, type SystemSettings } from "@ava/core";
 import { createAiEngine, type AiClientLike, type AiEngine, type AiUsageRecord, type Ref } from "@ava/ai";
 import { sql } from "drizzle-orm";
 import { BrowserRenderer } from "./browser";
 import type { WorkerEnv } from "./env";
 import { HttpTrafficLedger, PoliteFetcher, userAgentFor } from "./fetcher";
-import { tryReserveAi } from "./budget";
+import { accountAiStanding, BudgetRefusedError, tryReserveAi } from "./budget";
 import { log } from "./log";
 import { loadSettings, loadUserSettings } from "./settings";
 
@@ -36,6 +36,8 @@ export interface DepsOverrides {
   now?: () => Date;
   /** How long a settings read stays cached. Tests set 0 so a change takes effect at once. */
   settingsTtlMs?: number;
+  /** A stand-in for the Anthropic client behind every engine, so a test can drive the shared one too. */
+  aiClient?: AiClientLike;
 }
 
 export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}): Promise<WorkerDeps> {
@@ -110,19 +112,22 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
       account: ref.userId && account
         ? { userId: ref.userId, budgetUsd: account.aiBudgetUsd, since: aiBudgetWindowStart(at, account.aiBudgetResetAt) }
         : undefined,
-      daily: env.dailyAiBudgetUsd ?? 1000000,
-      discovery: env.discoveryAiBudgetUsd ?? 1000000,
+      // Unset, or at the environment's unlimited default, is no cap: tryReserveAi reads no day total.
+      daily: env.dailyAiBudgetUsd,
+      discovery: env.discoveryAiBudgetUsd,
       workerId: env.workerId,
     }, at);
     if ("refused" in hold)
       // One sentence for a refused hold, wherever it was refused: the CV build and this composed
       // their own, and the two drifted into telling the person different things about one budget.
-      throw new Error(`AI budget reserved or exhausted; retry later: ${aiBudgetRefusalMessage(aiFeatureLabel(callSite), estimate, hold.refused)}`);
+      // Typed, so a handler skips work its account has no room for instead of failing and retrying.
+      throw new BudgetRefusedError(hold.refused, `AI budget reserved or exhausted; retry later: ${aiBudgetRefusalMessage(aiFeatureLabel(callSite), estimate, hold.refused)}`);
     return hold.release;
   };
   const ai = createAiEngine({
     reserve,
     apiKey: env.anthropicApiKey,
+    ...(overrides.aiClient ? { client: overrides.aiClient } : {}),
     getModel: (callSite) => modelForCallSite(cached?.value ?? { defaultModel: "claude-sonnet-5", modelOverrides: {} }, callSite),
     onUsage,
     logger: (msg, data) => log.debug(`ai ${msg}`, data),
@@ -136,6 +141,7 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
     traffic,
     browser,
     ai,
+    ...(overrides.aiClient ? { aiClient: overrides.aiClient } : {}),
     settings,
     userSettings,
     invalidateSettings() {
@@ -235,16 +241,17 @@ export type AiBudgetStop = "ai unavailable" | "account ai budget exceeded";
  * `userId` is the account the work is for; work that belongs to no account, such as extraction and
  * discovery, passes none and only needs a model to be configured. Handlers ask before they begin,
  * so that an account which has spent its month skips its queued work and the task finishes done.
- * Leaving it to the hold instead would refuse the call mid-handler, fail the task and retry it: one
- * exhausted account's near-miss scoring would fill Health's failed-task list with work nothing can
- * complete.
+ * The arithmetic is the hold's: recorded spend plus what the account's calls in flight are holding.
+ * Recorded spend alone passed an account whose remaining month a running CV build was holding, and
+ * the hold then refused every call it made. A hold can still refuse a call too large for what is
+ * left; handlers read that `BudgetRefusedError` as the same skip.
  */
 export async function aiBudgetStop(deps: WorkerDeps, userId?: string): Promise<AiBudgetStop | null> {
   if (!deps.ai.enabled) return "ai unavailable";
   if (!userId) return null;
   const account = await deps.userSettings(userId);
-  const spent = await accountAiSpend(deps.db, userId, aiBudgetWindowStart(deps.now(), account.aiBudgetResetAt));
-  return spent >= account.aiBudgetUsd ? "account ai budget exceeded" : null;
+  const { spent, held } = await accountAiStanding(deps.db, userId, aiBudgetWindowStart(deps.now(), account.aiBudgetResetAt));
+  return spent + held >= account.aiBudgetUsd ? "account ai budget exceeded" : null;
 }
 
 /** Whether a model call must not be made: `userId`'s own budget, when the work belongs to an account. */

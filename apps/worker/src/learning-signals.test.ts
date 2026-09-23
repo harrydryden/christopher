@@ -160,6 +160,24 @@ it("scores a role on the confirmed evidence that bears on it, bounded, never on 
   expect(scoreJob).toHaveBeenCalledTimes(1);
 });
 
+it("skips a score whose own hold the account's budget refuses, and finishes rather than failing", async () => {
+  // The real shared engine and its per-call hold, with a client that must never be asked.
+  const create = vi.fn();
+  const engine = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0, aiClient: { messages: { create } } });
+  try {
+    const { job } = await seedRole();
+    await db.insert(schema.userSettings).values({ userId, key: "aiBudgetUsd", value: 1 });
+    // Less than a cent left: past the pre-check, which sees room, and short of what one A5 call holds.
+    await db.insert(schema.aiCalls).values({ userId, callSite: "A5", model: "fixture", costUsd: 0.9921875, at: now });
+    const withRealEngine = { ...engine, assertOwnership: undefined } as WorkerDeps;
+    expect(await handleScoreJob(task({ userId, jobId: job.id }), withRealEngine)).toEqual({ skipped: "account ai budget exceeded" });
+    expect(await viewOf(job.id)).toMatchObject({ scoreState: "budget" });
+    expect(create).not.toHaveBeenCalled();
+  } finally {
+    await engine.close();
+  }
+});
+
 it("marks a view queued in the statement that queues its score, from the gate and from a rescore", async () => {
   await setGate({});
   const { job } = await seedRole({ view: false });

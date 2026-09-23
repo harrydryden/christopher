@@ -9,7 +9,7 @@ import type { User } from "@ava/db/schema";
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { appliedRoleCount, sortRoleRows, parseRolesFilters, applyRolesFilters, buildRoleRowVM, fetchRolePage, fetchRoleRows, filtersToQueryString, locationReasonText, parseSince, resolveRoleView, roleTabFor, scoreStateText, type RoleRow } from "./jobs";
+import { appliedRoleCount, sortRoleRows, parseRolesFilters, applyRolesFilters, buildRoleRowVM, fetchRecentEventsFor, fetchRolePage, fetchRoleRows, filtersToQueryString, locationReasonText, parseSince, resolveRoleView, roleTabFor, scoreStateText, type RoleRow } from "./jobs";
 
 beforeAll(async () => {
   const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
@@ -299,5 +299,53 @@ describe("the shortlist's own breakdown", () => {
     expect(appliedRoleCount({ applied: 1, in_process: 1, accepted: 1, rejected: 1 })).toBe(4);
     expect(appliedRoleCount({ matched: 9, shortlisted: 12, applying: 4, dismissed: 3 })).toBe(0);
     expect(appliedRoleCount({})).toBe(0);
+  });
+});
+
+describe("a role's recent events", () => {
+  /** One posting followed by several accounts: every account's events hang off the one job. */
+  async function sharedPosting() {
+    await database.execute(sql`truncate users, companies restart identity cascade`);
+    const me: User = await ensureTestUser(database, "events-me@example.com");
+    const other: User = await ensureTestUser(database, "events-other@example.com", "member");
+    const [company] = await database.insert(schema.companies).values({ name: "Acme", domain: "acme.test", homepageUrl: "https://acme.test" }).returning();
+    const [source] = await database.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://acme.test/jobs" }).returning();
+    const jobsInserted = await database.insert(schema.jobs).values([1, 2, 3].map((n) => ({
+      companyId: company!.id, sourceId: source!.id, externalKey: `id:${n}`, title: `Role ${n}`, normalizedTitle: `role ${n}`, url: `https://acme.test/jobs/${n}`,
+    }))).returning();
+    return { me, other, jobs: jobsInserted };
+  }
+  const at = (second: number) => new Date(1_700_000_000_000 + second * 1000);
+
+  it("never returns another account's events, however many it has", async () => {
+    const { me, other, jobs: [job] } = await sharedPosting();
+    await database.insert(schema.jobEvents).values([
+      ...Array.from({ length: 20 }, (_, i) => ({ jobId: job!.id, userId: other.id, type: "scored" as const, payload: { who: "other", i }, at: at(100 + i) })),
+      { jobId: job!.id, userId: null, type: "discovered" as const, payload: { who: "shared" }, at: at(1) },
+      { jobId: job!.id, userId: me.id, type: "decided" as const, payload: { who: "me" }, at: at(2) },
+    ]);
+    const events = await fetchRecentEventsFor(me.id, [job!.id]);
+    expect(events.get(job!.id)!.map((e) => e.payload.who)).toEqual(["me", "shared"]);
+    expect(events.get(job!.id)![0]!.at).toEqual(at(2));
+  });
+
+  it("merges shared and own events newest first and caps them across both", async () => {
+    const { me, jobs: [job] } = await sharedPosting();
+    // Four of each, interleaved in time: the newest six of the eight, in order.
+    await database.insert(schema.jobEvents).values([1, 2, 3, 4, 5, 6, 7, 8].map((second) => ({
+      jobId: job!.id, userId: second % 2 ? null : me.id, type: "updated" as const, payload: { second }, at: at(second),
+    })));
+    const events = await fetchRecentEventsFor(me.id, [job!.id], 6);
+    expect(events.get(job!.id)!.map((e) => e.payload.second)).toEqual([8, 7, 6, 5, 4, 3]);
+  });
+
+  it("orders events at the same moment by id, leaves eventless jobs out and ignores repeated ids", async () => {
+    const { me, jobs: [job, quiet] } = await sharedPosting();
+    const ids = ["00000000-0000-4000-8000-00000000000b", "00000000-0000-4000-8000-00000000000a"];
+    await database.insert(schema.jobEvents).values(ids.map((id) => ({ id, jobId: job!.id, userId: null, type: "updated" as const, at: at(5) })));
+    const events = await fetchRecentEventsFor(me.id, [job!.id, quiet!.id, job!.id]);
+    expect(events.get(job!.id)!.map((e) => e.id)).toEqual([...ids].sort());
+    expect(events.has(quiet!.id)).toBe(false);
+    expect(await fetchRecentEventsFor(me.id, [])).toEqual(new Map());
   });
 });

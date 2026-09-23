@@ -108,6 +108,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
   const company = await getCompany(user.id, id);
   if (!company) notFound();
   const admin = user.role === "admin";
+  const now = new Date();
 
   const [sources, latestRun, scans, profile, followers, discoveryState, imports, ungated, suggestion, work, timing, applications, system, setup] = await Promise.all([
     getCompanySources(id),
@@ -120,13 +121,12 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
     ungatedUserPostings(user.id, id),
     pendingNameSuggestion(user.id, id),
     getCompanyWorkStatus(user.id),
-    companyScanTiming(id),
+    companyScanTiming(id, now),
     companyApplicationCount(user.id, id),
     getSystemSettings(),
     companySetupRows(user.id, id),
   ]);
 
-  const now = new Date();
   const candidates = (latestRun?.candidates ?? []) as DiscoveryCandidateView[];
   const subscription = company.subscription;
   const icon = companyIcon(company);

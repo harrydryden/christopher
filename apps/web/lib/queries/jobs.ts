@@ -1,7 +1,7 @@
 import { latestApplicationFor, roleStageSql, roleStatusSql, type LatestApplication } from "@ava/db";
 import { deadlineFor, defaultRoleTab, roleStatus, ROLE_STATUSES, ROLE_TABS, type ApplicationStatus, type RoleStage, type RoleStatus, type RoleTab } from "@ava/core";
-import { getTableColumns, and, desc, eq, inArray, ne, isNull, or, sql, lte } from "drizzle-orm";
-import { careerSources, companies, decisions, jobEvents, jobs, userJobs, type Job, type ScoreState, type SourceType, type UserJob } from "@ava/db/schema";
+import { getTableColumns, and, eq, inArray, ne, isNull, sql } from "drizzle-orm";
+import { careerSources, companies, decisions, jobs, userJobs, type Job, type ScoreState, type SourceType, type UserJob } from "@ava/db/schema";
 import { displayStatus, formatDuration, liveFor, type DisplayStatus } from "@ava/core";
 import { db } from "@/lib/db";
 import { companyLogoUrl } from "@/lib/company-icon";
@@ -125,22 +125,41 @@ export async function fetchRoleDetails(userId: string, ids: string[]): Promise<R
   return rows.map(row => ({ ...row, events: [] }));
 }
 
-/** Most recent job_events per job id, newest first, capped per job: shared observations plus this account's own. */
+/**
+ * Most recent job_events per job id, newest first, capped per job: shared observations plus this
+ * account's own.
+ *
+ * A posting followed by many accounts carries every one of their scored, decided and hidden
+ * events, so the query never reads the job's whole history to rank it: for each job it takes the
+ * newest few shared events and the newest few of this account's, each a bounded probe, and keeps
+ * the newest few of the two. Another account's events are never read.
+ */
 export async function fetchRecentEventsFor(userId: string, jobIds: string[], perJobLimit = 6): Promise<Map<string, RoleEvent[]>> {
   const map = new Map<string, RoleEvent[]>();
-  if (jobIds.length === 0) return map;
-  const ranked = db().select({ id: jobEvents.id, jobId: jobEvents.jobId, type: jobEvents.type,
-    payload: jobEvents.payload, at: jobEvents.at,
-    rank: sql<number>`row_number() over (partition by ${jobEvents.jobId} order by ${jobEvents.at} desc, ${jobEvents.id})`.as("event_rank"),
-  }).from(jobEvents).where(and(inArray(jobEvents.jobId, jobIds), or(isNull(jobEvents.userId), eq(jobEvents.userId, userId)))).as("ranked_events");
-  const rows = await db().select().from(ranked).where(lte(ranked.rank, perJobLimit)).orderBy(desc(ranked.at));
-  for (const row of rows) {
-    const existing = map.get(row.jobId);
-    const entry: RoleEvent = { id: row.id, type: row.type, payload: row.payload, at: row.at };
+  const ids = [...new Set(jobIds)];
+  if (ids.length === 0) return map;
+  // Drizzle renders one placeholder per element, so the array is spelled out rather than passed whole.
+  const idArray = sql`array[${sql.join(ids.map((id) => sql`${id}`), sql`, `)}]::uuid[]`;
+  const result = await db().execute(sql`
+    select e.id, e.job_id, e.type, e.payload, e.at
+    from unnest(${idArray}) as j(id)
+    cross join lateral (
+      (select id, job_id, type, payload, at from job_events
+        where job_id = j.id and user_id is null
+        order by at desc, id limit ${perJobLimit})
+      union all
+      (select id, job_id, type, payload, at from job_events
+        where user_id = ${userId}::uuid and job_id = j.id
+        order by at desc, id limit ${perJobLimit})
+    ) e
+    order by e.job_id, e.at desc, e.id`);
+  for (const row of result.rows as Array<{ id: string; job_id: string; type: string; payload: Record<string, unknown>; at: string | Date }>) {
+    const existing = map.get(row.job_id);
+    const entry: RoleEvent = { id: row.id, type: row.type, payload: row.payload, at: new Date(row.at) };
     if (existing) {
       if (existing.length < perJobLimit) existing.push(entry);
     } else {
-      map.set(row.jobId, [entry]);
+      map.set(row.job_id, [entry]);
     }
   }
   return map;

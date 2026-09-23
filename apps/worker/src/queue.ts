@@ -72,8 +72,40 @@ export class TimeoutError extends Error {
   }
 }
 
-/** How long `stop()` waits for a running handler before handing its task back to the queue. */
-export const STOP_GRACE_MS = 25_000;
+/**
+ * A run stopped because this worker is shutting down. Its task goes back on the queue with the
+ * attempt returned, whatever the handler did on its way out.
+ */
+export class ShutdownError extends Error {
+  constructor(message = "worker shutting down") {
+    super(message);
+    this.name = "ShutdownError";
+  }
+}
+
+/**
+ * How long `stop()` waits for the runs it has stopped to settle, so their streams close and their
+ * spend is recorded before this worker's holds are released. With the hand-back and the hold
+ * release on either side of it, all of `stop()` fits inside the platform's thirty seconds with
+ * room for the process to close its pool.
+ */
+export const STOP_GRACE_MS = 15_000;
+
+/** The longest `stop()` waits on the database for each of the hand-back and the hold release. */
+export const HAND_BACK_TIMEOUT_MS = 4_000;
+
+/** Resolves once `work` settles or `ms` has passed, whichever is first; never rejects. */
+export async function settleWithin(work: Promise<unknown>, ms: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      work.then(() => undefined, () => undefined),
+      new Promise<void>(resolve => { timer = setTimeout(resolve, ms); timer.unref?.(); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 export interface QueueOptions {
   concurrency: number;
@@ -497,6 +529,10 @@ export class TaskQueue {
   private turn = 0;
   /** Tasks this worker has claimed and not yet finished, so a shutdown can hand them back. */
   private readonly running = new Map<string, Task>();
+  /** Each running task's own signal, so a shutdown or a crash can stop every run at once. */
+  private readonly controllers = new Map<string, AbortController>();
+  /** Runs in progress, from the loops and from `runTask`, so `stop()` can wait for them. */
+  private readonly inFlight = new Set<Promise<void>>();
   private readonly activeByType = new Map<Task["type"], number>();
   /** A timed-out handler can outlive its queue attempt; its type stays reserved until it settles. */
   private readonly pendingSettlements = new Map<string, Promise<void>>();
@@ -517,40 +553,71 @@ export class TaskQueue {
   }
 
   /**
-   * Stop claiming, wait a bounded while for what is running, then give back what this worker still
-   * holds: its tasks go straight back on the queue and its AI reservations are released.
+   * Stop claiming, stop every run, and give back what this worker holds: its tasks go straight
+   * back on the queue with their attempt returned, and once the stopped runs have settled — or the
+   * grace is over — its AI reservations are released.
    *
    * Without this a task killed mid-flight stays `running` until `TASK_STALE_AFTER_MS` (five
    * minutes) has passed, and a killed CV build's half-hour hold sits against that account's budget
    * for the full half hour, refusing work the account can plainly afford.
+   *
+   * Every run is stopped at once rather than after the grace: waiting first let a CV build stream
+   * model answers for the whole grace that nothing would keep, and pushed the hand-back past the
+   * platform's kill. A stopped run's writes are refused by its fence, so a handler that reads the
+   * abort as a failure — a CV build on its last attempt, a document import — cannot record one, and
+   * the task is handed back whatever the handler returned. Handing back precedes the wait, so the
+   * rows are safe even if the process is killed during it. Each database step is bounded.
    */
-  async stop(graceMs = STOP_GRACE_MS): Promise<void> {
+  async stop(graceMs = STOP_GRACE_MS, handBackMs = HAND_BACK_TIMEOUT_MS): Promise<void> {
     this.stopping = true;
-    let timer: NodeJS.Timeout | undefined;
-    await Promise.race([
-      Promise.all(this.loops),
-      new Promise<void>(resolve => { timer = setTimeout(resolve, graceMs); timer.unref?.(); }),
-    ]);
-    if (timer) clearTimeout(timer);
-    await this.handBack();
+    for (const controller of this.controllers.values())
+      if (!controller.signal.aborted) controller.abort(new ShutdownError());
+    await settleWithin(this.handBackAll(), handBackMs);
+    await settleWithin(Promise.all([...this.loops, ...this.inFlight]), graceMs);
+    await settleWithin(this.releaseHolds(), handBackMs);
   }
 
-  /** Requeue every task still owned here and drop this worker's live reservations. */
-  private async handBack(): Promise<void> {
-    for (const task of [...this.running.values()]) {
-      try {
-        // Fenced by the lease: a task already reclaimed by another worker is left alone. The
-        // attempt is given back too, so a shutdown never spends one of the task's retries.
-        const rows = await this.deps.db
-          .update(schema.tasks)
-          .set({ status: "queued", lockedAt: null, lockedBy: null, attempts: task.attempts - 1, error: "requeued: worker shutting down" })
-          .where(ownedTask(task)).returning({ id: schema.tasks.id });
-        if (rows.length) log.warn("task requeued on shutdown", { id: task.id, type: task.type });
-      } catch (err) {
-        log.error("failed to requeue task on shutdown", err);
-      }
+  /**
+   * Stop claiming and put back what this worker holds after an uncaught exception, the way a
+   * crash recovery would: each task spends its attempt, and one at its limit is failed with its
+   * abandonment hook. Unlike a shutdown the attempt is not returned, because the task that threw
+   * may be the one that brought the process down, and returning it would let that task take the
+   * worker down again on every restart.
+   */
+  async releaseAfterCrash(timeoutMs = HAND_BACK_TIMEOUT_MS): Promise<void> {
+    this.stopping = true;
+    const ids = [...this.running.keys()];
+    const recovered = ids.length
+      ? requeueStale(this.deps.db, 0, this.opts.workerId, { ids, deps: this.deps, onAbandon: this.opts.onAbandon })
+      : Promise.resolve();
+    await settleWithin(recovered, timeoutMs);
+    for (const controller of this.controllers.values())
+      if (!controller.signal.aborted) controller.abort(new LeaseLostError("worker crashed; this run's task has been put back"));
+    await settleWithin(this.releaseHolds(), timeoutMs);
+  }
+
+  /**
+   * Requeue one task this worker still owns, with its attempt given back. Fenced by the lease: a
+   * task already reclaimed by another worker, or already handed back, is left alone.
+   */
+  private async handBackOne(task: Task): Promise<void> {
+    try {
+      const rows = await this.deps.db
+        .update(schema.tasks)
+        .set({ status: "queued", lockedAt: null, lockedBy: null, attempts: task.attempts - 1, error: "requeued: worker shutting down" })
+        .where(ownedTask(task)).returning({ id: schema.tasks.id });
+      if (rows.length) log.warn("task requeued on shutdown", { id: task.id, type: task.type });
+    } catch (err) {
+      log.error("failed to requeue task on shutdown", err);
     }
-    this.running.clear();
+  }
+
+  private async handBackAll(): Promise<void> {
+    for (const task of [...this.running.values()]) await this.handBackOne(task);
+  }
+
+  /** Drop this worker's live reservations: nothing it is stopping will settle them. */
+  private async releaseHolds(): Promise<void> {
     try {
       const released = await releaseAiHolds(this.deps.db, { workerId: this.opts.workerId });
       if (released.count) {
@@ -678,7 +745,10 @@ export class TaskQueue {
   }
 
   private async runTaskReserved(task: Task): Promise<void> {
-    return withLogContext({ taskId: task.id, taskType: task.type }, () => this.runTaskInContext(task));
+    const run = withLogContext({ taskId: task.id, taskType: task.type }, () => this.runTaskInContext(task));
+    this.inFlight.add(run);
+    try { return await run; }
+    finally { this.inFlight.delete(run); }
   }
 
   private async runTaskInContext(task: Task): Promise<void> {
@@ -689,6 +759,9 @@ export class TaskQueue {
     // This run's own signal: the deadline aborts it, and so does a heartbeat that finds the task
     // has been taken by another worker. A handler that made model calls or took holds stops.
     const stop = new AbortController();
+    this.controllers.set(task.id, stop);
+    /** Stopped because this worker is shutting down: the task goes back, whatever the run did. */
+    const handedBack = () => stop.signal.reason instanceof ShutdownError;
     let renewing = false;
     const heartbeatMs = this.opts.heartbeatMs ?? Math.max(100, Math.min(30_000, (this.opts.staleAfterMs ?? TASK_STALE_AFTER_MS) / 3));
     const heartbeat = setInterval(() => {
@@ -734,10 +807,16 @@ export class TaskQueue {
         }
         throw err;
       });
+      if (handedBack()) { await this.handBackOne(task); return; }
       if (!await completeTask(this.deps.db, task, result)) { log.warn("task completion discarded: lease lost", { id: task.id }); return; }
       if (task.type === "scan_company" || task.type === "run_daily") await finaliseScanRuns(this.deps);
       log.info("task done", { id: task.id, type: task.type, ms: Date.now() - started, ...this.heapReport(before) });
     } catch (err) {
+      if (handedBack()) {
+        log.info("task handed back on shutdown", { id: task.id, type: task.type, error: (err as Error)?.message });
+        await this.handBackOne(task);
+        return;
+      }
       let outcome: "retry" | "failed" | "lost";
       try {
         outcome = await failTask(this.deps.db, task, err);
@@ -777,6 +856,7 @@ export class TaskQueue {
     } finally {
       clearInterval(heartbeat);
       this.running.delete(task.id);
+      this.controllers.delete(task.id);
       this.active--;
     }
   }

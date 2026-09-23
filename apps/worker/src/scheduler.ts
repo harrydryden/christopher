@@ -16,8 +16,14 @@ function addMinutes(hm: string, minutes: number): string {
   return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
 }
 
-/** One scheduler tick. Idempotent: safe to call every minute and after restarts. */
-export async function schedulerTick(deps: WorkerDeps): Promise<void> {
+/**
+ * One scheduler tick. Idempotent: safe to call every minute and after restarts.
+ *
+ * `signal` is the scheduler being stopped: the tick returns at the next step rather than carrying
+ * on into a pool the shutdown is about to close. Every step is safe to leave for the next tick.
+ */
+export async function schedulerTick(deps: WorkerDeps, signal?: AbortSignal): Promise<void> {
+  const stopped = () => signal?.aborted === true;
   const settings = await deps.settings();
   const now = deps.now();
   const { ymd, hm, weekday } = localDateParts(now, settings.timezone);
@@ -37,6 +43,7 @@ export async function schedulerTick(deps: WorkerDeps): Promise<void> {
   }
 
   // Weekly learning jobs run per account, an hour after the daily run.
+  if (stopped()) return;
   if (weekday === settings.weeklyDay && hm >= addMinutes(settings.scanTime, 60)) {
     await deps.db.transaction(async tx => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext('ava:weekly-jobs'))`);
@@ -61,6 +68,7 @@ export async function schedulerTick(deps: WorkerDeps): Promise<void> {
   }
 
   // External discovery sources are checked on their own interval; the handler honours the owner's settings.
+  if (stopped()) return;
   const due = await deps.db.select().from(schema.discoverySources).where(and(
     eq(schema.discoverySources.enabled, true), sql`${schema.discoverySources.nextRunAt} <= ${now}`,
   ));
@@ -71,8 +79,10 @@ export async function schedulerTick(deps: WorkerDeps): Promise<void> {
     });
   }
 
+  if (stopped()) return;
   await finaliseScanRuns(deps);
 
+  if (stopped()) return;
   const recovered = await requeueStale(deps.db, undefined, deps.env.workerId, { deps, onAbandon });
   if (recovered.requeued || recovered.failed) log.warn("recovered tasks from a lost worker", recovered);
   // Boot sweeps these too; hourly is enough for a state nothing current produces.
@@ -82,12 +92,14 @@ export async function schedulerTick(deps: WorkerDeps): Promise<void> {
   });
 
   // Every few minutes, and once a day: the sweeps that catch what the queue itself could not.
+  if (stopped()) return;
   await claimPeriodic(deps, "lastCvReconcile", 300, async () => {
     const failed = await reconcileCvDrafts(deps);
     if (failed) log.warn("reconciled CV drafts nothing was building", { failed });
   });
   await prunePeriodically(deps);
 
+  if (stopped()) return;
   // Ageing, once a minute and bounded, so that a task which keeps losing to newer higher-priority
   // work still reaches the front. It lives here rather than in the claim because the claim's
   // ordering has to be something an index can serve. Claimed across the deployment, because every
@@ -102,23 +114,43 @@ export async function schedulerTick(deps: WorkerDeps): Promise<void> {
     .set({ status: "expired", resolvedAt: now })
     .where(and(eq(schema.companySuggestions.status, "pending"), lt(schema.companySuggestions.createdAt, new Date(now.getTime() - 30 * 86_400_000))));
 
+  if (stopped()) return;
   await maintainHistory(deps);
 }
 
-export function startScheduler(deps: WorkerDeps, intervalMs = 60_000): { stop(): void } {
+/**
+ * Tick now and then every `intervalMs`, one tick at a time.
+ *
+ * The next tick is scheduled when the last one finishes, so a tick that outlasts the interval —
+ * the weekly fan-out, a maintenance batch, a lock the daily run holds — delays the next instead
+ * of running beside it and doubling its connections. `stop()` tells the tick in flight to return
+ * at its next step and resolves once it has, so a shutdown never closes the pool under it.
+ */
+export function startScheduler(
+  deps: WorkerDeps,
+  intervalMs = 60_000,
+  tick: (deps: WorkerDeps, signal: AbortSignal) => Promise<void> = schedulerTick,
+): { stop(): Promise<void> } {
+  const controller = new AbortController();
   let timer: NodeJS.Timeout | null = null;
-  const run = async () => {
-    try {
-      await schedulerTick(deps);
-    } catch (err) {
-      log.error("scheduler tick failed", err);
-    }
+  let current: Promise<void> | null = null;
+  const run = () => {
+    if (controller.signal.aborted) return;
+    timer = null;
+    const started = Date.now();
+    current = tick(deps, controller.signal)
+      .catch(err => log.error("scheduler tick failed", err))
+      .finally(() => {
+        current = null;
+        if (!controller.signal.aborted) timer = setTimeout(run, Math.max(0, intervalMs - (Date.now() - started)));
+      });
   };
-  void run();
-  timer = setInterval(run, intervalMs);
+  run();
   return {
-    stop() {
-      if (timer) clearInterval(timer);
+    async stop() {
+      controller.abort();
+      if (timer) clearTimeout(timer);
+      await current;
     },
   };
 }

@@ -8,9 +8,9 @@ import { runMigrations } from "@ava/db/migrate";
 import { desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
-import { agePriorities, assertRunOwnership, backoffMs, BUSY_REFUND_WINDOW_MS, claimTask, deadlineMsFor, failSpentTasks, failTask, laneSlots, recoverFromCrash, requeueStale, sleep, TASK_STALE_AFTER_MS, TaskQueue } from "./queue";
+import { agePriorities, assertRunOwnership, backoffMs, BUSY_REFUND_WINDOW_MS, claimTask, deadlineMsFor, failSpentTasks, failTask, laneSlots, recoverFromCrash, requeueStale, ShutdownError, sleep, TASK_STALE_AFTER_MS, TaskQueue } from "./queue";
 import { LeaseBusyError, withResourceLease, type RunDeps } from "./lease";
-import { reconcileCvDrafts, schedulerTick } from "./scheduler";
+import { reconcileCvDrafts, schedulerTick, startScheduler } from "./scheduler";
 import { CV_ABANDONED_MESSAGE, onAbandon, onInterrupted } from "./handlers";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
@@ -522,6 +522,139 @@ describe("execution model", () => {
     await hang;
     await db.execute(sql`delete from ai_reservations`);
   }, 20_000);
+});
+
+describe("stopping", () => {
+  beforeEach(async () => { await db.execute(sql`truncate worker_events, ai_reservations`); });
+  const theTask = async () => (await db.select().from(schema.tasks))[0]!;
+  const holdsFor = async (workerId: string) =>
+    Number((await db.execute<{ n: number }>(sql`select count(*)::int as n from ai_reservations where worker_id = ${workerId}`)).rows[0]!.n);
+
+  it("stops every run as it begins, and hands its task back whatever the handler did on the way out", async () => {
+    // A CV build on its last attempt reads the abort as a failure and writes the draft failed, then
+    // returns normally. Aborting before handing back used to let that write through the fence and
+    // mark the task done: every deploy would have failed someone's CV for good.
+    let reason: unknown;
+    let write: string | undefined;
+    let started!: () => void;
+    const running = new Promise<void>(resolve => { started = resolve; });
+    const queue = new TaskQueue(deps, {
+      generate_cv: async (_task, runDeps, ctx) => {
+        started();
+        await new Promise(resolve => ctx.signal.addEventListener("abort", resolve, { once: true }));
+        reason = ctx.signal.reason;
+        write = await db.transaction(async tx => runDeps.assertOwnership!(tx as unknown as Db)).then(() => "written", (e: Error) => e.message);
+        return { failed: true };
+      },
+    }, { concurrency: 1, workerId: "deploying", pollMs: 10 });
+    await enqueueTask(db, "generate_cv", { draftId: "last-attempt" }, { maxAttempts: 1 });
+    queue.start();
+    await running;
+    const began = Date.now();
+    await queue.stop(5_000);
+    expect(Date.now() - began).toBeLessThan(2_000);
+    expect(reason).toBeInstanceOf(ShutdownError);
+    expect(write).toBe("Run was stopped; refusing its writes");
+    const row = await theTask();
+    expect(row.status).toBe("queued");
+    expect(row.attempts).toBe(0);
+    expect(row.error).toContain("shutting down");
+    expect(await listWorkerEvents(db, { kinds: ["task_abandoned"] })).toHaveLength(0);
+  }, 15_000);
+
+  it("hands the rows back before the grace, and releases the holds only once the stopped runs settle", async () => {
+    const user = await ensureTestUser(db, "stopping@example.com");
+    await db.execute(sql`insert into ai_reservations (user_id, call_site, amount, expires_at, worker_id)
+      values (${user.id}, 'CV', 1, now() + interval '30 minutes', 'settling')`);
+    let statusDuringGrace: string | undefined;
+    let holdsDuringGrace: number | undefined;
+    let started!: () => void;
+    const running = new Promise<void>(resolve => { started = resolve; });
+    const queue = new TaskQueue(deps, {
+      generate_cv: async (_task, _deps, ctx) => {
+        started();
+        await new Promise(resolve => ctx.signal.addEventListener("abort", resolve, { once: true }));
+        // The run is still closing its streams: its task is already safe, its hold not yet gone.
+        await sleep(200);
+        statusDuringGrace = (await theTask()).status;
+        holdsDuringGrace = await holdsFor("settling");
+        throw ctx.signal.reason;
+      },
+    }, { concurrency: 1, workerId: "settling", pollMs: 10 });
+    await enqueueTask(db, "generate_cv", { draftId: "settling" });
+    queue.start();
+    await running;
+    await queue.stop(5_000);
+    expect(statusDuringGrace).toBe("queued");
+    expect(holdsDuringGrace).toBe(1);
+    expect(await holdsFor("settling")).toBe(0);
+    expect((await theTask()).attempts).toBe(0);
+  }, 15_000);
+
+  it("puts back what it held after an uncaught exception, spending the attempt as a crash does", async () => {
+    const user = await ensureTestUser(db, "crashing@example.com");
+    await db.execute(sql`insert into ai_reservations (user_id, call_site, amount, expires_at, worker_id)
+      values (${user.id}, 'CV', 1, now() + interval '30 minutes', 'crashing')`);
+    let aborted = false;
+    let finish!: () => void;
+    const hang = new Promise<void>(resolve => { finish = resolve; });
+    let started!: () => void;
+    const running = new Promise<void>(resolve => { started = resolve; });
+    let abandoned = 0;
+    const queue = new TaskQueue(deps, {
+      scan_company: async (_task, _deps, ctx) => {
+        started();
+        ctx.signal.addEventListener("abort", () => { aborted = true; }, { once: true });
+        await hang;
+        return {};
+      },
+    }, { concurrency: 1, workerId: "crashing", pollMs: 10, onAbandon: { scan_company: async () => { abandoned++; } } });
+    await enqueueTask(db, "scan_company", { companyId: "culprit" });
+    queue.start();
+    await running;
+    await queue.releaseAfterCrash();
+    const row = await theTask();
+    // Back on the queue at once rather than after a stale lock, but with its attempt spent: the
+    // task that was running may be the one that threw, and must not be retried for ever.
+    expect(row.status).toBe("queued");
+    expect(row.attempts).toBe(1);
+    expect(row.runAfter.getTime()).toBeGreaterThan(Date.now());
+    expect(aborted).toBe(true);
+    expect(abandoned).toBe(0);
+    expect(await holdsFor("crashing")).toBe(0);
+    finish();
+    await queue.stop(1_000);
+  }, 15_000);
+});
+
+describe("scheduler loop", () => {
+  it("never runs two ticks at once, and stops only once the tick in flight has returned", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let ticks = 0;
+    let sawAbort = false;
+    const tick = async (_deps: WorkerDeps, signal: AbortSignal) => {
+      ticks++;
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      // Three intervals long, so an interval timer would have started three more beside it.
+      for (let step = 0; step < 6 && !signal.aborted; step++) await sleep(10);
+      if (signal.aborted) sawAbort = true;
+      await sleep(30);
+      inFlight--;
+    };
+    const scheduler = startScheduler(deps, 20, tick);
+    while (ticks < 3) await sleep(5);
+    const stopping = scheduler.stop();
+    expect(inFlight).toBe(1);
+    await stopping;
+    expect(inFlight).toBe(0);
+    expect(maxInFlight).toBe(1);
+    expect(sawAbort).toBe(true);
+    const after = ticks;
+    await sleep(100);
+    expect(ticks).toBe(after);
+  }, 10_000);
 });
 
 /**

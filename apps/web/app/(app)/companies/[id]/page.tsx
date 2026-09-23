@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { RoleWorkspace } from "@/components/RoleWorkspace";
 import type { RawSearchParams } from "@/lib/queries/jobs";
 import { SettingsForm } from "@/components/SettingsForm";
@@ -69,7 +70,7 @@ function KeywordPrompt() {
   return (
     <p className="text-12 text-muted">
       It is outside your filters, so a scan would not have caught it.{" "}
-      <a href="/settings#keywords" className="text-fg underline">Update your keywords</a> so similar roles reach your table.
+      <Link href="/settings#keywords" className="text-fg underline">Update your keywords</Link> so similar roles reach your table.
     </p>
   );
 }
@@ -94,7 +95,7 @@ function ImportStatus({ row, companyId }: { row: PostingImportRow; companyId: st
   return (
     <div className="space-y-1">
       <p className="text-14">
-        Added «<a href={`/companies/${companyId}?view=auto-matched#roles`} className="text-fg underline">{result.title ?? host}</a>»
+        Added «<Link href={`/companies/${companyId}?view=auto-matched#roles`} className="text-fg underline">{result.title ?? host}</Link>»
         {result.existing && <span className="text-muted"> · already in the catalogue</span>}
       </p>
       {outsideFilters && <KeywordPrompt />}
@@ -192,9 +193,9 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
             )}
             <span className="block text-12">
               {applications > 0 ? (
-                <a href={`/applications?company=${company.id}&filter=all`} className="text-fg underline">
+                <Link href={`/applications?company=${company.id}&filter=all`} className="text-fg underline">
                   {applications} {applications === 1 ? "application" : "applications"}
-                </a>
+                </Link>
               ) : (
                 <span className="text-muted">No applications here yet</span>
               )}
@@ -541,7 +542,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
 
             <p className="text-12 text-muted">
               Deleting the company or a source for every follower is done from{" "}
-              <a href={`/admin/catalogue?q=${encodeURIComponent(company.domain)}`} className="text-fg underline">Admin › Company catalogue</a>.
+              <Link href={`/admin/catalogue?q=${encodeURIComponent(company.domain)}`} className="text-fg underline">Admin › Company catalogue</Link>.
             </p>
           </div>
         </details>

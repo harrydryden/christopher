@@ -2,6 +2,7 @@
 
 import { Fragment, startTransition, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { decide, decideRoles, archiveRoles, roleDetails } from "@/app/actions/decisions";
 import { requestCv } from "@/app/actions/cv";
 import { Badge, decisionTone, fitVerdictTone, stageTone, FIT_VERDICT_LABELS } from "@/components/Badge";
@@ -74,7 +75,7 @@ function BuildCvOffer({ jobId, details }: { jobId: string; details: RoleDetailsV
   if (!details.cvQuote)
     return (
       <p className="text-12 text-muted">
-        Save your Library first: a CV is written from what is in it. <a href="/library" className="underline">Open Library</a>
+        Save your Library first: a CV is written from what is in it. <Link href="/library" className="underline">Open Library</Link>
       </p>
     );
   if (details.cvQuote.refusal) return <p className="text-12 text-warn" role="status">{details.cvQuote.refusal}</p>;
@@ -111,10 +112,10 @@ function SortTH({ label, sortKey, links, sort, dir, className = "" }: {
   const active = sort === sortKey;
   return (
     <TH className={className} aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}>
-      <a href={href} title={`Sort by ${label.toLowerCase()}`} className={`no-underline hover:underline ${active ? "text-fg" : ""}`}>
+      <Link href={href} title={`Sort by ${label.toLowerCase()}`} className={`no-underline hover:underline ${active ? "text-fg" : ""}`}>
         {label}
         {active && <span aria-hidden="true">{dir === "asc" ? " ↑" : " ↓"}</span>}
-      </a>
+      </Link>
     </TH>
   );
 }
@@ -461,13 +462,13 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                     />
                   </TD>
                   {!hideCompany && <TD>
-                    <a href={`/companies/${row.companyId}`} className="flex items-center gap-1.5 no-underline hover:underline">
+                    <Link href={`/companies/${row.companyId}`} className="flex items-center gap-1.5 no-underline hover:underline">
                       {/* The same icon the company page shows: the captured logo when there is one,
                           and the browser's own chain behind it. A bare <img> here is why Hims had a
                           logo on its company page and a blank square on its roles. */}
                       <CompanyFavicon src={row.companyLogoUrl ?? row.companyFaviconUrl} domain={row.companyDomain} size={14} />
                       <span className="max-w-[12rem] truncate">{row.companyName}</span>
-                    </a>
+                    </Link>
                   </TD>}
                   <TD id={`role-row-${row.id}`} className="max-w-[22rem]">
                     <span className="flex flex-wrap items-center gap-2">
@@ -492,7 +493,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                     <FitBar score={row.fitScore} title={fitTitle(row)} state={row.scoreStateText} />
                   </TD>
                   <TD className="text-right">
-                    {row.workflowStatus === "user-shortlisted" ? <a href={`/applications?job=${row.id}`} className={buttonClass("secondary", "sm", "whitespace-nowrap no-underline")}>{applicationLabel(row)}</a>
+                    {row.workflowStatus === "user-shortlisted" ? <Link href={`/applications?job=${row.id}`} className={buttonClass("secondary", "sm", "whitespace-nowrap no-underline")}>{applicationLabel(row)}</Link>
                     : archived ? <Button size="sm" disabled={archivingId !== null || reasonBox?.pending} onClick={() => void archiveRow(row.id)}>{archivingId === row.id ? "Restoring…" : "Restore"}</Button>
                     : <Button
                       size="sm"
@@ -562,7 +563,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                               keeps the link to the application that holds its CV. */}
                           {buildHere && detail?.state === "ready" && <BuildCvOffer jobId={row.id} details={detail.details} />}
                           <div className="flex flex-wrap items-center gap-4 text-12">
-                            {!buildHere && <a href={`/applications?job=${row.id}`} className="font-semibold underline">{applicationLabel(row)}</a>}
+                            {!buildHere && <Link href={`/applications?job=${row.id}`} className="font-semibold underline">{applicationLabel(row)}</Link>}
                             <a href={row.url} target="_blank" rel="noopener noreferrer" className="text-muted underline">View vacancy ↗</a>
                             <a href={row.companyHomepageUrl} target="_blank" rel="noopener noreferrer" className="text-muted underline">Company website ↗</a>
                           </div>

@@ -207,3 +207,28 @@ it("tells a run that its lease has gone, so it stops instead of finishing work n
   expect(lost[0]).toBeInstanceOf(LeaseLostError);
   await db.execute(sql`delete from resource_leases where key=${key}`);
 });
+
+it("lets a lease renewal give up on a row its own write transaction holds, without calling the lease lost", async () => {
+  const { withResourceLease } = await import("./lease");
+  const deps = { db } as unknown as import("./context").WorkerDeps;
+  const key = `held-operation-${Date.now()}`;
+  const lost: Error[] = [];
+  const blocked = await withResourceLease(deps, key, async locked => {
+    // The fence holds the lease row for the length of a write transaction; the renewals that fall
+    // due meanwhile must not queue up behind it, each holding a pooled connection.
+    return db.transaction(async tx => {
+      await locked.assertOwnership!(tx as unknown as typeof db);
+      let most = 0;
+      // Two renewals fall due while the row is held; each gives up well before the next.
+      for (let tick = 0; tick < 35; tick++) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+        const waiting = await pool.query("select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()");
+        most = Math.max(most, Number(waiting.rows[0]!.n));
+      }
+      return most;
+    });
+  }, { renewEveryMs: 3_000, onLost: error => lost.push(error) });
+  expect(blocked).toBe(1);
+  expect(lost).toHaveLength(0);
+  await db.execute(sql`delete from resource_leases where key=${key}`);
+}, 15_000);

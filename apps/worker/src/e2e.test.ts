@@ -16,6 +16,7 @@ import { readEnv } from "./env";
 import { handlers } from "./handlers";
 import { _scanSourceForTests } from "./handlers/scan";
 import { handleScoreJob, handleTagReason } from "./handlers/learning";
+import { anchoredInPage, handleFetchDescription } from "./handlers/description";
 import { handleRunDaily, finaliseScanRuns } from "./handlers/daily";
 import { TaskQueue } from "./queue";
 import { startTestServer, type RouteTable, type TestServer } from "./test-server";
@@ -1984,4 +1985,121 @@ describe("what a scan asks for and when", () => {
     const rows = await db.select().from(schema.jobs);
     expect(rows.every(job => job.status === "open" && job.missingScans === 0)).toBe(true);
   }, 240_000);
+});
+
+/** How many statements matching `pattern` the body sends, pooled or inside a transaction. */
+async function countingQueries(pattern: RegExp, body: () => Promise<unknown>): Promise<number> {
+  type Queryable = { query: (...args: unknown[]) => unknown; release: () => void };
+  const pool = db.$client as unknown as { connect: () => Promise<Queryable> };
+  // Every statement goes through a pooled client's `query`, whether the pool checked it out for
+  // one statement or a transaction holds it, so the count is taken on the clients' prototype.
+  const client = await pool.connect();
+  const prototype = Object.getPrototypeOf(client) as Queryable;
+  client.release();
+  const original = prototype.query;
+  let n = 0;
+  prototype.query = function (this: unknown, ...args: unknown[]) {
+    const text = typeof args[0] === "string" ? args[0] : (args[0] as { text?: string } | undefined)?.text ?? "";
+    if (pattern.test(text)) n++;
+    return original.apply(this, args);
+  };
+  try {
+    await body();
+  } finally {
+    prototype.query = original;
+  }
+  return n;
+}
+
+describe("a description arriving", () => {
+  async function follow(companyId: string, n: number, gate: Record<string, unknown>) {
+    const follower = await ensureTestUser(db, `follower-${n}@example.com`, "member");
+    await db.insert(schema.userSettings).values({ userId: follower.id, key: "gate", value: { excludeKeywords: [], locationTerms: [], includeRemote: true, ...gate } });
+    await subscribeToCompany(db, follower.id, companyId);
+    return follower;
+  }
+  const titleGate = { includeKeywords: ["engineer"], matchFields: ["title"] };
+  const descriptionGate = { includeKeywords: ["platform"], matchFields: ["title", "description"] };
+
+  it("re-runs every follower's gate in the same statements for thirty followers as for three", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const byKey = async (id: number) => (await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, `id:${id}`)))[0]!;
+    const clear = (jobId: string) => db.update(schema.jobs).set({ descriptionText: null, descriptionHash: null, descriptionFetchedAt: null }).where(eq(schema.jobs.id, jobId));
+    const perFollower = /user_jobs|user_settings|"tasks"|insert into "tasks"|decisions/;
+
+    const followers = [await follow(company.id, 0, titleGate), await follow(company.id, 1, descriptionGate)];
+    const engineer = await byKey(JOB_ENGINEER.id);
+    await clear(engineer.id);
+    const few = await countingQueries(perFollower, () => handleFetchDescription({ payload: { jobId: engineer.id } } as never, deps));
+
+    // The same arrival again, now with 29 followers, 27 of them new to the role.
+    for (let n = 2; n < 29; n++) followers.push(await follow(company.id, n, n % 3 === 0 ? descriptionGate : titleGate));
+    await clear(engineer.id);
+    const many = await countingQueries(perFollower, () => handleFetchDescription({ payload: { jobId: engineer.id } } as never, deps));
+    expect(many).toBe(few);
+
+    // And the verdicts are every follower's own: all 29 match the engineer role, by title or by
+    // the "Build the platform." text that just arrived; the first account's gate does not.
+    const views = await db.select().from(schema.userJobs).where(eq(schema.userJobs.jobId, engineer.id));
+    expect(new Set(views.filter(v => v.inTable).map(v => v.userId))).toEqual(new Set(followers.map(f => f.id)));
+    expect(views.some(v => v.userId === user.id)).toBe(false);
+    const scored = await db.select().from(schema.tasks).where(and(eq(schema.tasks.type, "score_job"), sql`payload->>'jobId' = ${engineer.id}`));
+    expect(scored).toHaveLength(29);
+  }, 120_000);
+
+  it("queues a fresh score for a role shortlisted outside the table when its text changes", async () => {
+    await setGate({});
+    await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [manager] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, `id:${JOB_OPERATIONS_MANAGER.id}`));
+    await db.update(schema.userJobs).set({ inTable: false, fitScore: 55, scoredAt: now })
+      .where(and(eq(schema.userJobs.userId, user.id), eq(schema.userJobs.jobId, manager!.id)));
+    await db.insert(schema.decisions).values({ userId: user.id, jobId: manager!.id, decision: "apply", jobTitle: manager!.title, companyName: "Acme" });
+    await db.update(schema.jobs).set({ descriptionHash: "an older text" }).where(eq(schema.jobs.id, manager!.id));
+    await db.delete(schema.tasks);
+
+    await handleFetchDescription({ payload: { jobId: manager!.id } } as never, deps);
+    const [view] = await db.select().from(schema.userJobs).where(and(eq(schema.userJobs.userId, user.id), eq(schema.userJobs.jobId, manager!.id)));
+    expect(view).toMatchObject({ fitScore: null, scoredAt: null, scoreState: "queued" });
+    const queued = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"));
+    expect(queued.map(t => t.payload)).toEqual([{ userId: user.id, jobId: manager!.id }]);
+  }, 60_000);
+
+  it("keeps a cleaned description only when the page says what it says", async () => {
+    const [company] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://www.acme.example/" }).returning();
+    const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://www.acme.example/listing", status: "active" }).returning();
+    const page = "<html><body><nav>Home Careers</nav><main><h1>Operations Lead</h1><p>Run our London site.</p><p>Hybrid, three days a week.</p></main><footer>Cookies</footer></body></html>";
+    server.setRoutes({ "www.acme.example": { "/robots.txt": { body: "User-agent: *\nAllow: /" }, "/jobs/lead": { body: page }, "/jobs/other": { body: page } } });
+    const insertJob = async (path: string) => (await db.insert(schema.jobs).values({ companyId: company!.id, sourceId: source!.id, externalKey: `url:${path}`, title: "Operations Lead", normalizedTitle: "operations lead", url: `https://www.acme.example${path}` }).returning())[0]!;
+    const faithful = await insertJob("/jobs/lead");
+    const invented = await insertJob("/jobs/other");
+    const cleanDescription = vi.fn()
+      .mockResolvedValueOnce({ descriptionText: "Run our London site.\nHybrid, three days a week.", remote: false })
+      .mockResolvedValueOnce({ descriptionText: "Run our London site. Robotics experts wanted, salary 200k.", salaryText: "200k" });
+    const modelDeps = { ...deps, ai: { ...deps.ai, enabled: true, cleanDescription } } as unknown as WorkerDeps;
+
+    await handleFetchDescription({ payload: { jobId: faithful.id } } as never, modelDeps);
+    await handleFetchDescription({ payload: { jobId: invented.id } } as never, modelDeps);
+    expect(cleanDescription).toHaveBeenCalledTimes(2);
+    const [kept] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, faithful.id));
+    expect(kept).toMatchObject({ descriptionSource: "model", descriptionText: "Run our London site.\nHybrid, three days a week." });
+    // Refused: what the page's own reading gave is kept (here nothing), and none of the claims.
+    const [refused] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, invented.id));
+    expect(refused!.descriptionSource).not.toBe("model");
+    expect(refused!.descriptionText ?? "").not.toContain("Robotics");
+    expect(refused!.salaryText).toBeNull();
+    expect(refused!.descriptionFetchedAt).not.toBeNull();
+  }, 60_000);
+
+  it("anchors a cleaned description sentence by sentence, whatever the spacing and punctuation", () => {
+    const raw = "Home | Careers\nOperations Lead — Run our London site!  Hybrid, three days a week. Apply now";
+    expect(anchoredInPage("Run our London site. Hybrid, three days a week.", raw)).toBe(true);
+    expect(anchoredInPage("Run our London site.\n\nHybrid three days a week", raw)).toBe(true);
+    expect(anchoredInPage("Run our London site. Lead the robotics lab.", raw)).toBe(false);
+    // A sentence must be whole words of the page, not a fragment inside a longer word.
+    expect(anchoredInPage("Ondon site", raw)).toBe(false);
+    expect(anchoredInPage("", raw)).toBe(false);
+  });
 });

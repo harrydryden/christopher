@@ -39,9 +39,11 @@ describe("stripHtml", () => {
   ])("reads a 5 MB page of %s in linear time", (_label, unit) => {
     stripHtml(hostile(unit, 50_000)); // compile and warm the code paths; the page is what is timed
     const page = hostile(unit, 5_000_000);
-    const started = performance.now();
+    // CPU time, not wall time, so a busy machine does not fail it.
+    const started = process.cpuUsage();
     stripHtml(page);
-    expect(performance.now() - started).toBeLessThan(200);
+    const { user, system } = process.cpuUsage(started);
+    expect((user + system) / 1000).toBeLessThan(200);
   });
 });
 

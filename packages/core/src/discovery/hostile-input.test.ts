@@ -5,13 +5,18 @@ import { countAnchors } from "./links";
 // Every heuristic here once rescanned the rest of the page from each repeated prefix: seconds on a
 // 100 KB page and hours at the fetcher's 5 MB body cap, with the worker's event loop held throughout.
 const hostile = (unit: string, length = 5_000_000) => unit.repeat(Math.ceil(length / unit.length)).slice(0, length);
-/** Read a 5 MB page of `unit` within 200 ms, after warming the same code path on 50 KB of it. */
+/**
+ * Read a 5 MB page of `unit` in under 200 ms of CPU, after warming the same code path on 50 KB of
+ * it. CPU time, not wall time, so a busy machine does not fail it; the quadratic versions of these
+ * patterns spent minutes of CPU on a page this size.
+ */
 const within200ms = (unit: string, read: (page: string) => unknown) => {
   read(hostile(unit, 50_000));
   const page = hostile(unit);
-  const started = performance.now();
+  const started = process.cpuUsage();
   read(page);
-  expect(performance.now() - started).toBeLessThan(200);
+  const { user, system } = process.cpuUsage(started);
+  expect((user + system) / 1000).toBeLessThan(200);
 };
 
 describe("page heuristics on hostile input", () => {

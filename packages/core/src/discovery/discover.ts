@@ -24,7 +24,7 @@ const MAX_BUNDLE_BYTES = 2_000_000;
 const MAX_VERIFICATIONS = 10;
 /** Model page classifications (A2) one run may make. */
 const MAX_CLASSIFICATIONS = 6;
-/** Blind path probes stop once this many in a row have answered 404. */
+/** Blind path probes stop once this many in a row found nothing: a 404, a soft 404 or a page already seen. */
 const MAX_CONSECUTIVE_MISSES = 8;
 /** A body larger than this is used by the step that fetched it and not kept for the rest of the run. */
 const MAX_CACHED_BODY = 2_000_000;
@@ -543,20 +543,30 @@ function safeExtract(ctx: DiscoveryContext, html: string, url: string): RawPosti
  * container, every `<loc>` is a page. A lazy `<url>[\s\S]*?<loc>` rescanned the rest of the file
  * from every `<url>` that had no `<loc>`.
  */
+/** Whether `text` has the lower-case `tag` at `at`, ignoring the case of its letters. */
+function tagAt(text: string, at: number, tag: string): boolean {
+  if (at + tag.length > text.length) return false;
+  for (let i = 0; i < tag.length; i++) {
+    let c = text.charCodeAt(at + i);
+    if (c >= 65 && c <= 90) c += 32;
+    if (c !== tag.charCodeAt(i)) return false;
+  }
+  return true;
+}
+
 export function parseSitemapUrls(xml: string): { sitemaps: string[]; urls: string[] } {
   const text = scanWindow(xml);
-  const tagAt = (at: number, tag: string) => text.slice(at, at + tag.length).toLowerCase() === tag;
   const sitemaps: string[] = [];
   const urls: string[] = [];
   const bare: string[] = [];
   let open: "sitemap" | "url" | undefined;
   for (let at = text.indexOf("<"); at >= 0; at = text.indexOf("<", at + 1)) {
-    if (tagAt(at, "<url>")) open = "url";
-    else if (tagAt(at, "<sitemap>")) open = "sitemap";
-    else if (tagAt(at, "<loc>")) {
+    if (tagAt(text, at, "<url>")) open = "url";
+    else if (tagAt(text, at, "<sitemap>")) open = "sitemap";
+    else if (tagAt(text, at, "<loc>")) {
       const close = text.indexOf("<", at + 5);
       if (close < 0) break;
-      if (!tagAt(close, "</loc>")) continue;
+      if (!tagAt(text, close, "</loc>")) continue;
       const loc = text.slice(at + 5, close).trim();
       if (bare.length < 2000) bare.push(loc);
       if (open === "sitemap") sitemaps.push(loc);

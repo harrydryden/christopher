@@ -2,9 +2,10 @@
  * The cookie is the only thing middleware has to go on, so a forged, altered or expired value
  * must never read as a session. The signed-value helper carries the Google sign-in state the same way.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createSessionCookieValue, createSignedValue, isSecureHost, readSessionCookie, readSignedValue, sanitizeNextPath, sessionCookieValue,
+  sessionSecret,
 } from "./session";
 
 const secret = "test-secret";
@@ -35,6 +36,37 @@ describe("session cookie", () => {
   it("rejects an expired cookie even with a valid signature", async () => {
     const value = await createSessionCookieValue(secret, id, new Date(Date.now() - 1000));
     expect(await readSessionCookie(value, secret)).toBeNull();
+  });
+});
+
+describe("the signing key", () => {
+  it("refuses a short key or the example placeholder in production, saying why once", () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      vi.stubEnv("NODE_ENV", "production");
+      vi.stubEnv("SESSION_SECRET", "smoke-test-secret");
+      expect(sessionSecret()).toBeNull();
+      vi.stubEnv("SESSION_SECRET", "change-me-to-a-long-random-string");
+      expect(sessionSecret()).toBeNull();
+      expect(logged.mock.calls.filter(([line]) => String(line).includes("session_secret_refused"))).toHaveLength(1);
+      vi.stubEnv("SESSION_SECRET", "a".repeat(64));
+      expect(sessionSecret()).toBe("a".repeat(64));
+      vi.stubEnv("SESSION_SECRET", "");
+      expect(sessionSecret()).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+      logged.mockRestore();
+    }
+  });
+
+  it("accepts any key outside production, so tests and local runs keep short ones", () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("SESSION_SECRET", "test-secret");
+    try {
+      expect(sessionSecret()).toBe("test-secret");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

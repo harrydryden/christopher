@@ -9,7 +9,7 @@ import { eq, sql } from "drizzle-orm";
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { authenticateWithPassword, changePassword, confirmEmailWithToken, previewVerification, registerWithPassword, registrationAllowed, requestPasswordReset, resetPasswordWithToken, sendVerificationEmail, signInWithGoogle } from "./accounts";
+import { adminEmails, authenticateWithPassword, changePassword, confirmEmailWithToken, previewVerification, registerWithPassword, registrationAllowed, requestPasswordReset, resetPasswordWithToken, sendVerificationEmail, signInWithGoogle } from "./accounts";
 import { consumeAuthToken, issueAuthToken } from "./auth-tokens";
 import { clearAttempts, isRateLimited, LIMITS, recordAttempt } from "./rate-limit";
 
@@ -60,6 +60,22 @@ describe("who may register and what they get", () => {
     expect(adminEmailsFrom({ ADMIN_EMAILS: " " })).toEqual(DEFAULT_ADMIN_EMAILS);
     expect(adminEmailsFrom({ ADMIN_EMAILS: "A@Example.com, b@example.com" })).toEqual(["a@example.com", "b@example.com"]);
     expect(DEFAULT_ADMIN_EMAILS).toContain("harryddryden@gmail.com");
+  });
+
+  it("keeps the default in production when ADMIN_EMAILS is unset, and says so in the log once", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      vi.stubEnv("NODE_ENV", "production");
+      vi.stubEnv("ADMIN_EMAILS", " , ");
+      expect(adminEmails()).toEqual(DEFAULT_ADMIN_EMAILS);
+      expect(adminEmails()).toEqual(DEFAULT_ADMIN_EMAILS);
+      const warnings = warn.mock.calls.filter(([line]) => String(line).includes("admin_emails_default"));
+      expect(warnings).toHaveLength(1);
+    } finally {
+      vi.unstubAllEnvs();
+      warn.mockRestore();
+    }
+    expect(adminEmails()).toEqual([OWNER]);
   });
 
   it("keeps registration closed to everyone but administrator addresses until an administrator opens it", async () => {

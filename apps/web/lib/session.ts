@@ -24,6 +24,35 @@ export const DEFAULT_SESSION_TTL_SECONDS = 2592000; // 30 days
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** The shortest signing key production accepts: `openssl rand -hex 32` gives 64 characters. */
+export const MIN_SESSION_SECRET_LENGTH = 32;
+/** The placeholder `.env.example` ships with. A deployment that copied it signs with a public key. */
+const EXAMPLE_SESSION_SECRET = "change-me-to-a-long-random-string";
+let refusedSecretLogged = false;
+
+/**
+ * The key that signs session cookies and the Google sign-in state, or null when there is none.
+ *
+ * In production a key shorter than 32 characters, or the `.env.example` placeholder, is refused as
+ * if it were unset: a signature is all middleware checks, and a guessable key forges it. Sign-in
+ * then says the deployment needs setting up, and the log says why, once per instance.
+ */
+export function sessionSecret(): string | null {
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) return null;
+  if (process.env.NODE_ENV === "production" && (secret.length < MIN_SESSION_SECRET_LENGTH || secret === EXAMPLE_SESSION_SECRET)) {
+    if (!refusedSecretLogged) {
+      refusedSecretLogged = true;
+      console.error(JSON.stringify({
+        event: "session_secret_refused",
+        hint: `SESSION_SECRET must be at least ${MIN_SESSION_SECRET_LENGTH} random characters (openssl rand -hex 32), not the example value. It is treated as unset until then.`,
+      }));
+    }
+    return null;
+  }
+  return secret;
+}
+
 function toBase64Url(bytes: Uint8Array): string {
   let binary = "";
   for (const b of bytes) binary += String.fromCharCode(b);

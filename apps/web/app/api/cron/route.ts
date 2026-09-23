@@ -14,6 +14,7 @@
 import { NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { getCurrentUser } from "@/lib/auth";
+import { sessionSecret } from "@/lib/session";
 import { runScheduledWork } from "./scheduled-work";
 
 function bearerMatches(header: string | null, secret: string): boolean {
@@ -52,7 +53,7 @@ async function authorised(request: Request): Promise<Verdict> {
   const secret = process.env.CRON_SECRET;
   if (secret && bearerMatches(request.headers.get("authorization"), secret)) return { ok: true };
 
-  if (process.env.SESSION_SECRET) {
+  if (sessionSecret()) {
     const current = await getCurrentUser().catch(() => null);
     if (current) {
       if (current.user.role !== "admin") return { ok: false, status: 403, error: "administrators only" };

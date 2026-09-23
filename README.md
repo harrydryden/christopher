@@ -95,11 +95,11 @@ Full instructions, including what to set where and what to do when something is 
 | Variable | Where | Purpose |
 |---|---|---|
 | `DATABASE_URL` | both | PostgreSQL connection string |
-| `SESSION_SECRET` | web | signs the session cookie; changing it signs everyone out |
+| `SESSION_SECRET` | web | signs the session cookie; changing it signs everyone out. At least 32 random characters (`openssl rand -hex 32`): in production a shorter one, or the `.env.example` placeholder, is refused as if unset and nobody can sign in |
 | `APP_URL` | web | the public origin, used in emailed links and the Google redirect (defaults to the request's host) |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | web | optional; enables "Continue with Google". Redirect URI: `<APP_URL>/auth/google/callback` |
-| `ADMIN_EMAILS` | web | comma-separated administrator addresses; defaults to `harryddryden@gmail.com`. They may always sign up, become administrators once their address is confirmed, and the first of them to confirm inherits the data migrated from a single-user deployment. Everyone else can only sign up while an administrator has opened registration in Admin |
-| `RESEND_API_KEY`, `EMAIL_FROM` | web | optional; sends confirmation and password-reset emails through Resend (set `APP_URL` with them). Without a provider the links are written to the server log, `AUTH_EMAIL_LOG=0` keeps them out, and an administrator can mint reset links from Admin |
+| `ADMIN_EMAILS` | web | comma-separated administrator addresses; defaults to `harryddryden@gmail.com`, and in production the interface logs a warning while it is unset, so set it. They may always sign up, become administrators once their address is confirmed, and the first of them to confirm inherits the data migrated from a single-user deployment. Everyone else can only sign up while an administrator has opened registration in Admin |
+| `RESEND_API_KEY`, `EMAIL_FROM` | web | optional; sends confirmation and password-reset emails through Resend (set `APP_URL` with them). Without a provider the links are written to the server log outside production unless `AUTH_EMAIL_LOG=0`, and in production only with `AUTH_EMAIL_LOG=1`, because the reset form is public; an administrator can mint reset links from Admin |
 | `AVA_CLI_USER` | worker | email of the account the CLI acts for; default is the earliest administrator |
 | `ANTHROPIC_API_KEY` | worker | optional; without it scanning still works and scoring is skipped |
 | `SCRAPER_CONTACT_EMAIL` | worker | included in the user agent so site owners can reach you |

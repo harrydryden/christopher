@@ -18,8 +18,19 @@ import { getSystemSettings } from "./settings";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/** Addresses that become administrators once proven, and the only ones that may take over migrated data. */
+let defaultAdminWarned = false;
+
+/**
+ * Addresses that become administrators once proven, and the only ones that may take over migrated
+ * data. Unset, they fall back to the built-in owner address, which keeps a live deployment from
+ * being locked out; in production that is said in the log, once per instance, because it hands
+ * administration of every account to one fixed outside mailbox.
+ */
 export function adminEmails(): string[] {
+  if (process.env.NODE_ENV === "production" && !defaultAdminWarned && !(process.env.ADMIN_EMAILS ?? "").split(",").some((e) => e.trim())) {
+    defaultAdminWarned = true;
+    console.warn(JSON.stringify({ event: "admin_emails_default", hint: "ADMIN_EMAILS is unset, so the built-in default administrator address applies. Set it to this deployment's administrators." }));
+  }
   return adminEmailsFrom(process.env);
 }
 

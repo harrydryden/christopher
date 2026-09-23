@@ -7,7 +7,7 @@ import { clientAddress, endSession, startSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { emailLinkOrigin, withParams } from "@/lib/origin";
 import { clearAttempts, LIMITS, releaseRateLimitReservations, reserveRateLimits } from "@/lib/rate-limit";
-import { sanitizeNextPath } from "@/lib/session";
+import { sanitizeNextPath, sessionSecret } from "@/lib/session";
 import { passwordProblem } from "@ava/core";
 import { users } from "@ava/db/schema";
 import { eq } from "drizzle-orm";
@@ -18,7 +18,7 @@ export async function login(formData: FormData): Promise<void> {
   const next = sanitizeNextPath(String(formData.get("next") ?? "/"));
   const back = (error: string) => redirect(withParams("/login", { error, next: next !== "/" ? next : undefined, email }));
 
-  if (!process.env.SESSION_SECRET) back("not_configured");
+  if (!sessionSecret()) back("not_configured");
   if (emailProblem(email) || !password) back("invalid");
   const address = await clientAddress();
   const emailKey = `login:email:${email}`;
@@ -49,7 +49,7 @@ export async function signup(formData: FormData): Promise<void> {
   const next = sanitizeNextPath(String(formData.get("next") ?? "/"));
   const back = (error: string) => redirect(withParams("/signup", { error, next: next !== "/" ? next : undefined, email, name }));
 
-  if (!process.env.SESSION_SECRET) back("not_configured");
+  if (!sessionSecret()) back("not_configured");
   if (emailProblem(email)) back("invalid_email");
   if (!(await registrationAllowed(email))) back("closed");
   if (passwordProblem(password)) back("weak_password");

@@ -526,19 +526,26 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     // What the save sends and what comes back, kept for the failure message: a server action is a
     // POST to the page's own URL, and a save that never left the page has none.
     const saveTraffic = [];
+    const startedAt = Date.now();
+    const stamp = () => `+${((Date.now() - startedAt) / 1000).toFixed(1)}s`;
+    const interesting = (request) => request.method() === "POST" || request.url().includes("/cv/") || request.headers()["rsc"] === "1";
     const onRequest = (request) => {
-      if (request.method() === "POST") saveTraffic.push(`→ POST ${request.url()} next-action=${request.headers()["next-action"] ?? "-"}`);
+      if (interesting(request)) saveTraffic.push(`${stamp()} → ${request.method()} ${request.url()} rsc=${request.headers()["rsc"] ?? "-"} next-action=${request.headers()["next-action"] ?? "-"}`);
     };
     const onResponse = (response) => {
-      if (response.request().method() === "POST") saveTraffic.push(`← ${response.status()} ${response.url()} x-action-redirect=${response.headers()["x-action-redirect"] ?? "-"}`);
+      if (interesting(response.request())) saveTraffic.push(`${stamp()} ← ${response.status()} ${response.url()} x-action-redirect=${response.headers()["x-action-redirect"] ?? "-"} type=${response.headers()["content-type"] ?? "-"}`);
+    };
+    const onFinished = (request) => {
+      if (interesting(request)) saveTraffic.push(`${stamp()} ✓ finished ${request.url()}`);
     };
     const onFailed = (request) => {
-      if (request.method() === "POST") saveTraffic.push(`✗ ${request.url()} ${request.failure()?.errorText ?? "failed"}`);
+      if (interesting(request)) saveTraffic.push(`${stamp()} ✗ ${request.url()} ${request.failure()?.errorText ?? "failed"}`);
     };
     const consoleErrors = [];
     const onConsole = (message) => { if (message.type() === "error") consoleErrors.push(message.text()); };
     page.on("request", onRequest);
     page.on("response", onResponse);
+    page.on("requestfinished", onFinished);
     page.on("requestfailed", onFailed);
     page.on("console", onConsole);
     const saveButton = page.getByRole("button", { name: "Save Direct Edits", exact: true });
@@ -566,6 +573,7 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     } finally {
       page.off("request", onRequest);
       page.off("response", onResponse);
+      page.off("requestfinished", onFinished);
       page.off("requestfailed", onFailed);
       page.off("console", onConsole);
     }

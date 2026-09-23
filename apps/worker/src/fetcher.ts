@@ -775,6 +775,14 @@ export class PoliteFetcher {
     return res;
   }
 
+  /**
+   * Defer `host` for a 429 or 503 seen somewhere other than this fetcher — the browser's own
+   * navigation — exactly as one seen here would be: its `Retry-After`, bounded at both ends.
+   */
+  async backOff(host: string, headers: Record<string, string>): Promise<void> {
+    await this.opts.deferHost?.(host, retryAfterMs(headers));
+  }
+
   asContext(): Pick<FetchContext, "fetchText" | "fetchBytes"> {
     return {
       fetchText: (url, init) => this.fetchText(url, init),

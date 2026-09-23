@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { BrowserRenderer } from "./browser";
+import { HttpTrafficLedger } from "./fetcher";
 import { startTestServer, type TestServer } from "./test-server";
 import { ats, discovery, renamedEnv, SourceFetchError } from "@ava/core";
 
@@ -28,6 +29,17 @@ const SHELL_PAGE = `<!doctype html><html><head><title>Open Roles | Acme Industri
       .catch(function () { document.getElementById("root").innerHTML = "failed"; });
   </script></body></html>`;
 
+const MEDIA_PAGE = `<html><head><link rel="stylesheet" href="/style.css"></head><body>
+  <img src="/logo.png" alt="logo"><video src="/clip.mp4" autoplay muted></video><p>Brand type</p></body></html>`;
+
+/** Each "Load more" appends about 100 KB of roles, so the snapshots grow without bound. */
+const GROWING_PAGE = `<html><body><ul id="jobs"><li><a href="/jobs/0">Role 0</a></li></ul>
+  <button onclick="var list = document.getElementById('jobs'); var n = list.children.length; var html = ''; for (var i = 0; i < 1000; i++) html += '<li><a href=/jobs/' + (n + i) + '>Role ' + (n + i) + ' ' + 'x'.repeat(60) + '</a></li>'; list.insertAdjacentHTML('beforeend', html);">Load more</button></body></html>`;
+
+/** Three hundred role links ahead of the control that reveals one more. */
+const MANY_LINKS_PAGE = `<html><body><ul id="jobs">${Array.from({ length: 300 }, (_, i) => `<li><a href="/jobs/${i}">Analyst ${i}</a></li>`).join("")}</ul>
+  <button onclick="document.getElementById('jobs').insertAdjacentHTML('beforeend', '<li><a href=/jobs/last>Finance Director</a></li>'); this.disabled = true">Load more</button></body></html>`;
+
 const JOBS = {
   jobs: [
     { id: 5001, title: "Operations Manager", absolute_url: "https://job-boards.greenhouse.io/acmeindustries/jobs/5001", location: { name: "Costa Mesa, CA" } },
@@ -46,7 +58,20 @@ beforeAll(async () => {
       "www.acmeind.example": { "/open-roles": { body: SHELL_PAGE },
         "/paginated": { body: `<html><body><ul id="jobs"><li><a href="/jobs/one">Operations Director</a></li></ul><button id="next" onclick="document.getElementById('jobs').innerHTML='<li><a href=/jobs/two>Finance Director</a></li>';this.disabled=true">Next</button></body></html>` },
         "/consent": { body: `<html><body>${'<button>Other</button>'.repeat(45)}<a role="button" data-bs-toggle="collapse" href=".locations">Show more</a><ul id="jobs"><li><a href="/jobs/one">Operations Director</a></li></ul><button onclick="document.getElementById('jobs').innerHTML='<li><a href=/jobs/two>Finance Director</a></li>';this.disabled=true">Next</button><div class="consent-modal" role="dialog" aria-label="Cookie consent" style="position:fixed;inset:0;background:white;z-index:999"><button class="consent-reject" onclick="this.parentElement.remove()">I do not accept</button></div></body></html>` },
-        "/stuck": { body: `<html><body><ul><li><a href="/jobs/one">Operations Director</a></li></ul><button>Next</button></body></html>` } },
+        "/stuck": { body: `<html><body><ul><li><a href="/jobs/one">Operations Director</a></li></ul><button>Next</button></body></html>` },
+        "/media": { body: MEDIA_PAGE },
+        "/style.css": { body: "@font-face { font-family: Brand; src: url(/brand.woff2); } body { font-family: Brand; background: url(/hero.jpg); }", contentType: "text/css" },
+        "/logo.png": { body: Buffer.from([0x89, 0x50, 0x4e, 0x47]), contentType: "image/png" },
+        "/hero.jpg": { body: Buffer.from([0xff, 0xd8, 0xff]), contentType: "image/jpeg" },
+        "/brand.woff2": { body: Buffer.from("wOF2"), contentType: "font/woff2" },
+        "/clip.mp4": { body: Buffer.from("mp4"), contentType: "video/mp4" },
+        "/hang": { body: `<html><body><ul><li><a href="/jobs/one">Operations Director</a></li></ul><script>document.addEventListener("DOMContentLoaded", function () { setTimeout(function () { for (;;) {} }, 300); });</script></body></html>` },
+        "/fine": { body: "<html><body><p>fine</p></body></html>" },
+        "/queued": { body: "<html><body><p>queued</p></body></html>" },
+        "/grow": { body: GROWING_PAGE },
+        "/big": { body: `<html><body>${"<p>role</p>".repeat(1000)}</body></html>` },
+        "/busy": { status: 429, body: "<html><body>slow down</body></html>", headers: { "retry-after": "30" } },
+        "/many-links": { body: MANY_LINKS_PAGE } },
       "boards-api.greenhouse.io": { "/v1/boards/acmeindustries/jobs": { body: JOBS } },
     },
     ["www.acmeind.example", "boards-api.greenhouse.io"],
@@ -100,9 +125,78 @@ describe.skipIf(skip)("headless rendering", () => {
   }, 120_000);
 
   it("blocks images, fonts and media so pages load quickly", async () => {
-    const page = await renderer.render("https://www.acmeind.example/open-roles");
+    // Counted where they would arrive: the page's stylesheet is fetched, and nothing it or the
+    // markup points at that is an image, a font or a video ever reaches the server.
+    const before = server.requests.length;
+    const page = await renderer.render("https://www.acmeind.example/media");
     expect(page.status).toBe(200);
-    expect(page.requests.every((r) => !/\.(png|jpg|jpeg|gif|woff2?)$/i.test(r))).toBe(true);
+    const asked = server.requests.slice(before).map(r => r.url);
+    expect(asked).toContain("/style.css");
+    expect(asked.filter(url => /\.(png|jpe?g|woff2?|mp4)$/.test(url))).toEqual([]);
+  }, 120_000);
+
+  it("finds the load-more control after hundreds of role links", async () => {
+    const page = await renderer.render("https://www.acmeind.example/many-links", { scrollAndExpand: true });
+    const titles = page.listingPages!.flatMap(p => ats.extractPostingsFromHtml(p.html, p.url)).map(p => p.title);
+    expect(titles).toContain("Finance Director");
+    expect(page.incomplete).toBe(false);
+    // The mark the search leaves for the click is gone before the next snapshot is taken.
+    expect(page.listingPages!.some(p => p.html.includes("data-ava-listing-control"))).toBe(false);
+  }, 120_000);
+
+  it("stops snapshotting at the byte cap and says the listing is incomplete", async () => {
+    const capped = new BrowserRenderer({ userAgent: "AVAJobMonitor/0.1 (test)", hostMap: server.hostMap, executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined, maxRenderBytes: 300_000 });
+    try {
+      const page = await capped.render("https://www.acmeind.example/grow", { scrollAndExpand: true });
+      expect(page.incomplete).toBe(true);
+      const held = page.listingPages!.reduce((sum, p) => sum + Buffer.byteLength(p.html), 0);
+      expect(page.listingPages!.length).toBeGreaterThan(1);
+      expect(held).toBeLessThanOrEqual(300_000);
+      // A single page larger than the cap is refused, as the fetcher refuses an oversized body.
+      const tiny = new BrowserRenderer({ userAgent: "AVAJobMonitor/0.1 (test)", hostMap: server.hostMap, executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined, maxRenderBytes: 5_000 });
+      try {
+        await expect(tiny.render("https://www.acmeind.example/big")).rejects.toMatchObject({ kind: "parse" });
+      } finally { await tiny.close(); }
+    } finally { await capped.close(); }
+  }, 120_000);
+
+  it("defers a host whose page answers 429, as the fetcher would", async () => {
+    const deferred: Array<{ host: string; retryAfter?: string }> = [];
+    const ledger = new HttpTrafficLedger(null);
+    const polite = new BrowserRenderer({
+      userAgent: "AVAJobMonitor/0.1 (test)", hostMap: server.hostMap, executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined, traffic: ledger,
+      onRateLimited: async (host, headers) => { deferred.push({ host, retryAfter: headers["retry-after"] }); },
+    });
+    try {
+      const page = await polite.render("https://www.acmeind.example/busy");
+      expect(page.status).toBe(429);
+      expect(deferred).toEqual([{ host: "www.acmeind.example", retryAfter: "30" }]);
+      expect(ledger.snapshot()[0]).toMatchObject({ requests: 1, rateLimited: 1, client4xx: 1 });
+    } finally { await polite.close(); }
+  }, 120_000);
+
+  it("gives up a page that hangs its main thread, and the renders queued behind it still run", async () => {
+    const ledger = new HttpTrafficLedger(null);
+    const bounded = new BrowserRenderer({ userAgent: "AVAJobMonitor/0.1 (test)", hostMap: server.hostMap, executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined, renderTimeoutMs: 5_000, concurrency: 1, traffic: ledger });
+    try {
+      const started = Date.now();
+      const hung = bounded.render("https://www.acmeind.example/hang");
+      hung.catch(() => undefined);
+      // Waiting for the one slot; its signal gives it up before it ever opens a page.
+      const controller = new AbortController();
+      const reason = new Error("task abandoned");
+      const queued = bounded.render("https://www.acmeind.example/queued", { signal: controller.signal });
+      const next = bounded.render("https://www.acmeind.example/fine");
+      setTimeout(() => controller.abort(reason), 100);
+      await expect(queued).rejects.toBe(reason);
+      expect(Date.now() - started).toBeLessThan(3_000);
+      await expect(hung).rejects.toMatchObject({ kind: "timeout" });
+      expect(Date.now() - started).toBeLessThan(20_000);
+      expect((await next).html).toContain("fine");
+      expect(server.requests.some(r => r.url === "/queued")).toBe(false);
+      // The hung render is counted once, as a timeout.
+      expect(ledger.snapshot()[0]).toMatchObject({ requests: 2, timeouts: 1, ok2xx: 1 });
+    } finally { await bounded.close(); }
   }, 120_000);
 
   it("guards a redirect destination before sending it", async () => {

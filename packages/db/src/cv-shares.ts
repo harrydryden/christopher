@@ -81,6 +81,8 @@ export interface LiveCvShare {
   draftId: string;
   allowComments: boolean;
   expiresAt: Date;
+  /** When the link was opened: the revision it shows is the one assessed before this moment. */
+  createdAt: Date;
 }
 
 /**
@@ -99,6 +101,7 @@ export async function findLiveCvShareByHash(db: Db, tokenHash: string, now = new
       draftId: cvShares.draftId,
       allowComments: cvShares.allowComments,
       expiresAt: cvShares.expiresAt,
+      createdAt: cvShares.createdAt,
     })
     .from(cvShares)
     .where(and(eq(cvShares.tokenHash, tokenHash), isNull(cvShares.revokedAt), gt(cvShares.expiresAt, now)))

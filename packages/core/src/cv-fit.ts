@@ -1,4 +1,4 @@
-import { materialiseCv, type CvLibrary, type CvPlan } from "./cv";
+import { materialiseCv, type CvContent, type CvLibrary, type CvPlan } from "./cv";
 import {
   type CvRelevanceTarget,
   createCvWritingBudget,
@@ -235,16 +235,17 @@ export async function selectCvToFit(
       );
     }
   }
+  // Which bullet goes next is decided by the plan alone, never by a measurement, so every plan the
+  // trimming could reach is known before anything is rendered: the first is the plan as selected,
+  // and each after it has one more lower-priority item removed. The fewest removals that fit are
+  // then found by bisection, which renders a handful of those plans rather than one per bullet.
+  const reachable: Array<{ plan: CvPlan; changes: string[] }> = [{ plan, changes }];
   for (;;) {
-    const content = materialiseCv(library, plan);
-    const { pageCount } = await renderCvPdfWithReport(content);
-    if (pageCount <= maxPages) {
-      if (semanticOverflows.length) changes.push("Retained distinct essential evidence because the measured PDF still fits the page limit.");
-      return { plan, content, pageCount, changes, semanticOverflows };
-    }
+    const previous = reachable.at(-1)!;
+    const next = structuredClone(previous.plan);
     // Education is protected. Every employment entry retains at least one bullet.
-    const semanticCounts = requirementCounts(plan, semantic, library);
-    const candidates = plan.sections
+    const semanticCounts = requirementCounts(next, semantic, library);
+    const candidates = next.sections
       .flatMap((section, sectionIndex) => {
         const entry = library.entries.find(
           (entry) => entry.id === section.entryId,
@@ -270,21 +271,52 @@ export async function selectCvToFit(
       })
       .filter(candidate => {
         if (!semantic) return true;
-        const ids = valueRequirements(plan.sections[candidate.sectionIndex]!, candidate.index, semantic, library);
+        const ids = valueRequirements(next.sections[candidate.sectionIndex]!, candidate.index, semantic, library);
         const essential = essentialIds(semantic);
         return ![...ids].some(id => essential.has(id) && semanticCounts.get(id) === 1);
       }).sort((a, b) => a.score - b.score);
     const remove = candidates[0];
-    if (!remove) return { plan, content, pageCount, changes, semanticOverflows };
-    const section = plan.sections[remove.sectionIndex]!;
+    if (!remove) break;
+    const section = next.sections[remove.sectionIndex]!;
     const values = section.skillItems ?? section.bullets;
     values.splice(remove.index, 1);
     if (!section.skillItems && section.bulletSources) section.bulletSources.splice(remove.index, 1);
-    changes.push(
-      `${library.entries.find((entry) => entry.id === section.entryId)!.heading}: omitted a lower-priority ${section.skillItems ? "skill" : "bullet"} to fit.`,
-    );
-    if (!values.length) plan.sections.splice(remove.sectionIndex, 1);
+    const note = `${library.entries.find((entry) => entry.id === section.entryId)!.heading}: omitted a lower-priority ${section.skillItems ? "skill" : "bullet"} to fit.`;
+    if (!values.length) next.sections.splice(remove.sectionIndex, 1);
+    reachable.push({ plan: next, changes: [...previous.changes, note] });
   }
+  const measured = new Map<number, { content: CvContent; pageCount: number }>();
+  const measure = async (index: number) => {
+    const known = measured.get(index);
+    if (known) return known;
+    const content = materialiseCv(library, reachable[index]!.plan);
+    const { pageCount } = await renderCvPdfWithReport(content);
+    const result = { content, pageCount };
+    measured.set(index, result);
+    return result;
+  };
+  const selected = async (index: number) => {
+    const { content, pageCount } = await measure(index);
+    const chosen = reachable[index]!;
+    const notes = pageCount <= maxPages && semanticOverflows.length
+      ? [...chosen.changes, "Retained distinct essential evidence because the measured PDF still fits the page limit."]
+      : chosen.changes;
+    return { plan: chosen.plan, content, pageCount, changes: notes, semanticOverflows };
+  };
+  if ((await measure(0)).pageCount <= maxPages) return selected(0);
+  // Removing content never lengthens the document, so the plans that fit are a run at the end.
+  let low = 1;
+  let high = reachable.length - 1;
+  let fits = -1;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    if ((await measure(middle)).pageCount <= maxPages) {
+      fits = middle;
+      high = middle - 1;
+    } else low = middle + 1;
+  }
+  // Nothing left to remove and still too long: the caller decides what to do with the last plan.
+  return selected(fits < 0 ? reachable.length - 1 : fits);
 }
 
 /** How much of a plan reached the page: what the narrative reports a writing attempt produced. */

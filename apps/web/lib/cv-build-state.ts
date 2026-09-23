@@ -94,6 +94,8 @@ export interface CvBuildTask {
   maxAttempts: number;
   error: string | null;
   startedAt: Date | null;
+  /** The worker has not reported recently, so nothing queued is being picked up. */
+  workerStopped?: boolean;
 }
 
 export interface CvBuildDraft {
@@ -107,6 +109,10 @@ export interface CvBuildDraft {
   /** What the build already paid for, so the page can say a retry will not pay for it again. */
   buildCheckpoint?: CvBuildCheckpoint | null;
 }
+
+/** What a queued build says while no worker is running. */
+export const CV_WORKER_STOPPED_MESSAGE =
+  "The background worker is not running, so this build has not started. It stays queued and starts when the worker is back; an administrator can see why in Operations.";
 
 export type CvBuildPhase = "waiting" | "progressing" | "stalled" | "retrying" | "stopped" | "failed";
 
@@ -261,6 +267,12 @@ export function cvBuildState(draft: CvBuildDraft, task: CvBuildTask | null, now:
       message: failure?.message ?? draft.error ?? "This build stopped before it finished.",
       taskError,
     };
+  }
+
+  // Queued while nothing is running to pick it up: only the worker builds CVs, so the build is
+  // kept and starts when the worker is back, and the page says that rather than simply waiting.
+  if (task.status === "queued" && task.workerStopped) {
+    return { ...base, phase: "waiting", tone: "amber", message: CV_WORKER_STOPPED_MESSAGE };
   }
 
   // Queued and never claimed: the worker has not reached it yet, which is ordinary.

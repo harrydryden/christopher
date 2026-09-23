@@ -75,6 +75,13 @@ export interface LibraryEntryReview {
   prompts: string[];
   score: number;
   rating: EvidenceRating;
+  /**
+   * Set when the model classified none of the entry's rows — it left the entry out of its answer,
+   * or answered for rows the entry does not have. Such a review says nothing about the entry, and
+   * is not stored as the model's judgement of it: the entry stays on its baseline and is asked
+   * about again on the next pass.
+   */
+  unread?: true;
 }
 
 /**
@@ -282,8 +289,9 @@ const knownFacets = (facets: readonly string[]): EvidenceFacet[] => EVIDENCE_FAC
  * anchored in that row, is kept as `verified: false` and counts as neither specific nor quantified
  * — marked, never silently deleted, so the Library can say which rows went unread. A row it
  * covered without quoting is verified: the row text itself was matched exactly, so there is
- * nothing unanchored about it. Demographic attributes in a prompt are refused outright, as
- * `validateCvRubric` refuses them in a requirement.
+ * nothing unanchored about it. When it covered none of them, the review is marked `unread`.
+ * Demographic attributes in a prompt are refused outright, as `validateCvRubric` refuses them in a
+ * requirement.
  *
  * A row's types are deduplicated and anything outside the vocabulary is dropped from them, rather
  * than failing the row: the schema already holds the model to the six, and losing a whole entry's
@@ -296,8 +304,10 @@ export function validateLibraryReview(entry: CvEntry, plan: LibraryReviewPlanEnt
     const key = normaliseRow(row.row);
     if (!covered.has(key)) covered.set(key, row);
   }
+  let classified = 0;
   const rows: LibraryRowReview[] = reviewableRows(entry).map(row => {
     const said = covered.get(normaliseRow(row));
+    if (said) classified++;
     const anchored = !!said && (said.quote === null || cvQuoteIsAnchored(said.quote, row));
     if (!said || !anchored) {
       return { row, facets: [], specific: false, quantified: false, outcomeLinked: false, quote: null, verified: false };
@@ -316,7 +326,10 @@ export function validateLibraryReview(entry: CvEntry, plan: LibraryReviewPlanEnt
     if (mentionsDemographicAttribute(prompt)) throw new Error("Demographic attributes cannot be evidence prompts.");
   }
   const scored = scoreLibraryRows(rows);
-  return { entryId: entry.id, rows, ...scored, prompts: plan.prompts.slice(0, 3) };
+  return {
+    entryId: entry.id, rows, ...scored, prompts: plan.prompts.slice(0, 3),
+    ...(rows.length && !classified ? { unread: true as const } : {}),
+  };
 }
 
 /**

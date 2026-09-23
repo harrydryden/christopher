@@ -18,6 +18,14 @@ const nextConfig: NextConfig = {
   // `pg` and the Anthropic SDK are CommonJS-friendly server packages; Playwright is only reachable
   // through a dynamic import that a serverless deployment never takes, so it must not be bundled.
   serverExternalPackages: ["pdfkit","pg", "playwright", "playwright-core", "@anthropic-ai/sdk"],
+  experimental: {
+    // A Library upload is posted through a server action, and Next refuses any action body over
+    // 1 MB before the action runs: a designed CV or a LinkedIn PDF of 1–5 MB failed with a
+    // framework error the form could only call a failed send. The action refuses files over
+    // `LIBRARY_IMPORT_MAX_BYTES` (5 MB) in a sentence, so the transport allows that much plus the
+    // multipart framing and the form's other fields around it.
+    serverActions: { bodySizeLimit: "6mb" },
+  },
   outputFileTracingIncludes: {
     "/api/cv/[id]/pdf": PDFKIT_STANDARD_FONTS,
     "/api/cv/preview": PDFKIT_STANDARD_FONTS,

@@ -29,8 +29,19 @@ import {
   type Employment,
 } from "./cv";
 import { cvQuoteIsAnchored } from "./cv-review";
+import { assertPublicHttpUrl, UnsafeUrlError } from "./url-safety";
 
 type CvEntry = CvLibrary["entries"][number];
+
+/**
+ * Text as a database and a model can both take it: every C0 control character and DEL removed,
+ * except the tab and the line breaks that are a document's own layout. A PDF writes NUL for a
+ * glyph it cannot map, and Postgres refuses NUL in a text column, so a document carrying one
+ * failed on the write that followed the model call — and was paid for again on every retry.
+ */
+export function stripControlCharacters(text: string): string {
+  return text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "");
+}
 
 /** Shortest paste worth reading: less than this is a note, not a document. */
 export const LIBRARY_IMPORT_MIN_CHARS = 100;
@@ -142,18 +153,94 @@ const key = (value: string) => normalise(value).toLowerCase();
 const CAREER_DATE = /^(\d{4})(?:-(0[1-9]|1[0-2]))?$/;
 
 /**
- * A date the document actually carries, or nothing.
- *
- * The year is the anchor: a CV writes "Mar 2020 – Jun 2022", and a year that appears nowhere in
- * the text is a date the model supplied rather than read. Anything that is not `YYYY` or `YYYY-MM`
- * — a month name, a quarter, "present" — is left blank too, because `EmploymentSchema` would
- * refuse it and a half-parsed date is worse than an empty field the person fills in themselves.
+ * How many lines above and below a job's quote its heading may run — its employer, its dates, a
+ * location or a duration — before a bullet, a blank line or another job's own line ends it.
+ * LinkedIn's export puts the employer two lines above the title and the dates on the line below.
  */
-function anchoredDate(value: string | null | undefined, document: string): string {
+const HEADING_LINES_BEFORE = 3;
+const HEADING_LINES_AFTER = 2;
+
+/** A line that is a list item rather than part of a heading. */
+const LIST_ITEM = /^(?:[•\-*▪●◦‣·–—]|\d{1,2}[.)])\s/u;
+const MONTH_NAMES = [
+  ["january", "jan"], ["february", "feb"], ["march", "mar"], ["april", "apr"], ["may"], ["june", "jun"],
+  ["july", "jul"], ["august", "aug"], ["september", "sept", "sep"], ["october", "oct"], ["november", "nov"], ["december", "dec"],
+];
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * A date the job's own heading carries, or as much of it as it carries, or nothing.
+ *
+ * Read from the passage around the job's quote, not from anywhere in the document: a year that
+ * appears only on the education line is not this job's. The year has to be there as a year, and a
+ * month has to be written beside it — "Mar 2020", "March 2020", "03/2020", "2020-03" — or the date
+ * is kept to the year the heading does carry rather than a month the model supplied. Anything that
+ * is not `YYYY` or `YYYY-MM` — a month name, a quarter, "present" — is left blank too, because
+ * `EmploymentSchema` would refuse it and a half-parsed date is worse than an empty field the person
+ * fills in themselves.
+ */
+function anchoredDate(value: string | null | undefined, passage: string): string {
   const trimmed = (value ?? "").trim();
   const match = CAREER_DATE.exec(trimmed);
   if (!match) return "";
-  return normalise(document).includes(match[1]!) ? trimmed : "";
+  const [, year, month] = match;
+  if (!new RegExp(`(?<!\\d)${year}(?!\\d)`).test(passage)) return "";
+  if (!month) return year!;
+  const number = Number(month);
+  const named = MONTH_NAMES[number - 1]!.map(escapeRegExp).join("|");
+  const written = [
+    new RegExp(`\\b(?:${named})\\.?,?\\s?${year}(?!\\d)`, "i"),
+    new RegExp(`(?<!\\d)0?${number}\\s?[/.\\-]\\s?${year}(?!\\d)`),
+    new RegExp(`(?<!\\d)${year}\\s?[/.\\-]\\s?0?${number}(?!\\d)`),
+  ];
+  return written.some(pattern => pattern.test(passage)) ? trimmed : year!;
+}
+
+/**
+ * A document as the lines it was written in, each normalised, so a passage can be read by line: a
+ * job's heading is a few lines, not a count of characters that runs on into the next job.
+ */
+function documentLines(document: string) {
+  const lines = document.split(/\r\n?|\n/).map(normalise);
+  const starts: number[] = [];
+  let at = 0;
+  for (const line of lines) {
+    starts.push(at);
+    at += line.length + 1;
+  }
+  const flat = lines.join("\n");
+  const lineAt = (offset: number) => {
+    let low = 0;
+    let high = starts.length - 1;
+    while (low < high) {
+      const middle = (low + high + 1) >> 1;
+      if (starts[middle]! <= offset) low = middle;
+      else high = middle - 1;
+    }
+    return low;
+  };
+  /** The lines `needle` is written across, wherever it appears, a line break counting as a space. */
+  const find = (needle: string): Array<{ first: number; last: number }> => {
+    if (!needle) return [];
+    const pattern = new RegExp(escapeRegExp(needle).replace(/ /g, "[ \\n]"), "g");
+    const found: Array<{ first: number; last: number }> = [];
+    for (let match = pattern.exec(flat); match && found.length < 50; match = pattern.exec(flat)) {
+      found.push({ first: lineAt(match.index), last: lineAt(match.index + match[0].length - 1) });
+      pattern.lastIndex = match.index + 1;
+    }
+    return found;
+  };
+  const read = (first: number, last: number) => lines.slice(first, last + 1).join(" ");
+  return { lines, find, read };
+}
+
+/**
+ * A skill as a word the document writes, not a run of letters inside another one: "Go" is not
+ * anchored by "Good communication", nor "SQL" by "NoSQL".
+ */
+function anchoredWord(text: string, document: string): boolean {
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(text)}(?![\\p{L}\\p{N}])`, "u").test(document);
 }
 
 /** How many items a proposal holds, for the sentence the Library page opens the card with. */
@@ -184,11 +271,18 @@ export function proposedItemIds(proposal: LibraryProposal): string[] {
 /**
  * Keep what the document supports and drop the rest.
  *
- * A job survives only when its company, its job title and the quote behind it all appear in the
- * document; a responsibility only when both the row and its quote do; a qualification when its
- * heading, its detail and its quote do; a skill when the word is there. `dropped` counts every
- * item that did not survive, because "we read your CV and found nothing" and "we read your CV and
- * refused six things it claimed" are different sentences and the person is owed the second one.
+ * A job is anchored as one passage, not as words found anywhere in the document: its quote has to
+ * be in the document, its title and its employer within the heading around that quote, its dates
+ * in that same heading, and each of its responsibilities — the row and its quote — between that
+ * heading and the next job's. Checked one by one, a title from one line and an employer from
+ * another made a job nobody had, a year from the education line dated a role, and a row was filed
+ * under whichever job the model chose. An employer named once above several roles, as LinkedIn's
+ * own export writes it, anchors each role under it until another employer's role comes between.
+ *
+ * A qualification survives when its heading, its detail and its quote are in the document; a skill
+ * when the document writes it as a word. `dropped` counts every item that did not survive, because
+ * "we read your CV and found nothing" and "we read your CV and refused six things it claimed" are
+ * different sentences and the person is owed the second one.
  *
  * Idempotent: running it again over what it produced — against the same document — returns the
  * same proposal with the same ids, which is what lets an accepted item be anchored a second time
@@ -200,23 +294,65 @@ export function validateLibraryProposal(
 ): { proposal: LibraryProposal; dropped: number } {
   const plan = LibraryProposalSchema.parse(value);
   const document = documentText ?? "";
-  const anchored = (text: string) => !!normalise(text) && cvQuoteIsAnchored(text, document);
+  const text = normalise(document);
+  const anchored = (value: string) => !!normalise(value) && cvQuoteIsAnchored(value, document);
+  const within = (value: string, passage: string) => !!normalise(value) && passage.includes(normalise(value));
   let dropped = 0;
+
+  const written = documentLines(document);
+  const quotes = new Set(plan.employment.map(job => normalise(job.quote)).filter(Boolean));
+  /** The lines heading a job whose quote is written across `first`–`last`. */
+  const headingOf = (first: number, last: number, quote: string) => {
+    const ends = (line: string | undefined) =>
+      line === undefined || !line || LIST_ITEM.test(line) || (quotes.has(line) && line !== quote);
+    let top = first;
+    while (top > 0 && first - top < HEADING_LINES_BEFORE && !ends(written.lines[top - 1])) top--;
+    let bottom = last;
+    while (bottom - last < HEADING_LINES_AFTER && !ends(written.lines[bottom + 1])) bottom++;
+    return { line: first, top, bottom, text: written.read(top, bottom) };
+  };
+  // Where each job is headed in the document: the first place its quote is written with its title
+  // in the heading around it, preferring one whose heading names its employer too.
+  const placed = plan.employment.map((job, order) => {
+    const company = normalise(job.company).slice(0, 160);
+    const title = normalise(job.title).slice(0, 160);
+    const quote = normalise(job.quote);
+    const headings = written.find(quote).map(place => headingOf(place.first, place.last, quote)).filter(place => within(title, place.text));
+    const named = headings.find(place => within(company, place.text));
+    const heading = named ?? headings[0];
+    return { job, order, company, title, heading, named: named !== undefined };
+  });
+  // The employer of a role listed under another of the same employer's, read in document order.
+  const byPosition = placed.filter(item => item.heading).sort((a, b) => a.heading!.line - b.heading!.line || a.order - b.order);
+  const employed = new Set<number>();
+  byPosition.forEach((item, index) => {
+    const previous = byPosition[index - 1];
+    if (item.named || (previous && employed.has(previous.order) && key(previous.company) === key(item.company))) employed.add(item.order);
+  });
+  /**
+   * A job's passage: from its heading to the line before the next placed job's own line. Headings
+   * can overlap — the lines above one job's title are the last lines of the job before — so the
+   * boundary is the next job's quote, never the top of its heading.
+   */
+  const passageOf = (item: (typeof placed)[number]) => {
+    const next = byPosition.find(other => other.heading!.line > item.heading!.line);
+    return written.read(item.heading!.top, next ? next.heading!.line - 1 : written.lines.length - 1);
+  };
 
   const employment: ProposedJob[] = [];
   const seenJobs = new Set<string>();
-  for (const job of plan.employment) {
-    const company = normalise(job.company).slice(0, 160);
-    const title = normalise(job.title).slice(0, 160);
+  for (const item of placed) {
+    const { job, company, title } = item;
     const rows = job.responsibilities ?? [];
-    if (!anchored(company) || !anchored(title) || !anchored(job.quote)) {
+    if (!company || !item.heading || !employed.has(item.order)) {
       // The rows of a job that was never in the document go with it: they have nothing to hang on.
       dropped += 1 + rows.length;
       continue;
     }
-    const startDate = anchoredDate(job.startDate, document);
+    const passage = passageOf(item);
+    const startDate = anchoredDate(job.startDate, item.heading.text);
     const current = job.current === true;
-    const endDate = current ? "" : anchoredDate(job.endDate, document);
+    const endDate = current ? "" : anchoredDate(job.endDate, item.heading.text);
     const jobKey = [key(company), key(title), startDate, endDate, String(current)].join("|");
     if (seenJobs.has(jobKey) || employment.length >= LIBRARY_IMPORT_MAX_JOBS) {
       dropped += 1 + rows.length;
@@ -227,14 +363,14 @@ export function validateLibraryProposal(
     const seenRows = new Set<string>();
     const id = `job-${employment.length}`;
     for (const row of rows) {
-      const text = normalise(row.text).slice(0, 4000);
-      if (!anchored(text) || !anchored(row.quote) || seenRows.has(key(text))
+      const said = normalise(row.text).slice(0, 4000);
+      if (!within(said, passage) || !within(row.quote, passage) || seenRows.has(key(said))
         || responsibilities.length >= LIBRARY_IMPORT_MAX_ROWS) {
         dropped += 1;
         continue;
       }
-      seenRows.add(key(text));
-      responsibilities.push({ id: `${id}-row-${responsibilities.length}`, text, quote: normalise(row.quote).slice(0, 4000) });
+      seenRows.add(key(said));
+      responsibilities.push({ id: `${id}-row-${responsibilities.length}`, text: said, quote: normalise(row.quote).slice(0, 4000) });
     }
     employment.push({ id, company, title, startDate, endDate, current, quote: normalise(job.quote).slice(0, 2000), responsibilities });
   }
@@ -256,14 +392,14 @@ export function validateLibraryProposal(
   const skills: ProposedSkill[] = [];
   const seenSkills = new Set<string>();
   for (const item of plan.skills ?? []) {
-    const text = normalise(item.text);
-    if (!text || text.length > 80 || !anchored(text) || seenSkills.has(key(text))
+    const skill = normalise(item.text);
+    if (!skill || skill.length > 80 || !anchoredWord(skill, text) || seenSkills.has(key(skill))
       || skills.length >= LIBRARY_IMPORT_MAX_SKILLS) {
       dropped += 1;
       continue;
     }
-    seenSkills.add(key(text));
-    skills.push({ id: `skill-${skills.length}`, text });
+    seenSkills.add(key(skill));
+    skills.push({ id: `skill-${skills.length}`, text: skill });
   }
 
   return { proposal: { employment, education, skills }, dropped };
@@ -290,8 +426,8 @@ export const LINKEDIN_IMPORT_ADVICE =
   "AVA does not read LinkedIn. Open your profile, choose More \u2192 Save to PDF, and upload that file here.";
 
 /**
- * The person's own site, checked before anything fetches it: https, a real host, no credentials,
- * and none of the sites above. Returns the URL to store, or the sentence to show them.
+ * The person's own site, checked before anything fetches it: https, a public host, no
+ * credentials, and none of the sites above. Returns the URL to store, or the sentence to show them.
  */
 export function libraryImportUrl(value: string): { url: string } | { error: string } {
   const trimmed = (value ?? "").trim();
@@ -304,6 +440,14 @@ export function libraryImportUrl(value: string): { url: string } | { error: stri
   }
   if (parsed.protocol !== "https:") return { error: "Use an https:// address, so the page is fetched securely." };
   if (parsed.username || parsed.password) return { error: "Remove the username and password from the address." };
+  // The same guard every fetch the worker makes goes through: a page about you is on the public
+  // internet, and an address inside a private network is refused here in words, before it is stored.
+  try {
+    assertPublicHttpUrl(parsed);
+  } catch (error) {
+    if (error instanceof UnsafeUrlError) return { error: `${error.message}. Use the address of your own public page, or upload a document instead.` };
+    throw error;
+  }
   const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
   if (!host.includes(".")) return { error: "That does not look like a web address. Paste the whole link, starting with https://." };
   if (host === "linkedin.com" || host.endsWith(".linkedin.com")) return { error: LINKEDIN_IMPORT_ADVICE };

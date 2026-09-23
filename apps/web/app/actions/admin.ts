@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { careerSources, companies, companyNameSuggestions } from "@ava/db/schema";
@@ -75,13 +75,42 @@ export async function dismissNameSuggestion(suggestionId: string): Promise<void>
   revalidateCatalogue(dismissed?.companyId);
 }
 
-/** Deleting a shared source affects every follower. Its scan history stays; it is simply no longer scanned. */
+/** The archive event a retired source leaves on each view it puts away; `cause` is for code, `reason` for people. */
+const SOURCE_RETIRED_EVENT = JSON.stringify({ action: "archived", actor: "system", reason: "Its careers source is no longer checked", cause: "source_retired" });
+
+/**
+ * Retire a shared source for every follower: nothing scans it again. It is not deleted — deleting
+ * it cascaded to its scans, every posting it ever saw and every follower's view of them — so its
+ * postings and scan history stay, and open roles stay open, because only a successful scan closes
+ * a role. Followers' views of its roles move to Archived, except the ones a person has worked on:
+ * a decision, a CV, an application or a role they added themselves keeps its place, as it does
+ * when a gate narrows.
+ */
 export async function removeCatalogueSource(sourceId: string): Promise<void> {
   await requireAdmin();
   const id = zUuid().parse(sourceId);
-  const [source] = await db().select({ companyId: careerSources.companyId }).from(careerSources).where(eq(careerSources.id, id)).limit(1);
-  await db().delete(careerSources).where(eq(careerSources.id, id));
-  revalidateCatalogue(source?.companyId);
+  const companyId = await db().transaction(async (tx) => {
+    const [source] = await tx.update(careerSources).set({ status: "disabled" }).where(eq(careerSources.id, id)).returning({ companyId: careerSources.companyId });
+    if (!source) return null;
+    // Lock the views first, in the order every other writer takes them, then read decisions and
+    // CVs in a fresh statement: a shortlist committed while this waited must keep its role.
+    await tx.execute(sql`select uj.user_id from user_jobs uj join jobs j on j.id = uj.job_id
+      where j.source_id = ${id} and uj.archived_at is null
+      order by uj.user_id, uj.job_id for update of uj`);
+    await tx.execute(sql`with retired as (
+        update user_jobs uj set archived_at = now(), updated_at = now()
+        from jobs j
+        where j.id = uj.job_id and j.source_id = ${id} and uj.archived_at is null
+          and j.added_by is distinct from uj.user_id
+          and not exists (select 1 from decisions d where d.user_id = uj.user_id and d.job_id = uj.job_id and d.superseded = false)
+          and not exists (select 1 from cv_drafts c where c.user_id = uj.user_id and c.job_id = uj.job_id)
+          and not exists (select 1 from applications a where a.user_id = uj.user_id and a.job_id = uj.job_id)
+        returning uj.user_id, uj.job_id)
+      insert into job_events (job_id, user_id, type, payload)
+      select job_id, user_id, 'updated', ${SOURCE_RETIRED_EVENT}::jsonb from retired`);
+    return source.companyId;
+  });
+  revalidateCatalogue(companyId);
 }
 
 /** Remove the company for everyone. Followers' decision snapshots survive; their views do not. */

@@ -6,9 +6,9 @@
  * role and taking over the migrated owner's data. Proof is a Google sign-in Google has verified, the
  * confirmation link completed with the account's password, or a reset link used to set a password.
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull, ne } from "drizzle-orm";
 import { adminEmailsFrom, completeAccountClaim, createUser, isEntitledEmail, isPlaceholderEmail, normaliseEmail, promoteIfEntitled, type CreateUserResult } from "@ava/db";
-import { authAccounts, sessions, users, type User } from "@ava/db/schema";
+import { authAccounts, authTokens, sessions, users, type User } from "@ava/db/schema";
 import { hashPassword, needsRehash, passwordProblem, verifyPassword } from "@ava/core";
 import { consumeAuthToken, issueAuthToken, peekAuthToken } from "./auth-tokens";
 import { db } from "./db";
@@ -18,8 +18,19 @@ import { getSystemSettings } from "./settings";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/** Addresses that become administrators once proven, and the only ones that may take over migrated data. */
+let defaultAdminWarned = false;
+
+/**
+ * Addresses that become administrators once proven, and the only ones that may take over migrated
+ * data. Unset, they fall back to the built-in owner address, which keeps a live deployment from
+ * being locked out; in production that is said in the log, once per instance, because it hands
+ * administration of every account to one fixed outside mailbox.
+ */
 export function adminEmails(): string[] {
+  if (process.env.NODE_ENV === "production" && !defaultAdminWarned && !(process.env.ADMIN_EMAILS ?? "").split(",").some((e) => e.trim())) {
+    defaultAdminWarned = true;
+    console.warn(JSON.stringify({ event: "admin_emails_default", hint: "ADMIN_EMAILS is unset, so the built-in default administrator address applies. Set it to this deployment's administrators." }));
+  }
   return adminEmailsFrom(process.env);
 }
 
@@ -115,14 +126,26 @@ export async function linkedProviders(userId: string) {
   return db().select().from(authAccounts).where(eq(authAccounts.userId, userId));
 }
 
-/** Set or change the password. The current one is required whenever the account already has one. */
-export async function changePassword(user: User, currentPassword: string, nextPassword: string): Promise<void> {
+/**
+ * Set or change the password. The current one is required whenever the account already has one.
+ *
+ * The new hash, the end of every outstanding reset and confirmation link, and (given the session to
+ * keep) the end of every other session land in one transaction: a reset link requested by whoever
+ * briefly had the mailbox must not outlive the change, and no browser signed in with the old
+ * password survives a change that half-happened.
+ */
+export async function changePassword(user: User, currentPassword: string, nextPassword: string, keepSessionId?: string): Promise<void> {
   if (user.passwordHash) {
     if (!(await verifyPassword(currentPassword, user.passwordHash))) throw new Error("The current password is not right.");
   }
   const problem = passwordProblem(nextPassword);
   if (problem) throw new Error(problem);
-  await db().update(users).set({ passwordHash: await hashPassword(nextPassword) }).where(eq(users.id, user.id));
+  const passwordHash = await hashPassword(nextPassword);
+  await db().transaction(async (tx) => {
+    await tx.update(users).set({ passwordHash }).where(eq(users.id, user.id));
+    await tx.update(authTokens).set({ usedAt: new Date() }).where(and(eq(authTokens.userId, user.id), isNull(authTokens.usedAt)));
+    if (keepSessionId) await tx.delete(sessions).where(and(eq(sessions.userId, user.id), ne(sessions.id, keepSessionId)));
+  });
 }
 
 /** Always quiet about whether an address is registered. A row waiting for confirmation may reset too: the link proves the address. */

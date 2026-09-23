@@ -2,9 +2,10 @@
  * The cookie is the only thing middleware has to go on, so a forged, altered or expired value
  * must never read as a session. The signed-value helper carries the Google sign-in state the same way.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createSessionCookieValue, createSignedValue, isSecureHost, readSessionCookie, readSignedValue, sanitizeNextPath, sessionCookieValue,
+  sessionSecret,
 } from "./session";
 
 const secret = "test-secret";
@@ -38,6 +39,37 @@ describe("session cookie", () => {
   });
 });
 
+describe("the signing key", () => {
+  it("refuses a short key or the example placeholder in production, saying why once", () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      vi.stubEnv("NODE_ENV", "production");
+      vi.stubEnv("SESSION_SECRET", "smoke-test-secret");
+      expect(sessionSecret()).toBeNull();
+      vi.stubEnv("SESSION_SECRET", "change-me-to-a-long-random-string");
+      expect(sessionSecret()).toBeNull();
+      expect(logged.mock.calls.filter(([line]) => String(line).includes("session_secret_refused"))).toHaveLength(1);
+      vi.stubEnv("SESSION_SECRET", "a".repeat(64));
+      expect(sessionSecret()).toBe("a".repeat(64));
+      vi.stubEnv("SESSION_SECRET", "");
+      expect(sessionSecret()).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+      logged.mockRestore();
+    }
+  });
+
+  it("accepts any key outside production, so tests and local runs keep short ones", () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("SESSION_SECRET", "test-secret");
+    try {
+      expect(sessionSecret()).toBe("test-secret");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
 describe("signed values", () => {
   it("carries string fields and rejects tampering and expiry", async () => {
     const value = await createSignedValue(secret, { state: "abc", verifier: "xyz", next: "/companies" }, 60);
@@ -57,6 +89,40 @@ describe("redirect targets", () => {
     expect(sanitizeNextPath("/\\evil.example")).toBe("/");
     expect(sanitizeNextPath("")).toBe("/");
     expect(sanitizeNextPath(null)).toBe("/");
+  });
+
+  // A URL parser strips tab, CR and LF before it reads, so "/\t/evil.example" arrives as
+  // "//evil.example"; dot segments collapse "/.//evil.example" to the path "//evil.example".
+  const offSite = [
+    "/\t/evil.example", "/\n/evil.example", "/\r/evil.example", "/\r\n/evil.example", "/\t\t/evil.example/",
+    "/\u0000x", "/\u007f", "/.//evil.example", "/a/..//evil.example", "/%2e//evil.example", "/%2E%2E//evil.example",
+    "//evil.example", "https://evil.example", "/\\evil.example", "\\/evil.example", "evil.example", " /x",
+    `/${"a".repeat(2048)}`,
+  ];
+
+  it("refuses control characters, dot segments that collapse to another host, and oversized values", () => {
+    for (const payload of offSite) expect(sanitizeNextPath(payload), JSON.stringify(payload)).toBe("/");
+  });
+
+  it("never yields a target that resolves off-site, from the address bar or from a Location header", () => {
+    const base = "https://app.example/auth/google/callback";
+    const decoded = (value: string) => new URL(`https://app.example/auth/google?next=${value}`).searchParams.get("next");
+    const payloads = [
+      ...offSite,
+      ...["%2F%09%2Fevil.example%2F", "%2F%0A%2Fevil.example", "%2F%0D%2Fevil.example", "%2F.%2F%2Fevil.example"].map(decoded),
+      "/companies?page=2#x", "/roles?next=/x", "/%2F%2Fevil.example", "/a/../b",
+    ];
+    for (const payload of payloads) {
+      const target = sanitizeNextPath(payload);
+      expect(new URL(target, base).origin, JSON.stringify(payload)).toBe("https://app.example");
+      expect(target.startsWith("//"), JSON.stringify(payload)).toBe(false);
+    }
+  });
+
+  it("leaves an ordinary path, query and fragment exactly as it was", () => {
+    expect(sanitizeNextPath("/companies?page=2#x")).toBe("/companies?page=2#x");
+    expect(sanitizeNextPath("/roles/3f2a?tab=notes")).toBe("/roles/3f2a?tab=notes");
+    expect(sanitizeNextPath("/a/../b")).toBe("/a/../b");
   });
 
   it("reads the renamed cookie first and the legacy one after it, so the rename signs nobody out", () => {

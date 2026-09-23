@@ -24,6 +24,35 @@ export const DEFAULT_SESSION_TTL_SECONDS = 2592000; // 30 days
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** The shortest signing key production accepts: `openssl rand -hex 32` gives 64 characters. */
+export const MIN_SESSION_SECRET_LENGTH = 32;
+/** The placeholder `.env.example` ships with. A deployment that copied it signs with a public key. */
+const EXAMPLE_SESSION_SECRET = "change-me-to-a-long-random-string";
+let refusedSecretLogged = false;
+
+/**
+ * The key that signs session cookies and the Google sign-in state, or null when there is none.
+ *
+ * In production a key shorter than 32 characters, or the `.env.example` placeholder, is refused as
+ * if it were unset: a signature is all middleware checks, and a guessable key forges it. Sign-in
+ * then says the deployment needs setting up, and the log says why, once per instance.
+ */
+export function sessionSecret(): string | null {
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) return null;
+  if (process.env.NODE_ENV === "production" && (secret.length < MIN_SESSION_SECRET_LENGTH || secret === EXAMPLE_SESSION_SECRET)) {
+    if (!refusedSecretLogged) {
+      refusedSecretLogged = true;
+      console.error(JSON.stringify({
+        event: "session_secret_refused",
+        hint: `SESSION_SECRET must be at least ${MIN_SESSION_SECRET_LENGTH} random characters (openssl rand -hex 32), not the example value. It is treated as unset until then.`,
+      }));
+    }
+    return null;
+  }
+  return secret;
+}
+
 function toBase64Url(bytes: Uint8Array): string {
   let binary = "";
   for (const b of bytes) binary += String.fromCharCode(b);
@@ -120,9 +149,28 @@ export function isSecureHost(host: string | null | undefined): boolean {
   return hostname !== "localhost" && hostname !== "127.0.0.1" && hostname !== "::1";
 }
 
-/** Only allow same-site relative redirects after login (never "//host" or "scheme://host"). */
+/** Control characters (which a URL parser strips before reading, so "/\t/host" reads as "//host") and backslashes. */
+const UNSAFE_PATH_CHARACTERS = /[\u0000-\u001f\u007f\\]/;
+const PATH_BASE = "http://internal.invalid";
+
+/**
+ * Only allow a same-site path after sign-in: a single leading "/", no control character, no
+ * backslash, no "//host" and no "scheme://host". Anything else becomes "/".
+ *
+ * The value is also resolved the way a browser resolves it, because what the Location header ends
+ * up naming is what matters: dot segments collapse "/.//host" to the path "//host", which anything
+ * that re-emits the normalised path would send off-site. The original string is returned, never
+ * the normalised one.
+ */
 export function sanitizeNextPath(next: string | null | undefined): string {
-  if (!next) return "/";
-  if (!next.startsWith("/") || next.startsWith("//") || next.includes("://") || next.includes("\\")) return "/";
+  if (!next || next.length > 2048 || UNSAFE_PATH_CHARACTERS.test(next)) return "/";
+  if (!next.startsWith("/") || next.startsWith("//") || next.includes("://")) return "/";
+  let resolved: URL;
+  try {
+    resolved = new URL(next, PATH_BASE);
+  } catch {
+    return "/";
+  }
+  if (resolved.origin !== PATH_BASE || resolved.pathname.startsWith("//")) return "/";
   return next;
 }

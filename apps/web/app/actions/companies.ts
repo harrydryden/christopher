@@ -1,9 +1,9 @@
 "use server";
 import { enqueueTask, reevaluateGate, setSubscriptionStatus, subscribeToCompany, syncCompanyStatus } from "@ava/db";
 
-import { requireUser, requireVerifiedUser } from "@/lib/auth";
+import { requireAdmin, requireUser, requireVerifiedUser } from "@/lib/auth";
 
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
@@ -18,13 +18,23 @@ import { actionError, fail, UserFacingError, zUrlString, zUuid, type ActionResul
 
 const CompanyStatusSchema = z.enum(["active", "paused", "archived"]);
 
-/** The subscription that entitles this account to act on a shared company. */
-async function requireFollowed(userId: string, companyId: string): Promise<CompanySubscription> {
-  const [subscription] = await db().select().from(companySubscriptions)
+type Reader = Pick<ReturnType<typeof db>, "select">;
+
+/**
+ * The subscription that entitles this account to act on a shared company. `live` is for work every
+ * follower shares — a scan, a discovery, a posting, a source — which an archived follow may not
+ * start; `writer` keeps a caller's transaction on the connection it already holds.
+ */
+async function requireFollowed(userId: string, companyId: string, options: { live?: boolean; writer?: Reader } = {}): Promise<CompanySubscription> {
+  const [subscription] = await (options.writer ?? db()).select().from(companySubscriptions)
     .where(and(eq(companySubscriptions.userId, userId), eq(companySubscriptions.companyId, companyId))).limit(1);
   if (!subscription) throw new UserFacingError("You do not follow this company.");
+  if (options.live && subscription.status === "archived") throw new UserFacingError("Resume following this company first.");
   return subscription;
 }
+
+/** What a follower is told when the change they asked for belongs to an administrator. */
+const REPLACING_IS_ADMINS = "This company already has a working source, and only an administrator can replace it. Keep the current source, or ask an administrator.";
 
 /** Give a new follower of an already scanned company its matching roles now, or queue it for a large one. */
 async function admitExistingRoles(userId: string, companyId: string, writer: ReturnType<typeof db>): Promise<void> {
@@ -130,7 +140,7 @@ export async function archiveCompany(companyId: string): Promise<void> {
 export async function refreshCompany(companyId: string): Promise<void> {
   const user = await requireVerifiedUser();
   const id = zUuid().parse(companyId);
-  await requireFollowed(user.id, id);
+  await requireFollowed(user.id, id, { live: true });
   const review = await db().transaction(async tx => {
     const [company] = await tx.select({ status: companies.status, homepageUrl: companies.homepageUrl }).from(companies).where(eq(companies.id, id)).for("update");
     if (!company || company.status !== "active") return false;
@@ -154,7 +164,7 @@ export async function refreshCompany(companyId: string): Promise<void> {
 export async function rescanCompany(companyId: string): Promise<void> {
   const user = await requireVerifiedUser();
   const id = zUuid().parse(companyId);
-  await requireFollowed(user.id, id);
+  await requireFollowed(user.id, id, { live: true });
   await enqueue("scan_company", { companyId: id, trigger: "manual" });
   revalidatePath("/companies");
   revalidatePath(`/companies/${id}`);
@@ -163,7 +173,7 @@ export async function rescanCompany(companyId: string): Promise<void> {
 export async function rediscoverCompany(companyId: string): Promise<void> {
   const user = await requireVerifiedUser();
   const id = zUuid().parse(companyId);
-  await requireFollowed(user.id, id);
+  await requireFollowed(user.id, id, { live: true });
   await enqueue("discover", { companyId: id, reason: "manual" });
   revalidatePath("/companies");
   revalidatePath(`/companies/${id}`);
@@ -198,7 +208,7 @@ export async function saveCompanyNotes(companyId: string, notes: string): Promis
 export async function importPosting(companyId: string, formData: FormData): Promise<void> {
   const user = await requireVerifiedUser();
   const id = zUuid().parse(companyId);
-  await requireFollowed(user.id, id);
+  await requireFollowed(user.id, id, { live: true });
   const url = normalisePostingUrl(zUrlString().parse(String(formData.get("url") ?? "")));
   await enqueue("import_posting", { userId: user.id, companyId: id, url });
   revalidatePath(`/companies/${id}`);
@@ -233,7 +243,7 @@ export async function suggestCompanyName(companyId: string, _previous: ActionRes
 export async function refreshCompanyLogo(companyId: string): Promise<void> {
   const user = await requireVerifiedUser();
   const id = zUuid().parse(companyId);
-  await requireFollowed(user.id, id);
+  await requireFollowed(user.id, id, { live: true });
   const [company] = await db().select({ homepageUrl: companies.homepageUrl }).from(companies).where(eq(companies.id, id)).limit(1);
   if (!company) return;
   await enqueue("discover", { companyId: id, logoOnly: true, homepageUrl: company.homepageUrl });
@@ -245,33 +255,48 @@ async function sourceCompanyId(sourceId: string): Promise<string | null> {
   return rows[0]?.companyId ?? null;
 }
 
+/**
+ * A career source is shared catalogue: switching one off stops scanning that company for every
+ * follower, so it is an administrator's (the company page's diagnostics). Its postings, scan
+ * history and every follower's roles stay; open roles stay open, because only a scan closes one.
+ */
 export async function disableSource(sourceId: string): Promise<void> {
-  const user = await requireUser();
+  await requireAdmin();
   const id = zUuid().parse(sourceId);
-  const companyId = await sourceCompanyId(id);
-  if (!companyId) return;
-  await requireFollowed(user.id, companyId);
-  await db().update(careerSources).set({ status: "disabled" }).where(eq(careerSources.id, id));
-  revalidatePath(`/companies/${companyId}`);
+  const [source] = await db().update(careerSources).set({ status: "disabled" }).where(eq(careerSources.id, id)).returning({ companyId: careerSources.companyId });
+  if (source) revalidatePath(`/companies/${source.companyId}`);
 }
 
+/** Scan a source again for everyone, whatever stopped it: an administrator's, like disabling it. */
 export async function enableSource(sourceId: string): Promise<void> {
-  const user = await requireUser();
+  await requireAdmin();
   const id = zUuid().parse(sourceId);
-  const companyId = await sourceCompanyId(id);
-  if (!companyId) return;
-  await requireFollowed(user.id, companyId);
-  await db().update(careerSources).set({ status: "active" }).where(eq(careerSources.id, id));
-  revalidatePath(`/companies/${companyId}`);
+  const [source] = await db().update(careerSources).set({ status: "active", consecutiveFailures: 0 }).where(eq(careerSources.id, id)).returning({ companyId: careerSources.companyId });
+  if (source) revalidatePath(`/companies/${source.companyId}`);
 }
 
+/**
+ * Stand behind a source discovery was unsure of, so it is scanned. Any follower may do this for a
+ * company that has no working source yet — it finishes the discovery they are waiting on — but only
+ * a source still waiting for confirmation, and only then: anything else is an administrator's.
+ */
 export async function markSourceConfirmed(sourceId: string): Promise<void> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   const id = zUuid().parse(sourceId);
   const companyId = await sourceCompanyId(id);
   if (!companyId) return;
-  await requireFollowed(user.id, companyId);
-  await db().update(careerSources).set({ confirmedByUser: true, status: "active" }).where(eq(careerSources.id, id));
+  if (user.role === "admin") {
+    await db().update(careerSources).set({ confirmedByUser: true, status: "active" }).where(eq(careerSources.id, id));
+  } else {
+    await requireFollowed(user.id, companyId, { live: true });
+    // One conditional statement, so the rule and the write cannot be separated by a concurrent edit:
+    // still waiting for confirmation, and nothing else of this company's is being scanned.
+    const [confirmed] = await db().update(careerSources).set({ confirmedByUser: true, status: "active" })
+      .where(and(eq(careerSources.id, id), eq(careerSources.status, "needs_confirmation"), sql`not exists (select 1 from career_sources other
+        where other.company_id = ${careerSources.companyId} and other.id <> ${careerSources.id} and other.status in ('active', 'failing'))`))
+      .returning({ id: careerSources.id });
+    if (!confirmed) throw new UserFacingError(REPLACING_IS_ADMINS);
+  }
   revalidatePath(`/companies/${companyId}`);
 }
 
@@ -283,14 +308,21 @@ const CandidateSpecSchema = z.object({
   atsSite: z.string().optional().nullable(),
 });
 
-/** Accept a discovery candidate from the confirmation panel: create its career_source and resolve the run. */
+/**
+ * Accept a discovery candidate from the confirmation panel: create its career_source and resolve the run.
+ *
+ * Any verified follower may finish a discovery for a company nothing is scanned from yet. A
+ * candidate that would sit beside or replace a source already working — a re-discovery proposal —
+ * or bring back one that was switched off changes what every follower is scanned from, so that
+ * is an administrator's.
+ */
 export async function useDiscoveryCandidate(runId: string, candidateIndex: number): Promise<void> {
   const user = await requireVerifiedUser();
   const id = zUuid().parse(runId);
   const companyId = await db().transaction(async (tx) => {
     const [run] = await tx.select().from(discoveryRuns).where(eq(discoveryRuns.id, id)).for("update");
     if (!run) throw new UserFacingError("Discovery run not found.");
-    await requireFollowed(user.id, run.companyId);
+    await requireFollowed(user.id, run.companyId, { live: true, writer: tx });
     if (run.status === "resolved" && run.chosenSourceId) return run.companyId;
     const candidates = run.candidates as Array<{ spec?: unknown }>;
     const raw = candidates[candidateIndex];
@@ -299,6 +331,13 @@ export async function useDiscoveryCandidate(runId: string, candidateIndex: numbe
 
     const existing = await tx.select().from(careerSources).where(and(eq(careerSources.companyId, run.companyId), eq(careerSources.type, spec.type)));
     const match = existing.find((source) => spec.atsSlug ? source.atsSlug === spec.atsSlug && source.atsSite === (spec.atsSite ?? null) : source.url === spec.url);
+    if (user.role !== "admin") {
+      if (match && (match.status === "disabled" || match.status === "blocked")) throw new UserFacingError("This source is switched off for every follower, and only an administrator can turn it back on.");
+      const working = await tx.select({ id: careerSources.id }).from(careerSources)
+        .where(and(eq(careerSources.companyId, run.companyId), inArray(careerSources.status, ["active", "failing"]), match ? ne(careerSources.id, match.id) : undefined))
+        .limit(1);
+      if (working.length) throw new UserFacingError(REPLACING_IS_ADMINS);
+    }
     const [source] = match ? await tx.update(careerSources).set({ confirmedByUser: true, status: "active" }).where(eq(careerSources.id, match.id)).returning({ id: careerSources.id }) : await tx
       .insert(careerSources)
       .values({
@@ -331,7 +370,7 @@ export async function useDiscoveryCandidate(runId: string, candidateIndex: numbe
 export async function pasteDiscoveryUrl(companyId: string, formData: FormData): Promise<void> {
   const user = await requireVerifiedUser();
   const id = zUuid().parse(companyId);
-  await requireFollowed(user.id, id);
+  await requireFollowed(user.id, id, { live: true });
   const url = zUrlString().parse(String(formData.get("url") ?? ""));
   await enqueueTask(db(), "discover", { companyId: id, url, reason: "pasted" }, { dedupeKey: `discover:${id}:url:${url}`, priority: 1 });
   revalidatePath(`/companies/${id}`);
@@ -340,7 +379,7 @@ export async function pasteDiscoveryUrl(companyId: string, formData: FormData): 
 export async function refreshCompanyProfile(companyId: string): Promise<void> {
   const user = await requireVerifiedUser();
   const id = zUuid().parse(companyId);
-  await requireFollowed(user.id, id);
+  await requireFollowed(user.id, id, { live: true });
   await enqueue("profile_company", { companyId: id });
   revalidatePath(`/companies/${id}`);
 }

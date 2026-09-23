@@ -30,7 +30,9 @@ export async function retryTask(taskId: string): Promise<void> {
  * because a follower has now stood behind it. No new state and no new column.
  *
  * Every follower of the company may judge it, which is why this needs only a signed-in account
- * with a subscription: it starts no scan, no discovery and no model call.
+ * with a subscription it has not archived: it starts no scan, no discovery and no model call, and
+ * it changes nothing about what is scanned. Accepting a candidate instead is an administrator's
+ * once a source is working (`useDiscoveryCandidate`).
  */
 export async function keepCurrentSource(runId: string): Promise<void> {
   const user = await requireUser();
@@ -39,11 +41,12 @@ export async function keepCurrentSource(runId: string): Promise<void> {
     const [run] = await tx.select().from(discoveryRuns).where(eq(discoveryRuns.id, id)).for("update");
     if (!run) throw new UserFacingError("Discovery run not found.");
     const [subscription] = await tx
-      .select({ userId: companySubscriptions.userId })
+      .select({ status: companySubscriptions.status })
       .from(companySubscriptions)
       .where(and(eq(companySubscriptions.userId, user.id), eq(companySubscriptions.companyId, run.companyId)))
       .limit(1);
     if (!subscription) throw new UserFacingError("You do not follow this company.");
+    if (subscription.status === "archived") throw new UserFacingError("Resume following this company first.");
     // Another follower may have answered it already; that is an answer, not a conflict.
     if (run.status !== "needs_confirmation") return run.companyId;
     const [keep] = await tx

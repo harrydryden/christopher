@@ -3,6 +3,7 @@ import { deadlineFor, defaultRoleTab, roleStatus, ROLE_STATUSES, ROLE_TABS, type
 import { getTableColumns, and, eq, inArray, ne, isNull, sql, type SQL } from "drizzle-orm";
 import { careerSources, companies, decisions, jobs, userJobs, type Job, type ScoreState, type SourceType, type UserJob } from "@ava/db/schema";
 import { displayStatus, formatDuration, liveFor, type DisplayStatus } from "@ava/core";
+import { cache } from "react";
 import { db } from "@/lib/db";
 import { companyLogoUrl } from "@/lib/company-icon";
 import { eventTypeLabel, relativeTime } from "@/lib/format";
@@ -725,17 +726,25 @@ export function locationReasonText(evaluated: { ok: boolean; terms: string[]; re
   return "Remote, and your filter allows remote roles.";
 }
 
-/** SQL filters and pagination for one 50-row page; descriptions are left in the database. */
+/**
+ * SQL filters and pagination for one 50-row page; descriptions are left in the database. The count
+ * and the page asked for are read side by side; only a page past the end of the view (a link
+ * written before the view shrank) waits for the count and reads the last page instead.
+ */
 export async function fetchRolePage(userId: string, filters: RolesFilters, archived: boolean, threshold: number | null, requestedPage: number, now = new Date()) {
   const started = Date.now();
   const { conditions } = rolesQuery(userId, filters, archived, now);
-  const [counted] = await db().select({ n: sql<number>`count(*)::int` }).from(baseRolesSelect(userId, true).where(conditions).as('filtered'));
+  const asked = Math.max(1, Number.isSafeInteger(requestedPage) ? requestedPage : 1);
+  const [[counted], rows] = await Promise.all([
+    db().select({ n: sql<number>`count(*)::int` }).from(baseRolesSelect(userId, true).where(conditions).as('filtered')),
+    fetchRoleRows(userId, filters, archived, { offset: (asked - 1) * 50, limit: 50, now }),
+  ]);
   const total = counted?.n ?? 0;
   // Fit is an explicit filter, never a second hidden workflow: nothing is ever held back.
   const hiddenTotal = 0;
   const pageCount = Math.max(1, Math.ceil(total / 50));
-  const page = Math.min(pageCount, Math.max(1, Number.isSafeInteger(requestedPage) ? requestedPage : 1));
-  const visible = await fetchRoleRows(userId, filters, archived, { offset: (page - 1) * 50, limit: 50, now });
+  const page = Math.min(pageCount, asked);
+  const visible = page === asked ? rows : await fetchRoleRows(userId, filters, archived, { offset: (page - 1) * 50, limit: 50, now });
   console.info(JSON.stringify({ event: 'role_page', durationMs: Date.now() - started, rows: visible.length, total, page }));
   return { visible, hidden: [] as RoleRow[], total, hiddenTotal, page, pageCount };
 }
@@ -756,7 +765,15 @@ export function appliedRoleCount(stageCounts: Partial<Record<RoleStage, number>>
   return APPLIED_ROLE_STAGES.reduce((total, stage) => total + (stageCounts[stage] ?? 0), 0);
 }
 
-export async function fetchRoleCounts(userId: string, companyId?: string): Promise<Record<RoleStatus, number>> {
+/**
+ * How many of this account's roles sit under each tab, for the whole table or one company. Kept for
+ * the request: the roles page's setup card and its workspace both ask for the whole table's.
+ */
+export function fetchRoleCounts(userId: string, companyId?: string): Promise<Record<RoleStatus, number>> {
+  return roleCountsFor(userId, companyId || null);
+}
+
+const roleCountsFor = cache(async (userId: string, companyId: string | null): Promise<Record<RoleStatus, number>> => {
   const rows = await db().select({ status: roleStatusSql, n: sql<number>`count(*)::int` }).from(userJobs)
     .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
     .leftJoin(decisions, and(eq(decisions.userId, userId), eq(decisions.jobId, jobs.id), eq(decisions.superseded, false)))
@@ -764,4 +781,4 @@ export async function fetchRoleCounts(userId: string, companyId?: string): Promi
   const counts = Object.fromEntries(ROLE_STATUSES.map(status => [status, 0])) as Record<RoleStatus, number>;
   for (const row of rows) counts[row.status] = row.n;
   return counts;
-}
+});

@@ -9,7 +9,8 @@ import { enqueue } from "@/lib/enqueue";
 import { hasChosenGate } from "@/lib/queries/setup";
 import { getSettings, getSettingsFor } from "@/lib/settings";
 import { CHOOSE_GATE_SENTENCE } from "@/lib/setup";
-import { UserFacingError, zUuid } from "@/lib/validation";
+import { isUserFacingError, UserFacingError, zUuid } from "@/lib/validation";
+import { assertFollowCapacity } from "@/lib/follow-limits";
 import type { DiscoveryActionResult } from "@/lib/discovery-ux";
 
 export async function acceptSuggestion(suggestionId: string): Promise<DiscoveryActionResult> {
@@ -21,6 +22,7 @@ export async function acceptSuggestion(suggestionId: string): Promise<DiscoveryA
   const result = await db().transaction(async tx => {
     const [suggestion] = await tx.select().from(companySuggestions).where(and(eq(companySuggestions.id, id), eq(companySuggestions.userId, user.id))).for("update");
     if (!suggestion || suggestion.status !== "pending") return { ok: false as const, error: "This recommendation has already been reviewed. Refresh the page to see its status." };
+    await assertFollowCapacity(tx, user, { domains: [suggestion.domain] });
     const [created] = await tx.insert(companies).values({ name: suggestion.name, homepageUrl: suggestion.homepageUrl, domain: suggestion.domain }).onConflictDoNothing().returning({ id: companies.id });
     const [company] = created ? [created] : await tx.select({ id: companies.id }).from(companies).where(eq(companies.domain, suggestion.domain)).limit(1);
     if (!company) throw new UserFacingError("Could not add the company.");
@@ -44,6 +46,9 @@ export async function acceptSuggestion(suggestionId: string): Promise<DiscoveryA
       : subscription.created || subscription.reactivated
         ? `${suggestion.name} is already in the shared catalogue; you now follow it and its matching roles are in your table.`
         : `${suggestion.name} is already in your companies. Recommendation marked as added.` };
+  }).catch((error: unknown) => {
+    if (isUserFacingError(error)) return { ok: false as const, error: error.message };
+    throw error;
   });
   revalidatePath("/suggestions"); revalidatePath("/companies"); revalidatePath("/");
   return result;

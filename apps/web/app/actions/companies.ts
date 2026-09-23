@@ -8,13 +8,14 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { careerSources, companies, companySubscriptions, discoveryRuns, jobs, tasks, SOURCE_TYPES, type CompanySubscription } from "@ava/db/schema";
-import { discovery, ensureHttpUrl, extractDomain, normalisePostingUrl } from "@ava/core";
+import { discovery, ensureHttpUrl, extractDomain, MAX_COMPANIES_PER_SUBMISSION, normalisePostingUrl } from "@ava/core";
 import { applySuggestedName, normaliseCompanyName, upsertNameSuggestion } from "@/lib/company-names";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { requireChosenGate } from "@/lib/queries/setup";
 import { getSettingsFor } from "@/lib/settings";
-import { actionError, fail, UserFacingError, zUrlString, zUuid, type ActionResult } from "@/lib/validation";
+import { actionError, fail, isUserFacingError, UserFacingError, zUrlString, zUuid, type ActionResult } from "@/lib/validation";
+import { assertFollowCapacity } from "@/lib/follow-limits";
 
 const CompanyStatusSchema = z.enum(["active", "paused", "archived"]);
 
@@ -37,13 +38,25 @@ async function requireFollowed(userId: string, companyId: string, options: { liv
 const REPLACING_IS_ADMINS = "This company already has a working source, and only an administrator can replace it. Keep the current source, or ask an administrator.";
 
 /** Give a new follower of an already scanned company its matching roles now, or queue it for a large one. */
-async function admitExistingRoles(userId: string, companyId: string, writer: ReturnType<typeof db>): Promise<void> {
-  const [count] = await writer.select({ n: sql<number>`count(*)::int` }).from(jobs).where(eq(jobs.companyId, companyId));
-  if ((count?.n ?? 0) > 500) {
+async function admitExistingRoles(userId: string, companyId: string, writer: ReturnType<typeof db>, options: { queue?: boolean } = {}): Promise<void> {
+  const [count] = options.queue ? [] : await writer.select({ n: sql<number>`count(*)::int` }).from(jobs).where(eq(jobs.companyId, companyId));
+  if (options.queue || (count?.n ?? 0) > 500) {
     await enqueueTask(writer, "reevaluate_gate", { userId, companyId }, { dedupeKey: `reevaluate_gate:${userId}:${companyId}`, priority: 1 });
     return;
   }
   await reevaluateGate(writer, userId, await getSettingsFor(userId, writer), new Date(), { companyId });
+}
+
+/**
+ * How many newly followed companies have their roles admitted inside the submission's own
+ * transaction; the rest are queued, committed with the follows they belong to, so one
+ * submission holds its connection for a bounded time.
+ */
+const INLINE_ADMISSIONS = 5;
+
+/** Back to the Companies page with a refusal the page reads out. */
+function refuseOnCompanies(sentence: string): never {
+  redirect(`/companies?${new URLSearchParams({ error: sentence }).toString()}`);
 }
 
 export async function addCompanies(formData: FormData): Promise<void> {
@@ -53,6 +66,11 @@ export async function addCompanies(formData: FormData): Promise<void> {
   await requireChosenGate(user.id);
   const raw = String(formData.get("urls") ?? "");
   const lines = [...new Set(raw.split(/[\n,]/).map((s) => s.trim()).filter(Boolean))];
+  // Every new company is discovered and then scanned daily for everyone who follows it, so one
+  // paste adds a bounded amount of shared work (design: a paste is not a bulk import).
+  if (lines.length > MAX_COMPANIES_PER_SUBMISSION) {
+    refuseOnCompanies(`Add at most ${MAX_COMPANIES_PER_SUBMISSION} companies at a time. This list has ${lines.length}.`);
+  }
 
   const candidates: Array<{ name: string; homepageUrl: string; domain: string }> = [];
   const skipped: string[] = [];
@@ -75,10 +93,12 @@ export async function addCompanies(formData: FormData): Promise<void> {
   let added = 0;
   let followed = 0;
   const admit: string[] = [];
+  let refusal: string | null = null;
   await db().transaction(async tx => {
+    await assertFollowCapacity(tx, user, { domains: candidates.map(candidate => candidate.domain) });
     for (let offset = 0; offset < candidates.length; offset += 100) {
       const batch = candidates.slice(offset, offset + 100);
-      const inserted = await tx.insert(companies).values(batch).onConflictDoNothing().returning({ id: companies.id, domain: companies.domain });
+      const inserted = await tx.insert(companies).values(batch.map(candidate => ({ ...candidate, addedBy: user.id }))).onConflictDoNothing().returning({ id: companies.id, domain: companies.domain });
       const createdIds = new Map(inserted.map(c => [c.domain, c.id]));
       const existing = await tx.select({ id: companies.id, domain: companies.domain }).from(companies).where(inArray(companies.domain, batch.map(c => c.domain)));
       const idByDomain = new Map(existing.map(c => [c.domain, c.id]));
@@ -100,8 +120,14 @@ export async function addCompanies(formData: FormData): Promise<void> {
         } else skipped.push(candidate.domain);
       }
     }
-    for (const companyId of admit) await admitExistingRoles(user.id, companyId, tx as unknown as ReturnType<typeof db>);
+    for (const [index, companyId] of admit.entries()) {
+      await admitExistingRoles(user.id, companyId, tx as unknown as ReturnType<typeof db>, { queue: index >= INLINE_ADMISSIONS });
+    }
+  }).catch((error: unknown) => {
+    if (!isUserFacingError(error)) throw error;
+    refusal = error.message;
   });
+  if (refusal) refuseOnCompanies(refusal);
 
   revalidatePath("/companies");
   revalidatePath("/");
@@ -116,10 +142,26 @@ async function setCompanyStatus(companyId: string, status: "active" | "paused" |
   const user = await requireUser();
   const id = zUuid().parse(companyId);
   const nextStatus = CompanyStatusSchema.parse(status);
+  let refusal: string | null = null;
   await db().transaction(async tx => {
+    // Bringing back an archived follow counts against the account's limit like a new one.
+    if (nextStatus !== "archived") {
+      const [current] = await tx.select({ status: companySubscriptions.status }).from(companySubscriptions)
+        .where(and(eq(companySubscriptions.userId, user.id), eq(companySubscriptions.companyId, id))).limit(1);
+      if (current?.status === "archived") {
+        try {
+          await assertFollowCapacity(tx, user, { companyIds: [id] });
+        } catch (error) {
+          if (!isUserFacingError(error)) throw error;
+          refusal = error.message;
+          return;
+        }
+      }
+    }
     const changed = await setSubscriptionStatus(tx, user.id, id, nextStatus);
     if (!changed) throw new UserFacingError("You do not follow this company.");
   });
+  if (refusal) refuseOnCompanies(refusal);
   revalidatePath("/companies");
   revalidatePath(`/companies/${id}`);
 }
@@ -372,6 +414,12 @@ export async function pasteDiscoveryUrl(companyId: string, formData: FormData): 
   const id = zUuid().parse(companyId);
   await requireFollowed(user.id, id, { live: true });
   const url = zUrlString().parse(String(formData.get("url") ?? ""));
+  // Each pasted URL is a discovery of its own — fetches, perhaps a browser, model reads — so a
+  // company has one in hand at a time; the next URL can be tried once that one has answered.
+  const [inFlight] = await db().select({ id: tasks.id }).from(tasks)
+    .where(and(eq(tasks.type, "discover"), inArray(tasks.status, ["queued", "running"]), sql`${tasks.payload}->>'companyId' = ${id}`, sql`${tasks.payload}->>'reason' = 'pasted'`))
+    .limit(1);
+  if (inFlight) throw new UserFacingError("A pasted URL for this company is still being checked. Try another once it has finished.");
   await enqueueTask(db(), "discover", { companyId: id, url, reason: "pasted" }, { dedupeKey: `discover:${id}:url:${url}`, priority: 1 });
   revalidatePath(`/companies/${id}`);
 }

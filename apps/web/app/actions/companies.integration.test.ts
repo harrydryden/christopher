@@ -23,7 +23,7 @@ vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (session ? {
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
-import { addCompanies, importPosting, refreshCompanyLogo, rescanCompany, saveCompanyNotes, suggestCompanyName, unfollowCompany } from "./companies";
+import { addCompanies, archiveCompany, importPosting, pasteDiscoveryUrl, refreshCompanyLogo, rescanCompany, resumeCompany, saveCompanyNotes, suggestCompanyName, unfollowCompany } from "./companies";
 import { companyApplicationCount, companyScanTiming, listCompanies } from "@/lib/queries/companies";
 import { scanTimingLine } from "@/app/(app)/companies/scan-line";
 
@@ -342,4 +342,80 @@ it("gives each companies-list row its open, review and shortlisted counts and th
   await database.insert(schema.careerSources)
     .values({ companyId: company.id, type: "greenhouse", url: "https://boards.greenhouse.io/acme", status: "active" });
   expect((await listCompanies(first.id))[0]!.sourceType).toBe("greenhouse");
+});
+
+/** `count` companies the account already follows, straight into the tables. */
+async function alreadyFollowing(userId: string, count: number, prefix = "held") {
+  const rows = await database.insert(schema.companies).values(Array.from({ length: count }, (_, n) => ({
+    name: `${prefix} ${n}`, domain: `${prefix}${n}.example`, homepageUrl: `https://${prefix}${n}.example`,
+  }))).returning({ id: schema.companies.id });
+  await database.insert(schema.companySubscriptions).values(rows.map(row => ({ userId, companyId: row.id })));
+  return rows.map(row => row.id);
+}
+
+it("refuses a submission of more than 25 companies, in a sentence on the page, and writes nothing", async () => {
+  const lines = Array.from({ length: 26 }, (_, n) => `https://many${n}.example`).join("\n");
+  await expect(addCompanies(urls(lines))).rejects.toThrow(`redirect:/companies?error=${encodeURIComponent("Add at most 25 companies at a time. This list has 26.").replace(/%20/g, "+")}`);
+  expect(await database.select().from(schema.companies)).toHaveLength(0);
+  expect(await database.select().from(schema.tasks)).toHaveLength(0);
+});
+
+it("holds a member to 200 followed companies, counted under one lock, and leaves administrators unlimited", async () => {
+  session = secondCookie;
+  await alreadyFollowing(second.id, 198);
+  // Two at once from one account: one fills the allowance, the other is refused whole.
+  const outcomes = await Promise.allSettled([
+    addCompanies(urls("https://new-a.example\nhttps://new-b.example")),
+    addCompanies(urls("https://new-c.example\nhttps://new-d.example")),
+  ]);
+  const messages = outcomes.map(outcome => outcome.status === "rejected" ? String((outcome.reason as Error).message) : "resolved");
+  expect(messages.filter(message => message.startsWith("redirect:/companies?added=2"))).toHaveLength(1);
+  // The second is counted after the first commits, so it sees the allowance already full.
+  expect(messages.filter(message => message.includes("error=") && message.includes("up+to+200+companies%2C+and+you+follow+200"))).toHaveLength(1);
+  const following = await database.select().from(schema.companySubscriptions).where(eq(schema.companySubscriptions.userId, second.id));
+  expect(following).toHaveLength(200);
+  expect(await database.select().from(schema.companies)).toHaveLength(200);
+
+  // Following one already followed adds nothing to the count, so it is not refused.
+  await expect(addCompanies(urls("https://held1.example"))).rejects.toThrow("redirect:/companies?added=0");
+  // An archived follow is outside the allowance, and bringing it back counts like a new one.
+  const [held] = await database.select().from(schema.companies).where(eq(schema.companies.domain, "held0.example"));
+  await archiveCompany(held!.id);
+  await expect(addCompanies(urls("https://new-e.example"))).rejects.toThrow("redirect:/companies?added=1");
+  await expect(resumeCompany(held!.id)).rejects.toThrow("redirect:/companies?error=");
+  const [archived] = await database.select().from(schema.companySubscriptions)
+    .where(eq(schema.companySubscriptions.companyId, held!.id));
+  expect(archived!.status).toBe("archived");
+
+  // The administrator is not limited.
+  session = firstCookie;
+  await alreadyFollowing(first.id, 200, "admin");
+  await expect(addCompanies(urls("https://admin-more.example"))).rejects.toThrow("redirect:/companies?added=1");
+});
+
+it("records who added a company, admits five followed companies inline and queues the rest", async () => {
+  // Seven companies already in the catalogue, each with a stored role the gate admits.
+  const ids = await alreadyFollowing(second.id, 7, "known");
+  for (const [n, companyId] of ids.entries()) {
+    const [source] = await database.insert(schema.careerSources).values({ companyId, type: "html", url: `https://known${n}.example/jobs` }).returning();
+    await database.insert(schema.jobs).values({ companyId, sourceId: source!.id, externalKey: "1", title: "Operations Lead", normalizedTitle: "operations lead", url: `https://known${n}.example/jobs/1` });
+  }
+  await expect(addCompanies(urls(Array.from({ length: 7 }, (_, n) => `https://known${n}.example`).join("\n")))).rejects.toThrow("redirect:/companies?added=0&followed=7");
+  expect(await database.select().from(schema.userJobs).where(eq(schema.userJobs.userId, first.id))).toHaveLength(5);
+  const queued = await tasksOfType("reevaluate_gate");
+  expect(queued.map(task => task.dedupeKey).sort()).toEqual(ids.slice(5).map(id => `reevaluate_gate:${first.id}:${id}`).sort());
+
+  await expect(addCompanies(urls("https://brand-new.example"))).rejects.toThrow("redirect:/companies?added=1");
+  const [created] = await database.select().from(schema.companies).where(eq(schema.companies.domain, "brand-new.example"));
+  expect(created!.addedBy).toBe(first.id);
+});
+
+it("keeps one pasted discovery in hand per company", async () => {
+  const company = await followedCompany();
+  await pasteDiscoveryUrl(company.id, urlForm("https://acme.example/careers"));
+  await expect(pasteDiscoveryUrl(company.id, urlForm("https://acme.example/jobs"))).rejects.toThrow("still being checked");
+  expect((await tasksOfType("discover")).filter(task => (task.payload as { reason?: string }).reason === "pasted")).toHaveLength(1);
+  await database.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.type, "discover"));
+  await pasteDiscoveryUrl(company.id, urlForm("https://acme.example/jobs"));
+  expect((await tasksOfType("discover")).filter(task => task.status === "queued")).toHaveLength(1);
 });

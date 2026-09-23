@@ -142,3 +142,14 @@ it("rolls back acceptance if queuing careers setup fails", async () => {
     expect((await database.select().from(schema.companySuggestions))[0]!.status).toBe("pending");
   } finally { failure.mockRestore(); }
 });
+it("holds a member who already follows 200 companies to that when accepting a recommendation", async () => {
+  const member = await ensureTestUser(database, "full@example.com", "member");
+  auth.requireUser.mockImplementation(async () => member);
+  await database.insert(schema.userSettings).values({ userId: member.id, key: "gate", value: { includeKeywords: ["operations"], excludeKeywords: [], matchFields: ["title"], locationTerms: [], includeRemote: true } });
+  const held = await database.insert(schema.companies).values(Array.from({ length: 200 }, (_, n) => ({ name: `Held ${n}`, domain: `held${n}.example`, homepageUrl: `https://held${n}.example` }))).returning({ id: schema.companies.id });
+  await database.insert(schema.companySubscriptions).values(held.map(row => ({ userId: member.id, companyId: row.id })));
+  const [row] = await database.insert(schema.companySuggestions).values({ userId: member.id, name: "Acme", domain: "acme.example", homepageUrl: "https://acme.example" }).returning();
+  expect(await acceptSuggestion(row!.id)).toEqual({ ok: false, error: expect.stringContaining("up to 200 companies") });
+  expect(await database.select().from(schema.companies).where(eq(schema.companies.domain, "acme.example"))).toHaveLength(0);
+  expect((await database.select().from(schema.companySuggestions))[0]!.status).toBe("pending");
+});

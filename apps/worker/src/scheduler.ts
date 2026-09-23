@@ -7,7 +7,7 @@ import { log } from "./log";
 import { finaliseScanRuns } from "./handlers/daily";
 import { CV_ABANDONED_MESSAGE, cvInterruptedFailure, onAbandon } from "./handlers/abandon";
 import { failOpenCvBuildStepsQuietly } from "./handlers/cv-journal";
-import { agePriorities, requeueStale } from "./queue";
+import { agePriorities, failSpentTasks, requeueStale } from "./queue";
 import { getInternal, setInternal } from "./settings";
 
 function addMinutes(hm: string, minutes: number): string {
@@ -75,6 +75,11 @@ export async function schedulerTick(deps: WorkerDeps): Promise<void> {
 
   const recovered = await requeueStale(deps.db, undefined, deps.env.workerId, { deps, onAbandon });
   if (recovered.requeued || recovered.failed) log.warn("recovered tasks from a lost worker", recovered);
+  // Boot sweeps these too; hourly is enough for a state nothing current produces.
+  await claimPeriodic(deps, "lastSpentSweep", 3600, async () => {
+    const spent = await failSpentTasks(deps.db, deps.env.workerId, { deps, onAbandon });
+    if (spent) log.warn("failed queued tasks that had spent every attempt", { spent });
+  });
 
   // Every few minutes, and once a day: the sweeps that catch what the queue itself could not.
   await claimPeriodic(deps, "lastCvReconcile", 300, async () => {

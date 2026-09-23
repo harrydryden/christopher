@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { RoleWorkspace } from "@/components/RoleWorkspace";
 import type { RawSearchParams } from "@/lib/queries/jobs";
 import { SettingsForm } from "@/components/SettingsForm";
@@ -69,7 +70,7 @@ function KeywordPrompt() {
   return (
     <p className="text-12 text-muted">
       It is outside your filters, so a scan would not have caught it.{" "}
-      <a href="/settings#keywords" className="text-fg underline">Update your keywords</a> so similar roles reach your table.
+      <Link href="/settings#keywords" className="text-fg underline">Update your keywords</Link> so similar roles reach your table.
     </p>
   );
 }
@@ -94,7 +95,7 @@ function ImportStatus({ row, companyId }: { row: PostingImportRow; companyId: st
   return (
     <div className="space-y-1">
       <p className="text-14">
-        Added «<a href={`/companies/${companyId}?view=auto-matched#roles`} className="text-fg underline">{result.title ?? host}</a>»
+        Added «<Link href={`/companies/${companyId}?view=auto-matched#roles`} className="text-fg underline">{result.title ?? host}</Link>»
         {result.existing && <span className="text-muted"> · already in the catalogue</span>}
       </p>
       {outsideFilters && <KeywordPrompt />}
@@ -108,6 +109,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
   const company = await getCompany(user.id, id);
   if (!company) notFound();
   const admin = user.role === "admin";
+  const now = new Date();
 
   const [sources, latestRun, scans, profile, followers, discoveryState, imports, ungated, suggestion, work, timing, applications, system, setup] = await Promise.all([
     getCompanySources(id),
@@ -120,13 +122,12 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
     ungatedUserPostings(user.id, id),
     pendingNameSuggestion(user.id, id),
     getCompanyWorkStatus(user.id),
-    companyScanTiming(id),
+    companyScanTiming(id, now),
     companyApplicationCount(user.id, id),
     getSystemSettings(),
     companySetupRows(user.id, id),
   ]);
 
-  const now = new Date();
   const candidates = (latestRun?.candidates ?? []) as DiscoveryCandidateView[];
   const subscription = company.subscription;
   const icon = companyIcon(company);
@@ -192,9 +193,9 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
             )}
             <span className="block text-12">
               {applications > 0 ? (
-                <a href={`/applications?company=${company.id}&filter=all`} className="text-fg underline">
+                <Link href={`/applications?company=${company.id}&filter=all`} className="text-fg underline">
                   {applications} {applications === 1 ? "application" : "applications"}
-                </a>
+                </Link>
               ) : (
                 <span className="text-muted">No applications here yet</span>
               )}
@@ -235,7 +236,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
         </div>
       )}
 
-      {work.active && <AutoRefresh message="Work is pending for your companies. Status updates automatically." />}
+      {work.active && <AutoRefresh scope="company" initialVersion={work.version} message="Work is pending for your companies. Status updates automatically." />}
 
       {needsSetup ? (
         <Card title="What has happened so far">
@@ -541,7 +542,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
 
             <p className="text-12 text-muted">
               Deleting the company or a source for every follower is done from{" "}
-              <a href={`/admin/catalogue?q=${encodeURIComponent(company.domain)}`} className="text-fg underline">Admin › Company catalogue</a>.
+              <Link href={`/admin/catalogue?q=${encodeURIComponent(company.domain)}`} className="text-fg underline">Admin › Company catalogue</Link>.
             </p>
           </div>
         </details>

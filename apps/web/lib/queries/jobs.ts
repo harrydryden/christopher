@@ -1,8 +1,9 @@
 import { latestApplicationFor, roleStageSql, roleStatusSql, type LatestApplication } from "@ava/db";
 import { deadlineFor, defaultRoleTab, roleStatus, ROLE_STATUSES, ROLE_TABS, type ApplicationStatus, type RoleStage, type RoleStatus, type RoleTab } from "@ava/core";
-import { getTableColumns, and, desc, eq, inArray, ne, isNull, or, sql, lte } from "drizzle-orm";
-import { careerSources, companies, decisions, jobEvents, jobs, userJobs, type Job, type ScoreState, type SourceType, type UserJob } from "@ava/db/schema";
+import { getTableColumns, and, eq, inArray, ne, isNull, sql, type SQL } from "drizzle-orm";
+import { careerSources, companies, decisions, jobs, userJobs, type Job, type ScoreState, type SourceType, type UserJob } from "@ava/db/schema";
 import { displayStatus, formatDuration, liveFor, type DisplayStatus } from "@ava/core";
+import { cache } from "react";
 import { db } from "@/lib/db";
 import { companyLogoUrl } from "@/lib/company-icon";
 import { eventTypeLabel, relativeTime } from "@/lib/format";
@@ -95,10 +96,10 @@ function roleRowSelection(latest: LatestApplication, userId: string) {
   } as const;
 }
 
-function baseRolesSelect(userId: string, summary = false) {
+function baseRolesSelect(userId: string, summary = false, cursor: SQL<RoleCursor> = sql<RoleCursor>`null`) {
   const latest = latestApplicationFor(userId);
   return db()
-    .select({ ...roleRowSelection(latest, userId), job: { ...getTableColumns(jobs), ...viewColumns, descriptionText: summary ? sql<string | null>`null` : jobs.descriptionText } })
+    .select({ ...roleRowSelection(latest, userId), job: { ...getTableColumns(jobs), ...viewColumns, descriptionText: summary ? sql<string | null>`null` : jobs.descriptionText }, cursor })
     .from(userJobs)
     .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
     .innerJoin(companies, eq(jobs.companyId, companies.id))
@@ -125,22 +126,41 @@ export async function fetchRoleDetails(userId: string, ids: string[]): Promise<R
   return rows.map(row => ({ ...row, events: [] }));
 }
 
-/** Most recent job_events per job id, newest first, capped per job: shared observations plus this account's own. */
+/**
+ * Most recent job_events per job id, newest first, capped per job: shared observations plus this
+ * account's own.
+ *
+ * A posting followed by many accounts carries every one of their scored, decided and hidden
+ * events, so the query never reads the job's whole history to rank it: for each job it takes the
+ * newest few shared events and the newest few of this account's, each a bounded probe, and keeps
+ * the newest few of the two. Another account's events are never read.
+ */
 export async function fetchRecentEventsFor(userId: string, jobIds: string[], perJobLimit = 6): Promise<Map<string, RoleEvent[]>> {
   const map = new Map<string, RoleEvent[]>();
-  if (jobIds.length === 0) return map;
-  const ranked = db().select({ id: jobEvents.id, jobId: jobEvents.jobId, type: jobEvents.type,
-    payload: jobEvents.payload, at: jobEvents.at,
-    rank: sql<number>`row_number() over (partition by ${jobEvents.jobId} order by ${jobEvents.at} desc, ${jobEvents.id})`.as("event_rank"),
-  }).from(jobEvents).where(and(inArray(jobEvents.jobId, jobIds), or(isNull(jobEvents.userId), eq(jobEvents.userId, userId)))).as("ranked_events");
-  const rows = await db().select().from(ranked).where(lte(ranked.rank, perJobLimit)).orderBy(desc(ranked.at));
-  for (const row of rows) {
-    const existing = map.get(row.jobId);
-    const entry: RoleEvent = { id: row.id, type: row.type, payload: row.payload, at: row.at };
+  const ids = [...new Set(jobIds)];
+  if (ids.length === 0) return map;
+  // Drizzle renders one placeholder per element, so the array is spelled out rather than passed whole.
+  const idArray = sql`array[${sql.join(ids.map((id) => sql`${id}`), sql`, `)}]::uuid[]`;
+  const result = await db().execute(sql`
+    select e.id, e.job_id, e.type, e.payload, e.at
+    from unnest(${idArray}) as j(id)
+    cross join lateral (
+      (select id, job_id, type, payload, at from job_events
+        where job_id = j.id and user_id is null
+        order by at desc, id limit ${perJobLimit})
+      union all
+      (select id, job_id, type, payload, at from job_events
+        where user_id = ${userId}::uuid and job_id = j.id
+        order by at desc, id limit ${perJobLimit})
+    ) e
+    order by e.job_id, e.at desc, e.id`);
+  for (const row of result.rows as Array<{ id: string; job_id: string; type: string; payload: Record<string, unknown>; at: string | Date }>) {
+    const existing = map.get(row.job_id);
+    const entry: RoleEvent = { id: row.id, type: row.type, payload: row.payload, at: new Date(row.at) };
     if (existing) {
       if (existing.length < perJobLimit) existing.push(entry);
     } else {
-      map.set(row.jobId, [entry]);
+      map.set(row.job_id, [entry]);
     }
   }
   return map;
@@ -575,28 +595,81 @@ function rolesQuery(userId: string, filters: RolesFilters, archived: boolean, no
     // "This week": the window is on the decision, so an undecided role is never in a `since` view.
     cutoff ? sql`${decisions.createdAt} >= ${cutoff}` : undefined,
   );
-  const direction = sql.raw(filters.dir === 'desc' ? 'desc' : 'asc');
   const sorts = {
     status: sql`case ${status} when 'new' then 0 when 'active' then 1 else 2 end`,
     fit: userJobs.fitScore, company: companies.name, firstSeen: jobs.firstSeenAt, title: jobs.title, location: sql`coalesce(${jobs.location}, '')`,
     decided: decisions.createdAt,
     liveFor: sql`greatest(0, floor(extract(epoch from (case when ${jobs.status} = 'closed' then coalesce(${jobs.closedAt}, ${now}) else ${now} end - (${liveStart}))) / 86400))`,
   };
-  const order = filters.sort === 'status'
-    ? [sql`${sorts.status} ${direction}`, sql`${userJobs.fitScore} ${filters.dir === 'asc' ? sql`desc nulls last` : sql`asc nulls first`}`, sql`${jobs.firstSeenAt} ${filters.dir === 'asc' ? sql`desc` : sql`asc`}`, jobs.id]
-    : [sql`${sorts[filters.sort]} ${direction} nulls last`, jobs.id];
-  return { conditions, order };
+  const dir: SortDir = filters.dir === 'desc' ? 'desc' : 'asc';
+  const flip: SortDir = dir === 'asc' ? 'desc' : 'asc';
+  // PostgreSQL's own default, written out: ascending puts nulls last and descending puts them first.
+  const nullsByDefault = (d: SortDir) => (d === 'asc' ? 'last' : 'first');
+  const keys: SortKeyPart[] = filters.sort === 'status'
+    ? [
+        { expr: sorts.status, dir, nulls: nullsByDefault(dir) },
+        { expr: sql`${userJobs.fitScore}`, dir: flip, nulls: dir === 'asc' ? 'last' : 'first' },
+        { expr: sql`${jobs.firstSeenAt}`, dir: flip, nulls: nullsByDefault(flip) },
+        { expr: sql`${jobs.id}`, dir: 'asc', nulls: 'last' },
+      ]
+    : [
+        { expr: sql`${sorts[filters.sort]}`, dir, nulls: 'last' },
+        { expr: sql`${jobs.id}`, dir: 'asc', nulls: 'last' },
+      ];
+  const order = keys.map((key) => sql`${key.expr} ${sql.raw(key.dir)} nulls ${sql.raw(key.nulls)}`);
+  // Each row's own values of the keys, as the database computed them: JSON keeps a timestamp to the
+  // microsecond, which a JavaScript date would round and a keyset comparison would then get wrong.
+  const cursor = sql<RoleCursor>`json_build_array(${sql.join(keys.map((key) => key.expr), sql`, `)})`;
+  return { conditions, order, keys, cursor };
+}
+
+/** One key of a view's order: what is compared, which way, and where its nulls go. */
+interface SortKeyPart {
+  expr: SQL;
+  dir: SortDir;
+  nulls: "first" | "last";
 }
 
 /**
- * One block of a filtered view, at any offset and size: the table reads 50 of these, the export
- * reads them 500 at a time until its cap. Summary rows either way — nothing that renders a block
- * renders the stored description, and 50 of them is up to 1.5 MB read and serialised on every
- * render and every pagination click.
+ * Where a block of a view ended: the last row's values of every sort key, `jobs.id` last, as
+ * `fetchRoleRows` returned them on that row. Opaque to callers; only handed back as `after`.
  */
-export async function fetchRoleRows(userId: string, filters: RolesFilters, archived: boolean, { offset = 0, limit = 50, now = new Date() }: { offset?: number; limit?: number; now?: Date } = {}): Promise<RoleRow[]> {
-  const { conditions, order } = rolesQuery(userId, filters, archived, now);
-  const rows = await baseRolesSelect(userId, true).where(conditions).orderBy(...order).limit(limit).offset(offset);
+export type RoleCursor = readonly unknown[];
+
+/**
+ * The rows strictly after `cursor` in the view's order: after it on the first key where they
+ * differ, with nulls placed exactly as the `order by` places them, so reading block after block
+ * yields the order an offset read would, without the database skipping over what it has sent.
+ */
+function afterCursor(keys: SortKeyPart[], cursor: RoleCursor): SQL {
+  if (cursor.length !== keys.length) throw new Error("A roles cursor must come from the same view.");
+  let rest: SQL | undefined;
+  for (let i = keys.length - 1; i >= 0; i--) {
+    const { expr, dir, nulls } = keys[i]!;
+    const value = cursor[i] ?? null;
+    const op = sql.raw(dir === 'asc' ? '>' : '<');
+    const beyond = value === null
+      ? (nulls === 'first' ? sql`${expr} is not null` : sql`false`)
+      : (nulls === 'last' ? sql`(${expr} ${op} ${value} or ${expr} is null)` : sql`${expr} ${op} ${value}`);
+    const same = value === null ? sql`${expr} is null` : sql`${expr} = ${value}`;
+    rest = rest ? sql`(${beyond} or (${same} and ${rest}))` : beyond;
+  }
+  return rest!;
+}
+
+/**
+ * One block of a filtered view, at an offset or after a cursor, and of any size: the table reads 50
+ * of these by page, the export reads them 500 at a time after the last row it wrote, until its cap.
+ * Summary rows either way — nothing that renders a block renders the stored description, and 50 of
+ * them is up to 1.5 MB read and serialised on every render and every pagination click.
+ *
+ * Each row carries its `cursor`; passing the last one back as `after` reads the next block without
+ * the database walking every row before it again, which an offset makes it do.
+ */
+export async function fetchRoleRows(userId: string, filters: RolesFilters, archived: boolean, { offset = 0, limit = 50, now = new Date(), after = null }: { offset?: number; limit?: number; now?: Date; after?: RoleCursor | null } = {}): Promise<Array<RoleRow & { cursor: RoleCursor }>> {
+  const { conditions, order, keys, cursor } = rolesQuery(userId, filters, archived, now);
+  const where = after ? and(conditions, afterCursor(keys, after)) : conditions;
+  const rows = await baseRolesSelect(userId, true, cursor).where(where).orderBy(...order).limit(limit).offset(offset);
   return rows.map(row => ({ ...row, events: [] as RoleEvent[] }));
 }
 
@@ -653,17 +726,25 @@ export function locationReasonText(evaluated: { ok: boolean; terms: string[]; re
   return "Remote, and your filter allows remote roles.";
 }
 
-/** SQL filters and pagination for one 50-row page; descriptions are left in the database. */
+/**
+ * SQL filters and pagination for one 50-row page; descriptions are left in the database. The count
+ * and the page asked for are read side by side; only a page past the end of the view (a link
+ * written before the view shrank) waits for the count and reads the last page instead.
+ */
 export async function fetchRolePage(userId: string, filters: RolesFilters, archived: boolean, threshold: number | null, requestedPage: number, now = new Date()) {
   const started = Date.now();
   const { conditions } = rolesQuery(userId, filters, archived, now);
-  const [counted] = await db().select({ n: sql<number>`count(*)::int` }).from(baseRolesSelect(userId, true).where(conditions).as('filtered'));
+  const asked = Math.max(1, Number.isSafeInteger(requestedPage) ? requestedPage : 1);
+  const [[counted], rows] = await Promise.all([
+    db().select({ n: sql<number>`count(*)::int` }).from(baseRolesSelect(userId, true).where(conditions).as('filtered')),
+    fetchRoleRows(userId, filters, archived, { offset: (asked - 1) * 50, limit: 50, now }),
+  ]);
   const total = counted?.n ?? 0;
   // Fit is an explicit filter, never a second hidden workflow: nothing is ever held back.
   const hiddenTotal = 0;
   const pageCount = Math.max(1, Math.ceil(total / 50));
-  const page = Math.min(pageCount, Math.max(1, Number.isSafeInteger(requestedPage) ? requestedPage : 1));
-  const visible = await fetchRoleRows(userId, filters, archived, { offset: (page - 1) * 50, limit: 50, now });
+  const page = Math.min(pageCount, asked);
+  const visible = page === asked ? rows : await fetchRoleRows(userId, filters, archived, { offset: (page - 1) * 50, limit: 50, now });
   console.info(JSON.stringify({ event: 'role_page', durationMs: Date.now() - started, rows: visible.length, total, page }));
   return { visible, hidden: [] as RoleRow[], total, hiddenTotal, page, pageCount };
 }
@@ -684,7 +765,15 @@ export function appliedRoleCount(stageCounts: Partial<Record<RoleStage, number>>
   return APPLIED_ROLE_STAGES.reduce((total, stage) => total + (stageCounts[stage] ?? 0), 0);
 }
 
-export async function fetchRoleCounts(userId: string, companyId?: string): Promise<Record<RoleStatus, number>> {
+/**
+ * How many of this account's roles sit under each tab, for the whole table or one company. Kept for
+ * the request: the roles page's setup card and its workspace both ask for the whole table's.
+ */
+export function fetchRoleCounts(userId: string, companyId?: string): Promise<Record<RoleStatus, number>> {
+  return roleCountsFor(userId, companyId || null);
+}
+
+const roleCountsFor = cache(async (userId: string, companyId: string | null): Promise<Record<RoleStatus, number>> => {
   const rows = await db().select({ status: roleStatusSql, n: sql<number>`count(*)::int` }).from(userJobs)
     .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
     .leftJoin(decisions, and(eq(decisions.userId, userId), eq(decisions.jobId, jobs.id), eq(decisions.superseded, false)))
@@ -692,4 +781,4 @@ export async function fetchRoleCounts(userId: string, companyId?: string): Promi
   const counts = Object.fromEntries(ROLE_STATUSES.map(status => [status, 0])) as Record<RoleStatus, number>;
   for (const row of rows) counts[row.status] = row.n;
   return counts;
-}
+});

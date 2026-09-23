@@ -1,6 +1,6 @@
 "use server";
 
-import { needsEmailConfirmation, requireUser } from "@/lib/auth";
+import { needsEmailConfirmation, requireUser, requireVerifiedUser } from "@/lib/auth";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { companies, decisions, jobEvents, jobs, tagVocabulary, userJobs } from "@ava/db/schema";
@@ -205,8 +205,9 @@ export async function decide(jobId: string, decision: "apply" | "skip" | null, r
   return ok();
 }
 
+/** Editing a decision's tags re-synthesises the profile from them, which is model work. */
 export async function saveDecisionTags(decisionId: string, formData: FormData): Promise<void> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   const id = zUuid().parse(decisionId);
   const tags = [...new Set(formData.getAll("tags").map(String))];
   if (tags.length > 30) throw new UserFacingError("Choose at most 30 tags.");

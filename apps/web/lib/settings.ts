@@ -44,8 +44,13 @@ export async function setUserSetting(userId: string, key: keyof UserSettings, va
     .onConflictDoUpdate({ target: [userSettingsTable.userId, userSettingsTable.key], set: { value: value as object, updatedAt: new Date() } });
 }
 
-/** Persist one account's settings and its gate membership in one transaction before returning to the interface. */
-export async function saveSettingsAndGate(userId: string, entries: Partial<UserSettings>): Promise<void> {
+/**
+ * Persist one account's settings and its gate membership in one transaction before returning to the
+ * interface. `rescore` is false for an account that has not confirmed its address: re-scoring is
+ * model work, and filters are the one thing such an account sets at once (the gate itself spends
+ * nothing).
+ */
+export async function saveSettingsAndGate(userId: string, entries: Partial<UserSettings>, options: { rescore?: boolean } = {}): Promise<void> {
   await db().transaction(async (tx) => {
     for (const [key, value] of Object.entries(entries)) {
       if (!isUserSettingsKey(key)) throw new Error(`Not a user setting: ${key}`);
@@ -59,7 +64,7 @@ export async function saveSettingsAndGate(userId: string, entries: Partial<UserS
       // Every save gets a task, including changes made during an earlier re-evaluation.
       await enqueueTask(tx, "reevaluate_gate", { userId }, { priority: 1 });
     } else await reevaluateGate(tx as unknown as ReturnType<typeof db>, userId, settings);
-    await enqueueTask(tx, "rescore_all", { userId, onlyInTable: true }, { dedupeKey: `rescore_all:${userId}`, priority: 5 });
+    if (options.rescore ?? true) await enqueueTask(tx, "rescore_all", { userId, onlyInTable: true }, { dedupeKey: `rescore_all:${userId}`, priority: 5 });
   });
 }
 

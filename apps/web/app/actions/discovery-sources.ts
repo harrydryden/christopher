@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { ensureHttpUrl, normalizeUrl, sha1, stripHtml } from "@ava/core";
 import { discoveryDocuments, discoverySources } from "@ava/db/schema";
-import { requireUser, requireVerifiedUser } from "@/lib/auth";
+import { requireVerifiedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { getSettings } from "@/lib/settings";
@@ -41,8 +41,9 @@ export async function saveDiscoverySource(form: FormData): Promise<DiscoveryActi
   return { ok: true, message: kind === "email" ? "Source added. Import an edition to get started." : "Source added. Its first check is due now." };
 }
 
+/** Enabling or re-pointing a source schedules its next model-read check, so it waits for a confirmed address too. */
 export async function updateDiscoverySource(id: string, form: FormData): Promise<DiscoveryActionResult> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   const sourceId = zUuid().parse(id);
   const interval = z.coerce.number().int().min(1).max(90).safeParse(form.get("intervalDays"));
   if (!interval.success) return { ok: false, error: "Choose a check interval between 1 and 90 days." };

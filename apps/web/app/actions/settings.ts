@@ -1,6 +1,6 @@
 "use server";
 
-import { requireAdmin, requireUser } from "@/lib/auth";
+import { needsEmailConfirmation, requireAdmin, requireUser } from "@/lib/auth";
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -43,7 +43,7 @@ export async function saveGate(_prev: ActionResult, formData: FormData): Promise
   const settings = await getSettings();
   const parsed = gateFromForm(formData, settings.gate);
   if (!parsed.ok) return fail(parsed.error);
-  await saveSettingsAndGate(user.id, { gate: parsed.gate });
+  await saveSettingsAndGate(user.id, { gate: parsed.gate }, { rescore: !needsEmailConfirmation(user) });
   revalidatePath("/settings");
   revalidatePath("/companies");
   revalidatePath("/");
@@ -60,7 +60,7 @@ export async function saveMatchFields(_prev: ActionResult, formData: FormData): 
   const settings = await getSettings();
   const raw = formData.getAll("matchFields").map(String);
   const matchFields = MATCH_FIELDS.filter((f) => raw.includes(f));
-  await saveSettingsAndGate(user.id, { gate: { ...settings.gate, matchFields: matchFields.length ? matchFields : ["title"] } });
+  await saveSettingsAndGate(user.id, { gate: { ...settings.gate, matchFields: matchFields.length ? matchFields : ["title"] } }, { rescore: !needsEmailConfirmation(user) });
   revalidatePath("/settings");
   revalidatePath("/");
   return ok();
@@ -79,7 +79,7 @@ export async function saveTableSettings(_prev: ActionResult, formData: FormData)
     return fail("Show-closed-days must be a whole number between 0 and 365.");
   }
 
-  await saveSettingsAndGate(user.id, { showClosedDays });
+  await saveSettingsAndGate(user.id, { showClosedDays }, { rescore: !needsEmailConfirmation(user) });
   revalidatePath("/settings");
   revalidatePath("/");
   return ok();

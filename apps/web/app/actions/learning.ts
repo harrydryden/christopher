@@ -1,11 +1,11 @@
 "use server";
 
-import { requireUser, requireVerifiedUser } from "@/lib/auth";
+import { needsEmailConfirmation, requireUser, requireVerifiedUser } from "@/lib/auth";
 
 import { appendProfile, latestProfileFor, setSubscriptionStatus } from "@ava/db";
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { filterSuggestions, tagVocabulary } from "@ava/db/schema";
+import { filterSuggestions, tagVocabulary, type User } from "@ava/db/schema";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { countRolesInTable } from "@/lib/queries/learning";
@@ -13,8 +13,13 @@ import { describeFilterSuggestion, extractSuggestionValue } from "@/lib/filterSu
 import { getSettings, setUserSetting, saveSettingsAndGate } from "@/lib/settings";
 import { actionError, fail, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
 
+/**
+ * Everything on Learning that ends in a model call — a profile synthesis or a re-score — waits for a
+ * confirmed address, like every other action that spends (R-6.3's seed profile is the exception
+ * below). Reading the page, rejecting a suggestion and accepting a tag spend nothing and do not.
+ */
 export async function savePinnedStatements(formData: FormData): Promise<void> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   const raw = String(formData.get("pinnedStatements") ?? "");
   const lines = raw
     .split("\n")
@@ -32,7 +37,7 @@ export async function savePinnedStatements(formData: FormData): Promise<void> {
 }
 
 export async function answerOpenQuestion(questionId: string, formData: FormData): Promise<void> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   const answer = String(formData.get("answer") ?? "").trim();
   if (!answer) throw new UserFacingError("An answer is required.");
   const latest = await latestProfileFor(db(), user.id);
@@ -58,12 +63,17 @@ const SEED_PROFILE_LIMIT = 5_000;
 /**
  * The one write behind both seed-profile cards (R-6.3). Settings is where setup asks for it and
  * Learning is where it stays editable, so the two forms differ only in what they return.
+ *
+ * Setup asks for the seed profile before the address is confirmed, so the text is saved for any
+ * account; the synthesis it prompts is model work and waits for the confirmation. Nothing is lost
+ * by waiting: scoring reads the seed profile itself until a synthesised one exists, and the first
+ * decision after confirming queues the synthesis.
  */
-async function writeSeedProfile(userId: string, raw: string): Promise<string | null> {
+async function writeSeedProfile(user: User, raw: string): Promise<string | null> {
   const text = String(raw ?? "");
   if (text.length > SEED_PROFILE_LIMIT) return `Keep your seed profile under ${SEED_PROFILE_LIMIT.toLocaleString("en-GB")} characters. A few sentences is plenty.`;
-  await setUserSetting(userId, "seedProfile", text);
-  await enqueue("synthesize_profile", { userId, force: true });
+  await setUserSetting(user.id, "seedProfile", text);
+  if (!needsEmailConfirmation(user)) await enqueue("synthesize_profile", { userId: user.id, force: true });
   revalidatePath("/learning");
   revalidatePath("/settings");
   revalidatePath("/");
@@ -72,14 +82,14 @@ async function writeSeedProfile(userId: string, raw: string): Promise<string | n
 
 export async function saveSeedProfile(formData: FormData): Promise<void> {
   const user = await requireUser();
-  const error = await writeSeedProfile(user.id, String(formData.get("seedProfile") ?? ""));
+  const error = await writeSeedProfile(user, String(formData.get("seedProfile") ?? ""));
   if (error) throw new UserFacingError(error);
 }
 
 /** The Settings card's twin, for a `SettingsForm` that shows its errors inline. */
 export async function saveSeedProfileSetting(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const user = await requireUser();
-  const error = await writeSeedProfile(user.id, String(formData.get("seedProfile") ?? ""));
+  const error = await writeSeedProfile(user, String(formData.get("seedProfile") ?? ""));
   return error ? fail(error) : { ok: true };
 }
 
@@ -93,7 +103,8 @@ export async function saveSeedProfileSetting(_prev: ActionResult, formData: Form
  * straight into a `<form action>`, which React types as returning nothing at all.
  */
 export async function acceptFilterSuggestionWithReport(suggestionId: string): Promise<ActionResult> {
-  const user = await requireUser();
+  // Accepting re-evaluates the gate and re-scores the table, which is model work.
+  const user = await requireVerifiedUser();
   const parsedId = zUuid().safeParse(suggestionId);
   if (!parsedId.success) return fail("Suggestion not found.");
   const id = parsedId.data;
@@ -176,7 +187,7 @@ export async function rescoreAllRoles(): Promise<void> {
 }
 
 export async function savePreferenceProfile(formData: FormData): Promise<void> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   const markdown = String(formData.get("markdown") ?? "").trim();
   if (!markdown || markdown.length > 50_000) throw new UserFacingError("Enter a profile of between 1 and 50,000 characters.");
   const expectedVersion = Number(formData.get("profileVersion") ?? 0);

@@ -1,5 +1,5 @@
 "use server";
-import { requireUser, requireVerifiedUser } from "@/lib/auth";
+import { requireVerifiedUser } from "@/lib/auth";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { reevaluateGate, subscribeToCompany } from "@ava/db";
@@ -49,8 +49,9 @@ export async function acceptSuggestion(suggestionId: string): Promise<DiscoveryA
   return result;
 }
 
+/** A rejection's reason is fed to the next profile synthesis, which is model work. */
 export async function rejectSuggestion(suggestionId: string, formData: FormData): Promise<DiscoveryActionResult> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   const id = zUuid().parse(suggestionId);
   const reason = String(formData.get("reason") ?? "").trim();
   if (!reason || reason.length > 1000) return { ok: false, error: "Give a brief reason (up to 1,000 characters) so future recommendations can improve." };

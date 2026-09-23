@@ -1,7 +1,8 @@
 /**
- * The queue's dedupe rule, which lives in a partial unique index: a key has at most one task that
+ * The queue's dedupe rule, which lives in partial unique indexes: a key has at most one task that
  * is queued and has never started. A task already running does not absorb a new enqueue, so work
- * asked for while it runs gets one follow-up that reads the state as it is by then.
+ * asked for while it runs gets one follow-up that reads the state as it is by then. CV builds are
+ * the exception, one per draft whether queued or running.
  *
  * Requires a database: set TEST_DATABASE_URL (defaults to the local ava_test database).
  */
@@ -48,6 +49,19 @@ describe("the dedupe key", () => {
     // follow-up already holds the key, and neither may fail for it.
     await db.update(tasks).set({ status: "queued", lockedAt: null, lockedBy: null }).where(eq(tasks.id, first!));
     expect((await rows()).map(row => row.status)).toEqual(["queued", "queued"]);
+  });
+
+  it("keeps one CV build per draft, queued or running, so a rebuild waits for the last to finish", async () => {
+    const draftKey = "generate_cv:00000000-0000-4000-8000-000000000002";
+    const build = () => enqueueTask(db, "generate_cv", { draftId: "00000000-0000-4000-8000-000000000002" }, { dedupeKey: draftKey });
+    const first = await build();
+    await claim(first!);
+    expect(await build()).toBeNull();
+    // A retry of the running build still goes back to the queue.
+    await db.update(tasks).set({ status: "queued" }).where(eq(tasks.id, first!));
+    expect(await build()).toBeNull();
+    await db.update(tasks).set({ status: "done", finishedAt: new Date() }).where(eq(tasks.id, first!));
+    expect(await build()).toBeTruthy();
   });
 
   it("is free again once the task has finished", async () => {

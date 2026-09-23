@@ -53,7 +53,11 @@ CREATE INDEX IF NOT EXISTS "discovery_documents_processed_idx" ON "discovery_doc
 -- score) was dropped, and the run finished on the state it had read; now it leaves one follow-up
 -- that reads the state as it is by then. A task that has started keeps `started_at` when a retry,
 -- the stale sweep or a shutdown hands it back to the queue, so it never collides with its own
--- follow-up. The plain index keeps "is anything queued or running for this key" an index lookup.
-CREATE UNIQUE INDEX IF NOT EXISTS "tasks_dedupe_queued_uidx" ON "tasks" USING btree ("dedupe_key") WHERE "status" = 'queued' AND "started_at" IS NULL AND "dedupe_key" IS NOT NULL;--> statement-breakpoint
+-- follow-up. CV builds keep the rule they had: the draft's lifecycle allows one build at a time,
+-- and the interface refuses a rebuild while the previous task is still finishing rather than queue
+-- a second one behind it. The plain index keeps "is anything queued or running for this key" an
+-- index lookup.
+CREATE UNIQUE INDEX IF NOT EXISTS "tasks_dedupe_queued_uidx" ON "tasks" USING btree ("dedupe_key") WHERE "status" = 'queued' AND "started_at" IS NULL AND "type" <> 'generate_cv' AND "dedupe_key" IS NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "tasks_dedupe_cv_build_uidx" ON "tasks" USING btree ("dedupe_key") WHERE "type" = 'generate_cv' AND "status" IN ('queued', 'running') AND "dedupe_key" IS NOT NULL;--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "tasks_dedupe_active_idx" ON "tasks" USING btree ("dedupe_key") WHERE "status" IN ('queued', 'running') AND "dedupe_key" IS NOT NULL;--> statement-breakpoint
 DROP INDEX IF EXISTS "tasks_dedupe_active_uidx";

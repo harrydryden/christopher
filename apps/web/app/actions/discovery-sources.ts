@@ -4,12 +4,19 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { ensureHttpUrl, normalizeUrl, sha1, stripHtml } from "@ava/core";
 import { discoveryDocuments, discoverySources } from "@ava/db/schema";
-import { requireUser, requireVerifiedUser } from "@/lib/auth";
+import { requireVerifiedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { getSettings } from "@/lib/settings";
 import { zUuid } from "@/lib/validation";
+import { unsafeUrlRefusal } from "@/lib/public-url";
 import type { DiscoveryActionResult } from "@/lib/discovery-ux";
+
+/**
+ * Each enabled source is fetched through the shared polite fetcher and read by the model on its
+ * interval, so one account keeps a newsletter shelf, not a crawl list.
+ */
+const MAX_DISCOVERY_SOURCES = 20;
 
 const sourceInput = z.object({ name: z.string().trim().min(1).max(200), kind: z.enum(["website", "email", "linkedin"]), intervalDays: z.coerce.number().int().min(1).max(90) });
 export async function saveDiscoverySource(form: FormData): Promise<DiscoveryActionResult> {
@@ -27,22 +34,29 @@ export async function saveDiscoverySource(form: FormData): Promise<DiscoveryActi
       if (kind === "linkedin" && parsedUrl.hostname !== "linkedin.com" && !parsedUrl.hostname.endsWith(".linkedin.com")) return { ok: false, error: "Use a LinkedIn URL, or select Website for another site." };
       url = normalizeUrl(parsedUrl.href);
     } catch { return { ok: false, error: "Enter a valid public website or LinkedIn URL." }; }
+    const unsafe = unsafeUrlRefusal(url);
+    if (unsafe) return { ok: false, error: unsafe };
   }
   const created = await db().transaction(async tx => {
-    // Serialise equivalent additions, including separate browser tabs.
+    // Serialise this account's additions, including separate browser tabs, so neither the duplicate
+    // check nor the count can be passed twice at once.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`discovery-sources:${user.id}`}))`);
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${user.id}:${url ?? `email:${name.toLowerCase()}`}`}))`);
     const existing = await tx.select().from(discoverySources).where(eq(discoverySources.userId, user.id));
-    if (existing.some(row => url ? row.url && normalizeUrl(row.url) === url : row.kind === "email" && row.name.toLowerCase() === name.toLowerCase())) return false;
+    if (existing.some(row => url ? row.url && normalizeUrl(row.url) === url : row.kind === "email" && row.name.toLowerCase() === name.toLowerCase())) return "duplicate";
+    if (existing.length >= MAX_DISCOVERY_SOURCES) return "full";
     await tx.insert(discoverySources).values({ userId: user.id, name, kind, intervalDays, url });
-    return true;
+    return "created";
   });
-  if (!created) return { ok: false, error: "This source is already on your list. Use its settings or Check now." };
+  if (created === "duplicate") return { ok: false, error: "This source is already on your list. Use its settings or Check now." };
+  if (created === "full") return { ok: false, error: `You can keep up to ${MAX_DISCOVERY_SOURCES} sources, and this list is full. Point one you no longer read at the new address instead.` };
   revalidatePath("/suggestions");
   return { ok: true, message: kind === "email" ? "Source added. Import an edition to get started." : "Source added. Its first check is due now." };
 }
 
+/** Enabling or re-pointing a source schedules its next model-read check, so it waits for a confirmed address too. */
 export async function updateDiscoverySource(id: string, form: FormData): Promise<DiscoveryActionResult> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   const sourceId = zUuid().parse(id);
   const interval = z.coerce.number().int().min(1).max(90).safeParse(form.get("intervalDays"));
   if (!interval.success) return { ok: false, error: "Choose a check interval between 1 and 90 days." };
@@ -62,6 +76,8 @@ export async function updateDiscoverySource(id: string, form: FormData): Promise
         if (source.kind === "linkedin" && parsedUrl.hostname !== "linkedin.com" && !parsedUrl.hostname.endsWith(".linkedin.com")) return "Use a LinkedIn URL for this source.";
         url = normalizeUrl(parsedUrl.href);
       } catch { return "Enter a valid public source URL."; }
+      const unsafe = url ? unsafeUrlRefusal(url) : null;
+      if (unsafe) return unsafe;
     }
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${user.id}:${url ?? `email:${name.toLowerCase()}`}`}))`);
     const existing = await tx.select().from(discoverySources).where(eq(discoverySources.userId, user.id));

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { RefreshCompanyButton } from "@/components/RefreshCompanyButton";
 import { CompanyFavicon } from "@/components/CompanyFavicon";
 import { companyIcon } from "@/lib/company-icon";
@@ -88,9 +89,9 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
       </Card>
       </div>
 
-      <SearchForm action="/companies" className="mb-4 flex flex-wrap items-end gap-3"><label className="grid gap-1.5"><span className={labelClass}>Search companies</span><input name="q" defaultValue={q} maxLength={200} className={`h-11 w-80 ${inputClass}`} /></label><Button type="submit" className="h-11">Search</Button><SearchPending />{q && <a className="self-center text-13 underline" href="/companies">Clear</a>}</SearchForm>
+      <SearchForm action="/companies" className="mb-4 flex flex-wrap items-end gap-3"><label className="grid gap-1.5"><span className={labelClass}>Search companies</span><input name="q" defaultValue={q} maxLength={200} className={`h-11 w-80 ${inputClass}`} /></label><Button type="submit" className="h-11">Search</Button><SearchPending />{q && <Link className="self-center text-13 underline" href="/companies">Clear</Link>}</SearchForm>
       <Pagination page={page} total={total} path="/companies" params={{ q }}/>
-      {work.active && <div className="mb-4"><AutoRefresh message="Company scanning or discovery is pending. Status updates automatically." /></div>}
+      {work.active && <div className="mb-4"><AutoRefresh scope="company" initialVersion={work.version} message="Company scanning or discovery is pending. Status updates automatically." /></div>}
       {rows.length === 0 ? (
         <EmptyState title={q ? "No matching companies" : "No companies yet"} description={q ? "Try another name or domain." : "Add a homepage URL above to start following a company’s careers page."} />
       ) : (
@@ -110,10 +111,10 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
             {rows.map(({ company, subscription, lastScan, openRoles, reviewRoles, shortlistedRoles, sourceType, followers, discovering, discoveryState, needsSource, lastDiscovery }) => (
               <TR key={company.id}>
                 <TD>
-                  <a href={`/companies/${company.id}`} className="flex items-center gap-2 no-underline hover:underline">
+                  <Link href={`/companies/${company.id}`} className="flex items-center gap-2 no-underline hover:underline">
                     <CompanyFavicon {...companyIcon(company)} />
                     <span className="font-semibold text-fg">{company.name}</span>
-                  </a>
+                  </Link>
                   <a href={company.homepageUrl} target="_blank" rel="noopener noreferrer" className="block text-12 text-muted no-underline hover:underline">
                     {company.domain}
                   </a>
@@ -132,7 +133,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                       <Badge tone="amber">no careers source</Badge>
                       <p className="mt-1 text-12 text-muted">
                         {lastDiscovery === "not_found" ? "Could not find the careers page." : lastDiscovery === "needs_confirmation" ? "Needs a source confirmed." : "Not discovered yet."}{" "}
-                        <a href={`/companies/${company.id}#careers-url`} className="text-fg underline">Add careers URL</a>
+                        <Link href={`/companies/${company.id}#careers-url`} className="text-fg underline">Add careers URL</Link>
                       </p>
                     </>
                   ) : (
@@ -154,21 +155,21 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                 </TD>
                 <TD>
                   {openRoles > 0 ? (
-                    <a className="no-underline hover:underline" href={`/companies/${company.id}#roles`}>{openRoles}</a>
+                    <Link className="no-underline hover:underline" href={`/companies/${company.id}#roles`}>{openRoles}</Link>
                   ) : (
                     <span className="text-muted">0</span>
                   )}
                 </TD>
                 <TD>
                   {reviewRoles > 0 ? (
-                    <a className="no-underline hover:underline" href={`/companies/${company.id}?view=auto-matched#roles`}>{reviewRoles}</a>
+                    <Link className="no-underline hover:underline" href={`/companies/${company.id}?view=auto-matched#roles`}>{reviewRoles}</Link>
                   ) : (
                     <span className="text-muted">0</span>
                   )}
                 </TD>
                 <TD>
                   {shortlistedRoles > 0 ? (
-                    <a className="no-underline hover:underline" href={`/companies/${company.id}?view=user-shortlisted#roles`}>{shortlistedRoles}</a>
+                    <Link className="no-underline hover:underline" href={`/companies/${company.id}?view=user-shortlisted#roles`}>{shortlistedRoles}</Link>
                   ) : (
                     <span className="text-muted">0</span>
                   )}

@@ -1,8 +1,17 @@
-import { routeUser } from '@/lib/route-auth';
+import { cookies } from 'next/headers';
+import { sessionCookieValue, sessionSecret, verifySessionCookieValue } from '@/lib/session';
 export const dynamic = 'force-dynamic';
+
+/**
+ * One navigation's timing, written to the log and nowhere else. It reads and writes no account's
+ * data, so a validly signed session cookie is enough: the check middleware makes, repeated here,
+ * without the session row that would cost a database round trip on every navigation.
+ */
 export async function POST(request: Request) {
-  const auth = await routeUser();
-  if (!auth.ok) return auth.response;
+  const secret = sessionSecret();
+  if (!secret || !(await verifySessionCookieValue(sessionCookieValue(await cookies()), secret))) {
+    return Response.json({ ok: false, error: 'Please sign in again.' }, { status: 401, headers: { 'cache-control': 'private, no-store' } });
+  }
   const body = await request.text();
   if (body.length > 1000) return new Response(null, { status: 413 });
   try {

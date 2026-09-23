@@ -41,7 +41,7 @@ export async function middleware(req: NextRequest) {
   if (authenticated) return NextResponse.next();
 
   if (req.nextUrl.pathname.startsWith("/api/")) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    return NextResponse.json({ error: "unauthorized" }, { status: 401, headers: { "cache-control": "private, no-store" } });
   }
 
   const loginUrl = new URL("/login", req.url);

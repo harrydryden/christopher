@@ -16,18 +16,18 @@
     "@ava/ai": "workspace:*",
     "@ava/core": "workspace:*",
     "@ava/db": "workspace:*",
-    "drizzle-orm": "latest",
+    "drizzle-orm": "0.45.2",
     "mammoth": "^1.12.3",
     "pdf-parse": "^2.4.5",
-    "pg": "latest",
+    "pg": "8.23.0",
     "playwright": "1.56.1",
-    "tsx": "latest"
+    "tsx": "4.23.13"
   },
   "devDependencies": {
-    "@types/node": "latest",
-    "@types/pg": "latest",
+    "@types/node": "26.4.1",
+    "@types/pg": "8.23.1",
     "typescript": "~5.9.0",
-    "vitest": "latest"
+    "vitest": "5.0.0"
   },
   "exports": {
     ".": {

@@ -1,6 +1,6 @@
 import { IncompleteListingError, type Adapter, type FetchContext, type RawPosting, type SourceSpec } from "../types";
 import { parseDate } from "../normalize";
-import { fetchJson, htmlToText, joinLocation, pathSegments, rec, safeUrl, slugOk, str, verifyFromFetch, MAX_POSTINGS } from "./common";
+import { fetchJson, htmlToText, joinLocation, pathSegments, rec, safeUrl, slugOk, str, verifyFromRead, MAX_POSTINGS, type ListingRead } from "./common";
 
 const API = "https://api.smartrecruiters.com/v1/companies";
 
@@ -49,17 +49,24 @@ function mapPosting(p: SrPosting, slug: string): RawPosting | null {
   };
 }
 
-/** Ten pages of 100 is 1,000 roles; boards larger than that exist and must not look complete. */
-const MAX_PAGES = 10;
+const PAGE_SIZE = 100;
+/**
+ * Two hundred pages of 100, bounded by the posting cap: every realistic board is read whole. A
+ * board longer than that is reported incomplete rather than complete.
+ */
+const MAX_PAGES = 200;
 
-async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
+/** Up to `maxPages` pages; `unread` is how many roles the board holds past the last page read. */
+async function readPages(spec: SourceSpec, ctx: FetchContext, maxPages: number): Promise<ListingRead & { unread: number | "unknown" }> {
   const slug = spec.atsSlug;
   if (!slug) throw new Error("smartrecruiters spec missing slug");
   const out: RawPosting[] = [];
-  const limit = 100;
+  const limit = PAGE_SIZE;
   let offset = 0;
-  let remaining = 0;
-  for (let page = 0; page < MAX_PAGES; page++) {
+  let total: number | undefined;
+  let companyName: string | undefined;
+  let unread: number | "unknown" = 0;
+  for (let page = 0; page < maxPages; page++) {
     const { data } = await fetchJson<{ content?: SrPosting[]; totalFound?: number; offset?: number; limit?: number }>(
       ctx,
       `${API}/${slug}/postings?limit=${limit}&offset=${offset}`,
@@ -69,16 +76,24 @@ async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPo
       const mapped = mapPosting(p, slug);
       if (mapped) out.push(mapped);
     }
-    const total = typeof data.totalFound === "number" ? data.totalFound : content.length;
+    companyName ??= str(content[0]?.company?.name);
+    if (typeof data.totalFound === "number") total = data.totalFound;
     offset += limit;
-    remaining = content.length === 0 ? 0 : Math.max(0, total - offset);
-    if (remaining === 0 || content.length === 0 || out.length >= MAX_POSTINGS) break;
+    // Without a total, only a short page proves the board has ended: a full one may have a
+    // successor, and treating it as the last page closed every role past it.
+    unread = content.length === 0 ? 0 : total !== undefined ? Math.max(0, total - offset) : content.length < limit ? 0 : "unknown";
+    if (unread === 0 || out.length >= MAX_POSTINGS) break;
   }
-  const postings = out.slice(0, MAX_POSTINGS);
+  return { postings: out.slice(0, MAX_POSTINGS), total, companyName, unread };
+}
+
+async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
+  const { postings, unread } = await readPages(spec, ctx, MAX_PAGES);
   // The page budget ran out with roles still unread. Returning what was read as a complete listing
-  // is what closes roles that are simply on page eleven.
-  if (remaining > 0) {
-    throw new IncompleteListingError(`SmartRecruiters listing stopped after ${MAX_PAGES} pages with ${remaining} roles unread; this scan cannot close roles`, postings);
+  // is what closes roles that are simply on the next page.
+  if (unread !== 0) {
+    const left = unread === "unknown" ? "more roles" : `${unread} roles`;
+    throw new IncompleteListingError(`SmartRecruiters listing stopped after ${postings.length} roles with ${left} unread; this scan cannot close roles`, postings);
   }
   return postings;
 }
@@ -113,5 +128,6 @@ export const smartrecruiters: Adapter = {
     return slug ? smartRecruitersSpec(slug) : null;
   },
   fetchPostings,
-  verify: (spec, ctx) => verifyFromFetch(() => fetchPostings(spec, ctx), () => companyName(spec, ctx))(),
+  // One page, which carries the company's name as well as the board's total.
+  verify: (spec, ctx) => verifyFromRead(() => readPages(spec, ctx, 1), () => companyName(spec, ctx))(),
 };

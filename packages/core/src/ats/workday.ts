@@ -1,7 +1,7 @@
 /** VERIFY: the /wday/cxs endpoint is undocumented but stable across tenants; shapes confirmed against fixtures. */
 import { IncompleteListingError, type Adapter, type FetchContext, type RawPosting, type SourceSpec } from "../types";
 import { parseRelativePosted } from "../normalize";
-import { fetchJson, pathSegments, safeUrl, str, verifyFromFetch, MAX_POSTINGS } from "./common";
+import { fetchJson, pathSegments, safeUrl, str, verifyFromRead, MAX_POSTINGS, type ListingRead } from "./common";
 
 const HOST_RE = /^([a-z0-9][a-z0-9-]*)\.(wd\d+)\.myworkdayjobs\.com$/;
 const LOCALE_RE = /^[a-z]{2}(-[A-Za-z]{2})?$/;
@@ -65,17 +65,23 @@ function mapPosting(p: WdPosting, host: string, site: string, now: Date): RawPos
   };
 }
 
-async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
+const PAGE_SIZE = 20;
+/** Every page a listing may take: the posting cap at Workday's twenty roles a page. */
+const MAX_PAGES = MAX_POSTINGS / PAGE_SIZE;
+
+/** Up to `maxPages` pages of the listing; `more` says the board holds roles past the last one read. */
+async function readPages(spec: SourceSpec, ctx: FetchContext, maxPages: number): Promise<ListingRead & { more: boolean }> {
   const p = parts(spec);
   if (!p) throw new Error("workday spec missing host/tenant/site");
   const now = ctx.now?.() ?? new Date();
   const out: RawPosting[] = [];
-  const limit = 20;
+  const limit = PAGE_SIZE;
   // Some tenants report `total` on the first page only and send 0 on every page after it, so the
   // count is taken once: trusting the later zero made page two look like the end of the board.
   let total: number | undefined;
   let more = false;
-  for (let offset = 0; offset < MAX_POSTINGS; offset += limit) {
+  for (let page = 0; page < maxPages; page++) {
+    const offset = page * limit;
     const { data } = await fetchJson<{ total?: number; jobPostings?: WdPosting[] }>(ctx, `https://${p.host}/wday/cxs/${p.tenant}/${p.site}/jobs`, {
       method: "POST",
       body: { appliedFacets: {}, limit, offset, searchText: "" },
@@ -91,14 +97,18 @@ async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPo
     more = total === undefined ? postings.length === limit : offset + limit < total;
     if (!more) break;
   }
-  const result = out.slice(0, MAX_POSTINGS);
-  if (more) throw new IncompleteListingError(`Workday listing stopped at ${result.length} roles with more pages to read; this scan cannot close roles`, result);
-  return result;
+  return { postings: out.slice(0, MAX_POSTINGS), total, more };
+}
+
+async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
+  const { postings, more } = await readPages(spec, ctx, MAX_PAGES);
+  if (more) throw new IncompleteListingError(`Workday listing stopped at ${postings.length} roles with more pages to read; this scan cannot close roles`, postings);
+  return postings;
 }
 
 export const workday: Adapter = {
   type: "workday",
   specFromUrl: fromUrl,
   fetchPostings,
-  verify: (spec, ctx) => verifyFromFetch(() => fetchPostings(spec, ctx))(),
+  verify: (spec, ctx) => verifyFromRead(() => readPages(spec, ctx, 1))(),
 };

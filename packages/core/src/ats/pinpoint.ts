@@ -1,7 +1,7 @@
 /** VERIFY: postings.json is undocumented. */
 import type { Adapter, FetchContext, RawPosting, SourceSpec } from "../types";
 import { parseDate } from "../normalize";
-import { fetchJson, rec, safeUrl, slugOk, str, verifyFromFetch, MAX_POSTINGS } from "./common";
+import { fetchJson, rec, safeUrl, slugOk, str, verifyFromFetch, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS } from "./common";
 
 export function pinpointSpec(slug: string): SourceSpec {
   return { type: "pinpoint", url: `https://${slug}.pinpointhq.com`, apiUrl: `https://${slug}.pinpointhq.com/postings.json`, atsSlug: slug };
@@ -22,7 +22,7 @@ function labelOf(v: unknown): string | undefined {
 async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
   const slug = spec.atsSlug;
   if (!slug) throw new Error("pinpoint spec missing slug");
-  const { data } = await fetchJson<unknown>(ctx, `https://${slug}.pinpointhq.com/postings.json`);
+  const { data } = await fetchJson<unknown>(ctx, `https://${slug}.pinpointhq.com/postings.json`, INLINE_DESCRIPTIONS_FETCH);
   const list = Array.isArray(rec(data)?.data) ? (rec(data)!.data as Array<Record<string, unknown>>) : Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
   const out: RawPosting[] = [];
   for (const raw of list) {

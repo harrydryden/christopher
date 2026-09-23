@@ -10,7 +10,7 @@ import { sessions, users, type User } from "@ava/db/schema";
 import { db } from "./db";
 import {
   createSessionCookieValue, DEFAULT_SESSION_TTL_SECONDS, isSecureHost, LEGACY_SESSION_COOKIE_NAME, readSessionCookie,
-  SESSION_COOKIE_NAME, sessionCookieValue,
+  SESSION_COOKIE_NAME, sessionCookieValue, sessionSecret,
 } from "./session";
 
 export interface CurrentUser {
@@ -20,7 +20,7 @@ export interface CurrentUser {
 
 /** The signed-in account for this request, memoised per request. Null when nobody is signed in. */
 export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
-  const secret = process.env.SESSION_SECRET;
+  const secret = sessionSecret();
   if (!secret) return null;
   const value = sessionCookieValue(await cookies());
   const parsed = await readSessionCookie(value, secret);
@@ -88,7 +88,7 @@ export async function clientAddress(): Promise<string> {
 
 /** Create a session row for `userId` and set the cookie that names it. */
 export async function startSession(userId: string, ttlSeconds = DEFAULT_SESSION_TTL_SECONDS): Promise<string> {
-  const secret = process.env.SESSION_SECRET;
+  const secret = sessionSecret();
   if (!secret) throw new Error("SESSION_SECRET is not set");
   const h = await headers();
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000);

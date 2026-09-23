@@ -27,14 +27,25 @@ export interface ConfidenceContext {
   homepageCompanyName?: string;
   /** How many distinct methods pointed at this same source. */
   methodCount?: number;
+  /**
+   * The verified feed names no company, and neither its board slug nor its tenant matches the
+   * company's name or domain: the board may be a partner's or a sister company's.
+   */
+  identityUnconfirmed?: boolean;
 }
+
+/** What a mismatched identity costs: enough to take any verified board below auto-accept. */
+const IDENTITY_PENALTY = 0.15;
 
 export function confidenceFor(candidate: Pick<DiscoveryCandidate, "method" | "companyName" | "count">, ctx: ConfidenceContext = {}): number {
   let score = BASE[candidate.method] ?? 0.4;
   const extraMethods = Math.max(0, (ctx.methodCount ?? 1) - 1);
   score += extraMethods * 0.02;
   if (candidate.companyName && ctx.homepageCompanyName && !companyNamesMatch(candidate.companyName, ctx.homepageCompanyName)) {
-    score -= 0.15;
+    score -= IDENTITY_PENALTY;
+  } else if (!candidate.companyName && ctx.identityUnconfirmed) {
+    // However many methods found it, a board nothing ties to the company is for a person to confirm.
+    score = Math.min(score - IDENTITY_PENALTY, AUTO_ACCEPT_CONFIDENCE - 0.05);
   }
   return Number(Math.max(0, Math.min(0.99, score)).toFixed(3));
 }

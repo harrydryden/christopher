@@ -1,4 +1,4 @@
-import { IncompleteListingError, SourceFetchError, type FetchContext, type FetchResponse, type RawPosting } from "../types";
+import { IncompleteListingError, SourceFetchError, type FetchContext, type FetchResponse, type RawPosting, type VerifyResult } from "../types";
 import { stripHtml } from "../normalize";
 
 export const SLUG_RE = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
@@ -100,29 +100,70 @@ export function sample(postings: RawPosting[], n = 3): RawPosting[] {
   return postings.slice(0, n).map((p) => ({ externalId: p.externalId, title: p.title, url: p.url, location: p.location, postedAt: p.postedAt }));
 }
 
-export function verifyFromFetch(fetchPostings: () => Promise<RawPosting[]>, companyName?: () => Promise<string | undefined>) {
-  return async () => {
+/**
+ * A verification, and whether a failure was the host asking us to come back later (a 429, a 503, a
+ * timeout, a dropped connection) rather than a verdict on the board. Discovery retries a company
+ * whose only good candidate failed that way instead of recording that nothing was found.
+ */
+export type Verification = VerifyResult & { transient?: boolean };
+
+/** True for a failure that says nothing about the board: retrying later may well succeed. */
+export function isTransientFailure(err: unknown): boolean {
+  if (err instanceof SourceFetchError) {
+    return err.kind === "rate_limited" || err.kind === "timeout" || err.kind === "network" || (err.kind === "http" && (err.status ?? 0) >= 500);
+  }
+  // The fetcher's refusal to wait any longer for a busy host.
+  return err instanceof Error && err.name === "HostBusyError";
+}
+
+/** One bounded read of a listing: the roles read and, when the feed says, how many it holds in all. */
+export interface ListingRead {
+  postings: RawPosting[];
+  total?: number;
+  companyName?: string;
+}
+
+/**
+ * Verification reads one page. It establishes that the board exists and serves roles, and samples
+ * them; whether a listing is complete is the scan's business, so a big board costs one request here
+ * rather than its whole length. The count is the feed's own total when it reports one.
+ */
+export function verifyFromRead(read: () => Promise<ListingRead>, companyName?: () => Promise<string | undefined>) {
+  return async (): Promise<Verification> => {
     try {
-      // A listing too long to read in one pass still proves the board exists and serves roles, so
-      // it verifies on what was read. Only the scan cares that it may not close anything.
-      const postings = await fetchPostings().catch((err: unknown) => {
-        if (err instanceof IncompleteListingError) return err.postings;
+      // A read cut short by its page budget still proves the board exists and serves roles.
+      const listing = await read().catch((err: unknown): ListingRead => {
+        if (err instanceof IncompleteListingError) return { postings: err.postings };
         throw err;
       });
-      let name: string | undefined;
-      if (companyName) {
+      let name = listing.companyName;
+      if (!name && companyName) {
         try {
           name = await companyName();
         } catch {
           name = undefined;
         }
       }
-      return { ok: true, count: postings.length, sample: sample(postings), companyName: name };
+      return { ok: true, count: listing.total ?? listing.postings.length, sample: sample(listing.postings), companyName: name };
     } catch (err) {
-      return { ok: false, error: (err as Error).message };
+      return { ok: false, error: (err as Error).message, transient: isTransientFailure(err) };
     }
   };
 }
+
+/** `verifyFromRead` for a feed that is a single request. */
+export function verifyFromFetch(fetchPostings: () => Promise<RawPosting[]>, companyName?: () => Promise<string | undefined>) {
+  return verifyFromRead(async () => ({ postings: await fetchPostings() }), companyName);
+}
+
+/**
+ * The body cap for a feed that carries every description inline (Lever, Ashby, Recruitee, Personio,
+ * the Workable widget, Pinpoint, BambooHR, Eightfold). A few hundred roles with their descriptions
+ * pass the fetcher's 5 MB default, and a refused body fails every scan and every verification of the
+ * board. The fetcher's own hard maximum still applies.
+ */
+export const INLINE_DESCRIPTIONS_MAX_BYTES = 32_000_000;
+export const INLINE_DESCRIPTIONS_FETCH = { maxBodyBytes: INLINE_DESCRIPTIONS_MAX_BYTES, timeoutMs: 60_000 } as const;
 
 /**
  * The most postings any adapter returns from one source. Greenhouse boards

@@ -1,6 +1,6 @@
 import type { Adapter, FetchContext, RawPosting, SourceSpec } from "../types";
 import { parseDate } from "../normalize";
-import { fetchJson, htmlToText, pathSegments, safeUrl, slugOk, str, verifyFromFetch, MAX_POSTINGS } from "./common";
+import { fetchJson, htmlToText, pathSegments, safeUrl, slugOk, str, verifyFromFetch, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS } from "./common";
 
 export function leverSpec(slug: string, eu = false): SourceSpec {
   const api = eu ? "https://api.eu.lever.co/v0/postings" : "https://api.lever.co/v0/postings";
@@ -86,7 +86,7 @@ function mapPosting(p: LeverPosting): RawPosting | null {
 async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
   if (!spec.atsSlug) throw new Error("lever spec missing slug");
   const api = spec.apiUrl ?? leverSpec(spec.atsSlug, spec.atsSite === "eu").apiUrl!;
-  const { data } = await fetchJson<LeverPosting[] | { data?: LeverPosting[] }>(ctx, api);
+  const { data } = await fetchJson<LeverPosting[] | { data?: LeverPosting[] }>(ctx, api, INLINE_DESCRIPTIONS_FETCH);
   const list = Array.isArray(data) ? data : Array.isArray((data as { data?: LeverPosting[] }).data) ? (data as { data: LeverPosting[] }).data : [];
   return list.map(mapPosting).filter((p): p is RawPosting => !!p).slice(0, MAX_POSTINGS);
 }

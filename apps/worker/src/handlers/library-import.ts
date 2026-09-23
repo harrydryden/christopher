@@ -17,7 +17,10 @@
  * them is fixed by the queue trying again, and all of them would fill Health with work nothing
  * can complete. What the person can act on is written on the row as a sentence and shown to them.
  *
- * Only transport failures throw. A site having a bad minute is worth the queue's backoff.
+ * Only transport failures throw. A site having a bad minute is worth the queue's backoff. The
+ * model having one is said as what it is — busy, cut short, unavailable — with the document kept,
+ * so the card's Try again reads it once more; only an answer that was no proposal at all is the
+ * document's fault.
  *
  * And the post-check is not optional. `validateLibraryProposal` drops every employer, title, row,
  * qualification and skill the document does not carry, and counts them, before anything is
@@ -35,7 +38,7 @@ import {
   validateLibraryProposal,
   type TaskPayloads,
 } from "@ava/core";
-import { createAiEngine, estimateLibraryImportUsd } from "@ava/ai";
+import { createAiEngine, estimateLibraryImportUsd, type AiFailure } from "@ava/ai";
 import {
   completeLibraryImport,
   getLibraryImportForWorker,
@@ -58,6 +61,29 @@ const HOLD_MINUTES = 10;
 /** A page that answers with less text than this is a shell waiting for its JavaScript. */
 const JS_SHELL_TEXT = 400;
 
+/**
+ * What the person is told when the call returned nothing, by why it did. A provider that was
+ * rate-limited, overloaded or dropped the connection, an answer cut off at its length limit, a
+ * model the deployment cannot reach: none of those is anything wrong with the document, and
+ * "AVA could not read that document" sent people off to re-export a file that was fine.
+ */
+function unansweredMessage(failure: AiFailure | undefined): string {
+  switch (failure?.kind) {
+    case "rate_limited":
+    case "overloaded":
+    case "connection":
+    case "stalled":
+    case "unknown":
+      return "AVA's model provider was too busy to read that document just now. Your document is kept: try this import again in a few minutes.";
+    case "output_limit":
+      return "Reading that document ran past the longest answer the model may give, so nothing was proposed. Your document is kept: try this import again, or paste the part of it that covers your career.";
+    case "model_access":
+      return "AVA cannot reach its model at the moment, so the document was not read. Your document is kept: try this import again later.";
+    default:
+      return "AVA could not read that document. Try a different export of it, or paste the text instead.";
+  }
+}
+
 export async function handleImportLibraryDocument(task: Task, deps: WorkerDeps, ctx?: TaskRunContext): Promise<unknown> {
   const { userId, importId } = (task.payload ?? {}) as TaskPayloads["import_library_document"];
   if (!userId || !importId) return { skipped: "no import on task" };
@@ -65,6 +91,11 @@ export async function handleImportLibraryDocument(task: Task, deps: WorkerDeps, 
   // Deleted while the task waited, or pointed at somebody else's row: neither is this task's to do.
   if (!row) return { skipped: "import no longer exists" };
   if (row.userId !== userId) return { skipped: "import belongs to another account" };
+  // A retry of a task that already finished — a completion whose lease was lost, a deadline that
+  // fired after the commit — must not pay for the call again or replace a proposal the person may
+  // be ticking through. Reading again is always asked for by reopening the row, which clears both.
+  if (row.resolvedAt) return { skipped: "import already resolved" };
+  if (row.processedAt) return { skipped: "import already read" };
 
   // The fetch and model call happen outside a transaction, so the queue lease can be reclaimed
   // while they are in flight. Fence every terminal write inside its own transaction: an expired
@@ -111,14 +142,17 @@ export async function handleImportLibraryDocument(task: Task, deps: WorkerDeps, 
   // The model the account chose for its own CV work: reading a CV is the same document, read once.
   const model = settings.cvModel;
   let cost = 0;
+  /** Why the call produced nothing, as the engine classified it; the engine returns null either way. */
+  let failure: AiFailure | undefined;
   const ai = createAiEngine({
     apiKey: deps.env.anthropicApiKey,
     client: deps.aiClient,
     getModel: () => model,
     // A deadline or a reclaimed task cuts the call off rather than paying for an answer nobody reads.
     ...(ctx?.signal ? { signal: ctx.signal } : {}),
-    onUsage: async usage => {
+    onUsage: async ({ failure: failed, ...usage }) => {
       cost += usage.costUsd;
+      failure = failed;
       await recordAiCall(deps.db, userId, usage);
     },
     logger: (msg, data) => log.debug(`ai ${msg}`, data),
@@ -152,9 +186,22 @@ export async function handleImportLibraryDocument(task: Task, deps: WorkerDeps, 
     const plan = await ai.extractLibrary({ document: text, model },
       { userId, refType: "library_import", refId: importId });
     if (!plan) {
-      return refuse("AVA could not read that document. Try a different export of it, or paste the text instead.", text);
+      // A task that was given up on writes nothing: whatever replaces it reads the document.
+      if (ctx?.signal.aborted) throw new Error("The import was stopped before the model answered.");
+      return refuse(unansweredMessage(failure), text);
     }
-    const { proposal, dropped } = validateLibraryProposal(text, plan);
+    let validated: ReturnType<typeof validateLibraryProposal>;
+    try {
+      validated = validateLibraryProposal(text, plan);
+    } catch (error) {
+      // The model answered something that is not a proposal at all. That is this document's
+      // answer, not a fault the queue can retry away.
+      if (error instanceof Error && error.name === "ZodError") {
+        return refuse("AVA could not make sense of that document. Try a different export of it, or paste the text instead.", text);
+      }
+      throw error;
+    }
+    const { proposal, dropped } = validated;
     const counts = countProposedItems(proposal);
     if (!counts.jobs && !counts.education && !counts.skills) {
       return refuse("Nothing in that document could be matched to what it says. Check that it is the right file, or paste the text instead.", text);
@@ -162,13 +209,6 @@ export async function handleImportLibraryDocument(task: Task, deps: WorkerDeps, 
     await complete({ proposal, content: text });
     log.info("library import read", { userId, importId, kind: row.kind, ...counts, dropped, truncated, usd: usd(cost) });
     return { proposed: counts, dropped, truncated, cost: usd(cost) };
-  } catch (error) {
-    // The model answered something that is not a proposal at all. That is this document's answer,
-    // not a fault the queue can retry away.
-    if (error instanceof Error && /invalid|expected|parse/i.test(error.message) && !/timed out|network|ECONN/i.test(error.message)) {
-      return refuse("AVA could not make sense of that document. Try a different export of it, or paste the text instead.", text);
-    }
-    throw error;
   } finally {
     // The call's real cost is in `ai_calls`; the hold only covered the gap until it landed.
     await admitted.release();

@@ -102,9 +102,16 @@ export async function handleReviewLibrary(task: Task, deps: WorkerDeps, ctx?: Ta
   // moment the task starts. The one exception is an entry whose model review is already stored
   // against this same version: one row per (account, version, entry) means writing the baseline
   // over it would throw that answer away, which is what a re-run of an unchanged library is.
-  await write(entries.flatMap(entry => {
+  //
+  // A model review of the same wording made under an older version is carried into this one as it
+  // stands. Pruning keeps only the newest versions, so a review left where it was made was deleted
+  // twenty saves later, the entry fell back to its rules score, and the same answer was bought again.
+  await write(entries.flatMap((entry): LibraryReviewUpsert[] => {
     const held = stored.get(entry.id);
     if (held?.source === "model" && held.libraryVersion === version) return [];
+    if (held?.source === "model") {
+      return [{ entryId: entry.id, inputHash: hashes.get(entry.id)!, review: held.review, source: "model", model: held.model }];
+    }
     return [{
       entryId: entry.id,
       inputHash: hashes.get(entry.id)!,

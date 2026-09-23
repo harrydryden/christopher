@@ -13,7 +13,7 @@ import {
   createDb, createLibraryImport, getLibraryImport, listOpenLibraryImports, schema, type Db,
 } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
-import type { AiClientLike, ParseResponse } from "@ava/ai";
+import { RateLimitError, type AiClientLike, type ParseResponse } from "@ava/ai";
 import { renderCvPdf } from "@ava/core/cv-pdf";
 import type { LibraryProposal } from "@ava/core";
 import { sql } from "drizzle-orm";
@@ -73,14 +73,15 @@ const ANSWER = {
 const USAGE = { input_tokens: 4200, output_tokens: 900, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
 
 /** A client that records the document it was sent and answers with whatever the test scripted. */
-function scriptedClient(answer: unknown = ANSWER) {
+function scriptedClient(answer: unknown = ANSWER, over: Partial<ParseResponse> | (() => never) = {}) {
   const documents: string[] = [];
   const client: AiClientLike = {
     messages: {
       async create(params): Promise<ParseResponse> {
         const content = (params.messages as Array<{ content: string }>)[0]!.content;
         documents.push(content);
-        return { parsed_output: answer, usage: USAGE, stop_reason: "end_turn", model: "claude-fable-5-1" };
+        if (typeof over === "function") over();
+        return { parsed_output: answer, usage: USAGE, stop_reason: "end_turn", model: "claude-fable-5-1", ...over };
       },
     },
   };
@@ -354,4 +355,48 @@ it("does not publish a result after the queue lease has been lost", async () => 
   expect(stored).toMatchObject({ proposal: null, error: null, processedAt: null });
   const [raw] = await db.select().from(schema.libraryImports).where(sql`${schema.libraryImports.id} = ${row.id}`);
   expect(raw!.content).toBe(DOCUMENT);
+});
+
+it("says the model was busy or cut short, not that the document is unreadable, and keeps it to try again", async () => {
+  const busy = await createLibraryImport(db, { userId, kind: "paste", content: DOCUMENT }, now);
+  deps.aiClient = scriptedClient(ANSWER, () => {
+    throw new RateLimitError(429, { type: "error", error: { type: "rate_limit_error", message: "Slow down" } }, "Slow down", new Headers());
+  }).client;
+  const refused = await handleImportLibraryDocument(task({ userId, importId: busy.id }), deps) as { message: string };
+  expect(refused.message).toContain("too busy to read that document just now");
+  expect(refused.message).not.toContain("could not read");
+  expect(await getLibraryImport(db, userId, busy.id)).toMatchObject({ error: refused.message, content: DOCUMENT, proposal: null });
+
+  const long = await createLibraryImport(db, { userId, kind: "paste", content: `${DOCUMENT}\n\nReferences on request.` }, now);
+  deps.aiClient = scriptedClient(null, { stop_reason: "max_tokens" }).client;
+  const cut = await handleImportLibraryDocument(task({ userId, importId: long.id }), deps) as { message: string };
+  expect(cut.message).toContain("ran past the longest answer the model may give");
+  expect((await getLibraryImport(db, userId, long.id))!.content).toContain("References on request.");
+});
+
+it("does not read a finished import again when its task is delivered twice", async () => {
+  const row = await createLibraryImport(db, { userId, kind: "paste", content: DOCUMENT }, now);
+  const scripted = scriptedClient();
+  deps.aiClient = scripted.client;
+  await handleImportLibraryDocument(task({ userId, importId: row.id }), deps);
+  const read = await getLibraryImport(db, userId, row.id);
+
+  // The completion committed, then the task was handed back and claimed again.
+  expect(await handleImportLibraryDocument(task({ userId, importId: row.id }), deps)).toEqual({ skipped: "import already read" });
+  await db.update(schema.libraryImports).set({ resolvedAt: now }).where(sql`${schema.libraryImports.id} = ${row.id}`);
+  expect(await handleImportLibraryDocument(task({ userId, importId: row.id }), deps)).toEqual({ skipped: "import already resolved" });
+  expect(scripted.documents).toHaveLength(1);
+  expect((await getLibraryImport(db, userId, row.id))!.proposal).toEqual(read!.proposal);
+  expect(await db.select().from(schema.aiCalls)).toHaveLength(1);
+});
+
+it("stores a document whose text carried NUL once, and never pays for the call twice", async () => {
+  const row = await createLibraryImport(db, {
+    userId, kind: "cv", filename: "cv.txt", sourceBytes: Buffer.from(`${DOCUMENT.padEnd(1100, " ")}\u0000 end`), sourceMime: "text/plain",
+  }, now);
+  const scripted = scriptedClient();
+  deps.aiClient = scripted.client;
+  expect(await handleImportLibraryDocument(task({ userId, importId: row.id }), deps)).toMatchObject({ proposed: { jobs: 2 } });
+  expect(scripted.documents[0]).not.toContain("\u0000");
+  expect((await getLibraryImport(db, userId, row.id))!.content).not.toContain("\u0000");
 });

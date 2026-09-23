@@ -175,9 +175,10 @@ it("reuses an unchanged entry's review across a save and sends only the entry wh
   expect(second.calls).toHaveLength(1);
   expect(second.calls[0]!.entries).toEqual(["role"]);
   const stored = await reviews();
-  // Version 2 carries both: the edited entry reviewed again, the untouched one on its old answer.
+  // Version 2 carries both: the edited entry reviewed again, the untouched one on its old answer,
+  // copied forward so it lives as long as the version does.
   const v2 = stored.filter(row => row.libraryVersion === 2);
-  expect(v2.map(row => [row.entryId, row.source])).toEqual([["degree", "rules"], ["role", "model"]]);
+  expect(v2.map(row => [row.entryId, row.source])).toEqual([["degree", "model"], ["role", "model"]]);
   expect(v2.find(row => row.entryId === "role")!.inputHash)
     .toBe(libraryEntryInputHash(edited.entries[0]!, edited.employment![0]!));
 
@@ -188,7 +189,29 @@ it("reuses an unchanged entry's review across a save and sends only the entry wh
   expect(await handleReviewLibrary(task({ userId, libraryVersion: 2 }), deps)).toMatchObject({ reviewed: 0, reused: 2 });
   expect(third.calls).toHaveLength(0);
   expect((await reviews()).filter(row => row.libraryVersion === 2).map(row => [row.entryId, row.source]))
-    .toEqual([["degree", "rules"], ["role", "model"]]);
+    .toEqual([["degree", "model"], ["role", "model"]]);
+});
+
+it("carries an unchanged entry's model review into every newer version, so pruning never loses it", async () => {
+  await saveLibrary(1, libraryOf());
+  deps.aiClient = scriptedClient().client;
+  await handleReviewLibrary(task({ userId, libraryVersion: 1 }), deps);
+  const original = (await reviews()).find(row => row.entryId === "degree")!;
+
+  // Twenty-five saves, each editing only the role: the degree is never touched again.
+  let paid = 0;
+  for (let version = 2; version <= 26; version++) {
+    await saveLibrary(version, libraryOf({ first: `Ran the UK warehouse team of 30 through site move number ${version}` }));
+    const scripted = scriptedClient();
+    deps.aiClient = scripted.client;
+    await handleReviewLibrary(task({ userId, libraryVersion: version }), deps);
+    paid += scripted.calls.filter(call => call.entries.includes("degree")).length;
+  }
+  // Never asked about again, and still held as the model's answer after versions 1–6 were pruned.
+  expect(paid).toBe(0);
+  const degree = (await reviews()).filter(row => row.entryId === "degree");
+  expect(Math.min(...degree.map(row => row.libraryVersion))).toBeGreaterThan(1);
+  expect(degree.every(row => row.source === "model" && row.score === original.score && row.model === original.model)).toBe(true);
 });
 
 it("reviews the newest library when a burst of saves ran the task once, and says which it read", async () => {

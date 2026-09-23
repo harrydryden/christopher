@@ -24,13 +24,25 @@ export interface WorkReading {
 
 export interface WorkPollState {
   /**
-   * The version the page on screen already accounts for: the one it rendered, or the last one a
-   * refresh was asked for. Undefined only until the first reading of a page that gave none.
+   * The version the page on screen accounts for: the one it rendered, or, for a page that rendered
+   * none, the first reading. Undefined only until that first reading.
    */
   seen: string | undefined;
+  /**
+   * Whether the page said what it rendered. Such a page acknowledges a refresh by rendering again
+   * with the new version, which resets this state; one that rendered nothing cannot, so it is
+   * refreshed once per change and believed.
+   */
+  rendered: boolean;
+  /** The version a rendered page was last refreshed for and has not shown yet. */
+  requested: string | undefined;
+  /** Refreshes asked for that same version since, bounded by `REFRESH_RETRIES`. */
+  retries: number;
   wait: number;
   /** Refreshes asked for since the work was last seen finished. */
   settled: number;
+  /** Readings in a row that failed to arrive; the first costs no wait, the rest back off. */
+  failures: number;
 }
 
 /**
@@ -40,27 +52,66 @@ export interface WorkPollState {
  */
 export const SETTLED_REFRESHES = 3;
 
+/**
+ * How many more times a rendered page is refreshed for a version it has not shown. A refresh is a
+ * request that can be lost like any other, and a page left showing a stage the build has finished
+ * is the failure a poller exists to prevent; a page whose rendered version simply never matches the
+ * poll's (a different scope, say) is refreshed this many times and then compared with the poll's.
+ */
+export const REFRESH_RETRIES = 2;
+
 export function initialWorkPoll(initialVersion?: string): WorkPollState {
-  return { seen: initialVersion, wait: FIRST_POLL_MS, settled: 0 };
+  return { seen: initialVersion, rendered: initialVersion !== undefined, requested: undefined, retries: 0, wait: FIRST_POLL_MS, settled: 0, failures: 0 };
+}
+
+/**
+ * A reading that did not arrive (a refused or dropped request). It is not news, so nothing is
+ * refreshed; one lost request costs no time either, because the reading it stood for may be the
+ * change the page is waiting on, and only a run of failures backs the poller off.
+ */
+export function failedWorkPoll(state: WorkPollState): { state: WorkPollState; next: number } {
+  const failures = state.failures + 1;
+  const wait = failures > 1 ? nextPollDelay(state.wait, false) : state.wait;
+  return { state: { ...state, failures, wait }, next: wait };
 }
 
 /**
  * One reading of the work a page watches: whether to refresh the page, and how long to wait before
  * the next reading (`null` to stop).
  *
- * A changed version refreshes once and is then the version seen, whether or not the page reports
- * the new one back, so a page that renders no version, or a different one, is refreshed once per
- * change rather than on every tick.
+ * A changed version refreshes the page. A page that rendered its version shows the new one once the
+ * refresh lands, which starts this state afresh; until it does, the next readings ask again, a
+ * bounded number of times. A page that rendered no version is refreshed once per change and the
+ * change is then counted as seen, so it is refreshed once per change rather than on every tick.
  */
-export function stepWorkPoll(state: WorkPollState, reading: WorkReading): { state: WorkPollState; refresh: boolean; next: number | null } {
+export function stepWorkPoll(previous: WorkPollState, reading: WorkReading): { state: WorkPollState; refresh: boolean; next: number | null } {
+  const state: WorkPollState = previous.failures ? { ...previous, failures: 0 } : previous;
   if (!reading.active) {
     const settled = state.settled + 1;
     const wait = nextPollDelay(state.wait, false);
-    return { state: { seen: reading.version, wait, settled }, refresh: true, next: settled < SETTLED_REFRESHES ? wait : null };
+    return { state: { ...state, seen: reading.version, requested: undefined, retries: 0, wait, settled }, refresh: true, next: settled < SETTLED_REFRESHES ? wait : null };
   }
-  const changed = state.seen !== undefined && state.seen !== reading.version;
-  const wait = nextPollDelay(state.wait, changed);
-  return { state: { seen: reading.version, wait, settled: 0 }, refresh: changed, next: wait };
+  if (state.seen === undefined) {
+    // The baseline for a page that rendered nothing: its later readings are compared with this.
+    const wait = nextPollDelay(state.wait, false);
+    return { state: { ...state, seen: reading.version, wait, settled: 0 }, refresh: false, next: wait };
+  }
+  if (state.seen === reading.version) {
+    const wait = nextPollDelay(state.wait, false);
+    return { state: { ...state, requested: undefined, retries: 0, wait, settled: 0 }, refresh: false, next: wait };
+  }
+  if (!state.rendered) {
+    return { state: { ...state, seen: reading.version, wait: FIRST_POLL_MS, settled: 0 }, refresh: true, next: FIRST_POLL_MS };
+  }
+  if (state.requested !== reading.version) {
+    return { state: { ...state, requested: reading.version, retries: 0, wait: FIRST_POLL_MS, settled: 0 }, refresh: true, next: FIRST_POLL_MS };
+  }
+  if (state.retries < REFRESH_RETRIES) {
+    return { state: { ...state, retries: state.retries + 1, wait: FIRST_POLL_MS, settled: 0 }, refresh: true, next: FIRST_POLL_MS };
+  }
+  // The page never shows this version: stop asking for it, and compare with it from now on.
+  const wait = nextPollDelay(state.wait, false);
+  return { state: { ...state, seen: reading.version, requested: undefined, retries: 0, wait, settled: 0 }, refresh: false, next: wait };
 }
 
 /** The banner's cadence while a run is in progress or about to start, and what it backs off to. */

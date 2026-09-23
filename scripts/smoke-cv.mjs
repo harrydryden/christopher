@@ -529,10 +529,19 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
         exact: true,
       })
       .click();
-    await page.waitForURL(
-      (url) =>
-        url.pathname.startsWith("/cv/") && !url.pathname.endsWith(readyId),
-    );
+    try {
+      await page.waitForURL(
+        (url) =>
+          url.pathname.startsWith("/cv/") && !url.pathname.endsWith(readyId),
+      );
+    } catch (error) {
+      // The failure names what the page said instead of navigating: the action's refusal, if any.
+      const said = await page
+        .locator('[role="alert"], [role="status"]')
+        .allInnerTexts()
+        .catch(() => []);
+      throw new Error(`${error.message}\nstill at ${page.url()}; the page says: ${JSON.stringify(said)}`, { cause: error });
+    }
     const childId = new URL(page.url()).pathname.split("/").pop();
     const {
       rows: [child],

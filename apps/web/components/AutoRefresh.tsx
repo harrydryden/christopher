@@ -1,16 +1,18 @@
 "use client";
 import { useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { initialWorkPoll, nextPollDelay, stepWorkPoll, type WorkReading } from "@/lib/polling";
+import { failedWorkPoll, initialWorkPoll, stepWorkPoll, type WorkReading } from "@/lib/polling";
 
 /**
  * Refresh the page while work it shows is in flight, and once more when that work finishes.
  *
  * `scope` names which of the account's work the page watches (its companies' or its CVs'), and
  * `initialVersion` is that work's version as the page rendered it; a page that passes both is
- * compared with exactly what it shows. The rules live in lib/polling.ts: one refresh per changed
- * version, a wait that grows from ten seconds to a minute while nothing changes, nothing asked of a
- * hidden tab, and no more asking once the work is finished.
+ * compared with exactly what it shows. The rules live in lib/polling.ts: a refresh per changed
+ * version, asked for again a few times while a page that rendered its version has not shown the
+ * new one (a landed refresh renders this component with the new `initialVersion`, which starts the
+ * poller afresh), a wait that grows from ten seconds to a minute while nothing changes, nothing
+ * asked of a hidden tab, and no more asking once the work is finished.
  */
 export function AutoRefresh({
   cvId,
@@ -53,9 +55,10 @@ export function AutoRefresh({
         next = step.next;
         if (step.refresh) startTransition(() => router.refresh());
       } catch {
-        /* A refused or dropped poll is not news: wait a little longer and ask again. */
-        state = { ...state, wait: nextPollDelay(state.wait, false) };
-        next = state.wait;
+        // A refused or dropped poll is not news: ask again, and back off only when they keep failing.
+        const failed = failedWorkPoll(state);
+        state = failed.state;
+        next = failed.next;
       } finally {
         clearTimeout(timeout);
       }

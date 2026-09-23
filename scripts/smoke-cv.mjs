@@ -523,24 +523,51 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       path: "tmp/cv-review-tabs/evaluation-mobile.png",
       fullPage: true,
     });
-    await page
-      .getByRole("button", {
-        name: "Save Direct Edits",
-        exact: true,
-      })
-      .click();
+    // What the save sends and what comes back, kept for the failure message: a server action is a
+    // POST to the page's own URL, and a save that never left the page has none.
+    const saveTraffic = [];
+    const onRequest = (request) => {
+      if (request.method() === "POST") saveTraffic.push(`→ POST ${request.url()} next-action=${request.headers()["next-action"] ?? "-"}`);
+    };
+    const onResponse = (response) => {
+      if (response.request().method() === "POST") saveTraffic.push(`← ${response.status()} ${response.url()} x-action-redirect=${response.headers()["x-action-redirect"] ?? "-"}`);
+    };
+    const onFailed = (request) => {
+      if (request.method() === "POST") saveTraffic.push(`✗ ${request.url()} ${request.failure()?.errorText ?? "failed"}`);
+    };
+    const consoleErrors = [];
+    const onConsole = (message) => { if (message.type() === "error") consoleErrors.push(message.text()); };
+    page.on("request", onRequest);
+    page.on("response", onResponse);
+    page.on("requestfailed", onFailed);
+    page.on("console", onConsole);
+    const saveButton = page.getByRole("button", { name: "Save Direct Edits", exact: true });
+    await saveButton.click();
     try {
       await page.waitForURL(
         (url) =>
           url.pathname.startsWith("/cv/") && !url.pathname.endsWith(readyId),
       );
     } catch (error) {
-      // The failure names what the page said instead of navigating: the action's refusal, if any.
+      // The failure names what the page said instead of navigating: the action's refusal, if any,
+      // the state of the button, the action requests seen, and anything the console complained of.
       const said = await page
         .locator('[role="alert"], [role="status"]')
         .allInnerTexts()
         .catch(() => []);
-      throw new Error(`${error.message}\nstill at ${page.url()}; the page says: ${JSON.stringify(said)}`, { cause: error });
+      const buttons = await page
+        .getByRole("button", { name: /Save Direct Edits|Saving…/ })
+        .evaluateAll((nodes) => nodes.map((node) => `${node.textContent?.trim()} disabled=${node.disabled} form=${node.getAttribute("form")} type=${node.getAttribute("type")}`))
+        .catch(() => []);
+      throw new Error(
+        `${error.message}\nstill at ${page.url()}; the page says: ${JSON.stringify(said)}\nsave buttons: ${JSON.stringify(buttons)}\nsave traffic: ${JSON.stringify(saveTraffic)}\nconsole errors: ${JSON.stringify(consoleErrors)}`,
+        { cause: error },
+      );
+    } finally {
+      page.off("request", onRequest);
+      page.off("response", onResponse);
+      page.off("requestfailed", onFailed);
+      page.off("console", onConsole);
     }
     const childId = new URL(page.url()).pathname.split("/").pop();
     const {

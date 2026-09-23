@@ -60,6 +60,12 @@ export type AppSettings = SystemSettings & UserSettings;
 export const DEFAULT_ACCOUNT_AI_BUDGET_USD = 25;
 /** The most an account budget may be set to, so a typed figure cannot become an unbounded bill. */
 export const MAX_ACCOUNT_AI_BUDGET_USD = 10000;
+/**
+ * The most a member may set their own monthly budget to. The deployment pays for the model, so
+ * anything above this is an administrator's grant (Admin › Accounts), which the member may then
+ * lower but not raise again.
+ */
+export const MAX_MEMBER_AI_BUDGET_USD = 100;
 
 /**
  * How much one account may add to the shared catalogue and its queue. Every company followed is

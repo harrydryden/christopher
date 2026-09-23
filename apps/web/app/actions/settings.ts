@@ -4,7 +4,7 @@ import { needsEmailConfirmation, requireAdmin, requireUser } from "@/lib/auth";
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { isKnownModel, isValidScanTime, isValidTimezone, MAX_ACCOUNT_AI_BUDGET_USD, parseTermList, type GateSettings, type MatchField } from "@ava/core";
+import { isKnownModel, isValidScanTime, isValidTimezone, MAX_ACCOUNT_AI_BUDGET_USD, MAX_MEMBER_AI_BUDGET_USD, parseTermList, type GateSettings, type MatchField } from "@ava/core";
 import { enqueue } from "@/lib/enqueue";
 import { GATE_NEEDS_KEYWORD_SENTENCE } from "@/lib/setup";
 import { getSettings, setSystemSetting, setUserSetting, saveSettingsAndGate } from "@/lib/settings";
@@ -147,13 +147,27 @@ const AiBudgetSchema = z.coerce.number().min(0).max(MAX_ACCOUNT_AI_BUDGET_USD);
  * The signed-in account's own monthly AI budget, the one budget there is. Anyone may set their
  * own; an administrator sets anyone's in Admin › Accounts, which is the same stored key, so Admin
  * is revalidated too.
+ *
+ * The deployment pays for the model, so a member sets theirs up to `MAX_MEMBER_AI_BUDGET_USD`, or
+ * up to what an administrator granted them when that is more: a grant can be lowered here but a
+ * member never raises their own budget past it. An administrator sets any figure up to the maximum.
  */
 export async function saveAiBudget(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const user = await requireUser();
   const entered = String(formData.get("aiBudgetUsd") ?? "").trim();
   const parsed = entered ? AiBudgetSchema.safeParse(entered) : null;
   if (!parsed?.success) return fail(`A monthly AI budget is a number between $0 and $${MAX_ACCOUNT_AI_BUDGET_USD}.`);
-  await setUserSetting(user.id, "aiBudgetUsd", Math.round(parsed.data * 100) / 100);
+  const budget = Math.round(parsed.data * 100) / 100;
+  if (user.role !== "admin") {
+    const granted = (await getSettings()).aiBudgetUsd;
+    const ceiling = Math.max(MAX_MEMBER_AI_BUDGET_USD, granted);
+    if (budget > ceiling) {
+      return fail(ceiling > MAX_MEMBER_AI_BUDGET_USD
+        ? `You can set your monthly AI budget up to $${ceiling}, the budget an administrator gave you. Ask an administrator for more.`
+        : `You can set your monthly AI budget up to $${MAX_MEMBER_AI_BUDGET_USD}. Ask an administrator for more.`);
+    }
+  }
+  await setUserSetting(user.id, "aiBudgetUsd", budget);
   revalidatePath("/settings");
   revalidatePath("/admin");
   return ok();

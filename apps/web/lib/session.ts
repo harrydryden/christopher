@@ -120,9 +120,28 @@ export function isSecureHost(host: string | null | undefined): boolean {
   return hostname !== "localhost" && hostname !== "127.0.0.1" && hostname !== "::1";
 }
 
-/** Only allow same-site relative redirects after login (never "//host" or "scheme://host"). */
+/** Control characters (which a URL parser strips before reading, so "/\t/host" reads as "//host") and backslashes. */
+const UNSAFE_PATH_CHARACTERS = /[\u0000-\u001f\u007f\\]/;
+const PATH_BASE = "http://internal.invalid";
+
+/**
+ * Only allow a same-site path after sign-in: a single leading "/", no control character, no
+ * backslash, no "//host" and no "scheme://host". Anything else becomes "/".
+ *
+ * The value is also resolved the way a browser resolves it, because what the Location header ends
+ * up naming is what matters: dot segments collapse "/.//host" to the path "//host", which anything
+ * that re-emits the normalised path would send off-site. The original string is returned, never
+ * the normalised one.
+ */
 export function sanitizeNextPath(next: string | null | undefined): string {
-  if (!next) return "/";
-  if (!next.startsWith("/") || next.startsWith("//") || next.includes("://") || next.includes("\\")) return "/";
+  if (!next || next.length > 2048 || UNSAFE_PATH_CHARACTERS.test(next)) return "/";
+  if (!next.startsWith("/") || next.startsWith("//") || next.includes("://")) return "/";
+  let resolved: URL;
+  try {
+    resolved = new URL(next, PATH_BASE);
+  } catch {
+    return "/";
+  }
+  if (resolved.origin !== PATH_BASE || resolved.pathname.startsWith("//")) return "/";
   return next;
 }

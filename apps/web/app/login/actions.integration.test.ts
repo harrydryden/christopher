@@ -63,3 +63,20 @@ it("a successful login releases only its own address reservation", async () => {
   expect(rows.filter(row => row.key === addressKey)).toHaveLength(2);
   expect(rows.filter(row => row.key === "login:email:member@example.com")).toHaveLength(0);
 });
+
+it("after a correct password, sends a next path that would leave the site to the home page instead", async () => {
+  await database.insert(schema.settings).values({ key: "registrationOpen", value: true });
+  await registerWithPassword({ email: "member@example.com", password: "correct horse battery staple", name: "Member" });
+  const signIn = async (next: string) => {
+    const form = new FormData();
+    form.set("email", "member@example.com");
+    form.set("password", "correct horse battery staple");
+    form.set("next", next);
+    return login(form).then(() => "completed without redirect", (error: Error) => error.message);
+  };
+  // A tab or newline is stripped by the browser's URL parser, which turns "/\t/host" into "//host".
+  expect(await signIn("/\t/evil.example")).toBe("redirect:/");
+  expect(await signIn("/\n/evil.example")).toBe("redirect:/");
+  expect(await signIn("/.//evil.example")).toBe("redirect:/");
+  expect(await signIn("/companies?page=2")).toBe("redirect:/companies?page=2");
+});

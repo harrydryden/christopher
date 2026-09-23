@@ -59,6 +59,40 @@ describe("redirect targets", () => {
     expect(sanitizeNextPath(null)).toBe("/");
   });
 
+  // A URL parser strips tab, CR and LF before it reads, so "/\t/evil.example" arrives as
+  // "//evil.example"; dot segments collapse "/.//evil.example" to the path "//evil.example".
+  const offSite = [
+    "/\t/evil.example", "/\n/evil.example", "/\r/evil.example", "/\r\n/evil.example", "/\t\t/evil.example/",
+    "/\u0000x", "/\u007f", "/.//evil.example", "/a/..//evil.example", "/%2e//evil.example", "/%2E%2E//evil.example",
+    "//evil.example", "https://evil.example", "/\\evil.example", "\\/evil.example", "evil.example", " /x",
+    `/${"a".repeat(2048)}`,
+  ];
+
+  it("refuses control characters, dot segments that collapse to another host, and oversized values", () => {
+    for (const payload of offSite) expect(sanitizeNextPath(payload), JSON.stringify(payload)).toBe("/");
+  });
+
+  it("never yields a target that resolves off-site, from the address bar or from a Location header", () => {
+    const base = "https://app.example/auth/google/callback";
+    const decoded = (value: string) => new URL(`https://app.example/auth/google?next=${value}`).searchParams.get("next");
+    const payloads = [
+      ...offSite,
+      ...["%2F%09%2Fevil.example%2F", "%2F%0A%2Fevil.example", "%2F%0D%2Fevil.example", "%2F.%2F%2Fevil.example"].map(decoded),
+      "/companies?page=2#x", "/roles?next=/x", "/%2F%2Fevil.example", "/a/../b",
+    ];
+    for (const payload of payloads) {
+      const target = sanitizeNextPath(payload);
+      expect(new URL(target, base).origin, JSON.stringify(payload)).toBe("https://app.example");
+      expect(target.startsWith("//"), JSON.stringify(payload)).toBe(false);
+    }
+  });
+
+  it("leaves an ordinary path, query and fragment exactly as it was", () => {
+    expect(sanitizeNextPath("/companies?page=2#x")).toBe("/companies?page=2#x");
+    expect(sanitizeNextPath("/roles/3f2a?tab=notes")).toBe("/roles/3f2a?tab=notes");
+    expect(sanitizeNextPath("/a/../b")).toBe("/a/../b");
+  });
+
   it("reads the renamed cookie first and the legacy one after it, so the rename signs nobody out", () => {
     const jar = (values: Record<string, string>) => ({ get: (name: string) => (name in values ? { value: values[name]! } : undefined) });
     expect(sessionCookieValue(jar({ ava_session: "new" }))).toBe("new");

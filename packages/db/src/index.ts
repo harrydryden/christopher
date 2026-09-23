@@ -5,7 +5,7 @@
  */
 export * from "./schema";
 export * as schema from "./schema";
-export { createDb, getDb, poolStats, slowQueryCount, type Db, type CreateDbOptions } from "./client";
+export { createDb, getDb, poolErrorCount, poolStats, slowQueryCount, type Db, type CreateDbOptions, type SlowQuery } from "./client";
 export { enqueueTask, pendingTaskCounts, taskById, activeTaskFor, type EnqueueOptions } from "./tasks";
 
 export { reevaluateGate, archiveNonMatches, isGateArchive, restoreGateArchive, GATE_RESTORE_EVENT, REEVALUATE_CLOSED_DAYS, type GateScope, type ArchiveScope } from "./gate";

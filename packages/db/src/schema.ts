@@ -145,7 +145,11 @@ export const authTokens = pgTable(
     usedAt: ts("used_at"),
     createdAt: tsNow("created_at"),
   },
-  (t) => [index("auth_tokens_user_purpose_idx").on(t.userId, t.purpose)],
+  (t) => [
+    index("auth_tokens_user_purpose_idx").on(t.userId, t.purpose),
+    index("auth_tokens_expires_idx").on(t.expiresAt),
+    index("auth_tokens_used_idx").on(t.usedAt).where(sql`${t.usedAt} is not null`),
+  ],
 );
 
 /** Distributed login throttling: one row per failed or sensitive attempt, keyed by email or address. */
@@ -156,7 +160,7 @@ export const loginAttempts = pgTable(
     key: text("key").notNull(),
     at: tsNow("at"),
   },
-  (t) => [index("login_attempts_key_at_idx").on(t.key, t.at)],
+  (t) => [index("login_attempts_key_at_idx").on(t.key, t.at), index("login_attempts_at_idx").on(t.at)],
 );
 
 /** Per-user settings (keywords, locations, seed profile, CV preferences). System settings stay in `settings`. */
@@ -297,7 +301,7 @@ export const discoveryRuns = pgTable("discovery_runs", {
   chosenSourceId: uuid("chosen_source_id"),
   log: jsonb("log").$type<unknown[]>().notNull().default(sql`'[]'::jsonb`),
   error: text("error"),
-}, (t) => [index("discovery_runs_company_started_idx").on(t.companyId, t.startedAt.desc())]);
+}, (t) => [index("discovery_runs_company_started_idx").on(t.companyId, t.startedAt.desc()), index("discovery_runs_started_idx").on(t.startedAt)]);
 
 export const scanRuns = pgTable("scan_runs", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -337,7 +341,7 @@ export const scans = pgTable(
     revalidated: integer("revalidated"),
     rawSnapshot: text("raw_snapshot"),
   },
-  (t) => [index("scans_source_started_idx").on(t.sourceId, t.startedAt), index("scans_run_idx").on(t.scanRunId)],
+  (t) => [index("scans_source_started_idx").on(t.sourceId, t.startedAt), index("scans_run_idx").on(t.scanRunId), index("scans_started_idx").on(t.startedAt)],
 );
 
 /** Every posting observed on a shared source. Which of them a person sees is decided in `user_jobs`. */
@@ -479,7 +483,14 @@ export const jobEvents = pgTable(
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
     at: tsNow("at"),
   },
-  (t) => [index("job_events_job_idx").on(t.jobId, t.at)],
+  (t) => [
+    index("job_events_job_idx").on(t.jobId, t.at),
+    // A posting's recent events are the shared observations plus the reading account's own; each half has its own index.
+    index("job_events_shared_job_at_idx").on(t.jobId, t.at).where(sql`${t.userId} is null`),
+    index("job_events_user_job_at_idx").on(t.userId, t.jobId, t.at).where(sql`${t.userId} is not null`),
+    // Retention's predicate, word for word, so the planner can prove the prune may use it.
+    index("job_events_prunable_at_idx").on(t.at).where(sql`${t.type} in ('updated', 'scored', 'description_fetched')`),
+  ],
 );
 
 export const decisions = pgTable(
@@ -505,6 +516,7 @@ export const decisions = pgTable(
   (t) => [
     uniqueIndex("decisions_active_job_uidx").on(t.userId, t.jobId).where(sql`${t.superseded} = false`),
     index("decisions_user_created_idx").on(t.userId, t.createdAt),
+    index("decisions_job_idx").on(t.jobId).where(sql`${t.jobId} is not null`),
   ],
 );
 
@@ -595,7 +607,8 @@ export const discoveryDocuments = pgTable("discovery_documents", {
   fingerprint: text("fingerprint").notNull(),
   processedAt: ts("processed_at"),
   createdAt: tsNow("created_at"),
-}, (t) => [uniqueIndex("discovery_document_dedupe").on(t.sourceId, t.fingerprint), index("discovery_document_pending_idx").on(t.sourceId, t.createdAt).where(sql`${t.processedAt} is null`)]);
+}, (t) => [uniqueIndex("discovery_document_dedupe").on(t.sourceId, t.fingerprint), index("discovery_document_pending_idx").on(t.sourceId, t.createdAt).where(sql`${t.processedAt} is null`),
+  index("discovery_documents_processed_idx").on(t.processedAt).where(sql`${t.content} <> ''`)]);
 
 export const companySuggestions = pgTable("company_suggestions", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -623,6 +636,7 @@ export const companySuggestions = pgTable("company_suggestions", {
   uniqueIndex("company_suggestions_user_domain_uidx").on(t.userId, t.domain),
   index("suggestions_review_idx").on(t.userId, t.status, t.rank, t.createdAt),
   index("suggestions_history_idx").on(t.userId, t.status, t.resolvedAt),
+  index("company_suggestions_pending_created_idx").on(t.createdAt).where(sql`${t.status} = 'pending'`),
 ]);
 
 /**
@@ -662,7 +676,21 @@ export const tasks = pgTable(
     index("tasks_scan_run_idx").on(sql`(${t.payload}->>'scanRunId')`, t.status),
     index("tasks_source_status_idx").on(sql`(${t.payload}->>'sourceId')`, t.status, t.createdAt),
     index("tasks_lane_idx").on(t.type, t.status, t.priority, t.runAfter, t.createdAt),
-    uniqueIndex("tasks_dedupe_active_uidx").on(t.dedupeKey).where(sql`${t.status} in ('queued', 'running') and ${t.dedupeKey} is not null`),
+    // What a payload is about: a company's scans and discovery, a draft's build, an account's work.
+    index("tasks_company_idx").on(sql`(${t.payload}->>'companyId')`, t.type, t.status).where(sql`(${t.payload}->>'companyId') is not null`),
+    index("tasks_draft_idx").on(sql`(${t.payload}->>'draftId')`, t.status).where(sql`(${t.payload}->>'draftId') is not null`),
+    index("tasks_user_idx").on(sql`(${t.payload}->>'userId')`, t.type, t.createdAt).where(sql`(${t.payload}->>'userId') is not null`),
+    // Retention and the failed-task list.
+    index("tasks_status_finished_idx").on(t.status, t.finishedAt),
+    // At most one task per key that is queued and has never started. A running task does not absorb
+    // an enqueue, so work asked for while it runs gets one follow-up that reads the state by then;
+    // a started task handed back to the queue keeps `started_at`, so it never collides with that
+    // follow-up. CV builds keep one task per draft, queued or running: the draft allows one build
+    // at a time, and the interface refuses a rebuild while the last task is still finishing. The
+    // plain index answers "is anything queued or running for this key".
+    uniqueIndex("tasks_dedupe_queued_uidx").on(t.dedupeKey).where(sql`${t.status} = 'queued' and ${t.startedAt} is null and ${t.type} <> 'generate_cv' and ${t.dedupeKey} is not null`),
+    uniqueIndex("tasks_dedupe_cv_build_uidx").on(t.dedupeKey).where(sql`${t.type} = 'generate_cv' and ${t.status} in ('queued', 'running') and ${t.dedupeKey} is not null`),
+    index("tasks_dedupe_active_idx").on(t.dedupeKey).where(sql`${t.status} in ('queued', 'running') and ${t.dedupeKey} is not null`),
   ],
 );
 
@@ -816,6 +844,8 @@ export const cvDrafts = pgTable("cv_drafts", {
 }, table => [
   index("cv_drafts_role_key_idx").on(cvRoleKey(table.userId, table.companyName, table.jobTitle)),
   index("cv_drafts_user_idx").on(table.userId, table.archivedAt, table.createdAt),
+  // The job's side of `on delete set null`, and the per-role "does this account hold a CV" probe.
+  index("cv_drafts_job_user_idx").on(table.jobId, table.userId).where(sql`${table.jobId} is not null`),
 ]);
 
 /** Version ledger survives retention/deletion; contains identifiers only, no CV content. */
@@ -855,6 +885,8 @@ export const applications = pgTable("applications", {
 }, t => [
   index("applications_user_idx").on(t.userId, t.appliedOn),
   index("applications_user_job_idx").on(t.userId, t.jobId),
+  index("applications_job_idx").on(t.jobId).where(sql`${t.jobId} is not null`),
+  index("applications_cv_idx").on(t.cvId).where(sql`${t.cvId} is not null`),
 ]);
 
 /** Renewable operation locks do not retain a connection while doing network work. */
@@ -878,13 +910,14 @@ export const discoveryCandidates = pgTable("discovery_candidates", {
   batchKey: text("batch_key"),
   processedAt: ts("processed_at"),
   createdAt: tsNow("created_at"),
-}, t => [uniqueIndex("discovery_candidate_document_domain").on(t.documentId, t.domain), uniqueIndex("discovery_candidate_batch_domain").on(t.batchKey, t.domain)]);
+}, t => [uniqueIndex("discovery_candidate_document_domain").on(t.documentId, t.domain), uniqueIndex("discovery_candidate_batch_domain").on(t.batchKey, t.domain),
+  index("discovery_candidates_user_idx").on(t.userId)]);
 
 export const verificationCache = pgTable("verification_cache", {
   key: text("key").primaryKey(),
   result: jsonb("result").$type<NonNullable<typeof companySuggestions.$inferSelect.verification>>().notNull(),
   expiresAt: ts("expires_at").notNull(),
-});
+}, (t) => [index("verification_cache_expires_idx").on(t.expiresAt)]);
 
 export const hostPacing = pgTable("host_pacing", {
   host: text("host").primaryKey(),
@@ -922,7 +955,7 @@ export const aiReservations = pgTable("ai_reservations", {
    */
   refId: text("ref_id"),
 }, (t) => [index("ai_reservations_user_idx").on(t.userId), index("ai_reservations_worker_idx").on(t.workerId),
-  index("ai_reservations_ref_idx").on(t.refId)]);
+  index("ai_reservations_ref_idx").on(t.refId), index("ai_reservations_expires_idx").on(t.expiresAt)]);
 
 export const WORKER_EVENT_KINDS = [
   "boot", "shutdown", "crash_recovery", "task_abandoned", "task_deadline", "holds_released", "vitals",
@@ -1097,7 +1130,7 @@ export const cvShares = pgTable("cv_shares", {
   viewCount: integer("view_count").notNull().default(0),
   lastViewedAt: ts("last_viewed_at"),
   createdAt: tsNow("created_at"),
-}, t => [index("cv_shares_user_draft_idx").on(t.userId, t.draftId)]);
+}, t => [index("cv_shares_user_draft_idx").on(t.userId, t.draftId), index("cv_shares_draft_idx").on(t.draftId)]);
 export type CvShare = typeof cvShares.$inferSelect;
 export type NewCvShare = typeof cvShares.$inferInsert;
 

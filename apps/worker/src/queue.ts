@@ -156,8 +156,12 @@ export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all
     // an out-of-memory is a hard death, so nothing compares the two before the lock goes stale and
     // the task is claimed again. A task already at its limit is failed by `requeueStale`, never
     // claimed. The column is read from the same index rows the lane filter walks.
+    //
+    // A key can have a queued follow-up while a task with that key runs; the follow-up waits for
+    // it, so the two never run side by side (served by `tasks_dedupe_active_idx`).
     .where(sql`${schema.tasks.id} = (
       select id from tasks where status = 'queued' and run_after <= now() and attempts < max_attempts and ${laneFilter} and ${exclusionFilter}
+        and (dedupe_key is null or not exists (select 1 from tasks r where r.dedupe_key = tasks.dedupe_key and r.status = 'running'))
       order by priority asc, run_after asc, created_at asc
       limit 1 for update skip locked
     )`)

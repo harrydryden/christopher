@@ -86,6 +86,53 @@ describe("task queue", () => {
     expect(await enqueueTask(db, "scan_company", { companyId: "a" }, { dedupeKey: "scan_company:a" })).toBeTruthy();
   });
 
+  it("holds a follow-up back while the task it follows is still running", async () => {
+    // A library saved while its review runs gets one follow-up; running them side by side would
+    // have two passes write the same entries.
+    const payload = { userId: "account", libraryVersion: 1 };
+    const key = dedupeKeyFor("review_library", payload);
+    await enqueueTask(db, "review_library", payload, { dedupeKey: key });
+    const first = (await claimTask(db, "w1", "interactive"))!;
+    const followUp = await enqueueTask(db, "review_library", { ...payload, libraryVersion: 2 }, { dedupeKey: key });
+    expect(followUp).not.toBeNull();
+    // Unrelated work is still claimed around it.
+    await enqueueTask(db, "discover", { companyId: "elsewhere" }, { dedupeKey: "discover:elsewhere" });
+    expect((await claimTask(db, "w2"))!.type).toBe("discover");
+    expect(await claimTask(db, "w2")).toBeNull();
+    expect(await completeTask(db, first, {})).toBe(true);
+    expect((await claimTask(db, "w2"))!.id).toBe(followUp);
+  });
+
+  it("puts a started task back beside its follow-up on every path, keeping when it started", async () => {
+    // A retry, a stale sweep and a shutdown hand-back each return a running row to the queue while
+    // its follow-up holds the key: none may collide with it, and the two still never run at once.
+    const key = "review_library:account";
+    const cycle = async (putBack: (task: schema.Task) => Promise<unknown>) => {
+      await db.execute(sql`truncate tasks`);
+      await enqueueTask(db, "review_library", { userId: "account", libraryVersion: 1 }, { dedupeKey: key });
+      const task = (await claimTask(db, "back#0", "interactive"))!;
+      const followUp = await enqueueTask(db, "review_library", { userId: "account", libraryVersion: 2 }, { dedupeKey: key });
+      await putBack(task);
+      const [row] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, task.id));
+      expect(row!.status).toBe("queued");
+      expect(row!.startedAt).not.toBeNull();
+      await db.update(schema.tasks).set({ runAfter: sql`now()` });
+      const next = (await claimTask(db, "back#1"))!;
+      expect([task.id, followUp]).toContain(next.id);
+      expect(await claimTask(db, "back#2")).toBeNull();
+    };
+    await cycle(task => failTask(db, task, new Error("transient")));
+    await cycle(async task => {
+      await db.update(schema.tasks).set({ lockedAt: new Date(Date.now() - 60 * 60_000) }).where(eq(schema.tasks.id, task.id));
+      expect(await requeueStale(db)).toEqual({ requeued: 1, failed: 0 });
+    });
+    await cycle(async task => {
+      const queue = new TaskQueue(deps, {}, { concurrency: 1, workerId: "back" });
+      (queue as unknown as { running: Map<string, schema.Task> }).running.set(task.id, task);
+      await queue.stop(0);
+    });
+  });
+
   it("retries with a growing delay, then gives up", async () => {
     await enqueueTask(db, "discover", { companyId: "a" }, { maxAttempts: 2 });
     const first = await claimTask(db, "w1");

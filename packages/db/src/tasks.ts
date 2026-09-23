@@ -8,11 +8,12 @@ export interface EnqueueOptions {
   runAfter?: Date;
   maxAttempts?: number;
   /**
-   * When a task with the same key is already queued, bring it up to this request's priority and
-   * start time instead of dropping the request. A person's request — a shortlist score, a gate
-   * re-evaluation after a save — used to be absorbed into the background row already waiting for
-   * the same work, and waited at that row's place in the queue. A running task is left alone, and
-   * its payload never changes.
+   * When a task with the same key is already waiting to start, bring it up to this request's
+   * priority and start time instead of dropping the request. A person's request — a shortlist
+   * score, a gate re-evaluation after a save — used to be absorbed into the background row already
+   * waiting for the same work, and waited at that row's place in the queue. The waiting row's
+   * payload never changes. A CV build, whose key is held while it runs as well, is never promoted:
+   * its request is dropped as before.
    */
   promote?: boolean;
 }
@@ -36,22 +37,35 @@ function valuesFor(row: EnqueueRow) {
 
 /** The ids of the rows actually inserted: a deduplicated or promoted row is not one. */
 async function insertTasks(db: Pick<Db, "insert">, rows: EnqueueRow[], promote: boolean): Promise<string[]> {
-  const insert = db.insert(tasks).values(rows.map(valuesFor));
-  if (!promote) return (await insert.onConflictDoNothing().returning({ id: tasks.id })).map(row => row.id);
-  const written = await insert
-    .onConflictDoUpdate({
-      // The partial unique index the dedupe rule lives in.
-      target: tasks.dedupeKey,
-      targetWhere: sql`${tasks.status} in ('queued', 'running') and ${tasks.dedupeKey} is not null`,
-      set: { priority: sql`least(${tasks.priority}, excluded.priority)`, runAfter: sql`least(${tasks.runAfter}, excluded.run_after)` },
-      setWhere: sql`${tasks.status} = 'queued' and (${tasks.priority} > excluded.priority or ${tasks.runAfter} > excluded.run_after)`,
-    })
-    .returning({ id: tasks.id, inserted: sql<boolean>`(xmax = 0)` });
-  return written.filter(row => row.inserted).map(row => row.id);
+  if (!rows.length) return [];
+  // A CV build's key lives in an index of its own, and one statement can promote against one index.
+  const promoted = promote ? rows.filter(row => row.type !== "generate_cv") : [];
+  const dropped = promote ? rows.filter(row => row.type === "generate_cv") : rows;
+  const ids: string[] = [];
+  if (dropped.length) {
+    const written = await db.insert(tasks).values(dropped.map(valuesFor)).onConflictDoNothing().returning({ id: tasks.id });
+    ids.push(...written.map(row => row.id));
+  }
+  if (promoted.length) {
+    const written = await db.insert(tasks).values(promoted.map(valuesFor))
+      .onConflictDoUpdate({
+        // `tasks_dedupe_queued_uidx`: the one task per key that is queued and has never started.
+        target: tasks.dedupeKey,
+        targetWhere: sql`${tasks.status} = 'queued' and ${tasks.startedAt} is null and ${tasks.type} <> 'generate_cv' and ${tasks.dedupeKey} is not null`,
+        set: { priority: sql`least(${tasks.priority}, excluded.priority)`, runAfter: sql`least(${tasks.runAfter}, excluded.run_after)` },
+        setWhere: sql`${tasks.priority} > excluded.priority or ${tasks.runAfter} > excluded.run_after`,
+      })
+      .returning({ id: tasks.id, inserted: sql<boolean>`(xmax = 0)` });
+    ids.push(...written.filter(row => row.inserted).map(row => row.id));
+  }
+  return ids;
 }
 
 /**
- * Insert a task unless an identical dedupe key is already queued or running.
+ * Insert a task unless one with the same dedupe key is already waiting to start: queued and never
+ * started. A task that is running does not absorb the enqueue, so work asked for while it runs
+ * gets one follow-up, which the claim holds back until the running task has finished. A CV build
+ * is the exception: its key is held while it is queued or running.
  * Returns the task id, or null when deduplicated (or, with `promote`, promoted).
  */
 export async function enqueueTask(
@@ -66,8 +80,9 @@ export async function enqueueTask(
 
 /**
  * Insert many tasks in multi-row statements, with the defaults `enqueueTask` uses and the same
- * dedupe rule: a row whose key is already queued or running — or repeated within the batch — is
- * skipped. Returns how many were inserted. `chunkSize` bounds one statement's parameters.
+ * dedupe rule: a row whose key already has a task waiting to start — or is repeated within the
+ * batch — is skipped. Returns how many were inserted. `chunkSize` bounds one statement's
+ * parameters.
  *
  * With `promote`, a batch that names one key twice keeps its most urgent row, because one
  * statement may not update the same row twice.

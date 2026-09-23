@@ -133,13 +133,15 @@ export async function schedulerTick(deps: WorkerDeps, signal?: AbortSignal): Pro
     if (aged) log.debug("aged queued tasks", { aged });
   });
 
-  await deps.db
-    .update(schema.companySuggestions)
-    .set({ status: "expired", resolvedAt: now })
-    .where(and(eq(schema.companySuggestions.status, "pending"), lt(schema.companySuggestions.createdAt, new Date(now.getTime() - 30 * 86_400_000))));
-
   if (stopped()) return;
-  await maintainHistory(deps);
+  // Hourly, under the maintenance claim, with the retention it belongs beside: a month-old
+  // suggestion expires within the hour, and the update no longer runs on every tick.
+  if (await maintainHistory(deps, { signal }) && !stopped()) {
+    await deps.db
+      .update(schema.companySuggestions)
+      .set({ status: "expired", resolvedAt: now })
+      .where(and(eq(schema.companySuggestions.status, "pending"), lt(schema.companySuggestions.createdAt, new Date(now.getTime() - 30 * 86_400_000))));
+  }
 }
 
 /**

@@ -138,12 +138,30 @@ describe("promotion on a duplicate key", () => {
     expect((await theRow()).priority).toBe(1);
   });
 
-  it("inserts when nothing is queued, and leaves a running task alone", async () => {
+  it("inserts when nothing is waiting, and leaves a running task alone", async () => {
     const id = await enqueueTask(db, "score_job", payload, { dedupeKey: key, priority: 4, promote: true });
     expect(id).not.toBeNull();
-    await db.update(schema.tasks).set({ status: "running" });
-    expect(await enqueueTask(db, "score_job", payload, { dedupeKey: key, priority: 1, promote: true })).toBeNull();
-    expect((await theRow()).priority).toBe(4);
+    await db.update(schema.tasks).set({ status: "running", startedAt: new Date() });
+    // The running task keeps its place; the request becomes its one follow-up.
+    const followUp = await enqueueTask(db, "score_job", payload, { dedupeKey: key, priority: 1, promote: true });
+    expect(followUp).not.toBeNull();
+    const rows = await db.select().from(schema.tasks);
+    expect(rows.find(t => t.id === id)!.priority).toBe(4);
+    expect(rows.find(t => t.id === followUp)!.priority).toBe(1);
+    // A second request promotes that follow-up rather than adding another.
+    expect(await enqueueTask(db, "score_job", payload, { dedupeKey: key, priority: 0, promote: true })).toBeNull();
+    expect((await db.select().from(schema.tasks).where(eq(schema.tasks.id, followUp!)))[0]!.priority).toBe(0);
+  });
+
+  it("drops a duplicate CV build request rather than promoting it, whose key is held while it runs", async () => {
+    const draftKey = "generate_cv:draft";
+    const id = await enqueueTask(db, "generate_cv", { draftId: "draft" }, { dedupeKey: draftKey, priority: 2 });
+    expect(await enqueueTask(db, "generate_cv", { draftId: "draft" }, { dedupeKey: draftKey, priority: 1, promote: true })).toBeNull();
+    await db.update(schema.tasks).set({ status: "running", startedAt: new Date() });
+    expect(await enqueueTask(db, "generate_cv", { draftId: "draft" }, { dedupeKey: draftKey, priority: 1, promote: true })).toBeNull();
+    const [row] = await db.select().from(schema.tasks);
+    expect(row!.id).toBe(id);
+    expect(row!.priority).toBe(2);
   });
 
   it("promotes in a batch that names one key twice without failing the statement", async () => {
@@ -153,6 +171,28 @@ describe("promotion on a duplicate key", () => {
     const all = await db.select().from(schema.tasks);
     expect(all.find(t => t.dedupeKey === key)!.priority).toBe(1);
     expect(all).toHaveLength(2);
+  });
+});
+
+describe("company suggestion expiry", () => {
+  it("expires month-old suggestions once an hour with the history maintenance, not on every tick", async () => {
+    const [owner] = await accounts([true]);
+    const suggest = async (name: string) => {
+      const [row] = await db.insert(schema.companySuggestions).values({ userId: owner!.id, name, homepageUrl: `https://${name}.example`, domain: `${name}.example`,
+        createdAt: new Date(now.getTime() - 31 * 86_400_000) }).returning();
+      return row!.id;
+    };
+    const statusOf = async (id: string) => (await db.select().from(schema.companySuggestions).where(eq(schema.companySuggestions.id, id)))[0]!.status;
+    const first = await suggest("first");
+    await schedulerTick(deps);
+    expect(await statusOf(first)).toBe("expired");
+    const second = await suggest("second");
+    await schedulerTick(deps);
+    expect(await statusOf(second)).toBe("pending");
+    await db.execute(sql`update settings set updated_at = now() - interval '2 hours' where key = 'internal:lastMaintenance'`);
+    await schedulerTick(deps);
+    expect(await statusOf(second)).toBe("expired");
+    await db.delete(schema.companySuggestions).where(eq(schema.companySuggestions.userId, owner!.id));
   });
 });
 

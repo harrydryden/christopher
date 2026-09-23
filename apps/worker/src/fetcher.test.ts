@@ -7,7 +7,7 @@ import { createDb, listHttpHostDaily } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { sql } from "drizzle-orm";
 import { sha1 } from "@ava/core";
-import { ATS_API_DELAY_MS, DEFAULT_HOST_DELAY_MS, HARD_MAX_BODY_BYTES, HostBusyError, hostDelayMs, HttpTrafficLedger, MAX_HOST_WAIT_MS, PoliteFetcher, PrivateAddressError, userAgentFor } from "./fetcher";
+import { ATS_API_DELAY_MS, decodeBody, DEFAULT_HOST_DELAY_MS, HARD_MAX_BODY_BYTES, HostBusyError, hostDelayMs, HttpTrafficLedger, MAX_HOST_WAIT_MS, parseRobots, PoliteFetcher, PrivateAddressError, userAgentFor } from "./fetcher";
 import { startTestServer, type TestServer } from "./test-server";
 
 let server: TestServer;
@@ -337,6 +337,116 @@ describe("per-host pacing", () => {
     // interval has nothing to say about it: a host asking for thirty seconds gets thirty seconds.
     await expect(f.fetchText("https://boards-api.greenhouse.io/429")).rejects.toThrow(SourceFetchError);
     expect(paced).toEqual([{ host: "boards-api.greenhouse.io", delayMs: 30_000 }]);
+  });
+});
+
+describe("character sets", () => {
+  const latin1 = (text: string) => Buffer.from(text, "latin1");
+
+  it("decodes with the charset the response names, then the page's own declaration, else UTF-8", () => {
+    expect(decodeBody(latin1("<p>Z\u00fcrich</p>"), "text/html; charset=windows-1252")).toBe("<p>Z\u00fcrich</p>");
+    expect(decodeBody(latin1('<html><head><meta charset="iso-8859-1"></head><body>M\u00fcnchen</body></html>'), "text/html")).toContain("M\u00fcnchen");
+    const sjis = Buffer.concat([Buffer.from('<meta http-equiv="Content-Type" content="text/html; charset=shift_jis"><p>'), Buffer.from([0x93, 0x8c, 0x8b, 0x9e]), Buffer.from("</p>")]);
+    expect(decodeBody(sjis, "text/html")).toContain("\u6771\u4eac");
+    expect(decodeBody(latin1('<?xml version="1.0" encoding="ISO-8859-1"?><rss><title>Krak\u00f3w</title></rss>'), "application/rss+xml")).toContain("Krak\u00f3w");
+    // UTF-8 stays byte for byte what it always was, a byte-order mark included, so no hash moves.
+    const utf8 = Buffer.from("\ufeff<p>Z\u00fcrich \u2014 \u6771\u4eac</p>", "utf8");
+    expect(decodeBody(utf8, "text/html")).toBe(utf8.toString("utf8"));
+    expect(decodeBody(utf8, "text/html; charset=windows-1252")).toBe(utf8.toString("utf8"));
+    expect(decodeBody(Buffer.from([0xff, 0xfe, 0x5a, 0x00, 0xfc, 0x00]), undefined)).toBe("Z\u00fc");
+  });
+
+  it("keeps JSON as UTF-8 whatever it claims, and never throws on a label it does not know", () => {
+    const json = Buffer.from('{"location":"Z\u00fcrich"}', "utf8");
+    expect(decodeBody(json, "application/json; charset=iso-8859-1")).toBe('{"location":"Z\u00fcrich"}');
+    expect(decodeBody(Buffer.from("plain"), "text/html; charset=x-bogus")).toBe("plain");
+    // A page claiming UTF-16 in ASCII bytes is read as UTF-8, as the HTML standard says.
+    expect(decodeBody(Buffer.from('<meta charset="utf-16"><p>ok</p>'), "text/html")).toBe('<meta charset="utf-16"><p>ok</p>');
+  });
+
+  it("serves a windows-1252 page with its accents intact", async () => {
+    const site = await startTestServer({ "legacy.test": {
+      "/robots.txt": { status: 404, body: "" },
+      "/jobs": { body: latin1("<li>Buchhalter (m/w/d), M\u00fcnchen</li>"), contentType: "text/html; charset=windows-1252" },
+    } }, ["legacy.test"]);
+    try {
+      const res = await new PoliteFetcher({ userAgent: "test", hostMap: site.hostMap, perHostDelayMs: 0 }).fetchText("https://legacy.test/jobs");
+      expect(res.body).toContain("M\u00fcnchen");
+      expect(res.body).not.toContain("\ufffd");
+    } finally { await site.close(); }
+  });
+});
+
+describe("robots.txt", () => {
+  it("reads consecutive user-agent lines as one group", () => {
+    expect(parseRobots("User-agent: *\nUser-agent: Googlebot\nDisallow: /private\n").disallow).toEqual(["/private"]);
+  });
+
+  it("lets a group for us replace the * group, under either of our names, and merges ours", () => {
+    const robots = "User-agent: *\nDisallow: /\n\nUser-agent: AVAJobMonitor\nAllow: /careers\nDisallow: /careers/drafts\n\nUser-agent: avajobmonitor/0.1\nDisallow: /tmp\n";
+    expect(parseRobots(robots)).toEqual({ allow: ["/careers"], disallow: ["/careers/drafts", "/tmp"] });
+    // A group a site wrote for the name this worker had before the rename still means us.
+    expect(parseRobots("User-agent: *\nAllow: /\n\nUser-agent: ChristopherJobMonitor\nDisallow: /jobs\n").disallow).toEqual(["/jobs"]);
+  });
+
+  it("does not apply a group for another product just because our user-agent string mentions it", () => {
+    expect(parseRobots("User-agent: Mozilla\nDisallow: /\n\nUser-agent: compatible\nDisallow: /\n")).toEqual({ allow: [], disallow: [] });
+    expect(parseRobots("Disallow: /before-any-group\nUser-agent: *\nDisallow:\n")).toEqual({ allow: [], disallow: [] });
+  });
+
+  it("re-reads robots.txt a day later, so a new Disallow is heard by the next day's run", async () => {
+    let clock = Date.parse("2026-09-01T00:00:00Z");
+    let rules = "User-agent: *\nAllow: /\n";
+    const site = await startTestServer({ "changing.test": {
+      "/robots.txt": () => ({ body: rules, contentType: "text/plain" }),
+      "/jobs": { body: "<p>jobs</p>" },
+    } }, ["changing.test"]);
+    try {
+      const f = new PoliteFetcher({ userAgent: userAgentFor("you@example.com"), hostMap: site.hostMap, perHostDelayMs: 0, respectRobots: () => true, now: () => clock });
+      await expect(f.fetchText("https://changing.test/jobs")).resolves.toMatchObject({ status: 200 });
+      rules = "User-agent: AVAJobMonitor\nDisallow: /jobs\n";
+      clock += 23 * 3_600_000;
+      await expect(f.fetchText("https://changing.test/jobs")).resolves.toMatchObject({ status: 200 });
+      clock += 2 * 3_600_000;
+      await expect(f.fetchText("https://changing.test/jobs")).rejects.toMatchObject({ kind: "blocked", status: 999 });
+      expect(site.requests.filter(r => r.url === "/robots.txt")).toHaveLength(2);
+    } finally { await site.close(); }
+  });
+
+  it("allows the fetch when robots.txt fails, but asks again within the hour instead of never", async () => {
+    let clock = Date.parse("2026-09-01T00:00:00Z");
+    let failing = true;
+    const site = await startTestServer({ "flaky.test": {
+      "/robots.txt": () => failing ? { status: 503, body: "down" } : { body: "User-agent: *\nDisallow: /jobs\n", contentType: "text/plain" },
+      "/jobs": { body: "<p>jobs</p>" },
+    } }, ["flaky.test"]);
+    try {
+      const f = new PoliteFetcher({ userAgent: "test", hostMap: site.hostMap, perHostDelayMs: 0, respectRobots: () => true, now: () => clock });
+      await expect(f.fetchText("https://flaky.test/jobs")).resolves.toMatchObject({ status: 200 });
+      failing = false;
+      clock += 30 * 60_000;
+      await expect(f.fetchText("https://flaky.test/jobs")).resolves.toMatchObject({ status: 200 });
+      clock += 31 * 60_000;
+      await expect(f.fetchText("https://flaky.test/jobs")).rejects.toMatchObject({ kind: "blocked" });
+    } finally { await site.close(); }
+  });
+
+  it("keeps a missing robots.txt as allow-all for a day, and asks once for callers arriving together", async () => {
+    let clock = Date.parse("2026-09-01T00:00:00Z");
+    const site = await startTestServer({ "norobots.test": {
+      "/robots.txt": { status: 404, body: "" },
+      "/a": { body: "a" }, "/b": { body: "b" }, "/c": { body: "c" },
+    } }, ["norobots.test"]);
+    try {
+      const f = new PoliteFetcher({ userAgent: "test", hostMap: site.hostMap, perHostDelayMs: 0, respectRobots: () => true, now: () => clock });
+      await Promise.all(["/a", "/b", "/c"].map(path => f.fetchText(`https://norobots.test${path}`)));
+      clock += 12 * 3_600_000;
+      await f.fetchText("https://norobots.test/a");
+      expect(site.requests.filter(r => r.url === "/robots.txt")).toHaveLength(1);
+      clock += 13 * 3_600_000;
+      await f.fetchText("https://norobots.test/a");
+      expect(site.requests.filter(r => r.url === "/robots.txt")).toHaveLength(2);
+    } finally { await site.close(); }
   });
 });
 

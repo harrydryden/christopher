@@ -36,6 +36,8 @@ export interface FetcherOptions {
   resolveHost?: ResolveHost;
   /** Which addresses may be reached. Defaults to `isPublicAddress`; a test substitutes one for a local fixture. */
   isAllowedAddress?: (address: string) => boolean;
+  /** The clock robots.txt entries age by. Tests move it; everything else uses the real one. */
+  now?: () => number;
 }
 
 /** Every address `hostname` resolves to. */
@@ -105,6 +107,99 @@ export class AddressGuard {
     this.vetted.set(host, now + VETTED_HOST_TTL_MS);
     while (this.vetted.size > MAX_VETTED_HOSTS) this.vetted.delete(this.vetted.keys().next().value!);
   }
+}
+
+/**
+ * A text body as its author meant it: the charset the Content-Type names, else the one an HTML
+ * page's `<meta>` or an XML document's prolog declares in its first 1024 bytes, else UTF-8. A
+ * byte-order mark outranks all of them, and JSON is UTF-8 whatever it claims (RFC 8259), because a
+ * feed that mislabels itself is commoner than one really written in Latin-1.
+ *
+ * Reading every page as UTF-8 turned "Zürich" on a windows-1252 careers page into "Z�rich", which
+ * the location gate then never matched. A UTF-8 body still decodes exactly as it always did, so no
+ * stored hash or revalidation changes for the pages that were already right.
+ */
+export function decodeBody(buf: Buffer, contentType: string | undefined): string {
+  const type = (contentType ?? "").toLowerCase();
+  let label: string | undefined;
+  if (buf[0] === 0xff && buf[1] === 0xfe) label = "utf-16le";
+  else if (buf[0] === 0xfe && buf[1] === 0xff) label = "utf-16be";
+  else if ((buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) || /[/+]json\b/.test(type)) label = "utf-8";
+  else {
+    label = /charset\s*=\s*["']?\s*([\w.:-]+)/.exec(type)?.[1];
+    if (!label) {
+      const head = buf.subarray(0, 1024).toString("latin1");
+      label = /<meta[^>]+charset\s*=\s*["']?\s*([\w.:-]+)/i.exec(head)?.[1] ?? /^\s*<\?xml[^>]*\sencoding\s*=\s*["']([\w.:-]+)/i.exec(head)?.[1];
+      // A document that declares UTF-16 in ASCII bytes is not UTF-16: the HTML standard reads it as UTF-8.
+      if (label && /^utf-16/i.test(label)) label = "utf-8";
+    }
+  }
+  let decoder: TextDecoder;
+  try {
+    decoder = new TextDecoder(label ?? "utf-8");
+  } catch {
+    return buf.toString("utf8");
+  }
+  return decoder.encoding === "utf-8" ? buf.toString("utf8") : decoder.decode(buf);
+}
+
+/**
+ * The product tokens robots.txt groups are matched against: this worker's, and the one it had
+ * before the rename, so a group a site wrote for the old name still applies to us.
+ */
+const ROBOTS_TOKENS = ["avajobmonitor", "christopherjobmonitor"];
+
+export interface RobotsRules {
+  allow: string[];
+  disallow: string[];
+}
+
+/**
+ * The rules robots.txt sets for us, read as RFC 9309 does: consecutive `User-agent` lines share
+ * one group, a group naming one of `tokens` (its product token, compared whole and ignoring case)
+ * replaces the `*` group rather than adding to it, several groups for us are merged, and `*`
+ * applies only when no group names us. Rules before any `User-agent` line apply to nobody.
+ */
+export function parseRobots(text: string, tokens: readonly string[] = ROBOTS_TOKENS): RobotsRules {
+  const groups: Array<{ agents: string[] } & RobotsRules> = [];
+  let current: ({ agents: string[] } & RobotsRules) | null = null;
+  let lastWasAgent = false;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/#.*$/, "").trim();
+    const m = line.match(/^([a-z-]+)\s*:\s*(.*)$/i);
+    if (!m) continue;
+    const key = m[1]!.toLowerCase();
+    const value = m[2]!.trim();
+    if (key === "user-agent") {
+      if (!current || !lastWasAgent) groups.push(current = { agents: [], allow: [], disallow: [] });
+      current.agents.push(value.toLowerCase().split(/[/\s]/)[0]!);
+      lastWasAgent = true;
+    } else if (key === "allow" || key === "disallow") {
+      lastWasAgent = false;
+      if (current && value) current[key].push(value);
+    }
+  }
+  const wanted = tokens.map(t => t.toLowerCase());
+  const ours = groups.filter(g => g.agents.some(a => wanted.includes(a)));
+  const chosen = ours.length > 0 ? ours : groups.filter(g => g.agents.includes("*"));
+  return { allow: chosen.flatMap(g => g.allow), disallow: chosen.flatMap(g => g.disallow) };
+}
+
+/**
+ * How long a robots.txt answer stands. Rules, and a 4xx (no robots.txt, so no rules), are kept a
+ * day, so a site that adds a Disallow for us is heard by tomorrow's run. A 5xx, a 429 or no answer
+ * at all allows the fetch but is asked again within the hour, never cached as "no rules" for the
+ * life of the process.
+ */
+const ROBOTS_TTL_MS = 86_400_000;
+const ROBOTS_RETRY_MS = 3_600_000;
+const MAX_ROBOTS_ENTRIES = 5000;
+
+interface RobotsEntry {
+  at: number;
+  ttlMs: number;
+  /** Null when there are none to apply: no robots.txt, or none could be read. */
+  rules: RobotsRules | null;
 }
 
 /** The longest a request waits for its host's turn. Beyond it the slot is given back. */
@@ -335,7 +430,9 @@ const CHALLENGE_MARKERS = [/cf-browser-verification/i, /just a moment/i, /attent
 export class PoliteFetcher {
   /** In-process pacing (tests, the CLI): each host's next free turn, as `reserveHost` keeps it in the table. */
   private nextTurn = new Map<string, number>();
-  private robotsCache = new Map<string, { fetchedAt: number; disallow: string[]; allow: string[] } | null>();
+  /** Per origin, oldest first, bounded; `robotsInFlight` makes one read serve every caller waiting on it. */
+  private robotsCache = new Map<string, RobotsEntry>();
+  private robotsInFlight = new Map<string, Promise<RobotsEntry>>();
   private responses = new Map<string, { response: FetchResponse; at: number }>();
   private responseBytes = 0;
   /** Validators for bodies too large to cache: enough to ask "has it changed?", never the body. */
@@ -402,58 +499,55 @@ export class PoliteFetcher {
     if (turn > now) await sleep(turn - now, opts.signal);
   }
 
-  private parseRobots(text: string): { disallow: string[]; allow: string[] } {
-    const lines = text.split(/\r?\n/);
-    let applies = false;
-    let sawStar = false;
-    const disallow: string[] = [];
-    const allow: string[] = [];
-    const ua = this.opts.userAgent.toLowerCase();
-    for (const raw of lines) {
-      const line = raw.replace(/#.*$/, "").trim();
-      if (!line) continue;
-      const m = line.match(/^([a-z-]+)\s*:\s*(.*)$/i);
-      if (!m) continue;
-      const key = m[1]!.toLowerCase();
-      const value = m[2]!.trim();
-      if (key === "user-agent") {
-        const v = value.toLowerCase();
-        applies = v === "*" || ua.includes(v);
-        if (v === "*") sawStar = true;
-      } else if (applies && key === "disallow" && value) disallow.push(value);
-      else if (applies && key === "allow" && value) allow.push(value);
-    }
-    if (!sawStar && disallow.length === 0) return { disallow: [], allow: [] };
-    return { disallow, allow };
+  private now(): number {
+    return this.opts.now?.() ?? Date.now();
   }
 
   private async robotsAllows(url: string): Promise<boolean> {
     const u = new URL(url);
     const origin = `${u.protocol}//${u.host}`;
     let entry = this.robotsCache.get(origin);
-    if (entry === undefined) {
-      try {
-        const res = await this.rawFetch(`${origin}/robots.txt`, { timeoutMs: 8000 });
-        entry = res.status === 200 ? { fetchedAt: Date.now(), ...this.parseRobots(res.body) } : null;
-      } catch (error) {
-        // A robots.txt the guard refused says the site itself is somewhere we will not go, and one
-        // never asked because the host is backing off says nothing at all: neither is "no rules".
-        if (error instanceof PrivateAddressError || error instanceof HostBusyError) throw error;
-        entry = null;
+    if (!entry || this.now() - entry.at >= entry.ttlMs) {
+      let pending = this.robotsInFlight.get(origin);
+      if (!pending) {
+        pending = this.readRobots(origin, u.hostname).finally(() => this.robotsInFlight.delete(origin));
+        this.robotsInFlight.set(origin, pending);
       }
-      this.robotsCache.set(origin, entry);
+      entry = await pending;
     }
-    if (!entry) return true;
+    const rules = entry.rules;
+    if (!rules) return true;
     const path = u.pathname + u.search;
     const matches = (rule: string) => {
       const re = new RegExp("^" + rule.split("*").map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*").replace(/\\\$$/, "$"));
       return re.test(path);
     };
-    const longest = (rules: string[]) => rules.filter(matches).reduce((a, b) => (b.length > a.length ? b : a), "");
-    const d = longest(entry.disallow);
-    const a = longest(entry.allow);
+    const longest = (list: string[]) => list.filter(matches).reduce((a, b) => (b.length > a.length ? b : a), "");
+    const d = longest(rules.disallow);
+    const a = longest(rules.allow);
     if (!d) return true;
     return a.length >= d.length;
+  }
+
+  /** Ask `origin` for its robots.txt and remember the answer for as long as it stands. */
+  private async readRobots(origin: string, host: string): Promise<RobotsEntry> {
+    let entry: RobotsEntry;
+    try {
+      const res = await this.rawFetch(`${origin}/robots.txt`, { timeoutMs: 8000 });
+      if (res.status === 429 || res.status === 503) await this.opts.deferHost?.(host, retryAfterMs(res.headers));
+      entry = res.status === 200
+        ? { at: this.now(), ttlMs: ROBOTS_TTL_MS, rules: parseRobots(res.body) }
+        : { at: this.now(), ttlMs: res.status === 429 || res.status >= 500 ? ROBOTS_RETRY_MS : ROBOTS_TTL_MS, rules: null };
+    } catch (error) {
+      // A robots.txt the guard refused says the site itself is somewhere we will not go, and one
+      // never asked because the host is backing off says nothing at all: neither is "no rules".
+      if (error instanceof PrivateAddressError || error instanceof HostBusyError) throw error;
+      entry = { at: this.now(), ttlMs: ROBOTS_RETRY_MS, rules: null };
+    }
+    this.robotsCache.delete(origin);
+    this.robotsCache.set(origin, entry);
+    while (this.robotsCache.size > MAX_ROBOTS_ENTRIES) this.robotsCache.delete(this.robotsCache.keys().next().value!);
+    return entry;
   }
 
   /**
@@ -659,7 +753,7 @@ export class PoliteFetcher {
         return undefined;
       },
       body: ({ res, chunks, headers: outHeaders, finalUrl, started, originalHost, counted }) => {
-        const body = Buffer.concat(chunks).toString("utf8");
+        const body = decodeBody(Buffer.concat(chunks), outHeaders["content-type"]);
         const response: FetchResponse = { status: res.status, url: finalUrl, headers: outHeaders, body };
         const bytes = Buffer.byteLength(body);
         counted.bytes = bytes;
@@ -687,7 +781,7 @@ export class PoliteFetcher {
             this.responseBytes -= Buffer.byteLength(this.responses.get(key)!.response.body); this.responses.delete(key);
           }
         }
-        log.info("http fetched", { host: originalHost, status: res.status, durationMs: Date.now() - started, bytes });
+        log.debug("http fetched", { host: originalHost, status: res.status, durationMs: Date.now() - started, bytes });
         return response;
       },
     });
@@ -706,7 +800,7 @@ export class PoliteFetcher {
         // A view rather than a copy, and a plain Uint8Array rather than a Buffer, so that what a
         // caller hashes or sniffs is exactly what came off the wire.
         const bytes = new Uint8Array(joined.buffer, joined.byteOffset, joined.byteLength);
-        log.info("http fetched", { host: originalHost, status: res.status, durationMs: Date.now() - started, bytes: bytes.length, binary: true });
+        log.debug("http fetched", { host: originalHost, status: res.status, durationMs: Date.now() - started, bytes: bytes.length, binary: true });
         return { status: res.status, url: finalUrl, headers, bytes };
       },
     });

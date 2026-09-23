@@ -5,13 +5,46 @@ import { needsEmailConfirmation, requireUser, requireVerifiedUser } from "@/lib/
 import { appendProfile, latestProfileFor, setSubscriptionStatus } from "@ava/db";
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { filterSuggestions, tagVocabulary, type User } from "@ava/db/schema";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { countRolesInTable } from "@/lib/queries/learning";
 import { describeFilterSuggestion, extractSuggestionValue } from "@/lib/filterSuggestions";
 import { getSettings, setUserSetting, saveSettingsAndGate } from "@/lib/settings";
-import { actionError, fail, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
+import { actionError, fail, zUuid, type ActionResult } from "@/lib/validation";
+
+/**
+ * The Learning page binds its forms straight to these actions, so an expected refusal — a stale
+ * page, an empty or overlong answer — goes back to the page as a sentence (`?error=`) rather than
+ * being thrown into a crash page that loses what was typed.
+ */
+function refuseOnLearning(sentence: string): never {
+  redirect(`/learning?${new URLSearchParams({ error: sentence }).toString()}`);
+}
+
+/**
+ * Pinned statements and answers go into every profile synthesis verbatim, so each one is a
+ * sentence or a paragraph rather than a document, and there are only so many of them.
+ */
+const PINNED_STATEMENT_LIMIT = 2_000;
+const PINNED_STATEMENTS_MAX = 50;
+
+const PROFILE_CHANGED = "Your preference profile changed since this page loaded, often because a new version was synthesised. Reload Learning and make the change again.";
+
+/**
+ * Append a version the person wrote. The worker writes versions too — a synthesis is queued after
+ * most decisions — so a page opened before one landed is stale, which is a refusal with a reason.
+ */
+async function appendOwnProfile(userId: string, expectedVersion: number, input: Parameters<typeof appendProfile>[3]): Promise<void> {
+  if (!Number.isInteger(expectedVersion) || expectedVersion < 0) refuseOnLearning(PROFILE_CHANGED);
+  try {
+    await appendProfile(db(), userId, expectedVersion, input);
+  } catch (error) {
+    if (((await latestProfileFor(db(), userId))?.version ?? 0) !== expectedVersion) refuseOnLearning(PROFILE_CHANGED);
+    throw error;
+  }
+}
 
 /**
  * Everything on Learning that ends in a model call — a profile synthesis or a re-score — waits for a
@@ -25,9 +58,11 @@ export async function savePinnedStatements(formData: FormData): Promise<void> {
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
+  if (lines.length > PINNED_STATEMENTS_MAX) refuseOnLearning(`Pin at most ${PINNED_STATEMENTS_MAX} statements.`);
+  if (lines.some((line) => line.length > PINNED_STATEMENT_LIMIT)) refuseOnLearning(`Keep each pinned statement under ${PINNED_STATEMENT_LIMIT.toLocaleString("en-GB")} characters.`);
   const latest = await latestProfileFor(db(), user.id);
   const expectedVersion = Number(formData.get("profileVersion") ?? latest?.version ?? 0);
-  await appendProfile(db(), user.id, expectedVersion, {
+  await appendOwnProfile(user.id, expectedVersion, {
     markdown: latest?.markdown ?? (await getSettings()).seedProfile,
     pinnedStatements: lines, openQuestions: latest?.openQuestions ?? [],
     sourceDecisionCount: latest?.sourceDecisionCount ?? 0, model: "user",
@@ -39,17 +74,18 @@ export async function savePinnedStatements(formData: FormData): Promise<void> {
 export async function answerOpenQuestion(questionId: string, formData: FormData): Promise<void> {
   const user = await requireVerifiedUser();
   const answer = String(formData.get("answer") ?? "").trim();
-  if (!answer) throw new UserFacingError("An answer is required.");
+  if (!answer) refuseOnLearning("Write an answer before saving it.");
+  if (answer.length > PINNED_STATEMENT_LIMIT) refuseOnLearning(`Keep an answer under ${PINNED_STATEMENT_LIMIT.toLocaleString("en-GB")} characters.`);
   const latest = await latestProfileFor(db(), user.id);
-  if (!latest) throw new UserFacingError("No preference profile exists yet.");
-  const questions = latest.openQuestions ?? [];
+  const questions = latest?.openQuestions ?? [];
   const question = questions.find((q) => q.id === questionId);
-  if (!question) throw new UserFacingError("Question not found.");
+  if (!latest || !question) refuseOnLearning(PROFILE_CHANGED);
+  if (latest.pinnedStatements.length >= PINNED_STATEMENTS_MAX) refuseOnLearning(`Your profile already pins ${PINNED_STATEMENTS_MAX} statements. Remove one before answering.`);
 
   const updatedQuestions = questions.map((q) => (q.id === questionId ? { ...q, answer } : q));
   const updatedPinned = [...latest.pinnedStatements, `Q: ${question.question} A: ${answer}`];
   const expectedVersion = Number(formData.get("profileVersion") ?? latest.version);
-  await appendProfile(db(), user.id, expectedVersion, {
+  await appendOwnProfile(user.id, expectedVersion, {
     markdown: latest.markdown, openQuestions: updatedQuestions, pinnedStatements: updatedPinned,
     sourceDecisionCount: latest.sourceDecisionCount, model: "user",
   });
@@ -83,7 +119,7 @@ async function writeSeedProfile(user: User, raw: string): Promise<string | null>
 export async function saveSeedProfile(formData: FormData): Promise<void> {
   const user = await requireUser();
   const error = await writeSeedProfile(user, String(formData.get("seedProfile") ?? ""));
-  if (error) throw new UserFacingError(error);
+  if (error) refuseOnLearning(error);
 }
 
 /** The Settings card's twin, for a `SettingsForm` that shows its errors inline. */
@@ -154,9 +190,10 @@ export async function acceptFilterSuggestionWithReport(suggestionId: string): Pr
   }
 }
 
-/** The Learning card's form-shaped twin of `acceptFilterSuggestionWithReport`. */
+/** The Learning card's form-shaped twin of `acceptFilterSuggestionWithReport`: a refusal goes back to the page. */
 export async function acceptFilterSuggestion(suggestionId: string): Promise<void> {
-  await acceptFilterSuggestionWithReport(suggestionId);
+  const result = await acceptFilterSuggestionWithReport(suggestionId);
+  if (!result.ok) refuseOnLearning(result.error);
 }
 
 /** Mine the latest scan of every source for role types and seniority labels the gate is missing. */
@@ -168,7 +205,9 @@ export async function suggestFromScansNow(): Promise<void> {
 
 export async function rejectFilterSuggestion(suggestionId: string): Promise<void> {
   const user = await requireUser();
-  const id = zUuid().parse(suggestionId);
+  const parsed = zUuid().safeParse(suggestionId);
+  if (!parsed.success) refuseOnLearning("That suggestion has already been settled.");
+  const id = parsed.data;
   await db().update(filterSuggestions).set({ status: "rejected", resolvedAt: new Date() }).where(and(eq(filterSuggestions.id, id), eq(filterSuggestions.userId, user.id)));
   revalidatePath("/learning");
 }
@@ -189,10 +228,10 @@ export async function rescoreAllRoles(): Promise<void> {
 export async function savePreferenceProfile(formData: FormData): Promise<void> {
   const user = await requireVerifiedUser();
   const markdown = String(formData.get("markdown") ?? "").trim();
-  if (!markdown || markdown.length > 50_000) throw new UserFacingError("Enter a profile of between 1 and 50,000 characters.");
+  if (!markdown || markdown.length > 50_000) refuseOnLearning("Enter a profile of between 1 and 50,000 characters.");
   const expectedVersion = Number(formData.get("profileVersion") ?? 0);
   const latest = await latestProfileFor(db(), user.id);
-  await appendProfile(db(), user.id, expectedVersion, {
+  await appendOwnProfile(user.id, expectedVersion, {
     markdown, pinnedStatements: latest?.pinnedStatements ?? [], openQuestions: latest?.openQuestions ?? [],
     sourceDecisionCount: latest?.sourceDecisionCount ?? 0, model: "user",
   });
@@ -202,7 +241,7 @@ export async function savePreferenceProfile(formData: FormData): Promise<void> {
 
 export async function acceptReasonTag(tag: string): Promise<void> {
   const user = await requireUser();
-  if (!tag || tag.length > 100) throw new UserFacingError("Invalid reason tag.");
+  if (!tag || tag.length > 100) refuseOnLearning("That reason tag is not in your list.");
   await db().update(tagVocabulary).set({ accepted: true }).where(and(eq(tagVocabulary.userId, user.id), eq(tagVocabulary.tag, tag)));
   revalidatePath("/learning");
 }

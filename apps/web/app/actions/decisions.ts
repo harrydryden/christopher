@@ -6,6 +6,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { decisions, jobEvents, tagVocabulary, userJobs } from "@ava/db/schema";
 import { evaluateLocation } from "@ava/core";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { enqueue, enqueueMany } from "@/lib/enqueue";
@@ -130,18 +131,27 @@ export async function decide(jobId: string, decision: "apply" | "skip" | null, r
   return ok();
 }
 
-/** Editing a decision's tags re-synthesises the profile from them, which is model work. */
+function refuseOnLearning(sentence: string): never {
+  redirect(`/learning?${new URLSearchParams({ error: sentence }).toString()}`);
+}
+
+/**
+ * Editing a decision's tags re-synthesises the profile from them, which is model work. The Learning
+ * page binds this straight to its form, so a refusal goes back there as a sentence.
+ */
 export async function saveDecisionTags(decisionId: string, formData: FormData): Promise<void> {
   const user = await requireVerifiedUser();
-  const id = zUuid().parse(decisionId);
+  const parsed = zUuid().safeParse(decisionId);
+  if (!parsed.success) refuseOnLearning("This decision has changed. Reload before editing its tags.");
+  const id = parsed.data;
   const tags = [...new Set(formData.getAll("tags").map(String))];
-  if (tags.length > 30) throw new UserFacingError("Choose at most 30 tags.");
+  if (tags.length > 30) refuseOnLearning("Choose at most 30 tags.");
   const accepted = tags.length ? await db().select({ tag: tagVocabulary.tag }).from(tagVocabulary)
     .where(and(eq(tagVocabulary.userId, user.id), inArray(tagVocabulary.tag, tags), eq(tagVocabulary.accepted, true))) : [];
-  if (accepted.length !== tags.length) throw new UserFacingError("Choose accepted reason tags from the list.");
+  if (accepted.length !== tags.length) refuseOnLearning("Choose accepted reason tags from the list.");
   const updated = await db().update(decisions).set({ tags, tagsEdited: true })
     .where(and(eq(decisions.id, id), eq(decisions.userId, user.id), eq(decisions.superseded, false))).returning({ id: decisions.id });
-  if (!updated.length) throw new UserFacingError("This decision has changed. Reload before editing its tags.");
+  if (!updated.length) refuseOnLearning("This decision has changed. Reload before editing its tags.");
   await enqueue("synthesize_profile", { userId: user.id, force: true });
   revalidatePath("/learning");
 }

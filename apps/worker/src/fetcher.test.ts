@@ -7,7 +7,7 @@ import { createDb, listHttpHostDaily } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { sql } from "drizzle-orm";
 import { sha1 } from "@ava/core";
-import { ATS_API_DELAY_MS, DEFAULT_HOST_DELAY_MS, HARD_MAX_BODY_BYTES, hostDelayMs, HttpTrafficLedger, PoliteFetcher, PrivateAddressError, userAgentFor } from "./fetcher";
+import { ATS_API_DELAY_MS, DEFAULT_HOST_DELAY_MS, HARD_MAX_BODY_BYTES, HostBusyError, hostDelayMs, HttpTrafficLedger, MAX_HOST_WAIT_MS, PoliteFetcher, PrivateAddressError, userAgentFor } from "./fetcher";
 import { startTestServer, type TestServer } from "./test-server";
 
 let server: TestServer;
@@ -153,10 +153,17 @@ describe("polite fetcher", () => {
     expect(Date.now() - started).toBeGreaterThanOrEqual(200);
   });
 
-  it("times out instead of hanging", async () => {
-    const f = fetcher({ defaultTimeoutMs: 1 });
-    const error = await f.fetchText("https://www.example.test/").catch((e: unknown) => e);
-    if (error instanceof SourceFetchError) expect(["timeout", "network"]).toContain(error.kind);
+  it("times out instead of hanging when a body stalls after its headers", async () => {
+    // The case the body-read timeout exists for: the host answers at once, then sends nothing more.
+    const stalled = await stallingServer();
+    try {
+      const ledger = new HttpTrafficLedger(null);
+      const f = new PoliteFetcher({ userAgent: "test", perHostDelayMs: 0, traffic: ledger, hostMap: { "stall.test": `127.0.0.1:${stalled.port}` } });
+      const started = Date.now();
+      await expect(f.fetchText("https://stall.test/board", { timeoutMs: 200 })).rejects.toMatchObject({ kind: "timeout" });
+      expect(Date.now() - started).toBeLessThan(5_000);
+      expect(ledger.snapshot()[0]).toMatchObject({ requests: 1, timeouts: 1, ok2xx: 1 });
+    } finally { await stalled.close(); }
   });
 
   it("refuses a host the test map does not name, rather than reaching the real internet", async () => {
@@ -330,6 +337,85 @@ describe("per-host pacing", () => {
     // interval has nothing to say about it: a host asking for thirty seconds gets thirty seconds.
     await expect(f.fetchText("https://boards-api.greenhouse.io/429")).rejects.toThrow(SourceFetchError);
     expect(paced).toEqual([{ host: "boards-api.greenhouse.io", delayMs: 30_000 }]);
+  });
+});
+
+describe("waiting for a host's turn", () => {
+  it("never sleeps through a long back-off: it gives the slot back with the time to come back", async () => {
+    // A Retry-After of an hour on a shared ATS host used to put every scan that touched it to sleep
+    // for the hour, long past its own deadline, holding the slot the whole time.
+    const asked: Array<[string, number, number]> = [];
+    const hits = server.requests.length;
+    const f = fetcher({ reserveHost: async (host, delayMs, maxWaitMs) => { asked.push([host, delayMs, maxWaitMs]); return 3_600_000; } });
+    const started = Date.now();
+    const error = await f.fetchText("https://boards-api.greenhouse.io/v1/boards/acme/jobs").catch((e: unknown) => e);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(error).toBeInstanceOf(HostBusyError);
+    expect(error).toBeInstanceOf(SourceFetchError);
+    expect((error as HostBusyError).kind).toBe("rate_limited");
+    expect((error as HostBusyError).host).toBe("boards-api.greenhouse.io");
+    expect(Math.abs((error as HostBusyError).retryAt.getTime() - (started + 3_600_000))).toBeLessThan(5_000);
+    // The reservation is told how long the fetcher is prepared to wait, so it can decline to book one.
+    expect(asked).toEqual([["boards-api.greenhouse.io", 0, MAX_HOST_WAIT_MS]]);
+    expect(server.requests.length).toBe(hits);
+  });
+
+  it("still waits out a turn within the cap", async () => {
+    const f = fetcher({ reserveHost: async () => 150 });
+    const started = Date.now();
+    await expect(f.fetchText("https://boards-api.greenhouse.io/v1/boards/acme/jobs")).resolves.toMatchObject({ status: 200 });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(140);
+  });
+
+  it("applies the same cap to its own queue when there is no shared table", async () => {
+    const f = fetcher({ perHostDelayMs: 80, maxHostWaitMs: 100, respectRobots: () => false });
+    const results = await Promise.allSettled([
+      f.fetchText("https://www.example.test/"),
+      f.fetchText("https://www.example.test/allowed"),
+      f.fetchText("https://www.example.test/echo"),
+    ]);
+    // The third turn is 160 ms off, beyond the 100 ms this fetcher will wait.
+    expect(results.map(r => r.status)).toEqual(["fulfilled", "fulfilled", "rejected"]);
+    expect((results[2] as PromiseRejectedResult).reason).toBeInstanceOf(HostBusyError);
+  });
+});
+
+describe("cancellation", () => {
+  it("sends nothing for a request whose signal has already aborted", async () => {
+    const hits = server.requests.length;
+    const controller = new AbortController();
+    const reason = new Error("task abandoned");
+    controller.abort(reason);
+    await expect(fetcher({ respectRobots: () => false }).fetchText("https://www.example.test/", { signal: controller.signal })).rejects.toBe(reason);
+    expect(server.requests.length).toBe(hits);
+  });
+
+  it("stops waiting for the host's turn the moment the signal aborts", async () => {
+    const hits = server.requests.length;
+    const controller = new AbortController();
+    const reason = new Error("deadline");
+    const f = fetcher({ reserveHost: async () => 20_000 });
+    setTimeout(() => controller.abort(reason), 50);
+    const started = Date.now();
+    await expect(f.fetchText("https://boards-api.greenhouse.io/v1/boards/acme/jobs", { signal: controller.signal })).rejects.toBe(reason);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(server.requests.length).toBe(hits);
+  });
+
+  it("cancels a body mid-read, and does not blame the host for it", async () => {
+    const stalled = await stallingServer();
+    try {
+      const ledger = new HttpTrafficLedger(null);
+      const f = new PoliteFetcher({ userAgent: "test", perHostDelayMs: 0, traffic: ledger, hostMap: { "stall.test": `127.0.0.1:${stalled.port}` } });
+      const controller = new AbortController();
+      const reason = new Error("lease lost");
+      setTimeout(() => controller.abort(reason), 100);
+      const started = Date.now();
+      await expect(f.fetchText("https://stall.test/board", { signal: controller.signal, timeoutMs: 30_000 })).rejects.toBe(reason);
+      expect(Date.now() - started).toBeLessThan(5_000);
+      const [row] = ledger.snapshot();
+      expect(row).toMatchObject({ requests: 1, timeouts: 0, networkErrors: 0 });
+    } finally { await stalled.close(); }
   });
 });
 
@@ -682,3 +768,19 @@ describe("redirects", () => {
     expect(seen.map(r => [r.host, r.authorization])).toEqual([["www.careers.test", "Bearer secret"], ["boards.other.test", undefined]]);
   });
 });
+
+/** Answers with headers and the start of a body, then never sends another byte. */
+async function stallingServer() {
+  const sockets = new Set<net.Socket>();
+  const stalled = http.createServer((req, res) => {
+    if (req.url === "/robots.txt") { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.write('{"jobs": [');
+  });
+  stalled.on("connection", socket => { sockets.add(socket); socket.on("close", () => sockets.delete(socket)); });
+  await new Promise<void>(resolve => stalled.listen(0, "127.0.0.1", resolve));
+  return {
+    port: (stalled.address() as net.AddressInfo).port,
+    close: async () => { for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => stalled.close(() => resolve())); },
+  };
+}

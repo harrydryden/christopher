@@ -16,7 +16,14 @@ import { log } from "./log";
 
 export interface FetcherOptions {
   deferHost?: (host: string, delayMs: number) => Promise<void>;
-  reserveHost?: (host: string, delayMs: number) => Promise<number>;
+  /**
+   * Reserve the host's next turn and say how long until it comes. When that is further off than
+   * `maxWaitMs` the fetcher will not wait for it, so an implementation should leave the host's
+   * schedule alone and only report the wait: a turn nobody takes still pushes everyone behind it.
+   */
+  reserveHost?: (host: string, delayMs: number, maxWaitMs: number) => Promise<number>;
+  /** The longest a request waits for its host's turn before `HostBusyError`. Defaults to 30 s. */
+  maxHostWaitMs?: number;
   userAgent: string;
   perHostDelayMs?: number;
   defaultTimeoutMs?: number;
@@ -98,6 +105,36 @@ export class AddressGuard {
     this.vetted.set(host, now + VETTED_HOST_TTL_MS);
     while (this.vetted.size > MAX_VETTED_HOSTS) this.vetted.delete(this.vetted.keys().next().value!);
   }
+}
+
+/** The longest a request waits for its host's turn. Beyond it the slot is given back. */
+export const MAX_HOST_WAIT_MS = 30_000;
+
+/**
+ * The host's next turn is further off than a request may wait — it asked for a back-off, or a
+ * queue of our own requests is ahead — so nothing was sent. `retryAt` is when the turn comes.
+ *
+ * A task holding a slot must not sleep through someone else's hour-long Retry-After: a handler
+ * that meets this requeues its task for `retryAt` instead. It is a `rate_limited` SourceFetchError
+ * so that code which does not know it yet treats it as the ordinary back-off it is, and a scan
+ * that meets one has observed nothing: it can never close a role.
+ */
+export class HostBusyError extends SourceFetchError {
+  constructor(readonly host: string, readonly retryAt: Date) {
+    super(`${host} is paced until ${retryAt.toISOString()}; nothing was sent`, "rate_limited");
+    this.name = "HostBusyError";
+  }
+}
+
+/** Wait `ms`, or reject with the signal's reason the moment it aborts. */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return new Promise(resolve => setTimeout(resolve, ms));
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const onAbort = () => { clearTimeout(timer); reject(signal.reason); };
+    const timer = setTimeout(() => { signal.removeEventListener("abort", onAbort); resolve(); }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 /** How long a request took, and what came back. `status` is null when nothing arrived. */
@@ -296,9 +333,9 @@ function retryAfterMs(headers: Record<string, string>): number {
 const CHALLENGE_MARKERS = [/cf-browser-verification/i, /just a moment/i, /attention required!\s*\|\s*cloudflare/i, /captcha/i, /access denied/i, /perimeterx/i, /_incapsula_/i];
 
 export class PoliteFetcher {
-  private lastRequestAt = new Map<string, number>();
+  /** In-process pacing (tests, the CLI): each host's next free turn, as `reserveHost` keeps it in the table. */
+  private nextTurn = new Map<string, number>();
   private robotsCache = new Map<string, { fetchedAt: number; disallow: string[]; allow: string[] } | null>();
-  private queues = new Map<string, Promise<void>>();
   private responses = new Map<string, { response: FetchResponse; at: number }>();
   private responseBytes = 0;
   /** Validators for bodies too large to cache: enough to ask "has it changed?", never the body. */
@@ -343,23 +380,26 @@ export class PoliteFetcher {
     return { target: u.toString(), originalHost, unmapped: !mapped && Object.keys(hostMap).length > 0, mapped: Boolean(mapped) };
   }
 
-  async waitForHost(host: string): Promise<void> {
+  /**
+   * Wait for `host`'s next turn. A turn more than `maxHostWaitMs` away is not waited for: this
+   * throws `HostBusyError` at once, so a back-off the host asked for costs the caller nothing but
+   * the requeue. The wait itself ends early when `signal` aborts.
+   */
+  async waitForHost(host: string, opts: { signal?: AbortSignal } = {}): Promise<void> {
+    opts.signal?.throwIfAborted();
     const delay = hostDelayMs(host, this.opts.perHostDelayMs ?? DEFAULT_HOST_DELAY_MS);
+    const maxWait = this.opts.maxHostWaitMs ?? MAX_HOST_WAIT_MS;
     if (this.opts.reserveHost) {
-      const wait = await this.opts.reserveHost(host, delay);
-      if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
+      const wait = await this.opts.reserveHost(host, delay, maxWait);
+      if (wait > maxWait) throw new HostBusyError(host, new Date(Date.now() + wait));
+      if (wait > 0) await sleep(wait, opts.signal);
       return;
     }
-    const prev = this.queues.get(host) ?? Promise.resolve();
-    let release!: () => void;
-    const mine = new Promise<void>((r) => (release = r));
-    this.queues.set(host, prev.then(() => mine));
-    await prev;
-    const last = this.lastRequestAt.get(host) ?? 0;
-    const wait = Math.max(0, last + delay - Date.now());
-    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-    this.lastRequestAt.set(host, Date.now());
-    release();
+    const now = Date.now();
+    const turn = Math.max(now, this.nextTurn.get(host) ?? 0);
+    if (turn - now > maxWait) throw new HostBusyError(host, new Date(turn));
+    this.nextTurn.set(host, turn + delay);
+    if (turn > now) await sleep(turn - now, opts.signal);
   }
 
   private parseRobots(text: string): { disallow: string[]; allow: string[] } {
@@ -396,8 +436,9 @@ export class PoliteFetcher {
         const res = await this.rawFetch(`${origin}/robots.txt`, { timeoutMs: 8000 });
         entry = res.status === 200 ? { fetchedAt: Date.now(), ...this.parseRobots(res.body) } : null;
       } catch (error) {
-        // A robots.txt the guard refused says the site itself is somewhere we will not go.
-        if (error instanceof PrivateAddressError) throw error;
+        // A robots.txt the guard refused says the site itself is somewhere we will not go, and one
+        // never asked because the host is backing off says nothing at all: neither is "no rules".
+        if (error instanceof PrivateAddressError || error instanceof HostBusyError) throw error;
         entry = null;
       }
       this.robotsCache.set(origin, entry);
@@ -446,10 +487,11 @@ export class PoliteFetcher {
     let method = init.method ?? "GET";
     let body = init.body;
     let callerHeaders: Record<string, string> = { ...(init.headers ?? {}) };
+    init.signal?.throwIfAborted();
     await this.assertDestination(logical);
     for (let hops = 0; ; hops++) {
       const { target, originalHost } = this.mapUrl(logical);
-      await this.waitForHost(originalHost);
+      await this.waitForHost(originalHost, { signal: init.signal });
       const sent = await this.send(logical, target, originalHost, { ...init, method, body, headers: callerHeaders }, hooks);
       if ("value" in sent) return sent.value;
       if (hops >= MAX_REDIRECTS) throw new SourceFetchError(`too many redirects fetching ${url}`, "network");
@@ -530,7 +572,7 @@ export class PoliteFetcher {
         headers,
         body: init.body,
         redirect: "manual",
-        signal: controller.signal,
+        signal: init.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal,
       });
       counted.status = res.status;
       const location = res.headers.get("location");
@@ -566,6 +608,8 @@ export class PoliteFetcher {
       return { value: hooks.body({ res, chunks, size, headers: outHeaders, finalUrl: logical, started, originalHost, counted }) };
     } catch (err) {
       if (err instanceof SourceFetchError) throw err;
+      // The caller gave up, not the host: its reason, and nothing the ledger blames on the host.
+      if (init.signal?.aborted) throw init.signal.reason;
       if ((err as Error).name === "AbortError") { counted.failure = "timeouts"; throw new SourceFetchError(`timeout fetching ${logical}`, "timeout"); }
       counted.failure = "networkErrors";
       throw new SourceFetchError(`network error fetching ${logical}: ${(err as Error).message}`, "network");

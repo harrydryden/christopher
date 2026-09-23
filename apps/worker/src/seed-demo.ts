@@ -1,6 +1,8 @@
 /**
  * Seed the database with realistic demo data so the interface can be exercised without waiting
- * for a real scan. Safe to re-run: it clears its own rows first.
+ * for a real scan. Re-runnable, and destructive: it first truncates every account, company and role
+ * in the database. It therefore refuses anything but a local database unless SEED_DEMO_DATABASE
+ * names the target database exactly (see seed-guard.ts).
  *
  *   DATABASE_URL=... pnpm --filter @ava/worker exec tsx src/seed-demo.ts
  *
@@ -11,10 +13,18 @@ import { createDb, createUser, schema, syncCompanyStatus } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { evaluateGate, normalizeTitle, DEFAULT_SETTINGS, hashPassword } from "@ava/core";
 import { sql } from "drizzle-orm";
+import { describeSeedTarget, seedDemoTarget, type SeedTarget } from "./seed-guard";
 
 const url = process.env.DATABASE_URL;
 if (!url) {
   console.error("DATABASE_URL is required");
+  process.exit(1);
+}
+let target: SeedTarget;
+try {
+  target = seedDemoTarget(url);
+} catch (err) {
+  console.error((err as Error).message);
   process.exit(1);
 }
 
@@ -88,6 +98,7 @@ const COMPANIES: Array<{
 ];
 
 async function main() {
+  console.log(`seeding demo data into ${describeSeedTarget(target)}; every existing account, company and role there is deleted first`);
   await runMigrations(db);
   await db.execute(sql`truncate users, companies, career_sources, discovery_runs, scan_runs, scans, jobs, job_events, decisions, company_profiles, company_suggestions, filter_suggestions, preference_profiles, tasks, ai_calls, settings restart identity cascade`);
 

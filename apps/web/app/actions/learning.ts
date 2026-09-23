@@ -134,8 +134,8 @@ export async function acceptFilterSuggestionWithReport(suggestionId: string): Pr
       await setSubscriptionStatus(db(), user.id, extracted.companyId, "paused");
     }
 
+    // The gate save above already re-evaluated the table, or queued the pass that will.
     await db().update(filterSuggestions).set({ status: "accepted", resolvedAt: new Date() }).where(eq(filterSuggestions.id, id));
-    await enqueue("reevaluate_gate", { userId: user.id });
     revalidatePath("/learning");
     revalidatePath("/settings");
     revalidatePath("/");

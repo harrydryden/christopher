@@ -79,7 +79,8 @@ export async function saveTableSettings(_prev: ActionResult, formData: FormData)
     return fail("Show-closed-days must be a whole number between 0 and 365.");
   }
 
-  await saveSettingsAndGate(user.id, { showClosedDays }, { rescore: !needsEmailConfirmation(user) });
+  // A display setting: the gate does not read it, so it re-evaluates and re-scores nothing.
+  await setUserSetting(user.id, "showClosedDays", showClosedDays);
   revalidatePath("/settings");
   revalidatePath("/");
   return ok();

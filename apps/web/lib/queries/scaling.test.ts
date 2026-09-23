@@ -41,16 +41,28 @@ it("bounds recommendation cards and counts the full filtered set for one account
   expect(await suggestionCount(user.id, false, "Employer 100")).toBe(1);
   expect(await suggestionCount(other.id)).toBe(1);
 });
-it("queues large filter changes immediately and keeps later changes made during processing", async () => {
+it("queues large filter changes immediately, coalesces the queued ones and keeps changes made during processing", async () => {
   const [company] = await database.insert(schema.companies).values({ name:"Test",domain:"test.test",homepageUrl:"https://test.test" }).returning();
   await subscribeToCompany(database, user.id, company!.id);
   const [source] = await database.insert(schema.careerSources).values({companyId:company!.id,type:"html",url:"https://test.test/jobs"}).returning();
   await database.insert(schema.jobs).values(Array.from({length:501},(_,n)=>({companyId:company!.id,sourceId:source!.id,externalKey:String(n),title:"Engineer",normalizedTitle:"engineer",url:`https://test.test/jobs/${n}`})));
+  const gate = (keywords: string[]) => ({ includeKeywords: keywords, excludeKeywords: [], matchFields: ["title" as const], locationTerms: [], includeRemote: true });
+  const passes = async () => (await database.execute(sql`select status, payload->>'userId' as user_id from tasks where type='reevaluate_gate' order by created_at`)).rows as Array<{ status: string; user_id: string }>;
+  // A display setting is not the gate: nothing to re-evaluate.
   await saveSettingsAndGate(user.id, {showClosedDays:20});
-  await saveSettingsAndGate(user.id, {showClosedDays:30});
-  const queued = await database.execute(sql`select count(*)::int as n, min(payload->>'userId') as user_id from tasks where type='reevaluate_gate'`);
-  expect(queued.rows[0]!.n).toBe(2);
-  expect(queued.rows[0]!.user_id).toBe(user.id);
+  expect(await passes()).toEqual([]);
+  // Three quick edits before the worker starts: one pass, which reads the last of them when it runs.
+  await saveSettingsAndGate(user.id, {gate: gate(["engineer"])});
+  await saveSettingsAndGate(user.id, {gate: gate(["engineer", "operations"])});
+  await saveSettingsAndGate(user.id, {gate: gate(["operations"])});
+  expect(await passes()).toEqual([{ status: "queued", user_id: user.id }]);
+  // A change made while that pass is running is not lost: it queues the next.
+  await database.execute(sql`update tasks set status = 'running' where type = 'reevaluate_gate'`);
+  await saveSettingsAndGate(user.id, {gate: gate(["strategy"])});
+  expect((await passes()).map(pass => pass.status)).toEqual(["running", "queued"]);
+  // Saving the gate it already has changes nothing, so it queues nothing.
+  await saveSettingsAndGate(user.id, {gate: gate(["strategy"])});
+  expect(await passes()).toHaveLength(2);
 });
 
 it("keeps every saved and archived CV reachable with stable, clamped pages", async () => {

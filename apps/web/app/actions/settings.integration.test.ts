@@ -3,7 +3,7 @@
  * save sets in motion.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, type Db } from "@ava/db";
+import { createDb, schema, subscribeToCompany, type Db } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { and, eq, sql } from "drizzle-orm";
 import { MAX_MEMBER_AI_BUDGET_USD } from "@ava/core";
@@ -20,7 +20,8 @@ vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (session ? {
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
-import { saveAiBudget } from "./settings";
+import { saveAiBudget, saveGate, saveTableSettings } from "./settings";
+import { acceptFilterSuggestionWithReport } from "./learning";
 import { setAccountAiBudget } from "./account";
 
 beforeAll(async () => {
@@ -67,4 +68,40 @@ it("lets a member lower a budget an administrator granted, but never raise it pa
   // Lowered is lowered: the grant is what is stored, so the way back up is the administrator's.
   expect(await saveAiBudget({ ok: true }, form({ aiBudgetUsd: "500" }))).toEqual({ ok: false, error: "You can set your monthly AI budget up to $400, the budget an administrator gave you. Ask an administrator for more." });
   expect(await budgetOf(member.user.id)).toBe(400);
+});
+
+/** A followed company with `count` stored postings, so a gate save runs inline or queues its pass. */
+async function followedPostings(userId: string, count: number) {
+  const [company] = await database.insert(schema.companies).values({ name: "Big", domain: "big.example", homepageUrl: "https://big.example" }).returning();
+  await subscribeToCompany(database, userId, company!.id);
+  const [source] = await database.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://big.example/jobs" }).returning();
+  await database.insert(schema.jobs).values(Array.from({ length: count }, (_, n) => ({
+    companyId: company!.id, sourceId: source!.id, externalKey: String(n), title: "Chief of Staff", normalizedTitle: "chief of staff", url: `https://big.example/jobs/${n}`,
+  })));
+}
+const taskTypes = async () => (await database.select({ type: schema.tasks.type }).from(schema.tasks)).map(row => row.type).sort();
+
+it("saves a display setting without re-evaluating or re-scoring anything", async () => {
+  await followedPostings(member.user.id, 3);
+  expect(await saveTableSettings({ ok: true }, form({ showClosedDays: "14" }))).toEqual({ ok: true });
+  expect(await taskTypes()).toEqual([]);
+  expect((await database.select().from(schema.userSettings).where(eq(schema.userSettings.key, "showClosedDays")))[0]!.value).toBe(14);
+});
+
+it("re-evaluates and re-scores only when a save changes the gate", async () => {
+  await followedPostings(member.user.id, 3);
+  expect(await saveGate({ ok: true }, form({ includeKeywords: "chief of staff", locationTerms: "" }))).toEqual({ ok: true });
+  expect(await database.select().from(schema.userJobs)).toHaveLength(3);
+  expect(await taskTypes()).toContain("rescore_all");
+  await database.execute(sql`truncate tasks`);
+  expect(await saveGate({ ok: true }, form({ includeKeywords: "chief of staff", locationTerms: "" }))).toEqual({ ok: true });
+  expect(await taskTypes()).toEqual([]);
+});
+
+it("queues one re-evaluation when accepting a suggestion widens a large account's gate", async () => {
+  await followedPostings(member.user.id, 501);
+  const [suggestion] = await database.insert(schema.filterSuggestions)
+    .values({ userId: member.user.id, type: "keyword_include", value: { term: "chief of staff" }, rationale: "" }).returning();
+  expect(await acceptFilterSuggestionWithReport(suggestion!.id)).toMatchObject({ ok: true });
+  expect((await taskTypes()).filter(type => type === "reevaluate_gate")).toHaveLength(1);
 });

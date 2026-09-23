@@ -1,5 +1,5 @@
 import { createDb, totalAiSpend, type Db } from "@ava/db";
-import { aiBudgetRefusalMessage, aiBudgetWindowStart, aiFeatureLabel, ats, discovery, modelForCallSite, type AppSettings, type DiscoveryContext, type FetchContext, type SystemSettings } from "@ava/core";
+import { aiBudgetRefusalMessage, aiBudgetWindowStart, aiFeatureLabel, ats, discovery, modelForCallSite, type AppSettings, type DiscoveryAiHooks, type DiscoveryContext, type FetchContext, type SystemSettings } from "@ava/core";
 import { createAiEngine, type AiClientLike, type AiEngine, type AiUsageRecord, type Ref } from "@ava/ai";
 import { sql } from "drizzle-orm";
 import { BrowserRenderer } from "./browser";
@@ -44,10 +44,8 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
   // Two connections per slot plus a margin: a handler holds one for its transaction and asks for
   // more from inside it (a lease check, a nested read), and the scheduler, the heartbeat and
   // /healthz all need one at the same time. Sized under the pool the deployment's Postgres allows.
-  // The environment reads that ceiling once (`databasePoolMax`) and logs it at boot, so the pool
-  // opened here is the one it logged; the formula is what it reads when nothing overrides it.
-  const { databasePoolMax } = env as WorkerEnv & { databasePoolMax?: number };
-  const { db, pool } = createDb(env.databaseUrl, { max: databasePoolMax ?? env.concurrency * 2 + 4 });
+  // The environment reads that ceiling once and logs it at boot, so the pool opened is the one logged.
+  const { db, pool } = createDb(env.databaseUrl, { max: env.databasePoolMax });
   const now = overrides.now ?? (() => new Date());
   const settingsTtlMs = overrides.settingsTtlMs ?? 5000;
   let cached: { at: number; value: SystemSettings } | null = null;
@@ -71,12 +69,7 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
     traffic,
     deferHost: async (host, delayMs) => { await db.execute(sql`insert into host_pacing (host, next_at) values (${host}, now() + ${delayMs} * interval '1 millisecond')
       on conflict (host) do update set next_at=greatest(host_pacing.next_at, excluded.next_at)`); },
-    reserveHost: async (host, delayMs) => {
-      const result = await db.execute<{ wait: number }>(sql`insert into host_pacing (host, next_at) values (${host}, now() + ${delayMs} * interval '1 millisecond')
-        on conflict (host) do update set next_at = greatest(host_pacing.next_at, now()) + ${delayMs} * interval '1 millisecond'
-        returning greatest(0, extract(epoch from (next_at - now())) * 1000 - ${delayMs})::float as wait`);
-      return Number(result.rows[0]?.wait ?? 0);
-    },
+    reserveHost: (host, delayMs, maxWaitMs) => reserveHostTurn(db, host, delayMs, maxWaitMs),
     userAgent: userAgentFor(env.contactEmail),
     hostMap: env.hostMap,
     respectRobots: async () => (await settings()).respectRobotsTxt,
@@ -84,7 +77,9 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
   });
   const browser = env.disableBrowser
     ? null
-    : new BrowserRenderer({ traffic, beforeNavigate: host => fetcher.waitForHost(host), allowNavigate: url => fetcher.assertRobotsAllowed(url), concurrency: env.browserConcurrency, userAgent: userAgentFor(env.contactEmail), executablePath: env.chromiumExecutablePath, hostMap: env.hostMap });
+    : new BrowserRenderer({ traffic, beforeNavigate: host => fetcher.waitForHost(host), allowNavigate: url => fetcher.assertRobotsAllowed(url), concurrency: env.browserConcurrency, userAgent: userAgentFor(env.contactEmail), executablePath: env.chromiumExecutablePath, hostMap: env.hostMap,
+      // A 429 or 503 the page's own navigation met defers the host for the fetcher as well.
+      onRateLimited: (host, headers) => fetcher.backOff(host, headers) });
 
   // One writer for `ai_calls`, shared with every other engine: a budget read from a ledger one
   // call site writes differently from another is wrong in the direction that spends money. A write
@@ -160,6 +155,27 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
 }
 
 /**
+ * Reserve `host`'s next turn in the shared pacing table and say how long until it comes.
+ *
+ * A turn further off than `maxWaitMs` is one the fetcher will not wait for (it throws
+ * `HostBusyError` and the task is requeued), so it is not taken: the host's schedule stays as it
+ * was, and only the wait is reported. Taking it anyway pushed every later request back by a turn
+ * nobody used. The report is never within the wait unless a turn was actually reserved, so a
+ * request can never go out without one.
+ */
+export async function reserveHostTurn(db: Db, host: string, delayMs: number, maxWaitMs: number): Promise<number> {
+  const taken = await db.execute<{ wait: number }>(sql`insert into host_pacing (host, next_at) values (${host}, now() + ${delayMs} * interval '1 millisecond')
+    on conflict (host) do update set next_at = greatest(host_pacing.next_at, now()) + ${delayMs} * interval '1 millisecond'
+    where host_pacing.next_at <= now() + ${maxWaitMs} * interval '1 millisecond'
+    returning greatest(0, extract(epoch from (next_at - now())) * 1000 - ${delayMs})::float as wait`);
+  if (taken.rows.length) return Number(taken.rows[0]?.wait ?? 0);
+  const busy = await db.execute<{ wait: number }>(sql`select greatest(0, extract(epoch from (next_at - now())) * 1000)::float as wait
+    from host_pacing where host = ${host}`);
+  // The turn moved inside the wait between the two statements: still report a wait past it, as none was taken.
+  return Math.max(Number(busy.rows[0]?.wait ?? 0), maxWaitMs + 1);
+}
+
+/**
  * Settle with the run's own stop as soon as `signal` aborts, and start nothing once it has.
  *
  * The request itself is handed the signal too, and a fetcher or renderer that honours it cancels
@@ -183,13 +199,12 @@ function untilStopped<T>(signal: AbortSignal | undefined, work: () => Promise<T>
  */
 export function makeFetchContext(deps: WorkerDeps, opts: { signal?: AbortSignal } = {}): FetchContext {
   const { signal } = opts;
-  // The signal rides along in the request options for a fetcher and renderer that take one.
-  const withSignal = <O extends object>(options: O | undefined): O & { signal?: AbortSignal } =>
-    ({ ...(options ?? {}), ...(signal ? { signal } : {}) }) as O & { signal?: AbortSignal };
+  // The fetcher and the renderer cancel the transfer themselves when told; a request that carries
+  // its own signal keeps it, and every other one carries the run's.
   return {
-    fetchText: (url, init) => untilStopped(signal, () => deps.fetcher.fetchText(url, withSignal(init))),
-    fetchBytes: (url, init) => untilStopped(signal, () => deps.fetcher.fetchBytes(url, withSignal(init))),
-    render: deps.browser ? (url, options) => untilStopped(signal, () => deps.browser!.render(url, withSignal(options))) : undefined,
+    fetchText: (url, init) => untilStopped(signal, () => deps.fetcher.fetchText(url, { ...init, signal: init?.signal ?? signal })),
+    fetchBytes: (url, init) => untilStopped(signal, () => deps.fetcher.fetchBytes(url, { ...init, signal: init?.signal ?? signal })),
+    render: deps.browser ? (url, options) => untilStopped(signal, () => deps.browser!.render(url, { ...options, signal: options?.signal ?? signal })) : undefined,
     log: (msg, data) => log.debug(msg, data),
     now: deps.now,
   };
@@ -207,7 +222,10 @@ export function makeDiscoveryContext(
 ): DiscoveryContext {
   const fetchCtx = makeFetchContext(deps, { signal: opts.signal });
   const useAi = opts.useAi ?? true;
-  const ref = { ...(opts.userId ? { userId: opts.userId } : {}), ...(opts.signal ? { signal: opts.signal } : {}) };
+  // What every model call of the run carries; the ref discovery hands each hook (its `aiRef`,
+  // naming the company and the account) is laid over it.
+  const base = { ...(opts.userId ? { userId: opts.userId } : {}), ...(opts.signal ? { signal: opts.signal } : {}) };
+  const refFor = (ref?: Parameters<NonNullable<DiscoveryAiHooks["classifyPage"]>>[1]): Ref => ({ ...base, ...ref });
   return {
     ...fetchCtx,
     resolveSpec: (url) => ats.specFromAnyUrl(url),
@@ -217,8 +235,8 @@ export function makeDiscoveryContext(
     ai:
       useAi && deps.ai.enabled
         ? {
-            chooseCareersLinks: async (input) => (await deps.ai.chooseCareersLinks(input, ref)) ?? [],
-            classifyPage: async (input) => (await deps.ai.classifyPage(input, ref)) ?? { kind: "other", confidence: 0 },
+            chooseCareersLinks: async (input, ref) => (await deps.ai.chooseCareersLinks(input, refFor(ref))) ?? [],
+            classifyPage: async (input, ref) => (await deps.ai.classifyPage(input, refFor(ref))) ?? { kind: "other", confidence: 0 },
           }
         : undefined,
     maxFetches: opts.maxFetches ?? 40,

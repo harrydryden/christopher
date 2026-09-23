@@ -61,11 +61,13 @@ describe("the fetch context under a run's signal", () => {
     await expect(pending).rejects.toThrow("Task lease lost");
   });
 
-  it("behaves exactly as before without a signal", async () => {
+  it("keeps a request's own signal, and passes none when there is none", async () => {
     const seen: Array<FetchInit | undefined> = [];
     const { deps } = depsWith(async (url, init) => { seen.push(init); return page(url); });
     expect((await makeFetchContext(deps).fetchText("https://acme.example/careers")).status).toBe(200);
-    expect(seen).toEqual([{}]);
+    const own = new AbortController();
+    await makeFetchContext(deps, { signal: new AbortController().signal }).fetchText("https://acme.example/careers", { signal: own.signal });
+    expect(seen).toEqual([{ signal: undefined }, { signal: own.signal }]);
   });
 });
 
@@ -77,6 +79,16 @@ describe("discovery's model calls", () => {
     await ctx.ai!.chooseCareersLinks!({ companyName: "Acme", homepageUrl: "https://acme.example", links: [] });
     await ctx.ai!.classifyPage!({ url: "https://acme.example/careers", text: "", links: [] });
     expect(asked).toEqual([{ userId: "user-1", signal: stop.signal }, { userId: "user-1", signal: stop.signal }]);
+  });
+
+  it("carry the ref discovery hands each hook, laid over the run's own", async () => {
+    const stop = new AbortController();
+    const { deps, asked } = depsWith(async url => page(url));
+    const ctx = makeDiscoveryContext(deps, { signal: stop.signal });
+    const aiRef = { refType: "company", refId: "company-1", userId: "user-2" };
+    await ctx.ai!.chooseCareersLinks!({ companyName: "Acme", homepageUrl: "https://acme.example", links: [] }, aiRef);
+    await ctx.ai!.classifyPage!({ url: "https://acme.example/careers", text: "", links: [] }, aiRef);
+    expect(asked).toEqual([{ ...aiRef, signal: stop.signal }, { ...aiRef, signal: stop.signal }]);
   });
 
   it("carry nothing for the shared catalogue, which stays under the deployment's caps", async () => {

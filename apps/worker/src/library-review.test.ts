@@ -66,9 +66,10 @@ function batchOf(params: Record<string, unknown>) {
 
 /**
  * A client that classifies whatever it is sent, quoting each row verbatim, and reports what the
- * stored reviews looked like at the moment it was called.
+ * stored reviews looked like at the moment it was called. `omit` names entries it leaves out of
+ * every answer.
  */
-function scriptedClient() {
+function scriptedClient({ omit = [] }: { omit?: string[] } = {}) {
   const calls: Array<{ entries: string[]; rows: string[]; baseline: Array<{ entryId: string; source: string; score: number }> }> = [];
   const client: AiClientLike = {
     messages: {
@@ -79,7 +80,7 @@ function scriptedClient() {
         calls.push({ entries: batch.map(entry => entry.id), rows: batch.flatMap(entry => entry.rows), baseline });
         return {
           parsed_output: {
-            entries: batch.map(entry => ({
+            entries: batch.filter(entry => !omit.includes(entry.id)).map(entry => ({
               entryId: entry.id,
               rows: entry.rows.map((row, index) => ({
                 row, facets: index === 0 ? ["responsibility"] : ["outcome", "metric"],
@@ -300,4 +301,26 @@ it("does not classify the evidence of a job that was removed", async () => {
 it("does nothing but say so for an account with no library", async () => {
   expect(await handleReviewLibrary(task({ userId, libraryVersion: 1 }), deps)).toEqual({ skipped: "no library saved" });
   expect(await reviews()).toHaveLength(0);
+});
+
+it("keeps an entry the model left out on its baseline, and asks about it again on the next pass", async () => {
+  await saveLibrary(1, libraryOf());
+  const first = scriptedClient({ omit: ["degree"] });
+  deps.aiClient = first.client;
+
+  expect(await handleReviewLibrary(task({ userId, libraryVersion: 1 }), deps)).toMatchObject({ reviewed: 1, unread: 1 });
+  // Asked once more in the same pass, as the engine does, and still left out.
+  expect(first.calls.map(call => call.entries)).toEqual([["role", "degree"], ["role", "degree"]]);
+  const stored = await reviews();
+  expect(stored.map(row => [row.entryId, row.source])).toEqual([["degree", "rules"], ["role", "model"]]);
+  // Its own facet tags still score it; the silence is not a model's zero.
+  expect(stored.find(row => row.entryId === "degree")!.score).toBe(
+    (await import("@ava/core")).rulesLibraryReview(libraryOf().entries[1]!, libraryOf()).score,
+  );
+
+  const second = scriptedClient();
+  deps.aiClient = second.client;
+  expect(await handleReviewLibrary(task({ userId, libraryVersion: 1 }), deps)).toMatchObject({ reviewed: 1, reused: 1 });
+  expect(second.calls.map(call => call.entries)).toEqual([["degree"]]);
+  expect((await reviews()).map(row => [row.entryId, row.source])).toEqual([["degree", "model"], ["role", "model"]]);
 });

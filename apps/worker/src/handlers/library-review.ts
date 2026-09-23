@@ -179,14 +179,17 @@ export async function handleReviewLibrary(task: Task, deps: WorkerDeps, ctx?: Ta
       { library: library.content, entries: pending, model },
       { userId, refType: "library", refId: `library:${userId}:${version}` },
     );
-    const byEntry = new Map(reviews.map(review => [review.entryId, review]));
+    // An entry the model left out of its answer keeps its baseline, and so is still pending: the
+    // next pass asks about it again, rather than storing the silence as a model's score of zero.
+    const byEntry = new Map(reviews.filter(review => !review.unread).map(review => [review.entryId, review]));
     await write(pending.flatMap(entry => {
       const review = byEntry.get(entry.id);
       return review ? [{ entryId: entry.id, inputHash: hashes.get(entry.id)!, review, source: "model" as const, model }] : [];
     }));
     const pruned = await pruneLibraryReviews(deps.db, userId);
-    log.info("library reviewed", { userId, version, reviewed: byEntry.size, reused, pruned, usd: usd(cost) });
-    return { reviewed: byEntry.size, reused, ...newer, cost: usd(cost) };
+    const unread = reviews.length - byEntry.size;
+    log.info("library reviewed", { userId, version, reviewed: byEntry.size, unread, reused, pruned, usd: usd(cost) });
+    return { reviewed: byEntry.size, reused, ...(unread ? { unread } : {}), ...newer, cost: usd(cost) };
   } finally {
     // The calls' real costs are in `ai_calls`; the hold only covered the gap until they landed.
     await admitted.release();

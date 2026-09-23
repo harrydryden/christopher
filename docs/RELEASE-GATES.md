@@ -12,6 +12,10 @@ Set these repository variables under **Settings → Secrets and variables → Ac
 | --- | --- |
 | `WORKER_HEALTH_URL` | The worker's public `/healthz` HTTPS URL |
 | `WEB_HEALTH_URL` | The web application's public `/api/health` HTTPS URL |
+| `WORKER_STATUS_URL` | Optional: the worker's `/status` URL, where a worker that keeps `/healthz` to liveness serves its full figures. Unset, the operational check reads them from `WORKER_HEALTH_URL` |
+
+When the worker's `/status` requires a token, also add the secret `WORKER_STATUS_TOKEN` under
+**Secrets**, with the same value as the worker's; the operational check sends it as a bearer token.
 
 An absent or malformed variable fails its workflow visibly. The release scripts also require the
 40-character lowercase commit supplied by the workflow. The web identity comes from Vercel's
@@ -22,8 +26,11 @@ An absent or malformed variable fails its workflow visibly. The release scripts 
 
 After CI passes for a push to `main`, Release polls the worker and web endpoints independently for
 up to eight minutes. Each job passes only when its endpoint reports both `ok: true` and the exact
-commit that CI checked. The two ten-minute job limits leave time for checkout and setup beyond the
-bounded eight-minute poll.
+commit that CI checked, with one exception for the worker: a merge that changes none of the worker's
+inputs (`WORKER_INPUT_PATHS` in `scripts/release-checks.mjs`, the same list as `render.yaml`'s build
+filter) does not redeploy it, so the worker passes while it runs an ancestor of the merged commit
+whose worker inputs are identical to it. The job checks out full history to compare the two. The
+two ten-minute job limits leave time for checkout and setup beyond the bounded eight-minute poll.
 
 This workflow becomes active for these changes only after they merge to the default branch. The
 first web check also requires a deployment containing the updated `/api/health` response.
@@ -36,9 +43,10 @@ three read-only requests fifteen seconds apart. The table distinguishes gate fai
 | Condition | Threshold | Requirement represented |
 | --- | --- | --- |
 | Worker stopped or unreadable | Any request error, non-2xx response or `ok` other than `true` | Scans and queued CV work require a running worker |
-| Wrong or stale worker release | Missing/malformed commit, or a commit different from the default-branch revision running the check | Operational readings must come from the release the repository expects |
+| Wrong or stale worker release | Missing/malformed commit, or a commit that neither is the default-branch revision running the check nor builds the same worker (an ancestor with identical worker inputs). While that revision was committed less than twenty minutes ago the worker is taken to be deploying: reported as attention, not a failure | Operational readings must come from the release the repository expects, without failing every check that runs during a normal Render build |
 | Incomplete telemetry | Any required value absent, non-finite, negative, or a heap fraction outside 0–1 | Missing configuration and incompatible releases must fail visibly |
-| Company scans overdue | At least one active company without a successful scan in the database's daily overdue window | The product promises daily career-page watching |
+| Company scans overdue | Ten or more active companies without a successful scan in the database's daily overdue window; one to nine are reported as attention | The product promises daily career-page watching. A few stragglers or sources waiting for a person are expected at a large catalogue; the daily run failing shows as most of it going overdue at once |
+| Companies that cannot be scanned | Reported as attention when the worker reports `unscannableCompanies` (no source found, or every source blocked, disabled or awaiting confirmation); never a failure | They need a person, not an alert every fifteen minutes |
 | Discovery overdue | At least one enabled discovery source more than one day overdue | Scheduled discovery must continue alongside scans |
 | Heap pressure | At least two readings at or above 85% of the V8 heap limit | Matches the worker and Operations warning threshold |
 | Database pressure | A positive pool waiting count in at least two readings | Sustained connection waits indicate exhausted process-side capacity |
@@ -51,8 +59,12 @@ three read-only requests fifteen seconds apart. The table distinguishes gate fai
 
 The numerical queue thresholds are operational guardrails, not product promises. A small normal
 queue passes while it is younger than fifteen minutes; age fails independently of queue size.
-The daily overdue counters are the direct product requirement and therefore have a zero tolerance
-once work is beyond that window.
+Overdue discovery keeps a zero tolerance. Overdue companies do not: with one alert owner, a check
+that fails every fifteen minutes because a handful of the catalogue's companies have a blocked or
+missing source teaches the owner to ignore it, and then a real outage goes unseen. The count the
+worker reports today still includes companies that cannot be scanned at all; until the worker
+separates them (the `unscannableCompanies` figure), a catalogue with ten or more of those keeps
+this row red, so read the attention list before acting on it.
 
 The response also reports aggregate AI spend for the last 24 hours and current UTC month, provider
 attempt/failure counts for the last hour, and crash recoveries for the last 24 hours. These figures
@@ -62,8 +74,10 @@ count supplies actionable attention telemetry instead. A zero budget with zero s
 that setting deliberately disables AI and is not overspend.
 
 The scheduled workflow supplies its default-branch `github.sha` as
-`OPERATIONAL_EXPECTED_SHA`, and every sample must report that exact healthy release. This catches
-a stale deployment or a URL pointing at a service on another commit. It cannot distinguish
+`OPERATIONAL_EXPECTED_SHA`, and every sample must report a healthy worker built from that
+revision: the revision itself, or an ancestor with identical worker inputs, or, for twenty minutes
+after the revision was committed, any commit (the deploy in progress). This catches a stale
+deployment or a URL pointing at a service on another commit. It cannot distinguish
 production from staging if both endpoints run the same commit, so the repository variable still
 needs an independently reviewed production URL.
 
@@ -91,6 +105,20 @@ WORKER_HEALTH_URL=https://example.invalid/healthz \
 OPERATIONAL_EXPECTED_SHA=0123456789abcdef0123456789abcdef01234567 \
 node scripts/verify-operational-status.mjs
 ```
+
+## The worker image in CI
+
+CI's `worker-image` job builds the Dockerfile with BuildKit, keeping layers in GitHub's cache, then
+boots the image against the job's PostgreSQL and waits up to ninety seconds for `/healthz` to
+report `ok: true`, and checks that PID 1 is `tini` and the process is not root. The budget for the
+job is ten minutes; the estimate is about four cold (pulling the Playwright base image, installing
+the worker's dependencies, exporting the image) and less when the lockfile is unchanged and the
+install layer is reused. That estimate is reasoned from the image's size, not yet measured on a
+runner: the first runs should confirm it, and if the job regularly exceeds ten minutes the build
+belongs on the release path instead of every pull request. `scripts/deploy-config.test.mjs`
+separately checks, without Docker, that the base image's Playwright version equals the worker's
+pinned `playwright`, that every file the image copies is a worker input, and that `render.yaml`'s
+build filter equals `WORKER_INPUT_PATHS`.
 
 ## Confirmed operating requirements and configuration — 20 September 2026
 

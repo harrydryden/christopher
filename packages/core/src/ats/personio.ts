@@ -2,7 +2,7 @@ import { XMLParser } from "fast-xml-parser";
 import type { Adapter, FetchContext, RawPosting, SourceSpec } from "../types";
 import { SourceFetchError } from "../types";
 import { parseDate } from "../normalize";
-import { asArray, htmlToText, joinLocation, safeUrl, slugOk, str, verifyFromFetch, MAX_POSTINGS } from "./common";
+import { asArray, htmlToText, joinLocation, safeUrl, slugOk, str, verifyFromFetch, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS } from "./common";
 
 /**
  * The feed answers in the tenant's default language unless asked otherwise, and for a Personio
@@ -70,7 +70,7 @@ function mapPosition(p: PersonioPosition, host: string): RawPosting | null {
 
 async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
   const host = spec.atsSite ?? `${spec.atsSlug}.jobs.personio.de`;
-  const res = await ctx.fetchText(`https://${host}/xml${FEED_QUERY}`, { headers: { accept: "application/xml,text/xml" } });
+  const res = await ctx.fetchText(`https://${host}/xml${FEED_QUERY}`, { ...INLINE_DESCRIPTIONS_FETCH, headers: { accept: "application/xml,text/xml" } });
   if (res.status >= 400) throw new SourceFetchError(`HTTP ${res.status} from personio`, res.status === 403 || res.status === 429 ? "blocked" : "http", res.status);
   let parsed: unknown;
   try {

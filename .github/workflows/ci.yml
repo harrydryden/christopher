@@ -107,3 +107,50 @@ jobs:
           AVA_DISABLE_BROWSER: "0"
       - run: pnpm db:migrate
       - run: pnpm smoke:web
+
+  # The image Render deploys, built and booted here so that a broken Dockerfile, a manifest the
+  # image does not copy or a runtime import error fails the pull request instead of the deploy.
+  # Runs beside the other two. Layers are cached in GitHub's cache, so an unchanged lockfile
+  # reuses the dependency install; the Playwright base image itself is pulled each time.
+  worker-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ava_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 10s --health-timeout 5s --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ava-worker:ci
+          cache-from: type=gha,scope=worker-image
+          cache-to: type=gha,scope=worker-image,mode=max
+      - name: Boot the image against the job's database and wait for /healthz
+        run: |
+          docker run -d --name worker --network host \
+            -e DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/ava_test \
+            -e AVA_DISABLE_BROWSER=1 -e PORT=8080 \
+            -e SCRAPER_CONTACT_EMAIL=ci@ava.dev -e ADMIN_EMAILS=ci@ava.dev \
+            ava-worker:ci
+          for attempt in $(seq 1 45); do
+            if curl -fsS http://127.0.0.1:8080/healthz | grep -q '"ok":true'; then healthy=1; break; fi
+            sleep 2
+          done
+          docker logs worker
+          test "${healthy:-0}" = 1
+      - name: Check it runs unprivileged under an init process
+        run: |
+          test "$(docker exec worker id -u)" != 0
+          test "$(docker exec worker cat /proc/1/comm)" = tini
+      - if: always()
+        run: docker rm -f worker || true

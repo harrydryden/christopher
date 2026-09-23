@@ -13,13 +13,13 @@
     "lint": "echo 'no lint configured'"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "latest",
+    "@anthropic-ai/sdk": "0.124.0",
     "@ava/core": "workspace:*",
-    "zod": "latest"
+    "zod": "4.5.4"
   },
   "devDependencies": {
-    "@types/node": "latest",
+    "@types/node": "26.4.1",
     "typescript": "~5.9.0",
-    "vitest": "latest"
+    "vitest": "5.0.0"
   }
 }

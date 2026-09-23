@@ -36,7 +36,9 @@ If PostgreSQL client tools are not installed on the host, set
 `pg_dump`, `createdb` and `pg_restore` binaries inside that container and copies only its
 temporary custom-format dump to the host for the duration of the check.
 
-The drill verifies source integrity, makes a custom-format logical dump, creates the isolated target, restores with `--exit-on-error`, reruns current migrations, and compares core table counts plus a deterministic account-role fingerprint. It also checks four orphan classes, unvalidated constraints, the migration count, PostgreSQL compatibility and tool exit status. The report records elapsed time and each command duration.
+The drill verifies source integrity, makes a custom-format logical dump, creates the isolated target, restores with `--exit-on-error`, reruns current migrations, and compares row counts for every table an account's work lives in — accounts, companies, postings, account views, decisions, account and system settings, preference and company profiles, subscriptions, careers sources, scans, sign-in providers, Libraries, CVs and their build steps, applications and tasks — plus deterministic fingerprints over account views, decisions, account settings and careers sources. A restore that loses the learning signal or everyone's gate settings therefore fails even when the headline counts survive. It also checks eight orphan classes, unvalidated constraints, the migration count, PostgreSQL compatibility and tool exit status. The report records elapsed time and each command duration. The managed recovery smoke (`scripts/managed-recovery-smoke.mjs`) reads the same query.
+
+The evidence recorded below from 20 September 2026 predates the wider comparison: it compared the eight original counts, the account-role fingerprint and four orphan classes.
 
 The target must not already exist. The script will not delete it before or after the drill; inspect it, run an authenticated smoke journey against it if required, and remove it manually only when its evidence is no longer needed. This prevents an accidental overwrite and preserves the failed or successful restore for diagnosis.
 

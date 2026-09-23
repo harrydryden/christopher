@@ -12,16 +12,16 @@ importers:
   .:
     devDependencies:
       '@types/node':
-        specifier: latest
+        specifier: 26.4.1
         version: 26.4.1
       tsx:
-        specifier: latest
+        specifier: 4.23.13
         version: 4.23.13
       typescript:
         specifier: ~5.9.0
         version: 5.9.3
       vitest:
-        specifier: latest
+        specifier: 5.0.0
         version: 5.0.0(@types/node@26.4.1)(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13))
 
   apps/web:
@@ -36,7 +36,7 @@ importers:
         specifier: workspace:*
         version: link:../worker
       drizzle-orm:
-        specifier: latest
+        specifier: 0.45.2
         version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)
       next:
         specifier: '15'
@@ -45,7 +45,7 @@ importers:
         specifier: ^0.20.2
         version: 0.20.2
       pg:
-        specifier: latest
+        specifier: 8.23.0
         version: 8.23.0
       react:
         specifier: '19'
@@ -54,20 +54,20 @@ importers:
         specifier: '19'
         version: 19.2.8(react@19.2.8)
       zod:
-        specifier: latest
+        specifier: 4.5.4
         version: 4.5.4
     devDependencies:
       '@tailwindcss/postcss':
-        specifier: latest
+        specifier: 4.3.3
         version: 4.3.3
       '@types/node':
-        specifier: latest
+        specifier: 26.4.1
         version: 26.4.1
       '@types/pdfkit':
         specifier: ^0.17.6
         version: 0.17.6
       '@types/pg':
-        specifier: latest
+        specifier: 8.23.1
         version: 8.23.1
       '@types/react':
         specifier: '19'
@@ -79,16 +79,16 @@ importers:
         specifier: 8.5.28
         version: 8.5.28
       tailwindcss:
-        specifier: latest
+        specifier: 4.3.3
         version: 4.3.3
       tsx:
-        specifier: latest
+        specifier: 4.23.13
         version: 4.23.13
       typescript:
         specifier: ~5.9.0
         version: 5.9.3
       vitest:
-        specifier: latest
+        specifier: 5.0.0
         version: 5.0.0(@types/node@26.4.1)(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13))
 
   apps/worker:
@@ -103,7 +103,7 @@ importers:
         specifier: workspace:*
         version: link:../../packages/db
       drizzle-orm:
-        specifier: latest
+        specifier: 0.45.2
         version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)
       mammoth:
         specifier: ^1.12.3
@@ -112,67 +112,67 @@ importers:
         specifier: ^2.4.5
         version: 2.4.5
       pg:
-        specifier: latest
+        specifier: 8.23.0
         version: 8.23.0
       playwright:
         specifier: 1.56.1
         version: 1.56.1
       tsx:
-        specifier: latest
+        specifier: 4.23.13
         version: 4.23.13
     devDependencies:
       '@types/node':
-        specifier: latest
+        specifier: 26.4.1
         version: 26.4.1
       '@types/pg':
-        specifier: latest
+        specifier: 8.23.1
         version: 8.23.1
       typescript:
         specifier: ~5.9.0
         version: 5.9.3
       vitest:
-        specifier: latest
+        specifier: 5.0.0
         version: 5.0.0(@types/node@26.4.1)(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13))
 
   packages/ai:
     dependencies:
       '@anthropic-ai/sdk':
-        specifier: latest
+        specifier: 0.124.0
         version: 0.124.0(zod@4.5.4)
       '@ava/core':
         specifier: workspace:*
         version: link:../core
       zod:
-        specifier: latest
+        specifier: 4.5.4
         version: 4.5.4
     devDependencies:
       '@types/node':
-        specifier: latest
+        specifier: 26.4.1
         version: 26.4.1
       typescript:
         specifier: ~5.9.0
         version: 5.9.3
       vitest:
-        specifier: latest
+        specifier: 5.0.0
         version: 5.0.0(@types/node@26.4.1)(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13))
 
   packages/core:
     dependencies:
       cheerio:
-        specifier: latest
+        specifier: 1.2.0
         version: 1.2.0
       fast-xml-parser:
-        specifier: latest
+        specifier: 5.11.1
         version: 5.11.1
       pdfkit:
         specifier: ^0.20.2
         version: 0.20.2
       zod:
-        specifier: latest
+        specifier: 4.5.4
         version: 4.5.4
     devDependencies:
       '@types/node':
-        specifier: latest
+        specifier: 26.4.1
         version: 26.4.1
       '@types/pdfkit':
         specifier: ^0.17.6
@@ -181,7 +181,7 @@ importers:
         specifier: ~5.9.0
         version: 5.9.3
       vitest:
-        specifier: latest
+        specifier: 5.0.0
         version: 5.0.0(@types/node@26.4.1)(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13))
 
   packages/db:
@@ -190,20 +190,20 @@ importers:
         specifier: workspace:*
         version: link:../core
       drizzle-orm:
-        specifier: latest
+        specifier: 0.45.2
         version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)
       pg:
-        specifier: latest
+        specifier: 8.23.0
         version: 8.23.0
     devDependencies:
       '@types/pg':
-        specifier: latest
+        specifier: 8.23.1
         version: 8.23.1
       drizzle-kit:
-        specifier: latest
+        specifier: 0.31.10
         version: 0.31.10
       tsx:
-        specifier: latest
+        specifier: 4.23.13
         version: 4.23.13
       typescript:
         specifier: ~5.9.0

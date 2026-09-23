@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_GATE_SETTINGS, evaluateGate, evaluateLocation, compileTerm, parseTermList, type GateSettings } from "./gate";
+import { DEFAULT_GATE_SETTINGS, compileGate, evaluateGate, evaluateLocation, compileTerm, parseTermList, type GateInput, type GateSettings } from "./gate";
 
 const base: GateSettings = { ...DEFAULT_GATE_SETTINGS };
 
@@ -147,4 +147,39 @@ it("includes the user's London strategic-execution target and excludes its US co
   const settings: GateSettings = { includeKeywords: ["strateg*"], seniorityKeywords: ["director"], excludeKeywords: [], matchFields: ["title"], locationTerms: ["London"], includeRemote: false };
   expect(evaluateGate({ title: "Associate Director, Strategic Execution - International", location: "London, England, United Kingdom" }, settings).inTable).toBe(true);
   expect(evaluateGate({ title: "Associate Director, Strategic Execution - TRS", location: "Costa Mesa, California, United States" }, settings).inTable).toBe(false);
+});
+
+describe("compileGate", () => {
+  const gates: GateSettings[] = [
+    base,
+    { ...base, includeKeywords: ["operat*", '"chief of staff"', "strateg* lead"], excludeKeywords: ["intern", "*ops"], seniorityKeywords: ["Senior", "Head of"] },
+    { ...base, matchFields: ["title", "department", "description"], includeKeywords: ["robotics"], locationTerms: ["UK", "Berlin"], includeRemote: true },
+    { ...base, locationTerms: ["London"], includeRemote: false },
+    { ...base, includeKeywords: [], excludeKeywords: [" "], seniorityKeywords: [" "], locationTerms: ["europe"] },
+  ];
+  const inputs: GateInput[] = [
+    { title: "Operations Manager", location: "London, UK" },
+    { title: "Senior Operational Lead", department: "Operations", location: "Manchester" },
+    { title: "Head of DevOps", location: "Remote - USA", remote: true },
+    { title: "Chief of  Staff", location: "Berlin, Germany", locations: ["Berlin", "Munich"] },
+    { title: "Facilities Coordinator", department: "Workplace", description: "Look after the robotics labs.", location: "Remote", remote: true },
+    { title: "Operations Intern", location: "Paris, France" },
+    { title: "Strategic Lead", location: null, locations: [] },
+    { title: "Strategy Leadership", remote: true },
+  ];
+
+  it("gives exactly the verdicts evaluateGate gives", () => {
+    for (const gate of gates) {
+      const compiled = compileGate(gate);
+      for (const input of inputs) expect(compiled.evaluate(input)).toEqual(evaluateGate(input, gate));
+    }
+  });
+  it("says whether a gate reads the description", () => {
+    expect(compileGate(base).matchesDescription).toBe(false);
+    expect(compileGate(gates[2]!).matchesDescription).toBe(true);
+  });
+  it("shares one compiled pattern per term", () => {
+    expect(compileTerm("operat*")).toBe(compileTerm("operat*"));
+    expect(compileTerm("*")).toBeNull();
+  });
 });

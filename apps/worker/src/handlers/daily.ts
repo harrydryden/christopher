@@ -1,8 +1,9 @@
-import { companiesDueLogoCapture, scanRunSummary, schema, enqueueTask, listUserIds, type Task } from "@ava/db";
+import { companiesDueLogoCapture, retireSourceRoles, scanRunSummary, schema, enqueueTask, type Task } from "@ava/db";
 import { dedupeKeyFor, localDateParts, priorityFor, type SystemSettings } from "@ava/core";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { log } from "../log";
+import { SUGGEST_FROM_SCANS_EVERY_MS } from "./suggest-from-scans";
 
 interface DailyPayload {
   trigger: "schedule" | "manual";
@@ -49,6 +50,11 @@ async function runDaily(task: Task, deps: WorkerDeps, settings: SystemSettings):
     return { skipped: "run already exists for date", runDate };
   }
 
+  // Roles of sources nobody scans any more (disabled, superseded, or a company nobody follows) are
+  // closed here, once a day, whatever path retired the source: left open they would read as live
+  // for ever. A lifecycle event, not a scan closure (see `retireSourceRoles`).
+  const retired = await retireSourceRoles(deps.db, {}, deps.now());
+
   const companies = await deps.db
     .select({ id: schema.companies.id })
     .from(schema.companies)
@@ -85,7 +91,7 @@ async function runDaily(task: Task, deps: WorkerDeps, settings: SystemSettings):
   }
 
   if (task.id) await deps.db.update(schema.tasks).set({ result: { scanRunId: run.id, companies: companies.length } }).where(eq(schema.tasks.id, task.id));
-  log.info("daily run started", { runId: run.id, runDate, companies: companies.length, logosQueued });
+  log.info("daily run started", { runId: run.id, runDate, companies: companies.length, logosQueued, retired });
   return { scanRunId: run.id, companies: companies.length, logosQueued };
 }
 
@@ -123,11 +129,22 @@ async function finalise(deps: WorkerDeps): Promise<number> {
       })
       .where(eq(schema.scanRuns.id, run.id));
     finalised++;
-    // Fresh evidence from every source: mine it, per account, for keywords each gate is missing.
-    for (const userId of await listUserIds(deps.db)) {
-      const payload = { userId };
-      await enqueueTask(deps.db, "suggest_from_scans", payload, { dedupeKey: dedupeKeyFor("suggest_from_scans", payload), priority: priorityFor("suggest_from_scans") });
-    }
+    // Fresh evidence: mine it, per account, for keywords each gate is missing. Only accounts that
+    // follow a company this run scanned have anything new, and each is mined weekly, so accounts
+    // mined in the last six days are left out here rather than queued to skip. One statement for
+    // every account, instead of an insert apiece while the daily-runs lock is held.
+    const minedSince = new Date(deps.now().getTime() - SUGGEST_FROM_SCANS_EVERY_MS);
+    await deps.db.execute(sql`insert into tasks (type, payload, dedupe_key, priority)
+      select 'suggest_from_scans', jsonb_build_object('userId', u.id, 'scheduled', true), 'suggest_from_scans:' || u.id::text, ${priorityFor("suggest_from_scans")}
+      from users u
+      where u.claimed_at is not null
+        and exists (select 1 from company_subscriptions s
+          join career_sources cs on cs.company_id = s.company_id
+          join scans sc on sc.source_id = cs.id and sc.scan_run_id = ${run.id}::uuid
+          where s.user_id = u.id and s.status = 'active')
+        and not exists (select 1 from settings st where st.key = 'internal:suggestFromScans:' || u.id::text
+          and (st.value->>'at')::timestamptz > ${minedSince})
+      on conflict do nothing`);
     log.info("scan run finalised", { runId: run.id, ok: companiesOk, failed: Math.max(0, run.companiesTotal - companiesOk), newRoles: summary.new_roles });
   }
   return finalised;

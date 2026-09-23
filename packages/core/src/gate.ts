@@ -62,6 +62,19 @@ function escapeRegex(s: string): string {
  * matching everything.
  */
 export function compileTerm(term: string): RegExp | null {
+  // Terms repeat endlessly (every follower's gate, every posting), and the patterns carry no global
+  // or sticky flag, so one compiled RegExp per term is safe to share. Bounded: oldest out first.
+  if (TERM_CACHE.has(term)) return TERM_CACHE.get(term)!;
+  const re = buildTerm(term);
+  if (TERM_CACHE.size >= TERM_CACHE_LIMIT) TERM_CACHE.delete(TERM_CACHE.keys().next().value!);
+  TERM_CACHE.set(term, re);
+  return re;
+}
+
+const TERM_CACHE_LIMIT = 2_000;
+const TERM_CACHE = new Map<string, RegExp | null>();
+
+function buildTerm(term: string): RegExp | null {
   let t = term.trim();
   if (!t) return null;
   const quoted = /^".*"$/.test(t) || /^'.*'$/.test(t);
@@ -89,10 +102,18 @@ export function compileTerm(term: string): RegExp | null {
   return new RegExp(body.join("\\s+"), "iu");
 }
 
-function matchTerms(text: string, terms: string[]): string[] {
+interface CompiledTerm {
+  term: string;
+  re: RegExp | null;
+}
+
+function compileTerms(terms: string[]): CompiledTerm[] {
+  return terms.map((term) => ({ term, re: compileTerm(term) }));
+}
+
+function matchTerms(text: string, terms: CompiledTerm[]): string[] {
   const hits: string[] = [];
-  for (const term of terms) {
-    const re = compileTerm(term);
+  for (const { term, re } of terms) {
     if (re && re.test(text)) hits.push(term);
   }
   return hits;
@@ -205,30 +226,47 @@ export function regionsMentioned(text: string): Set<string> {
   return groups;
 }
 
+interface CompiledLocation {
+  terms: Array<{ term: string; patterns: RegExp[] }>;
+  wantedGroups: Set<string>;
+  includeRemote: boolean;
+}
+
+function compileLocation(settings: Pick<GateSettings, "locationTerms" | "includeRemote">): CompiledLocation {
+  const wantedGroups = new Set<string>();
+  const terms = settings.locationTerms.map((t) => t.trim()).filter(Boolean).map((term) => {
+    const { group, patterns } = expandLocationTerm(term);
+    if (group) wantedGroups.add(group);
+    return { term, patterns };
+  });
+  return { terms, wantedGroups, includeRemote: settings.includeRemote };
+}
+
 export function evaluateLocation(input: GateInput, settings: Pick<GateSettings, "locationTerms" | "includeRemote">) {
+  return locate(input, compileLocation(settings));
+}
+
+function locate(input: GateInput, compiled: CompiledLocation) {
   const texts = locationTexts(input);
   const joined = texts.join(" | ");
   const remote = input.remote === true || looksRemote(joined);
-  const terms = settings.locationTerms.map((t) => t.trim()).filter(Boolean);
-  if (terms.length === 0) return { ok: true, terms: [] as string[], remote };
+  if (compiled.terms.length === 0) return { ok: true, terms: [] as string[], remote };
 
   const hits: string[] = [];
-  const wantedGroups = new Set<string>();
-  for (const term of terms) {
-    const { group, patterns } = expandLocationTerm(term);
-    if (group) wantedGroups.add(group);
+  const { wantedGroups } = compiled;
+  for (const { term, patterns } of compiled.terms) {
     if (patterns.some((re) => texts.some((t) => re.test(t)))) hits.push(term);
   }
   if (hits.length > 0) return { ok: true, terms: hits, remote };
 
-  if (remote && settings.includeRemote) {
+  if (remote && compiled.includeRemote) {
     // "Remote" with no region, or a region that is one of ours, passes. "Remote - USA" for a UK user fails.
     const mentioned = regionsMentioned(joined);
     mentioned.delete("remote");
     const conflicting = [...mentioned].filter((g) => !wantedGroups.has(g) && !isSuperRegionOf(g, wantedGroups));
     if (conflicting.length === 0) return { ok: true, terms: ["remote"], remote };
   }
-  if (texts.length === 0 && settings.includeRemote && remote) return { ok: true, terms: ["remote"], remote };
+  if (texts.length === 0 && compiled.includeRemote && remote) return { ok: true, terms: ["remote"], remote };
   return { ok: false, terms: [], remote };
 }
 
@@ -246,34 +284,64 @@ function isSuperRegionOf(group: string, wanted: Set<string>): boolean {
   return members.some((m) => wanted.has(m));
 }
 
-export function evaluateGate(input: GateInput, settings: GateSettings): GateResult {
+/** One gate with every pattern built once, for evaluating many postings against it. */
+export interface CompiledGate {
+  readonly settings: GateSettings;
+  /** Whether the gate matches on the description, so a posting's text can change its verdict. */
+  readonly matchesDescription: boolean;
+  evaluate(input: GateInput): GateResult;
+}
+
+/**
+ * Build every keyword, exclusion, seniority and location pattern of a gate once. `evaluateGate`
+ * is this with a single use; a scan that judges a listing for its followers compiles each gate
+ * once and evaluates every posting against the result, which gives the same verdicts without
+ * rebuilding a country's worth of location patterns per posting.
+ */
+export function compileGate(settings: GateSettings): CompiledGate {
   const fields = new Set(settings.matchFields.length ? settings.matchFields : ["title"]);
-  const haystackParts: string[] = [input.title];
-  if (fields.has("department") && input.department) haystackParts.push(input.department);
-  if (fields.has("description") && input.description) haystackParts.push(input.description);
-  const haystack = haystackParts.join("\n");
-
-  const keywordTerms = matchTerms(haystack, settings.includeKeywords);
-  const keywordMatched = settings.includeKeywords.filter((k) => k.trim()).length === 0 ? true : keywordTerms.length > 0;
-  // Exclusions are checked against title and department regardless of matchFields, never against description alone.
-  const excludeHaystack = [input.title, input.department ?? ""].join("\n");
-  const excludedTerms = matchTerms(excludeHaystack, settings.excludeKeywords);
-  const seniority = settings.seniorityKeywords ?? [];
-  const seniorityTerms = matchTerms(input.title, seniority);
-  const seniorityOk = !seniority.some(t => t.trim()) || seniorityTerms.length > 0;
-  const excluded = excludedTerms.length > 0 || !seniorityOk;
-
-  const loc = evaluateLocation(input, settings);
+  const include = compileTerms(settings.includeKeywords);
+  const includeRequired = settings.includeKeywords.filter((k) => k.trim()).length > 0;
+  const exclude = compileTerms(settings.excludeKeywords);
+  const seniorityList = settings.seniorityKeywords ?? [];
+  const seniority = compileTerms(seniorityList);
+  const seniorityRequired = seniorityList.some((t) => t.trim());
+  const location = compileLocation(settings);
   return {
-    keywordMatched,
-    keywordTerms: [...keywordTerms, ...seniorityTerms.filter(t => !keywordTerms.includes(t))],
-    excluded,
-    excludedTerms,
-    locationOk: loc.ok,
-    locationTerms: loc.terms,
-    remote: loc.remote,
-    inTable: keywordMatched && !excluded && loc.ok,
+    settings,
+    matchesDescription: fields.has("description"),
+    evaluate(input: GateInput): GateResult {
+      const haystackParts: string[] = [input.title];
+      if (fields.has("department") && input.department) haystackParts.push(input.department);
+      if (fields.has("description") && input.description) haystackParts.push(input.description);
+      const haystack = haystackParts.join("\n");
+
+      const keywordTerms = matchTerms(haystack, include);
+      const keywordMatched = includeRequired ? keywordTerms.length > 0 : true;
+      // Exclusions are checked against title and department regardless of matchFields, never against description alone.
+      const excludeHaystack = [input.title, input.department ?? ""].join("\n");
+      const excludedTerms = matchTerms(excludeHaystack, exclude);
+      const seniorityTerms = matchTerms(input.title, seniority);
+      const seniorityOk = !seniorityRequired || seniorityTerms.length > 0;
+      const excluded = excludedTerms.length > 0 || !seniorityOk;
+
+      const loc = locate(input, location);
+      return {
+        keywordMatched,
+        keywordTerms: [...keywordTerms, ...seniorityTerms.filter(t => !keywordTerms.includes(t))],
+        excluded,
+        excludedTerms,
+        locationOk: loc.ok,
+        locationTerms: loc.terms,
+        remote: loc.remote,
+        inTable: keywordMatched && !excluded && loc.ok,
+      };
+    },
   };
+}
+
+export function evaluateGate(input: GateInput, settings: GateSettings): GateResult {
+  return compileGate(settings).evaluate(input);
 }
 
 /** Parse a comma or newline separated user list into clean terms. Quoted phrases are preserved. */

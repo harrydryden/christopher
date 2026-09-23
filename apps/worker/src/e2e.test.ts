@@ -6,7 +6,7 @@
  * Requires a database: set TEST_DATABASE_URL (defaults to the local ava_test database).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import {createDb, readCompanyLogo, schema, enqueueTask, reevaluateGate, subscribeToCompany, type Db, type User} from "@ava/db";
+import {createDb, readCompanyLogo, retireSourceRoles, schema, enqueueTask, reevaluateGate, subscribeToCompany, type Db, type User} from "@ava/db";
 import { ensureTestUser } from "./test-users";
 import { runMigrations } from "@ava/db/migrate";
 import { ats, dedupeKeyFor, displayStatus, liveFor, priorityFor, sha1 } from "@ava/core";
@@ -14,14 +14,16 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { handlers } from "./handlers";
-import { _scanSourceForTests } from "./handlers/scan";
+import { _scanSourceForTests, handleScanCompany } from "./handlers/scan";
+import { handleSuggestFromScans } from "./handlers/suggest-from-scans";
 import { handleScoreJob, handleTagReason } from "./handlers/learning";
+import { anchoredInPage, handleFetchDescription } from "./handlers/description";
 import { handleRunDaily, finaliseScanRuns } from "./handlers/daily";
 import { TaskQueue } from "./queue";
 import { startTestServer, type RouteTable, type TestServer } from "./test-server";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
-const HOSTS = ["www.acme.example", "acme.example", "boards-api.greenhouse.io", "job-boards.greenhouse.io", "www.orbital.example", "orbital.example", "api.smartrecruiters.com", "pager.example"];
+const HOSTS = ["www.acme.example", "acme.example", "boards-api.greenhouse.io", "job-boards.greenhouse.io", "www.orbital.example", "orbital.example", "api.smartrecruiters.com", "pager.example", "acme.wd1.myworkdayjobs.com"];
 
 /** A real PNG, because the logo capture sniffs the bytes and refuses anything that is not one. */
 function pngBytes(length = 400): Buffer {
@@ -422,7 +424,8 @@ describe("end to end", () => {
     const company = await addCompany("https://www.acme.example/", "acme.example");
     await queue.drain();
 
-    setJobs([JOB_ENGINEER]);
+    // Only the one role comes down: a board cut to a fraction of itself would be a collapse, not a close.
+    setJobs([JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
     for (let i = 0; i < 2; i++) {
       now = new Date(now.getTime() + 86_400_000);
       await enqueueTask(db, "scan_company", { companyId: company.id, trigger: "manual" }, { dedupeKey: dedupeKeyFor("scan_company", { companyId: company.id }), priority: 5 });
@@ -430,7 +433,7 @@ describe("end to end", () => {
     }
     expect((await jobsInTable()).find((r) => r.title === "Operations Manager")!.status).toBe("closed");
 
-    setJobs([JOB_OPERATIONS_MANAGER, JOB_ENGINEER]);
+    setJobs([JOB_OPERATIONS_MANAGER, JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
     now = new Date(now.getTime() + 86_400_000);
     await enqueueTask(db, "scan_company", { companyId: company.id, trigger: "manual" }, { dedupeKey: dedupeKeyFor("scan_company", { companyId: company.id }), priority: 5 });
     await queue.drain();
@@ -657,6 +660,98 @@ describe("functional review regressions", () => {
     expect(views.every(v => !v.inTable && v.archivedAt !== null)).toBe(true);
   }, 60_000);
 
+  it("brings back on a later scan what the gate archived, never what the person archived", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources);
+    const scan = async () => {
+      now = new Date(now.getTime() + 86_400_000);
+      const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+      return _scanSourceForTests(deps, company, current!, await deps.settings(), null);
+    };
+    await setGate({ includeKeywords: ["no-match"] });
+    await scan();
+    const archived = await db.select().from(schema.userJobs);
+    expect(archived).toHaveLength(4);
+    expect(archived.every(v => !v.inTable && v.archivedAt !== null && v.gateArchivedAt?.getTime() === v.archivedAt.getTime())).toBe(true);
+    // The person restored one and put it away again themselves: that archive is theirs now.
+    const theirs = archived[0]!;
+    await db.update(schema.userJobs).set({ archivedAt: new Date(now.getTime() + 60_000) })
+      .where(and(eq(schema.userJobs.userId, user.id), eq(schema.userJobs.jobId, theirs.jobId)));
+
+    await setGate({});
+    expect((await scan()).status).toBe("ok");
+    const views = await db.select().from(schema.userJobs);
+    expect(views.every(v => v.inTable)).toBe(true);
+    expect(views.filter(v => v.archivedAt === null)).toHaveLength(3);
+    expect(views.find(v => v.jobId === theirs.jobId)!.archivedAt).not.toBeNull();
+  }, 90_000);
+
+  it("rewrites no view on a scan that changes nothing", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources);
+    const before = await db.select({ jobId: schema.userJobs.jobId, updatedAt: schema.userJobs.updatedAt, xmin: sql<string>`xmin::text` }).from(schema.userJobs).orderBy(schema.userJobs.jobId);
+    now = new Date(now.getTime() + 86_400_000);
+    expect((await _scanSourceForTests(deps, company, source!, await deps.settings(), null)).status).toBe("ok");
+    const after = await db.select({ jobId: schema.userJobs.jobId, updatedAt: schema.userJobs.updatedAt, xmin: sql<string>`xmin::text` }).from(schema.userJobs).orderBy(schema.userJobs.jobId);
+    expect(after).toEqual(before);
+  }, 60_000);
+
+  it("does not queue a view again whose scoring completed without a score", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources);
+    const aiDeps = { ...deps, ai: { ...deps.ai, enabled: true } } as unknown as WorkerDeps;
+    await db.insert(schema.userSettings).values({ userId: user.id, key: "aiBudgetUsd", value: 25 });
+    const views = await db.select().from(schema.userJobs).orderBy(schema.userJobs.jobId);
+    // The model was asked about the first and gave nothing usable; the rest were never scored.
+    await db.update(schema.userJobs).set({ fitScore: null, scoredAt: now }).where(eq(schema.userJobs.jobId, views[0]!.jobId));
+    await db.update(schema.userJobs).set({ fitScore: null, scoredAt: null }).where(sql`${schema.userJobs.jobId} <> ${views[0]!.jobId}`);
+    await db.delete(schema.tasks);
+    const queuedFor = async () => (await db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"))).map(t => (t.payload as { jobId: string }).jobId);
+
+    now = new Date(now.getTime() + 86_400_000);
+    await _scanSourceForTests(aiDeps, company, source!, await deps.settings(), null);
+    expect(await queuedFor()).not.toContain(views[0]!.jobId);
+    expect(await queuedFor()).toHaveLength(views.length - 1);
+
+    // Nor does re-evaluating the gate, which every boot and settings save does.
+    await db.delete(schema.tasks);
+    await reevaluateGate(db, user.id, await deps.userSettings(user.id), now);
+    expect(await queuedFor()).not.toContain(views[0]!.jobId);
+  }, 60_000);
+
+  it("creates no view for a role that closed long ago, and still puts older views away", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const late = await ensureTestUser(db, "late-closed@example.com", "member");
+    await db.insert(schema.userSettings).values({ userId: late.id, key: "gate", value: { includeKeywords: ["operations", "engineer"], excludeKeywords: [], matchFields: ["title"], locationTerms: [], includeRemote: true } });
+    await subscribeToCompany(db, late.id, company.id);
+    const byKey = async (id: number) => (await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, `id:${id}`)))[0]!;
+    const longAgo = await byKey(JOB_OPERATIONS_MANAGER.id);
+    const lately = await byKey(JOB_ENGINEER.id);
+    await db.update(schema.jobs).set({ status: "closed", closedAt: new Date(now.getTime() - 60 * 86_400_000) }).where(eq(schema.jobs.id, longAgo.id));
+    await db.update(schema.jobs).set({ status: "closed", closedAt: new Date(now.getTime() - 10 * 86_400_000) }).where(eq(schema.jobs.id, lately.id));
+
+    await reevaluateGate(db, late.id, await deps.userSettings(late.id), now, { companyId: company.id });
+    const lateViews = new Set((await db.select().from(schema.userJobs).where(eq(schema.userJobs.userId, late.id))).map(v => v.jobId));
+    expect(lateViews.has(longAgo.id)).toBe(false);
+    expect(lateViews.has(lately.id)).toBe(true);
+    expect(lateViews.size).toBe(4);
+
+    // The first account already had a view of the role closed long ago: narrowing still reaches it.
+    await setGate({ includeKeywords: ["no-match"] });
+    await reevaluateGate(db, user.id, await deps.userSettings(user.id), now);
+    const [oldView] = await db.select().from(schema.userJobs).where(and(eq(schema.userJobs.userId, user.id), eq(schema.userJobs.jobId, longAgo.id)));
+    expect(oldView).toMatchObject({ inTable: false });
+    expect(oldView!.archivedAt).not.toBeNull();
+  }, 60_000);
+
   it("limits description gate refreshes to their role and rechecks old closed roles globally", async () => {
     await setGate({});
     await addCompany("https://www.acme.example/", "acme.example");
@@ -673,7 +768,7 @@ describe("functional review regressions", () => {
     expect((await db.select().from(schema.userJobs)).filter(job => job.archivedAt)).toHaveLength(rows.length);
   });
 
-  it("does not reset missing counters on a partial scan", async () => {
+  it("resets the miss count of every role a partial scan saw, and counts nothing against the rest", async () => {
     const company = await addCompany("https://www.acme.example/", "acme.example");
     await queue.drain();
     const [source] = await db.select().from(schema.careerSources);
@@ -683,8 +778,123 @@ describe("functional review regressions", () => {
     const outcome = await _scanSourceForTests(deps, company, source!, await deps.settings(), null);
     expect(outcome.status).toBe("partial");
     const jobs = await db.select().from(schema.jobs);
-    expect(jobs.every(job => job.missingScans === 1 && job.status === "open")).toBe(true);
+    expect(jobs.every(job => job.status === "open")).toBe(true);
+    // Listed by the partial scan: still there, so the earlier miss no longer counts.
+    const seen = new Set([`id:${JOB_OPERATIONS_MANAGER.id}`, `id:${JOB_ENGINEER.id}`]);
+    expect(jobs.filter(job => seen.has(job.externalKey)).map(job => job.missingScans)).toEqual([0, 0]);
+    // Not listed by it: an incomplete listing is no evidence of absence, so nothing moves.
+    expect(jobs.filter(job => !seen.has(job.externalKey)).every(job => job.missingScans === 1)).toBe(true);
   }, 60_000);
+
+  it("reopens a role a partial scan lists with a fresh miss count, so one later miss cannot close it", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources);
+    const scanOn = async (day: string) => {
+      now = new Date(`${day}T06:00:00Z`);
+      const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+      return _scanSourceForTests(deps, company, current!, await deps.settings(), null);
+    };
+    const manager = async () => (await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, `id:${JOB_OPERATIONS_MANAGER.id}`)))[0]!;
+
+    // Two consecutive successful misses close it.
+    setJobs([JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
+    await scanOn("2026-09-06");
+    await scanOn("2026-09-07");
+    expect(await manager()).toMatchObject({ status: "closed", missingScans: 2 });
+
+    // A partial scan (the listing collapsed against a large previous ok scan) lists it again.
+    const [inflated] = await db.insert(schema.scans).values({ sourceId: source!.id, status: "ok", postingsFound: 20, startedAt: new Date("2026-09-07T12:00:00Z") }).returning();
+    setJobs([JOB_OPERATIONS_MANAGER, JOB_ENGINEER]);
+    expect((await scanOn("2026-09-08")).status).toBe("partial");
+    expect(await manager()).toMatchObject({ status: "open", missingScans: 0, closedAt: null });
+    await db.delete(schema.scans).where(eq(schema.scans.id, inflated!.id));
+
+    // One ok miss after that is the first of two, not the second.
+    setJobs([JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
+    expect((await scanOn("2026-09-09")).status).toBe("ok");
+    expect(await manager()).toMatchObject({ status: "open", missingScans: 1 });
+    await scanOn("2026-09-10");
+    expect(await manager()).toMatchObject({ status: "closed", missingScans: 2 });
+  }, 90_000);
+
+  it("closes only on consecutive misses: a role listed again between two misses stays open", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources);
+    const scanOn = async (day: string) => {
+      now = new Date(`${day}T06:00:00Z`);
+      const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+      return _scanSourceForTests(deps, company, current!, await deps.settings(), null);
+    };
+    const manager = async () => (await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, `id:${JOB_OPERATIONS_MANAGER.id}`)))[0]!;
+    const without = [JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK];
+
+    setJobs(without);
+    expect((await scanOn("2026-09-06")).status).toBe("ok");
+    expect(await manager()).toMatchObject({ status: "open", missingScans: 1 });
+    setJobs([JOB_OPERATIONS_MANAGER, ...without]);
+    expect((await scanOn("2026-09-07")).status).toBe("ok");
+    expect(await manager()).toMatchObject({ status: "open", missingScans: 0 });
+    setJobs(without);
+    expect((await scanOn("2026-09-08")).status).toBe("ok");
+    expect(await manager()).toMatchObject({ status: "open", missingScans: 1 });
+  }, 90_000);
+
+  it("counts two successful misses forty minutes apart as one, and closes on the next day's", async () => {
+    // A rescan after the daily scan, a retried task or a backlog that runs two days' tasks back to
+    // back all make two complete scans within the hour. A role briefly unpublished is absent from
+    // both, so they are one observation, not two.
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources);
+    const scanAt = async (at: string) => {
+      now = new Date(at);
+      const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+      return _scanSourceForTests(deps, company, current!, await deps.settings(), null);
+    };
+    const manager = async () => (await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, `id:${JOB_OPERATIONS_MANAGER.id}`)))[0]!;
+
+    setJobs([JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
+    expect((await scanAt("2026-09-06T06:00:00Z")).status).toBe("ok");
+    expect(await manager()).toMatchObject({ status: "open", missingScans: 1, firstMissedAt: new Date("2026-09-06T06:00:00Z") });
+    const rescan = await scanAt("2026-09-06T06:40:00Z");
+    expect(rescan).toMatchObject({ status: "ok", closedCount: 0 });
+    expect(await manager()).toMatchObject({ status: "open", missingScans: 1, firstMissedAt: new Date("2026-09-06T06:00:00Z") });
+
+    const nextDay = await scanAt("2026-09-07T06:00:00Z");
+    expect(nextDay.closedCount).toBe(1);
+    expect(await manager()).toMatchObject({ status: "closed", missingScans: 2 });
+
+    // Listed again: open, with no miss and no first-miss time left over.
+    setJobs([JOB_OPERATIONS_MANAGER, JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
+    await scanAt("2026-09-08T06:00:00Z");
+    expect(await manager()).toMatchObject({ status: "open", missingScans: 0, firstMissedAt: null });
+  }, 90_000);
+
+  it("closes nothing when a board that listed roles comes back empty, twice", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources);
+    setJobs([]);
+    for (const day of ["2026-09-06", "2026-09-07"]) {
+      now = new Date(`${day}T06:00:00Z`);
+      const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+      expect((await _scanSourceForTests(deps, company, current!, await deps.settings(), null)).status).toBe("suspect_empty");
+    }
+    const scans = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source!.id)).orderBy(desc(schema.scans.startedAt));
+    expect(scans.slice(0, 2).map(scan => scan.status)).toEqual(["suspect_empty", "suspect_empty"]);
+    const jobs = await db.select().from(schema.jobs);
+    expect(jobs).toHaveLength(5);
+    expect(jobs.every(job => job.status === "open" && job.missingScans === 0)).toBe(true);
+    // An empty board where there were roles is worth finding again.
+    const rediscovery = await db.select().from(schema.tasks).where(sql`type = 'discover' and payload->>'reason' = 'suspect_empty'`);
+    expect(rediscovery).toHaveLength(1);
+  }, 90_000);
 
   it("does not call an unextractable HTML page a successful empty scan", async () => {
     const company = await addCompany("https://www.acme.example/", "acme.example");
@@ -987,6 +1197,15 @@ describe("HTML extraction completion", () => {
     expect(await db.select().from(schema.jobs)).toHaveLength(2);
     const scans = await db.select().from(schema.scans);
     expect(scans.filter(scan => scan.rawSnapshot !== null)).toHaveLength(3);
+    // A fifth scan prunes the one snapshot that aged out, and rewrites no row pruned already.
+    const pruned = async () => (await db.execute<{ id: string; xmin: string }>(sql`select id, xmin::text as xmin from scans where source_id = ${source.id} and raw_snapshot is null order by id`)).rows;
+    const before = await pruned();
+    expect(before).toHaveLength(1);
+    await _scanSourceForTests(deps, company, source, await deps.settings(), null);
+    const after = await pruned();
+    expect(after).toHaveLength(2);
+    expect(after.find(row => row.id === before[0]!.id)).toEqual(before[0]);
+    expect((await db.select().from(schema.scans)).filter(scan => scan.rawSnapshot !== null)).toHaveLength(3);
   }, 60_000);
   it("never closes roles when a later listing page fails", async () => {
     const { company, source } = await htmlFixture();
@@ -1030,17 +1249,17 @@ it("re-discovers a source whose listing collapses and stays collapsed, without c
 
   // The old board keeps serving a shrinking remainder after a migration; the
   // roles we know about are not in it.
-  setJobs(filler.slice(0, 3));
-  const scanAt = async (day: string) => {
+  const scanAt = async (day: string, remainder: number) => {
+    setJobs(filler.slice(0, remainder));
     now = new Date(`${day}T06:00:00Z`);
     await enqueueTask(db, "scan_company", { companyId: company.id, trigger: "manual" }, { dedupeKey: dedupeKeyFor("scan_company", { companyId: company.id }), priority: 5 });
     await queue.drain();
   };
-  await scanAt("2026-09-06");
-  await scanAt("2026-09-07");
+  await scanAt("2026-09-06", 3);
+  await scanAt("2026-09-07", 2);
   let discovers = await db.select().from(schema.tasks).where(sql`type = 'discover' and payload->>'reason' = 'shrunk'`);
   expect(discovers).toHaveLength(0);
-  await scanAt("2026-09-08");
+  await scanAt("2026-09-08", 1);
   discovers = await db.select().from(schema.tasks).where(sql`type = 'discover' and payload->>'reason' = 'shrunk'`);
   expect(discovers.length).toBeGreaterThanOrEqual(1);
   const scans = await db.select().from(schema.scans).orderBy(schema.scans.startedAt);
@@ -1049,6 +1268,53 @@ it("re-discovers a source whose listing collapses and stays collapsed, without c
   expect(manager.status).toBe("open");
   expect(manager.missingScans).toBe(0);
 }, 120_000);
+
+it("takes a collapsed count read three times running as the board's size, and looks for a new board", async () => {
+  await setGate({});
+  const filler = Array.from({ length: 12 }, (_, i) => ({
+    ...JOB_ENGINEER, id: 6_100_000 + i, title: `Engineer ${i}`, absolute_url: `https://job-boards.greenhouse.io/acme/jobs/${6_100_000 + i}`,
+  }));
+  setJobs([JOB_OPERATIONS_MANAGER, ...filler]);
+  const company = await addCompany("https://www.acme.example/", "acme.example");
+  await queue.drain();
+  const [source] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
+  setJobs(filler.slice(0, 3));
+  const scanOn = async (day: string) => {
+    now = new Date(`${day}T06:00:00Z`);
+    const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+    return _scanSourceForTests(deps, company, current!, await deps.settings(), null);
+  };
+  expect((await scanOn("2026-09-06")).status).toBe("partial");
+  expect((await scanOn("2026-09-07")).status).toBe("partial");
+  // The third identical reading: the board shrank, and a board that shrank must be able to close roles.
+  expect((await scanOn("2026-09-08")).status).toBe("ok");
+  const manager = (await jobsInTable()).find(r => r.title === "Operations Manager")!;
+  expect(manager).toMatchObject({ status: "open", missingScans: 1 });
+  expect(await db.select().from(schema.tasks).where(sql`type = 'discover' and payload->>'reason' = 'shrunk'`)).toHaveLength(1);
+  // Judged against its new size from here: the next reading is ok and closes what it lacks.
+  const next = await scanOn("2026-09-09");
+  expect(next.status).toBe("ok");
+  expect(next.closedCount).toBeGreaterThan(0);
+}, 120_000);
+
+it("backs a failing source off to the next daily run, not the one after", async () => {
+  await setGate({});
+  const company = await addCompany("https://www.acme.example/", "acme.example");
+  await queue.drain();
+  const [source] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
+  server.setRoutes({ "www.acme.example": acmeRoutes(), "acme.example": acmeRoutes(), "job-boards.greenhouse.io": {},
+    "boards-api.greenhouse.io": { "/v1/boards/acme/jobs": { status: 500, body: { error: "boom" } } } });
+  // The scheduled run starts at 06:00; this source's turn comes forty minutes in, and it fails.
+  now = new Date("2026-09-06T06:40:00Z");
+  expect((await _scanSourceForTests(deps, company, source!, await deps.settings(), null)).status).toBe("failed");
+  const [failed] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+  expect(failed!.consecutiveFailures).toBe(1);
+  // Tomorrow's 06:00 run finds it due.
+  now = new Date("2026-09-07T06:00:00Z");
+  await handleRunDaily({ payload: { trigger: "schedule", runDate: "2026-09-07" } } as never, deps);
+  const [run] = await db.select().from(schema.scanRuns).where(eq(schema.scanRuns.runDate, "2026-09-07"));
+  expect(run!.companiesTotal).toBe(1);
+}, 60_000);
 
 it("marks a listing that reaches the adapter cap partial and never closes roles from it", async () => {
   await setGate({});
@@ -1260,7 +1526,47 @@ describe("shared catalogue", () => {
     expect(mine).toHaveLength(4);
     expect(mine.every(v => v.inTable && v.archivedAt === null)).toBe(true);
     expect(await db.select().from(schema.scans)).toHaveLength(1);
+
+    // Widening again brings back what the gate put away, and only that: the role the person
+    // archived by hand stays where they put it.
+    const engineerRole = engineerRows.find(r => r.title === "Software Engineer, Platform")!;
+    await db.update(schema.userJobs).set({ archivedAt: new Date(now.getTime() + 60_000) })
+      .where(and(eq(schema.userJobs.userId, engineer.id), eq(schema.userJobs.jobId, engineerRole.jobId)));
+    await setEngineerGate(["engineer", "operations"]);
+    await reevaluateGate(db, engineer.id, await deps.userSettings(engineer.id), now);
+    const rewidened = await db.select().from(schema.userJobs).where(eq(schema.userJobs.userId, engineer.id));
+    expect(rewidened.every(v => v.inTable)).toBe(true);
+    for (const jobId of archived) expect(rewidened.find(v => v.jobId === jobId)).toMatchObject({ archivedAt: null, gateArchivedAt: null });
+    expect(rewidened.find(v => v.jobId === engineerRole.jobId)!.archivedAt).not.toBeNull();
+    expect(rewidened.filter(v => v.archivedAt !== null)).toHaveLength(1);
+    const restoredEvents = await db.select().from(schema.jobEvents)
+      .where(and(eq(schema.jobEvents.userId, engineer.id), sql`${schema.jobEvents.payload}->>'action' = 'unarchived'`));
+    expect(restoredEvents.map(e => e.jobId).sort()).toEqual([...archived].sort());
   }, 120_000);
+
+  it("writes its verdicts from the gate saved while it was fetching, not the one it started with", async () => {
+    // A person widens their keywords while a scan of a company they follow is reading the board.
+    // The save re-evaluates their gate at once; the scan must not then commit verdicts from the
+    // gate it read before its network work and archive the roles that were just admitted.
+    await setGate({ includeKeywords: ["engineer"] });
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    expect((await jobsInTable()).map(r => r.title)).toEqual(["Software Engineer, Platform"]);
+    const [source] = await db.select().from(schema.careerSources);
+
+    const racing: WorkerDeps = { ...deps, assertOwnership: async () => {
+      await setGate({ includeKeywords: ["engineer", "operations"] });
+      deps.invalidateSettings();
+      await reevaluateGate(db, user.id, await deps.userSettings(user.id), now);
+    } };
+    now = new Date(now.getTime() + 86_400_000);
+    const outcome = await _scanSourceForTests(racing, company, source!, await deps.settings(), null);
+    expect(outcome.status).toBe("ok");
+
+    const views = await db.select().from(schema.userJobs).where(eq(schema.userJobs.userId, user.id));
+    expect(views).toHaveLength(5);
+    expect(views.every(v => v.inTable && v.archivedAt === null)).toBe(true);
+  }, 60_000);
 
   it("keeps a description a fetch_description stored while the scan was in flight", async () => {
     // The scan reads every stored description before it opens its transaction. A description task
@@ -1271,7 +1577,7 @@ describe("shared catalogue", () => {
     const [source] = await db.select().from(schema.careerSources);
 
     // A feed that stops supplying descriptions, and a posting that has none stored yet.
-    setJobs([{ ...JOB_OPERATIONS_MANAGER, content: undefined }]);
+    setJobs([{ ...JOB_OPERATIONS_MANAGER, content: undefined }, JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
     const [target] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, "id:4001001"));
     await db.update(schema.jobs).set({ descriptionText: null, descriptionHash: null, descriptionFetchedAt: null }).where(eq(schema.jobs.id, target!.id));
 
@@ -1541,6 +1847,162 @@ describe("what a scan asks for and when", () => {
     expect(closed!.closedAt).toBeInstanceOf(Date);
   }, 180_000);
 
+  it("rewrites no job row on an unchanged board, and only the row that moved when one does", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
+    const snapshot = async () => (await db.select({ key: schema.jobs.externalKey, updatedAt: schema.jobs.updatedAt, hash: schema.jobs.descriptionHash, fetchedAt: schema.jobs.descriptionFetchedAt }).from(schema.jobs).orderBy(schema.jobs.externalKey));
+    const before = await snapshot();
+    now = new Date(now.getTime() + 86_400_000);
+    expect((await _scanSourceForTests(deps, company, await currentSource(source!.id), await deps.settings(), null)).status).toBe("ok");
+    expect(await snapshot()).toEqual(before);
+
+    setJobs([{ ...JOB_OPERATIONS_MANAGER, title: "Senior Operations Manager" }, JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
+    now = new Date(now.getTime() + 86_400_000);
+    await _scanSourceForTests(deps, company, await currentSource(source!.id), await deps.settings(), null);
+    const after = await snapshot();
+    const moved = after.filter((row, i) => row.updatedAt.getTime() !== before[i]!.updatedAt.getTime()).map(row => row.key);
+    expect(moved).toEqual([`id:${JOB_OPERATIONS_MANAGER.id}`]);
+    expect(after.map(row => row.hash)).toEqual(before.map(row => row.hash));
+  }, 90_000);
+
+  it("keeps a description stored while its commit was running, not the older text it read", async () => {
+    // fetch_description takes no lock on the source, so it can commit between the commit reading a
+    // row and writing it. The scan must never put back the older text it read.
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
+    const [target] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, `id:${JOB_OPERATIONS_MANAGER.id}`));
+    await db.update(schema.jobs).set({ descriptionText: null, descriptionHash: null, descriptionFetchedAt: null }).where(eq(schema.jobs.id, target!.id));
+    const text = "Own operations for our London site, written while the commit ran.";
+    // Fire the concurrent write just before the commit's first write to `jobs`, which is after it
+    // has read every row it reconciles.
+    let fired = false;
+    const race = async () => {
+      fired = true;
+      await db.update(schema.jobs).set({ descriptionText: text, descriptionHash: sha1(text), descriptionFetchedAt: new Date(now.getTime() + 1000) }).where(eq(schema.jobs.id, target!.id));
+    };
+    const racingDb = new Proxy(deps.db, { get(base, prop, receiver) {
+      if (prop !== "transaction") return Reflect.get(base, prop, receiver);
+      return (body: (tx: unknown) => Promise<unknown>) => base.transaction(tx => body(new Proxy(tx, { get(inner, key, innerReceiver) {
+        const value = Reflect.get(inner, key, innerReceiver) as unknown;
+        if (key === "update") return (table: unknown) => {
+          const builder = (value as (t: unknown) => { set: (v: unknown) => { where: (w: unknown) => Promise<unknown> } }).call(inner, table);
+          if (table !== schema.jobs || fired) return builder;
+          return { set: (values: unknown) => ({ where: async (where: unknown) => { await race(); return builder.set(values).where(where); } }) };
+        };
+        return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(inner) : value;
+      } })));
+    } });
+    now = new Date(now.getTime() + 86_400_000);
+    const outcome = await _scanSourceForTests({ ...deps, db: racingDb as WorkerDeps["db"] }, company, await currentSource(source!.id), await deps.settings(), null);
+    expect(outcome.status).toBe("ok");
+    expect(fired).toBe(true);
+    const [after] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, target!.id));
+    expect(after!.descriptionText).toBe(text);
+    expect(after!.descriptionHash).toBe(sha1(text));
+  }, 60_000);
+
+  it("reads the stored descriptions of the roles it lists, not the source's closed history", async () => {
+    // A description-matching follower on a board that lists roles without text.
+    await setGate({ includeKeywords: ["robotics"], matchFields: ["title", "description"] });
+    setJobs([JOB_OPERATIONS_MANAGER, JOB_ENGINEER]);
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
+    // Years of closed roles, every one with its description kept.
+    await db.insert(schema.jobs).values(Array.from({ length: 60 }, (_, n) => ({
+      companyId: company.id, sourceId: source!.id, externalKey: `id:${9_000_000 + n}`, title: `Closed role ${n}`, normalizedTitle: `closed role ${n}`,
+      url: `https://job-boards.greenhouse.io/acme/jobs/${9_000_000 + n}`, status: "closed" as const, closedAt: new Date("2026-09-02"),
+      // Read after the board last edited the role, so nothing asks for it again.
+      descriptionText: `Robotics work, long gone. ${"x".repeat(500)}`, descriptionHash: `hash-${n}`, descriptionFetchedAt: new Date("2026-09-01"),
+    })));
+    // One of them comes back.
+    const returning = { ...JOB_ENGINEER, id: 9_000_007, title: "Closed role 7", absolute_url: "https://job-boards.greenhouse.io/acme/jobs/9000007" };
+    setJobs([JOB_OPERATIONS_MANAGER, JOB_ENGINEER, returning]);
+
+    let largest = 0;
+    const pool = db.$client as unknown as { query: (...args: unknown[]) => Promise<{ rows?: unknown[] }> };
+    const original = pool.query.bind(pool);
+    pool.query = (async (...args: unknown[]) => {
+      const text = typeof args[0] === "string" ? args[0] : (args[0] as { text?: string })?.text ?? "";
+      const result = await original(...args);
+      if (/"description_text"/.test(text) && /"source_id"/.test(text)) largest = Math.max(largest, result.rows?.length ?? 0);
+      return result;
+    }) as typeof pool.query;
+    try {
+      now = new Date(now.getTime() + 86_400_000);
+      await db.delete(schema.tasks);
+      expect((await _scanSourceForTests(deps, company, await currentSource(source!.id), await deps.settings(), null)).status).toBe("ok");
+    } finally {
+      pool.query = original as typeof pool.query;
+    }
+    expect(largest).toBeLessThanOrEqual(3);
+    // The reopened role's stored text is what its gate reads: admitted with no fetch queued for it.
+    const [back] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, "id:9000007"));
+    expect(back!.status).toBe("open");
+    expect(await db.select().from(schema.userJobs).where(and(eq(schema.userJobs.userId, user.id), eq(schema.userJobs.jobId, back!.id)))).toHaveLength(1);
+    const fetches = (await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"))).map(t => (t.payload as { jobId: string }).jobId);
+    expect(fetches).not.toContain(back!.id);
+  }, 90_000);
+
+  it("reuses the text an unchanged listing carried, however old, instead of reading every role again", async () => {
+    // A JSON-LD listing large enough to be revalidated by validator carries each role's text. When
+    // it comes back unchanged a week later, the text it carried is the text stored.
+    const roles = Array.from({ length: 300 }, (_, i) => i + 1);
+    const page = `<!doctype html><html><head><script type="application/ld+json">${JSON.stringify({ "@context": "https://schema.org", "@graph": roles.map(n => ({
+      "@type": "JobPosting", title: `Operations Role ${n}`, url: `https://pager.example/jobs/${n}`, identifier: { value: `role-${n}` },
+      description: `Warehouse operations on the night shift, role ${n}. ${"Keep the floor moving. ".repeat(90)}`,
+      jobLocation: { address: { addressLocality: "London", addressCountry: "UK" } },
+    })) })}</script></head><body></body></html>`;
+    expect(page.length).toBeGreaterThan(512 * 1024);
+    const etag = "listing-1";
+    server.setRoutes({ "pager.example": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /\n", contentType: "text/plain" },
+      "/postings": (req: import("node:http").IncomingMessage) => req.headers["if-none-match"] === etag
+        ? { status: 304, body: "", headers: { etag } } : { body: page, headers: { etag }, contentType: "text/html" },
+    } });
+    await setGate({ includeKeywords: ["warehouse"], matchFields: ["title", "description"] });
+    const [company] = await db.insert(schema.companies).values({ name: "Pager", domain: "pager.example", homepageUrl: "https://pager.example/" }).returning();
+    await subscribeToCompany(db, user.id, company!.id);
+    const [created] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "jsonld", url: "https://pager.example/postings", status: "active" }).returning();
+
+    expect((await _scanSourceForTests(deps, company!, created!, await deps.settings(), null)).status).toBe("ok");
+    expect((await latestScan(created!.id)).requests).toBe(1);
+    expect((await db.select().from(schema.jobs)).every(job => job.descriptionText?.startsWith("Warehouse operations"))).toBe(true);
+
+    now = new Date(now.getTime() + 8 * 86_400_000);
+    const outcome = await _scanSourceForTests(deps, company!, await currentSource(created!.id), await deps.settings(), null);
+    expect(outcome.status).toBe("ok");
+    const reused = await latestScan(created!.id);
+    expect(reused.requests).toBe(1);
+    expect(reused.revalidated).toBe(1);
+    expect((await db.select().from(schema.userJobs)).filter(v => v.inTable)).toHaveLength(300);
+  }, 120_000);
+
+  it("scores a new role once, after its description arrives, not also before it", async () => {
+    await setGate({});
+    const [company] = await db.insert(schema.companies).values({ name: "Acme Robotics", domain: "acme.example", homepageUrl: "https://www.acme.example/" }).returning();
+    await subscribeToCompany(db, user.id, company!.id);
+    await db.insert(schema.userSettings).values({ userId: user.id, key: "aiBudgetUsd", value: 25 });
+    const [source] = await db.insert(schema.careerSources).values({
+      companyId: company!.id, type: "greenhouse", url: "https://job-boards.greenhouse.io/acme",
+      apiUrl: "https://boards-api.greenhouse.io/v1/boards/acme/jobs", atsSlug: "acme", status: "active",
+    }).returning();
+    const aiDeps = { ...deps, ai: { ...deps.ai, enabled: true } } as unknown as WorkerDeps;
+    await _scanSourceForTests(aiDeps, company!, source!, await deps.settings(), null);
+    const scores = async () => (await db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"))).map(t => (t.payload as { jobId: string }).jobId);
+    // The listing carries no text, so every admitted role waits for its description.
+    expect(await scores()).toEqual([]);
+    expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "fetch_description"))).toHaveLength(4);
+    await queue.drain();
+    const queued = await scores();
+    expect(queued).toHaveLength(4);
+    expect(new Set(queued).size).toBe(4);
+  }, 90_000);
+
   it("stops at its request budget and records a partial scan that closes nothing", async () => {
     // A description-matching gate on a listing that carries no descriptions is one request per
     // role. Unbounded, that scan runs until its three-minute deadline kills it; bounded, it stops
@@ -1581,4 +2043,307 @@ describe("what a scan asks for and when", () => {
     const rows = await db.select().from(schema.jobs);
     expect(rows.every(job => job.status === "open" && job.missingScans === 0)).toBe(true);
   }, 240_000);
+});
+
+/** How many statements matching `pattern` the body sends, pooled or inside a transaction. */
+async function countingQueries(pattern: RegExp, body: () => Promise<unknown>): Promise<number> {
+  type Client = { query: (...args: unknown[]) => unknown };
+  type Pool = { on: (event: "acquire", listener: (client: Client) => void) => void; removeListener: (event: "acquire", listener: (client: Client) => void) => void };
+  const pool = db.$client as unknown as Pool;
+  let n = 0;
+  // Each client the pool hands out, for one statement or a whole transaction, is counted while the
+  // body runs; the pool wraps every client's own `query`, so the count wraps that in turn.
+  const counted = new Map<Client, Client["query"]>();
+  const onAcquire = (client: Client) => {
+    if (counted.has(client)) return;
+    const query = client.query;
+    counted.set(client, query);
+    client.query = function (this: unknown, ...args: unknown[]) {
+      const text = typeof args[0] === "string" ? args[0] : (args[0] as { text?: string } | undefined)?.text ?? "";
+      if (pattern.test(text)) n++;
+      return query.apply(this, args);
+    };
+  };
+  pool.on("acquire", onAcquire);
+  try {
+    await body();
+  } finally {
+    pool.removeListener("acquire", onAcquire);
+    for (const [client, query] of counted) client.query = query;
+  }
+  return n;
+}
+
+describe("a description arriving", () => {
+  async function follow(companyId: string, n: number, gate: Record<string, unknown>) {
+    const follower = await ensureTestUser(db, `follower-${n}@example.com`, "member");
+    await db.insert(schema.userSettings).values({ userId: follower.id, key: "gate", value: { excludeKeywords: [], locationTerms: [], includeRemote: true, ...gate } });
+    await subscribeToCompany(db, follower.id, companyId);
+    return follower;
+  }
+  const titleGate = { includeKeywords: ["engineer"], matchFields: ["title"] };
+  const descriptionGate = { includeKeywords: ["platform"], matchFields: ["title", "description"] };
+
+  it("re-runs every follower's gate in the same statements for thirty followers as for three", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const byKey = async (id: number) => (await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, `id:${id}`)))[0]!;
+    const clear = (jobId: string) => db.update(schema.jobs).set({ descriptionText: null, descriptionHash: null, descriptionFetchedAt: null }).where(eq(schema.jobs.id, jobId));
+    const perFollower = /user_jobs|user_settings|"tasks"|insert into "tasks"|decisions/;
+
+    const followers = [await follow(company.id, 0, titleGate), await follow(company.id, 1, descriptionGate)];
+    const engineer = await byKey(JOB_ENGINEER.id);
+    await clear(engineer.id);
+    const few = await countingQueries(perFollower, () => handleFetchDescription({ payload: { jobId: engineer.id } } as never, deps));
+
+    // The same arrival again, now with 29 followers, 27 of them new to the role.
+    for (let n = 2; n < 29; n++) followers.push(await follow(company.id, n, n % 3 === 0 ? descriptionGate : titleGate));
+    await clear(engineer.id);
+    const many = await countingQueries(perFollower, () => handleFetchDescription({ payload: { jobId: engineer.id } } as never, deps));
+    expect(few).toBeGreaterThan(0);
+    expect(many).toBe(few);
+
+    // And the verdicts are every follower's own: all 29 match the engineer role, by title or by
+    // the "Build the platform." text that just arrived; the first account's gate does not.
+    const views = await db.select().from(schema.userJobs).where(eq(schema.userJobs.jobId, engineer.id));
+    expect(new Set(views.filter(v => v.inTable).map(v => v.userId))).toEqual(new Set(followers.map(f => f.id)));
+    expect(views.some(v => v.userId === user.id)).toBe(false);
+    const scored = await db.select().from(schema.tasks).where(and(eq(schema.tasks.type, "score_job"), sql`payload->>'jobId' = ${engineer.id}`));
+    expect(scored).toHaveLength(29);
+  }, 120_000);
+
+  it("queues a fresh score for a role shortlisted outside the table when its text changes", async () => {
+    await setGate({});
+    await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [manager] = await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, `id:${JOB_OPERATIONS_MANAGER.id}`));
+    await db.update(schema.userJobs).set({ inTable: false, fitScore: 55, scoredAt: now })
+      .where(and(eq(schema.userJobs.userId, user.id), eq(schema.userJobs.jobId, manager!.id)));
+    await db.insert(schema.decisions).values({ userId: user.id, jobId: manager!.id, decision: "apply", jobTitle: manager!.title, companyName: "Acme" });
+    await db.update(schema.jobs).set({ descriptionHash: "an older text" }).where(eq(schema.jobs.id, manager!.id));
+    await db.delete(schema.tasks);
+
+    await handleFetchDescription({ payload: { jobId: manager!.id } } as never, deps);
+    const [view] = await db.select().from(schema.userJobs).where(and(eq(schema.userJobs.userId, user.id), eq(schema.userJobs.jobId, manager!.id)));
+    expect(view).toMatchObject({ fitScore: null, scoredAt: null, scoreState: "queued" });
+    const queued = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "score_job"));
+    expect(queued.map(t => t.payload)).toEqual([{ userId: user.id, jobId: manager!.id }]);
+  }, 60_000);
+
+  it("keeps a cleaned description only when the page says what it says", async () => {
+    const [company] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://www.acme.example/" }).returning();
+    const [source] = await db.insert(schema.careerSources).values({ companyId: company!.id, type: "html", url: "https://www.acme.example/listing", status: "active" }).returning();
+    const page = "<html><body><nav>Home Careers</nav><main><h1>Operations Lead</h1><p>Run our London site.</p><p>Hybrid, three days a week.</p></main><footer>Cookies</footer></body></html>";
+    server.setRoutes({ "www.acme.example": { "/robots.txt": { body: "User-agent: *\nAllow: /" }, "/jobs/lead": { body: page }, "/jobs/other": { body: page } } });
+    const insertJob = async (path: string) => (await db.insert(schema.jobs).values({ companyId: company!.id, sourceId: source!.id, externalKey: `url:${path}`, title: "Operations Lead", normalizedTitle: "operations lead", url: `https://www.acme.example${path}` }).returning())[0]!;
+    const faithful = await insertJob("/jobs/lead");
+    const invented = await insertJob("/jobs/other");
+    const cleanDescription = vi.fn()
+      .mockResolvedValueOnce({ descriptionText: "Run our London site.\nHybrid, three days a week.", remote: false })
+      .mockResolvedValueOnce({ descriptionText: "Run our London site. Robotics experts wanted, salary 200k.", salaryText: "200k" });
+    const modelDeps = { ...deps, ai: { ...deps.ai, enabled: true, cleanDescription } } as unknown as WorkerDeps;
+
+    await handleFetchDescription({ payload: { jobId: faithful.id } } as never, modelDeps);
+    await handleFetchDescription({ payload: { jobId: invented.id } } as never, modelDeps);
+    expect(cleanDescription).toHaveBeenCalledTimes(2);
+    const [kept] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, faithful.id));
+    expect(kept).toMatchObject({ descriptionSource: "model", descriptionText: "Run our London site.\nHybrid, three days a week." });
+    // Refused: what the page's own reading gave is kept (here nothing), and none of the claims.
+    const [refused] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, invented.id));
+    expect(refused!.descriptionSource).not.toBe("model");
+    expect(refused!.descriptionText ?? "").not.toContain("Robotics");
+    expect(refused!.salaryText).toBeNull();
+    expect(refused!.descriptionFetchedAt).not.toBeNull();
+  }, 60_000);
+
+  it("anchors a cleaned description sentence by sentence, whatever the spacing and punctuation", () => {
+    const raw = "Home | Careers\nOperations Lead — Run our London site!  Hybrid, three days a week. Apply now";
+    expect(anchoredInPage("Run our London site. Hybrid, three days a week.", raw)).toBe(true);
+    expect(anchoredInPage("Run our London site.\n\nHybrid three days a week", raw)).toBe(true);
+    expect(anchoredInPage("Run our London site. Lead the robotics lab.", raw)).toBe(false);
+    // A sentence must be whole words of the page, not a fragment inside a longer word.
+    expect(anchoredInPage("Ondon site", raw)).toBe(false);
+    expect(anchoredInPage("", raw)).toBe(false);
+  });
+});
+
+describe("a host that has asked us to wait", () => {
+  const pace = (minutes: number) => db.execute(sql`insert into host_pacing (host, next_at) values ('boards-api.greenhouse.io', now() + ${minutes} * interval '1 minute')
+    on conflict (host) do update set next_at = excluded.next_at`);
+
+  it("puts the scan back for when the host allows it, and records nothing against the source", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
+    const scansBefore = (await db.select().from(schema.scans)).length;
+    const jobsBefore = await db.select({ id: schema.jobs.id, missingScans: schema.jobs.missingScans, status: schema.jobs.status }).from(schema.jobs).orderBy(schema.jobs.id);
+    await db.delete(schema.tasks);
+    await pace(60);
+    try {
+      now = new Date(now.getTime() + 86_400_000);
+      await enqueueTask(db, "scan_company", { companyId: company.id, trigger: "manual" }, { dedupeKey: dedupeKeyFor("scan_company", { companyId: company.id }), priority: 5 });
+      await queue.drain();
+
+      // Nothing was sent, so nothing was observed: no scan, no miss, no failure, no backoff.
+      expect(await db.select().from(schema.scans)).toHaveLength(scansBefore);
+      expect(await db.select({ id: schema.jobs.id, missingScans: schema.jobs.missingScans, status: schema.jobs.status }).from(schema.jobs).orderBy(schema.jobs.id)).toEqual(jobsBefore);
+      const [untouched] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+      expect(untouched).toMatchObject({ consecutiveFailures: 0, nextScanAt: null, status: "active" });
+      const retries = await db.select().from(schema.tasks).where(and(eq(schema.tasks.type, "scan_company"), eq(schema.tasks.status, "queued")));
+      expect(retries).toHaveLength(1);
+      expect(retries[0]!.payload).toMatchObject({ companyId: company.id, trigger: "manual", sourceIds: [source!.id], hostBusyRetries: 1 });
+      expect(retries[0]!.runAfter!.getTime()).toBeGreaterThan(Date.now() + 50 * 60_000);
+
+      // When the pace allows, the task put back reads the board as usual.
+      await db.execute(sql`delete from host_pacing`);
+      await db.update(schema.tasks).set({ runAfter: new Date() }).where(eq(schema.tasks.id, retries[0]!.id));
+      await queue.drain();
+      const [latest] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source!.id)).orderBy(desc(schema.scans.startedAt)).limit(1);
+      expect(latest!.status).toBe("ok");
+    } finally {
+      await db.execute(sql`delete from host_pacing`);
+    }
+  }, 90_000);
+
+  it("records a scan that could not be put back as failed without counting it against the source", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
+    await pace(60);
+    try {
+      now = new Date(now.getTime() + 86_400_000);
+      const outcome = await _scanSourceForTests(deps, company, source!, await deps.settings(), null);
+      expect(outcome.status).toBe("failed");
+      const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source!.id)).orderBy(desc(schema.scans.startedAt)).limit(1);
+      expect(scan!.error).toContain("paced until");
+      const [after] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+      expect(after).toMatchObject({ consecutiveFailures: 0, nextScanAt: null, status: "active" });
+      expect((await db.select().from(schema.jobs)).every(job => job.status === "open" && job.missingScans === 0)).toBe(true);
+    } finally {
+      await db.execute(sql`delete from host_pacing`);
+    }
+  }, 60_000);
+});
+
+it("reads a Workday board past 150 pages whole, so it is a successful scan that can close roles", async () => {
+  // Twenty roles a page: a 3,500-role board is 175 requests, which the old per-scan budget of 150
+  // always cut short into a partial scan that could close nothing.
+  const total = 3500;
+  const posting = (n: number) => ({ title: `Operations Analyst ${n}`, externalPath: `/job/London/Operations-Analyst_R${n}`, locationsText: "London", postedOn: "Posted Today", bulletFields: [`R${n}`] });
+  let listed = total;
+  server.setRoutes({ "acme.wd1.myworkdayjobs.com": {
+    "/wday/cxs/acme/External/jobs": (_req, body) => {
+      const { offset = 0, limit = 20 } = JSON.parse(body || "{}") as { offset?: number; limit?: number };
+      const jobPostings = Array.from({ length: Math.max(0, Math.min(limit, listed - offset)) }, (_, i) => posting(offset + i));
+      return { body: { total: listed, jobPostings } };
+    },
+  } });
+  await setGate({});
+  const [company] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://www.acme.example/" }).returning();
+  await subscribeToCompany(db, user.id, company!.id);
+  const [source] = await db.insert(schema.careerSources).values({
+    companyId: company!.id, type: "workday", url: "https://acme.wd1.myworkdayjobs.com/External",
+    apiUrl: "https://acme.wd1.myworkdayjobs.com/wday/cxs/acme/External/jobs", atsSlug: "acme", atsSite: "acme.wd1.myworkdayjobs.com|External", status: "active",
+  }).returning();
+  const scanOn = async (day: string) => {
+    now = new Date(`${day}T06:00:00Z`);
+    const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+    return _scanSourceForTests(deps, company!, current!, await deps.settings(), null);
+  };
+  const first = await scanOn("2026-09-06");
+  expect(first).toMatchObject({ status: "ok", postingsFound: total });
+  const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source!.id)).orderBy(desc(schema.scans.startedAt)).limit(1);
+  expect(scan!.requests).toBe(total / 20);
+
+  // The last role comes down and stays down: two complete scans a day apart close it.
+  listed = total - 1;
+  expect((await scanOn("2026-09-07")).status).toBe("ok");
+  expect((await scanOn("2026-09-08")).closedCount).toBe(1);
+}, 180_000);
+
+it("closes the roles of a retired source and of a company nobody follows, and says why", async () => {
+  await setGate({});
+  const company = await addCompany("https://www.acme.example/", "acme.example");
+  await queue.drain();
+  const [live] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
+  // A guessed board discovery superseded, with two roles it once listed and one a follower pasted.
+  const [superseded] = await db.insert(schema.careerSources).values({ companyId: company.id, type: "lever", url: "https://jobs.lever.co/acme-old", status: "disabled" }).returning();
+  const seenAt = new Date("2026-08-20T06:00:00Z");
+  const roleOn = (sourceId: string, key: string, extra: Partial<typeof schema.jobs.$inferInsert> = {}) => ({
+    companyId: company.id, sourceId, externalKey: key, title: `Role ${key}`, normalizedTitle: `role ${key}`, url: `https://jobs.lever.co/acme-old/${key}`, lastSeenAt: seenAt, ...extra,
+  });
+  const old = await db.insert(schema.jobs).values([roleOn(superseded!.id, "a"), roleOn(superseded!.id, "b"), roleOn(superseded!.id, "c", { origin: "user", addedBy: user.id })]).returning();
+  // A company its only follower left.
+  const [orphan] = await db.insert(schema.companies).values({ name: "Gone", domain: "gone.example", homepageUrl: "https://gone.example/", status: "archived" }).returning();
+  const [orphanSource] = await db.insert(schema.careerSources).values({ companyId: orphan!.id, type: "html", url: "https://gone.example/jobs", status: "active" }).returning();
+  const [orphanRole] = await db.insert(schema.jobs).values({ companyId: orphan!.id, sourceId: orphanSource!.id, externalKey: "z", title: "Role z", normalizedTitle: "role z", url: "https://gone.example/jobs/z", lastSeenAt: seenAt }).returning();
+
+  await handleRunDaily({ payload: { trigger: "manual" } } as never, deps);
+  const byId = new Map((await db.select().from(schema.jobs)).map(job => [job.id, job]));
+  for (const job of [old[0]!, old[1]!, orphanRole!]) {
+    expect(byId.get(job.id)).toMatchObject({ status: "closed", closedAt: seenAt });
+    const [event] = await db.select().from(schema.jobEvents).where(and(eq(schema.jobEvents.jobId, job.id), eq(schema.jobEvents.type, "closed")));
+    expect(event!.payload).toMatchObject({ reason: "source_retired" });
+  }
+  // A pasted role was never that source's to lose, and the live source's roles are untouched.
+  expect(byId.get(old[2]!.id)!.status).toBe("open");
+  const liveRoles = [...byId.values()].filter(job => job.sourceId === live!.id);
+  expect(liveRoles).toHaveLength(5);
+  expect(liveRoles.every(job => job.status === "open")).toBe(true);
+
+  // Retiring one source by hand, as disabling it does, closes that source's roles and no other's.
+  await db.update(schema.careerSources).set({ status: "disabled" }).where(eq(schema.careerSources.id, live!.id));
+  expect(await retireSourceRoles(db, { sourceId: superseded!.id })).toBe(0);
+  expect(await retireSourceRoles(db, { sourceId: live!.id })).toBe(5);
+}, 60_000);
+
+describe("mining the scans for suggestions", () => {
+  it("queues a week's mining only for accounts whose companies the run scanned, in one pass", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const bystander = await ensureTestUser(db, "follows-nothing@example.com", "member");
+    await db.delete(schema.tasks);
+
+    await handleRunDaily({ payload: { trigger: "manual" } } as never, deps);
+    // Run the scan the fan-out queued, then finalise the run by hand, so the mining tasks stay queued.
+    const [scanTask] = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "scan_company"));
+    await handleScanCompany(scanTask!, deps);
+    await db.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.id, scanTask!.id));
+    expect(await finaliseScanRuns(deps)).toBe(1);
+    const mining = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "suggest_from_scans"));
+    expect(mining.map(t => t.payload)).toEqual([{ userId: user.id, scheduled: true }]);
+    expect(mining.some(t => (t.payload as { userId: string }).userId === bystander.id)).toBe(false);
+
+    // Mined now, so a scheduled run tomorrow skips it, while asking on Learning still mines.
+    expect(await handleSuggestFromScans(mining[0]!, deps)).not.toMatchObject({ skipped: expect.anything() });
+    now = new Date(now.getTime() + 86_400_000);
+    expect(await handleSuggestFromScans({ ...mining[0]!, payload: { userId: user.id, scheduled: true } } as never, deps)).toEqual({ skipped: "suggested within the week" });
+    expect(await handleSuggestFromScans({ ...mining[0]!, payload: { userId: user.id } } as never, deps)).not.toMatchObject({ skipped: expect.anything() });
+    // And the next run's finalise does not queue it at all.
+    await db.delete(schema.tasks);
+    await handleRunDaily({ payload: { trigger: "manual", runDate: "2026-09-06" } } as never, deps);
+    const [again] = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "scan_company"));
+    await handleScanCompany(again!, deps);
+    await db.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.id, again!.id));
+    await finaliseScanRuns(deps);
+    expect(await db.select().from(schema.tasks).where(eq(schema.tasks.type, "suggest_from_scans"))).toHaveLength(0);
+    void company;
+  }, 90_000);
+
+  it("reads a snapshot two followers share once, not once each", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    const second = await ensureTestUser(db, "second-miner@example.com", "member");
+    await db.insert(schema.userSettings).values({ userId: second.id, key: "gate", value: { includeKeywords: ["engineer"], excludeKeywords: [], matchFields: ["title"], locationTerms: [], includeRemote: true } });
+    await subscribeToCompany(db, second.id, company.id);
+    await queue.drain();
+    const snapshotReads = await countingQueries(/select "raw_snapshot" from "scans"/, async () => {
+      for (const account of [user, second]) await handleSuggestFromScans({ payload: { userId: account.id } } as never, deps);
+    });
+    expect(snapshotReads).toBe(1);
+  }, 60_000);
 });

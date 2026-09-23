@@ -13,7 +13,7 @@ import { createDb, schema } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { DEFAULT_SETTINGS } from "@ava/core";
 import { eq, sql } from "drizzle-orm";
-import { loadSettings, loadUserSettings } from "./settings";
+import { loadSettings, loadUserSettings, loadUserSettingsMany } from "./settings";
 import { loadAdmissionCache } from "./admission-cache";
 import { ensureTestUser } from "./test-users";
 
@@ -65,6 +65,31 @@ describe("the settings loaders", () => {
       await loadUserSettings(db, user.id);
     });
     expect(counted).toEqual([2, 2]);
+  });
+
+  it("loads many accounts' settings in the same two reads as one account's", async () => {
+    await db.insert(schema.settings).values({ key: "scanTime", value: "07:30" });
+    const users = await Promise.all(Array.from({ length: 30 }, (_, n) => ensureTestUser(db, `many-${n}@example.com`)));
+    await db.insert(schema.userSettings).values(users.map((user, n) => ({ userId: user.id, key: "gate", value: { includeKeywords: [`term-${n}`] } })));
+    await db.insert(schema.userSettings).values({ userId: users[3]!.id, key: "aiBudgetUsd", value: 7 });
+
+    let queries = 0;
+    const client = pool as unknown as { query: (...args: unknown[]) => Promise<unknown> };
+    const original = client.query.bind(client);
+    client.query = (async (...args: unknown[]) => { queries++; return original(...args); }) as typeof client.query;
+    let many: Map<string, Awaited<ReturnType<typeof loadUserSettings>>>;
+    try {
+      many = await loadUserSettingsMany(db, users.map(user => user.id));
+    } finally {
+      client.query = original as typeof client.query;
+    }
+    expect(queries).toBe(2);
+    expect(many.size).toBe(30);
+    // Exactly what loading each account on its own gives.
+    for (const user of users) expect(many.get(user.id)).toEqual(await loadUserSettings(db, user.id));
+    expect(many.get(users[3]!.id)!.aiBudgetUsd).toBe(7);
+    expect(many.get(users[0]!.id)!.scanTime).toBe("07:30");
+    expect(await loadUserSettingsMany(db, [])).toEqual(new Map());
   });
 
   it("ignores an account's key that has found its way into the shared table", async () => {

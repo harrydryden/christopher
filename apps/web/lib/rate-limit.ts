@@ -39,6 +39,11 @@ export const LIMITS = {
   shareView: { max: 240, windowMs: 60 * 60 * 1000 },
   /** Notes left through one link, per link and per caller: enough for a thorough read-through. */
   shareComment: { max: 20, windowMs: 60 * 60 * 1000 },
+  /**
+   * Newsletters accepted into one email source a day. Each is later read by the model on the
+   * owner's budget, and the ingest secret is deployment-wide, so one source must not be floodable.
+   */
+  newsletterSource: { max: 50, windowMs: 24 * 60 * 60 * 1000 },
 } as const satisfies Record<string, RateLimit>;
 
 export async function isRateLimited(key: string, limit: RateLimit, now: Date = new Date()): Promise<boolean> {

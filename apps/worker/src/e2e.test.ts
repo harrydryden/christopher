@@ -6,7 +6,7 @@
  * Requires a database: set TEST_DATABASE_URL (defaults to the local ava_test database).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import {createDb, readCompanyLogo, schema, enqueueTask, reevaluateGate, subscribeToCompany, type Db, type User} from "@ava/db";
+import {createDb, readCompanyLogo, retireSourceRoles, schema, enqueueTask, reevaluateGate, subscribeToCompany, type Db, type User} from "@ava/db";
 import { ensureTestUser } from "./test-users";
 import { runMigrations } from "@ava/db/migrate";
 import { ats, dedupeKeyFor, displayStatus, liveFor, priorityFor, sha1 } from "@ava/core";
@@ -2256,3 +2256,39 @@ it("reads a Workday board past 150 pages whole, so it is a successful scan that 
   expect((await scanOn("2026-09-07")).status).toBe("ok");
   expect((await scanOn("2026-09-08")).closedCount).toBe(1);
 }, 180_000);
+
+it("closes the roles of a retired source and of a company nobody follows, and says why", async () => {
+  await setGate({});
+  const company = await addCompany("https://www.acme.example/", "acme.example");
+  await queue.drain();
+  const [live] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
+  // A guessed board discovery superseded, with two roles it once listed and one a follower pasted.
+  const [superseded] = await db.insert(schema.careerSources).values({ companyId: company.id, type: "lever", url: "https://jobs.lever.co/acme-old", status: "disabled" }).returning();
+  const seenAt = new Date("2026-08-20T06:00:00Z");
+  const roleOn = (sourceId: string, key: string, extra: Partial<typeof schema.jobs.$inferInsert> = {}) => ({
+    companyId: company.id, sourceId, externalKey: key, title: `Role ${key}`, normalizedTitle: `role ${key}`, url: `https://jobs.lever.co/acme-old/${key}`, lastSeenAt: seenAt, ...extra,
+  });
+  const old = await db.insert(schema.jobs).values([roleOn(superseded!.id, "a"), roleOn(superseded!.id, "b"), roleOn(superseded!.id, "c", { origin: "user", addedBy: user.id })]).returning();
+  // A company its only follower left.
+  const [orphan] = await db.insert(schema.companies).values({ name: "Gone", domain: "gone.example", homepageUrl: "https://gone.example/", status: "archived" }).returning();
+  const [orphanSource] = await db.insert(schema.careerSources).values({ companyId: orphan!.id, type: "html", url: "https://gone.example/jobs", status: "active" }).returning();
+  const [orphanRole] = await db.insert(schema.jobs).values({ companyId: orphan!.id, sourceId: orphanSource!.id, externalKey: "z", title: "Role z", normalizedTitle: "role z", url: "https://gone.example/jobs/z", lastSeenAt: seenAt }).returning();
+
+  await handleRunDaily({ payload: { trigger: "manual" } } as never, deps);
+  const byId = new Map((await db.select().from(schema.jobs)).map(job => [job.id, job]));
+  for (const job of [old[0]!, old[1]!, orphanRole!]) {
+    expect(byId.get(job.id)).toMatchObject({ status: "closed", closedAt: seenAt });
+    const [event] = await db.select().from(schema.jobEvents).where(and(eq(schema.jobEvents.jobId, job.id), eq(schema.jobEvents.type, "closed")));
+    expect(event!.payload).toMatchObject({ reason: "source_retired" });
+  }
+  // A pasted role was never that source's to lose, and the live source's roles are untouched.
+  expect(byId.get(old[2]!.id)!.status).toBe("open");
+  const liveRoles = [...byId.values()].filter(job => job.sourceId === live!.id);
+  expect(liveRoles).toHaveLength(5);
+  expect(liveRoles.every(job => job.status === "open")).toBe(true);
+
+  // Retiring one source by hand, as disabling it does, closes that source's roles and no other's.
+  await db.update(schema.careerSources).set({ status: "disabled" }).where(eq(schema.careerSources.id, live!.id));
+  expect(await retireSourceRoles(db, { sourceId: superseded!.id })).toBe(0);
+  expect(await retireSourceRoles(db, { sourceId: live!.id })).toBe(5);
+}, 60_000);

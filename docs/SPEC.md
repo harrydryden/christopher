@@ -711,6 +711,7 @@ stateDiagram-v2
   open --> open: absent on 1 ok scan (missing_scans = 1, first_missed_at = now)
   open --> open: absent again within 6 hours of the first miss (nothing counted)
   open --> closed: absent from 2 consecutive ok scans at least 6 hours apart
+  open --> closed: source retired (closed_at = last_seen_at)
   closed --> open: key reappears (reopened_count += 1)
   note right of open
     Display: New if start ≤ 7 days ago, else Active.
@@ -720,6 +721,8 @@ stateDiagram-v2
     Display: Closed. Shown 30 days, retained forever.
   end note
 ```
+
+A source that is retired — disabled by a person, superseded when discovery confirms another, or left with no follower because everyone stopped following the company — takes its open roles with it: they close with `closed_at = last_seen_at` and a `closed` event whose reason is `source_retired`. This is a lifecycle event caused by a person or by discovery, not a scan closure: no listing was read, and nothing about the two-miss rule applies to it. The daily run sweeps for such roles, and the action that disables a source retires that source's roles at once. Only roles a scan observed are retired; a role a follower pasted (R-1.7) never belonged to the source it was filed under. A source brought back into use reopens, on its next scan, what it still lists.
 
 A `partial` scan moves a job only towards open: a job it lists is present (`missing_scans = 0`) and a closed job it lists is reopened, with its count starting again from 0. It never counts a miss and never closes anything. Scans with status `suspect_empty` or `failed` do not move any job along these edges.
 

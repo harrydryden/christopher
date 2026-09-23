@@ -1,4 +1,4 @@
-import { companiesDueLogoCapture, scanRunSummary, schema, enqueueTask, listUserIds, type Task } from "@ava/db";
+import { companiesDueLogoCapture, retireSourceRoles, scanRunSummary, schema, enqueueTask, listUserIds, type Task } from "@ava/db";
 import { dedupeKeyFor, localDateParts, priorityFor, type SystemSettings } from "@ava/core";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
@@ -49,6 +49,11 @@ async function runDaily(task: Task, deps: WorkerDeps, settings: SystemSettings):
     return { skipped: "run already exists for date", runDate };
   }
 
+  // Roles of sources nobody scans any more (disabled, superseded, or a company nobody follows) are
+  // closed here, once a day, whatever path retired the source: left open they would read as live
+  // for ever. A lifecycle event, not a scan closure (see `retireSourceRoles`).
+  const retired = await retireSourceRoles(deps.db, {}, deps.now());
+
   const companies = await deps.db
     .select({ id: schema.companies.id })
     .from(schema.companies)
@@ -85,7 +90,7 @@ async function runDaily(task: Task, deps: WorkerDeps, settings: SystemSettings):
   }
 
   if (task.id) await deps.db.update(schema.tasks).set({ result: { scanRunId: run.id, companies: companies.length } }).where(eq(schema.tasks.id, task.id));
-  log.info("daily run started", { runId: run.id, runDate, companies: companies.length, logosQueued });
+  log.info("daily run started", { runId: run.id, runDate, companies: companies.length, logosQueued, retired });
   return { scanRunId: run.id, companies: companies.length, logosQueued };
 }
 

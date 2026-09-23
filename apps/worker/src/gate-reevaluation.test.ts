@@ -3,7 +3,7 @@
  * only by a gate that matches on it.
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { createDb, schema, type Db } from "@ava/db";
+import { createDb, reevaluateGate, schema, type Db } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
@@ -87,4 +87,33 @@ it("admits a role on its description only when the account's gate matches on des
   await handleReevaluateGate(task({ userId: user.id }), deps);
   const views = await db.select().from(schema.userJobs);
   expect(views.map(v => [v.jobId, v.inTable])).toEqual([[job.id, true]]);
+});
+
+it("runs every page and the closing archive through the caller's eachPage, each in its own transaction", async () => {
+  const user = await ensureTestUser(db, "gate-pages@example.com", "member");
+  const { company, job } = await seedFollowedPosting(user.id);
+  const [source] = await db.select().from(schema.careerSources);
+  // 300 more roles: two pages of 250, then the empty read that ends the walk.
+  await db.insert(schema.jobs).values(Array.from({ length: 300 }, (_, n) => ({
+    companyId: company.id, sourceId: source!.id, externalKey: `id:page-${n}`, title: `Operations Analyst ${n}`,
+    normalizedTitle: `operations analyst ${n}`, url: `https://acme.test/jobs/page-${n}`,
+  })));
+  await setGate(user.id, {});
+  const settings = await deps.userSettings(user.id);
+
+  const handles: unknown[] = [];
+  const outcome = await reevaluateGate(db, user.id, settings, now, {}, {
+    eachPage: work => db.transaction(tx => { handles.push(tx); return work(tx as unknown as Db); }),
+  });
+  // Three page reads (250, 51, none) and the archive: four short transactions, not one long one.
+  expect(handles).toHaveLength(4);
+  expect(new Set(handles).size).toBe(4);
+  expect(outcome).toMatchObject({ examined: 301, created: 300 });
+  expect(await db.select().from(schema.userJobs)).toHaveLength(300);
+
+  // Narrowed: the pages write through the same hook and the archive puts the lot away.
+  await setGate(user.id, { includeKeywords: ["no-match"] });
+  const narrowed = await reevaluateGate(db, user.id, await deps.userSettings(user.id), now, {}, { eachPage: work => db.transaction(tx => work(tx as unknown as Db)) });
+  expect(narrowed.archived).toBe(300);
+  expect((await db.select().from(schema.userJobs)).every(v => v.archivedAt !== null && v.jobId !== job.id)).toBe(true);
 });

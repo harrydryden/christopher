@@ -56,6 +56,16 @@ export const restoreGateArchive = sql`archived_at = case when v."inTable" and uj
 /** The event a view the gate brought back carries, beside the one its archive recorded. */
 export const GATE_RESTORE_EVENT = '{"action":"unarchived","actor":"system","reason":"Matches your criteria again"}';
 
+export interface ReevaluateOptions {
+  /**
+   * Runs each 250-row page, its read and its writes, and then the closing archive, handing each
+   * the database to use. A caller that does not want one account's whole walk in one transaction
+   * passes one that opens a short transaction per call (and can renew a lease between them);
+   * without it every page runs on the `db` given.
+   */
+  eachPage?: <T>(work: (db: Db) => Promise<T>) => Promise<T>;
+}
+
 /**
  * Re-run one account's keyword and location gate over the shared postings of the companies it
  * follows (a posting pasted from a host that is not the company's is offered only to whoever asked
@@ -64,7 +74,8 @@ export const GATE_RESTORE_EVENT = '{"action":"unarchived","actor":"system","reas
  * or the account added the posting itself by pasting its URL.
  * Shared by synchronous settings saves, new subscriptions and the background `reevaluate_gate` task.
  */
-export async function reevaluateGate(db: Db, userId: string, settings: AppSettings, now = new Date(), scope: GateScope = {}) {
+export async function reevaluateGate(db: Db, userId: string, settings: AppSettings, now = new Date(), scope: GateScope = {}, opts: ReevaluateOptions = {}) {
+  const run = opts.eachPage ?? (<T>(work: (db: Db) => Promise<T>) => work(db));
   // Only a gate that matches on the description needs it, and it is the largest column on `jobs`:
   // reading it for every posting of every followed company was most of this loop's traffic for the
   // accounts that match on title and location alone.
@@ -82,6 +93,7 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
   let created = 0;
   let queuedForScoring = 0;
   while (true) {
+    const last = await run(async (db) => {
     const page = await db.execute<GateRow>(sql`
       select j.id, j.title, j.added_by as "addedBy", j.department, ${matchesDescription ? sql`j.description_text` : sql`null::text`} as "descriptionText", j.location, j.locations, j.remote, j.status,
         (uj.job_id is not null) as viewed, uj.keyword_matched as "keywordMatched", uj.keyword_terms as "keywordTerms",
@@ -97,7 +109,7 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
         and (${cursor ?? null}::uuid is null or j.id > ${cursor ?? null}::uuid)
       order by j.id limit 250`);
     const rows = page.rows;
-    if (!rows.length) break;
+    if (!rows.length) return null;
     examined += rows.length;
     const updates: Array<Record<string, unknown>> = [];
     const inserts: Array<typeof schema.userJobs.$inferInsert> = [];
@@ -156,10 +168,13 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
         where user_id = ${userId}
           and job_id in (select value::uuid from jsonb_array_elements_text(${JSON.stringify(scoring.map(row => (row.payload as { jobId: string }).jobId))}::jsonb))`);
     }
-    cursor = rows.at(-1)!.id;
+    return rows.at(-1)!.id;
+    });
+    if (last === null) break;
+    cursor = last;
     if (scope.jobId) break;
   }
-  const archived = await archiveNonMatches(db, { userId, jobId: scope.jobId, companyId: scope.companyId });
+  const archived = await run(db => archiveNonMatches(db, { userId, jobId: scope.jobId, companyId: scope.companyId }));
   return { removed: 0, archived, examined, changed, created, queuedForScoring };
 }
 

@@ -1,6 +1,6 @@
 import { schema, type Db } from "@ava/db";
 import { resolveSettings, resolveSystemSettings, type AppSettings, type SystemSettings } from "@ava/core";
-import { eq, notLike } from "drizzle-orm";
+import { eq, inArray, notLike, sql } from "drizzle-orm";
 
 /**
  * The settings table also carries the worker's own `internal:` bookkeeping, and both loaders below
@@ -22,6 +22,34 @@ export async function loadUserSettings(db: Db, userId: string): Promise<AppSetti
     db.select({ key: schema.userSettings.key, value: schema.userSettings.value }).from(schema.userSettings).where(eq(schema.userSettings.userId, userId)),
   ]);
   return resolveSettings(systemRows, userRows);
+}
+
+/**
+ * Several accounts' settings at once: one read of the system settings and one of every account's
+ * rows, however many accounts there are. A scan loads every follower of a company this way rather
+ * than a pair of queries per follower.
+ *
+ * With `lockGates`, each account's `gate` row is share-locked first, for the rest of the caller's
+ * transaction. A settings save takes that row exclusively and re-evaluates the gate in the same
+ * transaction, so the two serialise: a scan either waits for the save and reads the new gate, or
+ * holds the save until the scan's own verdicts are committed and the re-evaluation corrects them.
+ * Either way no scan writes verdicts from a gate that was replaced while it ran.
+ */
+export async function loadUserSettingsMany(db: Db, userIds: string[], opts: { lockGates?: boolean } = {}): Promise<Map<string, AppSettings>> {
+  const ids = [...new Set(userIds)].sort();
+  const out = new Map<string, AppSettings>();
+  if (!ids.length) return out;
+  if (opts.lockGates) {
+    await db.execute(sql`select user_id from user_settings where key = 'gate'
+      and user_id in (${sql.join(ids.map(id => sql`${id}::uuid`), sql`, `)}) order by user_id for share`);
+  }
+  const systemRows = await db.select({ key: schema.settings.key, value: schema.settings.value }).from(schema.settings).where(SYSTEM_KEYS_ONLY);
+  const userRows = await db.select({ userId: schema.userSettings.userId, key: schema.userSettings.key, value: schema.userSettings.value })
+    .from(schema.userSettings).where(inArray(schema.userSettings.userId, ids));
+  const byUser = new Map<string, Array<{ key: string; value: unknown }>>(ids.map(id => [id, []]));
+  for (const row of userRows) byUser.get(row.userId)?.push({ key: row.key, value: row.value });
+  for (const [userId, rows] of byUser) out.set(userId, resolveSettings(systemRows, rows));
+  return out;
 }
 
 /**

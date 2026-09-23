@@ -1,4 +1,4 @@
-import { evaluateGate, dedupeKeyFor, priorityFor, type AppSettings } from "@ava/core";
+import { compileGate, dedupeKeyFor, priorityFor, type AppSettings } from "@ava/core";
 import { sql } from "drizzle-orm";
 import type { Db } from "./client";
 import * as schema from "./schema";
@@ -43,6 +43,8 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
   // reading it for every posting of every followed company was most of this loop's traffic for the
   // accounts that match on title and location alone.
   const matchesDescription = settings.gate.matchFields.includes("description");
+  // Built once for the whole walk rather than per posting.
+  const gateOf = compileGate(settings.gate);
   let cursor: string | undefined;
   let examined = 0;
   let changed = 0;
@@ -67,7 +69,7 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
     const inserts: Array<typeof schema.userJobs.$inferInsert> = [];
     const scoring: Array<typeof schema.tasks.$inferInsert> = [];
     for (const job of rows) {
-      const gate = evaluateGate({ title: job.title, department: job.department, description: job.descriptionText, location: job.location, locations: job.locations, remote: job.remote }, settings.gate);
+      const gate = gateOf.evaluate({ title: job.title, department: job.department, description: job.descriptionText, location: job.location, locations: job.locations, remote: job.remote });
       // A role this account added by pasting its URL stays in their table whatever the gate says:
       // they asked for that one by name. The same exemption `archiveNonMatches` already makes for
       // a role they decided on or wrote a CV for — work the person did on that role.

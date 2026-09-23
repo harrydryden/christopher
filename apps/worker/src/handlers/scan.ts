@@ -10,9 +10,10 @@
 import { schema, enqueueTask, archiveNonMatches, type Task } from "@ava/db";
 import {
   ats,
+  aiBudgetWindowStart,
   classifyScan,
+  compileGate,
   dedupeKeyFor,
-  evaluateGate,
   keyPostings,
   looksRemote,
   MANUAL_RESCAN_INTERVAL_MS,
@@ -25,6 +26,7 @@ import {
   sha1,
   SourceFetchError,
   type AppSettings,
+  type CompiledGate,
   type ExistingJob,
   type FetchContext,
   type GateSettings,
@@ -42,6 +44,7 @@ import { loadAdmissionCache } from "../admission-cache";
 import { prepareForAdmission } from "../admission";
 import { withResourceLease } from "../lease";
 import { log } from "../log";
+import { loadUserSettingsMany } from "../settings";
 
 type ScanStatus = "ok" | "partial" | "suspect_empty" | "failed";
 
@@ -139,6 +142,8 @@ interface SourceOutcome {
 interface Follower {
   userId: string;
   settings: AppSettings;
+  /** This follower's gate with its patterns built once; followers with the same gate share one. */
+  gate: CompiledGate;
 }
 
 /** Description-based matching needs the detail text before the gate can decide anything. */
@@ -146,10 +151,41 @@ function needsDescription(gate: GateSettings): boolean {
   return gate.matchFields.includes("description") && gate.includeKeywords.length > 0;
 }
 
-async function loadFollowers(deps: WorkerDeps, companyId: string): Promise<Follower[]> {
-  const rows = await deps.db.select({ userId: schema.companySubscriptions.userId }).from(schema.companySubscriptions)
+/**
+ * Everyone who follows the company, with their settings read in one query. `lockGates` share-locks
+ * their gate rows for the caller's transaction (see `loadUserSettingsMany`): the commit reads the
+ * gates it writes verdicts from that way, after the network work, so a gate saved while the scan
+ * was fetching is the one it applies.
+ */
+async function loadFollowers(db: WorkerDeps["db"], companyId: string, opts: { lockGates?: boolean } = {}): Promise<Follower[]> {
+  const rows = await db.select({ userId: schema.companySubscriptions.userId }).from(schema.companySubscriptions)
     .where(and(eq(schema.companySubscriptions.companyId, companyId), inArray(schema.companySubscriptions.status, ["active", "paused"])));
-  return Promise.all(rows.map(async row => ({ userId: row.userId, settings: await deps.userSettings(row.userId) })));
+  const settings = await loadUserSettingsMany(db, rows.map(row => row.userId), opts);
+  const compiled = new Map<string, CompiledGate>();
+  return rows.map(row => {
+    const own = settings.get(row.userId)!;
+    const key = JSON.stringify(own.gate);
+    let gate = compiled.get(key);
+    if (!gate) compiled.set(key, gate = compileGate(own.gate));
+    return { userId: row.userId, settings: own, gate };
+  });
+}
+
+/**
+ * The accounts among `wanted` with budget left this month, asked in one grouped read of `ai_calls`
+ * rather than a sum per follower. Same rule as `aiBudgetStop`: an account whose spend since its
+ * window opened has reached its budget has its roles left unscored.
+ */
+async function accountsWithBudget(db: WorkerDeps["db"], followers: Follower[], wanted: Set<string>, now: Date): Promise<Set<string>> {
+  const windows = followers.filter(f => wanted.has(f.userId))
+    .map(f => ({ userId: f.userId, since: aiBudgetWindowStart(now, f.settings.aiBudgetResetAt).toISOString(), budget: f.settings.aiBudgetUsd }));
+  if (!windows.length) return new Set();
+  const rows = await db.execute<{ user_id: string; spent: number }>(sql`select v."userId" as user_id, coalesce(sum(a.cost_usd::float8), 0) as spent
+    from jsonb_to_recordset(${JSON.stringify(windows)}::jsonb) as v("userId" uuid, since timestamptz)
+    left join ai_calls a on a.user_id = v."userId" and a.at >= v.since
+    group by v."userId"`);
+  const spent = new Map(rows.rows.map(row => [row.user_id, Number(row.spent)]));
+  return new Set(windows.filter(w => (spent.get(w.userId) ?? 0) < w.budget).map(w => w.userId));
 }
 
 async function scanSource(
@@ -322,9 +358,10 @@ async function scanSource(
     if (posting.externalId && saved?.externalKey === `id:${posting.externalId}` && !posting.descriptionText && saved?.text && saved.at && deps.now().getTime() - saved.at.getTime() < 7 * 86400000 && (!posting.updatedAt || posting.updatedAt <= saved.at)) { posting.descriptionText = saved.text; reusedDescriptions.add(posting.url); }
   }
   // Followers decide admission. Only the distinct description-matching gates cost detail fetches;
-  // a posting fetched for one follower is already in hand for the next.
-  const followers = await loadFollowers(deps, company.id);
-  const descriptionGates = [...new Map(followers.filter(f => needsDescription(f.settings.gate)).map(f => [JSON.stringify(f.settings.gate), f.settings.gate])).values()];
+  // a posting fetched for one follower is already in hand for the next. These gates only plan what
+  // to read: the verdicts are written from the gates the commit reads under lock, below.
+  const followersAtFetch = await loadFollowers(deps.db, company.id);
+  const descriptionGates = [...new Map(followersAtFetch.filter(f => needsDescription(f.settings.gate)).map(f => [JSON.stringify(f.settings.gate), f.settings.gate])).values()];
   const rejectionCache = await loadAdmissionCache(deps.db, source.id, deps.now());
   // Two ways a description-matching gate can fail to decide about a posting, and they are not the
   // same thing. `unresolved`: the detail text was read inline and could not be had, so the listing
@@ -373,17 +410,6 @@ async function scanSource(
   // Compressing the evidence is synchronous and the snapshot can be megabytes, so it happens
   // before the transaction opens rather than with the source's row lock held.
   const rawSnapshot = gzipSync(JSON.stringify(snapshotFor(postings, responses, htmlPages, listingHash))).toString("base64");
-  // Scoring is per account, so the budget is asked per account: one follower with nothing left to
-  // spend has its roles left unscored, while everyone else scans and scores as usual. Queuing them
-  // anyway would only fail and retry each task at the hold. Each distinct account is asked once,
-  // here, because a month's budget cannot change meaningfully while one commit runs and asking
-  // from inside it took another pooled connection per follower while holding the row lock.
-  const scorable = new Set<string>();
-  if (!(await aiBudgetExceeded(deps))) {
-    for (const follower of followers) {
-      if (!(await aiBudgetExceeded(deps, follower.userId))) scorable.add(follower.userId);
-    }
-  }
 
   let committed = false;
   const outcome = await deps.db.transaction(async (tx): Promise<SourceOutcome> => {
@@ -403,6 +429,9 @@ async function scanSource(
   return outcome;
 
   async function commitScan(deps: WorkerDeps): Promise<SourceOutcome> {
+  // First, before anything is written: the gates the verdicts below come from, read now that the
+  // network work is done and held until this commits (see `loadFollowers`).
+  const followers = await loadFollowers(deps.db, company.id, { lockGates: true });
   if (updatedRecipe) await deps.db.update(schema.careerSources).set({ recipe: updatedRecipe }).where(eq(schema.careerSources.id, source.id));
   const sourceRows = await deps.db
     .select({
@@ -538,7 +567,7 @@ async function scanSource(
       for (const follower of followers) {
         const gate = follower.settings.gate;
         if (undecided(row.url) && needsDescription(gate)) continue;
-        const verdict = evaluateGate({ title: row.title, department: row.department, description: gate.matchFields.includes("description") ? row.descriptionText : undefined, location: row.location, locations: row.locations, remote: row.remote }, gate);
+        const verdict = follower.gate.evaluate({ title: row.title, department: row.department, description: follower.gate.matchesDescription ? row.descriptionText : undefined, location: row.location, locations: row.locations, remote: row.remote });
         if (!verdict.inTable) continue;
         wanted = true;
         viewInserts.push({ userId: follower.userId, jobId: row.id, keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms, excluded: verdict.excluded, locationOk: verdict.locationOk, inTable: true, nearMiss: false, seeded: isFirstScan, createdAt: deps.now(), updatedAt: deps.now() });
@@ -613,7 +642,7 @@ async function scanSource(
     for (const follower of followers) {
       const gate = follower.settings.gate;
       if (undecided(posting.url) && needsDescription(gate)) continue;
-      const verdict = evaluateGate({ ...fields, description: gate.matchFields.includes("description") ? fields.descriptionText : undefined }, gate);
+      const verdict = follower.gate.evaluate({ ...fields, description: follower.gate.matchesDescription ? fields.descriptionText : undefined });
       // The account that added this role by pasting its URL keeps it, whatever their gate says and
       // whether or not a later scan adopted the row: they asked for that one by name.
       const inTable = verdict.inTable || job.addedBy === follower.userId;
@@ -740,6 +769,11 @@ async function scanSource(
   }
 
   const queued: Array<typeof schema.tasks.$inferInsert> = [];
+  // Scoring is per account, so the budget is asked per account: one follower with nothing left to
+  // spend has its roles left unscored, while everyone else scans and scores as usual. Queuing them
+  // anyway would only fail and retry each task at the hold. Only the accounts with something to
+  // score are asked, all in one read.
+  const scorable = deps.ai.enabled ? await accountsWithBudget(deps.db, followers, new Set(scoreQueue.map(payload => payload.userId)), deps.now()) : new Set<string>();
   const scoring = scoreQueue.filter(payload => scorable.has(payload.userId));
   for (const payload of scoring) queued.push({ type: "score_job", payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") });
   for (const jobId of descriptionQueue) queued.push({ type: "fetch_description", payload: { jobId }, dedupeKey: dedupeKeyFor("fetch_description", { jobId }), priority: priorityFor("fetch_description") });

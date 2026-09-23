@@ -1377,6 +1377,30 @@ describe("shared catalogue", () => {
     expect(await db.select().from(schema.scans)).toHaveLength(1);
   }, 120_000);
 
+  it("writes its verdicts from the gate saved while it was fetching, not the one it started with", async () => {
+    // A person widens their keywords while a scan of a company they follow is reading the board.
+    // The save re-evaluates their gate at once; the scan must not then commit verdicts from the
+    // gate it read before its network work and archive the roles that were just admitted.
+    await setGate({ includeKeywords: ["engineer"] });
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    expect((await jobsInTable()).map(r => r.title)).toEqual(["Software Engineer, Platform"]);
+    const [source] = await db.select().from(schema.careerSources);
+
+    const racing: WorkerDeps = { ...deps, assertOwnership: async () => {
+      await setGate({ includeKeywords: ["engineer", "operations"] });
+      deps.invalidateSettings();
+      await reevaluateGate(db, user.id, await deps.userSettings(user.id), now);
+    } };
+    now = new Date(now.getTime() + 86_400_000);
+    const outcome = await _scanSourceForTests(racing, company, source!, await deps.settings(), null);
+    expect(outcome.status).toBe("ok");
+
+    const views = await db.select().from(schema.userJobs).where(eq(schema.userJobs.userId, user.id));
+    expect(views).toHaveLength(5);
+    expect(views.every(v => v.inTable && v.archivedAt === null)).toBe(true);
+  }, 60_000);
+
   it("keeps a description a fetch_description stored while the scan was in flight", async () => {
     // The scan reads every stored description before it opens its transaction. A description task
     // that commits in that window must not be written back to null by the scan's refresh.

@@ -4,7 +4,8 @@ import { runMigrations } from "@ava/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
-import { articleLinks, handleMonitorSource, handleExtractDocument, handleVerifyCompany } from "./handlers/external-sources";
+import { articleLinks, handleMonitorSource, handleExtractDocument, handleVerifyCompany, quoteSupportsCandidate } from "./handlers/external-sources";
+import { verifyCandidate } from "./handlers/companies";
 import { claimTask, completeTask } from "./queue";
 import { schedulerTick } from "./scheduler";
 import { ensureTestUser } from "./test-users";
@@ -134,4 +135,53 @@ it("checkpoints extraction before verification and resumes paused candidates wit
   await handleMonitorSource(task(source.id), deps); await runStages();
   expect(extract).toHaveBeenCalledTimes(1);
   expect(await client.db.select().from(schema.companySuggestions)).toHaveLength(1);
+});
+
+it("anchors an extracted candidate's name and homepage in its own quote", () => {
+  expect(quoteSupportsCandidate("Acme Robotics raised funding", "Acme", "https://acme.example")).toBe(true);
+  expect(quoteSupportsCandidate("Hims & Hers expands in London", "Hims and Hers", "https://www.hims.com/")).toBe(true);
+  expect(quoteSupportsCandidate("Read more at monzo.com about the round", "Monzo Bank", "https://monzo.com")).toBe(false);
+  expect(quoteSupportsCandidate("Monzo Bank opened an office; see monzo.com", "Monzo Bank", "https://monzo.com")).toBe(true);
+  // The model's formal name, and a homepage tied to the passage through the company's name.
+  expect(quoteSupportsCandidate("Acme Robotics raised funding", "Acme Robotics Ltd", "https://acmerobotics.example")).toBe(true);
+  expect(quoteSupportsCandidate("Acme Robotics raised funding", "Acme Robotics", "https://acme.example")).toBe(true);
+  // A genuine sentence carrying an injected company, or an injected homepage beside a real name.
+  expect(quoteSupportsCandidate("Acme Robotics raised funding", "Evil Corp", "https://evil.example")).toBe(false);
+  expect(quoteSupportsCandidate("Acme Robotics raised funding", "Acme", "https://evil.example")).toBe(false);
+});
+
+it("drops an extracted candidate whose quote is about someone else", async () => {
+  const source = await sourceWithDocument();
+  vi.spyOn(deps.ai, "extractSourceCompanies").mockResolvedValue({ candidates: [
+    { name: "Evil Corp", homepageUrl: "https://evil.example", rationale: "Fits", quote: "Acme Robotics raised funding", recommended: true },
+  ] });
+  await handleMonitorSource(task(source.id), deps); await runStages();
+  expect(await client.db.select().from(schema.discoveryCandidates)).toHaveLength(0);
+  expect(await client.db.select().from(schema.companySuggestions)).toHaveLength(0);
+});
+
+async function pendingCandidate() {
+  const source = await sourceWithDocument();
+  const [document] = await client.db.select().from(schema.discoveryDocuments);
+  const [candidate] = await client.db.insert(schema.discoveryCandidates).values({ userId, documentId: document!.id, name: "Acme", domain: "acme.example",
+    homepageUrl: "https://acme.example", rationale: "Fits", quote: "Acme Robotics raised funding" }).returning();
+  return { source, candidate: candidate! };
+}
+
+it("records a permanent verification failure as final instead of retrying it for ever", async () => {
+  const { source, candidate } = await pendingCandidate();
+  vi.mocked(verifyCandidate).mockResolvedValueOnce({ homepageOk: false, error: "HTTP 404" });
+  const outcome = await handleVerifyCompany({ payload: { sourceId: source.id, candidateId: candidate.id } } as unknown as Task, deps);
+  expect(outcome).toEqual({ stored: 0, rejected: "HTTP 404" });
+  const [processed] = await client.db.select().from(schema.discoveryCandidates);
+  expect(processed!.processedAt).not.toBeNull();
+  expect(await client.db.select().from(schema.companySuggestions)).toHaveLength(0);
+});
+
+it("retries a verification that failed only for now", async () => {
+  const { source, candidate } = await pendingCandidate();
+  vi.mocked(verifyCandidate).mockResolvedValueOnce({ homepageOk: false, error: "rate limited (429)", transient: true });
+  await expect(handleVerifyCompany({ payload: { sourceId: source.id, candidateId: candidate.id } } as unknown as Task, deps)).rejects.toThrow("rate limited");
+  const [pending] = await client.db.select().from(schema.discoveryCandidates);
+  expect(pending!.processedAt).toBeNull();
 });

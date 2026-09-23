@@ -32,6 +32,7 @@ import {
 } from "@ava/core";
 import { and, eq, ne } from "drizzle-orm";
 import { makeFetchContext, type WorkerDeps } from "../context";
+import { HostBusyError } from "../fetcher";
 import { log } from "../log";
 
 const MAX_DESCRIPTION = 30_000;
@@ -53,7 +54,10 @@ interface GateSummary {
 
 export type ImportResult =
   | { ok: true; jobId: string; title: string; existing: boolean; gate: GateSummary }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; retryAt?: string };
+
+/** How many times one import is put back for a host that asked us to wait, before it gives up. */
+const MAX_HOST_BUSY_DEFERRALS = 3;
 
 const summarise = (verdict: GateResult): GateSummary => ({
   inTable: verdict.inTable,
@@ -88,6 +92,7 @@ function transportReason(err: unknown): string {
 
 export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { userId, companyId, url } = task.payload as unknown as TaskPayloads["import_posting"];
+  const deferrals = (task.payload as { hostBusyRetries?: number }).hostBusyRetries ?? 0;
   const now = deps.now();
   const host = hostOf(url);
 
@@ -141,9 +146,19 @@ export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise
   } catch (err) {
     failure = err;
   }
+  // The host has asked us to wait longer than a slot may, and nothing was sent. The browser would
+  // be refused the same way, so the import is put back for when the host allows it.
+  if (failure instanceof HostBusyError && deferrals < MAX_HOST_BUSY_DEFERRALS) {
+    const retryAt = failure.retryAt;
+    const payload = { ...(task.payload as Record<string, unknown>), hostBusyRetries: deferrals + 1 };
+    const base = (task.dedupeKey ?? dedupeKeyFor("import_posting", { userId, companyId, url }) ?? `import_posting:${userId}:${companyId}:${url}`).replace(/:host-busy:\d+$/, "");
+    await enqueueTask(deps.db, "import_posting", payload, { dedupeKey: `${base}:host-busy:${retryAt.getTime()}`, priority: priorityFor("import_posting"), runAfter: retryAt });
+    log.info("import put back: host busy", { url, host: failure.host, retryAt: retryAt.toISOString() });
+    return { ok: false, reason: `${host} has asked us to wait before reading it again. The import will try again at ${retryAt.toISOString().slice(11, 16)} UTC.`, retryAt: retryAt.toISOString() } satisfies ImportResult;
+  }
   // A site that refuses the worker serves the page to a browser, and a page that arrived with no
   // text in it is a shell waiting for its JavaScript. Both are what the renderer is for.
-  if ((failure || (html !== null && stripHtml(html).length < JS_SHELL_TEXT)) && ctx.render) {
+  if (((failure && !(failure instanceof HostBusyError)) || (html !== null && stripHtml(html).length < JS_SHELL_TEXT)) && ctx.render) {
     try {
       const rendered = await ctx.render(url);
       if (rendered.html && (rendered.status === null || rendered.status < 400)) {

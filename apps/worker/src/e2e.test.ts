@@ -22,7 +22,7 @@ import { TaskQueue } from "./queue";
 import { startTestServer, type RouteTable, type TestServer } from "./test-server";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
-const HOSTS = ["www.acme.example", "acme.example", "boards-api.greenhouse.io", "job-boards.greenhouse.io", "www.orbital.example", "orbital.example", "api.smartrecruiters.com", "pager.example"];
+const HOSTS = ["www.acme.example", "acme.example", "boards-api.greenhouse.io", "job-boards.greenhouse.io", "www.orbital.example", "orbital.example", "api.smartrecruiters.com", "pager.example", "acme.wd1.myworkdayjobs.com"];
 
 /** A real PNG, because the logo capture sniffs the bytes and refuses anything that is not one. */
 function pngBytes(length = 400): Buffer {
@@ -2103,3 +2103,99 @@ describe("a description arriving", () => {
     expect(anchoredInPage("", raw)).toBe(false);
   });
 });
+
+describe("a host that has asked us to wait", () => {
+  const pace = (minutes: number) => db.execute(sql`insert into host_pacing (host, next_at) values ('boards-api.greenhouse.io', now() + ${minutes} * interval '1 minute')
+    on conflict (host) do update set next_at = excluded.next_at`);
+
+  it("puts the scan back for when the host allows it, and records nothing against the source", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
+    const scansBefore = (await db.select().from(schema.scans)).length;
+    const jobsBefore = await db.select({ id: schema.jobs.id, missingScans: schema.jobs.missingScans, status: schema.jobs.status }).from(schema.jobs).orderBy(schema.jobs.id);
+    await db.delete(schema.tasks);
+    await pace(60);
+    try {
+      now = new Date(now.getTime() + 86_400_000);
+      await enqueueTask(db, "scan_company", { companyId: company.id, trigger: "manual" }, { dedupeKey: dedupeKeyFor("scan_company", { companyId: company.id }), priority: 5 });
+      await queue.drain();
+
+      // Nothing was sent, so nothing was observed: no scan, no miss, no failure, no backoff.
+      expect(await db.select().from(schema.scans)).toHaveLength(scansBefore);
+      expect(await db.select({ id: schema.jobs.id, missingScans: schema.jobs.missingScans, status: schema.jobs.status }).from(schema.jobs).orderBy(schema.jobs.id)).toEqual(jobsBefore);
+      const [untouched] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+      expect(untouched).toMatchObject({ consecutiveFailures: 0, nextScanAt: null, status: "active" });
+      const retries = await db.select().from(schema.tasks).where(and(eq(schema.tasks.type, "scan_company"), eq(schema.tasks.status, "queued")));
+      expect(retries).toHaveLength(1);
+      expect(retries[0]!.payload).toMatchObject({ companyId: company.id, trigger: "manual", sourceIds: [source!.id], hostBusyRetries: 1 });
+      expect(retries[0]!.runAfter!.getTime()).toBeGreaterThan(Date.now() + 50 * 60_000);
+
+      // When the pace allows, the task put back reads the board as usual.
+      await db.execute(sql`delete from host_pacing`);
+      await db.update(schema.tasks).set({ runAfter: new Date() }).where(eq(schema.tasks.id, retries[0]!.id));
+      await queue.drain();
+      const [latest] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source!.id)).orderBy(desc(schema.scans.startedAt)).limit(1);
+      expect(latest!.status).toBe("ok");
+    } finally {
+      await db.execute(sql`delete from host_pacing`);
+    }
+  }, 90_000);
+
+  it("records a scan that could not be put back as failed without counting it against the source", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.companyId, company.id));
+    await pace(60);
+    try {
+      now = new Date(now.getTime() + 86_400_000);
+      const outcome = await _scanSourceForTests(deps, company, source!, await deps.settings(), null);
+      expect(outcome.status).toBe("failed");
+      const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source!.id)).orderBy(desc(schema.scans.startedAt)).limit(1);
+      expect(scan!.error).toContain("paced until");
+      const [after] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+      expect(after).toMatchObject({ consecutiveFailures: 0, nextScanAt: null, status: "active" });
+      expect((await db.select().from(schema.jobs)).every(job => job.status === "open" && job.missingScans === 0)).toBe(true);
+    } finally {
+      await db.execute(sql`delete from host_pacing`);
+    }
+  }, 60_000);
+});
+
+it("reads a Workday board past 150 pages whole, so it is a successful scan that can close roles", async () => {
+  // Twenty roles a page: a 3,500-role board is 175 requests, which the old per-scan budget of 150
+  // always cut short into a partial scan that could close nothing.
+  const total = 3500;
+  const posting = (n: number) => ({ title: `Operations Analyst ${n}`, externalPath: `/job/London/Operations-Analyst_R${n}`, locationsText: "London", postedOn: "Posted Today", bulletFields: [`R${n}`] });
+  let listed = total;
+  server.setRoutes({ "acme.wd1.myworkdayjobs.com": {
+    "/wday/cxs/acme/External/jobs": (_req, body) => {
+      const { offset = 0, limit = 20 } = JSON.parse(body || "{}") as { offset?: number; limit?: number };
+      const jobPostings = Array.from({ length: Math.max(0, Math.min(limit, listed - offset)) }, (_, i) => posting(offset + i));
+      return { body: { total: listed, jobPostings } };
+    },
+  } });
+  await setGate({});
+  const [company] = await db.insert(schema.companies).values({ name: "Acme", domain: "acme.example", homepageUrl: "https://www.acme.example/" }).returning();
+  await subscribeToCompany(db, user.id, company!.id);
+  const [source] = await db.insert(schema.careerSources).values({
+    companyId: company!.id, type: "workday", url: "https://acme.wd1.myworkdayjobs.com/External",
+    apiUrl: "https://acme.wd1.myworkdayjobs.com/wday/cxs/acme/External/jobs", atsSlug: "acme", atsSite: "acme.wd1.myworkdayjobs.com|External", status: "active",
+  }).returning();
+  const scanOn = async (day: string) => {
+    now = new Date(`${day}T06:00:00Z`);
+    const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+    return _scanSourceForTests(deps, company!, current!, await deps.settings(), null);
+  };
+  const first = await scanOn("2026-09-06");
+  expect(first).toMatchObject({ status: "ok", postingsFound: total });
+  const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source!.id)).orderBy(desc(schema.scans.startedAt)).limit(1);
+  expect(scan!.requests).toBe(total / 20);
+
+  // The last role comes down and stays down: two complete scans a day apart close it.
+  listed = total - 1;
+  expect((await scanOn("2026-09-07")).status).toBe("ok");
+  expect((await scanOn("2026-09-08")).closedCount).toBe(1);
+}, 180_000);

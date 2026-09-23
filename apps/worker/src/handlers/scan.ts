@@ -39,9 +39,11 @@ import {
 import { and, desc, eq, inArray, sql, or, isNull } from "drizzle-orm";
 import type { CareerSource } from "@ava/db";
 import { aiBudgetExceeded, makeFetchContext, type WorkerDeps } from "../context";
+import { createHash } from "node:crypto";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { loadAdmissionCache } from "../admission-cache";
 import { prepareForAdmission } from "../admission";
+import { HostBusyError } from "../fetcher";
 import { withResourceLease } from "../lease";
 import { log } from "../log";
 import { loadUserSettingsMany } from "../settings";
@@ -68,8 +70,25 @@ export { MANUAL_RESCAN_INTERVAL_MS };
  */
 export const MAX_REQUESTS_PER_SCAN = 150;
 
-/** Recorded on the scan row when the budget above stopped it, and shown on Health as its reason. */
-const BUDGET_SPENT_REASON = `Scan stopped after its budget of ${MAX_REQUESTS_PER_SCAN} requests to this source was spent; the listing was not read completely, so this scan cannot close roles`;
+/**
+ * What a structured applicant-tracking feed's listing may take instead, with at most
+ * `MAX_REQUESTS_PER_SCAN` more for descriptions after it. Those feeds page (Workday serves twenty
+ * roles a page, so its 10,000-role cap is 500 pages) from vendor hosts paced at 250 ms, so at 150
+ * a board of 3,000 roles was always partial and could never close one.
+ */
+export const MAX_LISTING_REQUESTS_PER_FEED = 600;
+
+/** Recorded on the scan row when a request budget stopped it, and shown on Health as its reason. */
+const budgetSpentReason = (limit: number) => `Scan stopped after its budget of ${limit} requests to this source was spent; the listing was not read completely, so this scan cannot close roles`;
+
+/**
+ * How many times one company's scan is put back for a host that is paced beyond what a slot may
+ * wait. Past this the source records a failed scan for the day (counted against nothing).
+ */
+const MAX_HOST_BUSY_DEFERRALS = 6;
+
+/** The adapters that read a structured feed rather than a page. */
+const PAGE_TYPES = new Set(["html", "jsonld", "rss"]);
 
 /**
  * Thrown by a scan's fetch wrapper when the listing the adapter asked for came back byte-identical
@@ -85,13 +104,19 @@ class ListingUnchanged extends Error {
   }
 }
 
+/**
+ * `sourceIds` and `hostBusyRetries` are set only on a scan put back because a host was busy: the
+ * sources still to read, and how many times that has happened.
+ */
+type ScanPayload = { companyId: string; scanRunId?: string; trigger?: string; sourceIds?: string[]; hostBusyRetries?: number };
+
 export async function handleScanCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
-  const payload = task.payload as { companyId: string; scanRunId?: string; trigger?: string };
+  const payload = task.payload as ScanPayload;
   return withResourceLease(deps, `scan:${payload.companyId}`, locked => scanCompany(task, locked));
 }
 
 async function scanCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
-  const payload = task.payload as { companyId: string; scanRunId?: string; trigger?: string };
+  const payload = task.payload as ScanPayload;
   const settings = await deps.settings();
   const [company] = await deps.db.select().from(schema.companies).where(eq(schema.companies.id, payload.companyId)).limit(1);
   if (!company) return { skipped: "company not found" };
@@ -102,6 +127,7 @@ async function scanCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
     .from(schema.careerSources)
     .where(and(eq(schema.careerSources.companyId, company.id), inArray(schema.careerSources.status, ["active", "failing"]), payload.trigger === "schedule" ? or(isNull(schema.careerSources.nextScanAt), sql`${schema.careerSources.nextScanAt} <= ${deps.now()}`) : undefined));
 
+  if (payload.sourceIds) sources = sources.filter(s => payload.sourceIds!.includes(s.id));
   if (sources.length === 0) {
     log.warn("company has no active source", { company: company.name });
     return { skipped: "no active source" };
@@ -122,14 +148,31 @@ async function scanCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
   let totalNew = 0;
   let totalClosed = 0;
   const statuses: ScanStatus[] = [];
+  const retries = payload.hostBusyRetries ?? 0;
+  const deferred: string[] = [];
+  let retryAt: Date | null = null;
   for (const source of sources) {
-    const outcome = await scanSource(deps, company, source, settings, payload.scanRunId ?? null);
+    const outcome = await scanSource(deps, company, source, settings, payload.scanRunId ?? null, { deferWhenHostBusy: retries < MAX_HOST_BUSY_DEFERRALS });
+    if (outcome.retryAt) {
+      deferred.push(source.id);
+      if (!retryAt || outcome.retryAt > retryAt) retryAt = outcome.retryAt;
+      continue;
+    }
     statuses.push(outcome.status);
     totalNew += outcome.newCount;
     totalClosed += outcome.closedCount;
   }
+  // A host paced beyond what a slot may wait was not asked anything: its sources are read again
+  // when the pace allows, by a task of their own, and nothing about them is recorded until then. A
+  // scheduled scan keeps its run, which stays open until that task is done.
+  if (retryAt) {
+    const next: ScanPayload = { companyId: payload.companyId, scanRunId: payload.scanRunId, trigger: payload.trigger, sourceIds: deferred, hostBusyRetries: retries + 1 };
+    const base = (task.dedupeKey ?? `scan_company:${company.id}`).replace(/:host-busy:\d+$/, "");
+    await enqueueTask(deps.db, "scan_company", next, { dedupeKey: `${base}:host-busy:${retryAt.getTime()}`, priority: task.priority ?? priorityFor("scan_company"), runAfter: retryAt });
+    log.info("host busy: sources put back", { company: company.name, sources: deferred.length, retryAt: retryAt.toISOString() });
+  }
 
-  return { sources: sources.length, new: totalNew, closed: totalClosed, statuses };
+  return { sources: sources.length, new: totalNew, closed: totalClosed, statuses, ...(retryAt ? { deferred: deferred.length, retryAt: retryAt.toISOString() } : {}) };
 }
 
 interface SourceOutcome {
@@ -137,6 +180,8 @@ interface SourceOutcome {
   newCount: number;
   closedCount: number;
   postingsFound: number;
+  /** Set when nothing was read because the host is paced until then; no scan was recorded. */
+  retryAt?: Date;
 }
 
 interface Follower {
@@ -194,6 +239,7 @@ async function scanSource(
   source: CareerSource,
   settings: SystemSettings,
   scanRunId: string | null,
+  opts: { deferWhenHostBusy?: boolean } = {},
 ): Promise<SourceOutcome> {
   const started = Date.now();
   // Recorded on the worker's clock so the manual-rescan guard compares like with like.
@@ -214,6 +260,8 @@ async function scanSource(
   // adapter that gives up mid-listing and a description read that swallows the failure both leave
   // a scan that did not read everything, and it must be recorded as one.
   let budgetSpent = false;
+  // A structured feed may page further for its listing; descriptions keep the ordinary budget.
+  let requestLimit = PAGE_TYPES.has(source.type) ? MAX_REQUESTS_PER_SCAN : MAX_LISTING_REQUESTS_PER_FEED;
   // The evidence kept with this source's last successful scan, read at most once and only when
   // something is about to reuse it.
   let snapshot: Promise<StoredSnapshot | null> | null = null;
@@ -224,9 +272,9 @@ async function scanSource(
   // from some older listing would be a fabricated observation, which is how roles close wrongly.
   let listingHash: string | undefined;
   const spend = () => {
-    if (requests >= MAX_REQUESTS_PER_SCAN) {
+    if (requests >= requestLimit) {
       budgetSpent = true;
-      throw new Error(BUDGET_SPENT_REASON);
+      throw new Error(budgetSpentReason(requestLimit));
     }
     requests += 1;
   };
@@ -283,6 +331,7 @@ async function scanSource(
   let incomplete = false;
   let updatedRecipe: HtmlRecipe | undefined;
   let reusedListing = false;
+  let hostBusy: HostBusyError | null = null;
 
   try {
     if (source.type === "html") {
@@ -324,11 +373,22 @@ async function scanSource(
       // rather than propagating still has it stored. The reason and the partial status are applied
       // below, so that a budget spent inside a description read — where the failure is swallowed
       // and never reaches here at all — is recorded in exactly the same way.
+    } else if (err instanceof HostBusyError) {
+      // The host is paced beyond what this slot may wait, and nothing was sent. That says nothing
+      // about the board, so it is never a miss and never a failure of the source.
+      hostBusy = err;
+      fetchOk = false;
+      error = err.message.slice(0, 1000);
     } else {
       fetchOk = false;
       error = (err as Error).message.slice(0, 1000);
       blocked = err instanceof SourceFetchError && err.kind === "blocked";
     }
+  }
+
+  if (hostBusy && opts.deferWhenHostBusy) {
+    log.info("host busy: source scan deferred", { company: company.name, url: source.url, host: hostBusy.host, retryAt: hostBusy.retryAt.toISOString() });
+    return { status: "failed", newCount: 0, closedCount: 0, postingsFound: 0, retryAt: hostBusy.retryAt };
   }
 
   const previousOk = await deps.db
@@ -409,6 +469,8 @@ async function scanSource(
         if (!posting.descriptionText && !savedByUrl.get(posting.url)?.hasText) deferred.add(posting.url);
       }
     } else {
+      // The listing is read; what descriptions may cost is the ordinary budget from here.
+      requestLimit = Math.min(requestLimit, requests + MAX_REQUESTS_PER_SCAN);
       for (const gate of descriptionGates) for (const url of await prepareForAdmission(postings, spec, ctx, gate, rejectionCache)) unresolved.add(url);
     }
   }
@@ -423,7 +485,7 @@ async function scanSource(
   // descriptions were unavailable, and why the listing above may be short.
   if (budgetSpent) {
     incomplete = true;
-    error = BUDGET_SPENT_REASON;
+    error = budgetSpentReason(requestLimit);
   }
   const classified = classifyScan({ fetchOk, postingsFound: postings.length, previousOkCount, droppedByValidation });
   // A listing that collapsed against the last ok scan is what an ATS migration
@@ -821,13 +883,15 @@ async function scanSource(
     and id not in (select id from scans where source_id = ${source.id} order by started_at desc, id desc limit 3)
     and id not in (select id from scans where source_id = ${source.id} and status='ok' order by started_at desc, id desc limit 1)`);
 
-  const failures = status === "failed" ? source.consecutiveFailures + 1 : 0;
+  // A host that asked us to wait is not a source that failed: its count, its next scan and its
+  // status stay exactly as they were.
+  const failures = hostBusy ? source.consecutiveFailures : status === "failed" ? source.consecutiveFailures + 1 : 0;
   await deps.db
     .update(schema.careerSources)
     .set({
       consecutiveFailures: failures,
-      nextScanAt: failures ? new Date(deps.now().getTime() + Math.min(7, 2 ** Math.min(failures - 1, 3)) * 86400000) : null,
-      status: blocked ? "blocked" : failures >= SOURCE_FAILING_AFTER ? "failing" : source.status === "failing" && status === "ok" ? "active" : source.status,
+      nextScanAt: hostBusy ? source.nextScanAt : failures ? new Date(deps.now().getTime() + Math.min(7, 2 ** Math.min(failures - 1, 3)) * 86400000) : null,
+      status: hostBusy ? source.status : blocked ? "blocked" : failures >= SOURCE_FAILING_AFTER ? "failing" : source.status === "failing" && status === "ok" ? "active" : source.status,
       lastOkScanAt: status === "ok" ? deps.now() : source.lastOkScanAt,
       lastPostingsCount: status === "ok" ? postings.length : source.lastPostingsCount,
       contentHash,
@@ -840,7 +904,7 @@ async function scanSource(
   const persistentlyShrunk = shrunk && (await deps.db.select({ error: schema.scans.error, status: schema.scans.status }).from(schema.scans)
     .where(eq(schema.scans.sourceId, source.id)).orderBy(desc(schema.scans.startedAt)).limit(3))
     .filter((scan) => scan.status === "partial" && /shrank/.test(scan.error ?? "")).length >= 3;
-  if (failures >= SOURCE_FAILING_AFTER || status === "suspect_empty" || persistentlyShrunk) {
+  if ((failures >= SOURCE_FAILING_AFTER && !hostBusy) || status === "suspect_empty" || persistentlyShrunk) {
     await enqueueTask(deps.db, "discover", { companyId: company.id, reason: status === "suspect_empty" ? "suspect_empty" : persistentlyShrunk ? "shrunk" : "failing" }, {
       dedupeKey: dedupeKeyFor("discover", { companyId: company.id }),
       priority: priorityFor("discover"),
@@ -884,6 +948,19 @@ async function scanSource(
   return { status, newCount, closedCount: result.closed.length, postingsFound: postings.length };
   }
 
+}
+
+/**
+ * The same digest as `sha1` over the captures joined with "|", fed one capture at a time: joining
+ * a render's pages into one string copied every one of them again just to hash it.
+ */
+function capturesHash(captures: Array<{ html: string }>): string {
+  const hash = createHash("sha1");
+  captures.forEach((capture, index) => {
+    if (index) hash.update("|");
+    hash.update(capture.html);
+  });
+  return hash.digest("hex");
 }
 
 /**
@@ -1072,7 +1149,7 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
       catch (error) { if (!outcomes.length) throw error; incomplete = true; }
     }
     return { postings: keyPostings(outcomes.flatMap(p => p.postings)).keyed, method: "browser", dropped: outcomes.reduce((n, p) => n + p.dropped, 0),
-      contentHash: sha1(captures.map(p => p.html).join("|")), unchanged: false, httpHash, renderedAt: deps.now().toISOString(), incomplete,
+      contentHash: capturesHash(captures), unchanged: false, httpHash, renderedAt: deps.now().toISOString(), incomplete,
       incompleteReason: incomplete ? incompleteReason ?? "Browser pagination could not complete; a control was blocked, did not advance, or reached its limit." : undefined, traversed: true };
 
   }

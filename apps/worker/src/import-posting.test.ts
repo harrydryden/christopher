@@ -235,3 +235,28 @@ it("throws when the site cannot be reached, so the queue retries with its backof
     .rejects.toThrow("Could not fetch elsewhere.test: network error");
   expect(await db.select().from(schema.jobs)).toHaveLength(0);
 });
+
+it("puts an import back for when a host that asked us to wait will be read again", async () => {
+  // Paced for an hour: the fetcher sends nothing and says when the host may be asked again.
+  await db.execute(sql`insert into host_pacing (host, next_at) values ('www.pasted.test', now() + interval '1 hour')
+    on conflict (host) do update set next_at = excluded.next_at`);
+  try {
+    const result = await handleImportPosting(importTask(STAFF_ENGINEER), deps) as { ok: false; reason: string; retryAt: string };
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("asked us to wait");
+    expect(await db.select().from(schema.jobs)).toHaveLength(0);
+    const [retry] = await tasksOfType("import_posting");
+    expect(retry!.payload).toMatchObject({ userId: importer.id, companyId: company.id, url: STAFF_ENGINEER, hostBusyRetries: 1 });
+    expect(Math.abs(retry!.runAfter!.getTime() - new Date(result.retryAt).getTime())).toBeLessThan(1000);
+    expect(retry!.runAfter!.getTime()).toBeGreaterThan(Date.now() + 50 * 60_000);
+
+    // When the pace allows, the import that was put back stores the role as usual.
+    await db.execute(sql`delete from host_pacing`);
+    await db.update(schema.tasks).set({ runAfter: new Date() }).where(eq(schema.tasks.id, retry!.id));
+    await queue.drain();
+    expect(await db.select().from(schema.jobs)).toHaveLength(1);
+    expect((await viewsFor(importer)).filter(v => v.inTable)).toHaveLength(1);
+  } finally {
+    await db.execute(sql`delete from host_pacing`);
+  }
+});

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createAiEngine, decisionDigest, extractJsonBlock, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, NO_OUTPUT_ERROR, OUTPUT_LIMIT_ERROR, REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, STREAM_CEILING_MS, type AiClientLike, type AiUsageRecord, type DecisionForDigest, type ParseResponse } from "./engine";
+import { a3OutputCeiling, createAiEngine, decisionDigest, extractJsonBlock, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, NO_OUTPUT_ERROR, OUTPUT_LIMIT_ERROR, REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, STREAM_CEILING_MS, type AiClientLike, type AiUsageRecord, type DecisionForDigest, type ParseResponse } from "./engine";
 import { APIConnectionError, APIConnectionTimeoutError, APIError, AuthenticationError, BadRequestError, InternalServerError, NotFoundError, PermissionDeniedError, RateLimitError } from "@anthropic-ai/sdk";
 import { estimateCostUsd, estimateCvBuildUsd, estimateLibraryImportUsd, estimateLibraryReviewUsd, serverToolCostUsd, SERVER_TOOL_USD } from "./pricing";
 import type { CvLibrary } from "@ava/core";
@@ -392,6 +392,18 @@ describe("call-site post-validation", () => {
     expect(result!.postings).toEqual([{ title: "Operations Manager", url: "https://acme.example/jobs/1", location: "London, UK", department: undefined }]);
     expect(result!.dropped).toBe(1);
     expect(result!.recipe).toEqual({ version: 1, listItem: "li.job", title: "a", link: "a", location: ".loc", department: undefined });
+  });
+
+  it("A3 sizes its output ceiling to the listing, so a large board is not cut off and a small page holds little", async () => {
+    const { engine, calls } = engineWith({ postings: [], recipe: null, confidence: 0.5 });
+    const lines = (n: number) => Array.from({ length: n }, (_, i) => `[${i}] Role ${i} | https://acme.example/jobs/${i}`).join("\n");
+    await engine.extractPostings({ pageUrl: "https://acme.example/careers", compactDom: lines(400), knownUrls: [] });
+    await engine.extractPostings({ pageUrl: "https://acme.example/careers", compactDom: lines(5), knownUrls: [] });
+    expect(calls[0]!.params.max_tokens).toBeGreaterThanOrEqual(400 * 50);
+    expect(calls[0]!.params.max_tokens).toBeLessThanOrEqual(32_000);
+    expect(calls[1]!.params.max_tokens).toBe(4_000);
+    // The schema allows 500 postings; the ceiling covers them at a conservative size each.
+    expect(a3OutputCeiling(500)).toBeGreaterThanOrEqual(500 * 60);
   });
 
   it("A5 clamps the score and keeps the verdict consistent", async () => {

@@ -898,7 +898,9 @@ export class AiEngine {
         user: `Page URL: ${input.pageUrl}\n\n${P.wrap("page_content", P.truncate(input.compactDom, 80_000))}`,
         schema: S.ExtractPostingsSchema,
         effort: "low",
-        maxTokens: 8000,
+        // Sized to the page: a flat 8,000 cut off every board past about 150 postings, and the
+        // hold is taken at this ceiling, so a small page now holds less than it did.
+        maxTokens: a3OutputCeiling((input.compactDom.match(/^\[\d+\] /gm) ?? []).length),
         timeoutMs: 60_000,
       },
       ref,
@@ -1491,6 +1493,16 @@ export interface DecisionForDigest {
   snippet?: string | null;
   fitScore?: number | null;
   at: string;
+}
+
+/**
+ * A3's output ceiling for a page of `lines` links. Each posting copied out is about 50-65 tokens —
+ * a URL tokenises poorly — and the recipe and confidence follow it, so the ceiling grows with the
+ * listing, from a floor for a short page to the cap a streamed answer is allowed. At the cap it
+ * covers the schema's 500 postings at 60 tokens each.
+ */
+export function a3OutputCeiling(lines: number): number {
+  return Math.min(32_000, Math.max(4_000, 2_000 + Math.max(0, lines) * 70));
 }
 
 /** Compact, newest-first summary of past decisions used as cached context for scoring. */

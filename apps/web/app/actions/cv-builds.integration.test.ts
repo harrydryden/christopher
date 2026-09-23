@@ -20,8 +20,23 @@ vi.mock("@/lib/db", () => ({ db: () => database }));
 vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (session ? { value: session } : undefined) }) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
+/** Runs inside every render the actions ask for, so a test can look at the database mid-render. */
+const rendering = vi.hoisted(() => ({ during: undefined as undefined | (() => Promise<void>) }));
+vi.mock("@/lib/cv-pdf", async (actual) => {
+  const real = await actual<typeof import("@/lib/cv-pdf")>();
+  return {
+    ...real,
+    renderCvPdf: async (...args: Parameters<typeof real.renderCvPdf>) => {
+      await rendering.during?.();
+      return real.renderCvPdf(...args);
+    },
+  };
+});
 
-import { assessCvDraft, requestCv, saveCvDraft } from "./cv";
+import { assessCvDraft, finaliseCvDraft, requestCv, saveCvDraft } from "./cv";
+import { createCvAssessment } from "@ava/core/cv-review";
+import { cvClaimItems, cvEvidenceItems, cvTextItems } from "@ava/core/cv-assessment";
+import { reviewFixture } from "../../../../packages/core/test/cv-review-fixture";
 import { CV_BUILD_CAP_MESSAGE, MAX_CV_BUILDS_IN_FLIGHT } from "@/lib/cv-build-capacity";
 import { ensureTestUser } from "@/test/auth";
 
@@ -36,6 +51,7 @@ afterAll(async () => {
   await pool?.end();
 });
 beforeEach(async () => {
+  rendering.during = undefined;
   await database.execute(
     sql`truncate ai_calls, ai_reservations, applications, cv_versions, cv_drafts, cv_libraries, companies, tasks, settings, user_settings, users restart identity cascade`,
   );
@@ -281,4 +297,76 @@ it("lets exactly one of two simultaneous requests take the last place", async ()
   expect(results.filter(result => typeof result === "string" && result.startsWith("redirect:/cv/"))).toHaveLength(1);
   expect(results).toContainEqual({ ok: false, error: CV_BUILD_CAP_MESSAGE });
   expect(await database.select().from(schema.cvDrafts)).toHaveLength(MAX_CV_BUILDS_IN_FLIGHT);
+});
+
+it("writes one application for a role when a Generate and a stage saved from the table meet", async () => {
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+  const [role] = await visibleRoles(1);
+  // The stage is being saved: its transaction holds the role's row and has written the application.
+  const table = await pool.connect();
+  try {
+    await table.query("begin");
+    await table.query("select job_id from user_jobs where user_id = $1 and job_id = $2 for update", [user.id, role!.job.id]);
+    await table.query(
+      `insert into applications (user_id, job_id, job_title, company_name, applied_on, status, notes, history)
+       values ($1, $2, 'Operations Manager', 'Company 0', '2026-09-23', 'interviewing', '', '[]')`,
+      [user.id, role!.job.id],
+    );
+    let settled = false;
+    const generating = outcome(requestCv({ ok: true }, generate(role!.job.id))).finally(() => { settled = true; });
+    // The Generate waits for the stage's lock, or — without one — finishes on its own.
+    for (;;) {
+      const waiting = await database.execute(
+        sql`select 1 from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock' limit 1`,
+      );
+      if (waiting.rows.length || settled) break;
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    await table.query("commit");
+    expect(await generating).toMatch(/^redirect:\/cv\//);
+  } finally {
+    table.release();
+  }
+  const applied = await database.select().from(schema.applications);
+  expect(applied.map(row => row.status)).toEqual(["interviewing"]);
+});
+
+/** A ready revision whose assessment is current and clean, as a finished build leaves one. */
+async function finalisableDraft() {
+  const description = "Finance operations";
+  const rubric = rubricFixture(description);
+  const review = reviewFixture({ rubric, cv: cvTextItems(content), claims: cvClaimItems(content), evidence: cvEvidenceItems(library) });
+  const assessment = createCvAssessment({ content, description, library, rubric, review, model: "test", pageCount: 1 });
+  return failedDraft({ status: "ready", failure: null, error: null, buildCheckpoint: null, assessment, jobDescription: description });
+}
+const reviewed = () => {
+  const form = new FormData();
+  form.set("reviewed", "on");
+  return form;
+};
+
+it("checks the PDF lays out before finalising, without holding the draft's row while it renders", async () => {
+  const draft = await finalisableDraft();
+  let probed = false;
+  rendering.during = async () => {
+    // Nothing else may be kept waiting on this row for the length of a render.
+    await database.execute(sql`select id from cv_drafts where id = ${draft.id} for update nowait`);
+    probed = true;
+  };
+  expect(await finaliseCvDraft(draft.id, { ok: true }, reviewed())).toEqual({ ok: true });
+  expect(probed).toBe(true);
+  expect((await draftRow(draft.id)).finalisedAt).not.toBeNull();
+});
+
+it("refuses to finalise a revision that was assessed again while its PDF was being checked", async () => {
+  const draft = await finalisableDraft();
+  rendering.during = async () => {
+    await database.update(schema.cvDrafts)
+      .set({ assessment: { ...draft.assessment!, assessedAt: new Date(Date.now() + 1000).toISOString() } })
+      .where(eq(schema.cvDrafts.id, draft.id));
+  };
+  expect(await finaliseCvDraft(draft.id, { ok: true }, reviewed())).toEqual({
+    ok: false, error: "This revision changed while it was being checked. Reload it before finalising.",
+  });
+  expect((await draftRow(draft.id)).finalisedAt).toBeNull();
 });

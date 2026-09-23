@@ -8,27 +8,20 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { actionCvs, applications, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, userJobs, enqueueTask } from "@ava/db";
 import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvWritingPreferences,
-  createCvWritingBudget, CvLibrarySchema, consolidateExperience, isActiveStoredEvidence, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel,
-  type AppSettings, type CvContent, type CvLibrary, type CvWritingPreferences } from "@ava/core";
+  createCvWritingBudget, CvLibrarySchema, isActiveStoredEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel,
+  type AppSettings, type CvContent, type CvWritingPreferences } from "@ava/core";
 import { CvGapAnswerSchema, CvGapQuizSchema, addGapAnswersToLibrary, type CvGapAnswer } from "@ava/core/cv-gap-quiz";
 import { requireUser, requireVerifiedUser } from "@/lib/auth";
 import { cvLibraryIssues } from "@/lib/cv-library-issues";
+import { latestLibrary, writeCvLibraryVersion, type Tx } from "@/lib/cv-library-write";
 import { assertCvBuildCapacity, lockCvBuildCapacity } from "@/lib/cv-build-capacity";
 import { cvBuildQuote } from "@/lib/cv-quote";
-import { enqueue } from "@/lib/enqueue";
 import { db } from "@/lib/db";
 import { userSettings as userSettingsTable } from "@ava/db/schema";
 import { getSettings, getSettingsFor, setUserSetting } from "@/lib/settings";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
-
-type Tx = Parameters<Parameters<ReturnType<typeof db>["transaction"]>[0]>[0];
-
-async function latestLibrary(tx: Pick<Tx, "select">, userId: string) {
-  const [latest] = await tx.select().from(cvLibraries).where(eq(cvLibraries.userId, userId)).orderBy(desc(cvLibraries.version)).limit(1);
-  return latest;
-}
 
 /**
  * The CV model a build is asked of: the one this account has chosen now. A draft records the model
@@ -120,38 +113,6 @@ async function rememberWording(tx: Tx, userId: string, before: CvContent, after:
   const updated = { ...preferences, preferredWording };
   await upsertUserSetting(tx, userId, "cvWritingPreferences", updated);
   return updated;
-}
-
-/**
- * One saved version of a Library, written the way every save writes one.
- *
- * Extracted from `saveCvLibrary` so that the document import can land accepted items through the
- * same path rather than a parallel one: the same advisory lock, the same obsolete-edit rejection,
- * the same archived-evidence retention, the same two tasks queued behind it. `build` is given the
- * version it is writing over — the import needs it, to add to what is there rather than replace
- * it — and returns the library to store.
- *
- * It takes the caller's transaction and is not a form action: everything it writes is decided by
- * `build`, which only a server action holding a live transaction can supply.
- */
-export async function writeCvLibraryVersion(
-  tx: Tx,
-  userId: string,
-  expectedVersion: number,
-  build: (current: CvLibrary | null) => CvLibrary,
-): Promise<number> {
-  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`cv:library:${userId}`}))`);
-  const latest = await latestLibrary(tx, userId);
-  if ((latest?.version ?? 0) !== expectedVersion) throw new UserFacingError("The library changed. Reload before saving.");
-  const version = (latest?.version ?? 0) + 1;
-  const content = CvLibrarySchema.parse(consolidateExperience(build(latest?.content ?? null)));
-  await tx.insert(cvLibraries).values({ userId, version, content: CvLibrarySchema.parse(retainArchivedEvidence(latest?.content, content)) });
-  await enqueueTask(tx, "rescore_all", { userId, onlyInTable: true }, { dedupeKey: `rescore_all:${userId}`, priority: 5 });
-  // The evidence review of the version this save just wrote. Its dedupe key is the account,
-  // not the version, so a person typing through five saves queues one pass; the handler reads
-  // the newest library when it runs.
-  await enqueue("review_library", { userId, libraryVersion: version }, tx);
-  return version;
 }
 
 export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promise<ActionResult> {
@@ -425,6 +386,15 @@ export async function requestCv(
     draftId = await db().transaction(async (tx) => {
       // The account's lock comes before the role's, in every transaction that queues a build.
       await lockCvBuildCapacity(tx, user.id);
+      // Then the role's row in this account's table, which `setRoleStage` and `decide` lock first:
+      // a stage saved from the table and a Generate each looked for the role's application under
+      // locks that did not exclude each other, both found none, and both wrote one.
+      const [view] = await tx
+        .select({ jobId: userJobs.jobId })
+        .from(userJobs)
+        .where(and(eq(userJobs.userId, user.id), eq(userJobs.jobId, id)))
+        .for("update");
+      if (!view) throw new UserFacingError("Role not found.");
       const revision = await nextCvRevision(tx, { userId: user.id, companyName: row.company, jobTitle: row.job.title });
       // Two clicks on Generate are two of these transactions, one behind the other. The second
       // finds the build the first queued, behind the same role lock, and goes to it rather than
@@ -774,12 +744,8 @@ export async function finaliseCvDraft(
       return fail(
         "Review the score, evidence gaps and factual wording before finalising.",
       );
-    await db().transaction(async (tx) => {
-      const [draft] = await tx
-        .select()
-        .from(cvDrafts)
-        .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, user.id)))
-        .for("update");
+    /** The revision as it can be finalised, or the sentence that says why it cannot. */
+    const finalisable = (draft: typeof cvDrafts.$inferSelect | undefined) => {
       if (!draft?.content || draft.status !== "ready")
         throw new UserFacingError("Wait for this revision’s assessment to finish.");
       // What the reviewer found missing is written for the person reading it.
@@ -788,8 +754,28 @@ export async function finaliseCvDraft(
       } catch (failure) {
         throw new UserFacingError(failure instanceof Error ? failure.message : "This CV cannot be finalised yet.");
       }
-      await renderCvPdf(draft.content);
-      if (!draft.finalisedAt)
+      return { ...draft, content: draft.content };
+    };
+    const [read] = await db()
+      .select()
+      .from(cvDrafts)
+      .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, user.id)));
+    const checked = finalisable(read);
+    // The render proves the revision lays out; it is seconds of work for a long CV, so it runs
+    // before the transaction rather than holding the draft's row lock and a pooled connection.
+    await renderCvPdf(checked.content);
+    await db().transaction(async (tx) => {
+      const [draft] = await tx
+        .select()
+        .from(cvDrafts)
+        .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, user.id)))
+        .for("update");
+      const current = finalisable(draft);
+      // The assessment covers the exact wording and appearance, so an unchanged one is the
+      // revision that was rendered; a draft re-assessed in between is not what was checked.
+      if (current.assessment?.inputHash !== checked.assessment?.inputHash || current.assessment?.assessedAt !== checked.assessment?.assessedAt)
+        throw new UserFacingError("This revision changed while it was being checked. Reload it before finalising.");
+      if (!current.finalisedAt)
         await tx
           .update(cvDrafts)
           .set({ finalisedAt: new Date() })

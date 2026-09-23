@@ -31,7 +31,7 @@ import {
   type CreateLibraryImportInput,
   type Db,
 } from "@ava/db";
-import { writeCvLibraryVersion } from "@/app/actions/cv";
+import { writeCvLibraryVersion } from "@/lib/cv-library-write";
 import { requireUser, requireVerifiedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";

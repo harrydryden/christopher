@@ -1,18 +1,73 @@
 import { withResourceLease } from "../lease";
 import { schema, enqueueTask, noteLogoFailure, storeCompanyLogo, type Db, type Task } from "@ava/db";
-import { captureCompanyLogo, dedupeKeyFor, discovery, LogoCaptureError, priorityFor, type TaskPayloads, type DiscoveryCandidate, type DiscoveryResult } from "@ava/core";
-import { and, eq, ne } from "drizzle-orm";
+import { captureCompanyLogo, deadlineMsFor, dedupeKeyFor, discovery, LogoCaptureError, priorityFor, type TaskPayloads, type DiscoveryCandidate, type DiscoveryResult } from "@ava/core";
+import { and, eq, gte, lt, ne } from "drizzle-orm";
 import { makeFetchContext, makeDiscoveryContext, type WorkerDeps } from "../context";
 import { log } from "../log";
 
 const AUTO_ACCEPT = 0.85;
 
-export async function handleDiscover(task: Task, deps: WorkerDeps): Promise<unknown> {
-  const payload = task.payload as TaskPayloads["discover"];
-  return withResourceLease(deps, `discover:${payload.companyId}:${payload.logoOnly ? "logo" : "careers"}`, locked => discoverCompany(task, locked));
+/** What the queue passes a handler: the run's own signal, aborted by its deadline or a lost lease. */
+interface RunContext {
+  signal?: AbortSignal;
 }
 
-async function discoverCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
+/**
+ * A discovery whose best board could not be verified for now (a 429, a 503, a timeout) and whose
+ * task has attempts left: thrown so the queue retries it with backoff instead of recording that
+ * nothing was found. The run row is failed with the same reason first.
+ */
+export class DiscoveryRetryError extends Error {
+  constructor(reason: string) {
+    super(`discovery will be retried: ${reason}`);
+    this.name = "DiscoveryRetryError";
+  }
+}
+
+export async function handleDiscover(task: Task, deps: WorkerDeps, runCtx?: RunContext): Promise<unknown> {
+  const payload = task.payload as TaskPayloads["discover"];
+  return withResourceLease(deps, `discover:${payload.companyId}:${payload.logoOnly ? "logo" : "careers"}`, locked => discoverCompany(task, locked, runCtx));
+}
+
+/**
+ * Close off discovery runs of this company left `running` by an attempt that will never write its
+ * own outcome: the process died, or the deadline or a lost lease stopped it. Only runs this task's
+ * attempts could have started (from the task's first claim on) are touched, so a run another task
+ * has in progress for the company is left alone.
+ */
+async function failRunningRuns(db: Db, companyId: string, since: Date | null, error: string, now: Date): Promise<number> {
+  const rows = await db.update(schema.discoveryRuns)
+    .set({ status: "failed", finishedAt: now, error: error.slice(0, 1000) })
+    .where(and(
+      eq(schema.discoveryRuns.companyId, companyId),
+      eq(schema.discoveryRuns.status, "running"),
+      ...(since ? [gte(schema.discoveryRuns.startedAt, since)] : []),
+    ))
+    .returning({ id: schema.discoveryRuns.id });
+  return rows.length;
+}
+
+function careersPayload(task: Task): TaskPayloads["discover"] | null {
+  const payload = task.payload as TaskPayloads["discover"] | undefined;
+  return payload?.companyId && !payload.logoOnly ? payload : null;
+}
+
+/** For the queue's abandonment hooks: `onAbandon.discover`. */
+export async function onDiscoverAbandoned(task: Task, deps: WorkerDeps, reason: string): Promise<void> {
+  const payload = careersPayload(task);
+  if (!payload) return;
+  const failed = await failRunningRuns(deps.db, payload.companyId, task.createdAt, `discovery abandoned: ${reason}`, deps.now());
+  if (failed) log.warn("discovery runs failed by an abandoned task", { taskId: task.id, companyId: payload.companyId, failed });
+}
+
+/** For the queue's interruption hooks: `onInterrupted.discover`. The next attempt starts a run of its own. */
+export async function onDiscoverInterrupted(task: Task, deps: WorkerDeps, info: { retryAt?: string }): Promise<void> {
+  const payload = careersPayload(task);
+  if (!payload) return;
+  await failRunningRuns(deps.db, payload.companyId, task.createdAt, `discovery interrupted${info.retryAt ? `; retrying at ${info.retryAt}` : ""}`, deps.now());
+}
+
+async function discoverCompany(task: Task, deps: WorkerDeps, runCtx?: RunContext): Promise<unknown> {
   const payload = task.payload as TaskPayloads["discover"];
   const companies = await deps.db.select().from(schema.companies).where(eq(schema.companies.id, payload.companyId)).limit(1);
   const company = companies[0];
@@ -28,26 +83,51 @@ async function discoverCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
     dedupeKey: dedupeKeyFor("discover", logoPayload), priority: 6,
   });
 
+  // A run older than any discovery may last, still `running`, belongs to a process that died
+  // before any hook could close it; this company's timeline must not say "discovering" for ever.
+  await deps.db.update(schema.discoveryRuns)
+    .set({ status: "failed", finishedAt: deps.now(), error: "discovery did not finish" })
+    .where(and(
+      eq(schema.discoveryRuns.companyId, company.id),
+      eq(schema.discoveryRuns.status, "running"),
+      lt(schema.discoveryRuns.startedAt, new Date(deps.now().getTime() - deadlineMsFor("discover"))),
+    ));
+
   const [run] = await deps.db
     .insert(schema.discoveryRuns)
     .values({ companyId: company.id, status: "running" })
     .returning({ id: schema.discoveryRuns.id });
   if (!run) throw new Error("could not create a discovery run");
 
-  const ctx = makeDiscoveryContext(deps);
-  let result: DiscoveryResult;
-  try {
-    result = payload.url
-      ? await discovery.probeUrlAsSource(payload.url, ctx)
-      : await discovery.discoverCareersSources(company.homepageUrl, ctx);
-  } catch (err) {
+  // Whatever stops this attempt after the row exists, the row says so. Written outside the fenced
+  // transaction: the run is this attempt's own, and a lost lease must not leave it `running`.
+  const failRun = async (error: string) => {
     await deps.db
       .update(schema.discoveryRuns)
-      .set({ status: "failed", finishedAt: deps.now(), error: (err as Error).message.slice(0, 1000) })
-      .where(eq(schema.discoveryRuns.id, run.id));
+      .set({ status: "failed", finishedAt: deps.now(), error: error.slice(0, 1000) })
+      .where(and(eq(schema.discoveryRuns.id, run.id), eq(schema.discoveryRuns.status, "running")))
+      .catch((err: unknown) => log.warn("could not fail a discovery run", { runId: run.id, error: (err as Error).message }));
+  };
+
+  try {
+    // The account that asked for this company, when the task says, so the model calls are theirs.
+    const userId = (payload as { userId?: string }).userId;
+    const ctx = { ...makeDiscoveryContext(deps), signal: runCtx?.signal, aiRef: { refType: "company", refId: company.id, userId } };
+    const result = payload.url
+      ? await discovery.probeUrlAsSource(payload.url, ctx)
+      : await discovery.discoverCareersSources(company.homepageUrl, ctx);
+    if (result.retry && result.outcome !== "resolved" && task.attempts < task.maxAttempts) {
+      await failRun(`retrying: ${result.retry}`);
+      throw new DiscoveryRetryError(result.retry);
+    }
+    return await recordResult(deps, company, run.id, result);
+  } catch (err) {
+    await failRun((err as Error).message);
     throw err;
   }
+}
 
+async function recordResult(deps: WorkerDeps, company: typeof schema.companies.$inferSelect, runId: string, result: DiscoveryResult): Promise<unknown> {
   return deps.db.transaction(async tx => {
     await deps.assertOwnership?.(tx as unknown as Db);
   // Replace a placeholder name (the raw domain or its label) with the first real one we learn,
@@ -79,7 +159,7 @@ async function discoverCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
   await tx
     .update(schema.discoveryRuns)
     .set({ status, finishedAt: deps.now(), candidates, chosenSourceId, log: result.log })
-    .where(eq(schema.discoveryRuns.id, run.id));
+    .where(eq(schema.discoveryRuns.id, runId));
 
   log.info("discovery finished", { company: company.name, outcome: status, fetches: result.fetches, best: result.best?.method });
   return { outcome: status, candidates: candidates.length, fetches: result.fetches, sourceId: chosenSourceId };

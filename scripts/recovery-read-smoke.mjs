@@ -18,7 +18,7 @@ async function main() {
   const require = createRequire(new URL("../apps/web/package.json", import.meta.url));
   const { Pool } = require("pg");
   const pool = new Pool({ connectionString: url.href, max: 1 });
-  const secret = "local-recovery-read-smoke";
+  const secret = "local-recovery-read-smoke-0123456789abcdef0123456789abcdef";
   const port = Number(process.env.RECOVERY_SMOKE_PORT ?? 3141);
   const { rows: [user] } = await pool.query(`select id from users where claimed_at is not null order by created_at limit 1`);
   if (!user) throw new Error("restored synthetic database has no claimed account");

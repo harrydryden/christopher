@@ -4,12 +4,20 @@ import { eq } from "drizzle-orm";
 import { sha1, stripHtml } from "@ava/core";
 import { discoveryDocuments, discoverySources } from "@ava/db/schema";
 import { db } from "@/lib/db";
+import { consumeRateLimit, LIMITS } from "@/lib/rate-limit";
 import { zUuid } from "@/lib/validation";
 
 export const runtime = "nodejs";
 const payloadSchema = z.object({ sourceId: zUuid(), title: z.string().trim().min(1).max(300), content: z.string().min(100).max(40000) });
 
-/** Provider-neutral inbound email adapter. Does not grant access to a mailbox. */
+/**
+ * Provider-neutral inbound email adapter. Does not grant access to a mailbox.
+ *
+ * The bearer is one secret for the whole deployment, held by the operator's relay, so it can write
+ * into any account's email source whose id it is given; a per-source token needs a column the
+ * schema does not have yet. Until then each source takes a bounded number of documents a day,
+ * because every one is later read by the model on its owner's budget.
+ */
 export async function POST(request: Request): Promise<Response> {
   const secret = process.env.NEWSLETTER_INGEST_SECRET;
   if (!secret) return Response.json({ ok: false, error: "Newsletter ingestion is not configured" }, { status: 503 });
@@ -33,6 +41,9 @@ export async function POST(request: Request): Promise<Response> {
   catch { return Response.json({ ok: false, error: "Expected sourceId, title and content (100–40,000 characters)" }, { status: 400 }); }
   const [source] = await db().select().from(discoverySources).where(eq(discoverySources.id, payload.sourceId));
   if (!source || source.kind !== "email") return Response.json({ ok: false, error: "Email source not found" }, { status: 404 });
+  if (!(await consumeRateLimit([`newsletter:source:${source.id}`], LIMITS.newsletterSource))) {
+    return Response.json({ ok: false, error: "Too many newsletters for this source today" }, { status: 429 });
+  }
   const content = stripHtml(payload.content);
   if (content.length < 100) return Response.json({ ok: false, error: "No readable newsletter content" }, { status: 400 });
   const rows = await db().insert(discoveryDocuments).values({ sourceId: source.id, title: payload.title, content,

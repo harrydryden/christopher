@@ -140,21 +140,174 @@ export function absoluteUrl(href: string, base: string): string | null {
   }
 }
 
+/**
+ * The most characters of a page that a whole-page heuristic reads. Every such pattern is written to
+ * run in linear time; this bounds that time too, so a hostile or broken page served at the fetcher's
+ * body cap cannot hold the worker's event loop. Code that decides a listing's contents never
+ * truncates: a short listing read as a complete one closes roles.
+ */
+export const MAX_SCANNED_TEXT = 2_000_000;
+
+/** The part of `text` a whole-page heuristic may scan. */
+export function scanWindow(text: string): string {
+  return text.length > MAX_SCANNED_TEXT ? text.slice(0, MAX_SCANNED_TEXT) : text;
+}
+
+export interface ElementBlock {
+  /** The element name as matched, lower-cased. */
+  name: string;
+  /** Index of the opening `<`. */
+  start: number;
+  /** Index just past the opening tag's `>`: where the content begins. */
+  openEnd: number;
+  /** Index of the closing tag's `<`: where the content ends. */
+  closeStart: number;
+  /** Index just past the closing tag. */
+  end: number;
+}
+
+/**
+ * Every `<name …>…</name>` block, earliest first, found in one linear pass. It matches what
+ * `/<\s*(name)[^>]*>[\s\S]*?<\/\s*\1\s*>/gi` matches, but that regex rescans the rest of the page
+ * from every opening tag that is never closed, which is quadratic on a page of unclosed tags; here
+ * the `>` after an opening tag and each closing tag are searched for once. `boundary` requires the
+ * name to end there (`<item>`, not `<itemize>`).
+ */
+export function elementBlocks(html: string, names: readonly string[], opts: { boundary?: boolean; limit?: number } = {}): ElementBlock[] {
+  const blocks: ElementBlock[] = [];
+  const limit = opts.limit ?? Infinity;
+  const opener = (open: readonly string[]) => new RegExp(`<\\s*(${open.join("|")})${opts.boundary ? "\\b" : ""}`, "gi");
+  // A name with no closing tag after one of its opening tags has none after any later one either,
+  // so it is dropped from the search.
+  let open = names.map((name) => name.toLowerCase());
+  let opening = opener(open);
+  const closers = new Map<string, RegExp>();
+  let gt = -1;
+  let match: RegExpExecArray | null;
+  while (blocks.length < limit && (match = opening.exec(html))) {
+    const start = match.index;
+    const name = (match[1] ?? "").toLowerCase();
+    if (gt < opening.lastIndex) gt = html.indexOf(">", opening.lastIndex);
+    if (gt < 0) break; // no opening tag after this point can end
+    let closer = closers.get(name);
+    if (!closer) {
+      closer = new RegExp(`<\\/\\s*${name}\\s*>`, "gi");
+      closers.set(name, closer);
+    }
+    closer.lastIndex = gt + 1;
+    const close = closer.exec(html);
+    if (!close) {
+      open = open.filter((other) => other !== name);
+      if (open.length === 0) break;
+      opening = opener(open);
+      opening.lastIndex = start + 1;
+      continue;
+    }
+    const end = close.index + close[0].length;
+    blocks.push({ name, start, openEnd: gt + 1, closeStart: close.index, end });
+    opening.lastIndex = end;
+  }
+  return blocks;
+}
+
+/** `html` with each block replaced by `replacement`. */
+function replaceBlocks(html: string, blocks: readonly ElementBlock[], replacement: string): string {
+  if (blocks.length === 0) return html;
+  const parts: string[] = [];
+  let last = 0;
+  for (const block of blocks) {
+    parts.push(html.slice(last, block.start), replacement);
+    last = block.end;
+  }
+  parts.push(html.slice(last));
+  return parts.join("");
+}
+
+/**
+ * `html.replace(/<[^>]+>/g, " ")` in one pass. That regex rescans the rest of the page from every
+ * `<` that no `>` follows; once no `>` is left, nothing after can be a tag, so the scan stops.
+ */
+function tagsToSpaces(html: string): string {
+  let out = "";
+  let last = 0;
+  let from = 0;
+  let spaces = 0; // tags seen since the last text, each of which becomes one space
+  for (;;) {
+    const lt = html.indexOf("<", from);
+    if (lt < 0) break;
+    const gt = html.indexOf(">", lt + 1);
+    if (gt < 0) break;
+    if (gt === lt + 1) {
+      from = gt; // "<>" is not a tag
+      continue;
+    }
+    if (lt > last) {
+      out += " ".repeat(spaces) + html.slice(last, lt);
+      spaces = 0;
+    }
+    spaces++;
+    last = from = gt + 1;
+  }
+  return out + " ".repeat(spaces) + html.slice(last);
+}
+
+/**
+ * Exactly `.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").replace(/[ \t]{2,}/g, " ")`, in one
+ * pass over each run of spaces, tabs and newlines. The first of those regexes rescans a long run of
+ * spaces from each of its characters.
+ */
+function tidyWhitespace(text: string): string {
+  let out = "";
+  let last = 0;
+  let i = 0;
+  while (i < text.length) {
+    const c = text.charCodeAt(i);
+    if (c !== 32 && c !== 9 && c !== 10) {
+      i++;
+      continue;
+    }
+    let end = i;
+    let newlines = 0;
+    let lastNewline = -1;
+    for (; end < text.length; end++) {
+      const d = text.charCodeAt(end);
+      if (d === 10) {
+        newlines++;
+        lastNewline = end;
+      } else if (d !== 32 && d !== 9) break;
+    }
+    let replacement: string;
+    if (newlines === 0) {
+      if (end - i === 1) {
+        i = end; // a single space or tab stays as it is
+        continue;
+      }
+      replacement = " ";
+    } else {
+      // Spaces before a newline go, three or more newlines become two, and the spaces after the
+      // last newline collapse like any other run.
+      const tail = end - lastNewline - 1;
+      replacement = (newlines >= 2 ? "\n\n" : "\n") + (tail >= 2 ? " " : tail === 1 ? text.charAt(end - 1) : "");
+    }
+    out += text.slice(last, i) + replacement;
+    last = i = end;
+  }
+  return out + text.slice(last);
+}
+
+/** Readable text from HTML, in time linear in the page and bounded by `MAX_SCANNED_TEXT`. */
 export function stripHtml(html: string): string {
-  return html
-    .replace(/<\s*(script|style)[^>]*>[\s\S]*?<\/\s*\1\s*>/gi, " ")
+  const page = scanWindow(html);
+  const withoutCode = replaceBlocks(page, elementBlocks(page, ["script", "style"]), " ");
+  return tidyWhitespace(tagsToSpaces(withoutCode
     .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|li|h[1-6]|tr|section|article)>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
+    .replace(/<\/(p|div|li|h[1-6]|tr|section|article)>/gi, "\n"))
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
-    .replace(/&#39;|&apos;/g, "'")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/[ \t]{2,}/g, " ")
+    .replace(/&#39;|&apos;/g, "'"))
     .trim();
 }
 

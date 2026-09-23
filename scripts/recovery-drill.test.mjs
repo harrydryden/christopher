@@ -15,3 +15,10 @@ test('integrity query covers tenant records, fingerprints, orphans, constraints 
   const sql = coreIntegritySql();
   for (const term of ['user_jobs','cv_libraries','applications','company_subscriptions','convalidated','__drizzle_migrations','hashtextextended']) assert.match(sql, new RegExp(term));
 });
+test('integrity query counts and fingerprints the learning signal, settings, profiles, sources and scans', () => {
+  const sql = coreIntegritySql();
+  for (const table of ['decisions','user_settings','settings','preference_profiles','company_profiles','career_sources','scans','auth_accounts','cv_build_steps'])
+    assert.match(sql, new RegExp(`count\\(\\*\\) from ${table}\\)`), table);
+  for (const key of ['decisionFingerprint','userSettingsFingerprint','sourceFingerprint']) assert.match(sql, new RegExp(`'${key}'`));
+  for (const orphan of ['decisions','userSettings','sources','scans']) assert.match(sql, new RegExp(`'${orphan}',\\(select count\\(\\*\\) from \\w+ \\w+ left join`), orphan);
+});

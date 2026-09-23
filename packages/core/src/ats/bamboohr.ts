@@ -1,6 +1,6 @@
 /** VERIFY: the /careers/list endpoint is undocumented; shapes confirmed against fixtures only. */
 import type { Adapter, FetchContext, RawPosting, SourceSpec } from "../types";
-import { fetchJson, joinLocation, rec, safeUrl, slugOk, str, verifyFromFetch, MAX_POSTINGS } from "./common";
+import { fetchJson, joinLocation, rec, safeUrl, slugOk, str, verifyFromFetch, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS } from "./common";
 import { parseDate } from "../normalize";
 
 export function bambooSpec(slug: string): SourceSpec {
@@ -45,7 +45,7 @@ function mapJob(j: BhJob, slug: string): RawPosting | null {
 async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
   const slug = spec.atsSlug;
   if (!slug) throw new Error("bamboohr spec missing slug");
-  const { data } = await fetchJson<unknown>(ctx, `https://${slug}.bamboohr.com/careers/list`);
+  const { data } = await fetchJson<unknown>(ctx, `https://${slug}.bamboohr.com/careers/list`, INLINE_DESCRIPTIONS_FETCH);
   const result = rec(data)?.result;
   const list = Array.isArray(result) ? (result as BhJob[]) : [];
   return list.map((j) => mapJob(j, slug)).filter((p): p is RawPosting => !!p).slice(0, MAX_POSTINGS);

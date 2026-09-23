@@ -29,10 +29,10 @@
     "check:operations": "node scripts/verify-operational-status.mjs"
   },
   "devDependencies": {
-    "@types/node": "latest",
+    "@types/node": "26.4.1",
     "typescript": "~5.9.0",
-    "tsx": "latest",
-    "vitest": "latest"
+    "tsx": "4.23.13",
+    "vitest": "5.0.0"
   },
   "pnpm": {
     "overrides": {

@@ -1,9 +1,11 @@
 /**
  * Operational CLI. Run one-off jobs without waiting for the scheduler:
+ *   pnpm --filter @ava/worker cli migrate        (apply this checkout's migrations; nothing else does)
  *   pnpm --filter @ava/worker cli probe <url>    (dry run: what would discovery find?)
  *   pnpm --filter @ava/worker cli add <homepage-url>   (follows it as the CLI account)
- *   pnpm --filter @ava/worker cli discover <company-id|domain>
- *   pnpm --filter @ava/worker cli scan [company-id|domain]
+ *   pnpm --filter @ava/worker cli discover <company-id|domain|name> [careers-url]
+ *   pnpm --filter @ava/worker cli discover --all (every active company, never a careers URL)
+ *   pnpm --filter @ava/worker cli scan [company-id|domain|name]
  *   pnpm --filter @ava/worker cli drain          (run queued tasks to completion)
  *   pnpm --filter @ava/worker cli list           (companies, sources, followers, counts)
  *   pnpm --filter @ava/worker cli table          (the CLI account's roles table as text)
@@ -11,6 +13,9 @@
  *
  * Per-account commands act for AVA_CLI_USER (an email) or, when unset, the earliest
  * administrator.
+ *
+ * Every command except `migrate` first checks that the database is at exactly this checkout's
+ * schema and refuses otherwise, so looking at production from a branch never migrates it.
  */
 import { schema, enqueueTask, reevaluateGate, subscribeToCompany } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
@@ -28,8 +33,8 @@ import {
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { createDeps, makeDiscoveryContext, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
+import { assertSchemaCurrent, discoverTargets, findCompany, schemaState } from "./cli-guards";
 import { handlers } from "./handlers";
-import { ensureSeedTags } from "./handlers/learning";
 import { TaskQueue } from "./queue";
 import { schedulerTick } from "./scheduler";
 
@@ -43,20 +48,26 @@ async function cliUser(deps: WorkerDeps) {
   return user;
 }
 
+const COMMANDS = new Set(["migrate", "probe", "add", "discover", "scan", "tick", "drain", "users", "list", "table"]);
+
 async function main() {
   const [command, ...args] = process.argv.slice(2);
+  if (!command || !COMMANDS.has(command)) {
+    console.log("commands: migrate | probe <url> | add <url...> | discover <company> [url] | discover --all | scan [company] | tick | drain [n] | list | table | users");
+    return;
+  }
   const env = readEnv();
   const deps = await createDeps(env);
-  await runMigrations(deps.db);
-  await ensureSeedTags(deps);
-  const queue = new TaskQueue(deps, handlers, { concurrency: 1, workerId: "cli" });
-
-  const findCompany = async (needle: string) => {
-    const rows = await deps.db.select().from(schema.companies);
-    return rows.find((c) => c.id === needle || c.domain === needle || c.name.toLowerCase() === needle.toLowerCase()) ?? null;
-  };
 
   try {
+    if (command === "migrate") {
+      const before = await schemaState(deps.db);
+      await runMigrations(deps.db);
+      console.log(before.state === "behind" ? `applied ${before.pending.length} migration(s): ${before.pending.join(", ")}` : "no migrations to apply");
+      return;
+    }
+    await assertSchemaCurrent(deps.db);
+    const queue = new TaskQueue(deps, handlers, { concurrency: 1, workerId: "cli" });
     switch (command) {
       case "probe": {
         const target = args[0];
@@ -106,21 +117,19 @@ async function main() {
         break;
       }
       case "discover": {
-        const company = args[0] ? await findCompany(args[0]) : null;
-        const targets = company ? [company] : await deps.db.select().from(schema.companies).where(eq(schema.companies.status, "active"));
+        const { companies: targets, url } = await discoverTargets(deps.db, args);
         for (const c of targets) {
-          await enqueueTask(deps.db, "discover", { companyId: c.id, reason: "manual", url: args[1] }, {
+          await enqueueTask(deps.db, "discover", { companyId: c.id, reason: "manual", url }, {
             dedupeKey: dedupeKeyFor("discover", { companyId: c.id }),
             priority: priorityFor("discover"),
           });
         }
-        console.log(`queued discovery for ${targets.length} company(ies)`);
+        console.log(targets.length === 1 ? `queued discovery for ${targets[0]!.name}` : `queued discovery for ${targets.length} companies`);
         break;
       }
       case "scan": {
         if (args[0]) {
-          const company = await findCompany(args[0]);
-          if (!company) throw new Error(`no company matching ${args[0]}`);
+          const company = await findCompany(deps.db, args[0]);
           await enqueueTask(deps.db, "scan_company", { companyId: company.id, trigger: "manual" }, {
             dedupeKey: dedupeKeyFor("scan_company", { companyId: company.id }),
             priority: priorityFor("scan_company"),
@@ -205,8 +214,6 @@ async function main() {
         console.log(`\n${rows.length} role(s) in ${user.email}'s table. * = counted from first seen, the source publishes no posted date.`);
         break;
       }
-      default:
-        console.log("commands: probe <url> | add <url...> | discover [company] [url] | scan [company] | tick | drain [n] | list | table | users");
     }
   } finally {
     await deps.close();

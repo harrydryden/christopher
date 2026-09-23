@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { absoluteUrl, sameDomain } from "../normalize";
+import { absoluteUrl, sameDomain, scanWindow } from "../normalize";
 import type { HarvestedLink } from "./types";
 import type { SourceSpec } from "../types";
 
@@ -142,6 +142,11 @@ export function extractMeta(html: string, pageUrl: string): { title?: string; si
   return { title, siteName, faviconUrl };
 }
 
+/**
+ * Anchors with an href. The attributes are read only up to the next `<` or `>`, so the scan from one
+ * `<a ` ends where the next tag begins: `[^>]*` rescanned the rest of a page of unclosed tags from
+ * each of them.
+ */
 export function countAnchors(html: string): number {
-  return (html.match(/<a\s[^>]*href=/gi) ?? []).length;
+  return (scanWindow(html).match(/<a\s[^<>]*?href=/gi) ?? []).length;
 }

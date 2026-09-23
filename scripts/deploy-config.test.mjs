@@ -79,3 +79,10 @@ test("the Playwright base image matches the Playwright the worker installs", () 
   const pinned = JSON.parse(read("apps/worker/package.json")).dependencies.playwright;
   assert.equal(tag, pinned, "bump the FROM tag and the playwright dependency together");
 });
+
+test("the example environment points at the local database the README creates", () => {
+  const url = new URL(read(".env.example").match(/^DATABASE_URL=(.+)$/m)[1]);
+  assert.equal(url.port, "5432");
+  assert.equal(url.pathname, "/ava_dev");
+  assert.match(read("README.md"), /createdb ava_dev/);
+});

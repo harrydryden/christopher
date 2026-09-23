@@ -9,10 +9,11 @@ import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { actionCvs, applications, lockCvDraft, nextCvRevision, cvLibraries, cvDrafts, jobs, companies, userJobs, enqueueTask } from "@ava/db";
 import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvWritingPreferences,
   createCvWritingBudget, CvLibrarySchema, consolidateExperience, isActiveStoredEvidence, retainArchivedEvidence, groupCvLibrary, CvContentSchema, modelForCallSite, isKnownModel,
-  type CvContent, type CvLibrary, type CvWritingPreferences } from "@ava/core";
+  type AppSettings, type CvContent, type CvLibrary, type CvWritingPreferences } from "@ava/core";
 import { CvGapAnswerSchema, CvGapQuizSchema, addGapAnswersToLibrary, type CvGapAnswer } from "@ava/core/cv-gap-quiz";
 import { requireUser, requireVerifiedUser } from "@/lib/auth";
 import { cvLibraryIssues } from "@/lib/cv-library-issues";
+import { assertCvBuildCapacity, lockCvBuildCapacity } from "@/lib/cv-build-capacity";
 import { cvBuildQuote } from "@/lib/cv-quote";
 import { enqueue } from "@/lib/enqueue";
 import { db } from "@/lib/db";
@@ -27,6 +28,19 @@ type Tx = Parameters<Parameters<ReturnType<typeof db>["transaction"]>[0]>[0];
 async function latestLibrary(tx: Pick<Tx, "select">, userId: string) {
   const [latest] = await tx.select().from(cvLibraries).where(eq(cvLibraries.userId, userId)).orderBy(desc(cvLibraries.version)).limit(1);
   return latest;
+}
+
+/**
+ * The CV model a build is asked of: the one this account has chosen now. A draft records the model
+ * it was built with, but a retry or a rebuild is a new request, and "choose a different CV model,
+ * then retry" is advice the page gives — so the choice is read here every time, never inherited.
+ */
+function cvModelFor(settings: AppSettings): string {
+  if (settings.cvModel === modelForCallSite(settings, "A3"))
+    throw new UserFacingError("Choose a CV model different from website extraction before generating.");
+  if (!isKnownModel(settings.cvModel))
+    throw new UserFacingError("Choose a supported model for CV generation in Settings.");
+  return settings.cvModel;
 }
 
 async function upsertUserSetting(tx: Pick<Tx, "insert">, userId: string, key: string, value: unknown) {
@@ -163,7 +177,12 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
   return ok();
 }
 
-/** Resolve the one optional evidence pause. Confirmed facts get a new Library version and child draft. */
+/**
+ * Resolve the one optional evidence pause. Confirmed facts get a new Library version and child draft.
+ *
+ * Continuing is not held to the account's cap on builds in flight: the paused build was admitted
+ * when it started, and turning away answers the person has just typed would lose them.
+ */
 export async function answerCvGapQuiz(draftId: string, _prev: ActionResult, form: FormData): Promise<ActionResult> {
   const user = await requireVerifiedUser();
   if (!zUuid().safeParse(draftId).success) return fail("This CV could not be found.");
@@ -351,10 +370,7 @@ export async function requestCv(
   try {
     const id = zUuid().parse(String(form.get("jobId")));
     const settings = await getSettings();
-    if (settings.cvModel === modelForCallSite(settings, "A3"))
-      return fail(
-        "Choose a CV model different from website extraction before generating.",
-      );
+    const model = cvModelFor(settings);
     const library = await latestLibrary(db(), user.id);
     if (!library) return fail("Save your Library first.");
     // What the library is missing is written for the person who has to fix it.
@@ -407,6 +423,8 @@ export async function requestCv(
     const quote = await cvBuildQuote(user.id, id);
     if (quote.refusal) return fail(quote.refusal);
     draftId = await db().transaction(async (tx) => {
+      // The account's lock comes before the role's, in every transaction that queues a build.
+      await lockCvBuildCapacity(tx, user.id);
       const revision = await nextCvRevision(tx, { userId: user.id, companyName: row.company, jobTitle: row.job.title });
       // Two clicks on Generate are two of these transactions, one behind the other. The second
       // finds the build the first queued, behind the same role lock, and goes to it rather than
@@ -427,6 +445,8 @@ export async function requestCv(
         .orderBy(desc(cvDrafts.createdAt))
         .limit(1);
       if (inFlight) return inFlight.id;
+      // Going to the build already running is never refused; starting a fourth one is.
+      await assertCvBuildCapacity(tx, user.id);
       const [draft] = await tx
         .insert(cvDrafts)
         .values({
@@ -448,7 +468,7 @@ export async function requestCv(
           },
           libraryVersion: library.version,
           librarySnapshot: generationLibrary,
-          model: settings.cvModel,
+          model,
           buildCheckpoint: { tailoringEnabled: true },
         })
         .returning();
@@ -523,6 +543,9 @@ export async function saveCvDraft(
       ...original
     } = draft;
     savedId = await db().transaction(async (tx) => {
+      // Either save queues a build, and a build counts against the account's cap. The account's
+      // lock comes before the role's; the count is taken once the save is known to be possible.
+      await lockCvBuildCapacity(tx, user.id);
       // Both a rebuild and a direct edit are written from this draft, so retention spares it
       // however many newer failures the role has; the next publish clears it.
       const revision = await nextCvRevision(tx, draft, { spare: id });
@@ -539,9 +562,13 @@ export async function saveCvDraft(
         .where(and(eq(cvDrafts.parentId, id), eq(cvDrafts.userId, user.id), inArray(cvDrafts.status, ["queued", "generating"]), isNull(cvDrafts.archivedAt)))
         .limit(1);
       if (building) throw new UserFacingError("This CV is already being rebuilt.");
+      await assertCvBuildCapacity(tx, user.id);
       // Corrections are remembered whichever build the save requests, and an improved revision
       // is written with them from the start.
       const remembered = form.get("rememberWording") === "on" ? await rememberWording(tx, user.id, draft.content!, content) : undefined;
+      // Either revision is a new build, asked of the model this account has chosen now.
+      const settings = await getSettingsFor(user.id, tx);
+      const model = cvModelFor(settings);
       if (rebuild) {
         // A rebuild is written afresh from the latest Library and writing preferences.
         const latest = await latestLibrary(tx, user.id);
@@ -550,13 +577,14 @@ export async function saveCvDraft(
           : draft.librarySnapshot;
         const librarySnapshot = CvLibrarySchema.parse({
           ...evidence,
-          ...(remembered ?? (await getSettings()).cvWritingPreferences ?? {}),
+          ...(remembered ?? settings.cvWritingPreferences ?? {}),
           theme: content.theme ?? DEFAULT_CV_THEME,
         });
         const [fitting] = await tx
           .insert(cvDrafts)
           .values({
             ...original,
+            model,
             libraryVersion: latest?.version ?? draft.libraryVersion,
             librarySnapshot,
             content: null,
@@ -580,6 +608,7 @@ export async function saveCvDraft(
         .insert(cvDrafts)
         .values({
           ...original,
+          model,
           content,
           status: "queued",
           error: null,
@@ -610,10 +639,9 @@ export async function saveCvDraft(
  * build from. Undefined when the account has no Library to read, which leaves the draft's own
  * snapshot in place rather than emptying it.
  */
-async function currentLibrarySnapshot(tx: Tx, userId: string) {
+async function currentLibrarySnapshot(tx: Tx, userId: string, settings: AppSettings) {
   const latest = await latestLibrary(tx, userId);
   if (!latest) return undefined;
-  const settings = await getSettingsFor(userId, tx);
   try {
     return {
       libraryVersion: latest.version,
@@ -636,6 +664,10 @@ async function currentLibrarySnapshot(tx: Tx, userId: string) {
  * the writing preferences and the page limit as they were. Re-queueing that is a retry that cannot
  * succeed and costs what the first attempt cost, so those retries take the Library and the
  * settings as they are now, and the checkpoint and failure of the attempt they replace go with it.
+ *
+ * Every retry is asked of the CV model the account has chosen now. "Choose a different CV model,
+ * then retry" is the way forward the page offers for a model that keeps failing, and a retry that
+ * went back to the model stored on the draft paid for the same failure again.
  */
 export async function assessCvDraft(
   id: string,
@@ -646,6 +678,8 @@ export async function assessCvDraft(
   try {
     zUuid().parse(id);
     await db().transaction(async (tx) => {
+      // A retry queues the draft again, so it counts against the account's cap like a new build.
+      await lockCvBuildCapacity(tx, user.id);
       await lockCvDraft(tx, id);
       const [draft] = await tx
         .select()
@@ -663,19 +697,23 @@ export async function assessCvDraft(
         throw new UserFacingError(
           "Choose an unfinished saved draft that is not already being processed.",
         );
+      await assertCvBuildCapacity(tx, user.id);
       // Both the failures whose way forward is a page limit or a Library, and every draft that
       // stopped before it wrote anything: none of them can succeed against the snapshot they hold.
       const stale =
         draft.failure?.kind === "page_limit_unfittable" ||
         draft.failure?.kind === "library_invalid" ||
         !draft.content;
-      const refreshed = stale ? await currentLibrarySnapshot(tx, user.id) : undefined;
+      const settings = await getSettingsFor(user.id, tx);
+      const model = cvModelFor(settings);
+      const refreshed = stale ? await currentLibrarySnapshot(tx, user.id, settings) : undefined;
       await tx
         .update(cvDrafts)
         .set({
           status: "queued",
           error: null,
           buildStage: null,
+          model,
           ...(refreshed ? {
             ...refreshed,
             buildCheckpoint: {

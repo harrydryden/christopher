@@ -1,9 +1,9 @@
 import { recordWorkerEvent, releaseAiHolds, schema, type Db, type ReleasedHolds, type Task } from "@ava/db";
-import { deadlineMsFor, TASK_DEADLINES_MS, taskSubject, taskUserId, type TaskDeadlines } from "@ava/core";
-import { and, eq, inArray, lt, sql } from "drizzle-orm";
+import { AGEING_PRIORITY_FLOOR, deadlineMsFor, INTERACTIVE_TASK_TYPES, SCAN_TASK_TYPES, TASK_DEADLINES_MS, taskSubject, taskUserId, type TaskDeadlines } from "@ava/core";
+import { and, eq, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 import { finaliseScanRuns } from "./handlers/daily";
-import { LeaseBusyError, LeaseLostError } from "./lease";
+import { LeaseBusyError, LeaseLostError, type RunDeps } from "./lease";
 import { log, withLogContext } from "./log";
 import { vitals } from "./vitals";
 
@@ -50,6 +50,9 @@ export interface AbandonContext {
   onAbandon?: AbandonHookMap;
 }
 
+/** Past this many spent tasks, one sweep leaves the rest for the next. */
+const SPENT_SWEEP_LIMIT = 200;
+
 // Ten missed 30-second renewals; aligned with the resource lease expiry.
 export const TASK_STALE_AFTER_MS = 5 * 60_000;
 
@@ -69,8 +72,40 @@ export class TimeoutError extends Error {
   }
 }
 
-/** How long `stop()` waits for a running handler before handing its task back to the queue. */
-export const STOP_GRACE_MS = 25_000;
+/**
+ * A run stopped because this worker is shutting down. Its task goes back on the queue with the
+ * attempt returned, whatever the handler did on its way out.
+ */
+export class ShutdownError extends Error {
+  constructor(message = "worker shutting down") {
+    super(message);
+    this.name = "ShutdownError";
+  }
+}
+
+/**
+ * How long `stop()` waits for the runs it has stopped to settle, so their streams close and their
+ * spend is recorded before this worker's holds are released. With the hand-back and the hold
+ * release on either side of it, all of `stop()` fits inside the platform's thirty seconds with
+ * room for the process to close its pool.
+ */
+export const STOP_GRACE_MS = 15_000;
+
+/** The longest `stop()` waits on the database for each of the hand-back and the hold release. */
+export const HAND_BACK_TIMEOUT_MS = 4_000;
+
+/** Resolves once `work` settles or `ms` has passed, whichever is first; never rejects. */
+export async function settleWithin(work: Promise<unknown>, ms: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      work.then(() => undefined, () => undefined),
+      new Promise<void>(resolve => { timer = setTimeout(resolve, ms); timer.unref?.(); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 export interface QueueOptions {
   concurrency: number;
@@ -84,14 +119,22 @@ export interface QueueOptions {
   onAbandon?: AbandonHookMap;
   /** What to record when a run of a given type is cut off by its deadline but the task lives on. */
   onInterrupted?: InterruptedHookMap;
+  /**
+   * The most runs of a type this process holds at once; a slot at the limit claims anything else.
+   * Company verification is always capped at one, because it may drive the browser.
+   */
+  maxActiveByType?: Partial<Record<Task["type"], number>>;
 }
+
+/** The per-type caps every queue has, whatever it is given. */
+const DEFAULT_MAX_ACTIVE_BY_TYPE: Partial<Record<Task["type"], number>> = { verify_company: 1 };
 
 export function backoffMs(attempts: number): number {
   return Math.min(60_000 * 2 ** Math.max(0, attempts - 1), 30 * 60_000);
 }
 
-export const scanTypes = ["scan_company", "run_daily"];
-export const interactiveTypes = ["generate_cv", "discover", "tag_reason", "reevaluate_gate", "import_posting", "review_library", "import_library_document"];
+export const scanTypes: string[] = [...SCAN_TASK_TYPES];
+export const interactiveTypes: string[] = [...INTERACTIVE_TASK_TYPES];
 export type QueueLane = "all" | "scan" | "interactive" | "background";
 
 export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all", excludedTypes: Task["type"][] = []): Promise<Task | null> {
@@ -113,8 +156,12 @@ export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all
     // an out-of-memory is a hard death, so nothing compares the two before the lock goes stale and
     // the task is claimed again. A task already at its limit is failed by `requeueStale`, never
     // claimed. The column is read from the same index rows the lane filter walks.
+    //
+    // A key can have a queued follow-up while a task with that key runs; the follow-up waits for
+    // it, so the two never run side by side (served by `tasks_dedupe_active_idx`).
     .where(sql`${schema.tasks.id} = (
       select id from tasks where status = 'queued' and run_after <= now() and attempts < max_attempts and ${laneFilter} and ${exclusionFilter}
+        and (dedupe_key is null or not exists (select 1 from tasks r where r.dedupe_key = tasks.dedupe_key and r.status = 'running'))
       order by priority asc, run_after asc, created_at asc
       limit 1 for update skip locked
     )`)
@@ -128,14 +175,26 @@ export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all
  * The claim itself orders by the stored priority alone, so something has to move a task that keeps
  * losing to newer, higher-priority work. Running it from the scheduler keeps the claim indexed and
  * the sweep bounded; `limit` caps how much one sweep rewrites.
+ *
+ * Waiting is measured from when the task could first have run, not from when it was queued: a
+ * scan spread across the morning, or a retry backing off, is not starving while it waits for its
+ * own `run_after`. The longest-waiting go first, and nothing is lifted past
+ * `AGEING_PRIORITY_FLOOR`, so a backlog can never overtake work someone has just asked for. A
+ * boot-time gate re-evaluation stops one step further back: a thousand of them arrive at once, and
+ * none of them is anyone's request. A row a claim has locked is skipped rather than waited on.
  */
 export async function agePriorities(db: Db, olderThanSeconds = 300, limit = 500): Promise<number> {
   const rows = await db.execute<{ id: string }>(sql`
     update tasks set priority = priority - 1
     where id in (
       select id from tasks
-      where status = 'queued' and priority > 0 and created_at < now() - make_interval(secs => ${olderThanSeconds}::int)
-      order by priority asc, created_at asc limit ${limit}
+      where status = 'queued'
+        and greatest(created_at, run_after) < now() - make_interval(secs => ${olderThanSeconds}::int)
+        and priority > case when type = 'reevaluate_gate' and payload->>'reason' = 'boot'
+          then ${AGEING_PRIORITY_FLOOR + 1}::int else ${AGEING_PRIORITY_FLOOR}::int end
+      order by greatest(created_at, run_after) asc
+      limit ${limit}
+      for update skip locked
     ) returning id`);
   return rows.rows.length;
 }
@@ -145,14 +204,52 @@ export function ownedTask(task: Task) {
     eq(schema.tasks.attempts, task.attempts), eq(schema.tasks.lockedBy, task.lockedBy ?? ""));
 }
 
-export async function renewTask(db: Db, task: Task): Promise<boolean> {
-  const rows = await db.update(schema.tasks).set({ lockedAt: new Date() }).where(ownedTask(task)).returning({ id: schema.tasks.id });
-  return rows.length === 1;
+/** The Postgres code for a statement that gave up on a lock, or on its own statement timeout. */
+function isLockTimeout(err: unknown): boolean {
+  const code = (e: unknown) => (e && typeof e === "object" && "code" in e ? (e as { code?: unknown }).code : undefined);
+  const found = code(err) ?? code((err as { cause?: unknown } | null)?.cause);
+  return found === "55P03" || found === "57014";
+}
+
+/**
+ * Renew a running task's lock: true when renewed, false when the task is no longer this run's,
+ * null when the renewal could not get at the row in time.
+ *
+ * The row can be locked by this run's own write transaction — the fence takes it `for update` and
+ * holds it until commit — and a renewal used to wait out the whole transaction holding a pooled
+ * connection, one more every beat, until the pool ran dry. It now gives up after two seconds and
+ * frees its connection; the run is neither renewed nor stopped, and the next beat tries again.
+ */
+export async function renewTask(db: Db, task: Task): Promise<boolean | null> {
+  try {
+    return await db.transaction(async tx => {
+      await tx.execute(sql`set local lock_timeout = '2s'`);
+      await tx.execute(sql`set local statement_timeout = '5s'`);
+      const rows = await tx.update(schema.tasks).set({ lockedAt: new Date() }).where(ownedTask(task)).returning({ id: schema.tasks.id });
+      return rows.length === 1;
+    });
+  } catch (err) {
+    if (isLockTimeout(err)) return null;
+    throw err;
+  }
 }
 
 export async function assertTaskOwnership(db: Db, task: Task): Promise<void> {
   const rows = await db.select({ id: schema.tasks.id }).from(schema.tasks).where(ownedTask(task)).for("update");
   if (!rows.length) throw new LeaseLostError("Task lease lost; refusing stale writes");
+}
+
+/**
+ * The fence one run writes through: the task must still be this run's, and the run must not have
+ * been stopped. The row alone is not enough, because a run cut off by its deadline still owns it
+ * until `failTask` has written, and in that window a handler unwinding from its abort — a fetch
+ * cut short, a model call cancelled — would otherwise commit what the abort left it holding. The
+ * signal is read again once the row is locked, since the abort can land while the lock is awaited.
+ */
+export async function assertRunOwnership(db: Db, task: Task, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) throw new LeaseLostError("Run was stopped; refusing its writes");
+  await assertTaskOwnership(db, task);
+  if (signal.aborted) throw new LeaseLostError("Run was stopped; refusing its writes");
 }
 
 export async function completeTask(db: Db, task: Task, result: unknown): Promise<boolean> {
@@ -163,15 +260,22 @@ export async function completeTask(db: Db, task: Task, result: unknown): Promise
   return rows.length === 1;
 }
 
+/**
+ * How long a task may keep finding its resource busy without spending an attempt. A busy bounce is
+ * someone else doing the same thing, so it is normally free; one that is still bouncing after this
+ * long is waiting on something that is not finishing, and from then on each bounce counts.
+ */
+export const BUSY_REFUND_WINDOW_MS = 2 * 3600_000;
+
 export async function failTask(db: Db, task: Task, err: unknown): Promise<"retry" | "failed" | "lost"> {
   const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-  const busy = err instanceof LeaseBusyError;
-  const retry = busy || task.attempts < task.maxAttempts;
+  const refund = err instanceof LeaseBusyError && Date.now() - task.createdAt.getTime() < BUSY_REFUND_WINDOW_MS;
+  const retry = refund || task.attempts < task.maxAttempts;
   const rows = await db
     .update(schema.tasks)
     .set(
       retry
-        ? { status: "queued", error: message.slice(0, 2000), runAfter: new Date(Date.now() + (busy ? 30_000 : backoffMs(task.attempts))), attempts: busy ? task.attempts - 1 : task.attempts, lockedAt: null }
+        ? { status: "queued", error: message.slice(0, 2000), runAfter: new Date(Date.now() + (refund ? 30_000 : backoffMs(task.attempts))), attempts: refund ? task.attempts - 1 : task.attempts, lockedAt: null }
         : { status: "failed", error: message.slice(0, 2000), finishedAt: new Date(), lockedAt: null },
     )
     .where(ownedTask(task)).returning({ id: schema.tasks.id });
@@ -205,13 +309,15 @@ async function runInterruptedHook(task: Task, deps: WorkerDeps, hooks: Interrupt
  * Give up on one task for good: fail the row, write the ledger entry, close off what it was for.
  *
  * Fenced on the status and attempt it was read at, so a task another worker has already reclaimed
- * is left alone and its hook does not run.
+ * is left alone and its hook does not run. `fence` adds what else must still hold when the write
+ * lands — for a lost task, that its lock is still stale — because the row can change between the
+ * read that chose it and this write.
  */
-export async function abandonTask(db: Db, task: Task, error: string, workerId: string, context: AbandonContext = {}): Promise<boolean> {
+export async function abandonTask(db: Db, task: Task, error: string, workerId: string, context: AbandonContext & { fence?: SQL } = {}): Promise<boolean> {
   const rows = await db
     .update(schema.tasks)
     .set({ status: "failed", error: error.slice(0, 2000), finishedAt: new Date(), lockedAt: null })
-    .where(and(eq(schema.tasks.id, task.id), eq(schema.tasks.status, task.status), eq(schema.tasks.attempts, task.attempts)))
+    .where(and(eq(schema.tasks.id, task.id), eq(schema.tasks.status, task.status), eq(schema.tasks.attempts, task.attempts), context.fence))
     .returning({ id: schema.tasks.id });
   if (!rows.length) return false;
   log.warn("task abandoned", { id: task.id, type: task.type, attempts: task.attempts, lockedBy: task.lockedBy, error });
@@ -233,18 +339,23 @@ export interface RequeueOutcome {
 /**
  * Reclaim what a dead worker was holding, and refuse to retry what killed it.
  *
- * Two things end up here. A task left `running` by a process that is gone — the lock stopped
- * being renewed — and a task sitting `queued` that has already spent every attempt, which only a
- * worker from before this rule can leave behind. Both are the same question: has this task had
- * its retries? Under the limit it goes back on the queue having spent one, with the usual
- * backoff, so a transient crash costs a delay rather than the work. At the limit it is failed,
- * because an out-of-memory is a hard death with no catch and no `failTask`: nothing ever compared
- * `attempts` with `max_attempts`, so one bad task was claimed, killed the process, and was claimed
- * again on the next boot, for as long as the deployment was left alone. Failing it also runs the
- * type's abandonment hook, so a CV draft does not keep saying "generating" for the rest of the day.
+ * A task left `running` by a process that is gone — the lock stopped being renewed — is asked
+ * one question: has it had its retries? Under the limit it goes back on the queue having spent
+ * one, with the usual backoff, so a transient crash costs a delay rather than the work. At the
+ * limit it is failed, because an out-of-memory is a hard death with no catch and no `failTask`:
+ * nothing ever compared `attempts` with `max_attempts`, so one bad task was claimed, killed the
+ * process, and was claimed again on the next boot, for as long as the deployment was left alone.
+ * Failing it also runs the type's abandonment hook, so a CV draft does not keep saying
+ * "generating" for the rest of the day.
  *
- * `ids` names the tasks to reclaim whatever their lock age: boot recovery uses it, because a
- * process that has claimed nothing yet knows every `running` row belongs to an earlier incarnation.
+ * The write re-checks what the read saw: the same holder, and a lock still older than the cutoff.
+ * A heartbeat that lands between the two — its renewal delayed behind a slow database, or queued
+ * on the row lock the owner's own write transaction holds — wins, and the live run is left alone
+ * rather than requeued, or failed with its hook run, under it.
+ *
+ * `ids` names the tasks to reclaim: boot recovery uses it. The rows this worker id locked in an
+ * earlier incarnation are taken whatever their lock age, because a process that has claimed
+ * nothing yet knows they are not its own; anything else in `ids` must still be stale.
  */
 export async function requeueStale(
   db: Db,
@@ -258,18 +369,19 @@ export async function requeueStale(
       ? and(eq(schema.tasks.status, "running"), inArray(schema.tasks.id, options.ids))
       : and(eq(schema.tasks.status, "running"), lt(schema.tasks.lockedAt, cutoff)),
   );
-  // A queued task past its limit can never be claimed again, so it would sit in the queue for
-  // ever. It is given up on here, with the same ledger entry and hook.
-  const spent = await db.select().from(schema.tasks)
-    .where(and(eq(schema.tasks.status, "queued"), sql`${schema.tasks.attempts} >= ${schema.tasks.maxAttempts}`));
+  const earlierIncarnation = (task: Task) => !!options.ids?.length
+    && (task.lockedBy === workerId || !!task.lockedBy?.startsWith(`${workerId}#`));
+  const stillLost = (task: Task) => and(
+    eq(schema.tasks.id, task.id), eq(schema.tasks.status, "running"), eq(schema.tasks.attempts, task.attempts),
+    task.lockedBy === null ? isNull(schema.tasks.lockedBy) : eq(schema.tasks.lockedBy, task.lockedBy),
+    earlierIncarnation(task) ? undefined : or(isNull(schema.tasks.lockedAt), lt(schema.tasks.lockedAt, cutoff)),
+  );
 
   const outcome: RequeueOutcome = { requeued: 0, failed: 0 };
-  for (const task of [...lost, ...spent]) {
+  for (const task of lost) {
     if (task.attempts >= task.maxAttempts) {
-      const error = task.status === "running"
-        ? `worker lost while running this task (attempt ${task.attempts} of ${task.maxAttempts}); not retried`
-        : `out of attempts (${task.attempts} of ${task.maxAttempts} spent); not retried`;
-      if (await abandonTask(db, task, error, workerId, options)) outcome.failed++;
+      const error = `worker lost while running this task (attempt ${task.attempts} of ${task.maxAttempts}); not retried`;
+      if (await abandonTask(db, task, error, workerId, { ...options, fence: stillLost(task) })) outcome.failed++;
       continue;
     }
     const rows = await db
@@ -279,11 +391,30 @@ export async function requeueStale(
         error: `requeued: worker lost while running (attempt ${task.attempts} of ${task.maxAttempts})`,
         runAfter: new Date(Date.now() + backoffMs(task.attempts)),
       })
-      .where(and(eq(schema.tasks.id, task.id), eq(schema.tasks.status, "running"), eq(schema.tasks.attempts, task.attempts)))
+      .where(stillLost(task))
       .returning({ id: schema.tasks.id });
     outcome.requeued += rows.length;
   }
   return outcome;
+}
+
+/**
+ * Fail the queued tasks that have already spent every attempt. Nothing in the current queue
+ * leaves one — a claim needs an attempt in hand, and every requeue is under the limit or gives the
+ * attempt back — so only a worker from before that rule, or a hand edit, can; but such a task can
+ * never be claimed, and would sit in the queue for ever. The read walks every queued row, so it
+ * runs at boot and then hourly rather than on every tick, and is bounded per run.
+ */
+export async function failSpentTasks(db: Db, workerId = "worker", context: AbandonContext = {}): Promise<number> {
+  const spent = await db.select().from(schema.tasks)
+    .where(and(eq(schema.tasks.status, "queued"), sql`${schema.tasks.attempts} >= ${schema.tasks.maxAttempts}`))
+    .limit(SPENT_SWEEP_LIMIT);
+  let failed = 0;
+  for (const task of spent) {
+    const error = `out of attempts (${task.attempts} of ${task.maxAttempts} spent); not retried`;
+    if (await abandonTask(db, task, error, workerId, { ...context, fence: sql`${schema.tasks.attempts} >= ${schema.tasks.maxAttempts}` })) failed++;
+  }
+  return failed;
 }
 
 /** One task the previous incarnation of this worker was running when it died. */
@@ -362,7 +493,9 @@ export async function recoverFromCrash(
     ids: suspects.map(s => s.id), deps, onAbandon: opts.onAbandon,
   });
   if (outcome.requeued || outcome.failed) log.warn("recovered tasks from a previous incarnation", { ...outcome, workerId: opts.workerId });
-  return { ...outcome, suspects, likely, holds };
+  const spent = await failSpentTasks(deps.db, opts.workerId, { deps, onAbandon: opts.onAbandon });
+  if (spent) log.warn("failed queued tasks that had spent every attempt", { spent, workerId: opts.workerId });
+  return { requeued: outcome.requeued, failed: outcome.failed + spent, suspects, likely, holds };
 }
 
 const LANES = ["interactive", "scan", "background"] as const;
@@ -433,12 +566,17 @@ export class TaskQueue {
   private turn = 0;
   /** Tasks this worker has claimed and not yet finished, so a shutdown can hand them back. */
   private readonly running = new Map<string, Task>();
+  /** Each running task's own signal, so a shutdown or a crash can stop every run at once. */
+  private readonly controllers = new Map<string, AbortController>();
+  /** Runs in progress, from the loops and from `runTask`, so `stop()` can wait for them. */
+  private readonly inFlight = new Set<Promise<void>>();
   private readonly activeByType = new Map<Task["type"], number>();
   /** A timed-out handler can outlive its queue attempt; its type stays reserved until it settles. */
   private readonly pendingSettlements = new Map<string, Promise<void>>();
   /** Serialises eligibility check + claim + reservation, so two loops cannot both admit a verification. */
   private claimTurn: Promise<void> = Promise.resolve();
   private readonly lanes: QueueLane[] | null;
+  private readonly maxActiveByType: Partial<Record<Task["type"], number>>;
 
   constructor(
     private readonly deps: WorkerDeps,
@@ -446,6 +584,7 @@ export class TaskQueue {
     private readonly opts: QueueOptions,
   ) {
     this.lanes = laneSlots(opts.concurrency);
+    this.maxActiveByType = { ...opts.maxActiveByType, ...DEFAULT_MAX_ACTIVE_BY_TYPE };
   }
 
   start(): void {
@@ -453,40 +592,71 @@ export class TaskQueue {
   }
 
   /**
-   * Stop claiming, wait a bounded while for what is running, then give back what this worker still
-   * holds: its tasks go straight back on the queue and its AI reservations are released.
+   * Stop claiming, stop every run, and give back what this worker holds: its tasks go straight
+   * back on the queue with their attempt returned, and once the stopped runs have settled — or the
+   * grace is over — its AI reservations are released.
    *
    * Without this a task killed mid-flight stays `running` until `TASK_STALE_AFTER_MS` (five
    * minutes) has passed, and a killed CV build's half-hour hold sits against that account's budget
    * for the full half hour, refusing work the account can plainly afford.
+   *
+   * Every run is stopped at once rather than after the grace: waiting first let a CV build stream
+   * model answers for the whole grace that nothing would keep, and pushed the hand-back past the
+   * platform's kill. A stopped run's writes are refused by its fence, so a handler that reads the
+   * abort as a failure — a CV build on its last attempt, a document import — cannot record one, and
+   * the task is handed back whatever the handler returned. Handing back precedes the wait, so the
+   * rows are safe even if the process is killed during it. Each database step is bounded.
    */
-  async stop(graceMs = STOP_GRACE_MS): Promise<void> {
+  async stop(graceMs = STOP_GRACE_MS, handBackMs = HAND_BACK_TIMEOUT_MS): Promise<void> {
     this.stopping = true;
-    let timer: NodeJS.Timeout | undefined;
-    await Promise.race([
-      Promise.all(this.loops),
-      new Promise<void>(resolve => { timer = setTimeout(resolve, graceMs); timer.unref?.(); }),
-    ]);
-    if (timer) clearTimeout(timer);
-    await this.handBack();
+    for (const controller of this.controllers.values())
+      if (!controller.signal.aborted) controller.abort(new ShutdownError());
+    await settleWithin(this.handBackAll(), handBackMs);
+    await settleWithin(Promise.all([...this.loops, ...this.inFlight]), graceMs);
+    await settleWithin(this.releaseHolds(), handBackMs);
   }
 
-  /** Requeue every task still owned here and drop this worker's live reservations. */
-  private async handBack(): Promise<void> {
-    for (const task of [...this.running.values()]) {
-      try {
-        // Fenced by the lease: a task already reclaimed by another worker is left alone. The
-        // attempt is given back too, so a shutdown never spends one of the task's retries.
-        const rows = await this.deps.db
-          .update(schema.tasks)
-          .set({ status: "queued", lockedAt: null, lockedBy: null, attempts: task.attempts - 1, error: "requeued: worker shutting down" })
-          .where(ownedTask(task)).returning({ id: schema.tasks.id });
-        if (rows.length) log.warn("task requeued on shutdown", { id: task.id, type: task.type });
-      } catch (err) {
-        log.error("failed to requeue task on shutdown", err);
-      }
+  /**
+   * Stop claiming and put back what this worker holds after an uncaught exception, the way a
+   * crash recovery would: each task spends its attempt, and one at its limit is failed with its
+   * abandonment hook. Unlike a shutdown the attempt is not returned, because the task that threw
+   * may be the one that brought the process down, and returning it would let that task take the
+   * worker down again on every restart.
+   */
+  async releaseAfterCrash(timeoutMs = HAND_BACK_TIMEOUT_MS): Promise<void> {
+    this.stopping = true;
+    const ids = [...this.running.keys()];
+    const recovered = ids.length
+      ? requeueStale(this.deps.db, 0, this.opts.workerId, { ids, deps: this.deps, onAbandon: this.opts.onAbandon })
+      : Promise.resolve();
+    await settleWithin(recovered, timeoutMs);
+    for (const controller of this.controllers.values())
+      if (!controller.signal.aborted) controller.abort(new LeaseLostError("worker crashed; this run's task has been put back"));
+    await settleWithin(this.releaseHolds(), timeoutMs);
+  }
+
+  /**
+   * Requeue one task this worker still owns, with its attempt given back. Fenced by the lease: a
+   * task already reclaimed by another worker, or already handed back, is left alone.
+   */
+  private async handBackOne(task: Task): Promise<void> {
+    try {
+      const rows = await this.deps.db
+        .update(schema.tasks)
+        .set({ status: "queued", lockedAt: null, lockedBy: null, attempts: task.attempts - 1, error: "requeued: worker shutting down" })
+        .where(ownedTask(task)).returning({ id: schema.tasks.id });
+      if (rows.length) log.warn("task requeued on shutdown", { id: task.id, type: task.type });
+    } catch (err) {
+      log.error("failed to requeue task on shutdown", err);
     }
-    this.running.clear();
+  }
+
+  private async handBackAll(): Promise<void> {
+    for (const task of [...this.running.values()]) await this.handBackOne(task);
+  }
+
+  /** Drop this worker's live reservations: nothing it is stopping will settle them. */
+  private async releaseHolds(): Promise<void> {
     try {
       const released = await releaseAiHolds(this.deps.db, { workerId: this.opts.workerId });
       if (released.count) {
@@ -500,6 +670,11 @@ export class TaskQueue {
 
   get activeCount(): number {
     return this.active;
+  }
+
+  /** Started and not stopping: the loops are claiming. */
+  get isRunning(): boolean {
+    return this.loops.length > 0 && !this.stopping;
   }
 
   /** Process queued tasks until the queue is empty. Used by tests and the CLI. */
@@ -540,9 +715,12 @@ export class TaskQueue {
   }
 
   /**
-   * Admit at most one browser-capable company verification in this process while leaving every
-   * other task eligible. The short local critical section closes the gap between checking the
-   * active count and reserving the type; the database claim remains the cross-process lease.
+   * Admit at most `maxActiveByType` runs of a capped type in this process — one browser-capable
+   * company verification, and as many CV builds as the worker is configured to allow — while
+   * leaving every other task eligible, so a backlog of one type can never occupy every slot. A run
+   * cut off by its deadline counts until it settles. The short local critical section closes the
+   * gap between checking the active count and reserving the type; the database claim remains the
+   * cross-process lease, so each cap is per process.
    */
   private async claimForSlot(slot: number): Promise<Task | null> {
     const previous = this.claimTurn;
@@ -551,7 +729,9 @@ export class TaskQueue {
     await previous;
     try {
       if (this.stopping) return null;
-      const excluded: Task["type"][] = (this.activeByType.get("verify_company") ?? 0) > 0 ? ["verify_company"] : [];
+      const excluded = (Object.entries(this.maxActiveByType) as Array<[Task["type"], number]>)
+        .filter(([type, cap]) => (this.activeByType.get(type) ?? 0) >= cap)
+        .map(([type]) => type);
       const lane: QueueLane = this.lanes ? this.lanes[slot % this.lanes.length]! : LANES[this.turn++ % LANES.length]!;
       const workerId = `${this.opts.workerId}#${slot}`;
       const task = (await claimTask(this.deps.db, workerId, lane, excluded))
@@ -601,8 +781,23 @@ export class TaskQueue {
     finally { this.releaseTypeWhenSettled(task); }
   }
 
+  /**
+   * A ledger entry from the failure path. The database that just refused the task's own write may
+   * refuse this one too, and a throw here would end the slot's loop for good.
+   */
+  private async record(event: Parameters<typeof recordWorkerEvent>[1]): Promise<void> {
+    try {
+      await recordWorkerEvent(this.deps.db, event);
+    } catch (err) {
+      log.error("failed to record a worker event", { kind: event.kind, taskId: event.taskId ?? null, error: (err as Error)?.message });
+    }
+  }
+
   private async runTaskReserved(task: Task): Promise<void> {
-    return withLogContext({ taskId: task.id, taskType: task.type }, () => this.runTaskInContext(task));
+    const run = withLogContext({ taskId: task.id, taskType: task.type }, () => this.runTaskInContext(task));
+    this.inFlight.add(run);
+    try { return await run; }
+    finally { this.inFlight.delete(run); }
   }
 
   private async runTaskInContext(task: Task): Promise<void> {
@@ -613,12 +808,17 @@ export class TaskQueue {
     // This run's own signal: the deadline aborts it, and so does a heartbeat that finds the task
     // has been taken by another worker. A handler that made model calls or took holds stops.
     const stop = new AbortController();
+    this.controllers.set(task.id, stop);
+    /** Stopped because this worker is shutting down: the task goes back, whatever the run did. */
+    const handedBack = () => stop.signal.reason instanceof ShutdownError;
     let renewing = false;
     const heartbeatMs = this.opts.heartbeatMs ?? Math.max(100, Math.min(30_000, (this.opts.staleAfterMs ?? TASK_STALE_AFTER_MS) / 3));
     const heartbeat = setInterval(() => {
       if (renewing) return;
       renewing = true;
       const renewal = renewTask(this.deps.db, task).then(renewed => {
+        // Blocked behind a write transaction on the row, most often this run's own: try again.
+        if (renewed === null) { log.debug("task heartbeat waited on the row lock", { id: task.id, type: task.type }); return; }
         // The task is someone else's now: this run's writes are stale and it must not spend more.
         if (!renewed && !stop.signal.aborted) {
           log.warn("task heartbeat lost the task", { id: task.id, type: task.type });
@@ -641,7 +841,10 @@ export class TaskQueue {
       // task was holding what, and the delta is what says which type grows the heap.
       log.info("task start", { id: task.id, type: task.type, attempt: task.attempts, workerId: this.opts.workerId, commit: process.env.RENDER_GIT_COMMIT ?? null, readyWaitMs: readyWaitMs(task), heapUsedMb: before.heapUsedMb, heapLimitMb: before.heapLimitMb, rssMb: before.rssMb });
       const deadlineMs = deadlineMsFor(task.type, this.opts.deadlines);
-      const work = handler(task, { ...this.deps, assertOwnership: db => assertTaskOwnership(db, task) }, { signal: stop.signal });
+      // The run's signal travels with its deps, so whatever the handler holds on the run's behalf
+      // — a resource lease — lets go when the queue gives up on it.
+      const runDeps: RunDeps = { ...this.deps, signal: stop.signal, assertOwnership: db => assertRunOwnership(db, task, stop.signal) };
+      const work = handler(task, runDeps, { signal: stop.signal });
       const result = await withDeadline(work, deadlineMs, task.type, started, stop).catch(err => {
         // The handler is told to stop, but it settles in its own time: its outcome is logged
         // rather than left unobserved, and its writes are refused by the lease fence, because
@@ -655,17 +858,32 @@ export class TaskQueue {
         }
         throw err;
       });
+      if (handedBack()) { await this.handBackOne(task); return; }
       if (!await completeTask(this.deps.db, task, result)) { log.warn("task completion discarded: lease lost", { id: task.id }); return; }
       if (task.type === "scan_company" || task.type === "run_daily") await finaliseScanRuns(this.deps);
       log.info("task done", { id: task.id, type: task.type, ms: Date.now() - started, ...this.heapReport(before) });
     } catch (err) {
-      const outcome = await failTask(this.deps.db, task, err).catch((e) => {
-        log.error("failTask failed", e);
-        return "failed" as const;
-      });
+      if (handedBack()) {
+        log.info("task handed back on shutdown", { id: task.id, type: task.type, error: (err as Error)?.message });
+        await this.handBackOne(task);
+        return;
+      }
+      let outcome: "retry" | "failed" | "lost";
+      try {
+        outcome = await failTask(this.deps.db, task, err);
+      } catch (failure) {
+        // Whether the task is spent is unknown from here, and the row is still `running` under
+        // this run's lock. Treating that as failed for good used to close a CV draft off and
+        // release its hold under a task the stale sweep then ran again. The sweep decides
+        // instead, and runs the abandonment hook only if the task really is out of attempts.
+        log.error("failTask failed; leaving the task for the stale sweep", {
+          id: task.id, type: task.type, attempt: task.attempts, error: (err as Error)?.message, failure: (failure as Error)?.message,
+        });
+        return;
+      }
       log.warn(`task ${outcome}`, { id: task.id, type: task.type, error: (err as Error).message, ms: Date.now() - started, ...this.heapReport(before) });
       if (err instanceof TimeoutError) {
-        await recordWorkerEvent(this.deps.db, {
+        await this.record({
           workerId: this.opts.workerId, kind: "task_deadline", taskId: task.id, taskType: task.type, userId: taskUserId(task.payload),
           detail: { attempts: task.attempts, elapsedMs: Date.now() - started, deadlineMs: deadlineMsFor(task.type, this.opts.deadlines), outcome, subject: taskSubject(task.type, task.payload) },
         });
@@ -680,7 +898,7 @@ export class TaskQueue {
       // The last attempt of a handler that keeps throwing leaves the same half-finished work
       // behind as a crash, so it closes it off the same way.
       if (outcome === "failed") {
-        await recordWorkerEvent(this.deps.db, {
+        await this.record({
           workerId: this.opts.workerId, kind: "task_abandoned", taskId: task.id, taskType: task.type, userId: taskUserId(task.payload),
           detail: { attempts: task.attempts, maxAttempts: task.maxAttempts, lockedBy: task.lockedBy, subject: taskSubject(task.type, task.payload), error: (err as Error).message },
         });
@@ -689,6 +907,7 @@ export class TaskQueue {
     } finally {
       clearInterval(heartbeat);
       this.running.delete(task.id);
+      this.controllers.delete(task.id);
       this.active--;
     }
   }

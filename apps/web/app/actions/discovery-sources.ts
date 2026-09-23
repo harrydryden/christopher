@@ -12,6 +12,12 @@ import { zUuid } from "@/lib/validation";
 import { unsafeUrlRefusal } from "@/lib/public-url";
 import type { DiscoveryActionResult } from "@/lib/discovery-ux";
 
+/**
+ * Each enabled source is fetched through the shared polite fetcher and read by the model on its
+ * interval, so one account keeps a newsletter shelf, not a crawl list.
+ */
+const MAX_DISCOVERY_SOURCES = 20;
+
 const sourceInput = z.object({ name: z.string().trim().min(1).max(200), kind: z.enum(["website", "email", "linkedin"]), intervalDays: z.coerce.number().int().min(1).max(90) });
 export async function saveDiscoverySource(form: FormData): Promise<DiscoveryActionResult> {
   const user = await requireVerifiedUser();
@@ -32,14 +38,18 @@ export async function saveDiscoverySource(form: FormData): Promise<DiscoveryActi
     if (unsafe) return { ok: false, error: unsafe };
   }
   const created = await db().transaction(async tx => {
-    // Serialise equivalent additions, including separate browser tabs.
+    // Serialise this account's additions, including separate browser tabs, so neither the duplicate
+    // check nor the count can be passed twice at once.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`discovery-sources:${user.id}`}))`);
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${user.id}:${url ?? `email:${name.toLowerCase()}`}`}))`);
     const existing = await tx.select().from(discoverySources).where(eq(discoverySources.userId, user.id));
-    if (existing.some(row => url ? row.url && normalizeUrl(row.url) === url : row.kind === "email" && row.name.toLowerCase() === name.toLowerCase())) return false;
+    if (existing.some(row => url ? row.url && normalizeUrl(row.url) === url : row.kind === "email" && row.name.toLowerCase() === name.toLowerCase())) return "duplicate";
+    if (existing.length >= MAX_DISCOVERY_SOURCES) return "full";
     await tx.insert(discoverySources).values({ userId: user.id, name, kind, intervalDays, url });
-    return true;
+    return "created";
   });
-  if (!created) return { ok: false, error: "This source is already on your list. Use its settings or Check now." };
+  if (created === "duplicate") return { ok: false, error: "This source is already on your list. Use its settings or Check now." };
+  if (created === "full") return { ok: false, error: `You can keep up to ${MAX_DISCOVERY_SOURCES} sources, and this list is full. Point one you no longer read at the new address instead.` };
   revalidatePath("/suggestions");
   return { ok: true, message: kind === "email" ? "Source added. Import an edition to get started." : "Source added. Its first check is due now." };
 }

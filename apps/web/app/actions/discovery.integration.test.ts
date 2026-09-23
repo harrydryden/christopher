@@ -162,3 +162,9 @@ it("refuses a discovery source on an address the worker will never fetch", async
     .toEqual({ ok: false, error: "wiki.internal is a local network name." });
   expect((await database.select().from(schema.discoverySources))[0]!.url).toBe("https://news.example/blog");
 });
+it("keeps an account to 20 discovery sources", async () => {
+  await database.insert(schema.discoverySources).values(Array.from({ length: 20 }, (_, n) => ({ userId: user.id, name: `Source ${n}`, kind: "website" as const, url: `https://news${n}.example/` })));
+  expect(await saveDiscoverySource(form({ name: "One more", kind: "website", intervalDays: "7", url: "https://more.example/blog" })))
+    .toEqual({ ok: false, error: "You can keep up to 20 sources, and this list is full. Point one you no longer read at the new address instead." });
+  expect(await database.select().from(schema.discoverySources)).toHaveLength(20);
+});

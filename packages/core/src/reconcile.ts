@@ -31,9 +31,13 @@ export interface JobUpdate {
 export interface ReconcileResult {
   mode: ScanMode;
   inserts: Array<KeyedPosting & { repostOfJobId?: string }>;
-  /** Jobs present in the scan: refresh last_seen and reset missing_scans. */
+  /**
+   * Jobs present in the scan: refresh last_seen and reset missing_scans. Both ok and partial scans
+   * report them, because being listed is positive evidence whether or not the listing was complete.
+   */
   seen: string[];
   updates: JobUpdate[];
+  /** Closed jobs present in the scan (ok or partial): reopen them with a fresh miss count. */
   reopened: string[];
   /** Open jobs absent from an ok scan whose missing_scans is still below the threshold. */
   missing: string[];

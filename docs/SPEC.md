@@ -245,7 +245,7 @@ Pipeline, in order. Every step adds candidates with a confidence; the best candi
 - **R-4.4** Display status is derived: **New** = open and `coalesce(posted_at, first_seen_at)` within the last 7 days; **Active** = open and older; **Closed** = closed. Closed roles are shown for 30 days by default and retained indefinitely.
 - **R-4.5** `live for` = today − `coalesce(posted_at, first_seen_at)` while open, or `closed_at` − that start once closed. The UI marks values derived from first-seen with a small indicator and a tooltip ("Source does not publish a posted date; counted from when this tool first saw the role").
 - **R-4.6** Postings found on a company's first successful scan are flagged `seeded`. They still show as New for 7 days (they are new to you) but carry the seeded marker.
-- **R-4.7** Scans that are not `ok` never change `missing_scans` or close anything.
+- **R-4.7** Scans that are not `ok` never count a miss or close anything. A `partial` scan still reconciles what it did list: a role it lists is seen, so its `missing_scans` returns to 0, and a closed role it lists is reopened with a fresh count, because being listed is evidence the role is there even when the listing was not read completely. `suspect_empty` and `failed` scans change nothing.
 - **R-4.8** Roles that are identical in title at the same company but differ in location (common on Greenhouse) remain separate rows; the table offers "group by role" which merges them into one expandable row, and a decision on the group applies to all members.
 - **R-4.10** A posting with `origin = 'user'` (added by a follower from its URL, R-1.7) takes no part in reconciliation: it was never in a listing, so no `ok` scan counts it missing, closes it or reopens it. When a scan does observe its canonical URL, the row is *adopted* rather than duplicated: it takes the listing's `external_key` and source, becomes `origin = 'scan'`, keeps `added_by`, and is reconciled from then on like any other posting, including the two-miss close in R-4.2. An `updated` event records the adoption. Adoption is skipped if a scanned row already holds that `(source, external_key)`.
 
@@ -720,7 +720,7 @@ stateDiagram-v2
   end note
 ```
 
-Scans with status `partial`, `suspect_empty` or `failed` do not move any job along these edges.
+A `partial` scan moves a job only towards open: a job it lists is present (`missing_scans = 0`) and a closed job it lists is reopened, with its count starting again from 0. It never counts a miss and never closes anything. Scans with status `suspect_empty` or `failed` do not move any job along these edges.
 
 ---
 

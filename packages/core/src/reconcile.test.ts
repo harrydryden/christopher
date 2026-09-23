@@ -75,6 +75,23 @@ describe("reconcile", () => {
     const r = reconcile([job({ status: "closed", closedAt: daysAgo(3) })], [posting()], { mode: "ok", now });
     expect(r.reopened).toEqual(["job-1"]);
   });
+  it("reports a once-missed job that is listed again as seen, never missing or closed", () => {
+    // The caller resets missing_scans for every seen job: that reset is what makes the two misses
+    // that close a role consecutive ones.
+    const r = reconcile([job({ missingScans: 1 })], [posting()], { mode: "ok", now });
+    expect(r.seen).toEqual(["job-1"]);
+    expect(r.missing).toEqual([]);
+    expect(r.closed).toEqual([]);
+  });
+  it("lets a partial scan see and reopen a job, but never count it missing", () => {
+    const closed = job({ id: "closed", externalKey: "id:1", status: "closed", closedAt: daysAgo(1), missingScans: 2 });
+    const absent = job({ id: "absent", externalKey: "id:2", missingScans: 1 });
+    const r = reconcile([closed, absent], [posting()], { mode: "partial", now });
+    expect(r.seen).toEqual(["closed"]);
+    expect(r.reopened).toEqual(["closed"]);
+    expect(r.missing).toEqual([]);
+    expect(r.closed).toEqual([]);
+  });
   it("links a new posting to a recently closed twin as a repost", () => {
     const closed = job({ id: "old", externalKey: "id:old", status: "closed", closedAt: daysAgo(5) });
     const r = reconcile([closed], [posting({ externalId: "new" })], { mode: "ok", now });

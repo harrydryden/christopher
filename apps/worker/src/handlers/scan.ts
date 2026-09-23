@@ -551,8 +551,11 @@ async function scanSource(
     }
   }
 
+  // Being seen is positive evidence in every mode that reconciles: a partial scan that lists a role
+  // proves it is still there as surely as an ok one does, so either resets the miss count. What a
+  // partial scan may not do is count a miss or close anything, and reconcile() gives it neither.
   if (result.seen.length > 0) {
-    await deps.db.update(schema.jobs).set({ lastSeenAt: deps.now(), ...(mode === "ok" ? { missingScans: 0 } : {}) }).where(inArray(schema.jobs.id, result.seen));
+    await deps.db.update(schema.jobs).set({ lastSeenAt: deps.now(), missingScans: 0 }).where(inArray(schema.jobs.id, result.seen));
   }
   // Refresh every observed posting, including fields the identity reconciliation does not compare.
   const observed = new Map(keyPostings(postings).keyed.map((p) => [p.externalKey, p]));
@@ -652,7 +655,9 @@ async function scanSource(
   if (result.reopened.length > 0) {
     await deps.db
       .update(schema.jobs)
-      .set({ status: "open", closedAt: null, ...(mode === "ok" ? { missingScans: 0 } : {}), reopenedCount: sql`${schema.jobs.reopenedCount} + 1` })
+      // A reopened role starts its two-miss count afresh, whichever scan saw it. A closed row carries
+      // the count that closed it, so leaving that in place would let a single later miss close it again.
+      .set({ status: "open", closedAt: null, missingScans: 0, reopenedCount: sql`${schema.jobs.reopenedCount} + 1` })
       .where(inArray(schema.jobs.id, result.reopened));
     await deps.db.insert(schema.jobEvents).values(result.reopened.map(jobId => ({ jobId, type: "reopened" as const, payload: {} })));
   }

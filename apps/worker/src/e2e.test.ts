@@ -673,7 +673,7 @@ describe("functional review regressions", () => {
     expect((await db.select().from(schema.userJobs)).filter(job => job.archivedAt)).toHaveLength(rows.length);
   });
 
-  it("does not reset missing counters on a partial scan", async () => {
+  it("resets the miss count of every role a partial scan saw, and counts nothing against the rest", async () => {
     const company = await addCompany("https://www.acme.example/", "acme.example");
     await queue.drain();
     const [source] = await db.select().from(schema.careerSources);
@@ -683,8 +683,91 @@ describe("functional review regressions", () => {
     const outcome = await _scanSourceForTests(deps, company, source!, await deps.settings(), null);
     expect(outcome.status).toBe("partial");
     const jobs = await db.select().from(schema.jobs);
-    expect(jobs.every(job => job.missingScans === 1 && job.status === "open")).toBe(true);
+    expect(jobs.every(job => job.status === "open")).toBe(true);
+    // Listed by the partial scan: still there, so the earlier miss no longer counts.
+    const seen = new Set([`id:${JOB_OPERATIONS_MANAGER.id}`, `id:${JOB_ENGINEER.id}`]);
+    expect(jobs.filter(job => seen.has(job.externalKey)).map(job => job.missingScans)).toEqual([0, 0]);
+    // Not listed by it: an incomplete listing is no evidence of absence, so nothing moves.
+    expect(jobs.filter(job => !seen.has(job.externalKey)).every(job => job.missingScans === 1)).toBe(true);
   }, 60_000);
+
+  it("reopens a role a partial scan lists with a fresh miss count, so one later miss cannot close it", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources);
+    const scanOn = async (day: string) => {
+      now = new Date(`${day}T06:00:00Z`);
+      const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+      return _scanSourceForTests(deps, company, current!, await deps.settings(), null);
+    };
+    const manager = async () => (await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, `id:${JOB_OPERATIONS_MANAGER.id}`)))[0]!;
+
+    // Two consecutive successful misses close it.
+    setJobs([JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
+    await scanOn("2026-09-06");
+    await scanOn("2026-09-07");
+    expect(await manager()).toMatchObject({ status: "closed", missingScans: 2 });
+
+    // A partial scan (the listing collapsed against a large previous ok scan) lists it again.
+    const [inflated] = await db.insert(schema.scans).values({ sourceId: source!.id, status: "ok", postingsFound: 20, startedAt: new Date("2026-09-07T12:00:00Z") }).returning();
+    setJobs([JOB_OPERATIONS_MANAGER, JOB_ENGINEER]);
+    expect((await scanOn("2026-09-08")).status).toBe("partial");
+    expect(await manager()).toMatchObject({ status: "open", missingScans: 0, closedAt: null });
+    await db.delete(schema.scans).where(eq(schema.scans.id, inflated!.id));
+
+    // One ok miss after that is the first of two, not the second.
+    setJobs([JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK]);
+    expect((await scanOn("2026-09-09")).status).toBe("ok");
+    expect(await manager()).toMatchObject({ status: "open", missingScans: 1 });
+    await scanOn("2026-09-10");
+    expect(await manager()).toMatchObject({ status: "closed", missingScans: 2 });
+  }, 90_000);
+
+  it("closes only on consecutive misses: a role listed again between two misses stays open", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources);
+    const scanOn = async (day: string) => {
+      now = new Date(`${day}T06:00:00Z`);
+      const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+      return _scanSourceForTests(deps, company, current!, await deps.settings(), null);
+    };
+    const manager = async () => (await db.select().from(schema.jobs).where(eq(schema.jobs.externalKey, `id:${JOB_OPERATIONS_MANAGER.id}`)))[0]!;
+    const without = [JOB_ENGINEER, JOB_OPS_NEW_YORK, JOB_OPS_REMOTE_US, JOB_OPS_REMOTE_UK];
+
+    setJobs(without);
+    expect((await scanOn("2026-09-06")).status).toBe("ok");
+    expect(await manager()).toMatchObject({ status: "open", missingScans: 1 });
+    setJobs([JOB_OPERATIONS_MANAGER, ...without]);
+    expect((await scanOn("2026-09-07")).status).toBe("ok");
+    expect(await manager()).toMatchObject({ status: "open", missingScans: 0 });
+    setJobs(without);
+    expect((await scanOn("2026-09-08")).status).toBe("ok");
+    expect(await manager()).toMatchObject({ status: "open", missingScans: 1 });
+  }, 90_000);
+
+  it("closes nothing when a board that listed roles comes back empty, twice", async () => {
+    await setGate({});
+    const company = await addCompany("https://www.acme.example/", "acme.example");
+    await queue.drain();
+    const [source] = await db.select().from(schema.careerSources);
+    setJobs([]);
+    for (const day of ["2026-09-06", "2026-09-07"]) {
+      now = new Date(`${day}T06:00:00Z`);
+      const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
+      expect((await _scanSourceForTests(deps, company, current!, await deps.settings(), null)).status).toBe("suspect_empty");
+    }
+    const scans = await db.select().from(schema.scans).where(eq(schema.scans.sourceId, source!.id)).orderBy(desc(schema.scans.startedAt));
+    expect(scans.slice(0, 2).map(scan => scan.status)).toEqual(["suspect_empty", "suspect_empty"]);
+    const jobs = await db.select().from(schema.jobs);
+    expect(jobs).toHaveLength(5);
+    expect(jobs.every(job => job.status === "open" && job.missingScans === 0)).toBe(true);
+    // An empty board where there were roles is worth finding again.
+    const rediscovery = await db.select().from(schema.tasks).where(sql`type = 'discover' and payload->>'reason' = 'suspect_empty'`);
+    expect(rediscovery).toHaveLength(1);
+  }, 90_000);
 
   it("does not call an unextractable HTML page a successful empty scan", async () => {
     const company = await addCompany("https://www.acme.example/", "acme.example");

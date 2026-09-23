@@ -59,7 +59,8 @@ async function main() {
   await reportHeartbeat();
   const heartbeatTimer = setInterval(() => void reportHeartbeat(), 30_000);
   const scheduler = startScheduler(deps);
-  const server = startHealthServer(deps, env.port, () => ({ active: queue.activeCount, commit: process.env.RENDER_GIT_COMMIT ?? null }));
+  const server = startHealthServer(deps, env.port, () => ({ active: queue.activeCount, commit: process.env.RENDER_GIT_COMMIT ?? null }),
+    { isRunning: () => queue.isRunning });
 
   let shuttingDown = false;
   const shutdown = async (signal: string) => {

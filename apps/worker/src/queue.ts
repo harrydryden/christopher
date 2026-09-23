@@ -633,6 +633,11 @@ export class TaskQueue {
     return this.active;
   }
 
+  /** Started and not stopping: the loops are claiming. */
+  get isRunning(): boolean {
+    return this.loops.length > 0 && !this.stopping;
+  }
+
   /** Process queued tasks until the queue is empty. Used by tests and the CLI. */
   async drain(maxTasks = 1000): Promise<number> {
     let n = 0;

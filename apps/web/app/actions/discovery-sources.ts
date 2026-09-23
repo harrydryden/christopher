@@ -9,6 +9,7 @@ import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { getSettings } from "@/lib/settings";
 import { zUuid } from "@/lib/validation";
+import { unsafeUrlRefusal } from "@/lib/public-url";
 import type { DiscoveryActionResult } from "@/lib/discovery-ux";
 
 const sourceInput = z.object({ name: z.string().trim().min(1).max(200), kind: z.enum(["website", "email", "linkedin"]), intervalDays: z.coerce.number().int().min(1).max(90) });
@@ -27,6 +28,8 @@ export async function saveDiscoverySource(form: FormData): Promise<DiscoveryActi
       if (kind === "linkedin" && parsedUrl.hostname !== "linkedin.com" && !parsedUrl.hostname.endsWith(".linkedin.com")) return { ok: false, error: "Use a LinkedIn URL, or select Website for another site." };
       url = normalizeUrl(parsedUrl.href);
     } catch { return { ok: false, error: "Enter a valid public website or LinkedIn URL." }; }
+    const unsafe = unsafeUrlRefusal(url);
+    if (unsafe) return { ok: false, error: unsafe };
   }
   const created = await db().transaction(async tx => {
     // Serialise equivalent additions, including separate browser tabs.
@@ -63,6 +66,8 @@ export async function updateDiscoverySource(id: string, form: FormData): Promise
         if (source.kind === "linkedin" && parsedUrl.hostname !== "linkedin.com" && !parsedUrl.hostname.endsWith(".linkedin.com")) return "Use a LinkedIn URL for this source.";
         url = normalizeUrl(parsedUrl.href);
       } catch { return "Enter a valid public source URL."; }
+      const unsafe = url ? unsafeUrlRefusal(url) : null;
+      if (unsafe) return unsafe;
     }
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${user.id}:${url ?? `email:${name.toLowerCase()}`}`}))`);
     const existing = await tx.select().from(discoverySources).where(eq(discoverySources.userId, user.id));

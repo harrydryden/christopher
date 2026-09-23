@@ -10,6 +10,7 @@ import { applySuggestedName, normaliseCompanyName } from "@/lib/company-names";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { fail, zUuid, type ActionResult } from "@/lib/validation";
+import { unsafeUrlRefusal } from "@/lib/public-url";
 
 /** Catalogue edits are seen by every follower, so they live in the administrator's section. */
 function revalidateCatalogue(companyId?: string | null): void {
@@ -36,6 +37,9 @@ export async function saveCatalogueCompany(companyId: string, _previous: ActionR
   } catch {
     return fail("Enter a valid main website, such as https://anduril.com/.");
   }
+  // The worker fetches the homepage for the logo and for discovery, so it must be one it may fetch.
+  const unsafe = unsafeUrlRefusal(homepageUrl);
+  if (unsafe) return fail(unsafe);
   const domain = extractDomain(homepageUrl);
   const duplicate = await db().select({ id: companies.id }).from(companies).where(eq(companies.domain, domain)).limit(1);
   if (duplicate[0] && duplicate[0].id !== id) return fail("Another company already uses this domain.");

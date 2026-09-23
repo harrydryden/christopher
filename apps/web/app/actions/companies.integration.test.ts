@@ -436,3 +436,15 @@ it("flags a pasted posting that is not on the company's own hosts, so the worker
     "https://attacker.example/acme-senior-operations": true,
   });
 });
+
+it("refuses addresses the worker will never fetch, in a sentence, before anything is queued", async () => {
+  await expect(addCompanies(urls("http://10.0.0.1\nhttp://printer.local\nhttps://acme.example"))).rejects.toThrow(
+    `redirect:/companies?${new URLSearchParams({ added: "1", skipped: "10.0.0.1 is a private or local network address, printer.local is a local network name" }).toString()}`,
+  );
+  expect((await database.select().from(schema.companies)).map(row => row.domain)).toEqual(["acme.example"]);
+  const [company] = await database.select().from(schema.companies);
+  await expect(importPosting(company!.id, urlForm("http://192.168.1.10/jobs/1"))).rejects.toThrow("192.168.1.10 is a private or local network address.");
+  await expect(pasteDiscoveryUrl(company!.id, urlForm("http://metadata.google.internal/careers"))).rejects.toThrow("metadata.google.internal is a local network name.");
+  expect(await tasksOfType("import_posting")).toHaveLength(0);
+  expect((await tasksOfType("discover")).filter(task => (task.payload as { reason?: string }).reason === "pasted")).toHaveLength(0);
+});

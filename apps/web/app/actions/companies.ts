@@ -10,6 +10,7 @@ import { z } from "zod";
 import { careerSources, companies, companySubscriptions, discoveryRuns, jobs, tasks, SOURCE_TYPES, type CompanySubscription } from "@ava/db/schema";
 import { dedupeKeyFor, discovery, ensureHttpUrl, extractDomain, MAX_COMPANIES_PER_SUBMISSION, normalisePostingUrl, priorityFor } from "@ava/core";
 import { postingOnCompanyHost } from "@/lib/posting-host";
+import { unsafeUrlRefusal } from "@/lib/public-url";
 import { applySuggestedName, normaliseCompanyName, upsertNameSuggestion } from "@/lib/company-names";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
@@ -84,6 +85,13 @@ export async function addCompanies(formData: FormData): Promise<void> {
       domain = extractDomain(url);
     } catch {
       skipped.push(line);
+      continue;
+    }
+    // An address the worker will never fetch is skipped with the reason, not added to the catalogue.
+    const unsafe = unsafeUrlRefusal(url);
+    if (unsafe) {
+      // The skipped list is one line of items, so the reason goes in without its full stop.
+      skipped.push(unsafe.replace(/\.$/, ""));
       continue;
     }
     if (seen.has(domain)) continue;
@@ -258,6 +266,8 @@ export async function importPosting(companyId: string, formData: FormData): Prom
   const id = zUuid().parse(companyId);
   await requireFollowed(user.id, id, { live: true });
   const url = normalisePostingUrl(zUrlString().parse(String(formData.get("url") ?? "")));
+  const unsafe = unsafeUrlRefusal(url);
+  if (unsafe) throw new UserFacingError(unsafe);
   const [company] = await db().select({ domain: companies.domain, homepageUrl: companies.homepageUrl }).from(companies).where(eq(companies.id, id)).limit(1);
   if (!company) throw new UserFacingError("You do not follow this company.");
   const sources = await db().select({ type: careerSources.type, url: careerSources.url, apiUrl: careerSources.apiUrl, atsSlug: careerSources.atsSlug, atsSite: careerSources.atsSite, status: careerSources.status })
@@ -425,6 +435,8 @@ export async function pasteDiscoveryUrl(companyId: string, formData: FormData): 
   const id = zUuid().parse(companyId);
   await requireFollowed(user.id, id, { live: true });
   const url = zUrlString().parse(String(formData.get("url") ?? ""));
+  const unsafe = unsafeUrlRefusal(url);
+  if (unsafe) throw new UserFacingError(unsafe);
   // Each pasted URL is a discovery of its own — fetches, perhaps a browser, model reads — so a
   // company has one in hand at a time; the next URL can be tried once that one has answered.
   const [inFlight] = await db().select({ id: tasks.id }).from(tasks)

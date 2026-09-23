@@ -22,7 +22,7 @@ vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (session ? {
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
-import { removeCatalogueSource } from "./admin";
+import { removeCatalogueSource, saveCatalogueCompany } from "./admin";
 
 beforeAll(async () => {
   const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_b");
@@ -100,4 +100,14 @@ it("leaves the catalogue alone for a member", async () => {
   const [untouched] = await database.select().from(schema.careerSources).where(eq(schema.careerSources.id, source.id));
   expect(untouched!.status).toBe("active");
   expect((await database.select().from(schema.userJobs)).every(row => row.archivedAt === null)).toBe(true);
+});
+
+it("refuses a main website the worker will never fetch", async () => {
+  const { company } = await fixture();
+  const form = new FormData();
+  form.set("name", "Acme");
+  form.set("homepageUrl", "http://10.1.2.3/");
+  expect(await saveCatalogueCompany(company.id, { ok: true }, form)).toEqual({ ok: false, error: "10.1.2.3 is a private or local network address." });
+  const [unchanged] = await database.select().from(schema.companies).where(eq(schema.companies.id, company.id));
+  expect(unchanged!.homepageUrl).toBe("https://acme.example");
 });

@@ -153,3 +153,12 @@ it("holds a member who already follows 200 companies to that when accepting a re
   expect(await database.select().from(schema.companies).where(eq(schema.companies.domain, "acme.example"))).toHaveLength(0);
   expect((await database.select().from(schema.companySuggestions))[0]!.status).toBe("pending");
 });
+it("refuses a discovery source on an address the worker will never fetch", async () => {
+  expect(await saveDiscoverySource(form({ name: "Intranet", kind: "website", intervalDays: "7", url: "http://127.0.0.1/news" })))
+    .toEqual({ ok: false, error: "127.0.0.1 is a private or local network address." });
+  expect(await database.select().from(schema.discoverySources)).toHaveLength(0);
+  const [row] = await database.insert(schema.discoverySources).values({ userId: user.id, name: "Blog", kind: "website", url: "https://news.example/blog" }).returning();
+  expect(await updateDiscoverySource(row!.id, form({ intervalDays: "7", url: "http://wiki.internal/jobs" })))
+    .toEqual({ ok: false, error: "wiki.internal is a local network name." });
+  expect((await database.select().from(schema.discoverySources))[0]!.url).toBe("https://news.example/blog");
+});

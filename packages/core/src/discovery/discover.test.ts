@@ -101,6 +101,26 @@ describe("discovery: an Anduril-style JavaScript shell", () => {
   });
 });
 
+describe("discovery: where it will not go", () => {
+  it("never follows a private or local address a page offers, and spends no fetch on it", async () => {
+    const ctx = createFakeDiscoveryContext({
+      routes: {
+        "https://www.acme.example/": {
+          body: '<html><head><title>Acme</title></head><body><a href="http://10.0.0.7/careers">Careers</a><a href="http://intranet/jobs">Jobs</a><a href="http://169.254.169.254/latest/meta-data/">Openings</a></body></html>',
+        },
+      },
+    });
+    const result = await discoverCareersSources("https://www.acme.example/", ctx);
+    const followed = ctx.requestLog.map((entry) => entry.url);
+    expect(followed.some((url) => url.startsWith("http://10.0.0.7") || url.startsWith("http://intranet") || url.startsWith("http://169.254"))).toBe(false);
+    expect(result.outcome).not.toBe("resolved");
+    // The probe of one pasted address refuses the same way, before any request is made.
+    const probe = await probeUrlAsSource("http://127.0.0.1:8080/careers", ctx);
+    expect(probe.candidates).toHaveLength(0);
+    expect(ctx.requestLog.some((entry) => entry.url.includes("127.0.0.1"))).toBe(false);
+  });
+});
+
 describe("discovery: other shapes", () => {
   it("does not auto-accept careers-content calls to action as job postings", async () => {
     const contentLinks = [

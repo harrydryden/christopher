@@ -43,7 +43,7 @@ const REPLACING_IS_ADMINS = "This company already has a working source, and only
 async function admitExistingRoles(userId: string, companyId: string, writer: ReturnType<typeof db>, options: { queue?: boolean } = {}): Promise<void> {
   const [count] = options.queue ? [] : await writer.select({ n: sql<number>`count(*)::int` }).from(jobs).where(eq(jobs.companyId, companyId));
   if (options.queue || (count?.n ?? 0) > 500) {
-    await enqueueTask(writer, "reevaluate_gate", { userId, companyId }, { dedupeKey: `reevaluate_gate:${userId}:${companyId}`, priority: 1 });
+    await enqueueTask(writer, "reevaluate_gate", { userId, companyId }, { dedupeKey: `reevaluate_gate:${userId}:${companyId}`, priority: 1, promote: true });
     return;
   }
   await reevaluateGate(writer, userId, await getSettingsFor(userId, writer), new Date(), { companyId });
@@ -117,14 +117,14 @@ export async function addCompanies(formData: FormData): Promise<void> {
         const outcome = await subscribeToCompany(tx, user.id, companyId);
         if (createdIds.has(candidate.domain)) {
           added++;
-          await tx.insert(tasks).values({ type: "discover", payload: { companyId, reason: "added" }, dedupeKey: `discover:${companyId}`, priority: 1 }).onConflictDoNothing();
+          await enqueue("discover", { companyId, reason: "added" }, tx);
         } else if (outcome.created || outcome.reactivated) {
           followed++;
           admit.push(companyId);
           // A company nobody followed for a while may have no usable source any more.
           const sources = await tx.select({ status: careerSources.status }).from(careerSources).where(eq(careerSources.companyId, companyId));
           if (!sources.some(s => s.status === "active" || s.status === "failing" || s.status === "needs_confirmation")) {
-            await tx.insert(tasks).values({ type: "discover", payload: { companyId, reason: "added" }, dedupeKey: `discover:${companyId}`, priority: 1 }).onConflictDoNothing();
+            await enqueue("discover", { companyId, reason: "added" }, tx);
           }
         } else skipped.push(candidate.domain);
       }
@@ -273,7 +273,7 @@ export async function importPosting(companyId: string, formData: FormData): Prom
   const sources = await db().select({ type: careerSources.type, url: careerSources.url, apiUrl: careerSources.apiUrl, atsSlug: careerSources.atsSlug, atsSite: careerSources.atsSite, status: careerSources.status })
     .from(careerSources).where(eq(careerSources.companyId, id));
   const payload = { userId: user.id, companyId: id, url, foreignHost: !postingOnCompanyHost(url, company, sources) };
-  await enqueueTask(db(), "import_posting", payload, { dedupeKey: dedupeKeyFor("import_posting", payload), priority: priorityFor("import_posting") });
+  await enqueueTask(db(), "import_posting", payload, { dedupeKey: dedupeKeyFor("import_posting", payload), priority: priorityFor("import_posting"), promote: true });
   revalidatePath(`/companies/${id}`);
 }
 
@@ -443,7 +443,7 @@ export async function pasteDiscoveryUrl(companyId: string, formData: FormData): 
     .where(and(eq(tasks.type, "discover"), inArray(tasks.status, ["queued", "running"]), sql`${tasks.payload}->>'companyId' = ${id}`, sql`${tasks.payload}->>'reason' = 'pasted'`))
     .limit(1);
   if (inFlight) throw new UserFacingError("A pasted URL for this company is still being checked. Try another once it has finished.");
-  await enqueueTask(db(), "discover", { companyId: id, url, reason: "pasted" }, { dedupeKey: `discover:${id}:url:${url}`, priority: 1 });
+  await enqueueTask(db(), "discover", { companyId: id, url, reason: "pasted" }, { dedupeKey: `discover:${id}:url:${url}`, priority: 1, promote: true });
   revalidatePath(`/companies/${id}`);
 }
 

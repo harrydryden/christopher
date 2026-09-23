@@ -3,7 +3,7 @@ import { requireVerifiedUser } from "@/lib/auth";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { reevaluateGate, subscribeToCompany } from "@ava/db";
-import { careerSources, companies, companySubscriptions, companySuggestions, jobs, tasks } from "@ava/db/schema";
+import { careerSources, companies, companySubscriptions, companySuggestions, jobs } from "@ava/db/schema";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { hasChosenGate } from "@/lib/queries/setup";
@@ -37,7 +37,7 @@ export async function acceptSuggestion(suggestionId: string): Promise<DiscoveryA
         await enqueue("discover", { companyId: company.id, url: suggestion.verification?.careersSource?.url, reason: "added" }, tx);
       }
       const [count] = await tx.select({ n: sql<number>`count(*)::int` }).from(jobs).where(eq(jobs.companyId, company.id));
-      if ((count?.n ?? 0) > 500) await tx.insert(tasks).values({ type: "reevaluate_gate", payload: { userId: user.id, companyId: company.id }, dedupeKey: `reevaluate_gate:${user.id}:${company.id}`, priority: 1 }).onConflictDoNothing();
+      if ((count?.n ?? 0) > 500) await enqueue("reevaluate_gate", { userId: user.id, companyId: company.id }, tx);
       else await reevaluateGate(tx as unknown as ReturnType<typeof db>, user.id, await getSettingsFor(user.id, tx as unknown as ReturnType<typeof db>), new Date(), { companyId: company.id });
     }
     await tx.update(companySuggestions).set({ status: "accepted", resolvedAt: new Date() }).where(eq(companySuggestions.id, id));

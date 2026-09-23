@@ -1,7 +1,7 @@
 import { cache } from "react";
 import { and, eq, inArray, notLike, sql } from "drizzle-orm";
 import { settings as settingsTable, userSettings as userSettingsTable } from "@ava/db/schema";
-import { isSystemSettingsKey, isUserSettingsKey, resolveSettings, resolveSystemSettings, type AppSettings, type GateSettings, type SystemSettings, type UserSettings } from "@ava/core";
+import { dedupeKeyFor, isSystemSettingsKey, isUserSettingsKey, priorityFor, resolveSettings, resolveSystemSettings, type AppSettings, type GateSettings, type SystemSettings, type UserSettings } from "@ava/core";
 import { enqueueTask, reevaluateGate } from "@ava/db";
 import { requireUser } from "./auth";
 import { db } from "./db";
@@ -75,12 +75,12 @@ export async function saveSettingsAndGate(userId: string, entries: Partial<UserS
     const size = await tx.execute(sql`select count(*)::int as n from (
       select j.id from jobs j where exists (select 1 from company_subscriptions s where s.company_id = j.company_id and s.user_id = ${userId} and s.status <> 'archived') limit 501) bounded`);
     if (Number(size.rows[0]?.n) > 500) {
-      const waiting = await tx.execute(sql`select 1 from tasks where type = 'reevaluate_gate' and status = 'queued'
-        and payload->>'userId' = ${userId} and payload->>'companyId' is null limit 1`);
-      // No dedupe key: a pass that is already running must not stop this one being queued.
-      if (!waiting.rows.length) await enqueueTask(tx, "reevaluate_gate", { userId }, { priority: 1 });
+      // The account's key holds only a pass that has not started, so a running one never absorbs
+      // this; a waiting one — the boot pass, say — is brought up to a person's priority instead.
+      const payload = { userId };
+      await enqueueTask(tx, "reevaluate_gate", payload, { dedupeKey: dedupeKeyFor("reevaluate_gate", payload), priority: priorityFor("reevaluate_gate"), promote: true });
     } else await reevaluateGate(tx as unknown as ReturnType<typeof db>, userId, settings);
-    if (options.rescore ?? true) await enqueueTask(tx, "rescore_all", { userId, onlyInTable: true }, { dedupeKey: `rescore_all:${userId}`, priority: 5 });
+    if (options.rescore ?? true) await enqueueTask(tx, "rescore_all", { userId, onlyInTable: true }, { dedupeKey: `rescore_all:${userId}`, priority: 5, promote: true });
   });
 }
 

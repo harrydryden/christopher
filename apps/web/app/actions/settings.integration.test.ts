@@ -105,3 +105,11 @@ it("queues one re-evaluation when accepting a suggestion widens a large account'
   expect(await acceptFilterSuggestionWithReport(suggestion!.id)).toMatchObject({ ok: true });
   expect((await taskTypes()).filter(type => type === "reevaluate_gate")).toHaveLength(1);
 });
+
+it("lifts a large account's waiting background pass to the person's gate save instead of queuing a second", async () => {
+  await followedPostings(member.user.id, 501);
+  await database.insert(schema.tasks).values({ type: "reevaluate_gate", payload: { userId: member.user.id, reason: "boot" }, dedupeKey: `reevaluate_gate:${member.user.id}`, priority: 6 });
+  expect(await saveGate({ ok: true }, form({ includeKeywords: "chief of staff", locationTerms: "" }))).toEqual({ ok: true });
+  const passes = await database.select().from(schema.tasks).where(eq(schema.tasks.type, "reevaluate_gate"));
+  expect(passes.map(pass => pass.priority)).toEqual([1]);
+});

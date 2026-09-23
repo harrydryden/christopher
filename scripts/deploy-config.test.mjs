@@ -62,3 +62,20 @@ test("the Render blueprint deploys the worker only for worker inputs, in the int
   assert.deepEqual(JSON.parse(read("apps/web/vercel.json")).regions, ["fra1"]);
   assert.ok(Number(blueprint.match(/^\s+diskSizeGB: (\d+)/m)?.[1]) >= 10, "more than the 1 GB the smallest plan starts with");
 });
+
+test("the worker image runs under an init process as the image's unprivileged user", () => {
+  const dockerfile = read("Dockerfile");
+  assert.match(dockerfile, /apt-get install -y --no-install-recommends tini/);
+  assert.match(dockerfile, /^ENTRYPOINT \["\/usr\/bin\/tini", "--"\]$/m);
+  assert.match(dockerfile, /^CMD \["node", "--import", "tsx", "src\/index\.ts"\]$/m);
+  const user = dockerfile.search(/^USER pwuser$/m);
+  assert.ok(user > 0, "USER pwuser is set");
+  assert.ok(user < dockerfile.search(/^CMD /m), "before the command runs");
+  assert.doesNotMatch(dockerfile, /NODE_OPTIONS/, "NODE_OPTIONS stays unset (docs/DEPLOY.md)");
+});
+
+test("the Playwright base image matches the Playwright the worker installs", () => {
+  const tag = read("Dockerfile").match(/^FROM mcr\.microsoft\.com\/playwright:v([\d.]+)-/m)?.[1];
+  const pinned = JSON.parse(read("apps/worker/package.json")).dependencies.playwright;
+  assert.equal(tag, pinned, "bump the FROM tag and the playwright dependency together");
+});

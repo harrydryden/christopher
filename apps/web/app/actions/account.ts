@@ -126,8 +126,9 @@ export async function createResetLink(_prev: ActionResult, form: FormData): Prom
  * or not they were later archived; "companies" counts the boards the account still follows, which
  * is what an archived subscription stops being.
  */
-export async function listAccounts() {
+export async function listAccounts(page = 1, perPage = 50) {
   await requireAdmin();
+  const size = Math.max(1, Math.min(perPage, 200));
   return db().select({
     id: users.id, email: users.email, name: users.name, role: users.role, claimedAt: users.claimedAt, emailVerifiedAt: users.emailVerifiedAt,
     createdAt: users.createdAt, lastLoginAt: users.lastLoginAt,
@@ -136,7 +137,14 @@ export async function listAccounts() {
     sessions: sql<number>`(select count(*) from ${sessions} s where s.user_id = ${users}.id and s.expires_at > now())::int`,
     cvsProduced: sql<number>`(select count(*) from ${cvDrafts} cv where cv.user_id = ${users}.id and cv.status = 'ready')::int`,
     companies: sql<number>`(select count(*) from ${companySubscriptions} sub where sub.user_id = ${users}.id and sub.status <> 'archived')::int`,
-  }).from(users).orderBy(asc(users.createdAt));
+  }).from(users).orderBy(asc(users.createdAt), asc(users.id)).limit(size).offset((Math.max(1, page) - 1) * size);
+}
+
+/** How many accounts there are, for the pages above. */
+export async function accountCount(): Promise<number> {
+  await requireAdmin();
+  const [row] = await db().select({ n: sql<number>`count(*)::int` }).from(users);
+  return row?.n ?? 0;
 }
 
 /** A budget is money, so it is bounded on the way in as well as on the way out of settings. */

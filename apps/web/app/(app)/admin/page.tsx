@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { createResetLink, deleteUser, listAccounts, resetAccountAiSpend, setAccountAiBudget, setUserRole } from "@/app/actions/account";
+import { accountCount, createResetLink, deleteUser, listAccounts, resetAccountAiSpend, setAccountAiBudget, setUserRole } from "@/app/actions/account";
 import { saveRegistrationSettings } from "@/app/actions/settings";
 import { ResetLinkButton } from "@/components/ResetLinkButton";
 import { RunScheduledWork } from "@/components/RunScheduledWork";
@@ -28,11 +28,11 @@ const ACCOUNTS_PER_PAGE = 50;
 export default async function AdminAccountsPage({ searchParams }: { searchParams: Promise<{ page?: string }> }) {
   const admin = await requireAdmin();
   const now = new Date();
-  const [accounts, system, params] = await Promise.all([listAccounts(), getSystemSettings(), searchParams]);
-  const pages = Math.max(1, Math.ceil(accounts.length / ACCOUNTS_PER_PAGE));
+  const [total, system, params] = await Promise.all([accountCount(), getSystemSettings(), searchParams]);
+  const pages = Math.max(1, Math.ceil(total / ACCOUNTS_PER_PAGE));
   const page = Math.min(pageNumber(params.page), pages);
-  const shown = accounts.slice((page - 1) * ACCOUNTS_PER_PAGE, page * ACCOUNTS_PER_PAGE);
-  // One statement for the page's accounts, however many there are.
+  // One page of accounts from the database, then one statement for that page's budgets.
+  const shown = await listAccounts(page, ACCOUNTS_PER_PAGE);
   const budgets = await accountAiBudgets(shown.map((account) => account.id), now);
 
   return (
@@ -62,7 +62,7 @@ export default async function AdminAccountsPage({ searchParams }: { searchParams
         <p className="mb-3 text-14 text-muted">
           Everyone with an account. Each has its own monthly AI budget, the only budget there is: it resets on the 1st, its holder sets it on Settings and you can set it for anyone here. <Link href="/admin/health" className="text-fg underline">Operations</Link> shows what the spend bought. Deleting an account removes everything it owns; shared companies and postings stay. A reset link lets you onboard or unblock someone when email delivery is not set up: it works once, for an hour, and confirms their address.
         </p>
-        {pages > 1 && <Pagination page={page} total={accounts.length} size={ACCOUNTS_PER_PAGE} path="/admin" label="Account pages" />}
+        {pages > 1 && <Pagination page={page} total={total} size={ACCOUNTS_PER_PAGE} path="/admin" label="Account pages" />}
         <Table>
           <THead>
             <tr>

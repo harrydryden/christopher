@@ -174,12 +174,19 @@ export interface CvBuildCosts {
   stages: string[];
 }
 
-/** The last `limit` CV builds that spent anything, newest first, each one itemised by stage. */
+/** How far back the sampled builds may reach: an Operations page reads this month's costs, not the ledger's history. */
+const CV_BUILD_COST_WINDOW = sql`now() - interval '90 days'`;
+
+/**
+ * The last `limit` CV builds that spent anything, newest first, each one itemised by stage. The
+ * sample is taken from the last ninety days, so the grouping walks a bounded slice of the ledger
+ * rather than every CV call ever made.
+ */
 export async function costPerCvBuild(db: Db, limit = 20): Promise<CvBuildCosts> {
   const rows = await db.execute<{ draftId: string; stage: string | null; calls: number; costUsd: number; at: Date }>(sql`
     with builds as (
       select ref_id, max(at) as last_at from ai_calls
-      where ref_type like 'cv-%' and ref_id is not null
+      where ref_type like 'cv-%' and ref_id is not null and at >= ${CV_BUILD_COST_WINDOW}
       group by ref_id order by max(at) desc limit ${limit}
     )
     select c.ref_id as "draftId", c.stage, count(*)::int as calls,

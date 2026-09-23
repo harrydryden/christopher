@@ -9,7 +9,28 @@ export interface CreateDbOptions {
   max?: number;
   /** "disable" | "require" (no CA verification, what Render external URLs need) | "verify". Defaults from DATABASE_SSL or host heuristics. */
   ssl?: "disable" | "require" | "verify";
+  /**
+   * The server's ceiling on any one statement, in milliseconds; 0 for none. Defaults to
+   * DATABASE_STATEMENT_TIMEOUT_MS, else five minutes, which is above the worker's longest
+   * legitimate statement. The interface should pass 30 seconds: a function the platform has
+   * already killed otherwise leaves its query running, and its locks held, until it finishes.
+   */
+  statementTimeoutMs?: number;
+  /** How long a session may sit idle inside an open transaction before the server ends it; 0 for never. Defaults to a minute. */
+  idleInTransactionTimeoutMs?: number;
+  /** Where a slow query is reported. Defaults to an `info` line on stdout; the worker can route it through its own log, which knows the task. */
+  onSlowQuery?: (query: SlowQuery) => void;
 }
+
+/** A statement that took `SLOW_QUERY_MS` or longer, identified by the start of its text (parameters are never part of it). */
+export interface SlowQuery {
+  durationMs: number;
+  statement: string | null;
+}
+
+const SLOW_QUERY_MS = 250;
+const DEFAULT_STATEMENT_TIMEOUT_MS = 5 * 60_000;
+const DEFAULT_IDLE_IN_TRANSACTION_TIMEOUT_MS = 60_000;
 
 /**
  * Whether a connection string names Render's PgBouncer endpoint, which pools by transaction: port
@@ -110,6 +131,31 @@ function absorbConnectionError(error: unknown, connection: object): void {
   logLine("warn", "database_pool_error", { message: typeof message === "string" ? message : String(error), ...(typeof code === "string" ? { code } : {}) });
 }
 
+/** The first 120 characters of a query's text, whitespace collapsed; the text never carries the parameters. */
+function statementOf(args: unknown[]): string | null {
+  const first = args[0];
+  const text = typeof first === "string" ? first
+    : first && typeof first === "object" && typeof (first as { text?: unknown }).text === "string" ? (first as { text: string }).text
+    : null;
+  return text === null ? null : text.replace(/\s+/g, " ").trim().slice(0, 120);
+}
+
+/**
+ * The server-side time limits a pool's connections start with. They travel as startup parameters,
+ * which a transaction pooler refuses ("unsupported startup parameter"), so on Render's PgBouncer
+ * endpoint none are sent and the limits come from the database role instead (docs/DEPLOY.md).
+ */
+export function serverTimeouts(connectionString: string, options: Pick<CreateDbOptions, "statementTimeoutMs" | "idleInTransactionTimeoutMs"> = {}) {
+  if (isRenderPooledUrl(connectionString)) return {};
+  const fromEnv = Number(process.env.DATABASE_STATEMENT_TIMEOUT_MS);
+  const statement = options.statementTimeoutMs ?? (process.env.DATABASE_STATEMENT_TIMEOUT_MS && Number.isFinite(fromEnv) ? fromEnv : DEFAULT_STATEMENT_TIMEOUT_MS);
+  const idle = options.idleInTransactionTimeoutMs ?? DEFAULT_IDLE_IN_TRANSACTION_TIMEOUT_MS;
+  return {
+    ...(statement > 0 ? { statement_timeout: statement } : {}),
+    ...(idle > 0 ? { idle_in_transaction_session_timeout: idle } : {}),
+  };
+}
+
 export function createDb(connectionString: string, options: CreateDbOptions = {}) {
   const pool = new pg.Pool({
     connectionString,
@@ -121,7 +167,9 @@ export function createDb(connectionString: string, options: CreateDbOptions = {}
     // an idle TLS connection is silently dropped and the next query pays the
     // handshake again.
     keepAlive: true,
+    ...serverTimeouts(connectionString, options),
   });
+  const reportSlow = options.onSlowQuery ?? ((query: SlowQuery) => logLine("info", "slow_database_query", { ...query }));
   pool.on("error", (error, client) => absorbConnectionError(error, client));
   pool.on("connect", client => {
     client.on("error", error => absorbConnectionError(error, client));
@@ -133,9 +181,13 @@ export function createDb(connectionString: string, options: CreateDbOptions = {}
         if (reported) return;
         reported = true;
         const durationMs = Math.round(performance.now() - started);
-        if (durationMs >= 250) {
+        if (durationMs >= SLOW_QUERY_MS) {
           slowQueries += 1;
-          console.info(JSON.stringify({ event: "slow_database_query", durationMs }));
+          try {
+            reportSlow({ durationMs, statement: statementOf(args) });
+          } catch {
+            // A report must never fail the query it describes.
+          }
         }
       };
       const callback = args[args.length - 1];

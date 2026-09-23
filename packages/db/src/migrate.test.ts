@@ -19,15 +19,15 @@ const { db, pool } = createDb(DATABASE_URL, { max: 2 });
 const probe = { migrationsSchema: "migration_probe", migrationsTable: "__probe_migrations" };
 let folder: string;
 
-/** A migrations folder holding exactly these entries, each creating one probe table. */
-async function writeProbeFolder(entries: JournalEntry[]) {
+/** A migrations folder holding exactly these entries, each creating one probe table unless given its own SQL. */
+async function writeProbeFolder(entries: Array<JournalEntry & { sql?: string }>) {
   await rm(folder, { recursive: true, force: true });
   await mkdir(join(folder, "meta"), { recursive: true });
   await writeFile(join(folder, "meta", "_journal.json"), JSON.stringify({
-    version: "7", dialect: "postgresql", entries: entries.map(entry => ({ ...entry, version: "7", breakpoints: true })),
+    version: "7", dialect: "postgresql", entries: entries.map(({ idx, when, tag }) => ({ idx, when, tag, version: "7", breakpoints: true })),
   }));
   for (const entry of entries) {
-    await writeFile(join(folder, `${entry.tag}.sql`), `CREATE TABLE IF NOT EXISTS "migration_probe"."${entry.tag}" ("id" integer);`);
+    await writeFile(join(folder, `${entry.tag}.sql`), entry.sql ?? `CREATE TABLE IF NOT EXISTS "migration_probe"."${entry.tag}" ("id" integer);`);
   }
 }
 
@@ -88,6 +88,70 @@ describe("runMigrations", () => {
       await other.query("select pg_advisory_unlock(74233101)");
     } finally {
       other.release();
+    }
+  });
+});
+
+describe("runMigrations and other sessions' locks", () => {
+  it("waits a bounded time for another process's migration lock, then says so", async () => {
+    await writeProbeFolder([{ idx: 0, when: 1000, tag: "0000_first" }]);
+    const other = await pool.connect();
+    try {
+      await other.query("select pg_advisory_lock(74233101)");
+      await expect(runMigrations(db, { ...probe, migrationsFolder: folder, lockTimeout: "50ms", attempts: 2 }))
+        .rejects.toThrow(/Gave up on the migration lock after 2 attempts/);
+      await other.query("select pg_advisory_unlock(74233101)");
+    } finally {
+      other.release();
+    }
+    // Once the other process is done, the same call goes through.
+    await runMigrations(db, { ...probe, migrationsFolder: folder, lockTimeout: "50ms", attempts: 2 });
+  });
+
+  it("gives up on a table lock after lock_timeout instead of queueing every reader behind it, and retries", async () => {
+    const single = createDb(DATABASE_URL, { max: 1 });
+    const blocker = await pool.connect();
+    try {
+      await db.execute(sql`create schema migration_probe`);
+      await db.execute(sql`create table migration_probe.target (id integer)`);
+      await writeProbeFolder([{ idx: 0, when: 1000, tag: "0000_alter_target", sql: `ALTER TABLE "migration_probe"."target" ADD COLUMN IF NOT EXISTS "added" integer;` }]);
+      // A long read holds the table; the ALTER needs an exclusive lock and must not wait it out.
+      await blocker.query("begin");
+      await blocker.query("lock table migration_probe.target in access share mode");
+      const waits: number[] = [];
+      await runMigrations(single.db, {
+        ...probe, migrationsFolder: folder, lockTimeout: "50ms", attempts: 3,
+        retryWait: async attempt => {
+          waits.push(attempt);
+          await blocker.query("commit");
+        },
+      });
+      expect(waits).toEqual([1]);
+      const column = await db.execute(sql`select 1 from information_schema.columns where table_schema = 'migration_probe' and table_name = 'target' and column_name = 'added'`);
+      expect(column.rows).toHaveLength(1);
+      // The session goes back to the pool with its own limits, not the migration's.
+      const settings = await single.db.execute<{ lock: string; statement: string }>(sql`select current_setting('lock_timeout') as lock, current_setting('statement_timeout') as statement`);
+      expect(settings.rows[0]).toEqual({ lock: "0", statement: "5min" });
+    } finally {
+      await blocker.query("rollback").catch(() => undefined);
+      blocker.release();
+      await single.pool.end();
+    }
+  });
+
+  it("stops retrying a table lock after its attempts, naming what it gave up on", async () => {
+    const blocker = await pool.connect();
+    try {
+      await db.execute(sql`create schema migration_probe`);
+      await db.execute(sql`create table migration_probe.target (id integer)`);
+      await writeProbeFolder([{ idx: 0, when: 1000, tag: "0000_alter_target", sql: `ALTER TABLE "migration_probe"."target" ADD COLUMN IF NOT EXISTS "added" integer;` }]);
+      await blocker.query("begin");
+      await blocker.query("lock table migration_probe.target in access share mode");
+      await expect(runMigrations(db, { ...probe, migrationsFolder: folder, lockTimeout: "50ms", attempts: 2, retryWait: async () => {} }))
+        .rejects.toThrow(/Gave up on the migrations after 2 attempts/);
+    } finally {
+      await blocker.query("rollback").catch(() => undefined);
+      blocker.release();
     }
   });
 });

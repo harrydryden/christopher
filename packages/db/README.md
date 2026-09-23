@@ -36,6 +36,14 @@ interleaved in order when the branches merge.
 
 ### Locks and time limits
 
+`runMigrations` holds a session advisory lock, so two processes never migrate at once; that is why
+it refuses Render's transaction-pooled URL. Its session waits at most `lock_timeout` (10 s) for any
+lock: for the advisory lock, so a second booting process gives up after six attempts instead of
+hanging; and for the tables it alters, so an `ALTER TABLE` queued behind a long read does not block
+every later query on that table while it waits. A migration that loses a lock is rolled back and
+tried again, up to six times with a growing pause. Its statements may run for ten minutes, for a
+backfill or an index build. Both settings are reset before the connection goes back to the pool.
+
 Every pending migration runs in one transaction, so `CREATE INDEX CONCURRENTLY` cannot be used in a
 migration file. A plain `CREATE INDEX` blocks writes to its table while it builds. For a table large
 enough for that to matter, build the index by hand first with `CONCURRENTLY` and the same name,

@@ -2,7 +2,7 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { isRenderPooledUrl, type Db } from "./client";
+import { isRenderPooledUrl, logLine, type Db } from "./client";
 
 const LOCK_KEY = 74_233_101; // arbitrary advisory lock id shared by all processes
 
@@ -49,11 +49,47 @@ export function unappliedMigrations(entries: readonly JournalEntry[], appliedMil
 }
 
 export interface MigrationOptions {
+  /** How long any one statement, the advisory lock included, may wait for a lock before the attempt is abandoned. */
+  lockTimeout?: string;
+  /** Attempts at the advisory lock, and then at the migrations, before giving up. */
+  attempts?: number;
+  /** What happens between attempts at migrations that lost a lock; `attempt` starts at 1. Defaults to a backoff of 1 s, doubling to 15 s. */
+  retryWait?: (attempt: number) => Promise<void>;
   /** Tests only: another folder of migrations, and the table that records what was applied from it. */
   migrationsFolder?: string;
   migrationsTable?: string;
   migrationsSchema?: string;
 }
+
+const LOCK_NOT_AVAILABLE = "55P03";
+
+/** Whether an error, or anything it wraps, is PostgreSQL giving up on a lock after `lock_timeout`. */
+function lockNotAvailable(error: unknown): boolean {
+  let current = error;
+  for (let depth = 0; depth < 5 && current && typeof current === "object"; depth++) {
+    if ((current as { code?: unknown }).code === LOCK_NOT_AVAILABLE) return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+async function retryingLockTimeouts<T>(attempts: number, wait: (attempt: number) => Promise<void>, what: string, work: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await work();
+    } catch (error) {
+      if (!lockNotAvailable(error)) throw error;
+      if (attempt >= attempts) {
+        throw new Error(`Gave up on ${what} after ${attempts} attempts: each waited out lock_timeout behind another session's lock. `
+          + "Find the blocking session in pg_stat_activity, or run the migrations again once it has finished.", { cause: error });
+      }
+      logLine("warn", "migration_lock_retry", { what, attempt, attempts });
+      await wait(attempt);
+    }
+  }
+}
+
+const backoff = (attempt: number) => new Promise<void>(resolve => setTimeout(resolve, Math.min(1000 * 2 ** (attempt - 1), 15_000)));
 
 export async function runMigrations(db: Db, options: MigrationOptions = {}) {
   // Render's managed PgBouncer endpoint uses transaction pooling. A session advisory lock
@@ -66,13 +102,25 @@ export async function runMigrations(db: Db, options: MigrationOptions = {}) {
   const migrationsFolder = options.migrationsFolder ?? fileURLToPath(new URL("../drizzle", import.meta.url));
   const journal = readJournal(migrationsFolder);
   assertJournalOrdered(journal);
+  const attempts = options.attempts ?? 6;
   const migrationsSchema = options.migrationsSchema ?? "drizzle";
   const migrationsTable = options.migrationsTable ?? "__drizzle_migrations";
   const client = await db.$client.connect();
+  let locked = false;
   let failure: Error | undefined;
   try {
-    await client.query("select pg_advisory_lock($1)", [LOCK_KEY]);
-    await migrate(drizzle(client), { migrationsFolder, migrationsTable, migrationsSchema });
+    // A migration that queues for an exclusive lock behind a long read blocks every later query on
+    // that table for as long as it waits, which during a deploy is the interface. Waiting a bounded
+    // time and trying again keeps that window short. The statement ceiling is generous because a
+    // backfill or an index build legitimately runs longer than any request.
+    await client.query("select set_config('lock_timeout', $1, false), set_config('statement_timeout', $2, false)", [options.lockTimeout ?? "10s", "10min"]);
+    // A second process booting at the same moment waits for the first, but not for ever.
+    await retryingLockTimeouts(attempts, async () => {}, "the migration lock", () => client.query("select pg_advisory_lock($1)", [LOCK_KEY]));
+    locked = true;
+    // Every pending migration runs in one transaction, so a lock timeout rolls all of them back
+    // and a retry starts from the same place.
+    await retryingLockTimeouts(attempts, options.retryWait ?? backoff, "the migrations", () =>
+      migrate(drizzle(client), { migrationsFolder, migrationsTable, migrationsSchema }));
     const recorded = await client.query<{ created_at: string }>(
       `select created_at from ${client.escapeIdentifier(migrationsSchema)}.${client.escapeIdentifier(migrationsTable)}`);
     const missing = unappliedMigrations(journal, recorded.rows.map(row => row.created_at));
@@ -81,13 +129,17 @@ export async function runMigrations(db: Db, options: MigrationOptions = {}) {
         + "Give them a later \"when\" (see packages/db/README.md) and deploy again.");
     }
     await client.query("select pg_advisory_unlock($1)", [LOCK_KEY]);
+    await client.query("reset lock_timeout");
+    await client.query("reset statement_timeout");
   } catch (error) {
     failure = error instanceof Error ? error : new Error(String(error));
+    // The lock goes at once if the connection still works; the session ending below is the backstop.
+    if (locked) await client.query("select pg_advisory_unlock($1)", [LOCK_KEY]).catch(() => undefined);
     throw error;
   } finally {
     // A failed run ends its session instead of returning it to the pool: that releases the
-    // advisory lock even when the connection itself is what failed, and never hands a broken
-    // client to the next query.
+    // advisory lock and the settings above even when the connection itself is what failed, and
+    // never hands a broken client to the next query.
     client.release(failure);
   }
 }

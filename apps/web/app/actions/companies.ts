@@ -8,7 +8,8 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { careerSources, companies, companySubscriptions, discoveryRuns, jobs, tasks, SOURCE_TYPES, type CompanySubscription } from "@ava/db/schema";
-import { discovery, ensureHttpUrl, extractDomain, MAX_COMPANIES_PER_SUBMISSION, normalisePostingUrl } from "@ava/core";
+import { dedupeKeyFor, discovery, ensureHttpUrl, extractDomain, MAX_COMPANIES_PER_SUBMISSION, normalisePostingUrl, priorityFor } from "@ava/core";
+import { postingOnCompanyHost } from "@/lib/posting-host";
 import { applySuggestedName, normaliseCompanyName, upsertNameSuggestion } from "@/lib/company-names";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
@@ -246,13 +247,23 @@ export async function saveCompanyNotes(companyId: string, notes: string): Promis
  * is shared like any other, and this account gets a view of it whatever its gate says — a role you
  * went and found is one you meant to see. The URL is canonicalised first, so the same posting
  * pasted twice, from a newsletter and from the board, collapses onto one dedupe key.
+ *
+ * Only a posting on the company's own hosts may reach its other followers: a URL anywhere else
+ * could be anybody's page filed under a popular company. `foreignHost` tells the worker to keep
+ * such a posting for this account alone. The worker checks where the page finally landed too,
+ * since a redirect can leave the company's hosts after this check.
  */
 export async function importPosting(companyId: string, formData: FormData): Promise<void> {
   const user = await requireVerifiedUser();
   const id = zUuid().parse(companyId);
   await requireFollowed(user.id, id, { live: true });
   const url = normalisePostingUrl(zUrlString().parse(String(formData.get("url") ?? "")));
-  await enqueue("import_posting", { userId: user.id, companyId: id, url });
+  const [company] = await db().select({ domain: companies.domain, homepageUrl: companies.homepageUrl }).from(companies).where(eq(companies.id, id)).limit(1);
+  if (!company) throw new UserFacingError("You do not follow this company.");
+  const sources = await db().select({ type: careerSources.type, url: careerSources.url, apiUrl: careerSources.apiUrl, atsSlug: careerSources.atsSlug, atsSite: careerSources.atsSite, status: careerSources.status })
+    .from(careerSources).where(eq(careerSources.companyId, id));
+  const payload = { userId: user.id, companyId: id, url, foreignHost: !postingOnCompanyHost(url, company, sources) };
+  await enqueueTask(db(), "import_posting", payload, { dedupeKey: dedupeKeyFor("import_posting", payload), priority: priorityFor("import_posting") });
   revalidatePath(`/companies/${id}`);
 }
 

@@ -153,7 +153,8 @@ it("queues one import per posting, however the URL was decorated, and only for a
   await importPosting(company.id, urlForm("https://job-boards.greenhouse.io/acme/jobs/1234567?utm_source=newsletter&gh_src=abc#apply"));
   const queued = await tasksOfType("import_posting");
   expect(queued).toHaveLength(1);
-  expect(queued[0]!.payload).toEqual({ userId: first.id, companyId: company.id, url: "https://job-boards.greenhouse.io/acme/jobs/1234567" });
+  // Acme has no Greenhouse board of its own, so the posting is flagged to stay this account's.
+  expect(queued[0]!.payload).toEqual({ userId: first.id, companyId: company.id, url: "https://job-boards.greenhouse.io/acme/jobs/1234567", foreignHost: true });
 
   // The same posting pasted again, from the board this time: one task, not two.
   await importPosting(company.id, urlForm("  https://job-boards.greenhouse.io/acme/jobs/1234567/  "));
@@ -418,4 +419,20 @@ it("keeps one pasted discovery in hand per company", async () => {
   await database.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.type, "discover"));
   await pasteDiscoveryUrl(company.id, urlForm("https://acme.example/jobs"));
   expect((await tasksOfType("discover")).filter(task => task.status === "queued")).toHaveLength(1);
+});
+
+it("flags a pasted posting that is not on the company's own hosts, so the worker keeps it private", async () => {
+  const company = await followedCompany();
+  await database.insert(schema.careerSources).values({ companyId: company.id, type: "greenhouse", url: "https://job-boards.greenhouse.io/acme", atsSlug: "acme" });
+  await importPosting(company.id, urlForm("https://careers.acme.example/jobs/ops-lead"));
+  await importPosting(company.id, urlForm("https://job-boards.greenhouse.io/acme/jobs/1"));
+  await importPosting(company.id, urlForm("https://job-boards.greenhouse.io/rival/jobs/1"));
+  await importPosting(company.id, urlForm("https://attacker.example/acme-senior-operations"));
+  const flags = Object.fromEntries((await tasksOfType("import_posting")).map(task => [(task.payload as { url: string }).url, (task.payload as { foreignHost: boolean }).foreignHost]));
+  expect(flags).toEqual({
+    "https://careers.acme.example/jobs/ops-lead": false,
+    "https://job-boards.greenhouse.io/acme/jobs/1": false,
+    "https://job-boards.greenhouse.io/rival/jobs/1": true,
+    "https://attacker.example/acme-senior-operations": true,
+  });
 });

@@ -367,6 +367,11 @@ export async function releaseOrphanedCvHolds(db: Db, graceMinutes = 2): Promise<
  * (extraction, discovery) has none while every CV call has one.
  */
 export interface AiCallRecord {
+  /**
+   * The row's id, when the caller chooses it. A caller that retries a write whose acknowledgement
+   * was lost passes the same id each time, so a commit that did land is not written twice.
+   */
+  id?: string;
   callSite: string;
   model: string;
   inputTokens: number;
@@ -387,10 +392,12 @@ export interface AiCallRecord {
  *
  * Every engine writes through here, so a column added to the ledger reaches every call site at
  * once: the two that existed had drifted into writing different subsets of the row, and a budget
- * read from a table missing one of them is wrong in the direction that spends money.
+ * read from a table missing one of them is wrong in the direction that spends money. With an `id`
+ * the write is idempotent: the same id again writes nothing.
  */
-export async function recordAiCall(db: Db, userId: string | null, record: AiCallRecord): Promise<void> {
+export async function recordAiCall(db: Pick<Db, "insert">, userId: string | null, record: AiCallRecord): Promise<void> {
   await db.insert(aiCalls).values({
+    ...(record.id ? { id: record.id } : {}),
     userId,
     callSite: record.callSite,
     model: record.model,
@@ -405,5 +412,5 @@ export async function recordAiCall(db: Db, userId: string | null, record: AiCall
     refType: record.refType ?? null,
     refId: record.refId ?? null,
     stage: record.stage ?? null,
-  });
+  }).onConflictDoNothing({ target: aiCalls.id });
 }

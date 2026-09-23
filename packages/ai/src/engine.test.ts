@@ -316,6 +316,21 @@ describe("engine plumbing", () => {
     expect(usage).toHaveLength(1);
   });
 
+  it("keeps a call's hold when its cost could not be recorded, and releases it once it was", async () => {
+    const { client } = fakeClient({ score: 80, verdict: "strong", rationale: "Fits.", flags: [] });
+    const released: string[] = [];
+    let ledgerDown = true;
+    const engine = createAiEngine({ client, getModel: () => "claude-opus-5",
+      reserve: async callSite => async () => { released.push(callSite); },
+      onUsage: () => { if (ledgerDown) throw new Error("timeout exceeded when trying to connect"); } });
+    // The answer is still the caller's; only the budget's view of it is at stake.
+    expect(await engine.scoreJob({ profileMarkdown: "", decisionDigest: "", job: { title: "Ops", company: "Acme" } })).toMatchObject({ score: 80 });
+    expect(released).toEqual([]);
+    ledgerDown = false;
+    await engine.scoreJob({ profileMarkdown: "", decisionDigest: "", job: { title: "Ops", company: "Acme" } });
+    expect(released).toEqual(["A5"]);
+  });
+
   it("gives a run its own engine that shares the client, the budget and the ledger", async () => {
     const { client, calls } = fakeClient({ score: 80, verdict: "strong", rationale: "Fits.", flags: [] });
     const usage: AiUsageRecord[] = [];

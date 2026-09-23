@@ -1,11 +1,11 @@
-import { createDb, recordAiCall, totalAiSpend, type Db } from "@ava/db";
+import { createDb, totalAiSpend, type Db } from "@ava/db";
 import { aiBudgetRefusalMessage, aiBudgetWindowStart, aiFeatureLabel, ats, discovery, modelForCallSite, type AppSettings, type DiscoveryContext, type FetchContext, type SystemSettings } from "@ava/core";
 import { createAiEngine, type AiClientLike, type AiEngine, type AiUsageRecord, type Ref } from "@ava/ai";
 import { sql } from "drizzle-orm";
 import { BrowserRenderer } from "./browser";
 import type { WorkerEnv } from "./env";
 import { HttpTrafficLedger, PoliteFetcher, userAgentFor } from "./fetcher";
-import { accountAiStanding, BudgetRefusedError, tryReserveAi } from "./budget";
+import { accountAiStanding, BudgetRefusedError, recordAiUsage, tryReserveAi } from "./budget";
 import { log } from "./log";
 import { loadSettings, loadUserSettings } from "./settings";
 
@@ -84,13 +84,11 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
     : new BrowserRenderer({ traffic, beforeNavigate: host => fetcher.waitForHost(host), allowNavigate: url => fetcher.assertRobotsAllowed(url), concurrency: env.browserConcurrency, userAgent: userAgentFor(env.contactEmail), executablePath: env.chromiumExecutablePath, hostMap: env.hostMap });
 
   // One writer for `ai_calls`, shared with every other engine: a budget read from a ledger one
-  // call site writes differently from another is wrong in the direction that spends money.
+  // call site writes differently from another is wrong in the direction that spends money. A write
+  // that still fails after its retries throws, so the engine keeps the call's hold instead of
+  // releasing it and letting the spend vanish from the budget.
   const onUsage = async (r: AiUsageRecord) => {
-    try {
-      await recordAiCall(db, r.userId ?? null, r);
-    } catch (err) {
-      log.warn("failed to record ai usage", err);
-    }
+    await recordAiUsage(db, r.userId ?? null, r);
   };
   /**
    * Hold capacity for one call against the budget that can refuse it.

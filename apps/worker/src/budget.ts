@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
-import type { Db } from "@ava/db";
+import { recordAiCall, type AiCallRecord, type Db } from "@ava/db";
 import type { AiBudgetRefusal } from "@ava/core";
+import { log } from "./log";
 
 export type { AiBudgetRefusal };
 
@@ -100,8 +101,20 @@ export type AiBudgetLimits = {
 
 /** A hold taken, with the figures it was measured against — read inside the lock that took it. */
 export interface AiHold {
-  /** Release the hold. The call's real cost is already in `ai_calls`, so nothing is charged here. */
+  /**
+   * Release the hold. The call's real cost is already in `ai_calls`, so nothing is charged here —
+   * unless a call it covered could not be recorded (`keep`), when the hold is left to expire, so
+   * the spend that exists nowhere else goes on counting until then.
+   */
   release: () => Promise<void>;
+  /**
+   * Take a recorded call's cost off a hold taken for a whole build, in the transaction that
+   * recorded it, so the budget never sees that spend twice — once in `ai_calls`, again as held.
+   * Clamped at zero and never deleted: `renew` reads a missing row as the hold having been let go.
+   */
+  consume: (costUsd: number, tx?: Pick<Db, "execute">) => Promise<void>;
+  /** A call this hold covered could not be recorded: keep the hold until it expires rather than release it. */
+  keep: () => void;
   /**
    * Keep a hold alive through a long build. False when the row is no longer there — it expired, or
    * something released it — which means the budget has forgotten this work and the caller must
@@ -170,9 +183,18 @@ export async function tryReserveAi(db: Db, callSite: string, amount: number, lim
     return { measured: measured ?? { spent: day, held: pending, limitUsd: daily ?? UNLIMITED_AI_BUDGET_USD } };
   });
   if ("refused" in outcome) return outcome;
+  let kept = false;
   return {
     ...outcome.measured,
-    release: async () => { await db.execute(sql`delete from ai_reservations where id = ${id}`); },
+    release: async () => {
+      if (kept) return;
+      await db.execute(sql`delete from ai_reservations where id = ${id}`);
+    },
+    consume: async (costUsd, tx) => {
+      if (!(costUsd > 0)) return;
+      await (tx ?? db).execute(sql`update ai_reservations set amount = greatest(0, amount - ${costUsd}) where id = ${id}`);
+    },
+    keep: () => { kept = true; },
     renew: async () => {
       // A hold whose process died still expires on its own; one released by something else is
       // already gone, and this is how its build finds out rather than spending on regardless.
@@ -180,4 +202,49 @@ export async function tryReserveAi(db: Db, callSite: string, amount: number, lim
       return rows.rows.length === 1;
     },
   };
+}
+
+/** How long to wait before each further attempt to record a call. Three retries after the first. */
+const RECORD_RETRY_MS = [100, 400, 1_600];
+
+/**
+ * Write one finished call to `ai_calls`, the only record of what was spent, and settle the hold it
+ * was made under.
+ *
+ * A write that fails is tried three more times under one id, so an insert that committed but whose
+ * acknowledgement was lost is not counted twice. With a `hold` taken for a whole build, the row and
+ * the hold's reduction are one transaction: a concurrent admission reads either both or neither.
+ * If every attempt fails, the hold is kept (it goes on counting the spend until it expires, the
+ * conservative direction), the record is logged at error with everything needed to reconcile it,
+ * and the error is thrown so the engine keeps its per-call hold too.
+ */
+export async function recordAiUsage(
+  db: Db,
+  userId: string | null,
+  usage: AiCallRecord,
+  opts: { hold?: AiHold; retryDelaysMs?: readonly number[] } = {},
+): Promise<void> {
+  const record = { ...usage, id: usage.id ?? randomUUID() };
+  const delays = opts.retryDelaysMs ?? RECORD_RETRY_MS;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      if (opts.hold) {
+        const hold = opts.hold;
+        await db.transaction(async tx => {
+          await recordAiCall(tx, userId, record);
+          await hold.consume(record.costUsd, tx);
+        });
+      } else {
+        await recordAiCall(db, userId, record);
+      }
+      return;
+    } catch (err) {
+      if (attempt >= delays.length) {
+        opts.hold?.keep();
+        log.error("ai usage unrecorded", { userId, ...record, error: (err as Error)?.message });
+        throw err;
+      }
+      await new Promise(resolve => setTimeout(resolve, delays[attempt]));
+    }
+  }
 }

@@ -161,7 +161,9 @@ export interface AiEngineOptions {
   /**
    * Hold capacity for one call, or refuse it. The returned function releases the hold, which the
    * engine calls once the call's real cost has been written through `onUsage`; an engine given a
-   * `reserve` without an `onUsage` that records cost would never charge the budget at all.
+   * `reserve` without an `onUsage` that records cost would never charge the budget at all. When
+   * `onUsage` throws, the cost was not written, so the hold is not released: it goes on counting
+   * the spend until it expires, rather than the spend vanishing from the budget.
    *
    * The call's `ref` comes with it, because budgets are per account as well as deployment-wide and
    * `ref.userId` names the account this call is for (shared work such as extraction has none).
@@ -171,6 +173,7 @@ export interface AiEngineOptions {
   reserve?: (callSite: string, estimateUsd: number, ref: Ref) => Promise<(() => Promise<void>) | null>;
   apiKey?: string;
   getModel: (callSite: string) => string;
+  /** Record one finished call. Throw when the record did not land, so its hold is kept. */
   onUsage?: (record: AiUsageRecord) => void | Promise<void>;
   client?: AiClientLike;
   /**
@@ -435,11 +438,14 @@ export class AiEngine {
     this.options.logger?.(msg, data);
   }
 
-  private async record(record: AiUsageRecord) {
+  /** Hand one call's record to `onUsage`. False when it threw: the cost did not reach the ledger. */
+  private async record(record: AiUsageRecord): Promise<boolean> {
     try {
       await this.options.onUsage?.(record);
+      return true;
     } catch (err) {
       this.log("usage callback failed", err);
+      return false;
     }
   }
 
@@ -525,6 +531,7 @@ export class AiEngine {
     // reservation for the whole build instead, so measuring every prompt for it was work thrown
     // away — and a second, unused figure beside the one the build was actually admitted at.
     let settle: (() => Promise<void>) | null | undefined;
+    let landed = true;
     if (this.options.reserve) {
       // A generous reading of the prompt: English runs about four bytes per token, so a third of
       // the byte count leaves roughly 30% of headroom. Output is reserved at the cap it may reach.
@@ -574,7 +581,7 @@ export class AiEngine {
         ...(failure ? { failure } : {}),
         ...recorded,
       };
-      await this.record(record);
+      landed = await this.record(record);
       params.onRecord?.(record);
       if (refused) this.log(`${callSite} refused`, response.stop_details);
       return validated;
@@ -604,12 +611,13 @@ export class AiEngine {
         ...(failure ? { failure } : {}),
         ...recorded,
       };
-      await this.record(record);
+      landed = await this.record(record);
       params.onRecord?.(record);
       this.log(`${callSite} failed`, err);
       return null;
     } finally {
-      await settle?.();
+      // A call whose cost never reached the ledger keeps its hold until the hold expires.
+      if (landed) await settle?.();
     }
   }
 

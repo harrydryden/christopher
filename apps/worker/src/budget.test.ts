@@ -16,7 +16,8 @@ import { ensureTestUser } from "./test-users";
 const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
 beforeAll(() => runMigrations(db));
 beforeEach(() => db.execute(sql`truncate ai_calls, ai_reservations`));
-afterAll(() => pool.end());
+// Holds are left live on purpose here; the suites after this one share the database.
+afterAll(async () => { await db.execute(sql`truncate ai_calls, ai_reservations`); await pool.end(); });
 
 const since = new Date("2026-01-01T00:00:00Z");
 const within = <T>(work: Promise<T>, ms = 5_000) =>

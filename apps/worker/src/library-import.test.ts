@@ -21,6 +21,7 @@ import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { handlers } from "./handlers";
 import { handleImportLibraryDocument } from "./handlers/library-import";
+import { HostBusyError, PrivateAddressError } from "./fetcher";
 import { ensureTestUser } from "./test-users";
 import { startTestServer, type TestServer } from "./test-server";
 
@@ -399,4 +400,37 @@ it("stores a document whose text carried NUL once, and never pays for the call t
   expect(await handleImportLibraryDocument(task({ userId, importId: row.id }), deps)).toMatchObject({ proposed: { jobs: 2 } });
   expect(scripted.documents[0]).not.toContain("\u0000");
   expect((await getLibraryImport(db, userId, row.id))!.content).not.toContain("\u0000");
+});
+
+/** The worker's own dependencies, with a fetcher whose `fetchText` is the test's. */
+function withFetchText(fetchText: WorkerDeps["fetcher"]["fetchText"]): WorkerDeps {
+  const fetcher = Object.create(deps.fetcher) as WorkerDeps["fetcher"];
+  fetcher.fetchText = fetchText;
+  return { ...deps, fetcher };
+}
+
+it("waits for a paced host's turn in the queue rather than failing the import", async () => {
+  const row = await createLibraryImport(db, { userId, kind: "website", url: "https://jane.example.test/about" }, now);
+  const retryAt = new Date(Date.now() + 90_000);
+  const busy = withFetchText(async () => { throw new HostBusyError("jane.example.test", retryAt); });
+
+  expect(await handleImportLibraryDocument(task({ userId, importId: row.id }), busy)).toEqual({ deferred: retryAt.toISOString() });
+  // Nothing was written to the row, and a copy of the task runs when the host is free.
+  expect((await getLibraryImport(db, userId, row.id))!).toMatchObject({ processedAt: null, error: null });
+  const [waiting] = await db.select().from(schema.tasks);
+  expect(waiting).toMatchObject({ type: "import_library_document", status: "queued", payload: { userId, importId: row.id, hostWaits: 1 } });
+  expect(waiting!.runAfter!.getTime()).toBe(retryAt.getTime());
+
+  // That copy reads the page once the host answers.
+  deps.aiClient = scriptedClient().client;
+  expect(await handleImportLibraryDocument(task(waiting!.payload as Record<string, unknown>), deps)).toMatchObject({ proposed: { jobs: 2 } });
+});
+
+it("refuses a site whose name resolves into a private network, in a sentence", async () => {
+  const row = await createLibraryImport(db, { userId, kind: "website", url: "https://jane.example.test/about" }, now);
+  const guarded = withFetchText(async () => { throw new PrivateAddressError("https://jane.example.test/about", "resolves to 10.0.0.8"); });
+
+  const result = await handleImportLibraryDocument(task({ userId, importId: row.id }), guarded) as { message: string };
+  expect(result.message).toContain("points into a private network");
+  expect((await getLibraryImport(db, userId, row.id))!.processedAt).toBeInstanceOf(Date);
 });

@@ -41,6 +41,7 @@ import {
 import { createAiEngine, estimateLibraryImportUsd, type AiFailure } from "@ava/ai";
 import {
   completeLibraryImport,
+  enqueueTask,
   getLibraryImportForWorker,
   recordAiCall,
   type Db,
@@ -49,6 +50,7 @@ import {
 import { tryReserveAi } from "../budget";
 import { makeFetchContext, type WorkerDeps } from "../context";
 import { capDocumentText, DocumentReadError, documentToText, tidyDocumentText } from "../document-text";
+import { HostBusyError, PrivateAddressError } from "../fetcher";
 import type { TaskRunContext } from "../queue";
 import { log } from "../log";
 
@@ -60,6 +62,9 @@ const HOLD_MINUTES = 10;
 
 /** A page that answers with less text than this is a shell waiting for its JavaScript. */
 const JS_SHELL_TEXT = 400;
+
+/** How many times one import waits for its host's turn before the queue's own retries take over. */
+const MAX_HOST_WAITS = 10;
 
 /**
  * What the person is told when the call returned nothing, by why it did. A provider that was
@@ -85,7 +90,7 @@ function unansweredMessage(failure: AiFailure | undefined): string {
 }
 
 export async function handleImportLibraryDocument(task: Task, deps: WorkerDeps, ctx?: TaskRunContext): Promise<unknown> {
-  const { userId, importId } = (task.payload ?? {}) as TaskPayloads["import_library_document"];
+  const { userId, importId, hostWaits = 0 } = (task.payload ?? {}) as TaskPayloads["import_library_document"] & { hostWaits?: number };
   if (!userId || !importId) return { skipped: "no import on task" };
   const row = await getLibraryImportForWorker(deps.db, importId);
   // Deleted while the task waited, or pointed at somebody else's row: neither is this task's to do.
@@ -128,6 +133,20 @@ export async function handleImportLibraryDocument(task: Task, deps: WorkerDeps, 
     }
   } else if (!text && row.kind === "website" && row.url) {
     const fetched = await websiteText(row.url, deps);
+    if ("busy" in fetched && hostWaits < MAX_HOST_WAITS) {
+      // The host is paced, or asked us to come back later, and nothing was sent. The import waits
+      // for its turn in the queue rather than here, so a slot is not held idle, and it is not
+      // failed: this task finishes and a copy of it runs at the moment the host is free.
+      const retryAt = fetched.busy.retryAt;
+      await enqueueTask(deps.db, "import_library_document", { userId, importId, hostWaits: hostWaits + 1 }, {
+        dedupeKey: `import_library_document:${importId}:host-wait:${hostWaits + 1}`,
+        priority: task.priority ?? 1,
+        runAfter: retryAt,
+      });
+      log.info("library import waits for its host", { userId, importId, host: fetched.busy.host, retryAt: retryAt.toISOString() });
+      return { deferred: retryAt.toISOString() };
+    }
+    if ("busy" in fetched) throw fetched.busy;
     if ("error" in fetched) return refuse(fetched.error, null);
     if (fetched.retry) throw new Error(fetched.retry);
     text = fetched.text;
@@ -224,7 +243,7 @@ export async function handleImportLibraryDocument(task: Task, deps: WorkerDeps, 
 async function websiteText(
   url: string,
   deps: WorkerDeps,
-): Promise<{ text: string; truncated: boolean; retry?: string } | { error: string }> {
+): Promise<{ text: string; truncated: boolean; retry?: string } | { error: string } | { busy: HostBusyError }> {
   const checked = libraryImportUrl(url);
   if ("error" in checked) return checked;
   const host = new URL(checked.url).hostname;
@@ -240,6 +259,12 @@ async function websiteText(
     }
     html = response.body;
   } catch (error) {
+    if (error instanceof HostBusyError) return { busy: error };
+    // A name that resolves into a private network is refused by the fetcher, and no retry makes it
+    // public: that is an answer about the address, for the person to act on.
+    if (error instanceof PrivateAddressError) {
+      return { error: `${host} points into a private network, so AVA will not fetch it. Use the address of your own public page, or paste its text instead.` };
+    }
     const message = (error as Error)?.message ?? "";
     // A site that will not have us is an answer, not an outage: robots.txt is respected here as
     // everywhere, and the person can paste the text instead.

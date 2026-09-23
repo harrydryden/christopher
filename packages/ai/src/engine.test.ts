@@ -448,6 +448,36 @@ describe("call-site post-validation", () => {
     expect(JSON.stringify(calls[0]!.params)).not.toContain("near_miss");
   });
 
+  it("A8 names a pause by a followed company's id, and drops a company or term it cannot stand behind", async () => {
+    const acme = { id: "4f3c2b1a-9d8e-4c7b-a6f5-0e1d2c3b4a59", name: "Acme" };
+    const { engine, calls } = engineWith({
+      suggestions: [
+        { type: "pause_company", value: { companyId: acme.id }, rationale: "Three skips.", evidence: [] },
+        { type: "pause_company", value: { companyName: "Acme" }, rationale: "By name only.", evidence: [] },
+        { type: "pause_company", value: { companyId: "not-followed" }, rationale: "Invented.", evidence: [] },
+        { type: "keyword_exclude", value: { term: "x".repeat(81) }, rationale: "Too long.", evidence: [] },
+        { type: "keyword_exclude", value: { term: 7 }, rationale: "Not a term.", evidence: [] },
+        { type: "keyword_exclude", value: { term: " Intern " }, rationale: "Skipped internships.", evidence: [] },
+        { type: "keyword_exclude", value: { term: "intern" }, rationale: "The same term again.", evidence: [] },
+      ],
+    });
+    const result = await engine.suggestFilters({
+      includeKeywords: [], excludeKeywords: [], locationTerms: [], decisions: [], previouslyRejected: [], companies: [acme],
+    });
+    expect(result!.map(s => s.value)).toEqual([{ companyId: acme.id, companyName: "Acme" }, { term: "Intern" }]);
+    const user = (calls[0]!.params.messages as Array<{ content: string }>)[0]!.content;
+    expect(user).toContain(`<followed_companies>\n- ${acme.id}: Acme\n</followed_companies>`);
+  });
+
+  it("A8 keeps a term rejected from the scans rejected, whatever its case or source", async () => {
+    const { engine } = engineWith({ suggestions: [{ type: "keyword_include", value: { term: "Strateg*" }, rationale: "x", evidence: [] }] });
+    const result = await engine.suggestFilters({
+      includeKeywords: [], excludeKeywords: [], locationTerms: [], decisions: [],
+      previouslyRejected: [{ type: "keyword_include", value: { term: "strateg*", source: "scans" } }],
+    });
+    expect(result).toEqual([]);
+  });
+
   it("A10 asks for web search and filters excluded domains and aggregators", async () => {
     const { engine, calls } = engineWith({
       candidates: [

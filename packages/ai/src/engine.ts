@@ -1120,13 +1120,17 @@ export class AiEngine {
       locationTerms: string[];
       decisions: DecisionForDigest[];
       previouslyRejected: Array<{ type: string; value: unknown }>;
+      /** The companies this account follows and has not paused: the only ones a pause may name. */
+      companies?: Array<{ id: string; name: string }>;
     },
     ref: Ref = {},
   ): Promise<S.FilterSuggestionsOutput["suggestions"] | null> {
+    const companies = (input.companies ?? []).slice(0, 300);
     const user = [
       `Current include keywords: ${input.includeKeywords.join(", ") || "(none)"}`,
       `Current exclude keywords: ${input.excludeKeywords.join(", ") || "(none)"}`,
       `Current location terms: ${input.locationTerms.join(", ") || "(none)"}`,
+      P.wrap("followed_companies", companies.map(company => `- ${company.id}: ${company.name}`).join("\n") || "(none)"),
       P.wrap("decisions", decisionDigest(input.decisions, { maxItems: 200, maxChars: 20_000 })),
       `Previously rejected suggestions: ${JSON.stringify(input.previouslyRejected).slice(0, 4000)}`,
     ].join("\n\n");
@@ -1139,12 +1143,28 @@ export class AiEngine {
     const existing = new Set(
       [...input.includeKeywords, ...input.excludeKeywords, ...input.locationTerms].map((t) => t.trim().toLowerCase()),
     );
-    const rejected = new Set(input.previouslyRejected.map((r) => `${r.type}|${JSON.stringify(r.value).toLowerCase()}`));
-    return result.suggestions.filter((s) => {
-      const term = typeof s.value.term === "string" ? s.value.term.trim().toLowerCase() : null;
-      if (term && existing.has(term)) return false;
-      return !rejected.has(`${s.type}|${JSON.stringify(s.value).toLowerCase()}`);
-    });
+    // Compared by what a suggestion names, not by its whole value: a rejected term filed by the
+    // scans carries a `source` beside it, and a model's own casing is not a different term.
+    const rejected = new Set(input.previouslyRejected.map((r) => filterSuggestionKey(r.type, r.value)));
+    const followed = new Map(companies.map(company => [company.id, company]));
+    const out: S.FilterSuggestionsOutput["suggestions"] = [];
+    for (const s of result.suggestions) {
+      let value: Record<string, unknown>;
+      if (s.type === "pause_company") {
+        // Only a company this account follows, named by its id from the list it was given.
+        const company = followed.get(typeof s.value.companyId === "string" ? s.value.companyId.trim() : "");
+        if (!company) continue;
+        value = { companyId: company.id, companyName: company.name };
+      } else {
+        const term = typeof s.value.term === "string" ? s.value.term.trim() : "";
+        if (!term || term.length > 80 || existing.has(term.toLowerCase())) continue;
+        value = { term };
+      }
+      const key = filterSuggestionKey(s.type, value);
+      if (rejected.has(key) || out.some(kept => filterSuggestionKey(kept.type, kept.value) === key)) continue;
+      out.push({ ...s, value });
+    }
+    return out;
   }
 
   // A9 ---------------------------------------------------------------------
@@ -1489,6 +1509,17 @@ export function decisionDigest(decisions: DecisionForDigest[], opts: { maxItems?
     used += line.length + 1;
   }
   return lines.join("\n");
+}
+
+/**
+ * What a filter suggestion names, as one comparable key: its type and its term, lowercased, or the
+ * company a pause is for. A suggestion from the scans (`{ term, source }`) and one from the model
+ * (`{ term }`) naming the same term are the same suggestion.
+ */
+export function filterSuggestionKey(type: string, value: unknown): string {
+  const v = (value ?? {}) as Record<string, unknown>;
+  if (type === "pause_company") return `${type}|${typeof v.companyId === "string" ? v.companyId.trim() : JSON.stringify(v)}`;
+  return `${type}|${typeof v.term === "string" ? v.term.trim().toLowerCase() : JSON.stringify(v).toLowerCase()}`;
 }
 
 function clamp01(n: number): number {

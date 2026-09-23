@@ -21,12 +21,12 @@ const mono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Christopher",
+  title: "AVA",
   description: "Careers page monitor",
   // favicon.ico, icon.svg and apple-icon.png live in app/ and Next links them
   // automatically; the manifest comes from app/manifest.ts.
   manifest: "/manifest.webmanifest",
-  appleWebApp: { title: "Christopher" },
+  appleWebApp: { title: "AVA" },
 };
 
 export const viewport: Viewport = {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { assertDedicatedDatabase, summarise } from './benchmark-users.mjs';
 test('database guard accepts only the exact dedicated local database', () => {
   assert.equal(assertDedicatedDatabase('postgres://u:p@127.0.0.1:55439/christopher_users_benchmark').pathname, '/christopher_users_benchmark');
-  for (const unsafe of ['postgres://u:p@example.com/christopher_users_benchmark','postgres://u:p@localhost/christopher_test','postgres://u:p@localhost/postgres'])
+  for (const unsafe of ['postgres://u:p@example.com/christopher_users_benchmark','postgres://u:p@localhost/ava_test','postgres://u:p@localhost/postgres'])
     assert.throws(() => assertDedicatedDatabase(unsafe), /dedicated local/);
 });
 test('summary reports errors and percentiles', () => {

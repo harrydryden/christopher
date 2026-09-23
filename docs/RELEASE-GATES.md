@@ -1,7 +1,7 @@
 # Release and operational gates
 
 These checks provide repository-visible evidence about the deployed source revisions and one
-read-only operational snapshot. They do not deploy Christopher, change production data or establish
+read-only operational snapshot. They do not deploy AVA, change production data or establish
 an uptime guarantee.
 
 ## Required GitHub configuration

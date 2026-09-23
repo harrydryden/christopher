@@ -1,8 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { isActiveStoredEvidence } from "@christopher/core/cv";
-import type { CvGapQuiz as CvGapQuizValue, CvLibrary } from "@christopher/core";
+import { isActiveStoredEvidence } from "@ava/core/cv";
+import type { CvGapQuiz as CvGapQuizValue, CvLibrary } from "@ava/core";
 import type { ActionResult } from "@/lib/validation";
 import { Button } from "@/components/Button";
 import { Checkbox, Select, Textarea } from "@/components/Field";

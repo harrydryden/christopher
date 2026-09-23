@@ -2,7 +2,7 @@
  * Test helper: a claimed account and a session row for it, so actions and routes that
  * authenticate through `getCurrentUser` see a real signed-in user.
  */
-import { createUser, schema, type Db } from "@christopher/db";
+import { createUser, schema, type Db } from "@ava/db";
 import { eq } from "drizzle-orm";
 import { createSessionCookieValue, DEFAULT_SESSION_TTL_SECONDS } from "@/lib/session";
 

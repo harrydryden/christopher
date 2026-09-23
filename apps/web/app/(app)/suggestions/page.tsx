@@ -1,6 +1,6 @@
 import { Pagination, pageNumber } from "@/components/Pagination";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { discoverySources, tasks } from "@christopher/db/schema";
+import { discoverySources, tasks } from "@ava/db/schema";
 import { db } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { DiscoverySources } from "@/components/DiscoverySources";

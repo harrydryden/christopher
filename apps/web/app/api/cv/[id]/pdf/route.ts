@@ -1,5 +1,5 @@
-import { assertCvFinalisable } from "@christopher/core/cv-review";
-import { CvContentSchema } from "@christopher/core";
+import { assertCvFinalisable } from "@ava/core/cv-review";
+import { CvContentSchema } from "@ava/core";
 import { routeUser } from "@/lib/route-auth";
 import { getOwnCvDraft } from "@/lib/queries/cv";
 import { zUuid } from "@/lib/validation";

@@ -19,7 +19,7 @@ export function validateManagedRecoveryUrl(raw) {
 
 async function main() {
   const started = performance.now();
-  const url = validateManagedRecoveryUrl(await readFile(process.env.RECOVERY_URL_FILE ?? '/tmp/christopher-managed-recovery-url', 'utf8'));
+  const url = validateManagedRecoveryUrl(await readFile(process.env.RECOVERY_URL_FILE ?? '/tmp/ava-managed-recovery-url', 'utf8'));
   const require = createRequire(new URL('../apps/web/package.json', import.meta.url));
   const { Pool } = require('pg');
   const pool = new Pool({ connectionString: url.href, ssl: { rejectUnauthorized: false }, max: 1, connectionTimeoutMillis: 10_000, statement_timeout: 30_000 });
@@ -46,10 +46,10 @@ async function main() {
     if (!user) throw new Error('Recovery copy has no claimed account');
     const expires = Math.floor(Date.now() / 1000) + 900;
     await pool.query("insert into sessions(id,user_id,expires_at,user_agent,ip_address) values($1,$2,to_timestamp($3),'isolated managed recovery smoke','127.0.0.1')", [sessionId, user.id, expires]);
-    const cookie = `christopher_session=v2.${sessionId}.${expires}.${createHmac('sha256', secret).update(`${sessionId}.${expires}`).digest('base64url')}`;
+    const cookie = `ava_session=v2.${sessionId}.${expires}.${createHmac('sha256', secret).update(`${sessionId}.${expires}`).digest('base64url')}`;
     server = spawn(process.execPath, [require.resolve('next/dist/bin/next'), 'start', '-H', '127.0.0.1', '-p', String(port)], {
       cwd: new URL('../apps/web', import.meta.url), detached: true,
-      env: { ...process.env, DATABASE_URL: url.href, SESSION_SECRET: secret, NODE_ENV: 'production', CHRISTOPHER_SERVERLESS_FALLBACK: '0' },
+      env: { ...process.env, DATABASE_URL: url.href, SESSION_SECRET: secret, NODE_ENV: 'production', AVA_SERVERLESS_FALLBACK: '0' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     server.stdout.resume(); server.stderr.resume();

@@ -34,15 +34,15 @@ import {
   usd,
   validateLibraryProposal,
   type TaskPayloads,
-} from "@christopher/core";
-import { createAiEngine, estimateLibraryImportUsd } from "@christopher/ai";
+} from "@ava/core";
+import { createAiEngine, estimateLibraryImportUsd } from "@ava/ai";
 import {
   completeLibraryImport,
   getLibraryImportForWorker,
   recordAiCall,
   type Db,
   type Task,
-} from "@christopher/db";
+} from "@ava/db";
 import { tryReserveAi } from "../budget";
 import { makeFetchContext, type WorkerDeps } from "../context";
 import { capDocumentText, DocumentReadError, documentToText, tidyDocumentText } from "../document-text";
@@ -124,7 +124,7 @@ export async function handleImportLibraryDocument(task: Task, deps: WorkerDeps, 
     logger: (msg, data) => log.debug(`ai ${msg}`, data),
   });
   if (!ai.enabled) {
-    return refuse("Christopher cannot read documents at the moment: no model is configured. Your document is kept — try this import again once one is.", text);
+    return refuse("AVA cannot read documents at the moment: no model is configured. Your document is kept — try this import again once one is.", text);
   }
   const expected = estimateLibraryImportUsd(model, { documentBytes: Buffer.byteLength(text) });
   const admitted = await tryReserveAi(deps.db, "A11", expected, {
@@ -152,7 +152,7 @@ export async function handleImportLibraryDocument(task: Task, deps: WorkerDeps, 
     const plan = await ai.extractLibrary({ document: text, model },
       { userId, refType: "library_import", refId: importId });
     if (!plan) {
-      return refuse("Christopher could not read that document. Try a different export of it, or paste the text instead.", text);
+      return refuse("AVA could not read that document. Try a different export of it, or paste the text instead.", text);
     }
     const { proposal, dropped } = validateLibraryProposal(text, plan);
     const counts = countProposedItems(proposal);
@@ -166,7 +166,7 @@ export async function handleImportLibraryDocument(task: Task, deps: WorkerDeps, 
     // The model answered something that is not a proposal at all. That is this document's answer,
     // not a fault the queue can retry away.
     if (error instanceof Error && /invalid|expected|parse/i.test(error.message) && !/timed out|network|ECONN/i.test(error.message)) {
-      return refuse("Christopher could not make sense of that document. Try a different export of it, or paste the text instead.", text);
+      return refuse("AVA could not make sense of that document. Try a different export of it, or paste the text instead.", text);
     }
     throw error;
   } finally {

@@ -1,5 +1,5 @@
 "use server";
-import { enqueueTask, reevaluateGate, setSubscriptionStatus, subscribeToCompany, syncCompanyStatus } from "@christopher/db";
+import { enqueueTask, reevaluateGate, setSubscriptionStatus, subscribeToCompany, syncCompanyStatus } from "@ava/db";
 
 import { requireUser, requireVerifiedUser } from "@/lib/auth";
 
@@ -7,8 +7,8 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { careerSources, companies, companySubscriptions, discoveryRuns, jobs, tasks, SOURCE_TYPES, type CompanySubscription } from "@christopher/db/schema";
-import { discovery, ensureHttpUrl, extractDomain, normalisePostingUrl } from "@christopher/core";
+import { careerSources, companies, companySubscriptions, discoveryRuns, jobs, tasks, SOURCE_TYPES, type CompanySubscription } from "@ava/db/schema";
+import { discovery, ensureHttpUrl, extractDomain, normalisePostingUrl } from "@ava/core";
 import { applySuggestedName, normaliseCompanyName, upsertNameSuggestion } from "@/lib/company-names";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";

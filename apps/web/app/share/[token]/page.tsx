@@ -13,7 +13,7 @@
  * sentence, because the difference is the owner's business.
  */
 import { headers } from "next/headers";
-import { recordCvShareView } from "@christopher/db";
+import { recordCvShareView } from "@ava/db";
 import { db } from "@/lib/db";
 import { consumeRateLimit, LIMITS } from "@/lib/rate-limit";
 import {

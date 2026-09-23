@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import type { CvContent } from "@christopher/core/cv";
+import type { CvContent } from "@ava/core/cv";
 import { cvContentLinks, cvLibraryJobFor, cvSectionBlockId, cvSectionEntryId } from "./cv-content-links";
 const content: CvContent = {
   name: "Candidate",

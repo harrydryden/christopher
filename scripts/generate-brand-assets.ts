@@ -1,22 +1,26 @@
 /**
- * Renders every brand asset from the one cell list in
- * `apps/web/components/brand/mark-cells.ts`, so the favicon, the installed-app
- * icon and the mark on the page are the same artwork by construction.
+ * Renders every brand asset from the glyph rows in `apps/web/components/brand/mark-cells.ts`, so
+ * the favicon, the installed-app icon and the mark on the page are the same artwork by
+ * construction.
  *
  *   pnpm exec tsx scripts/generate-brand-assets.ts
  *
  * Writes:
- *   apps/web/app/icon.svg          white mark on black, what the tab shows
- *   apps/web/app/favicon.ico       16/32/48 PNGs in one container
- *   apps/web/app/apple-icon.png    180px, white on black
- *   apps/web/public/brand/…        mark.svg (currentColor) and the PNG sizes
+ *   apps/web/app/icon.svg          the monogram white on black, what the tab shows
+ *   apps/web/app/favicon.ico       16/32/48 PNGs of it in one container
+ *   apps/web/app/apple-icon.png    192px, white on black
+ *   apps/web/public/brand/…        the wordmark (mark*) and the monogram (monogram*) as SVG in
+ *                                  currentColor, white and black, the PNG sizes of each, and the
+ *                                  manifest icons
  */
 import { deflateSync } from "node:zlib";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { MARK_CELLS, MARK_GRID, MARK_PATH } from "../apps/web/components/brand/mark-cells.ts";
+import {
+  GLYPH_A, MONOGRAM_PATH, TILE, WORDMARK_GLYPHS, WORDMARK_PATHS, WORDMARK_WIDTH,
+} from "../apps/web/components/brand/mark-cells.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const BLACK: RGB = [0, 0, 0];
@@ -24,18 +28,41 @@ const WHITE: RGB = [255, 255, 255];
 
 type RGB = [number, number, number];
 
-const filled = new Set(MARK_CELLS.map((cell) => `${cell.x},${cell.y}`));
+/** A form of the mark: its width in cells, its letters for the rasters and its paths for the SVGs. */
+interface Artwork {
+  width: number;
+  letters: ReadonlyArray<{ rows: readonly string[]; dx: number }>;
+  paths: readonly string[];
+}
 
-/** Nearest-neighbour upscale: every cell must stay a hard square. */
-function raster(size: number, ink: RGB, ground: RGB | null): Buffer {
-  if (size % MARK_GRID !== 0) throw new Error(`${size} is not a multiple of ${MARK_GRID}`);
-  const scale = size / MARK_GRID;
+const WORDMARK: Artwork = { width: WORDMARK_WIDTH, letters: WORDMARK_GLYPHS, paths: WORDMARK_PATHS };
+const MONOGRAM: Artwork = { width: TILE, letters: [{ rows: GLYPH_A, dx: 0 }], paths: [MONOGRAM_PATH] };
+
+for (const { rows } of WORDMARK.letters) {
+  if (rows.length !== TILE || rows.some((row) => row.length !== TILE)) throw new Error(`glyphs must be ${TILE}×${TILE}`);
+}
+
+/** The filled cells of an artwork as "x,y" keys. */
+function cellsOf(art: Artwork): Set<string> {
+  const cells = new Set<string>();
+  for (const { rows, dx } of art.letters) {
+    rows.forEach((row, y) => [...row].forEach((cell, x) => { if (cell === "#") cells.add(`${x + dx},${y}`); }));
+  }
+  return cells;
+}
+
+/** Nearest-neighbour upscale to `height` pixels: every cell must stay a hard square. */
+function raster(art: Artwork, height: number, ink: RGB, ground: RGB | null): Buffer {
+  if (height % TILE !== 0) throw new Error(`${height} is not a multiple of ${TILE}`);
+  const scale = height / TILE;
+  const width = art.width * scale;
+  const filled = cellsOf(art);
   // Raw PNG scanlines: one filter byte (0 = None) then RGBA per pixel.
-  const row = 1 + size * 4;
-  const raw = Buffer.alloc(row * size);
-  for (let y = 0; y < size; y++) {
+  const row = 1 + width * 4;
+  const raw = Buffer.alloc(row * height);
+  for (let y = 0; y < height; y++) {
     const cellY = Math.floor(y / scale);
-    for (let x = 0; x < size; x++) {
+    for (let x = 0; x < width; x++) {
       const on = filled.has(`${Math.floor(x / scale)},${cellY}`);
       const colour = on ? ink : ground;
       const at = y * row + 1 + x * 4;
@@ -45,7 +72,7 @@ function raster(size: number, ink: RGB, ground: RGB | null): Buffer {
       raw[at + 3] = colour ? 255 : 0;
     }
   }
-  return png(size, raw);
+  return png(width, height, raw);
 }
 
 const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
@@ -69,10 +96,10 @@ function chunk(type: string, data: Buffer): Buffer {
   return Buffer.concat([head, data, tail]);
 }
 
-function png(size: number, raw: Buffer): Buffer {
+function png(width: number, height: number, raw: Buffer): Buffer {
   const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(size, 0);
-  ihdr.writeUInt32BE(size, 4);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
   ihdr[8] = 8; // bit depth
   ihdr[9] = 6; // truecolour with alpha
   return Buffer.concat([
@@ -105,10 +132,11 @@ function ico(images: Array<{ size: number; data: Buffer }>): Buffer {
   return Buffer.concat([header, ...entries, ...images.map((i) => i.data)]);
 }
 
-function svg({ ink, ground }: { ink: string; ground?: string }): string {
-  const box = `0 0 ${MARK_GRID} ${MARK_GRID}`;
-  const back = ground ? `<rect width="${MARK_GRID}" height="${MARK_GRID}" fill="${ground}"/>` : "";
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${box}" shape-rendering="crispEdges" role="img" aria-label="Christopher">${back}<path d="${MARK_PATH}" fill="${ink}"/></svg>\n`;
+function svg(art: Artwork, { ink, ground }: { ink: string; ground?: string }): string {
+  const box = `0 0 ${art.width} ${TILE}`;
+  const back = ground ? `<rect width="${art.width}" height="${TILE}" fill="${ground}"/>` : "";
+  const letters = art.paths.map((d) => `<path d="${d}" fill="${ink}"/>`).join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${box}" shape-rendering="crispEdges" role="img" aria-label="AVA">${back}${letters}</svg>\n`;
 }
 
 const brand = join(root, "apps/web/public/brand");
@@ -120,22 +148,29 @@ const write = (path: string, data: Buffer | string) => {
   console.log("wrote", path);
 };
 
-// The tab: white on black, so the mark reads on a dark or light browser chrome.
-write("apps/web/app/icon.svg", svg({ ink: "#ffffff", ground: "#000000" }));
-write("apps/web/app/apple-icon.png", raster(192, WHITE, BLACK));
+// The tab: the monogram white on black, so it reads on a dark or light browser chrome.
+write("apps/web/app/icon.svg", svg(MONOGRAM, { ink: "#ffffff", ground: "#000000" }));
+write("apps/web/app/apple-icon.png", raster(MONOGRAM, 192, WHITE, BLACK));
 write(
   "apps/web/app/favicon.ico",
-  ico([16, 32, 48].map((size) => ({ size, data: raster(size, WHITE, BLACK) }))),
+  ico([16, 32, 48].map((size) => ({ size, data: raster(MONOGRAM, size, WHITE, BLACK) }))),
 );
 
 // Everything else, for documents and anywhere the ground is not ours to pick.
-write("apps/web/public/brand/mark.svg", svg({ ink: "currentColor" }));
-write("apps/web/public/brand/mark-white.svg", svg({ ink: "#ffffff" }));
-write("apps/web/public/brand/mark-black.svg", svg({ ink: "#000000" }));
+for (const [name, art] of [["mark", WORDMARK], ["monogram", MONOGRAM]] as const) {
+  write(`apps/web/public/brand/${name}.svg`, svg(art, { ink: "currentColor" }));
+  write(`apps/web/public/brand/${name}-white.svg`, svg(art, { ink: "#ffffff" }));
+  write(`apps/web/public/brand/${name}-black.svg`, svg(art, { ink: "#000000" }));
+}
+// PNGs are named for their height; the wordmark is 2.75 times as wide.
 for (const size of [16, 32, 48, 64, 128, 256, 512]) {
-  write(`apps/web/public/brand/mark-white-${size}.png`, raster(size, WHITE, null));
-  write(`apps/web/public/brand/mark-black-${size}.png`, raster(size, BLACK, null));
+  write(`apps/web/public/brand/monogram-white-${size}.png`, raster(MONOGRAM, size, WHITE, null));
+  write(`apps/web/public/brand/monogram-black-${size}.png`, raster(MONOGRAM, size, BLACK, null));
+}
+for (const height of [32, 64, 128, 256]) {
+  write(`apps/web/public/brand/mark-white-${height}.png`, raster(WORDMARK, height, WHITE, null));
+  write(`apps/web/public/brand/mark-black-${height}.png`, raster(WORDMARK, height, BLACK, null));
 }
 // Manifest icons carry the ground with them; maskable needs it edge to edge.
-write("apps/web/public/brand/app-icon-192.png", raster(192, WHITE, BLACK));
-write("apps/web/public/brand/app-icon-512.png", raster(512, WHITE, BLACK));
+write("apps/web/public/brand/app-icon-192.png", raster(MONOGRAM, 192, WHITE, BLACK));
+write("apps/web/public/brand/app-icon-512.png", raster(MONOGRAM, 512, WHITE, BLACK));

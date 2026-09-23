@@ -14,16 +14,16 @@
  * role, which is read through this account's `user_jobs` view rather than the shared catalogue.
  */
 import { and, desc, eq, gt, sql } from "drizzle-orm";
-import { aiReservations, accountAiSpend, cvLibraries, jobs, userJobs } from "@christopher/db";
+import { aiReservations, accountAiSpend, cvLibraries, jobs, userJobs } from "@ava/db";
 import {
   aiBudgetRefusalMessage,
   aiBudgetWindowStart,
   CvLibrarySchema,
   DEFAULT_CV_THEME,
   groupCvLibrary,
-} from "@christopher/core";
+} from "@ava/core";
 // The one estimator the worker admits builds with, so the price quoted here and the price held
-// there cannot drift. The interface does not depend on `@christopher/ai` by name — the worker it
+// there cannot drift. The interface does not depend on `@ava/ai` by name — the worker it
 // drives does — and this module is the package's pure pricing table, with no imports of its own.
 import { estimateCvBuildUsd, type CvBuildSize } from "../../../packages/ai/src/pricing";
 import { db } from "@/lib/db";

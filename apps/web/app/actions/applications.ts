@@ -1,9 +1,9 @@
 "use server";
-import { assertCvFinalisable } from "@christopher/core/cv-review";
+import { assertCvFinalisable } from "@ava/core/cv-review";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
-import { actionCvs, applications, companies, cvDrafts, jobs, userJobs, type ApplicationStatus } from "@christopher/db";
+import { actionCvs, applications, companies, cvDrafts, jobs, userJobs, type ApplicationStatus } from "@ava/db";
 import { pipelineRowForJob, type PipelineRow } from "@/lib/queries/applications";
-import { APPLICATION_STATUSES, APPLICATION_STATUS_LABELS, CvContentSchema, applicationStage, roleStageRank } from "@christopher/core";
+import { APPLICATION_STATUSES, APPLICATION_STATUS_LABELS, CvContentSchema, applicationStage, roleStageRank } from "@ava/core";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { isRecordableDay, todayDay } from "@/lib/application-dates";

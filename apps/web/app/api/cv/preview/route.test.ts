@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { DEFAULT_CV_THEME } from "@christopher/core/cv";
+import { DEFAULT_CV_THEME } from "@ava/core/cv";
 const auth = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/auth", () => ({ requireUser: auth }));
 import { POST } from "./route";

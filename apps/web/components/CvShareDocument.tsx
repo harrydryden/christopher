@@ -11,7 +11,7 @@
  * what the first one said rather than repeating it. Names are what the writer typed and are shown
  * as exactly that: unverified.
  */
-import { cvDisplaySections, type CvContent } from "@christopher/core/cv";
+import { cvDisplaySections, type CvContent } from "@ava/core/cv";
 import { CV_PROFILE_ID, cvSectionBlockId } from "@/lib/cv-content-links";
 import { CV_SHARE_AUTHOR_NAME_MAX_CHARS, CV_SHARE_BODY_MAX_CHARS } from "@/lib/cv-share";
 import { buttonClass } from "@/components/Button";

@@ -7,12 +7,12 @@
  * backoff and a real second claim.
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { actionCvs, enqueueTask, failOpenCvBuildSteps, listCvBuildSteps, schema, startCvBuildStep, type Db } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
-import { InternalServerError, RateLimitError, type AiClientLike, type ParseResponse } from "@christopher/ai";
-import { DEFAULT_CV_THEME } from "@christopher/core/cv";
-import type { CvBuildFailure, CvBuildStepView } from "@christopher/core";
-import { dedupeKeyFor } from "@christopher/core";
+import { actionCvs, enqueueTask, failOpenCvBuildSteps, listCvBuildSteps, schema, startCvBuildStep, type Db } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
+import { InternalServerError, RateLimitError, type AiClientLike, type ParseResponse } from "@ava/ai";
+import { DEFAULT_CV_THEME } from "@ava/core/cv";
+import type { CvBuildFailure, CvBuildStepView } from "@ava/core";
+import { dedupeKeyFor } from "@ava/core";
 import { eq, sql } from "drizzle-orm";
 import { rubricFixture, reviewFixture } from "../../../packages/core/test/cv-review-fixture";
 import { createDeps, type WorkerDeps } from "./context";
@@ -25,7 +25,7 @@ import { tryReserveAi } from "./budget";
 import { LeaseBusyError, LeaseLostError } from "./lease";
 import { ensureTestUser } from "./test-users";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
 
 let deps: WorkerDeps;
 let db: Db;
@@ -41,7 +41,7 @@ const plan = { summary: "Operations leader", sections: [{ entryId: "one", bullet
 
 beforeAll(async () => {
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.CHRISTOPHER_DISABLE_BROWSER = "1";
+  process.env.AVA_DISABLE_BROWSER = "1";
   const bootstrap = await createDeps(readEnv());
   await runMigrations(bootstrap.db);
   deps = bootstrap;

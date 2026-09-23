@@ -1,4 +1,4 @@
-import type { CvBuildStepView } from "@christopher/core";
+import type { CvBuildStepView } from "@ava/core";
 import { Badge } from "./Badge";
 import { CvDisclosure } from "./CvDisclosure";
 import {

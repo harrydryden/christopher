@@ -6,15 +6,15 @@
 # in the Render dashboard and have drifted from what is written here. The dashboard is the source
 # of truth for the deployed service; change a value there as well as here, or it does nothing.
 databases:
-  - name: christopher-db
-    databaseName: christopher
-    user: christopher
+  - name: ava-db
+    databaseName: ava
+    user: ava
     plan: basic-256mb        # the free tier expires after 30 days; do not use it here
     postgresMajorVersion: "16"
 
 services:
   - type: web                # a web service, not a cron job: the scheduler must always be running
-    name: christopher-worker
+    name: ava-worker
     runtime: docker
     plan: starter            # starter never sleeps; the free tier does
     dockerfilePath: ./Dockerfile
@@ -24,7 +24,7 @@ services:
     envVars:
       - key: DATABASE_URL
         fromDatabase:
-          name: christopher-db
+          name: ava-db
           property: connectionString
       - key: ANTHROPIC_API_KEY
         sync: false          # set this in the Render dashboard

@@ -11,7 +11,7 @@ import { WorkspaceNav } from "@/components/WorkspaceNav";
 // The banner and every control it disables say one sentence, from one place.
 import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
 import { NavLink } from "@/components/NavLink";
-import { Mark } from "@/components/brand";
+import { Mark, Monogram } from "@/components/brand";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 export const dynamic = "force-dynamic";
@@ -44,7 +44,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   return (
     <WorkspaceShell><NavigationMetrics />
       <div className="flex items-center gap-3 border-b-2 border-line bg-raised px-4 py-2 text-13">
-        <Mark size={16} />
+        <Monogram size={16} />
         <Suspense fallback={<span className="text-muted">Loading scan status…</span>}><ScanBanner userId={user.id} /></Suspense>
       </div>
       {needsEmailConfirmation(user) && (
@@ -57,7 +57,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       )}
       <div className="flex flex-1 flex-col md:flex-row">
         <aside className="flex w-full shrink-0 flex-col border-b-2 border-line p-3 md:w-48 md:border-b-0 md:border-r-2">
-          <Link href="/" className="mb-4 block p-2" aria-label="Christopher home">
+          <Link href="/" className="mb-4 block p-2" aria-label="AVA home">
             <Mark size={48} />
           </Link>
           <nav aria-label="Main navigation" className="flex flex-wrap gap-0.5 md:block md:space-y-0.5">

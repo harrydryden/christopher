@@ -1,8 +1,8 @@
 /** Local-only 50-company daily-run timing and failure-isolation drill. */
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { createDb, enqueueTask, schema } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
+import { createDb, enqueueTask, schema } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
 import { sql } from "drizzle-orm";
 import { createDeps } from "./context";
 import { readEnv } from "./env";
@@ -28,10 +28,10 @@ await bootstrap.pool.end();
 
 const deps = await createDeps(readEnv({
   DATABASE_URL: databaseUrl.href,
-  CHRISTOPHER_DISABLE_BROWSER: "1",
+  AVA_DISABLE_BROWSER: "1",
   WORKER_CONCURRENCY: "3",
   SCAN_SPREAD_MINUTES: "0",
-  CHRISTOPHER_HOST_MAP: '{"*":"127.0.0.1:1"}',
+  AVA_HOST_MAP: '{"*":"127.0.0.1:1"}',
 }));
 let stage: "baseline" | "failure" = "baseline";
 let requests = 0;

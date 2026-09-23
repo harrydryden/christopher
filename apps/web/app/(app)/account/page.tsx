@@ -9,7 +9,7 @@ import { linkedProviders } from "@/lib/accounts";
 import { getCurrentUser, needsEmailConfirmation } from "@/lib/auth";
 import { emailConfigured } from "@/lib/email";
 import { googleConfigured } from "@/lib/google";
-import { MIN_PASSWORD_LENGTH } from "@christopher/core";
+import { MIN_PASSWORD_LENGTH } from "@ava/core";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";

@@ -12,7 +12,7 @@
  */
 // The subpath, not the package index: this file is read by the applications table, which is a
 // client component, and the index pulls in Node-only modules that no browser bundle can take.
-import { APPLICATION_STATUS_LABELS, type ApplicationStatus } from "@christopher/core/role-workflow";
+import { APPLICATION_STATUS_LABELS, type ApplicationStatus } from "@ava/core/role-workflow";
 
 /** Nothing recorded here predates the product by more than a working lifetime of applications. */
 export const EARLIEST_DAY = "2000-01-01";

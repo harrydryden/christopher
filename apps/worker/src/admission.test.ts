@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { prepareForAdmission } from "./admission";
-import { DEFAULT_GATE_SETTINGS, evaluateGate, type FetchContext } from "@christopher/core";
+import { DEFAULT_GATE_SETTINGS, evaluateGate, type FetchContext } from "@ava/core";
 const source = { type: "html" as const, url: "https://example.com/jobs" };
 const gate = { ...DEFAULT_GATE_SETTINGS, includeKeywords: ["strategy"], excludeKeywords: ["engineer"], matchFields: ["description" as const] };
 function context(body: string, status = 200) {

@@ -1,5 +1,5 @@
 {
-  "name": "@christopher/worker",
+  "name": "@ava/worker",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -13,9 +13,9 @@
     "cli": "tsx src/cli.ts"
   },
   "dependencies": {
-    "@christopher/ai": "workspace:*",
-    "@christopher/core": "workspace:*",
-    "@christopher/db": "workspace:*",
+    "@ava/ai": "workspace:*",
+    "@ava/core": "workspace:*",
+    "@ava/db": "workspace:*",
     "drizzle-orm": "latest",
     "mammoth": "^1.12.3",
     "pdf-parse": "^2.4.5",

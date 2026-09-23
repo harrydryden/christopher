@@ -2,10 +2,10 @@
 
 import { requireUser, requireVerifiedUser } from "@/lib/auth";
 
-import { appendProfile, latestProfileFor, setSubscriptionStatus } from "@christopher/db";
+import { appendProfile, latestProfileFor, setSubscriptionStatus } from "@ava/db";
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { filterSuggestions, tagVocabulary } from "@christopher/db/schema";
+import { filterSuggestions, tagVocabulary } from "@ava/db/schema";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { countRolesInTable } from "@/lib/queries/learning";

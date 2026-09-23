@@ -11,9 +11,15 @@
 
 const encoder = new TextEncoder();
 
-export const SESSION_COOKIE_NAME = "christopher_session";
+export const SESSION_COOKIE_NAME = "ava_session";
+/**
+ * The session cookie's name before the product was renamed. It is still read, after
+ * `SESSION_COOKIE_NAME`, so nobody is signed out by the deploy, and `endSession` clears it too.
+ * Remove it one session TTL (30 days) after the release, when the last one has expired.
+ */
+export const LEGACY_SESSION_COOKIE_NAME = "christopher_session";
 /** Short-lived state for the Google sign-in round trip. */
-export const OAUTH_COOKIE_NAME = "christopher_oauth";
+export const OAUTH_COOKIE_NAME = "ava_oauth";
 export const DEFAULT_SESSION_TTL_SECONDS = 2592000; // 30 days
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -42,6 +48,11 @@ function constantTimeEqual(a: string, b: string): boolean {
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
+}
+
+/** The session cookie a request carries: the current name first, then the legacy one. */
+export function sessionCookieValue(jar: { get(name: string): { value: string } | undefined }): string | undefined {
+  return jar.get(SESSION_COOKIE_NAME)?.value ?? jar.get(LEGACY_SESSION_COOKIE_NAME)?.value;
 }
 
 export interface SessionCookie {

@@ -4,12 +4,12 @@
  * work carries no account at all, so both have to survive the trip to the table.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, type Db } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
-import { aiFeatureLabel } from "@christopher/core";
+import { createDb, schema, type Db } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
+import { aiFeatureLabel } from "@ava/core";
 import { sql } from "drizzle-orm";
 import { ensureTestUser } from "@/test/auth";
-import type { User } from "@christopher/db/schema";
+import type { User } from "@ava/db/schema";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
@@ -17,13 +17,13 @@ let user: User;
 vi.mock("@/lib/db", () => ({ db: () => database }));
 import { getAiUsage, getCvBuildCosts, getCvBuildFailureKinds, getCvBuildMotions, getScoredRoleCost, getTotalAiSpend } from "./health";
 import { totalAiUsage } from "@/lib/ai-usage";
-import { aiOutcome } from "@christopher/db";
+import { aiOutcome } from "@ava/db";
 
 /** The string packages/ai writes when it stops paying for a batch whose sibling has failed. */
 const CANCELLED = "Cancelled because another call in the same task failed.";
 
 beforeAll(async () => {
-  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
+  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
   database = client.db;
   pool = client.pool;
   await runMigrations(database);
@@ -271,7 +271,7 @@ it("shows what is running against its deadline, and what a crash handed back", a
 
   const [running] = await listRunningTasks();
   expect(running).toMatchObject({ type: "scan_company", subject: "Stripe", attempts: 109 });
-  // scan_company's three minutes, from the shared table in @christopher/core.
+  // scan_company's three minutes, from the shared table in @ava/core.
   expect(running!.deadlineMs).toBe(3 * MINUTE);
   expect(Date.now() - running!.startedAt!.getTime()).toBeGreaterThan(running!.deadlineMs);
 
@@ -471,7 +471,7 @@ it("counts build motions and failure kinds, and reads nothing from a database wi
 
 import { countHealthItems, healthItemDetail, healthItemHeadline, healthItems, SOURCE_FAILING_AFTER } from "./health";
 import { formatUsd } from "@/lib/format";
-import { subscribeToCompany } from "@christopher/db";
+import { subscribeToCompany } from "@ava/db";
 
 async function resetAttention() {
   await database.execute(sql`truncate companies, ai_calls, user_settings, users restart identity cascade`);

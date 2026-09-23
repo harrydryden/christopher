@@ -1,7 +1,7 @@
-import { workloadMetrics } from "@christopher/db";
-import { aiBudgetWindowStart, CV_BUILD_MOTIONS, CV_FAILURE_POLICIES, type CvFailureKind } from "@christopher/core";
+import { workloadMetrics } from "@ava/db";
+import { aiBudgetWindowStart, CV_BUILD_MOTIONS, CV_FAILURE_POLICIES, type CvFailureKind } from "@ava/core";
 import { CV_STAGE_LABELS } from "@/lib/cv-build-narrative";
-import { users } from "@christopher/db/schema";
+import { users } from "@ava/db/schema";
 import Link from "next/link";
 import { retryTask } from "@/app/actions/health";
 import { Badge, scanStatusTone, sourceStatusTone, taskStatusTone } from "@/components/Badge";

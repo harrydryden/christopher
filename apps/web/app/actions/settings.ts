@@ -4,7 +4,7 @@ import { requireAdmin, requireUser } from "@/lib/auth";
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { isKnownModel, isValidScanTime, isValidTimezone, MAX_ACCOUNT_AI_BUDGET_USD, parseTermList, type GateSettings, type MatchField } from "@christopher/core";
+import { isKnownModel, isValidScanTime, isValidTimezone, MAX_ACCOUNT_AI_BUDGET_USD, parseTermList, type GateSettings, type MatchField } from "@ava/core";
 import { enqueue } from "@/lib/enqueue";
 import { GATE_NEEDS_KEYWORD_SENTENCE } from "@/lib/setup";
 import { getSettings, setSystemSetting, setUserSetting, saveSettingsAndGate } from "@/lib/settings";

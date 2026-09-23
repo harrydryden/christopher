@@ -4,7 +4,7 @@ import { requireAdmin, requireUser } from "@/lib/auth";
 
 import { and, asc, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { careerSources, companySubscriptions, discoveryRuns, tasks } from "@christopher/db/schema";
+import { careerSources, companySubscriptions, discoveryRuns, tasks } from "@ava/db/schema";
 import { db } from "@/lib/db";
 import { UserFacingError, zUuid } from "@/lib/validation";
 

@@ -4,14 +4,14 @@
  * call, then discover a careers source and scan it with no worker process involved.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createDb, enqueueTask, schema, subscribeToCompany, type Db } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
-import { dedupeKeyFor, priorityFor } from "@christopher/core";
+import { createDb, enqueueTask, schema, subscribeToCompany, type Db } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
+import { dedupeKeyFor, priorityFor } from "@ava/core";
 import { sql } from "drizzle-orm";
 import { startTestServer, type TestServer } from "../../../../worker/src/test-server";
 import { ensureTestUser } from "../../../../worker/src/test-users";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
 const SECRET = "cron-test-secret";
 
 const JOBS = {
@@ -42,7 +42,7 @@ let pool: { end(): Promise<void> };
 let GET: (request: Request) => Promise<Response>;
 
 beforeAll(async () => {
-  process.env.CHRISTOPHER_SERVERLESS_FALLBACK = "1";
+  process.env.AVA_SERVERLESS_FALLBACK = "1";
   server = await startTestServer(
     {
       "www.acme.example": SITE,
@@ -58,8 +58,8 @@ beforeAll(async () => {
 
   process.env.DATABASE_URL = DATABASE_URL;
   process.env.CRON_SECRET = SECRET;
-  process.env.CHRISTOPHER_HOST_MAP = JSON.stringify(server.hostMap);
-  process.env.CHRISTOPHER_DISABLE_BROWSER = "1";
+  process.env.AVA_HOST_MAP = JSON.stringify(server.hostMap);
+  process.env.AVA_DISABLE_BROWSER = "1";
   process.env.SCRAPER_CONTACT_EMAIL = "you@example.com";
   delete process.env.ANTHROPIC_API_KEY;
 
@@ -118,7 +118,7 @@ describe("the cron route", () => {
   });
 
   it("schedules but does not drain when the fallback is off", async () => {
-    delete process.env.CHRISTOPHER_SERVERLESS_FALLBACK;
+    delete process.env.AVA_SERVERLESS_FALLBACK;
     try {
       await db.insert(schema.settings).values([
         { key: "scanTime", value: "00:00" },
@@ -140,7 +140,7 @@ describe("the cron route", () => {
       expect(tasks.every((task) => task.status === "queued")).toBe(true);
       expect(await db.select().from(schema.scanRuns)).toHaveLength(0);
     } finally {
-      process.env.CHRISTOPHER_SERVERLESS_FALLBACK = "1";
+      process.env.AVA_SERVERLESS_FALLBACK = "1";
     }
   }, 120_000);
 

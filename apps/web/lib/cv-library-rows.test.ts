@@ -8,7 +8,7 @@
  * sentence, and it has to stay both across an edit.
  */
 import { expect, it } from "vitest";
-import { rowFacets, type CvLibrary, type Employment } from "@christopher/core/cv";
+import { rowFacets, type CvLibrary, type Employment } from "@ava/core/cv";
 import {
   addJobRow,
   archivedBlocks,

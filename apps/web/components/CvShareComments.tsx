@@ -9,8 +9,8 @@
  * to a note: nothing here is sent to a model, and nothing a reader wrote is treated as an
  * instruction by anything in the product.
  */
-import type { CvShareComment } from "@christopher/db";
-import type { CvContent } from "@christopher/core/cv";
+import type { CvShareComment } from "@ava/db";
+import type { CvContent } from "@ava/core/cv";
 import { resolveCvShareComment } from "@/app/actions/cv-share";
 import { Badge } from "@/components/Badge";
 import { Button } from "@/components/Button";

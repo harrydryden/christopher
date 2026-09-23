@@ -23,7 +23,7 @@ import {
   type CvLibrary,
   type Employment,
   type EvidenceFacet,
-} from "@christopher/core/cv";
+} from "@ava/core/cv";
 
 type CvEntry = CvLibrary["entries"][number];
 

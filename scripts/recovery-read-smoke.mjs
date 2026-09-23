@@ -25,7 +25,7 @@ async function main() {
   const expires = Math.floor(Date.now() / 1000) + 900;
   const sessionId = randomUUID();
   await pool.query(`insert into sessions(id,user_id,expires_at,user_agent,ip_address) values($1,$2,to_timestamp($3),'local recovery read smoke','127.0.0.1')`, [sessionId, user.id, expires]);
-  const cookie = `christopher_session=v2.${sessionId}.${expires}.${createHmac("sha256", secret).update(`${sessionId}.${expires}`).digest("base64url")}`;
+  const cookie = `ava_session=v2.${sessionId}.${expires}.${createHmac("sha256", secret).update(`${sessionId}.${expires}`).digest("base64url")}`;
   const server = spawn(process.execPath, [require.resolve("next/dist/bin/next"), "start", "-p", String(port)], {
     cwd: new URL("../apps/web", import.meta.url), detached: true,
     env: { ...process.env, DATABASE_URL: url.href, SESSION_SECRET: secret, NODE_ENV: "production" }, stdio: ["ignore", "pipe", "pipe"],

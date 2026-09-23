@@ -31,11 +31,11 @@ describe('structured skills and theme snapshots', () => {
   });
 });
 
-it('uses Black first and by default, on three pages in Christopher, and guarantees at least 4.5:1 foreground contrast', async () => {
+it('uses Black first and by default, on three pages in AVA, and guarantees at least 4.5:1 foreground contrast', async () => {
   const { CV_THEMES } = await import('./cv-theme');
   expect(Object.keys(CV_THEMES)[0]).toBe('Black');
   expect(DEFAULT_CV_THEME).toBe(CV_THEMES.Black);
-  expect(DEFAULT_CV_THEME).toMatchObject({ primary: '#000000', font: 'Christopher', maxPages: 3 });
+  expect(DEFAULT_CV_THEME).toMatchObject({ primary: '#000000', font: 'AVA', maxPages: 3 });
   for (const [label, preset] of Object.entries(CV_THEMES)) expect(CvThemeSchema.safeParse(preset).success, label).toBe(true);
   expect(CV_THEMES.Black?.primary).toBe('#000000');
   expect(cvForeground(DEFAULT_CV_THEME.primary)).toBe('#ffffff');
@@ -49,8 +49,8 @@ it('uses Black first and by default, on three pages in Christopher, and guarante
 
 it('fills the font and page limit for themes stored before they existed, and bounds new values', () => {
   const legacy = { version: 1, primary: '#142D46', background: '#ffffff', surface: '#eff4f8', pill: '#e3edf5', introPanel: true, skillPills: true };
-  expect(CvThemeSchema.parse(legacy)).toEqual({ ...legacy, font: 'Christopher', maxPages: 3 });
-  expect(resolveCvTheme(legacy)).toEqual({ ...legacy, font: 'Christopher', maxPages: 3 });
+  expect(CvThemeSchema.parse(legacy)).toEqual({ ...legacy, font: 'AVA', maxPages: 3 });
+  expect(resolveCvTheme(legacy)).toEqual({ ...legacy, font: 'AVA', maxPages: 3 });
   expect(resolveCvTheme(undefined)).toEqual(DEFAULT_CV_THEME);
   expect(resolveCvTheme({ ...legacy, primary: 'red' })).toEqual(DEFAULT_CV_THEME);
   expect(cvMaxPages(undefined)).toBe(3);
@@ -61,5 +61,13 @@ it('fills the font and page limit for themes stored before they existed, and bou
   expect(CvThemeSchema.parse({ ...legacy, font: 'Arial', maxPages: 1 })).toMatchObject({ font: 'Arial', maxPages: 1 });
   // A library carries the chosen font and limit into every CV it materialises.
   expect(materialiseCv({ ...library, theme: { ...DEFAULT_CV_THEME, font: 'Arial', maxPages: 2 } }, plan).theme).toMatchObject({ font: 'Arial', maxPages: 2 });
-  expect(CvContentSchema.parse({ name: 'Example', contact: '', summary: 'Profile', theme: legacy, sections: [{ entryId: 'old', kind: 'skill', heading: 'Skills', bullets: ['SQL'] }], gaps: [] }).theme).toMatchObject({ font: 'Christopher', maxPages: 3 });
+  expect(CvContentSchema.parse({ name: 'Example', contact: '', summary: 'Profile', theme: legacy, sections: [{ entryId: 'old', kind: 'skill', heading: 'Skills', bullets: ['SQL'] }], gaps: [] }).theme).toMatchObject({ font: 'AVA', maxPages: 3 });
+});
+
+it('reads the font stored under its old name as AVA', () => {
+  const stored = { ...DEFAULT_CV_THEME, font: 'Christopher', maxPages: 2 };
+  expect(CvThemeSchema.parse(stored)).toEqual({ ...DEFAULT_CV_THEME, font: 'AVA', maxPages: 2 });
+  expect(resolveCvTheme(stored)).toEqual({ ...DEFAULT_CV_THEME, font: 'AVA', maxPages: 2 });
+  expect(CvContentSchema.parse({ name: 'Example', contact: '', summary: 'Profile', theme: stored, sections: [{ entryId: 'old', kind: 'skill', heading: 'Skills', bullets: ['SQL'] }], gaps: [] }).theme).toMatchObject({ font: 'AVA' });
+  expect(CvThemeSchema.safeParse({ ...DEFAULT_CV_THEME, font: 'christopher' }).success).toBe(false);
 });

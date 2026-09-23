@@ -1,5 +1,5 @@
-import { schema, abandonCvDraft, enqueueTask, listUserIds, pruneWorkerEvents, recordWorkerEvent, releaseAiHolds, releaseOrphanedCvHolds } from "@christopher/db";
-import { dedupeKeyFor, localDateParts, priorityFor } from "@christopher/core";
+import { schema, abandonCvDraft, enqueueTask, listUserIds, pruneWorkerEvents, recordWorkerEvent, releaseAiHolds, releaseOrphanedCvHolds } from "@ava/db";
+import { dedupeKeyFor, localDateParts, priorityFor } from "@ava/core";
 import { and, eq, lt, sql } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 import { maintainHistory } from "./maintenance";
@@ -39,7 +39,7 @@ export async function schedulerTick(deps: WorkerDeps): Promise<void> {
   // Weekly learning jobs run per account, an hour after the daily run.
   if (weekday === settings.weeklyDay && hm >= addMinutes(settings.scanTime, 60)) {
     await deps.db.transaction(async tx => {
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('christopher:weekly-jobs'))`);
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('ava:weekly-jobs'))`);
     const last = await getInternal<string>(tx as unknown as WorkerDeps["db"], "lastWeeklyYmd");
     if (last !== ymd) {
       await setInternal(tx as unknown as WorkerDeps["db"], "lastWeeklyYmd", ymd);

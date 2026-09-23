@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
-import { materialiseCv, type CvLibrary } from "@christopher/core/cv";
+import { materialiseCv, type CvLibrary } from "@ava/core/cv";
 import { CV_PROFILE_ID, cvSectionBlockId } from "./cv-content-links";
 import {
   CV_SHARE_ANCHOR_MAX_CHARS,

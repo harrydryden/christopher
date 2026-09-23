@@ -7,9 +7,9 @@
  * handful of accounts, so they are read together rather than joined into the listing.
  */
 import { and, inArray } from "drizzle-orm";
-import { aiBudgetWindowStart, DEFAULT_ACCOUNT_AI_BUDGET_USD, resolveUserSettings } from "@christopher/core";
-import { accountAiSpend } from "@christopher/db";
-import { userSettings } from "@christopher/db/schema";
+import { aiBudgetWindowStart, DEFAULT_ACCOUNT_AI_BUDGET_USD, resolveUserSettings } from "@ava/core";
+import { accountAiSpend } from "@ava/db";
+import { userSettings } from "@ava/db/schema";
 import { db } from "@/lib/db";
 
 /** The two `user_settings` keys that decide one account's budget window. */

@@ -8,7 +8,7 @@ const auth = vi.hoisted(() => vi.fn());
 const read = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/auth", () => ({ requireUser: auth }));
 vi.mock("@/lib/db", () => ({ db: () => ({}) }));
-vi.mock("@christopher/db", () => ({ readCompanyLogo: read }));
+vi.mock("@ava/db", () => ({ readCompanyLogo: read }));
 
 import { GET } from "./route";
 

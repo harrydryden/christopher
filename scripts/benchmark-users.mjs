@@ -87,10 +87,10 @@ async function main() {
     const { rows: drafts } = await pool.query(`select id,user_id from cv_drafts where archived_at is null`);
     const draftByUser = new Map(drafts.map(row => [row.user_id, row.id]));
     await pool.query('analyze');
-    const cookies = sessions.map(({ id }) => `christopher_session=v2.${id}.${expires}.${createHmac('sha256', secret).update(`${id}.${expires}`).digest('base64url')}`);
+    const cookies = sessions.map(({ id }) => `ava_session=v2.${id}.${expires}.${createHmac('sha256', secret).update(`${id}.${expires}`).digest('base64url')}`);
     server = spawn(process.execPath, ['--inspect=127.0.0.1:0', require.resolve('next/dist/bin/next'), 'start', '-p', String(port)], {
       cwd: new URL('../apps/web', import.meta.url), detached: true,
-      env: { ...process.env, SESSION_SECRET: secret, NODE_ENV: 'production', CHRISTOPHER_DISABLE_BROWSER: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, SESSION_SECRET: secret, NODE_ENV: 'production', AVA_DISABLE_BROWSER: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
     });
     server.stdout.on('data', b => { serverLog = (serverLog + b).slice(-20_000); });
     server.stderr.on('data', b => { serverLog = (serverLog + b).slice(-20_000); });
@@ -224,7 +224,7 @@ async function main() {
         'The local inspector used for heap samples adds small diagnostic overhead and is bound to loopback.',
         'Synthetic populated CV/Library/application data is smaller than p95 documents. No imports, public shares, Chromium, external providers or paid models run.',
         'This does not establish hosted connection, memory, network, serverless fan-out or sustained-soak headroom.'] };
-    await writeFile(process.env.USERS_REPORT_PATH ?? '/tmp/christopher-users-report.json', JSON.stringify(report, null, 2) + '\n');
+    await writeFile(process.env.USERS_REPORT_PATH ?? '/tmp/ava-users-report.json', JSON.stringify(report, null, 2) + '\n');
     console.log(JSON.stringify({ passed: report.passed, counts, phases: phases.map(({ label, errors, p95Ms, seconds }) => ({ label, errors, p95Ms, seconds })), failures }));
     if (!report.passed) process.exitCode = 1;
   } finally {

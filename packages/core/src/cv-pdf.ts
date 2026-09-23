@@ -12,7 +12,7 @@ export function assertCvPageLimit(pageCount: number, maxPages: number): void {
 
 const decodeFont = (base64: string) => Buffer.from(base64.replace(/\s+/g, ""), "base64");
 let liberationSans: { regular: Buffer; bold: Buffer } | undefined;
-/** Christopher is pdfkit's built-in Helvetica; Arial embeds the bundled Liberation Sans bytes. */
+/** AVA is pdfkit's built-in Helvetica; Arial embeds the bundled Liberation Sans bytes. */
 function registerCvFont(doc: PDFKit.PDFDocument, font: CvFont): { regular: string; bold: string } {
   if (font !== "Arial") return { regular: "Helvetica", bold: "Helvetica-Bold" };
   liberationSans ??= { regular: decodeFont(LIBERATION_SANS_REGULAR), bold: decodeFont(LIBERATION_SANS_BOLD) };

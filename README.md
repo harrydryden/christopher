@@ -1,4 +1,4 @@
-# Christopher
+# AVA
 
 Watches the careers pages of companies you list, once a day. Keeps a table of the roles that match
 your keywords **and** your locations, tracks how long each has been live and when it closes, and
@@ -45,10 +45,10 @@ Requirements: Node 22, pnpm 10, PostgreSQL 16.
 
 ```bash
 pnpm install
-createdb christopher_dev                      # or: psql -c 'create database christopher_dev'
+createdb ava_dev                              # or: psql -c 'create database ava_dev'
 cp .env.example .env                          # then edit it
 
-export DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/christopher_dev
+export DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/ava_dev
 pnpm db:migrate
 
 # Interface: http://localhost:3000 — sign up with the administrator address (ADMIN_EMAILS, default harryddryden@gmail.com) and confirm it
@@ -73,7 +73,7 @@ pnpm cli probe https://www.anthropic.com
 pnpm cli add https://www.anduril.com https://www.anthropic.com
 pnpm cli drain      # runs queued work now instead of waiting for the scheduler
 pnpm cli list       # companies, the source found for each, role and follower counts
-pnpm cli users      # accounts and what each follows (CHRISTOPHER_CLI_USER picks who the CLI acts for)
+pnpm cli users      # accounts and what each follows (AVA_CLI_USER picks who the CLI acts for)
 pnpm cli table      # the roles table as text
 pnpm cli scan       # queue a full run
 ```
@@ -100,14 +100,18 @@ Full instructions, including what to set where and what to do when something is 
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | web | optional; enables "Continue with Google". Redirect URI: `<APP_URL>/auth/google/callback` |
 | `ADMIN_EMAILS` | web | comma-separated administrator addresses; defaults to `harryddryden@gmail.com`. They may always sign up, become administrators once their address is confirmed, and the first of them to confirm inherits the data migrated from a single-user deployment. Everyone else can only sign up while an administrator has opened registration in Admin |
 | `RESEND_API_KEY`, `EMAIL_FROM` | web | optional; sends confirmation and password-reset emails through Resend (set `APP_URL` with them). Without a provider the links are written to the server log, `AUTH_EMAIL_LOG=0` keeps them out, and an administrator can mint reset links from Admin |
-| `CHRISTOPHER_CLI_USER` | worker | email of the account the CLI acts for; default is the earliest administrator |
+| `AVA_CLI_USER` | worker | email of the account the CLI acts for; default is the earliest administrator |
 | `ANTHROPIC_API_KEY` | worker | optional; without it scanning still works and scoring is skipped |
 | `SCRAPER_CONTACT_EMAIL` | worker | included in the user agent so site owners can reach you |
 | `TZ` | worker | the timezone the daily run is scheduled in |
 | `WORKER_CONCURRENCY` | worker | parallel tasks, default 3 |
 | `CHROMIUM_EXECUTABLE_PATH` | worker | only needed outside the Docker image |
 | `CRON_SECRET` | web | required only for the Vercel-cron deployment; Vercel sends it as a bearer token |
-| `CHRISTOPHER_DISABLE_BROWSER` | both | set to `1` where there is no Chromium, such as Vercel |
+| `AVA_DISABLE_BROWSER` | both | set to `1` where there is no Chromium, such as Vercel |
+
+The `AVA_*` variables were named `CHRISTOPHER_*` before the product was renamed. The old names are
+still read wherever the new ones are unset, so a deployment that sets them keeps working; move them
+to the new names when convenient.
 
 Everything else, including keywords, locations, the run time and the model, is edited in Settings and
 stored in the database. Each account has its own monthly AI budget, $25 to start, and that is the
@@ -131,7 +135,7 @@ pnpm -r typecheck
 The end-to-end suite starts a fake company website and runs the real code against a real database:
 adding a homepage URL, discovering its Greenhouse board, scanning it, filtering by keyword and
 location, and closing a role that disappears. It needs PostgreSQL; set `TEST_DATABASE_URL` or use the
-default `christopher_test` database.
+default `ava_test` database.
 
 ## Checking it against a real site
 

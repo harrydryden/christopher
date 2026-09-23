@@ -17,7 +17,7 @@ import {
   type CvEvidenceStatus,
   type CvLibrary,
   type Employment,
-} from "@christopher/core/cv";
+} from "@ava/core/cv";
 
 /** One job's evidence as the Library shows it: how much is written, how much is confirmed. */
 export interface CvJobReadiness {

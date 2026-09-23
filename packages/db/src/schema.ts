@@ -1,5 +1,5 @@
 /**
- * Database schema for Christopher. See docs/SPEC.md section 5.
+ * Database schema for AVA. See docs/SPEC.md section 5.
  * Conventions: snake_case columns, timestamptz everywhere, uuid primary keys.
  *
  * Two kinds of table live here:
@@ -10,9 +10,9 @@
  *    follows which company, `user_jobs` holds one person's gate result, fit score and archive
  *    marker for a shared posting, and decisions, profiles, CVs and settings all carry a `user_id`.
  */
-import type { CvLibrary, CvContent, LibraryEntryReview } from "@christopher/core";
-import type { CvAssessment, CvJobSource } from "@christopher/core/cv-assessment";
-import type { CvBuildCheckpoint, CvBuildFailure, CvBuildMotion, CvBuildStage, CvBuildStepStatus, CvGapQuiz } from "@christopher/core";
+import type { CvLibrary, CvContent, LibraryEntryReview } from "@ava/core";
+import type { CvAssessment, CvJobSource } from "@ava/core/cv-assessment";
+import type { CvBuildCheckpoint, CvBuildFailure, CvBuildMotion, CvBuildStage, CvBuildStepStatus, CvGapQuiz } from "@ava/core";
 import { sql } from "drizzle-orm";
 import { cvRoleKey } from "./cv-role-key";
 import {
@@ -57,12 +57,12 @@ export const JOB_ORIGINS = ["scan", "user"] as const;
  */
 export const SCORE_STATES = ["queued", "scored", "closed", "budget", "ineligible"] as const;
 export type ScoreState = (typeof SCORE_STATES)[number];
-/** Where captured logo bytes came from. Mirrors `LOGO_SOURCES` in @christopher/core. */
+/** Where captured logo bytes came from. Mirrors `LOGO_SOURCES` in @ava/core. */
 export const LOGO_SOURCES = ["site_icon", "icon_service"] as const;
 export const NAME_SUGGESTION_STATUSES = ["pending", "applied", "dismissed"] as const;
 export const DECISIONS = ["apply", "skip"] as const;
 /**
- * What an `applications` row can say. Mirrors `APPLICATION_STATUSES` in @christopher/core, which
+ * What an `applications` row can say. Mirrors `APPLICATION_STATUSES` in @ava/core, which
  * maps each one onto a role stage; the two lists are maintained together because core cannot
  * import this package. "applying" is the stage a person sets from the table before anything is
  * submitted, which is why `pdf_base64` is nullable.
@@ -711,13 +711,13 @@ export const cvLibraries = pgTable("cv_libraries", {
   createdAt: tsNow("created_at"),
 }, t => [uniqueIndex("cv_libraries_user_version_uidx").on(t.userId, t.version)]);
 
-/** How much evidence an entry carries. Mirrors `EVIDENCE_RATINGS` in @christopher/core. */
+/** How much evidence an entry carries. Mirrors `EVIDENCE_RATINGS` in @ava/core. */
 export const EVIDENCE_RATINGS = ["none", "weak", "good", "strong"] as const;
 export type EvidenceRating = (typeof EVIDENCE_RATINGS)[number];
 /**
  * Who produced a review. `rules` is the deterministic baseline computed from the person's own
  * facet tags, written the moment a library is saved; `model` is the A12 review, which lands when
- * the task has run. Mirrors `LIBRARY_REVIEW_SOURCES` in @christopher/core.
+ * the task has run. Mirrors `LIBRARY_REVIEW_SOURCES` in @ava/core.
  */
 export const LIBRARY_REVIEW_SOURCES = ["rules", "model"] as const;
 export type LibraryReviewSource = (typeof LIBRARY_REVIEW_SOURCES)[number];

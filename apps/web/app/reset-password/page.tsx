@@ -3,7 +3,7 @@ import { resetPassword } from "@/app/login/actions";
 import { AuthShell } from "@/components/AuthShell";
 import { Button } from "@/components/Button";
 import { Field, Input } from "@/components/Field";
-import { MIN_PASSWORD_LENGTH } from "@christopher/core";
+import { MIN_PASSWORD_LENGTH } from "@ava/core";
 
 export const dynamic = "force-dynamic";
 

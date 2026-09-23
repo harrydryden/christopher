@@ -1,7 +1,7 @@
 import { Fragment } from "react";
 import Link from "next/link";
 import { z } from "zod";
-import { ROLE_STAGES, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS, type RoleStage } from "@christopher/core";
+import { ROLE_STAGES, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS, type RoleStage } from "@ava/core";
 import { ApplicationsTable } from "@/components/ApplicationsTable";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { EmptyState } from "@/components/EmptyState";

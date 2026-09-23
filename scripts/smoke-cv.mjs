@@ -626,12 +626,13 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       name: "CV build progress",
       exact: true,
     });
-    // One mark in both states now: reduced motion stops the wheel turning
-    // rather than swapping in a separate still image.
-    const wheel = progress.locator("svg").first();
-    assert.equal(await wheel.isVisible(), true);
+    // One mark in both states now: reduced motion stops its letters turning
+    // rather than swapping in a separate still image. The turn is on each
+    // letter's path, not on the svg.
+    const mark = progress.locator("svg").first();
+    assert.equal(await mark.isVisible(), true);
     assert.equal(
-      await wheel.evaluate((el) => getComputedStyle(el).animationName),
+      await mark.locator(".ds-mark-letter").first().evaluate((el) => getComputedStyle(el).animationName),
       "none",
     );
     await pool.query(

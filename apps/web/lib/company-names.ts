@@ -7,7 +7,7 @@
  * place that turns a proposal into the rename.
  */
 import { and, eq } from "drizzle-orm";
-import { companies, companyNameSuggestions } from "@christopher/db/schema";
+import { companies, companyNameSuggestions } from "@ava/db/schema";
 import type { db } from "./db";
 
 type Writer = Pick<ReturnType<typeof db>, "select" | "insert" | "update">;

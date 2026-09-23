@@ -1,5 +1,5 @@
 {
-  "name": "@christopher/db",
+  "name": "@ava/db",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -34,7 +34,7 @@
     "lint": "echo 'no lint configured'"
   },
   "dependencies": {
-    "@christopher/core": "workspace:*",
+    "@ava/core": "workspace:*",
     "drizzle-orm": "latest",
     "pg": "latest"
   },

@@ -1,7 +1,7 @@
 "use client";
 import { useActionState, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { flushSync } from "react-dom";
-import { EVIDENCE_FACET_PROMPTS, employmentCompanyGroups, employmentHeading, isActiveEvidence, normaliseCvLibrary, responsibilityRows, rowFacets, updateResponsibilityRows, type CvLibrary, type Employment, type EvidenceFacet } from "@christopher/core/cv";
+import { EVIDENCE_FACET_PROMPTS, employmentCompanyGroups, employmentHeading, isActiveEvidence, normaliseCvLibrary, responsibilityRows, rowFacets, updateResponsibilityRows, type CvLibrary, type Employment, type EvidenceFacet } from "@ava/core/cv";
 import { saveCvLibrary } from "@/app/actions/cv";
 import { cvJobReadiness, cvLibraryReadiness } from "@/lib/cv-ready";
 import { mergeCvLibrary } from "@/lib/cv-library-merge";

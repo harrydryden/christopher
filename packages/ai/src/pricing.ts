@@ -143,7 +143,7 @@ export function estimateLibraryImportUsd(model: string, size: { documentBytes: n
   });
 }
 
-/** Entries per A12 batch. Mirrors `LIBRARY_REVIEW_BATCH` in @christopher/core. */
+/** Entries per A12 batch. Mirrors `LIBRARY_REVIEW_BATCH` in @ava/core. */
 const LIBRARY_REVIEW_BATCH = 8;
 
 /** What a library evidence review is measured in: the library itself and how much of it to review. */

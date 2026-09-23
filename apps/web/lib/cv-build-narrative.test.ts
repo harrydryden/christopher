@@ -4,8 +4,8 @@
  * is a change to what the product says.
  */
 import { expect, it } from "vitest";
-import type { CvBuildMotion, CvBuildStepStatus, CvBuildStepView } from "@christopher/core";
-import { CV_BUILD_MOTIONS } from "@christopher/core";
+import type { CvBuildMotion, CvBuildStepStatus, CvBuildStepView } from "@ava/core";
+import { CV_BUILD_MOTIONS } from "@ava/core";
 import { attemptLabel, cvBuildTotals, cvBuildTotalsLine, narrateStep } from "./cv-build-narrative";
 
 const now = new Date("2026-09-18T18:12:00.000Z");

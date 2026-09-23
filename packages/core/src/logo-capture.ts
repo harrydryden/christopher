@@ -17,7 +17,7 @@ import type { FetchContext, FetchInit } from "./types";
 /** Half a megabyte. An icon is a few kilobytes; anything larger is a hero image or a mistake. */
 export const LOGO_MAX_BYTES = 512 * 1024;
 
-/** Kept identical to `LOGO_SOURCES` in @christopher/db — core cannot import the schema. */
+/** Kept identical to `LOGO_SOURCES` in @ava/db — core cannot import the schema. */
 export const LOGO_SOURCES = ["site_icon", "icon_service"] as const;
 export type LogoSource = (typeof LOGO_SOURCES)[number];
 

@@ -29,8 +29,8 @@ import {
   type CvLibrary,
   type Employment,
   type TaskPayloads,
-} from "@christopher/core";
-import { createAiEngine, estimateLibraryReviewUsd } from "@christopher/ai";
+} from "@ava/core";
+import { createAiEngine, estimateLibraryReviewUsd } from "@ava/ai";
 import {
   latestLibraryReviews,
   pruneLibraryReviews,
@@ -40,7 +40,7 @@ import {
   type Db,
   type LibraryReviewUpsert,
   type Task,
-} from "@christopher/db";
+} from "@ava/db";
 import { desc, eq } from "drizzle-orm";
 import { tryReserveAi } from "../budget";
 import type { TaskRunContext } from "../queue";

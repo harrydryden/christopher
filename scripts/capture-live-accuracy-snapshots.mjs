@@ -9,7 +9,7 @@ const valueAfter = flag => {
   const index = args.indexOf(flag);
   return index >= 0 ? args[index + 1] : undefined;
 };
-const child = spawn("pnpm", ["--filter", "@christopher/worker", "exec", "tsx", "src/capture-live-accuracy-snapshots.ts"], {
+const child = spawn("pnpm", ["--filter", "@ava/worker", "exec", "tsx", "src/capture-live-accuracy-snapshots.ts"], {
   cwd: root,
   stdio: ["ignore", "pipe", "inherit"],
 });

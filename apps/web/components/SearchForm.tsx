@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useTransition, type FormEvent, type FormHTMLAttributes, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { Mark } from "@/components/brand";
+import { Monogram } from "@/components/brand";
 
 const PendingContext = createContext(false);
 
@@ -49,7 +49,7 @@ export function SearchPending({ size = 16 }: { size?: number }) {
   const pending = useContext(PendingContext);
   return (
     <span role="status" aria-live="polite" className="inline-flex min-w-4 items-center self-center">
-      {pending && <Mark size={size} searching title="Searching" />}
+      {pending && <Monogram size={size} searching title="Searching" />}
     </span>
   );
 }

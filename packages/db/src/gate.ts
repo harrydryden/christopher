@@ -1,4 +1,4 @@
-import { evaluateGate, dedupeKeyFor, priorityFor, type AppSettings } from "@christopher/core";
+import { evaluateGate, dedupeKeyFor, priorityFor, type AppSettings } from "@ava/core";
 import { sql } from "drizzle-orm";
 import type { Db } from "./client";
 import * as schema from "./schema";

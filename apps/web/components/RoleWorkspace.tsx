@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ROLE_STAGES, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS, ROLE_STATUS_LABELS, ROLE_TABS, type RoleStatus } from "@christopher/core";
+import { ROLE_STAGES, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS, ROLE_STATUS_LABELS, ROLE_TABS, type RoleStatus } from "@ava/core";
 import { Card } from "./Card";
 import { EmptyState } from "./EmptyState";
 import { RolesTable } from "./RolesTable";

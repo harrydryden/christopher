@@ -11,7 +11,7 @@ it("renders an actual PDF from stored content without requiring a browser", asyn
 // checked the file signature, so an entirely unstyled PDF passed.
 import PDFDocument from "pdfkit";
 import { afterEach, vi } from "vitest";
-import { CV_THEMES, DEFAULT_CV_THEME, type CvContent } from "@christopher/core/cv";
+import { CV_THEMES, DEFAULT_CV_THEME, type CvContent } from "@ava/core/cv";
 import { renderCvPdfWithReport } from "./cv-pdf";
 const fixture: CvContent = { name: "Example Candidate", contact: "London", summary: "Operations leader.", sections: [
   { entryId: "skill", kind: "skill", heading: "Internal evidence label", bullets: ["Planning and reporting."] },
@@ -84,10 +84,10 @@ it("rejects downloads above the CV's own page limit while allowing a complete di
   await expect(renderCvPdf(trimmed)).resolves.toBeInstanceOf(Buffer);
   await expect(renderCvPdf({ ...trimmed, theme: { ...DEFAULT_CV_THEME, maxPages: 2 } })).rejects.toThrow("the maximum is 2");
 });
-it("embeds Liberation Sans for the Arial font and keeps the built-in face for Christopher", async () => {
-  const christopher = (await renderCvPdf(fixture)).toString("latin1");
-  expect(christopher).toContain("/BaseFont /Helvetica");
-  expect(christopher).not.toContain("LiberationSans");
+it("embeds Liberation Sans for the Arial font and keeps the built-in face for AVA", async () => {
+  const builtIn = (await renderCvPdf(fixture)).toString("latin1");
+  expect(builtIn).toContain("/BaseFont /Helvetica");
+  expect(builtIn).not.toContain("LiberationSans");
   const arial = (await renderCvPdf({ ...fixture, theme: { ...DEFAULT_CV_THEME, font: "Arial" } })).toString("latin1");
   expect(arial).toContain("LiberationSans");
   expect(arial).toContain("LiberationSans-Bold");

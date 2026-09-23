@@ -1,5 +1,5 @@
-import type { CvBuildFailure, CvBuildMotion, CvBuildStepDetails, CvBuildStepStatus } from "@christopher/core";
-import { failOpenCvBuildSteps, finishCvBuildStep, schema, startCvBuildStep, type Db } from "@christopher/db";
+import type { CvBuildFailure, CvBuildMotion, CvBuildStepDetails, CvBuildStepStatus } from "@ava/core";
+import { failOpenCvBuildSteps, finishCvBuildStep, schema, startCvBuildStep, type Db } from "@ava/db";
 import { eq } from "drizzle-orm";
 import { LeaseLostError } from "../lease";
 import { log } from "../log";

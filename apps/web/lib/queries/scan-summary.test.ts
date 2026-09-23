@@ -3,11 +3,11 @@
  * history all read. It has to be right per account, cheap for many runs at once, and briefly cached.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, scanRunSummaries, scanRunSummary, subscribeToCompany, type Db } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
+import { createDb, schema, scanRunSummaries, scanRunSummary, subscribeToCompany, type Db } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
 import { sql } from "drizzle-orm";
 import { ensureTestUser } from "@/test/auth";
-import type { User } from "@christopher/db/schema";
+import type { User } from "@ava/db/schema";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
@@ -16,7 +16,7 @@ vi.mock("@/lib/db", () => ({ db: () => database }));
 import { scanRunReport, scanRunReports, clearScanSummaryCache } from "@/lib/scan-run-report";
 
 beforeAll(async () => {
-  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
+  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
   database = client.db;
   pool = client.pool;
   await runMigrations(database);

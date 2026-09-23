@@ -13,7 +13,7 @@ import {
   type CvBuildDraft,
   type CvBuildTask,
 } from "./cv-build-state";
-import type { CvBuildFailure } from "@christopher/core";
+import type { CvBuildFailure } from "@ava/core";
 
 const now = new Date("2026-09-18T12:00:00.000Z");
 const ago = (ms: number) => new Date(now.getTime() - ms);

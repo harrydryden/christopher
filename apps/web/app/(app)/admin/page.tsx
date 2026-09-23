@@ -2,8 +2,8 @@ import { createResetLink, deleteUser, listAccounts, resetAccountAiSpend, setAcco
 import { saveRegistrationSettings } from "@/app/actions/settings";
 import { ResetLinkButton } from "@/components/ResetLinkButton";
 import { adminEmails } from "@/lib/accounts";
-import { isPlaceholderEmail } from "@christopher/db";
-import { MAX_ACCOUNT_AI_BUDGET_USD } from "@christopher/core";
+import { isPlaceholderEmail } from "@ava/db";
+import { MAX_ACCOUNT_AI_BUDGET_USD } from "@ava/core";
 import { getSystemSettings } from "@/lib/settings";
 import { accountAiBudgets, defaultAccountAiBudget } from "@/lib/queries/accounts";
 import { Badge } from "@/components/Badge";

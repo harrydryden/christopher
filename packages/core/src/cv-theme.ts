@@ -3,13 +3,15 @@ import { CV_PAGE_LIMITS } from "./cv-format";
 
 const ColourSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Use a six-digit hex colour.");
 /**
- * Christopher is the renderer's own face (the standard Helvetica every PDF viewer carries).
+ * AVA is the renderer's own face (the standard Helvetica every PDF viewer carries).
  * Arial embeds Liberation Sans, its metric-compatible open equivalent, so it looks the same on
  * every machine. The names are what the user chooses in Settings.
  */
-export const CV_FONTS = ["Christopher", "Arial"] as const;
+export const CV_FONTS = ["AVA", "Arial"] as const;
 export type CvFont = (typeof CV_FONTS)[number];
-export const DEFAULT_CV_FONT: CvFont = "Christopher";
+export const DEFAULT_CV_FONT: CvFont = "AVA";
+/** The name the AVA face was stored under before the product was renamed. */
+const LEGACY_CV_FONT = "Christopher";
 /**
  * The font and page limit ride with the palette because everything here is captured per CV: the
  * Settings default seeds each new draft's library snapshot, and a saved revision keeps its own copy.
@@ -18,7 +20,8 @@ export const DEFAULT_CV_FONT: CvFont = "Christopher";
 export const CvThemeSchema = z.object({
   version: z.literal(1), primary: ColourSchema, background: ColourSchema,
   surface: ColourSchema, pill: ColourSchema, introPanel: z.boolean(), skillPills: z.boolean(),
-  font: z.enum(CV_FONTS).default(DEFAULT_CV_FONT),
+  // Stored themes and saved revisions carry the old name, so it reads as the face it always was.
+  font: z.preprocess((font) => (font === LEGACY_CV_FONT ? DEFAULT_CV_FONT : font), z.enum(CV_FONTS)).default(DEFAULT_CV_FONT),
   maxPages: z.number().int().min(CV_PAGE_LIMITS.min).max(CV_PAGE_LIMITS.max).default(CV_PAGE_LIMITS.default),
 });
 export type CvTheme = z.infer<typeof CvThemeSchema>;

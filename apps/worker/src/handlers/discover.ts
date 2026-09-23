@@ -1,6 +1,6 @@
 import { withResourceLease } from "../lease";
-import { schema, enqueueTask, noteLogoFailure, storeCompanyLogo, type Db, type Task } from "@christopher/db";
-import { captureCompanyLogo, dedupeKeyFor, discovery, LogoCaptureError, priorityFor, type TaskPayloads, type DiscoveryCandidate, type DiscoveryResult } from "@christopher/core";
+import { schema, enqueueTask, noteLogoFailure, storeCompanyLogo, type Db, type Task } from "@ava/db";
+import { captureCompanyLogo, dedupeKeyFor, discovery, LogoCaptureError, priorityFor, type TaskPayloads, type DiscoveryCandidate, type DiscoveryResult } from "@ava/core";
 import { and, eq, ne } from "drizzle-orm";
 import { makeFetchContext, makeDiscoveryContext, type WorkerDeps } from "../context";
 import { log } from "../log";

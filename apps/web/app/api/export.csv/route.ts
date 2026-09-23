@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { roleStatus, liveFor } from "@christopher/core";
+import { roleStatus, liveFor } from "@ava/core";
 import { routeUser } from "@/lib/route-auth";
 import { csvRow } from "@/lib/csv";
 import {
@@ -97,7 +97,7 @@ export async function GET(request: NextRequest) {
     status: 200,
     headers: {
       "content-type": "text/csv; charset=utf-8",
-      "content-disposition": `attachment; filename="christopher-roles-${now.toISOString().slice(0, 10)}.csv"`,
+      "content-disposition": `attachment; filename="ava-roles-${now.toISOString().slice(0, 10)}.csv"`,
     },
   });
 }

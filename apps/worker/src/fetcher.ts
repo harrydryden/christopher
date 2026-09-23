@@ -6,9 +6,9 @@
  *  - maps 403 and challenge pages to SourceFetchError("blocked"), 429/503 to "rate_limited"
  *  - counts every outcome per host per day into `http_host_daily`
  */
-import { sha1, SourceFetchError, type FetchBytesResponse, type FetchContext, type FetchInit, type FetchResponse } from "@christopher/core";
-import { ats } from "@christopher/core";
-import { addHttpHostDaily, emptyHttpCounters, latencyBucketIndex, type Db, type HttpHostDailyDelta, type HttpVia } from "@christopher/db";
+import { sha1, SourceFetchError, type FetchBytesResponse, type FetchContext, type FetchInit, type FetchResponse } from "@ava/core";
+import { ats } from "@ava/core";
+import { addHttpHostDaily, emptyHttpCounters, latencyBucketIndex, type Db, type HttpHostDailyDelta, type HttpVia } from "@ava/db";
 import { log } from "./log";
 
 export interface FetcherOptions {
@@ -590,5 +590,5 @@ export class PoliteFetcher {
 }
 
 export function userAgentFor(contactEmail: string): string {
-  return `Mozilla/5.0 (compatible; ChristopherJobMonitor/0.1; +mailto:${contactEmail})`;
+  return `Mozilla/5.0 (compatible; AVAJobMonitor/0.1; +mailto:${contactEmail})`;
 }

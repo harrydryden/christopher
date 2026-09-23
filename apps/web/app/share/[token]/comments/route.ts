@@ -12,7 +12,7 @@
  * is, never an instruction.
  */
 import { NextResponse } from "next/server";
-import { addCvShareComment, CvShareClosedError } from "@christopher/db";
+import { addCvShareComment, CvShareClosedError } from "@ava/db";
 import { db } from "@/lib/db";
 import { consumeRateLimit, LIMITS } from "@/lib/rate-limit";
 import {

@@ -4,8 +4,8 @@ import { LIVE_ACCEPTANCE_CASES } from "./live-acceptance-manifest";
 import { resolveLiveAcceptanceConcurrency, runLiveAcceptanceCase, summariseLiveAcceptance, liveAcceptanceVerdict, type LiveAcceptanceResult } from "./live-acceptance";
 import { PoliteFetcher, userAgentFor } from "./fetcher";
 import { BrowserRenderer } from "./browser";
-import { createAiEngine, type AiUsageRecord } from "@christopher/ai";
-import { DEFAULT_SYSTEM_SETTINGS } from "@christopher/core";
+import { createAiEngine, type AiUsageRecord } from "@ava/ai";
+import { DEFAULT_SYSTEM_SETTINGS } from "@ava/core";
 import { createLiveAcceptanceAiBudget } from "./live-acceptance-ai";
 
 function valueAfter(args: string[], flag: string): string | undefined {
@@ -36,11 +36,11 @@ async function main() {
 
   const results: LiveAcceptanceResult[] = [];
   const fetcher = new PoliteFetcher({
-    userAgent: userAgentFor(process.env.CONTACT_EMAIL ?? "christopher-live-acceptance@example.invalid"),
+    userAgent: userAgentFor(process.env.CONTACT_EMAIL ?? "ava-live-acceptance@example.invalid"),
     respectRobots: () => true,
   });
   const browser = browserEnabled ? new BrowserRenderer({
-    userAgent: userAgentFor(process.env.CONTACT_EMAIL ?? "christopher-live-acceptance@example.invalid"),
+    userAgent: userAgentFor(process.env.CONTACT_EMAIL ?? "ava-live-acceptance@example.invalid"),
     beforeNavigate: host => fetcher.waitForHost(host),
     allowNavigate: url => fetcher.assertRobotsAllowed(url),
     concurrency: 1,

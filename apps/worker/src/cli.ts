@@ -1,19 +1,19 @@
 /**
  * Operational CLI. Run one-off jobs without waiting for the scheduler:
- *   pnpm --filter @christopher/worker cli probe <url>    (dry run: what would discovery find?)
- *   pnpm --filter @christopher/worker cli add <homepage-url>   (follows it as the CLI account)
- *   pnpm --filter @christopher/worker cli discover <company-id|domain>
- *   pnpm --filter @christopher/worker cli scan [company-id|domain]
- *   pnpm --filter @christopher/worker cli drain          (run queued tasks to completion)
- *   pnpm --filter @christopher/worker cli list           (companies, sources, followers, counts)
- *   pnpm --filter @christopher/worker cli table          (the CLI account's roles table as text)
- *   pnpm --filter @christopher/worker cli users          (accounts and roles)
+ *   pnpm --filter @ava/worker cli probe <url>    (dry run: what would discovery find?)
+ *   pnpm --filter @ava/worker cli add <homepage-url>   (follows it as the CLI account)
+ *   pnpm --filter @ava/worker cli discover <company-id|domain>
+ *   pnpm --filter @ava/worker cli scan [company-id|domain]
+ *   pnpm --filter @ava/worker cli drain          (run queued tasks to completion)
+ *   pnpm --filter @ava/worker cli list           (companies, sources, followers, counts)
+ *   pnpm --filter @ava/worker cli table          (the CLI account's roles table as text)
+ *   pnpm --filter @ava/worker cli users          (accounts and roles)
  *
- * Per-account commands act for CHRISTOPHER_CLI_USER (an email) or, when unset, the earliest
+ * Per-account commands act for AVA_CLI_USER (an email) or, when unset, the earliest
  * administrator.
  */
-import { schema, enqueueTask, reevaluateGate, subscribeToCompany } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
+import { schema, enqueueTask, reevaluateGate, subscribeToCompany } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
 import {
   dedupeKeyFor,
   discovery,
@@ -23,7 +23,8 @@ import {
   formatDuration,
   liveFor,
   priorityFor,
-} from "@christopher/core";
+  renamedEnv,
+} from "@ava/core";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { createDeps, makeDiscoveryContext, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -33,7 +34,7 @@ import { TaskQueue } from "./queue";
 import { schedulerTick } from "./scheduler";
 
 async function cliUser(deps: WorkerDeps) {
-  const email = process.env.CHRISTOPHER_CLI_USER?.trim().toLowerCase();
+  const email = renamedEnv(process.env, "AVA_CLI_USER", "CHRISTOPHER_CLI_USER")?.trim().toLowerCase();
   const rows = email
     ? await deps.db.select().from(schema.users).where(eq(schema.users.email, email)).limit(1)
     : await deps.db.select().from(schema.users).where(and(eq(schema.users.role, "admin"), sql`${schema.users.claimedAt} is not null`)).orderBy(asc(schema.users.createdAt)).limit(1);

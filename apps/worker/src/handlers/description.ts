@@ -1,5 +1,5 @@
-import { schema, reevaluateGate, type Task } from "@christopher/db";
-import { ats, extractMainText, sha1, stripHtml } from "@christopher/core";
+import { schema, reevaluateGate, type Task } from "@ava/db";
+import { ats, extractMainText, sha1, stripHtml } from "@ava/core";
 import { and, eq, inArray, ne } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { makeFetchContext, aiBudgetExceeded } from "../context";
@@ -86,7 +86,7 @@ export async function handleFetchDescription(task: Task, deps: WorkerDeps): Prom
 }
 
 /**
- * Moved to @christopher/core (`posting-page.ts`), where the same reading serves a posting a
+ * Moved to @ava/core (`posting-page.ts`), where the same reading serves a posting a
  * follower pastes the URL of. Re-exported so the worker's own callers keep their import.
  */
 export { extractMainText };

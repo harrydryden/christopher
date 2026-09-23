@@ -3,15 +3,15 @@ import {
   reviewFixture,
 } from "../../../packages/core/test/cv-review-fixture";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, type Task } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
-import { AiEngine } from "@christopher/ai";
-import { DEFAULT_CV_THEME } from "@christopher/core/cv";
+import { createDb, schema, type Task } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
+import { AiEngine } from "@ava/ai";
+import { DEFAULT_CV_THEME } from "@ava/core/cv";
 import { eq, sql } from "drizzle-orm";
 import { ensureTestUser } from "./test-users";
 import { handleGenerateCv } from "./handlers/cv";
 import type { WorkerDeps } from "./context";
-const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
+const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
 const library = { name: "Test Candidate", contact: "London", profile: "Operations", entries: [{ id: "one", kind: "experience" as const, heading: "Director · Acme", details: "Led a team", confirmedResponsibilities: ["Led a team"] }] };
 let userId: string;
 beforeAll(async () => { await runMigrations(client.db); userId = (await ensureTestUser(client.db, "cv@example.com")).id; });
@@ -222,7 +222,7 @@ it("fits a long CV within the default three-page limit without a second model ca
   const [saved] = await client.db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft.id));
   expect(saved!.status).toBe("ready");
   expect(saved!.assessment!.pageCount).toBe(3);
-  expect(saved!.content!.theme).toMatchObject({ font: "Christopher", maxPages: 3 });
+  expect(saved!.content!.theme).toMatchObject({ font: "AVA", maxPages: 3 });
   expect(saved!.content!.sections).toHaveLength(8);
 });
 
@@ -272,8 +272,8 @@ it("does not author a CV against a hallucinated requirement", async () => {
 });
 
 it("automatically fits an oversized saved draft before assessment, retaining its edited appearance and reporting stages", async () => {
-  const { materialiseCv, DEFAULT_CV_THEME } = await import("@christopher/core/cv");
-  const { renderCvPdfWithReport } = await import("@christopher/core/cv-pdf");
+  const { materialiseCv, DEFAULT_CV_THEME } = await import("@ava/core/cv");
+  const { renderCvPdfWithReport } = await import("@ava/core/cv-pdf");
   const { task, deps, draft } = await setup();
   const entries = Array.from({ length: 8 }, (_, i) => ({ ...library.entries[0]!, id: `role-${i}`, heading: `Director ${i}` }));
   const snapshot = { ...library, entries };

@@ -3,7 +3,7 @@
  * manual rescan was reused because a scan made in the last half hour already answered it. The
  * window is the worker's own `MANUAL_RESCAN_INTERVAL_MS`, read from core so the two cannot drift.
  */
-import { MANUAL_RESCAN_INTERVAL_MS } from "@christopher/core";
+import { MANUAL_RESCAN_INTERVAL_MS } from "@ava/core";
 import type { CompanyScanTiming } from "@/lib/queries/companies";
 import { relativeTime } from "@/lib/format";
 

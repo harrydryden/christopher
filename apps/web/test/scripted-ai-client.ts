@@ -20,14 +20,14 @@ import {
   type CvLibrary,
   type CvPlan,
   type CvWritingBudget,
-} from "@christopher/core";
+} from "@ava/core";
 import type {
   CvClaimItem,
   CvReviewPlan,
   CvRubric,
   CvTextItem,
-} from "@christopher/core/cv-assessment";
-// The interface does not depend on @christopher/ai by name; the worker it drives does.
+} from "@ava/core/cv-assessment";
+// The interface does not depend on @ava/ai by name; the worker it drives does.
 import type { AiClientLike, AiStreamLike } from "../../../packages/ai/src/index";
 import { reviewFixture } from "../../../packages/core/test/cv-review-fixture";
 

@@ -29,8 +29,8 @@ The pieces behind a stage are stored apart — the gate result and archive marke
 `user_jobs`, the decision, the CV draft, the application row — so precedence decides when
 they disagree: an application's status wins, because it is the furthest anything has got;
 then a dismissal or an archive, which beats a CV; then a CV, which makes a shortlist
-Applying; then the bare shortlist; then the gate. `roleStage` in `@christopher/core` and
-`roleStageSql` in `@christopher/db` are the same rule in JavaScript and in SQL.
+Applying; then the bare shortlist; then the gate. `roleStage` in `@ava/core` and
+`roleStageSql` in `@ava/db` are the same rule in JavaScript and in SQL.
 
 Dismissed and Archived are one stage shown in one place: the Dismissed tab, with the
 archived card below it. The roles table's Shortlisted tab carries the stage as a badge

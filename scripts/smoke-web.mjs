@@ -17,11 +17,11 @@ const nextBin = createRequire(new URL("../apps/web/package.json", import.meta.ur
 
 const PORT = Number(process.env.SMOKE_PORT ?? 3123);
 const SECRET = "smoke-test-secret";
-const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_dev";
+const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_dev";
 const skipBuild = process.argv.includes("--no-build");
 
 const { Pool } = createRequire(new URL("../apps/web/package.json", import.meta.url))("pg");
-const SMOKE_EMAIL = "smoke@christopher.invalid";
+const SMOKE_EMAIL = "smoke@ava.invalid";
 const SMOKE_DOMAIN = "smoke.invalid";
 
 /**
@@ -40,7 +40,7 @@ async function signIn(pool) {
     [user.id, expires],
   );
   const sig = createHmac("sha256", SECRET).update(`${session.id}.${expires}`).digest("base64url");
-  return { userId: user.id, cookie: `christopher_session=v2.${session.id}.${expires}.${sig}` };
+  return { userId: user.id, cookie: `ava_session=v2.${session.id}.${expires}.${sig}` };
 }
 
 /**
@@ -94,7 +94,7 @@ const PAGES = [
   ["/cv", { redirectsTo: "/applications" }],
   ["/library", ["Library", "Intro", "Website", "Experience", "Education, skills and interests",
     "Import a document", "Upload a CV", "Paste text", "Read your website",
-    "Christopher does not read LinkedIn itself.",
+    "AVA does not read LinkedIn itself.",
     "Versions", "Nothing saved yet. Your first save becomes version 1.",
     "Writing preferences", "Writing style", "Saved phrasing", "No library saved yet"]],
   ["/applications", ["Applications", "Active", "Closed", "Roles by stage", "What the stages mean"]],

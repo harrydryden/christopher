@@ -9,7 +9,7 @@
  * The link itself is never shown again after it is made. Only its hash is stored, so the card can
  * describe a link without being able to reproduce it, which is the point.
  */
-import type { CvShare } from "@christopher/db";
+import type { CvShare } from "@ava/db";
 import { revokeCvShareLink } from "@/app/actions/cv-share";
 import { Badge, type Tone } from "@/components/Badge";
 import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";

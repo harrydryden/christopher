@@ -1,5 +1,5 @@
-import { scanRunSummaries, type ScanRunSummary } from "@christopher/db";
-import type { ScanRun } from "@christopher/db/schema";
+import { scanRunSummaries, type ScanRunSummary } from "@ava/db";
+import type { ScanRun } from "@ava/db/schema";
 import { db } from "./db";
 
 /**

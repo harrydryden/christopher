@@ -8,7 +8,7 @@ import {
   CvContentSchema,
   cvDisplaySections,
   type CvContent,
-} from "@christopher/core/cv";
+} from "@ava/core/cv";
 import { saveCvDraft } from "@/app/actions/cv";
 import { formatUsd } from "@/lib/format";
 import type { CvEditCosts } from "@/lib/cv-quote";

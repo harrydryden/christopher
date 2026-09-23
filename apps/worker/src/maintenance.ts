@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pruneHttpHostDaily } from "@christopher/db";
+import { pruneHttpHostDaily } from "@ava/db";
 import type { WorkerDeps } from "./context";
 
 /** Bounded hourly cleanup. Keep decisions, applications and review evidence. */

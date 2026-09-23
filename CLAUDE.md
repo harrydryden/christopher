@@ -1,6 +1,6 @@
 # Working in this repository
 
-Christopher watches company careers pages daily and keeps a filtered, learnable table of roles.
+AVA watches company careers pages daily and keeps a filtered, learnable table of roles.
 [docs/SPEC.md](docs/SPEC.md) is the contract; read the relevant section before changing behaviour.
 
 ## Layout
@@ -27,12 +27,12 @@ pnpm smoke:web               # build the interface, sign in, fetch every page
 cd apps/worker
 pnpm cli probe <url>         # dry run: what would discovery find?
 pnpm cli drain               # run queued tasks now
-pnpm cli table               # the roles table as text (CHRISTOPHER_CLI_USER picks the account)
+pnpm cli table               # the roles table as text (AVA_CLI_USER picks the account)
 pnpm cli users               # accounts and what each follows
 ```
 
 The worker suites share one database and truncate between tests, so `fileParallelism` is off. Set
-`CHRISTOPHER_DISABLE_BROWSER=1` to skip the Chromium test.
+`AVA_DISABLE_BROWSER=1` to skip the Chromium test.
 
 ## Rules that are load-bearing
 

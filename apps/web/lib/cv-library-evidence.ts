@@ -16,9 +16,9 @@ import {
   rowFacets,
   type CvLibrary,
   type EvidenceFacet,
-} from "@christopher/core/cv";
+} from "@ava/core/cv";
 // Types only: the scorer they belong to reaches `node:crypto` and never reaches the browser.
-import type { EvidenceRating, LibraryReviewSource } from "@christopher/core/library-review";
+import type { EvidenceRating, LibraryReviewSource } from "@ava/core/library-review";
 
 type CvEntry = CvLibrary["entries"][number];
 

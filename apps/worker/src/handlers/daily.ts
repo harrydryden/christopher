@@ -1,5 +1,5 @@
-import { companiesDueLogoCapture, scanRunSummary, schema, enqueueTask, listUserIds, type Task } from "@christopher/db";
-import { dedupeKeyFor, localDateParts, priorityFor, type SystemSettings } from "@christopher/core";
+import { companiesDueLogoCapture, scanRunSummary, schema, enqueueTask, listUserIds, type Task } from "@ava/db";
+import { dedupeKeyFor, localDateParts, priorityFor, type SystemSettings } from "@ava/core";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { log } from "../log";
@@ -29,7 +29,7 @@ export async function handleRunDaily(task: Task, deps: WorkerDeps): Promise<unkn
   const settings = await deps.settings();
   return deps.db.transaction(async (tx) => {
     await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('christopher:daily-runs'))`);
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('ava:daily-runs'))`);
     return runDaily(task, { ...deps, db: tx as unknown as WorkerDeps["db"] }, settings);
   });
 }
@@ -92,7 +92,7 @@ async function runDaily(task: Task, deps: WorkerDeps, settings: SystemSettings):
 /** Summarise a scan run once its scans are done. Called after the queue drains and by the scheduler. */
 export async function finaliseScanRuns(deps: WorkerDeps): Promise<number> {
   return deps.db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('christopher:daily-runs'))`);
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('ava:daily-runs'))`);
     return finalise({ ...deps, db: tx as unknown as WorkerDeps["db"] });
   });
 }

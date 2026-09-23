@@ -1,4 +1,4 @@
-import type { RoleStage } from "@christopher/core";
+import type { RoleStage } from "@ava/core";
 
 export type Tone = "green" | "blue" | "gray" | "amber" | "red" | "neutral";
 
@@ -122,7 +122,7 @@ export function decisionTone(decision: "apply" | "skip"): Tone {
 }
 
 /**
- * How far a role has got, for one account (`ROLE_STAGES` in @christopher/core). The two stages
+ * How far a role has got, for one account (`ROLE_STAGES` in @ava/core). The two stages
  * nothing has happened in yet carry no tone of their own; the three in flight are informational;
  * the two endings take the ok and danger roles, and a dismissal is muted like any put-away row.
  */

@@ -5,7 +5,7 @@ export default {
   schema: "./src/schema.ts",
   out: "./drizzle",
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_dev",
+    url: process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_dev",
   },
   strict: true,
   verbose: true,

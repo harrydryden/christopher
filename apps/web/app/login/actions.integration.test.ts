@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, type Db } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
+import { createDb, schema, type Db } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
 import { eq, sql } from "drizzle-orm";
 
 let database: Db;
@@ -8,7 +8,7 @@ let pool: ReturnType<typeof createDb>["pool"];
 
 vi.mock("@/lib/db", () => ({ db: () => database }));
 vi.mock("next/headers", () => ({
-  headers: async () => new Headers({ host: "christopher.test", "x-forwarded-for": "198.51.100.20" }),
+  headers: async () => new Headers({ host: "ava.test", "x-forwarded-for": "198.51.100.20" }),
   cookies: async () => ({ get: () => undefined, set: vi.fn(), delete: vi.fn() }),
 }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
@@ -18,7 +18,7 @@ import { registerWithPassword } from "@/lib/accounts";
 import { LIMITS } from "@/lib/rate-limit";
 
 beforeAll(async () => {
-  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
+  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
   database = client.db;
   pool = client.pool;
   await runMigrations(database);

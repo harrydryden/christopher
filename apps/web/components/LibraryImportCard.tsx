@@ -20,7 +20,7 @@ export function LibraryImportCard() {
     <Card title="Import a document">
       <div className="grid gap-5">
         <p className="text-14 text-muted">
-          Start from a document you already have. Christopher reads it, proposes what it says, and
+          Start from a document you already have. AVA reads it, proposes what it says, and
           adds nothing to your Library until you have ticked through it.
         </p>
 
@@ -28,7 +28,7 @@ export function LibraryImportCard() {
           <h3 className="ds-pixel text-12 text-fg">Upload a CV</h3>
           <p className="text-12 text-muted">
             A PDF or Word document, up to 5 MB. For LinkedIn, open your profile, choose More → Save
-            to PDF, and upload that file: Christopher does not read LinkedIn itself.
+            to PDF, and upload that file: AVA does not read LinkedIn itself.
           </p>
           <LibraryImportForm action={importLibraryDocument} submitLabel="Import document" pendingLabel="Uploading…">
             <input type="hidden" name="kind" value="cv" />

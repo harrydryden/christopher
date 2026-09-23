@@ -3,7 +3,7 @@ import { Mark } from "@/components/brand";
 export default function Loading() {
   return (
     <div role="status" aria-live="polite" className="space-y-4">
-      {/* The wheel carries the motion here, so the skeleton no longer pulses
+      {/* The mark carries the motion here, so the skeleton no longer pulses
           alongside it — two competing animations read as jitter. */}
       <div className="flex items-center gap-3">
         <Mark size={32} searching title="Loading" />

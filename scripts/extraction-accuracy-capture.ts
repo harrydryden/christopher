@@ -174,7 +174,7 @@ async function compare(target: Target, responses: Captured[], expected: ReturnTy
 async function main() {
   await mkdir(output, { recursive: true });
   const old = replay ? JSON.parse(await readFile(resolve(replay, "extraction-accuracy-report.json"), "utf8")) : undefined;
-  const fetcher = replay ? undefined : new PoliteFetcher({ userAgent: userAgentFor(process.env.CONTACT_EMAIL ?? "christopher-extraction-accuracy@example.invalid"), respectRobots: () => true });
+  const fetcher = replay ? undefined : new PoliteFetcher({ userAgent: userAgentFor(process.env.CONTACT_EMAIL ?? "ava-extraction-accuracy@example.invalid"), respectRobots: () => true });
   const cases: any[] = [];
   const buildReport = () => {
     const completed = cases.filter(c => c.status === "completed");

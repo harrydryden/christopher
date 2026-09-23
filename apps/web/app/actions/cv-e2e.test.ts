@@ -8,18 +8,18 @@
  *
  * Run it against its own database so it does not collide with the suites that truncate shared
  * tables:
- *   TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/christopher_e2e \
- *   CHRISTOPHER_DISABLE_BROWSER=1 pnpm test cv-e2e
+ *   TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/ava_e2e \
+ *   AVA_DISABLE_BROWSER=1 pnpm test cv-e2e
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDb, schema, subscribeToCompany, type Db } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
+import { createDb, schema, subscribeToCompany, type Db } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
 import { and, eq, sql } from "drizzle-orm";
-import { CV_THEMES } from "@christopher/core/cv";
-import { cvClaimItems } from "@christopher/core/cv-assessment";
-import { renderCvPdfWithReport } from "@christopher/core/cv-pdf";
+import { CV_THEMES } from "@ava/core/cv";
+import { cvClaimItems } from "@ava/core/cv-assessment";
+import { renderCvPdfWithReport } from "@ava/core/cv-pdf";
 import { signInTestUser } from "@/test/auth";
-import type { User } from "@christopher/db/schema";
+import type { User } from "@ava/db/schema";
 import {
   callsOf,
   createScriptedAiClient,
@@ -210,7 +210,7 @@ function libraryFixture(headResponsibilities: string[] = NORTHWIND_HEAD) {
 
 beforeAll(async () => {
   const client = createDb(
-    process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test",
+    process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test",
   );
   database = client.db;
   pool = client.pool;

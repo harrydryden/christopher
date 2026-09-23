@@ -4,7 +4,7 @@
  * Everything here is a pure decision about one link: how its token is made and hashed, how long
  * it may live, which blocks of a CV a note may be left against, and the sentences the public page
  * says when the answer is no. The reads and writes live in `lib/queries/cv-shares.ts` and
- * `@christopher/db`; keeping the rules here is what lets them be tested without a database, and
+ * `@ava/db`; keeping the rules here is what lets them be tested without a database, and
  * what stops the same cap being written twice in a form and a route handler.
  *
  * Two of these rules are load-bearing. The token is generated and hashed exactly as `auth_tokens`
@@ -18,9 +18,9 @@ import {
   CV_SHARE_ANCHOR_MAX_CHARS,
   CV_SHARE_AUTHOR_NAME_MAX_CHARS,
   CV_SHARE_BODY_MAX_CHARS,
-} from "@christopher/db/schema";
-import type { CvShareRefusal } from "@christopher/db";
-import { cvDisplaySections, type CvContent } from "@christopher/core/cv";
+} from "@ava/db/schema";
+import type { CvShareRefusal } from "@ava/db";
+import { cvDisplaySections, type CvContent } from "@ava/core/cv";
 import { CV_PROFILE_ID, cvSectionBlockId, type CvContentLink } from "./cv-content-links";
 import { hashToken } from "./auth-tokens";
 

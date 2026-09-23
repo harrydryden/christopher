@@ -6,9 +6,12 @@ import { cache } from "react";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { and, eq, gt, ne } from "drizzle-orm";
-import { sessions, users, type User } from "@christopher/db/schema";
+import { sessions, users, type User } from "@ava/db/schema";
 import { db } from "./db";
-import { createSessionCookieValue, DEFAULT_SESSION_TTL_SECONDS, isSecureHost, readSessionCookie, SESSION_COOKIE_NAME } from "./session";
+import {
+  createSessionCookieValue, DEFAULT_SESSION_TTL_SECONDS, isSecureHost, LEGACY_SESSION_COOKIE_NAME, readSessionCookie,
+  SESSION_COOKIE_NAME, sessionCookieValue,
+} from "./session";
 
 export interface CurrentUser {
   user: User;
@@ -19,7 +22,7 @@ export interface CurrentUser {
 export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   const secret = process.env.SESSION_SECRET;
   if (!secret) return null;
-  const value = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
+  const value = sessionCookieValue(await cookies());
   const parsed = await readSessionCookie(value, secret);
   if (!parsed) return null;
   const [row] = await db()
@@ -105,11 +108,13 @@ export async function startSession(userId: string, ttlSeconds = DEFAULT_SESSION_
   return session!.id;
 }
 
-/** Delete the current session row and clear its cookie. */
+/** Delete the current session row and clear its cookie, under either name. */
 export async function endSession(): Promise<void> {
   const current = await getCurrentUser().catch(() => null);
   if (current) await db().delete(sessions).where(eq(sessions.id, current.sessionId));
-  (await cookies()).delete(SESSION_COOKIE_NAME);
+  const jar = await cookies();
+  jar.delete(SESSION_COOKIE_NAME);
+  jar.delete(LEGACY_SESSION_COOKIE_NAME);
 }
 
 /** Sign the account out of every other browser. */

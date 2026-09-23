@@ -3,8 +3,8 @@
  * owner's takeover, password sign-in, Google linking, single-use confirmation and reset links, throttling.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { adminEmailsFrom, BOOTSTRAP_EMAIL, BOOTSTRAP_USER_ID, createDb, DEFAULT_ADMIN_EMAILS, SEED_TAGS, schema, type Db } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
+import { adminEmailsFrom, BOOTSTRAP_EMAIL, BOOTSTRAP_USER_ID, createDb, DEFAULT_ADMIN_EMAILS, SEED_TAGS, schema, type Db } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
 import { eq, sql } from "drizzle-orm";
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
@@ -17,7 +17,7 @@ const PASSWORD = "correct horse battery staple";
 const OWNER = "owner@example.com";
 
 beforeAll(async () => {
-  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
+  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
   database = client.db;
   pool = client.pool;
   await runMigrations(database);

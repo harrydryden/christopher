@@ -33,13 +33,13 @@ import { sha1 } from "./normalize";
 
 type CvEntry = CvLibrary["entries"][number];
 
-/** How much evidence an entry carries. Mirrors `EVIDENCE_RATINGS` in @christopher/db. */
+/** How much evidence an entry carries. Mirrors `EVIDENCE_RATINGS` in @ava/db. */
 export const EVIDENCE_RATINGS = ["none", "weak", "good", "strong"] as const;
 export type EvidenceRating = (typeof EVIDENCE_RATINGS)[number];
 
 /**
  * Who produced a review: the deterministic baseline from the person's own tags, or the model.
- * Mirrors `LIBRARY_REVIEW_SOURCES` in @christopher/db.
+ * Mirrors `LIBRARY_REVIEW_SOURCES` in @ava/db.
  */
 export const LIBRARY_REVIEW_SOURCES = ["rules", "model"] as const;
 export type LibraryReviewSource = (typeof LIBRARY_REVIEW_SOURCES)[number];

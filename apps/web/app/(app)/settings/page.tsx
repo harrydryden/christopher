@@ -1,4 +1,4 @@
-import { MAX_ACCOUNT_AI_BUDGET_USD } from "@christopher/core";
+import { MAX_ACCOUNT_AI_BUDGET_USD } from "@ava/core";
 import { CvAppearance } from "@/components/CvAppearance";
 import { getDefaultCvAppearance } from "@/lib/cv-appearance";
 import { saveCvModel, saveCvAppearance } from "@/app/actions/cv";

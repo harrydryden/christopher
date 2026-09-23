@@ -7,9 +7,9 @@
  * confirmation link completed with the account's password, or a reset link used to set a password.
  */
 import { and, eq } from "drizzle-orm";
-import { adminEmailsFrom, completeAccountClaim, createUser, isEntitledEmail, isPlaceholderEmail, normaliseEmail, promoteIfEntitled, type CreateUserResult } from "@christopher/db";
-import { authAccounts, sessions, users, type User } from "@christopher/db/schema";
-import { hashPassword, needsRehash, passwordProblem, verifyPassword } from "@christopher/core";
+import { adminEmailsFrom, completeAccountClaim, createUser, isEntitledEmail, isPlaceholderEmail, normaliseEmail, promoteIfEntitled, type CreateUserResult } from "@ava/db";
+import { authAccounts, sessions, users, type User } from "@ava/db/schema";
+import { hashPassword, needsRehash, passwordProblem, verifyPassword } from "@ava/core";
 import { consumeAuthToken, issueAuthToken, peekAuthToken } from "./auth-tokens";
 import { db } from "./db";
 import { sendEmail } from "./email";
@@ -132,8 +132,8 @@ export async function requestPasswordReset(email: string, origin: string | null)
   const token = await issueAuthToken(user.id, "password_reset");
   await sendEmail({
     to: user.email,
-    subject: "Reset your Christopher password",
-    text: `Someone asked to reset the password for this Christopher account.\n\nSet a new password here (the link works once, for an hour):\n${origin}/reset-password?token=${token}\n\nIf that was not you, ignore this message; nothing has changed.`,
+    subject: "Reset your AVA password",
+    text: `Someone asked to reset the password for this AVA account.\n\nSet a new password here (the link works once, for an hour):\n${origin}/reset-password?token=${token}\n\nIf that was not you, ignore this message; nothing has changed.`,
   });
 }
 
@@ -156,8 +156,8 @@ export async function sendVerificationEmail(user: User, origin: string | null): 
   const token = await issueAuthToken(user.id, "email_verification");
   return sendEmail({
     to: user.email,
-    subject: "Confirm your email for Christopher",
-    text: `Confirm this address for your Christopher account (the link works once, for a day, and asks for your password):\n${origin}/auth/verify?token=${token}\n\nIf you did not create an account, ignore this message.`,
+    subject: "Confirm your email for AVA",
+    text: `Confirm this address for your AVA account (the link works once, for a day, and asks for your password):\n${origin}/auth/verify?token=${token}\n\nIf you did not create an account, ignore this message.`,
   });
 }
 

@@ -1,7 +1,7 @@
 import { withResourceLease } from "../lease";
-import { schema, enqueueTask, latestApplicationFor, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, type ScoreState, type Task } from "@christopher/db";
-import { decisionDigest } from "@christopher/ai";
-import { eligibleCvEvidence, evidenceHeading, sha1, dedupeKeyFor, modelForCallSite, priorityFor, type TaskPayloads } from "@christopher/core";
+import { schema, enqueueTask, latestApplicationFor, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, type ScoreState, type Task } from "@ava/db";
+import { decisionDigest } from "@ava/ai";
+import { eligibleCvEvidence, evidenceHeading, sha1, dedupeKeyFor, modelForCallSite, priorityFor, type TaskPayloads } from "@ava/core";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { aiBudgetStop } from "../context";

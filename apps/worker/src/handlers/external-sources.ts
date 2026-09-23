@@ -1,5 +1,5 @@
-import { schema, enqueueTask, type Task } from "@christopher/db";
-import { dedupeKeyFor, discovery, extractDomain, normalizeUrl, sha1, stripHtml } from "@christopher/core";
+import { schema, enqueueTask, type Task } from "@ava/db";
+import { dedupeKeyFor, discovery, extractDomain, normalizeUrl, sha1, stripHtml } from "@ava/core";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { aiBudgetStop, makeFetchContext, type WorkerDeps } from "../context";
 import { recommendationContext } from "../recommendation-context";

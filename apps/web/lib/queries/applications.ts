@@ -31,7 +31,7 @@ import {
   roleStageSql,
   userJobs,
   type ApplicationStatus,
-} from "@christopher/db";
+} from "@ava/db";
 import {
   ACTIVE_ROLE_STAGES,
   APPLICATION_STATUSES,
@@ -41,7 +41,7 @@ import {
   applicationStage,
   roleStageRank,
   type RoleStage,
-} from "@christopher/core";
+} from "@ava/core";
 import { DUE_WITHIN_DAYS, todayDay } from "@/lib/application-dates";
 import { companyIcon } from "@/lib/company-icon";
 import { cvBuildQuote, cvEditCosts, type CvBuildQuote } from "@/lib/cv-quote";

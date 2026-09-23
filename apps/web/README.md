@@ -1,9 +1,9 @@
-# Christopher — web
+# AVA — web
 
-Next.js (App Router) UI for Christopher, the careers page monitor: several accounts, one shared company catalogue. See
+Next.js (App Router) UI for AVA, the careers page monitor: several accounts, one shared company catalogue. See
 [`docs/SPEC.md`](../../docs/SPEC.md) at the repo root for the full product spec.
 
-This app only reads and writes the shared Postgres database (`@christopher/db`) — it never
+This app only reads and writes the shared Postgres database (`@ava/db`) — it never
 calls the worker directly. Mutations write rows and/or enqueue rows in the `tasks` table; the
 worker (`apps/worker`) picks those up and does the scraping, scanning and AI calls.
 
@@ -30,9 +30,9 @@ From the repo root (dependencies are installed at the workspace root already):
 #    e.g. pg_ctlcluster 16 main start
 
 # 2. Run the dev server:
-DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/christopher_dev \
+DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/ava_dev \
 SESSION_SECRET=some-long-random-string \
-pnpm --filter @christopher/web dev
+pnpm --filter @ava/web dev
 ```
 
 Then open http://localhost:3000/signup, sign up with the administrator address (`ADMIN_EMAILS`,
@@ -48,7 +48,7 @@ same `DATABASE_URL` for anything beyond viewing/editing to actually happen.
 - **Root directory:** `apps/web`
 - **Install command:** run from the repo root, e.g. `pnpm install --frozen-lockfile` (Vercel's
   default monorepo install already does this when the project root directory is set as above).
-- **Build command:** `pnpm --filter @christopher/web build`
+- **Build command:** `pnpm --filter @ava/web build`
 - **Environment variables:** `DATABASE_URL`, `SESSION_SECRET`, plus the optional sign-in and
   email variables in the table above — set for Production (and Preview, if you want previews to
   sign in against the same database).
@@ -59,8 +59,8 @@ same `DATABASE_URL` for anything beyond viewing/editing to actually happen.
 
 ## Notable implementation choices
 
-- `lib/db.ts` builds its own Drizzle client from `@christopher/db/schema` rather than calling
-  `getDb()` from the package root (`@christopher/db`). That root barrel also re-exports
+- `lib/db.ts` builds its own Drizzle client from `@ava/db/schema` rather than calling
+  `getDb()` from the package root (`@ava/db`). That root barrel also re-exports
   `runMigrations`, which resolves its migrations folder via
   `new URL("../drizzle", import.meta.url)` — Next's webpack build statically analyses that
   pattern as an asset reference and fails to bundle it ("Module not found: Can't resolve

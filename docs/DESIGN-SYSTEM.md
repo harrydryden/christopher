@@ -1,4 +1,4 @@
-# Christopher design system
+# AVA design system
 
 Black ground, white ink, four status hues. Silkscreen for headings and labels,
 IBM Plex Mono for everything else. Radius 0, hard offset shadows, stepped
@@ -70,10 +70,10 @@ else. No component branches on the theme.
 
 ## Typography
 
-Silkscreen (pixel, uppercase by typeface) for the wordmark, page and section
-titles, button labels, badges, table heads and numerals near the mark. Never for
-a paragraph. IBM Plex Mono for all body text and controls. Both are self-hosted
-through `next/font` in `app/layout.tsx`; `body` carries
+Silkscreen (pixel, uppercase by typeface) for page and section titles, button
+labels, badges, table heads and numerals near the mark. Never for a paragraph.
+IBM Plex Mono for all body text and controls. Both are self-hosted through
+`next/font` in `app/layout.tsx`; `body` carries
 `font-variant-numeric: tabular-nums` so figures line up in tables.
 
 Sizes are named for their pixel value, because the scale is small and literal.
@@ -114,8 +114,10 @@ Spacing runs on the 4px scale in whole multiples. Sidebar 192px, content padding
 ## Motion
 
 Stepped, never eased. `ease-step-2` and `ease-step-4`, at 120/240/480ms.
-`animate-paddle` turns the mark in eight jumps per 1.6s revolution while
-something is loading. `prefers-reduced-motion` stops every animation.
+`--animate-mark-turn` turns the mark while something is loading: each letter
+turns once about its own centre in eight 45° jumps on a 200ms beat, one beat
+behind the letter before it, then all three rest upright together before the
+2.4s cycle repeats. `prefers-reduced-motion` stops every animation.
 
 ---
 
@@ -132,24 +134,40 @@ opacity.
 
 ## The mark
 
-One drum of the Bombe as a 16×16 pixel wheel, its dial opening the ring into a
-"C". It is the only graphic in the product. The cell list lives in
-`components/brand/mark-cells.ts` and is the single source: `Mark.tsx` renders it
-on the page, and `scripts/generate-brand-assets.ts` renders the favicon, the
-installed-app icons and the PNG sizes from the same data, so the tab and the
-page can never drift.
+A V A in three pixel letters, each drawn on its own 16×16 cell tile with 2-cell
+strokes. The letter box is columns 3–12 and rows 2–13 of its tile, so its centre
+is the tile centre. It is the only graphic in the product. The glyph rows live in
+`components/brand/mark-cells.ts` and are the single source: `Mark.tsx` and
+`Monogram.tsx` render them on the page, and `scripts/generate-brand-assets.ts`
+renders the favicon, the installed-app icons, the SVGs and the PNG sizes in
+`public/brand/` from the same data, so the tab and the page can never drift.
 
-- Render at whole multiples of 16 only (16, 32, 48, 64, 96, 128). `Mark` snaps
-  the size it is given.
+- **The mark is the wordmark.** `Mark` sets the tiles at x = 0, 14 and 28 on a
+  44×16 grid: four empty cells between letters, three at each edge. There is no
+  separate logotype.
+- **The monogram is its compact form.** `Monogram` is the A tile alone, 16×16,
+  for wherever the wordmark would be too wide: the status strip and every inline
+  loading indicator at 16px. The favicon and the installed-app icons are the
+  monogram, white on black.
+- `size` is the height. Both snap it to a whole multiple of 16 (16, 32, 48, 64)
+  so cells land on device pixels, and the wordmark is 44/16 as wide as it is
+  tall: 48 gives 132×48 in the sidebar, 64 gives 176×64 on the sign-in pages.
 - `searching` turns it, and that is the product's **only loading indicator**: a
-  page loading (`loading.tsx`), a CV building (`CvBuildProgress`), a search or
-  filter in flight (`SearchPending` inside a `SearchForm`). Everywhere else —
-  sidebar, login, the status strip — the mark is still. A wheel that is always
-  turning tells the user nothing.
-- It is rendered as one `<path>` (`MARK_PATH`), not one element per cell. Every
-  mark on a page is serialised into the payload of every navigation; as
-  elements the three in the shell cost ~45KB a page.
-- Clear space is half a mark. No wordmark inside the product.
+  page loading (`loading.tsx`, the wordmark at 32), a CV building
+  (`CvBuildProgress`, the wordmark at 48), a search or filter in flight
+  (`SearchPending` inside a `SearchForm`), a description loading or a suggestion
+  saving (the monogram at 16). Everywhere else — sidebar, sign-in, the status
+  strip — the mark is still. A mark that is always turning tells the user
+  nothing.
+- Each letter turns about its own box: `ds-mark-letter` on the `<path>` sets
+  `transform-box: fill-box`, and `ds-mark-turning` on the svg starts the letters
+  a beat apart. At pitch 14 turning neighbours never touch.
+- Each letter is one `<path>` of horizontal runs (`WORDMARK_PATHS`,
+  `MONOGRAM_PATH`), not one element per cell, because every mark on a page is
+  serialised into the payload of every navigation. Its offset is baked into the
+  coordinates rather than set with a `transform` attribute, which the turn's CSS
+  transform would replace.
+- Clear space is half the mark's height.
 - Regenerate assets with `pnpm exec tsx scripts/generate-brand-assets.ts`.
 
 ---
@@ -180,7 +198,7 @@ the 16-cell grid in `currentColor`.
 | `Field` | `Field`/`Input`/`Textarea`/`Select`/`Checkbox`, and the `inputClass`, `selectClass` and `labelClass` strings for server components that style raw inputs. |
 | `NavLink` / `WorkspaceNav` | Sidebar items invert when active; workspace links underline over a dotted rule. |
 | `CompanyNotepad` | The company note. A `contenteditable` in the `Field` control shape — 2px muted border on the page ground, full-contrast on focus — with a Bold / Bullet list toolbar, `Saved HH:MM` or `Unsaved changes`, and a primary Save. `ds-notepad` draws the bullets and paragraph rhythm the browser's own `ul`/`p` would otherwise lose to preflight. Stored text is converted through `lib/notes-markdown`, never `innerHTML`. |
-| `Mark` | Above. |
+| `Mark` / `Monogram` | The wordmark and its compact form. Above. |
 
 ---
 
@@ -190,7 +208,9 @@ The previous system was a light navy-and-slate one: accent `#142D46`, a slate
 neutral ramp, rounded corners, and a four-drum enamel mark with its own brand
 palette (rust, brass, verdigris, slate). All of it is retired — the palette, the
 `accent-hover` and `accent-tint` tokens, `ChristopherMark`/`Wordmark`/`Lockup`
-and `components/brand/artwork.ts`.
+and `components/brand/artwork.ts`. The pixel wheel that followed it (one drum of
+the Bombe, its dial opening the ring into a "C", turned by `animate-paddle`) gave
+way to the AVA wordmark when the product was renamed.
 
 The CV document palettes in `components/CvAppearance.tsx` and `lib/cv-pdf.ts`
 are deliberately **not** part of this system. A CV is a document the user styles

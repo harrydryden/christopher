@@ -3,8 +3,8 @@ import { writeFile } from "node:fs/promises";
 import { cpus, totalmem } from "node:os";
 import { createDeps } from "./context";
 import { readEnv } from "./env";
-import { schema, enqueueTask } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
+import { schema, enqueueTask } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
 import { sql } from "drizzle-orm";
 import { claimTask, TaskQueue } from "./queue";
 import { handlers } from "./handlers";
@@ -14,7 +14,7 @@ const url = new URL(process.env.SCALE_DATABASE_URL ?? "postgres://postgres:postg
 if (!["localhost", "127.0.0.1"].includes(url.hostname) || url.pathname !== "/christopher_scale_benchmark") throw new Error("Use the dedicated local christopher_scale_benchmark database");
 const queueMode = process.env.SCALE_QUEUE_MODE ?? "production";
 if (!["production", "unrestricted"].includes(queueMode)) throw new Error("SCALE_QUEUE_MODE must be production or unrestricted");
-const deps = await createDeps(readEnv({ DATABASE_URL: url.href, CHRISTOPHER_DISABLE_BROWSER: "1", WORKER_CONCURRENCY: "3", SCAN_SPREAD_MINUTES: "0", CHRISTOPHER_HOST_MAP: '{"*":"127.0.0.1:1"}' }));
+const deps = await createDeps(readEnv({ DATABASE_URL: url.href, AVA_DISABLE_BROWSER: "1", WORKER_CONCURRENCY: "3", SCAN_SPREAD_MINUTES: "0", AVA_HOST_MAP: '{"*":"127.0.0.1:1"}' }));
 let stage = "onboarding";
 let requests = 0;
 const companies = 1000;
@@ -112,7 +112,7 @@ try {
     companies, jobsPerCompany, consumers, queueMode, aiCalls: 0, syntheticHttp: true, results,
     peakWorkerRssMiB: Math.round(peakRss/2**20), pageQuerySamples: queryMs.length, pageQueryP95Ms: Number((queryMs[Math.floor(queryMs.length*.95)] ?? 0).toFixed(2)),
     limitations: `Local synthetic ATS responses; ${queueMode === "production" ? "production queue with one interactive, one scan and one background slot; default 3-second polling and graceful shutdown included" : "three unrestricted queue consumers"}. Excludes real provider pacing, browser memory, model cost and remote database latency.` };
-  await writeFile(process.env.SCALE_REPORT_PATH ?? "/tmp/christopher-scale-report.json", JSON.stringify(report, null, 2));
+  await writeFile(process.env.SCALE_REPORT_PATH ?? "/tmp/ava-scale-report.json", JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));
 } finally {
   clearInterval(sample);

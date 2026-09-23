@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, type Task } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
+import { createDb, schema, type Task } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -9,15 +9,15 @@ import { claimTask, completeTask } from "./queue";
 import { schedulerTick } from "./scheduler";
 import { ensureTestUser } from "./test-users";
 vi.mock("./handlers/companies", () => ({ verifyCandidate: vi.fn(async () => ({ homepageOk: true, careersSource: { type: "greenhouse", url: "https://boards.greenhouse.io/acme", confidence: 0.95 }, openRoles: 4, matchingRoles: 1 })) }));
-const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
+const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
 let deps: WorkerDeps;
 let userId: string;
 const now = new Date("2026-09-11T00:00:00Z");
 const content = "Acme Robotics raised funding to expand its London operations team. ".repeat(3);
 beforeAll(async () => {
   await runMigrations(client.db);
-  process.env.DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test";
-  process.env.CHRISTOPHER_DISABLE_BROWSER = "1";
+  process.env.DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+  process.env.AVA_DISABLE_BROWSER = "1";
   deps = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0 });
 });
 afterAll(async () => { if (deps) await client.db.execute(sql`truncate discovery_sources cascade`); await deps?.close(); await client.pool.end(); });

@@ -1,11 +1,11 @@
 import { expect, it, vi } from "vitest";
-import { createDb } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
+import { createDb } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
 
 it.each([
-  "postgres://operator:private-test-value@dpg-example-a:6432/christopher",
-  "postgres://operator:private-test-value@dpg-example-a.frankfurt-postgres.render.com:6432/christopher",
-  "postgres://operator:private-test-value@dpg-example-a.frankfurt-postgres.render.com:5432/christopher?port=6432",
+  "postgres://operator:private-test-value@dpg-example-a:6432/ava",
+  "postgres://operator:private-test-value@dpg-example-a.frankfurt-postgres.render.com:6432/ava",
+  "postgres://operator:private-test-value@dpg-example-a.frankfurt-postgres.render.com:5432/ava?port=6432",
 ])("rejects a Render transaction-pool migration before opening a connection (%#)", async url => {
   const { db, pool } = createDb(url);
   const connect = vi.spyOn(pool, "connect");

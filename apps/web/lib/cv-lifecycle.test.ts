@@ -7,12 +7,12 @@ import {
   nextCvRevision,
   schema,
   type Db,
-} from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
+} from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { readFile } from "node:fs/promises";
 import { signInTestUser } from "@/test/auth";
-import type { User } from "@christopher/db/schema";
+import type { User } from "@ava/db/schema";
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 let session: string | undefined;
@@ -502,7 +502,7 @@ it("serialises crossed bulk requests without deadlocks or extra current CVs", as
 it("allows an unrelated role to complete while another role is locked", async () => {
   const a = await draft(1),
     b = await draft(2, { companyName: "Different" });
-  const { lockCvLifecycle } = await import("@christopher/db");
+  const { lockCvLifecycle } = await import("@ava/db");
   await database.transaction(async (tx) => {
     await lockCvLifecycle(tx, a);
     await database.transaction(async (other) => {
@@ -512,7 +512,7 @@ it("allows an unrelated role to complete while another role is locked", async ()
   });
 });
 it("uses collision-free role keys and an indexed lookup", async () => {
-  const { cvRoleKey } = await import("@christopher/db");
+  const { cvRoleKey } = await import("@ava/db");
   const result = await database.execute(
     sql`select ${cvRoleKey(user.id, "a:b", "c")} as a, ${cvRoleKey(user.id, "a", "b:c")} as b`,
   );

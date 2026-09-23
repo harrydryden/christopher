@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { CV_BUILD_STAGES, type CvBuildStage } from "@christopher/core";
+import { CV_BUILD_STAGES, type CvBuildStage } from "@ava/core";
 import { Mark } from "./brand";
 import { Badge, toneText } from "./Badge";
 import { relativeTime } from "@/lib/format";
@@ -31,7 +31,7 @@ const stages = CV_BUILD_STAGES.filter(
 ).map((id) => ({ id, title: CV_STAGE_LABELS[id], detail: MILESTONE_DETAILS[id] }));
 
 /**
- * A build is a chain of model calls that can honestly take twenty minutes, so a turning wheel says
+ * A build is a chain of model calls that can honestly take twenty minutes, so a turning mark says
  * nothing. What the reader needs is when it started, what it is doing, when it last moved, and
  * which attempt this is — and, when it has stopped moving, to be told so rather than left watching.
  *
@@ -70,7 +70,7 @@ export function CvBuildProgress({
       className="space-y-6 border-2 border-line bg-raised p-5 sm:p-6"
     >
       <div className="flex items-center gap-5">
-        <Mark size={64} searching={!stopped} className="shrink-0" />
+        <Mark size={48} searching={!stopped} className="shrink-0" />
         <div role="status" aria-live="polite" aria-atomic="true" className="min-w-0 space-y-1">
           <h2 className="ds-pixel text-16 text-fg">
             {stopped

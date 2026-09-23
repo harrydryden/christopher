@@ -1,4 +1,4 @@
-# Deploying Christopher
+# Deploying AVA
 
 Two shapes. Pick one, then follow its section.
 
@@ -84,7 +84,7 @@ above). Or create it by hand: **New → Web Service**, runtime **Docker**, Docke
 `DATABASE_URL` is the one value that cannot be set through the API, because Render never exposes a
 database password over it. In the dashboard, open the worker service, go to **Environment**, add a
 variable named `DATABASE_URL`, and use the database picker in the value field to select
-**christopher-db → Internal Connection String**. Saving triggers a redeploy.
+**ava-db → Internal Connection String**. Saving triggers a redeploy.
 
 Until it is set, the worker builds and starts but exits with `DATABASE_URL is required`.
 
@@ -143,9 +143,13 @@ Deploy the interface exactly as above, and add:
 | `CRON_SECRET` | `openssl rand -hex 32`. Vercel sends it as `Authorization: Bearer …` on every cron call |
 | `ANTHROPIC_API_KEY` | your key |
 | `SCRAPER_CONTACT_EMAIL` | an address you read |
-| `CHRISTOPHER_DISABLE_BROWSER` | `1`. There is no Chromium in the Vercel runtime |
-| `CHRISTOPHER_SERVERLESS_FALLBACK` | `1`. Without it the route only queues work; with it the route also runs the queue itself (see below) |
+| `AVA_DISABLE_BROWSER` | `1`. There is no Chromium in the Vercel runtime |
+| `AVA_SERVERLESS_FALLBACK` | `1`. Without it the route only queues work; with it the route also runs the queue itself (see below) |
 | `TZ` | e.g. `Europe/London` |
+
+A deployment made before the rename may still set `CHRISTOPHER_DISABLE_BROWSER` and
+`CHRISTOPHER_SERVERLESS_FALLBACK`. They are still read wherever the new names are unset, so nothing
+changes on deploy; rename them in the dashboard when convenient.
 
 `apps/web/vercel.json` already declares the schedule (`0 6 * * *`). Change the time there if you
 want; on Hobby, Vercel runs cron jobs approximately, not to the minute.
@@ -155,7 +159,7 @@ run finishes in one invocation.
 
 ### Living without a worker
 
-- **`CHRISTOPHER_SERVERLESS_FALLBACK=1` is what makes the route do the work.** Without it the cron
+- **`AVA_SERVERLESS_FALLBACK=1` is what makes the route do the work.** Without it the cron
   route only ticks the scheduler — it queues the day's run and the weekly jobs, and nothing runs
   them. With it, the same invocation works through the queue until its time is nearly up. Its
   limits are real: no browser, so a JavaScript careers page still cannot be scanned; and each task
@@ -175,7 +179,8 @@ run finishes in one invocation.
   `jobs.lever.co/...` address), and it is scanned normally from then on.
 
 Moving to shape A later is only a Render deploy: add the worker service, unset
-`CHRISTOPHER_DISABLE_BROWSER` and `CHRISTOPHER_SERVERLESS_FALLBACK`, and the same database keeps
+`AVA_DISABLE_BROWSER` and `AVA_SERVERLESS_FALLBACK` (and their old `CHRISTOPHER_*` names, if the
+deployment still sets them), and the same database keeps
 every company, role and decision.
 
 ---

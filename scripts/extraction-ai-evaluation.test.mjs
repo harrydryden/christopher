@@ -11,7 +11,7 @@ const source = resolve(root, "docs/benchmarks/extraction-ai-structure-fix-2026-0
 
 test("zero-cost A3 regrade preserves source evidence and exposes field mismatches", async () => {
   const before = await readFile(source);
-  const directory = await mkdtemp(join(tmpdir(), "christopher-a3-regrade-"));
+  const directory = await mkdtemp(join(tmpdir(), "ava-a3-regrade-"));
   const output = join(directory, "regraded.json");
   const run = spawnSync("pnpm", ["exec", "tsx", "scripts/evaluate-extraction-ai.ts", "--replay", source, "--output", output], {
     cwd: root,

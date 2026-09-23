@@ -7,7 +7,7 @@
  * without another query — `listOpenLibraryImports` says so — and everything below turns that into
  * the words the person sees.
  */
-import { countProposedItems, StoredLibraryProposalSchema, type LibraryProposal } from "@christopher/core/library-import";
+import { countProposedItems, StoredLibraryProposalSchema, type LibraryProposal } from "@ava/core/library-import";
 
 export type LibraryImportState = "reading" | "proposed" | "failed";
 

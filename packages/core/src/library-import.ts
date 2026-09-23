@@ -287,7 +287,7 @@ export const LIBRARY_IMPORT_BLOCKED_HOSTS: readonly string[] = [
 
 /** What to do instead, in one sentence, wherever a LinkedIn URL is refused. */
 export const LINKEDIN_IMPORT_ADVICE =
-  "Christopher does not read LinkedIn. Open your profile, choose More \u2192 Save to PDF, and upload that file here.";
+  "AVA does not read LinkedIn. Open your profile, choose More \u2192 Save to PDF, and upload that file here.";
 
 /**
  * The person's own site, checked before anything fetches it: https, a real host, no credentials,

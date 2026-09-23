@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
-import type { Db } from "@christopher/db";
-import type { InterruptedError } from "@christopher/core/cv-build-failure";
+import type { Db } from "@ava/db";
+import type { InterruptedError } from "@ava/core/cv-build-failure";
 import type { WorkerDeps } from "./context";
 import { log } from "./log";
 

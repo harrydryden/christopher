@@ -1,8 +1,8 @@
 import { cache } from "react";
 import { and, eq, inArray, notLike, sql } from "drizzle-orm";
-import { settings as settingsTable, userSettings as userSettingsTable } from "@christopher/db/schema";
-import { isSystemSettingsKey, isUserSettingsKey, resolveSettings, resolveSystemSettings, type AppSettings, type SystemSettings, type UserSettings } from "@christopher/core";
-import { enqueueTask, reevaluateGate } from "@christopher/db";
+import { settings as settingsTable, userSettings as userSettingsTable } from "@ava/db/schema";
+import { isSystemSettingsKey, isUserSettingsKey, resolveSettings, resolveSystemSettings, type AppSettings, type SystemSettings, type UserSettings } from "@ava/core";
+import { enqueueTask, reevaluateGate } from "@ava/db";
 import { requireUser } from "./auth";
 import { db } from "./db";
 

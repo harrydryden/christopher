@@ -21,7 +21,7 @@ import {
   type CvBuildStepStatus,
   type CvFailureAction,
   type CvFailureKind,
-} from "@christopher/core";
+} from "@ava/core";
 import { formatClock } from "./format";
 
 /** No progress for this long, while a task is still running, is worth saying out loud. */

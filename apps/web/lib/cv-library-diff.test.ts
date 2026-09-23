@@ -6,7 +6,7 @@
  * bullet reads as one change rather than a removal and an addition that happen to be adjacent.
  */
 import { expect, it } from "vitest";
-import type { CvLibrary, Employment } from "@christopher/core/cv";
+import type { CvLibrary, Employment } from "@ava/core/cv";
 import { diffCvLibraries, diffRows, libraryDiffSummary, requestedDiff } from "./cv-library-diff";
 import { openStoredLibrary } from "./cv-library-rows";
 

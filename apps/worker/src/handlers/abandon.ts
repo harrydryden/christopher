@@ -1,5 +1,5 @@
-import { abandonCvDraft, noteCvBuildFailure, releaseAiHolds } from "@christopher/db";
-import { cvBuildFailure, type CvBuildFailure } from "@christopher/core";
+import { abandonCvDraft, noteCvBuildFailure, releaseAiHolds } from "@ava/db";
+import { cvBuildFailure, type CvBuildFailure } from "@ava/core";
 import type { AbandonHookMap, InterruptedHookMap } from "../queue";
 import { failOpenCvBuildStepsQuietly } from "./cv-journal";
 import { log } from "../log";

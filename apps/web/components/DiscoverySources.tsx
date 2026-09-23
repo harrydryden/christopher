@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, sql, inArray } from "drizzle-orm";
-import { discoveryDocuments, discoverySources, tasks } from "@christopher/db/schema";
+import { discoveryDocuments, discoverySources, tasks } from "@ava/db/schema";
 import { db } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { discoverySourceState, SOURCE_KIND_LABELS } from "@/lib/discovery-ux";

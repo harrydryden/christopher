@@ -1,5 +1,5 @@
 import { and, desc, eq, gte, sql } from "drizzle-orm";
-import { CV_BUILD_MOTIONS, type CvBuildFailure, type CvBuildMotion, type CvBuildStepStatus, type CvBuildStepView } from "@christopher/core";
+import { CV_BUILD_MOTIONS, type CvBuildFailure, type CvBuildMotion, type CvBuildStepStatus, type CvBuildStepView } from "@ava/core";
 import type { Db } from "./client";
 import { cvBuildSteps } from "./schema";
 

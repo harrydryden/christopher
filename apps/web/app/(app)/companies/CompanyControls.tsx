@@ -9,7 +9,7 @@
 import { archiveCompany, pauseCompany, resumeCompany, unfollowCompany } from "@/app/actions/companies";
 import { Button } from "@/components/Button";
 import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
-import type { CompanySubscription } from "@christopher/db/schema";
+import type { CompanySubscription } from "@ava/db/schema";
 
 export function CompanyControls({
   companyId,

@@ -1,13 +1,13 @@
-import { buildFittedCv, selectCvToFit, CvFitFailure, type CvFitEvent } from "@christopher/core/cv-fit";
+import { buildFittedCv, selectCvToFit, CvFitFailure, type CvFitEvent } from "@ava/core/cv-fit";
 import {
   renderCvPdfWithReport,
   assertCvPageLimit,
   CvLayoutError,
-} from "@christopher/core/cv-pdf";
+} from "@ava/core/cv-pdf";
 import {
   createCvAssessment,
   validateCvRubric,
-} from "@christopher/core/cv-review";
+} from "@ava/core/cv-review";
 import {
   cvTextItems,
   cvClaimItems,
@@ -15,13 +15,13 @@ import {
   cvImprovementOwner,
   type CvAssessment,
   type CvReviewPlan,
-} from "@christopher/core/cv-assessment";
-import { cvTailoringEvidence, validateCvTailoringPlan } from "@christopher/core/cv-tailoring";
-import { buildCvGapQuiz } from "@christopher/core/cv-gap-quiz";
-import { compareCvQuality, diagnoseCvQuality } from "@christopher/core/cv-quality";
+} from "@ava/core/cv-assessment";
+import { cvTailoringEvidence, validateCvTailoringPlan } from "@ava/core/cv-tailoring";
+import { buildCvGapQuiz } from "@ava/core/cv-gap-quiz";
+import { compareCvQuality, diagnoseCvQuality } from "@ava/core/cv-quality";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
-import { completeCv, cvRoleKey, recordAiCall, schema, type Task, type Db } from "@christopher/db";
-import { createAiEngine, estimateCvBuildUsd, CANCELLED_ERROR, type AiFailure, type AiUsageRecord } from "@christopher/ai";
+import { completeCv, cvRoleKey, recordAiCall, schema, type Task, type Db } from "@ava/db";
+import { createAiEngine, estimateCvBuildUsd, CANCELLED_ERROR, type AiFailure, type AiUsageRecord } from "@ava/ai";
 import {
   CvContentSchema,
   CvPlanSchema,
@@ -40,7 +40,7 @@ import {
   usd,
   type CvBuildCheckpoint,
   type CvFailureKind,
-} from "@christopher/core";
+} from "@ava/core";
 import {
   AUTHOR_CALL,
   callFailureMessage,
@@ -50,7 +50,7 @@ import {
   REVIEW_CALL,
   RUBRIC_CALL,
   type CvCallDoing,
-} from "@christopher/core/cv-build-failure";
+} from "@ava/core/cv-build-failure";
 import { withResourceLease } from "../lease";
 import { tryReserveAi, type AiHold } from "../budget";
 import { backoffMs, type TaskRunContext } from "../queue";

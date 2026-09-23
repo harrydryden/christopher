@@ -3,7 +3,7 @@
 import { startTransition, useState } from "react";
 import { useRouter } from "next/navigation";
 import { acceptFilterSuggestionWithReport, rejectFilterSuggestion } from "@/app/actions/learning";
-import { Mark } from "@/components/brand/Mark";
+import { Monogram } from "@/components/brand/Monogram";
 
 /** One pending filter suggestion, reduced to what a single line can carry. */
 export interface SuggestionChip {
@@ -81,7 +81,7 @@ export function SuggestionsStrip({ items }: { items: SuggestionChip[] }) {
           </span>
         ))}
       </>}
-      {pendingId !== null && <span className="text-muted"><Mark size={16} searching title="Saving" /></span>}
+      {pendingId !== null && <span className="text-muted"><Monogram size={16} searching title="Saving" /></span>}
       {message && <span role="status" aria-live="polite" className="text-fg">{message}</span>}
       {error && <span role="status" aria-live="polite" className="text-danger">{error}</span>}
       <a href="/learning" className="ml-auto text-12 text-muted underline hover:text-fg">All suggestions</a>

@@ -2,7 +2,7 @@
  * What the form lets through, and what it refuses before anything is uploaded.
  */
 import { expect, it } from "vitest";
-import { LIBRARY_IMPORT_MAX_BYTES } from "@christopher/db";
+import { LIBRARY_IMPORT_MAX_BYTES } from "@ava/db";
 import { LIBRARY_UPLOAD_MAX_BYTES, UPLOAD_ACCEPT, uploadKind } from "./library-upload";
 
 const bytes = (...magic: number[]) => Uint8Array.from([...magic, ...new Array(32).fill(0x20)]);

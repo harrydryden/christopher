@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { MANUAL_RESCAN_INTERVAL_MS } from "@christopher/core";
+import { MANUAL_RESCAN_INTERVAL_MS } from "@ava/core";
 import { nextScanSentence, scanTimingLine } from "./scan-line";
 
 const NOW = new Date("2026-09-19T10:00:00Z");

@@ -4,15 +4,15 @@
  * the companies that account follows. Every suggestion is verified deterministically before the
  * user ever sees it (SPEC R-8.3).
  */
-import { schema, enqueueTask, type Task } from "@christopher/db";
-import { dedupeKeyFor, discovery, ensureHttpUrl, extractDomain, priorityFor, stripHtml, type DiscoveryResult, type TaskPayloads } from "@christopher/core";
+import { schema, enqueueTask, type Task } from "@ava/db";
+import { dedupeKeyFor, discovery, ensureHttpUrl, extractDomain, priorityFor, stripHtml, type DiscoveryResult, type TaskPayloads } from "@ava/core";
 import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { aiBudgetStop, makeDiscoveryContext, makeFetchContext, type WorkerDeps } from "../context";
 import { serialiseCandidate } from "./discover";
 import { latestProfile } from "./learning";
 import { withResourceLease } from "../lease";
 import { selectExamples, recommendationContext, followedCompanies } from "../recommendation-context";
-import { sha1 } from "@christopher/core";
+import { sha1 } from "@ava/core";
 import { log } from "../log";
 
 const PARKED_MARKERS = /(domain (?:is )?for sale|buy this domain|parked (?:free )?courtesy|this domain has expired|godaddy\.com\/domain)/i;
@@ -217,7 +217,7 @@ async function verifyUncached(deps: WorkerDeps, homepageUrl: string, countMatchi
   const openRoles = result.best.count ?? sample.length;
   let matchingRoles: number | undefined;
   if (countMatching && sample.length > 0) {
-    const { evaluateGate } = await import("@christopher/core");
+    const { evaluateGate } = await import("@ava/core");
     matchingRoles = sample.filter((p) => evaluateGate({ title: p.title, location: p.location, remote: p.remote }, gate).inTable).length;
   }
   return {

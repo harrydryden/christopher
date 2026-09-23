@@ -1,5 +1,5 @@
 /**
- * Password hashing and the rules a new password must meet. Hashing lives in @christopher/core
+ * Password hashing and the rules a new password must meet. Hashing lives in @ava/core
  * so the worker CLI and the interface agree on the format; this checks the re-export.
  */
 import { describe, expect, it } from "vitest";

@@ -9,7 +9,7 @@
  * they touched is reviewed again. That is the whole reason the hash exists.
  */
 import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
-import type { LibraryEntryReview } from "@christopher/core";
+import type { LibraryEntryReview } from "@ava/core";
 import type { Db } from "./client";
 import { cvLibraryReviews, type CvLibraryReview, type LibraryReviewSource } from "./schema";
 

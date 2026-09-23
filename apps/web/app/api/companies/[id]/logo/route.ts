@@ -6,7 +6,7 @@
  * to every signed-in reader, versioned by capture time — the URL carries `?v=<ms>` and the
  * response an `etag` of the same instant, so a re-capture busts the cache and nothing else does.
  */
-import { readCompanyLogo } from "@christopher/db";
+import { readCompanyLogo } from "@ava/db";
 import { routeUser } from "@/lib/route-auth";
 import { db } from "@/lib/db";
 import { zUuid } from "@/lib/validation";

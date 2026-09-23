@@ -1,5 +1,5 @@
 import http from "node:http";
-import { pendingTaskCounts, workloadMetrics } from "@christopher/db";
+import { pendingTaskCounts, workloadMetrics } from "@ava/db";
 import type { WorkerDeps } from "./context";
 import { log } from "./log";
 import { vitals } from "./vitals";

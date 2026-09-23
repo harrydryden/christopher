@@ -7,9 +7,9 @@
  * in ten minutes and then give up for good — and that the sweep queues each company once.
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { createDb, readCompanyLogo, schema, type Db } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
-import { dedupeKeyFor } from "@christopher/core";
+import { createDb, readCompanyLogo, schema, type Db } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
+import { dedupeKeyFor } from "@ava/core";
 import { eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -17,7 +17,7 @@ import { handleDiscover } from "./handlers/discover";
 import { handleRunDaily } from "./handlers/daily";
 import { startTestServer, type TestServer } from "./test-server";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test";
+const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
 const HOSTS = ["www.logo.test", "logo.test", "blank.test", "icons.duckduckgo.com", "www.google.com"];
 const DAY = 86_400_000;
 
@@ -54,8 +54,8 @@ beforeAll(async () => {
   }, HOSTS);
 
   process.env.DATABASE_URL = DATABASE_URL;
-  process.env.CHRISTOPHER_HOST_MAP = JSON.stringify(server.hostMap);
-  process.env.CHRISTOPHER_DISABLE_BROWSER = "1";
+  process.env.AVA_HOST_MAP = JSON.stringify(server.hostMap);
+  process.env.AVA_DISABLE_BROWSER = "1";
   delete process.env.ANTHROPIC_API_KEY;
   deps = await createDeps(readEnv(), { now: () => now, settingsTtlMs: 0 });
   db = deps.db;

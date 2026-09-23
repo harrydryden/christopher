@@ -7,7 +7,7 @@ import { AuthDivider, AuthShell, GoogleButton } from "@/components/AuthShell";
 import { Button } from "@/components/Button";
 import { Field, Input } from "@/components/Field";
 import { sanitizeNextPath } from "@/lib/session";
-import { MIN_PASSWORD_LENGTH } from "@christopher/core";
+import { MIN_PASSWORD_LENGTH } from "@ava/core";
 
 export const dynamic = "force-dynamic";
 

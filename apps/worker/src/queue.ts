@@ -1,5 +1,5 @@
-import { recordWorkerEvent, releaseAiHolds, schema, type Db, type ReleasedHolds, type Task } from "@christopher/db";
-import { deadlineMsFor, TASK_DEADLINES_MS, taskSubject, taskUserId, type TaskDeadlines } from "@christopher/core";
+import { recordWorkerEvent, releaseAiHolds, schema, type Db, type ReleasedHolds, type Task } from "@ava/db";
+import { deadlineMsFor, TASK_DEADLINES_MS, taskSubject, taskUserId, type TaskDeadlines } from "@ava/core";
 import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 import { finaliseScanRuns } from "./handlers/daily";
@@ -53,7 +53,7 @@ export interface AbandonContext {
 // Ten missed 30-second renewals; aligned with the resource lease expiry.
 export const TASK_STALE_AFTER_MS = 5 * 60_000;
 
-// The deadline table lives in @christopher/core, because the interface shows elapsed time against
+// The deadline table lives in @ava/core, because the interface shows elapsed time against
 // it and cannot import the worker. Re-exported here so nothing else had to change.
 export { deadlineMsFor, TASK_DEADLINES_MS };
 export type { TaskDeadlines };

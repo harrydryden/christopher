@@ -7,7 +7,7 @@
  * follows the company. What each person sees of the listing lives in `user_jobs`, one row per
  * follower and posting, created only once the posting passes that follower's gate.
  */
-import { schema, enqueueTask, archiveNonMatches, type Task } from "@christopher/db";
+import { schema, enqueueTask, archiveNonMatches, type Task } from "@ava/db";
 import {
   ats,
   classifyScan,
@@ -33,9 +33,9 @@ import {
   type SourceSpec,
   type SystemSettings,
   SOURCE_FAILING_AFTER,
-} from "@christopher/core";
+} from "@ava/core";
 import { and, desc, eq, inArray, sql, or, isNull } from "drizzle-orm";
-import type { CareerSource } from "@christopher/db";
+import type { CareerSource } from "@ava/db";
 import { aiBudgetExceeded, makeFetchContext, type WorkerDeps } from "../context";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { loadAdmissionCache } from "../admission-cache";

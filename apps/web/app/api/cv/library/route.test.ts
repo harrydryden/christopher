@@ -6,12 +6,12 @@
  * that the stored version has just moved on.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createDb, schema, type Db } from "@christopher/db";
-import { runMigrations } from "@christopher/db/migrate";
+import { createDb, schema, type Db } from "@ava/db";
+import { runMigrations } from "@ava/db/migrate";
 import { sql } from "drizzle-orm";
 import { ensureTestUser } from "@/test/auth";
-import type { CvLibrary } from "@christopher/core/cv";
-import type { User } from "@christopher/db/schema";
+import type { CvLibrary } from "@ava/core/cv";
+import type { User } from "@ava/db/schema";
 
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
@@ -32,7 +32,7 @@ const library = (profile: string): CvLibrary => ({
 });
 
 beforeAll(async () => {
-  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/christopher_test");
+  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
   database = client.db;
   pool = client.pool;
   await runMigrations(database);

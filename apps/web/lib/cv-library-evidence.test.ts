@@ -7,8 +7,8 @@
  * wording falls back to the baseline and says so, rather than reading as unscored or as reviewed.
  */
 import { expect, it } from "vitest";
-import { evidenceRatingFor, rulesLibraryReview, type LibraryEntryReview } from "@christopher/core/library-review";
-import { setRowFacets, type CvLibrary, type EvidenceFacet, type Employment } from "@christopher/core/cv";
+import { evidenceRatingFor, rulesLibraryReview, type LibraryEntryReview } from "@ava/core/library-review";
+import { setRowFacets, type CvLibrary, type EvidenceFacet, type Employment } from "@ava/core/cv";
 import {
   EVIDENCE_RATING_LABELS,
   libraryEvidenceLine,

@@ -1,5 +1,5 @@
-import { cvQuoteIsAnchored } from "@christopher/core/cv-review";
-import { cvMatchPoints, type CvClaimItem, type CvReviewPlan, type CvRubric, type CvTextItem } from "@christopher/core/cv-assessment";
+import { cvQuoteIsAnchored } from "@ava/core/cv-review";
+import { cvMatchPoints, type CvClaimItem, type CvReviewPlan, type CvRubric, type CvTextItem } from "@ava/core/cv-assessment";
 
 type Context = { cv: CvTextItem[]; claims: CvClaimItem[]; evidence: CvTextItem[] };
 

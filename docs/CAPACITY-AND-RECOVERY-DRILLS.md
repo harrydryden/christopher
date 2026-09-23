@@ -8,7 +8,7 @@ Build the web application and migrate a new empty database named `christopher_us
 
 ```sh
 DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55439/christopher_users_benchmark \
-USERS_REPORT_PATH=/tmp/christopher-users-report.json \
+USERS_REPORT_PATH=/tmp/ava-users-report.json \
 node scripts/benchmark-users.mjs
 ```
 
@@ -27,7 +27,7 @@ With the populated capacity database available, choose a local target URL for th
 ```sh
 RECOVERY_SOURCE_URL=postgres://postgres:postgres@127.0.0.1:55439/christopher_users_benchmark \
 RECOVERY_TARGET_URL=postgres://postgres:postgres@127.0.0.1:55439/christopher_recovery_drill \
-RECOVERY_REPORT_PATH=/tmp/christopher-recovery-report.json \
+RECOVERY_REPORT_PATH=/tmp/ava-recovery-report.json \
 node scripts/recovery-drill.mjs
 ```
 

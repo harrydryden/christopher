@@ -1,4 +1,4 @@
-import { createDb } from "@christopher/db/client";
+import { createDb } from "@ava/db/client";
 export type Db = ReturnType<typeof createDb>["db"];
 let cached: Db | null = null;
 /** Shared connection policy, with a small serverless pool. Direct subpath avoids migrations. */

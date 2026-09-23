@@ -3,7 +3,9 @@
  * must never read as a session. The signed-value helper carries the Google sign-in state the same way.
  */
 import { describe, expect, it } from "vitest";
-import { createSessionCookieValue, createSignedValue, isSecureHost, readSessionCookie, readSignedValue, sanitizeNextPath } from "./session";
+import {
+  createSessionCookieValue, createSignedValue, isSecureHost, readSessionCookie, readSignedValue, sanitizeNextPath, sessionCookieValue,
+} from "./session";
 
 const secret = "test-secret";
 const id = "0f3b2c4e-1d2a-4b6c-8e9f-0a1b2c3d4e5f";
@@ -57,10 +59,18 @@ describe("redirect targets", () => {
     expect(sanitizeNextPath(null)).toBe("/");
   });
 
+  it("reads the renamed cookie first and the legacy one after it, so the rename signs nobody out", () => {
+    const jar = (values: Record<string, string>) => ({ get: (name: string) => (name in values ? { value: values[name]! } : undefined) });
+    expect(sessionCookieValue(jar({ ava_session: "new" }))).toBe("new");
+    expect(sessionCookieValue(jar({ christopher_session: "old" }))).toBe("old");
+    expect(sessionCookieValue(jar({ ava_session: "new", christopher_session: "old" }))).toBe("new");
+    expect(sessionCookieValue(jar({}))).toBeUndefined();
+  });
+
   it("marks cookies secure everywhere except plain localhost", () => {
     expect(isSecureHost("localhost:3000")).toBe(false);
     expect(isSecureHost("127.0.0.1")).toBe(false);
-    expect(isSecureHost("christopher.example")).toBe(true);
+    expect(isSecureHost("ava.example")).toBe(true);
     expect(isSecureHost(null)).toBe(true);
   });
 });

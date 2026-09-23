@@ -116,7 +116,9 @@ export async function recordDecision(tx: Tx, userId: string, jobId: string, deci
     if (existing) await tx.update(decisions).set({ superseded: true }).where(eq(decisions.id, existing.id));
     if (existing?.decision === "skip") await restoreDismissedApplications(tx, userId, [jobId]);
     if (!locked.inTable && !locked.archivedAt) {
-      await tx.update(userJobs).set({ archivedAt: new Date(), updatedAt: new Date() }).where(and(eq(userJobs.userId, userId), eq(userJobs.jobId, jobId)));
+      // The gate's archive, stamped as such: the view comes back by itself once the gate admits it.
+      const at = new Date();
+      await tx.update(userJobs).set({ archivedAt: at, gateArchivedAt: at, updatedAt: at }).where(and(eq(userJobs.userId, userId), eq(userJobs.jobId, jobId)));
       await tx.insert(jobEvents).values({ jobId, userId, type: "updated", payload: { action: "archived", actor: "system", reason: "No longer matches your criteria" } });
     }
     await tx.insert(jobEvents).values({ jobId, userId, type: "decided", payload: { decision: null } });

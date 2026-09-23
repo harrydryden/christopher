@@ -719,7 +719,13 @@ export const aiCalls = pgTable(
     stage: text("stage"),
     at: tsNow("at"),
   },
-  (t) => [index("ai_calls_at_idx").on(t.at), index("ai_calls_user_at_idx").on(t.userId, t.at), index("ai_calls_site_at_idx").on(t.callSite, t.at)],
+  (t) => [
+    index("ai_calls_at_idx").on(t.at),
+    index("ai_calls_user_at_idx").on(t.userId, t.at),
+    index("ai_calls_site_at_idx").on(t.callSite, t.at),
+    // Created by migration 0038: the cost-per-build sample, by draft within the last ninety days.
+    index("ai_calls_cv_ref_at_idx").on(t.refId, t.at).where(sql`${t.refType} like 'cv-%' and ${t.refId} is not null`),
+  ],
 );
 
 export type User = typeof users.$inferSelect;

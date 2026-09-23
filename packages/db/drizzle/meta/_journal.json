@@ -248,17 +248,24 @@
       "breakpoints": true
     },
     {
-      "idx": 35,
-      "version": "7",
-      "when": 1790848800000,
-      "tag": "0035_scan_closure_evidence",
-      "breakpoints": true
-    },
-    {
       "idx": 36,
       "version": "7",
       "when": 1790935200000,
       "tag": "0036_indexes_and_retention",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1791021600000,
+      "tag": "0037_scan_closure_evidence",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1791108000000,
+      "tag": "0038_ai_calls_cv_ref_index",
       "breakpoints": true
     }
   ]

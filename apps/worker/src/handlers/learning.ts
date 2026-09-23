@@ -150,7 +150,13 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
     await markScoreState(deps, userId, jobId, "budget");
     return BUDGET_SKIP;
   }
-  if (!result) return { skipped: "no ai result" };
+  if (!result) {
+    // The model was asked and gave nothing usable. The view says so beside its blank score, so a
+    // scan does not queue the same inputs again every day; a changed profile or gate asks again.
+    await deps.db.update(schema.userJobs).set({ scoreState: "scored", scoreStateAt: deps.now(), scoredAt: deps.now() })
+      .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId)));
+    return { skipped: "no ai result" };
+  }
 
   return deps.db.transaction(async tx => {
     await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
@@ -165,6 +171,7 @@ export async function handleScoreJob(task: Task, deps: WorkerDeps): Promise<unkn
       scoreInputHash: fingerprint,
       scoreState: "scored",
       scoreStateAt: deps.now(),
+      scoredAt: deps.now(),
       hidden: false,
       updatedAt: deps.now(),
     })

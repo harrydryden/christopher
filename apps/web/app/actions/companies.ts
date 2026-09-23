@@ -1,5 +1,5 @@
 "use server";
-import { enqueueTask, reevaluateGate, setSubscriptionStatus, subscribeToCompany, syncCompanyStatus } from "@ava/db";
+import { enqueueTask, reevaluateGate, setSubscriptionStatus, subscribeToCompany, syncCompanyStatus, retireSourceRoles } from "@ava/db";
 
 import { requireAdmin, requireUser, requireVerifiedUser } from "@/lib/auth";
 
@@ -327,6 +327,9 @@ export async function disableSource(sourceId: string): Promise<void> {
   await requireAdmin();
   const id = zUuid().parse(sourceId);
   const [source] = await db().update(careerSources).set({ status: "disabled" }).where(eq(careerSources.id, id)).returning({ companyId: careerSources.companyId });
+  // A source nobody scans any more cannot close its roles by the two-miss rule; they are closed
+  // now, as of when they were last seen, rather than at the next daily sweep.
+  if (source) await retireSourceRoles(db(), { sourceId: id });
   if (source) revalidatePath(`/companies/${source.companyId}`);
 }
 

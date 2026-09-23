@@ -569,7 +569,7 @@ export function buildRoleRowVM(row: RoleRow, now: Date = new Date(), viewerId?: 
     decision: row.decision
       ? { id: row.decision.id, decision: row.decision.decision, reason: row.decision.reason, createdLabel: relativeTime(row.decision.createdAt, now), createdTitle: row.decision.createdAt.toISOString() }
       : null,
-    events: row.events.map((e) => ({ id: e.id, type: e.type, label: e.payload.action === "archived" ? `Archived: ${e.payload.reason ?? "Put away by you"}` : e.payload.action === "restored" ? "Restored by you" : eventTypeLabel(e.type), title: `${relativeTime(e.at, now)} · ${e.at.toISOString()}` })),
+    events: row.events.map((e) => ({ id: e.id, type: e.type, label: e.payload.action === "archived" ? `Archived: ${e.payload.reason ?? "Put away by you"}` : e.payload.action === "unarchived" ? "Back: matches your criteria again" : e.payload.action === "restored" ? "Restored by you" : eventTypeLabel(e.type), title: `${relativeTime(e.at, now)} · ${e.at.toISOString()}` })),
   };
 }
 

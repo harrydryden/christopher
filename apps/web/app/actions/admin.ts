@@ -3,6 +3,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { retireSourceRoles } from "@ava/db";
 import { careerSources, companies, companyNameSuggestions } from "@ava/db/schema";
 import { ensureHttpUrl, extractDomain } from "@ava/core";
 import { requireAdmin } from "@/lib/auth";
@@ -112,6 +113,9 @@ export async function removeCatalogueSource(sourceId: string): Promise<void> {
         returning uj.user_id, uj.job_id)
       insert into job_events (job_id, user_id, type, payload)
       select job_id, user_id, 'updated', ${SOURCE_RETIRED_EVENT}::jsonb from retired`);
+    // The shared postings: a source nobody scans any more cannot close its roles by the two-miss
+    // rule, so they are closed now, as of when they were last seen.
+    await retireSourceRoles(tx, { sourceId: id });
     return source.companyId;
   });
   revalidateCatalogue(companyId);

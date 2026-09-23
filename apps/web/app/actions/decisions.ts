@@ -245,7 +245,7 @@ export async function decideRoles(jobIds: string[], decision: "apply" | "skip" |
         // A role the gate no longer admits was only in the table because a decision held it.
         const drops = rows.filter(row => !row.inTable && !row.archivedAt).map(row => row.jobId);
         if (drops.length) {
-          await tx.update(userJobs).set({ archivedAt: now, updatedAt: now })
+          await tx.update(userJobs).set({ archivedAt: now, gateArchivedAt: now, updatedAt: now })
             .where(and(eq(userJobs.userId, user.id), inArray(userJobs.jobId, drops)));
           await tx.insert(jobEvents).values(drops.map(jobId => ({
             jobId, userId: user.id, type: "updated" as const,

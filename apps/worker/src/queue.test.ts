@@ -419,6 +419,37 @@ describe("execution model", () => {
     await queueUnderTest.stop(5_000);
   }, 15_000);
 
+  it("lets CV builds take at most their share of the slots, so other work still runs beside a backlog of them", async () => {
+    let building = 0;
+    let maxBuilding = 0;
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let discovered!: () => void;
+    const sawDiscover = new Promise<void>(resolve => { discovered = resolve; });
+    queueUnderTest = new TaskQueue(deps, {
+      generate_cv: async () => {
+        building++;
+        maxBuilding = Math.max(maxBuilding, building);
+        await held;
+        building--;
+        return {};
+      },
+      discover: async () => { discovered(); return {}; },
+    }, { concurrency: 3, workerId: "capped-builds", pollMs: 10, maxActiveByType: { generate_cv: 2 } });
+    for (const draftId of ["a", "b", "c", "d", "e"]) await enqueueTask(db, "generate_cv", { draftId }, { priority: 2 });
+    queueUnderTest.start();
+    while (building < 2) await sleep(10);
+    // Queued behind five builds, at a less urgent priority than any of them, it still runs.
+    await enqueueTask(db, "discover", { companyId: "behind-the-builds" }, { priority: 6 });
+    await Promise.race([sawDiscover, new Promise((_, reject) => setTimeout(() => reject(new Error("the builds held every slot")), 5_000))]);
+    await sleep(100);
+    expect(maxBuilding).toBe(2);
+    const running = await db.select().from(schema.tasks).where(eq(schema.tasks.status, "running"));
+    expect(running.filter(task => task.type === "generate_cv")).toHaveLength(2);
+    release();
+    await queueUnderTest.stop(5_000);
+  }, 15_000);
+
   it("releases the verification slot after a handler fails", async () => {
     let calls = 0;
     let secondStarted!: () => void;

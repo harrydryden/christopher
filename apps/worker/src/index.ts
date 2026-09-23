@@ -38,7 +38,12 @@ async function main() {
   // once. A boot on the same semantics queues nothing.
   await enqueueBootGateReevaluation(deps.db);
 
-  const queue = new TaskQueue(deps, handlers, { concurrency: env.concurrency, workerId: env.workerId, onAbandon, onInterrupted });
+  // CV builds hold a slot for many minutes, so they may take at most half the slots: the rest stay
+  // free for the discoveries, imports and scans queued behind a run of builds.
+  const queue = new TaskQueue(deps, handlers, {
+    concurrency: env.concurrency, workerId: env.workerId, onAbandon, onInterrupted,
+    maxActiveByType: { generate_cv: Math.max(1, Math.ceil(env.concurrency / 2)) },
+  });
   queue.start();
   // Written only by the persistent worker, never the short-lived web cron runner.
   const reportHeartbeat = async () => {

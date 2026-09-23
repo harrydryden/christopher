@@ -119,7 +119,15 @@ export interface QueueOptions {
   onAbandon?: AbandonHookMap;
   /** What to record when a run of a given type is cut off by its deadline but the task lives on. */
   onInterrupted?: InterruptedHookMap;
+  /**
+   * The most runs of a type this process holds at once; a slot at the limit claims anything else.
+   * Company verification is always capped at one, because it may drive the browser.
+   */
+  maxActiveByType?: Partial<Record<Task["type"], number>>;
 }
+
+/** The per-type caps every queue has, whatever it is given. */
+const DEFAULT_MAX_ACTIVE_BY_TYPE: Partial<Record<Task["type"], number>> = { verify_company: 1 };
 
 export function backoffMs(attempts: number): number {
   return Math.min(60_000 * 2 ** Math.max(0, attempts - 1), 30 * 60_000);
@@ -539,6 +547,7 @@ export class TaskQueue {
   /** Serialises eligibility check + claim + reservation, so two loops cannot both admit a verification. */
   private claimTurn: Promise<void> = Promise.resolve();
   private readonly lanes: QueueLane[] | null;
+  private readonly maxActiveByType: Partial<Record<Task["type"], number>>;
 
   constructor(
     private readonly deps: WorkerDeps,
@@ -546,6 +555,7 @@ export class TaskQueue {
     private readonly opts: QueueOptions,
   ) {
     this.lanes = laneSlots(opts.concurrency);
+    this.maxActiveByType = { ...opts.maxActiveByType, ...DEFAULT_MAX_ACTIVE_BY_TYPE };
   }
 
   start(): void {
@@ -676,9 +686,12 @@ export class TaskQueue {
   }
 
   /**
-   * Admit at most one browser-capable company verification in this process while leaving every
-   * other task eligible. The short local critical section closes the gap between checking the
-   * active count and reserving the type; the database claim remains the cross-process lease.
+   * Admit at most `maxActiveByType` runs of a capped type in this process — one browser-capable
+   * company verification, and as many CV builds as the worker is configured to allow — while
+   * leaving every other task eligible, so a backlog of one type can never occupy every slot. A run
+   * cut off by its deadline counts until it settles. The short local critical section closes the
+   * gap between checking the active count and reserving the type; the database claim remains the
+   * cross-process lease, so each cap is per process.
    */
   private async claimForSlot(slot: number): Promise<Task | null> {
     const previous = this.claimTurn;
@@ -687,7 +700,9 @@ export class TaskQueue {
     await previous;
     try {
       if (this.stopping) return null;
-      const excluded: Task["type"][] = (this.activeByType.get("verify_company") ?? 0) > 0 ? ["verify_company"] : [];
+      const excluded = (Object.entries(this.maxActiveByType) as Array<[Task["type"], number]>)
+        .filter(([type, cap]) => (this.activeByType.get(type) ?? 0) >= cap)
+        .map(([type]) => type);
       const lane: QueueLane = this.lanes ? this.lanes[slot % this.lanes.length]! : LANES[this.turn++ % LANES.length]!;
       const workerId = `${this.opts.workerId}#${slot}`;
       const task = (await claimTask(this.deps.db, workerId, lane, excluded))

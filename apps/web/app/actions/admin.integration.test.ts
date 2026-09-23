@@ -75,9 +75,17 @@ it("retires a source instead of deleting what every follower observed through it
 
   const [retired] = await database.select().from(schema.careerSources).where(eq(schema.careerSources.id, source.id));
   expect(retired!.status).toBe("disabled");
-  // The scan history and every posting stay, and nothing is closed: only a scan closes a role.
+  // The scan history and every posting stay. The roles close, but not as a scan closes them: no
+  // listing was read, so each is closed as of the last time a scan saw it, with an event that
+  // says the source was retired (a role left open on a source nobody scans would read as live
+  // for ever, and a company followed again would admit months-old "open" roles).
   expect(await database.select().from(schema.scans)).toHaveLength(1);
-  expect((await database.select().from(schema.jobs)).map(job => job.status)).toEqual(["open", "open", "open"]);
+  const jobs = await database.select().from(schema.jobs);
+  expect(jobs.map(job => job.status)).toEqual(["closed", "closed", "closed"]);
+  for (const job of jobs) expect(job.closedAt?.getTime()).toBe(job.lastSeenAt?.getTime());
+  const closures = await database.select().from(schema.jobEvents).where(eq(schema.jobEvents.type, "closed"));
+  expect(closures).toHaveLength(3);
+  expect(closures.every(event => (event.payload as { reason?: string }).reason === "source_retired")).toBe(true);
   expect(await database.select().from(schema.userJobs)).toHaveLength(6);
   // Work a person did on a role keeps it where it was: the shortlist, the application.
   expect((await view(admin.user.id, one.id))!.archivedAt).toBeNull();

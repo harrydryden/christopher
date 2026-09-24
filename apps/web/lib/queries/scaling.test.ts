@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb, schema, subscribeToCompany, type Db } from "@ava/db";
+import { createTestDb } from "@/test/db";
 import { runMigrations } from "@ava/db/migrate";
 import { sql } from "drizzle-orm";
 import { ensureTestUser } from "@/test/auth";
@@ -11,7 +12,7 @@ vi.mock("@/lib/db", () => ({ db: () => database }));
 import { listCompanies, companyCount } from "./companies";
 import { listPendingSuggestions, suggestionCount } from "./suggestions";
 import { saveSettingsAndGate } from "@/lib/settings";
-beforeAll(async () => { const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test"); database=client.db; pool=client.pool; await runMigrations(database); user = await ensureTestUser(database); });
+beforeAll(async () => { const client = createTestDb(); database=client.db; pool=client.pool; await runMigrations(database); user = await ensureTestUser(database); });
 afterAll(() => pool.end());
 beforeEach(() => database.execute(sql`truncate companies, company_suggestions, tasks, settings, user_settings cascade`));
 it("pages and searches a thousand followed companies without repeating names across page boundaries", async () => {

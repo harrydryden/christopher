@@ -10,6 +10,7 @@ import {
 } from "../../../../packages/core/test/cv-review-fixture";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDb, schema, subscribeToCompany, type Db } from "@ava/db";
+import { createTestDb } from "@/test/db";
 import { DEFAULT_CV_THEME, CV_THEMES } from "@ava/core/cv";
 import { DEFAULT_ACCOUNT_AI_BUDGET_USD, DEFAULT_SETTINGS, modelForCallSite } from "@ava/core";
 import { runMigrations } from "@ava/db/migrate";
@@ -103,10 +104,7 @@ import { listAccounts, resetAccountAiSpend, setAccountAiBudget, setUserRole } fr
 import { accountAiBudgets } from "@/lib/queries/accounts";
 
 beforeAll(async () => {
-  const client = createDb(
-    process.env.TEST_DATABASE_URL ??
-      "postgres://postgres:postgres@127.0.0.1:5432/ava_test",
-  );
+  const client = createTestDb();
   database = client.db;
   pool = client.pool;
   await runMigrations(database);

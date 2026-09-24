@@ -18,10 +18,11 @@ let other: User;
 const reads = vi.hoisted(() => ({ n: 0 }));
 vi.mock("@/lib/db", () => ({ db: () => { reads.n++; return database; } }));
 import { accountAiSpend } from "@ava/db";
+import { createTestDb } from "@/test/db";
 import { accountAiBudget, accountAiBudgets } from "./accounts";
 
 beforeAll(async () => {
-  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
+  const client = createTestDb();
   database = client.db;
   pool = client.pool;
   await runMigrations(database);

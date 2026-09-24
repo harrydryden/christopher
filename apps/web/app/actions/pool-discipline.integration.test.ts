@@ -4,12 +4,14 @@
  * instance under load, until the connection timeout fails it with its row locks held. Against a
  * pool of one, every such action would wait out that timeout and fail; these must simply finish.
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb, schema, subscribeToCompany, type Db } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { DEFAULT_SETTINGS } from "@ava/core";
 import { signInTestUser } from "@/test/auth";
+import { createTestDb, TEST_DATABASE_URL } from "@/test/db";
 import type { User } from "@ava/db/schema";
 
 let database: Db;
@@ -17,7 +19,9 @@ let pool: ReturnType<typeof createDb>["pool"];
 let session: string | undefined;
 let user: User;
 vi.mock("@/lib/db", () => ({ db: () => database }));
-vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (session ? { value: session } : undefined) }) }));
+/** The session of the call in hand, when a test runs several accounts' actions at once. */
+const caller = new AsyncLocalStorage<string>();
+vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => { const value = caller.getStore() ?? session; return value ? { value } : undefined; } }) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
@@ -25,9 +29,10 @@ import { addCompanies, useDiscoveryCandidate } from "./companies";
 import { setRoleStage } from "./applications";
 import { decide } from "./decisions";
 import { removeCatalogueSource } from "./admin";
+import { saveCvDraft } from "./cv";
 
 beforeAll(async () => {
-  const url = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_b";
+  const url = TEST_DATABASE_URL;
   const migrator = createDb(url);
   await runMigrations(migrator.db);
   await migrator.pool.end();
@@ -83,4 +88,59 @@ it("retires a source on one connection", async () => {
   await database.update(schema.users).set({ role: "admin" }).where(eq(schema.users.id, user.id));
   await removeCatalogueSource(source.id);
   expect((await database.select().from(schema.careerSources).where(eq(schema.careerSources.id, source.id)))[0]!.status).toBe("disabled");
+}, 30_000);
+
+const LIBRARY = {
+  name: "Example", contact: "London", profile: "Leader",
+  entries: [{ id: "one", kind: "experience" as const, heading: "Director", details: "Led a team", confirmedResponsibilities: ["Led a team"] }],
+};
+const CONTENT = {
+  name: "Example", contact: "London", summary: "Original profile",
+  sections: [{ entryId: "one", kind: "experience" as const, heading: "Director", bullets: ["Led a team"] }], gaps: [],
+};
+
+/** A finished CV this account may ask to have rebuilt from its Library. */
+async function builtCv(userId: string) {
+  await database.insert(schema.cvLibraries).values({ userId, version: 1, content: LIBRARY });
+  const [draft] = await database.insert(schema.cvDrafts).values({
+    userId, jobTitle: "Director", companyName: "Example", jobDescription: "Finance operations",
+    libraryVersion: 1, librarySnapshot: LIBRARY, model: "test", status: "ready", content: CONTENT,
+  }).returning({ id: schema.cvDrafts.id });
+  return draft!.id;
+}
+
+function rebuildForm() {
+  const form = new FormData();
+  form.set("intent", "improve");
+  form.set("summary", CONTENT.summary);
+  form.set("section-0", "Led a team");
+  return form;
+}
+
+it("rebuilds a CV on the one connection its transaction holds", async () => {
+  const draft = await builtCv(user.id);
+  await expect(saveCvDraft(draft, { ok: true }, rebuildForm())).rejects.toThrow(/^redirect:\/cv\//);
+  expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"))).toHaveLength(1);
+}, 30_000);
+
+it("rebuilds three accounts' CVs at once on the interface's three connections", async () => {
+  // Each rebuild holds one connection for its transaction; one that asked the pool for another
+  // while all three were held would wait out the connection timeout and fail.
+  const three = createTestDb();
+  const single = database;
+  try {
+    const accounts: Array<Awaited<ReturnType<typeof signInTestUser>>> = [];
+    for (const name of ["rebuild-a", "rebuild-b", "rebuild-c"]) accounts.push(await signInTestUser(single, process.env.SESSION_SECRET!, `${name}@example.com`, "member"));
+    const drafts: string[] = [];
+    for (const account of accounts) drafts.push(await builtCv(account.user.id));
+    database = three.db;
+    const outcomes = await Promise.all(accounts.map((account, index) => caller.run(account.cookie, () =>
+      saveCvDraft(drafts[index]!, { ok: true }, rebuildForm()).then((result) => JSON.stringify(result), (error: Error) => error.message))));
+    expect(outcomes.map((outcome) => /^redirect:\/cv\//.test(outcome))).toEqual([true, true, true]);
+    const queued = await single.select({ payload: schema.tasks.payload }).from(schema.tasks).where(eq(schema.tasks.type, "generate_cv"));
+    expect(queued).toHaveLength(3);
+  } finally {
+    database = single;
+    await three.pool.end();
+  }
 }, 30_000);

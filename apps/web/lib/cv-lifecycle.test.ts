@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { createTestDb } from "@/test/db";
 import {
   actionCvs,
   addCvShareComment,
@@ -37,7 +38,7 @@ vi.mock("next/navigation", () => ({
 import { manageCvs } from "@/app/actions/cv";
 
 beforeAll(async () => {
-  const client = createDb(process.env.TEST_DATABASE_URL!);
+  const client = createTestDb();
   database = client.db;
   pool = client.pool;
   await runMigrations(database);

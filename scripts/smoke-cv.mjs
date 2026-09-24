@@ -134,6 +134,13 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     const [name, value] = cookie.split("=");
     await context.addCookies([{ name, value, url: baseUrl }]);
     const page = await context.newPage();
+    // SMOKE_CPU_THROTTLE=6 runs the browser at a sixth of its speed, the way a shared CI runner
+    // does, so a stall that only happens there can be reproduced here.
+    const throttle = Number(process.env.SMOKE_CPU_THROTTLE ?? 0);
+    if (throttle > 1) {
+      const session = await context.newCDPSession(page);
+      await session.send("Emulation.setCPUThrottlingRate", { rate: throttle });
+    }
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
     // The CV list has gone; the link every older page carries lands on the applications table.
@@ -548,6 +555,29 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     page.on("requestfinished", onFinished);
     page.on("requestfailed", onFailed);
     page.on("console", onConsole);
+    // What the page's own navigation did around the save: every navigation the browser was asked
+    // for (a same-document one for a hash included), each history entry the page wrote, and the
+    // unload events, so a save whose redirect became a navigation that went nowhere says so.
+    await page.evaluate(() => {
+      const trace = (window.__avaNavTrace = []);
+      const startedAt = Date.now();
+      const note = (text) => trace.push(`+${((Date.now() - startedAt) / 1000).toFixed(1)}s ${text}`);
+      window.navigation?.addEventListener("navigate", (event) =>
+        note(`navigate ${event.navigationType} to ${event.destination.url} sameDocument=${event.destination.sameDocument} hashChange=${event.hashChange} cancelable=${event.cancelable}`),
+      );
+      window.navigation?.addEventListener("navigateerror", (event) => note(`navigateerror ${event.message}`));
+      for (const type of ["hashchange", "popstate", "beforeunload", "pagehide"]) {
+        window.addEventListener(type, () => note(`${type} at ${location.href}`));
+      }
+      for (const method of ["pushState", "replaceState"]) {
+        const original = history[method];
+        history[method] = function (data, unused, url) {
+          note(`${method} ${url ?? "-"} state=${data ? Object.keys(data).join(",") : "null"}`);
+          return original.call(this, data, unused, url);
+        };
+      }
+      note(`start at ${location.href} history.state=${history.state ? Object.keys(history.state).join(",") : "null"}`);
+    });
     const saveButton = page.getByRole("button", { name: "Save Direct Edits", exact: true });
     await saveButton.click();
     try {
@@ -569,8 +599,9 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
         .getByRole("button", { name: /Save Direct Edits|Saving…/ })
         .evaluateAll((nodes) => nodes.map((node) => `${node.textContent?.trim()} disabled=${node.disabled} form=${node.getAttribute("form")} type=${node.getAttribute("type")}`))
         .catch(() => []);
+      const navigation = await page.evaluate(() => window.__avaNavTrace ?? []).catch(() => []);
       throw new Error(
-        `${error.message}\nstill at ${page.url()}; the page says: ${JSON.stringify(said)}\nsave buttons: ${JSON.stringify(buttons)}\nsave traffic: ${JSON.stringify(saveTraffic)}\nconsole errors: ${JSON.stringify(consoleErrors)}`,
+        `${error.message}\nstill at ${page.url()}; the page says: ${JSON.stringify(said)}\nsave buttons: ${JSON.stringify(buttons)}\nsave traffic: ${JSON.stringify(saveTraffic)}\nnavigation: ${JSON.stringify(navigation)}\nconsole errors: ${JSON.stringify(consoleErrors)}`,
         { cause: error },
       );
     } finally {

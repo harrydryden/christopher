@@ -87,9 +87,10 @@ export function failedWorkPoll(state: WorkPollState): { state: WorkPollState; ne
 export function stepWorkPoll(previous: WorkPollState, reading: WorkReading): { state: WorkPollState; refresh: boolean; next: number | null } {
   const state: WorkPollState = previous.failures ? { ...previous, failures: 0 } : previous;
   if (!reading.active) {
+    // A finished build the page has not shown is the failure a poller exists to prevent, so the
+    // few refreshes asked for finished work come at the first interval, not a backed-off one.
     const settled = state.settled + 1;
-    const wait = nextPollDelay(state.wait, false);
-    return { state: { ...state, seen: reading.version, requested: undefined, retries: 0, wait, settled }, refresh: true, next: settled < SETTLED_REFRESHES ? wait : null };
+    return { state: { ...state, seen: reading.version, requested: undefined, retries: 0, wait: FIRST_POLL_MS, settled }, refresh: true, next: settled < SETTLED_REFRESHES ? FIRST_POLL_MS : null };
   }
   if (state.seen === undefined) {
     // The baseline for a page that rendered nothing: its later readings are compared with this.

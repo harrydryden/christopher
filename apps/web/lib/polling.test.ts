@@ -101,7 +101,9 @@ describe("stepWorkPoll", () => {
     expect(refreshes).toBe(SETTLED_REFRESHES);
     expect(waits).toHaveLength(SETTLED_REFRESHES);
     expect(waits.at(-1)).toBeNull();
-    expect(waits.slice(0, -1).every((wait) => typeof wait === "number" && wait > FIRST_POLL_MS)).toBe(true);
+    // Each refresh of finished work comes at the first interval: a lost one is retried in ten
+    // seconds, not after a back-off that would leave a finished build on its progress screen.
+    expect(waits.slice(0, -1).every((wait) => wait === FIRST_POLL_MS)).toBe(true);
   });
 
   it("starts counting settled refreshes again when new work appears", () => {

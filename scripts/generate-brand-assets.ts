@@ -162,7 +162,7 @@ for (const [name, art] of [["mark", WORDMARK], ["monogram", MONOGRAM]] as const)
   write(`apps/web/public/brand/${name}-white.svg`, svg(art, { ink: "#ffffff" }));
   write(`apps/web/public/brand/${name}-black.svg`, svg(art, { ink: "#000000" }));
 }
-// PNGs are named for their height; the wordmark is 2.75 times as wide.
+// PNGs are named for their height; the wordmark is three times as wide.
 for (const size of [16, 32, 48, 64, 128, 256, 512]) {
   write(`apps/web/public/brand/monogram-white-${size}.png`, raster(MONOGRAM, size, WHITE, null));
   write(`apps/web/public/brand/monogram-black-${size}.png`, raster(MONOGRAM, size, BLACK, null));

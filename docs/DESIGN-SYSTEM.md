@@ -135,23 +135,27 @@ opacity.
 ## The mark
 
 A V A in three pixel letters, each drawn on its own 16×16 cell tile with 2-cell
-strokes. The letter box is columns 3–12 and rows 2–13 of its tile, so its centre
-is the tile centre. It is the only graphic in the product. The glyph rows live in
+strokes. The letter box is columns 2–13 and rows 2–13 of its tile, so its centre
+is the tile centre. Both letters are all diagonal: every stroke steps one cell
+outward each two rows, from a two-cell point to a twelve-cell base, so the A is
+an upside-down V with a bar two thirds of the way down and the V is that outline
+turned over; neither has a vertical side. It is the only graphic in the product.
+The glyph rows live in
 `components/brand/mark-cells.ts` and are the single source: `Mark.tsx` and
 `Monogram.tsx` render them on the page, and `scripts/generate-brand-assets.ts`
 renders the favicon, the installed-app icons, the SVGs and the PNG sizes in
 `public/brand/` from the same data, so the tab and the page can never drift.
 
-- **The mark is the wordmark.** `Mark` sets the tiles at x = 0, 14 and 28 on a
-  44×16 grid: four empty cells between letters, three at each edge. There is no
-  separate logotype.
+- **The mark is the wordmark.** `Mark` sets the tiles side by side at x = 0, 16
+  and 32 on a 48×16 grid: four empty cells between letters, two at each edge.
+  There is no separate logotype.
 - **The monogram is its compact form.** `Monogram` is the A tile alone, 16×16,
   for wherever the wordmark would be too wide: the status strip and every inline
   loading indicator at 16px. The favicon and the installed-app icons are the
   monogram, white on black.
 - `size` is the height. Both snap it to a whole multiple of 16 (16, 32, 48, 64)
-  so cells land on device pixels, and the wordmark is 44/16 as wide as it is
-  tall: 48 gives 132×48 in the sidebar, 64 gives 176×64 on the sign-in pages.
+  so cells land on device pixels, and the wordmark is three times as wide as it
+  is tall: 48 gives 144×48 in the sidebar, 64 gives 192×64 on the sign-in pages.
 - `searching` turns it, and that is the product's **only loading indicator**: a
   page loading (`loading.tsx`, the wordmark at 32), a CV building
   (`CvBuildProgress`, the wordmark at 48), a search or filter in flight
@@ -161,7 +165,8 @@ renders the favicon, the installed-app icons, the SVGs and the PNG sizes in
   nothing.
 - Each letter turns about its own box: `ds-mark-letter` on the `<path>` sets
   `transform-box: fill-box`, and `ds-mark-turning` on the svg starts the letters
-  a beat apart. At pitch 14 turning neighbours never touch.
+  a beat apart. At pitch 16 turning neighbours never touch: a letter at 45
+  degrees reaches 8.49 cells from its centre, its neighbour at most 6.
 - Each letter is one `<path>` of horizontal runs (`WORDMARK_PATHS`,
   `MONOGRAM_PATH`), not one element per cell, because every mark on a page is
   serialised into the payload of every navigation. Its offset is baked into the

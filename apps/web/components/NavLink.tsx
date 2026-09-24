@@ -8,28 +8,36 @@ export function NavLink({
   href,
   children,
   count = null,
-  indent = false,
+  countTitle,
 }: {
   href: string;
   children: ReactNode;
   /** A figure beside the label, shown only when there is something to show. */
   count?: number | null;
-  /** A child of the entry above it, such as Health under Settings. */
-  indent?: boolean;
+  /** What the figure counts, for whoever hovers or reads it out. */
+  countTitle?: string;
 }) {
   const pathname = usePathname();
-  // A sidebar entry owns every page its section reaches, so the CV workspace keeps Applications lit.
-  const active = href === "/" ? pathname === "/" : pathname.startsWith(href) || (href === "/companies" && pathname === "/suggestions") || (href === "/applications" && pathname.startsWith("/cv")) || (href === "/settings" && ["/learning", "/account"].includes(pathname));
+  // A sidebar entry owns every page its section reaches, so the CV workspace keeps Applications
+  // lit and Health, Learning and Account keep Settings lit.
+  const active = href === "/" ? pathname === "/" : pathname.startsWith(href) || (href === "/companies" && pathname === "/suggestions") || (href === "/applications" && pathname.startsWith("/cv")) || (href === "/settings" && ["/learning", "/account", "/health"].includes(pathname));
+  const showCount = count !== null && count > 0;
+  // A named count describes the link rather than naming it: the entry is still "Settings" to a
+  // reader and to anything that finds it by name, and the figure's meaning follows as its
+  // description. The bare figure stays in the name when nothing names it.
+  const descriptionId = showCount && countTitle ? `nav-count-${href.replace(/[^a-z0-9]+/gi, "-")}` : undefined;
   return (
     <Link prefetch={false}
       href={href}
       aria-current={active ? "page" : undefined}
-      className={`ds-pixel flex items-center justify-between gap-2 border-2 px-3 py-1.5 text-11 no-underline ${indent ? "md:ml-3" : ""} ${
+      aria-describedby={descriptionId}
+      className={`ds-pixel flex items-center justify-between gap-2 border-2 px-3 py-1.5 text-11 no-underline ${
         active ? "border-fg bg-fg text-bg" : "border-transparent text-fg hover:bg-sunken"
       }`}
     >
       <span>{children}</span>
-      {count !== null && count > 0 && <span className="tabular-nums">{count}</span>}
+      {showCount && <span className="tabular-nums" title={countTitle} aria-hidden={descriptionId ? true : undefined}>{count}</span>}
+      {descriptionId && <span id={descriptionId} hidden>{countTitle}</span>}
     </Link>
   );
 }

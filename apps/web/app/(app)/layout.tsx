@@ -17,21 +17,21 @@ import { redirect } from "next/navigation";
 export const dynamic = "force-dynamic";
 
 /** One entry for applications and CVs: the two are one job, on one page, under one heading. */
-const NAV_ITEMS: Array<{ href: string; label: string; indent?: boolean }> = [
+const NAV_ITEMS: Array<{ href: string; label: string }> = [
   { href: "/", label: "Roles" },
   { href: "/companies", label: "Companies" },
   { href: "/applications", label: "Applications" },
   { href: "/library", label: "Library" },
+  // Health is a section of Settings, reached from its section tabs rather than listed here; the
+  // number of items on it rides on this entry, because an attention item nobody can see is an
+  // attention item nobody resolves (R-9.1).
   { href: "/settings", label: "Settings" },
-  // Health belongs to the Settings section and is shown under it, because an attention item
-  // nobody can see is an attention item nobody resolves (R-9.1).
-  { href: "/health", label: "Health", indent: true },
 ];
 
-/** Health's entry with its count, streamed in so the shell never waits for the count. */
-async function HealthNavLink({ userId, href, indent, children }: { userId: string; href: string; indent?: boolean; children: ReactNode }) {
+/** The Settings entry with Health's count, streamed in so the shell never waits for the count. */
+async function SettingsNavLink({ userId, href, children }: { userId: string; href: string; children: ReactNode }) {
   const count = await countHealthItems(userId);
-  return <NavLink href={href} indent={indent} count={count}>{children}</NavLink>;
+  return <NavLink href={href} count={count} countTitle={`${count} ${count === 1 ? "item" : "items"} on Health need${count === 1 ? "s" : ""} you`}>{children}</NavLink>;
 }
 
 async function ScanBanner({ userId }: { userId: string }) {
@@ -65,13 +65,13 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
             <Mark size={48} />
           </Link>
           <nav aria-label="Main navigation" className="flex flex-wrap gap-0.5 md:block md:space-y-0.5">
-            {[...NAV_ITEMS, ...(user.role === "admin" ? [{ href: "/admin", label: "Admin" }] : [])].map((item) => item.href === "/health" ? (
-              // What Health would show: on the entry itself, so the number is seen from wherever you are.
-              <Suspense key={item.href} fallback={<NavLink href={item.href} indent={item.indent}>{item.label}</NavLink>}>
-                <HealthNavLink userId={user.id} href={item.href} indent={item.indent}>{item.label}</HealthNavLink>
+            {[...NAV_ITEMS, ...(user.role === "admin" ? [{ href: "/admin", label: "Admin" }] : [])].map((item) => item.href === "/settings" ? (
+              // What Health would show: on the section's entry, so the number is seen from wherever you are.
+              <Suspense key={item.href} fallback={<NavLink href={item.href}>{item.label}</NavLink>}>
+                <SettingsNavLink userId={user.id} href={item.href}>{item.label}</SettingsNavLink>
               </Suspense>
             ) : (
-              <NavLink key={item.href} href={item.href} indent={item.indent}>
+              <NavLink key={item.href} href={item.href}>
                 {item.label}
               </NavLink>
             ))}

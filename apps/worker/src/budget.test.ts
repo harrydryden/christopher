@@ -38,7 +38,9 @@ async function holdLock(key: string) {
 
 async function waitingOnAdvisoryLock() {
   for (let attempt = 0; attempt < 200; attempt++) {
-    const rows = await db.execute<{ n: number }>(sql`select count(*)::int as n from pg_locks where locktype = 'advisory' and not granted`);
+    // pg_locks is the whole cluster's; a wait in another database is not this hold's.
+    const rows = await db.execute<{ n: number }>(sql`select count(*)::int as n from pg_locks where locktype = 'advisory' and not granted
+      and database = (select oid from pg_database where datname = current_database())`);
     if (Number(rows.rows[0]?.n) > 0) return;
     await new Promise(resolve => setImmediate(resolve));
   }

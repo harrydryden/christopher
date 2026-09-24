@@ -3,7 +3,7 @@ import { renewTask, completeTask, assertTaskOwnership } from "./queue";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {createDb, enqueueTask, listUserIds, listWorkerEvents, schema, setSubscriptionStatus, subscribeToCompany, type Db} from "@ava/db";
 import { AGEING_PRIORITY_FLOOR, dedupeKeyFor, isUserSettingsKey, priorityFor } from "@ava/core";
-import { ensureTestUser } from "./test-users";
+import { ensureTestUser, testDatabaseUrl } from "./test-users";
 import { runMigrations } from "@ava/db/migrate";
 import { desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
@@ -13,7 +13,9 @@ import { LeaseBusyError, withResourceLease, type RunDeps } from "./lease";
 import { reconcileCvDrafts, schedulerTick, startScheduler } from "./scheduler";
 import { CV_ABANDONED_MESSAGE, onAbandon, onInterrupted } from "./handlers";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+/** Every connection this file opens carries this name, so it can ask about its own sessions alone. */
+const SUITE = "ava-queue-test";
+const DATABASE_URL = testDatabaseUrl(SUITE);
 
 let deps: WorkerDeps;
 let db: Db;
@@ -42,7 +44,8 @@ afterEach(async () => {
 });
 
 beforeEach(async () => {
-  await db.execute(sql`truncate tasks, scan_runs, scans, companies, career_sources, jobs, settings, user_settings restart identity cascade`);
+  // Crash recovery below leaves AI holds as a dead process would; they are this file's to clear.
+  await db.execute(sql`truncate tasks, scan_runs, scans, companies, career_sources, jobs, settings, user_settings, ai_reservations restart identity cascade`);
   now = new Date("2026-09-05T06:05:00Z");
 });
 
@@ -51,7 +54,9 @@ describe("task queue", () => {
     const client = createDb(DATABASE_URL, { max: 3 });
     try {
       await Promise.all([runMigrations(client.db), runMigrations(client.db)]);
-      const locks = await client.db.execute(sql`select count(*)::int as n from pg_locks where locktype = 'advisory' and objid = 74233101`);
+      // pg_locks is the whole cluster's: another database's migration takes the same key.
+      const locks = await client.db.execute(sql`select count(*)::int as n from pg_locks where locktype = 'advisory' and objid = 74233101
+        and database = (select oid from pg_database where datname = current_database())`);
       expect(locks.rows[0]!.n).toBe(0);
     } finally {
       await client.pool.end();
@@ -1036,7 +1041,7 @@ describe("crash recovery", () => {
         const sweep = requeueStale(db, TASK_STALE_AFTER_MS, "sweeper", { deps, onAbandon: { discover: async () => { abandoned++; } } });
         // Commit the renewal only once the sweep's write is waiting on the row.
         for (let tick = 0; tick < 500; tick++) {
-          const waiting = await db.execute(sql`select 1 from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()`);
+          const waiting = await db.execute(sql`select 1 from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database() and application_name = ${SUITE}`);
           if (waiting.rows.length) break;
           await sleep(10);
         }
@@ -1372,7 +1377,7 @@ describe("keeping a run alive, and stopping one that is over", () => {
       const started = Date.now();
       expect(await renewTask(db, task)).toBeNull();
       expect(Date.now() - started).toBeLessThan(4_000);
-      const waiting = await db.execute(sql`select 1 from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()`);
+      const waiting = await db.execute(sql`select 1 from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database() and application_name = ${SUITE}`);
       expect(waiting.rows).toHaveLength(0);
     } finally {
       release();

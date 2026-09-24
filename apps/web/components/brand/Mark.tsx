@@ -48,7 +48,7 @@ export function MarkTiles({
 }
 
 /**
- * The AVA mark, which is also the wordmark: A V A in pixel letters, 44 cells wide by 16 tall. It
+ * The AVA mark, which is also the wordmark: A V A in pixel letters, 48 cells wide by 16 tall. It
  * is the only graphic in the product — there is no icon set. Where it would be too wide, use the
  * `Monogram`.
  */

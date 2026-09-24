@@ -309,9 +309,9 @@ kbd {
   transform-origin: center;
 }
 
-/* While searching, every letter turns, one 200ms beat behind the letter before it. At pitch 14
-   neighbours never touch: a letter at 45 degrees reaches 7.78 cells from its centre, and the one
-   beside it is then upright or at 90 degrees, 5 or 6. */
+/* While searching, every letter turns, one 200ms beat behind the letter before it. At pitch 16
+   neighbours never touch: a letter's 12-cell box at 45 degrees reaches 8.49 cells from its centre,
+   the one beside it reaches 6 at most, and 14.49 is short of the 16 between their centres. */
 .ds-mark-turning > .ds-mark-letter { animation: var(--animate-mark-turn); }
 .ds-mark-turning > .ds-mark-letter:nth-of-type(2) { animation-delay: 0.2s; }
 .ds-mark-turning > .ds-mark-letter:nth-of-type(3) { animation-delay: 0.4s; }

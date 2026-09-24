@@ -117,7 +117,8 @@ beforeEach(async () => {
   await database.execute(
     sql`truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users restart identity cascade`,
   );
-  ({ user, cookie: session } = await signInTestUser(database, process.env.SESSION_SECRET!));
+  // An administrator: several cases below exercise the shared catalogue and account management.
+  ({ user, cookie: session } = await signInTestUser(database, process.env.SESSION_SECRET!, "tester@example.com", "admin"));
   // Filters first: `addCompanies` refuses an account that has never chosen its gate.
   await database.insert(schema.userSettings).values({ userId: user.id, key: "gate", value: DEFAULT_SETTINGS.gate });
 });

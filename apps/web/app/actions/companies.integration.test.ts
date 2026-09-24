@@ -39,7 +39,7 @@ afterAll(async () => { await pool?.end(); });
 
 beforeEach(async () => {
   await database.execute(sql`truncate companies, tasks, settings, users restart identity cascade`);
-  ({ user: first, cookie: firstCookie } = await signInTestUser(database, process.env.SESSION_SECRET!, "one@example.com"));
+  ({ user: first, cookie: firstCookie } = await signInTestUser(database, process.env.SESSION_SECRET!, "one@example.com", "admin"));
   ({ user: second, cookie: secondCookie } = await signInTestUser(database, process.env.SESSION_SECRET!, "two@example.com", "member"));
   // Filters first: `addCompanies` refuses an account that has never chosen its gate, so both
   // accounts start with one saved, exactly as a person reaches the form through setup.

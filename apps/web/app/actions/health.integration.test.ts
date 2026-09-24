@@ -42,7 +42,7 @@ beforeAll(async () => {
 afterAll(async () => { await pool?.end(); });
 beforeEach(async () => {
   await database.execute(sql`truncate companies, tasks, ai_calls, user_settings, users restart identity cascade`);
-  ({ user, cookie: session } = await signInTestUser(database, process.env.SESSION_SECRET!, "health@example.com"));
+  ({ user, cookie: session } = await signInTestUser(database, process.env.SESSION_SECRET!, "health@example.com", "admin"));
 });
 
 /** A followed company, optionally with the run and source the item under test needs. */

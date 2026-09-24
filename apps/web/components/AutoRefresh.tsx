@@ -53,6 +53,13 @@ export function AutoRefresh({
         const step = stepWorkPoll(state, reading);
         state = step.state;
         next = step.next;
+        if (step.reload) {
+          // Only an individual CV's build screen has no edits to lose. Other pages can hold
+          // unsaved form input, so give them the original final soft-refresh attempt.
+          if (cvId) window.location.reload();
+          else startTransition(() => router.refresh());
+          return;
+        }
         if (step.refresh) startTransition(() => router.refresh());
       } catch {
         // A refused or dropped poll is not news: ask again, and back off only when they keep failing.

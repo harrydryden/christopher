@@ -592,8 +592,11 @@ describe("execution model", () => {
     await claimed;
 
     // The handler is still running when the cap fires: its task goes straight back on the queue
-    // rather than waiting out the five-minute stale lock, and keeps its attempt.
-    await queue.stop(50);
+    // rather than waiting out the five-minute stale lock, and keeps its attempt. The grace is what
+    // this case is about; the hand-back and the hold release get a bound no loaded database can
+    // reach, because `stop()` stops waiting for either once its bound passes, and the assertions
+    // below would then read the rows before the writes landed.
+    await queue.stop(50, 30_000);
     const [row] = await db.select().from(schema.tasks);
     expect(row!.status).toBe("queued");
     expect(row!.attempts).toBe(0);
@@ -1312,24 +1315,46 @@ describe("keeping a run alive, and stopping one that is over", () => {
     let observed!: { sameSignal: boolean; renewedBefore: boolean; renewedAfter: boolean; fenced: string };
     let settled!: () => void;
     const done = new Promise<void>(resolve => { settled = resolve; });
+    // The lease renews in a transaction of its own on the run's database handle, so counting those
+    // transactions says exactly which renewals began, and when they have all landed; waiting a
+    // fixed time for "any renewal in flight" failed whenever a loaded database took longer.
+    const renewals = new Set<Promise<unknown>>();
+    let renewalsBegun = 0;
+    const counting = (handle: Db): Db => new Proxy(handle, {
+      get(target, property, receiver) {
+        if (property !== "transaction") return Reflect.get(target, property, receiver);
+        return (...args: Parameters<Db["transaction"]>) => {
+          renewalsBegun++;
+          const renewal = target.transaction(...args);
+          renewals.add(renewal);
+          void renewal.finally(() => renewals.delete(renewal)).catch(() => undefined);
+          return renewal;
+        };
+      },
+    });
     const queue = new TaskQueue(deps, {
-      discover: (_task, runDeps, ctx) => withResourceLease(runDeps, key, async locked => {
+      discover: (_task, runDeps, ctx) => withResourceLease({ ...runDeps, db: counting(runDeps.db) }, key, async locked => {
         const first = await expiresAt();
         let renewedBefore = false;
         for (let tick = 0; tick < 100 && !renewedBefore; tick++) { await sleep(10); renewedBefore = (await expiresAt()) !== first; }
-        // The handler ignores its abort, as a scan or a discovery does today.
-        await new Promise(resolve => ctx.signal.addEventListener("abort", resolve, { once: true }));
-        await sleep(60); // any renewal already in flight lands
+        // The handler ignores its abort, as a scan or a discovery does today. On a loaded machine
+        // the deadline can fire before this line is reached, and a listener added then never runs.
+        if (!ctx.signal.aborted) await new Promise(resolve => ctx.signal.addEventListener("abort", resolve, { once: true }));
+        // Every renewal that began before the abort lands, however long the database takes.
+        while (renewals.size) await Promise.allSettled([...renewals]);
+        const begunAtAbort = renewalsBegun;
         const atAbort = await expiresAt();
-        await sleep(150); // seven renewal intervals
-        const renewedAfter = (await expiresAt()) !== atAbort;
+        await sleep(150); // seven renewal intervals, in which a lease still renewing would begin several
+        const renewedAfter = renewalsBegun !== begunAtAbort || (await expiresAt()) !== atAbort;
         const fenced = await db.transaction(async tx => locked.assertOwnership!(tx as unknown as Db)).then(() => "passed", (e: Error) => e.message);
         observed = { sameSignal: (runDeps as RunDeps).signal === ctx.signal, renewedBefore, renewedAfter, fenced };
         settled();
         await zombie;
         return {};
       }, { renewEveryMs: 20 }),
-    }, { concurrency: 1, workerId: "zombie", deadlines: { discover: 400 } });
+      // The deadline must leave room for the first 20 ms renewal to land before it fires, or there is
+      // no "before" to compare with; a loaded database has taken hundreds of milliseconds over one.
+    }, { concurrency: 1, workerId: "zombie", deadlines: { discover: 2_000 } });
     await enqueueTask(db, "discover", { companyId: "slow" }, { maxAttempts: 2 });
     await queue.runTask((await claimTask(db, "zombie"))!);
     await done;

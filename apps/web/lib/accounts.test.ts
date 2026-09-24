@@ -4,6 +4,7 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { adminEmailsFrom, BOOTSTRAP_EMAIL, BOOTSTRAP_USER_ID, createDb, DEFAULT_ADMIN_EMAILS, SEED_TAGS, schema, type Db } from "@ava/db";
+import { createTestDb } from "@/test/db";
 import { runMigrations } from "@ava/db/migrate";
 import { eq, sql } from "drizzle-orm";
 let database: Db;
@@ -17,7 +18,7 @@ const PASSWORD = "correct horse battery staple";
 const OWNER = "owner@example.com";
 
 beforeAll(async () => {
-  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
+  const client = createTestDb();
   database = client.db;
   pool = client.pool;
   await runMigrations(database);

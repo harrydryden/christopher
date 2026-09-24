@@ -8,6 +8,7 @@
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb, schema, type Db } from "@ava/db";
+import { createTestDb } from "@/test/db";
 import { runMigrations } from "@ava/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { signInTestUser } from "@/test/auth";
@@ -31,7 +32,7 @@ import { saveGate } from "./settings";
 const VERIFY = "redirect:/account?verify=required";
 
 beforeAll(async () => {
-  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_b");
+  const client = createTestDb();
   database = client.db;
   pool = client.pool;
   await runMigrations(database);

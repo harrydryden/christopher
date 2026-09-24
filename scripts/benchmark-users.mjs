@@ -1,4 +1,9 @@
-/** Bounded local capacity probe for 100 registered users and 10 active users. */
+/**
+ * Bounded local capacity probe: registered accounts, ten of them active, and the daily run's window,
+ * when every open tab polls while the worker works through one scan per company. 100 accounts and
+ * 20 companies by default; USERS_BENCHMARK_ACCOUNTS, USERS_BENCHMARK_COMPANIES and
+ * USERS_BENCHMARK_FOLLOWS give the thousand-account shape (for example 1000, 1500 and 20).
+ */
 import { createRequire } from 'node:module';
 import { createHmac } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
@@ -7,7 +12,58 @@ import { cpus, freemem, totalmem } from 'node:os';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export const TARGETS = Object.freeze({ readP95Ms: 2_000, writeP95Ms: 4_000, maxErrors: 0, maxPhaseSeconds: 120 });
+export const TARGETS = Object.freeze({ readP95Ms: 2_000, writeP95Ms: 4_000, pollP95Ms: 1_000, maxErrors: 0, maxPhaseSeconds: 120 });
+
+/**
+ * How often an open tab asks, while a run is live: `AutoRefresh` reads /api/work-status every ten
+ * seconds while the work it shows keeps changing (lib/polling.ts FIRST_POLL_MS), and the scan
+ * banner reads /api/scan-status every thirty (BANNER_FIRST_MS). Both back off once nothing moves;
+ * during the daily run something always does, so this is the cadence the window is served at.
+ */
+export const POLL_CADENCE = Object.freeze({ workStatusMs: 10_000, scanStatusMs: 30_000 });
+export const WORK_STATUS_PATH = '/api/work-status?scope=company';
+export const SCAN_STATUS_PATH = '/api/scan-status';
+
+/** The fixture's size, from the environment, and the row counts it must leave behind. */
+export function benchmarkShape(env = process.env) {
+  const whole = (name, fallback, min, max) => {
+    const raw = env[name];
+    const value = raw === undefined || raw === '' ? fallback : Number(raw);
+    if (!Number.isSafeInteger(value) || value < min || value > max) throw new Error(`${name} must be a whole number from ${min} to ${max}`);
+    return value;
+  };
+  const accounts = whole('USERS_BENCHMARK_ACCOUNTS', 100, 10, 2_000);
+  const companies = whole('USERS_BENCHMARK_COMPANIES', 20, 1, 3_000);
+  const follows = Math.min(companies, whole('USERS_BENCHMARK_FOLLOWS', 20, 1, 200));
+  const jobsPerCompany = whole('USERS_BENCHMARK_JOBS_PER_COMPANY', 50, 1, 200);
+  const pollingTabs = Math.min(accounts, whole('USERS_POLLING_TABS', 100, 1, 2_000));
+  const pollingSeconds = whole('USERS_POLLING_SECONDS', 60, 30, 600);
+  return {
+    accounts, companies, follows, jobsPerCompany, pollingTabs, pollingSeconds,
+    // Ten active accounts each save one more Library version, record ten decisions and queue three tasks.
+    expected: { users: accounts, userJobs: accounts * follows * jobsPerCompany, libraries: accounts + 10, cvs: accounts, applications: accounts, decisions: 100, queuedTasks: 30 },
+  };
+}
+
+/**
+ * Every poll `tabs` open tabs make in `seconds`, in time order. Each tab starts at its own point in
+ * the first interval, as tabs opened at different moments do, rather than all asking at once.
+ */
+export function pollSchedule(tabs, seconds, cadence = POLL_CADENCE) {
+  const events = [];
+  const endMs = seconds * 1_000;
+  for (let tab = 0; tab < tabs; tab++) {
+    const offset = Math.floor((tab * cadence.workStatusMs) / tabs);
+    for (let at = offset; at < endMs; at += cadence.workStatusMs) events.push({ atMs: at, tab, path: WORK_STATUS_PATH });
+    for (let at = offset; at < endMs; at += cadence.scanStatusMs) events.push({ atMs: at, tab, path: SCAN_STATUS_PATH });
+  }
+  return events.sort((a, b) => a.atMs - b.atMs || a.tab - b.tab);
+}
+
+/** Whether a work-status reading makes the tab render its page again: a version it has not shown. */
+export function needsRender(shown, reading) {
+  return reading.ok && shown !== undefined && reading.version !== shown;
+}
 export function assertDedicatedDatabase(input, expected = 'christopher_users_benchmark') {
   const url = new URL(input);
   const database = decodeURIComponent(url.pathname.slice(1));
@@ -26,6 +82,7 @@ async function main() {
   const require = createRequire(new URL('../apps/web/package.json', import.meta.url));
   const { Pool } = require('pg');
   const url = assertDedicatedDatabase(process.env.DATABASE_URL ?? '');
+  const shape = benchmarkShape();
   const pool = new Pool({ connectionString: url.href, max: 12, connectionTimeoutMillis: 5_000, statement_timeout: 30_000 });
   const port = Number(process.env.USERS_BENCHMARK_PORT ?? 3139);
   const soakSeconds = Number(process.env.USERS_SOAK_SECONDS ?? 60);
@@ -36,11 +93,11 @@ async function main() {
   let server, sampler;
   let serverLog = '', resourcePhase = 'startup';
   const phases = [], resources = [];
-  const deadline = async (work, label) => {
+  const deadline = async (work, label, seconds = TARGETS.maxPhaseSeconds) => {
     let timer;
     try {
       return await Promise.race([work, new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label} exceeded ${TARGETS.maxPhaseSeconds}s`)), TARGETS.maxPhaseSeconds * 1_000);
+        timer = setTimeout(() => reject(new Error(`${label} exceeded ${seconds}s`)), seconds * 1_000);
       })]);
     } finally { clearTimeout(timer); }
   };
@@ -50,20 +107,23 @@ async function main() {
       (select count(*)::int from users where claimed_at is not null) claimed_users`);
     if (state.companies || state.claimed_users) throw new Error('Benchmark database must be empty apart from the unclaimed migration bootstrap account');
     await pool.query(`insert into users(email,name,claimed_at,email_verified_at)
-      select 'load-'||n||'@benchmark.invalid','Load user '||n,now(),now() from generate_series(1,100) n`);
+      select 'load-'||n||'@benchmark.invalid','Load user '||n,now(),now() from generate_series(1,$1::int) n`, [shape.accounts]);
     await pool.query(`insert into companies(name,domain,homepage_url)
-      select 'Load company '||n,'load-'||n||'.invalid','https://load-'||n||'.invalid' from generate_series(1,20) n`);
+      select 'Load company '||n,'load-'||n||'.invalid','https://load-'||n||'.invalid' from generate_series(1,$1::int) n`, [shape.companies]);
     await pool.query(`insert into career_sources(company_id,type,url,status)
       select id,case when row_number() over(order by id)%3=0 then 'html' else 'greenhouse' end,homepage_url||'/careers','active' from companies`);
     await pool.query(`insert into jobs(company_id,source_id,external_key,title,normalized_title,url,location,locations,description_text)
       select c.id,s.id,'load-'||n,'Engineer '||n,'engineer '||n,c.homepage_url||'/jobs/'||n,
       'London, UK','["London, UK"]'::jsonb,repeat('Engineering work with measurable customer outcomes. ',100)
-      from companies c join career_sources s on s.company_id=c.id cross join generate_series(1,50) n`);
+      from companies c join career_sources s on s.company_id=c.id cross join generate_series(1,$1::int) n`, [shape.jobsPerCompany]);
+    // Account n follows the `follows` companies from n × follows on, wrapping round the catalogue:
+    // every account follows all of a small catalogue, and a large one is shared out evenly.
     await pool.query(`insert into company_subscriptions(user_id,company_id)
-      select u.id,c.id from users u cross join companies c where u.email like '%@benchmark.invalid'`);
+      select u.id,c.id from (select id,row_number() over(order by email)-1 n from users where email like '%@benchmark.invalid') u
+      join (select id,row_number() over(order by id)-1 n from companies) c on ((c.n-u.n*$1::int)%$2::int+$2::int)%$2::int<$1::int`, [shape.follows, shape.companies]);
     await pool.query(`insert into user_jobs(user_id,job_id,in_table,keyword_matched,location_ok,fit_score,score_state)
-      select u.id,j.id,true,true,true,55+(row_number() over(partition by u.id order by j.id)%40),'scored'
-      from users u cross join jobs j where u.email like '%@benchmark.invalid'`);
+      select s.user_id,j.id,true,true,true,55+(row_number() over(partition by s.user_id order by j.id)%40),'scored'
+      from company_subscriptions s join jobs j on j.company_id=s.company_id`);
     await pool.query(`insert into user_settings(user_id,key,value)
       select id,'seedProfile','"Engineering leadership in London"'::jsonb from users where email like '%@benchmark.invalid'`);
     await pool.query(`insert into cv_libraries(user_id,version,content)
@@ -75,7 +135,7 @@ async function main() {
       jsonb_build_object('name',u.name,'contact',u.email,'summary','Engineering leader focused on reliable delivery.',
         'sections',jsonb_build_array(jsonb_build_object('entryId','experience-1','kind','experience','heading','Engineering leadership — Load Company',
           'bullets',jsonb_build_array('Led delivery and improved throughput by 25%.'))),'gaps','[]'::jsonb)
-      from users u join lateral (select * from jobs order by id limit 1) j on true
+      from users u join lateral (select j.* from jobs j join company_subscriptions s on s.company_id=j.company_id and s.user_id=u.id order by j.id limit 1) j on true
       join companies c on c.id=j.company_id join cv_libraries l on l.user_id=u.id and l.version=1
       where u.email like '%@benchmark.invalid'`);
     await pool.query(`insert into applications(user_id,cv_id,job_id,job_title,company_name,applied_on,status,notes,history)
@@ -205,6 +265,67 @@ async function main() {
     await deadline(reads(100, 600, 'hundred-user authenticated read burst'), 'hundred-user burst');
     resourcePhase = 'post-burst idle';
     await new Promise(r => setTimeout(r, idleSeconds * 1_000));
+
+    // The daily run's window, as the scheduler opens it: one shared run and one scan_company task per
+    // company, spread over the next hour, while every open tab polls at its real cadence and renders
+    // its page again each time the work it shows moves. A stand-in worker finishes an even share of
+    // the scans every ten seconds, leaving a scan row for each, which is what moves the versions
+    // and the banner's summary.
+    resourcePhase = 'daily-window pollers';
+    const { rows: [run] } = await pool.query(`insert into scan_runs(run_date,trigger,companies_total)
+      select to_char(now(),'YYYY-MM-DD'),'schedule',count(*)::int from companies returning id,companies_total`);
+    await pool.query(`insert into tasks(type,payload,dedupe_key,priority,run_after)
+      select 'scan_company',jsonb_build_object('companyId',c.id::text,'scanRunId',$1::text,'trigger','schedule'),'scan_company:'||c.id::text||':'||$1::text,5,
+        now()+(('x'||substr(replace(c.id::text,'-',''),1,8))::bit(32)::bigint/4294967295.0)*interval '60 minutes'
+      from companies c`, [run.id]);
+    const perTick = Math.max(1, Math.ceil(run.companies_total / (shape.pollingSeconds / 10)));
+    let scansFinished = 0;
+    const finishScans = async () => {
+      const { rowCount } = await pool.query(`with done as (
+          update tasks set status='done',started_at=now(),finished_at=now() where id in (
+            select id from tasks where type='scan_company' and status='queued' and payload->>'scanRunId'=$1 order by run_after,id limit $2)
+          returning (payload->>'companyId')::uuid company_id)
+        insert into scans(scan_run_id,source_id,started_at,finished_at,status,fetch_method,postings_found)
+        select $1::uuid,cs.id,now(),now(),'ok','api',$3 from done join career_sources cs on cs.company_id=done.company_id`, [run.id, perTick, shape.jobsPerCompany]);
+      scansFinished += rowCount ?? 0;
+    };
+    const transactions = async () => Number((await pool.query(`select xact_commit+xact_rollback n from pg_stat_database where datname=current_database()`)).rows[0].n);
+    const poll = async (path, cookie) => {
+      const start = performance.now();
+      try {
+        // AutoRefresh gives up on a reading after eight seconds, and so does this.
+        const response = await fetch(`http://127.0.0.1:${port}${path}`, { headers: { cookie }, signal: AbortSignal.timeout(8_000) });
+        const body = await response.json();
+        return { path, ms: performance.now() - start, status: response.status, ok: response.status === 200, version: body.version ?? null };
+      } catch (error) { return { path, ms: performance.now() - start, status: 0, ok: false, error: String(error) }; }
+    };
+    const shown = new Map();
+    const polls = [], renders = [];
+    const transactionsBefore = await transactions();
+    const windowStart = performance.now();
+    const worker = setInterval(() => { finishScans().catch(() => undefined); }, 10_000);
+    try {
+      await deadline(Promise.all(pollSchedule(shape.pollingTabs, shape.pollingSeconds).map(async ({ atMs, tab, path }) => {
+        const wait = atMs - (performance.now() - windowStart);
+        if (wait > 0) await new Promise(r => setTimeout(r, wait));
+        const reading = await poll(path, cookies[tab]);
+        polls.push(reading);
+        if (path !== WORK_STATUS_PATH) return;
+        const render = needsRender(shown.get(tab), reading);
+        if (reading.ok) shown.set(tab, reading.version);
+        if (render) renders.push(await request('/?view=auto-matched', cookies[tab]));
+      })), 'daily-window pollers', shape.pollingSeconds + 60);
+    } finally { clearInterval(worker); }
+    const windowSeconds = (performance.now() - windowStart) / 1000;
+    const transactionCount = (await transactions()) - transactionsBefore;
+    phases.push({ label: `daily-window pollers (${shape.pollingTabs} tabs, ${shape.pollingSeconds}s)`, concurrency: shape.pollingTabs,
+      seconds: +windowSeconds.toFixed(2), companies: run.companies_total, scansFinished,
+      pollsPerSecond: +(polls.length / windowSeconds).toFixed(2), ...summarise(polls),
+      routes: Object.fromEntries([WORK_STATUS_PATH, SCAN_STATUS_PATH].map(p => [p, summarise(polls.filter(x => x.path === p))])),
+      followUpRenders: { ...summarise(renders), perTabPerMinute: +(renders.length / shape.pollingTabs / (windowSeconds / 60)).toFixed(2) },
+      databaseTransactionsPerSecond: +(transactionCount / windowSeconds).toFixed(1),
+      databaseTransactionsPerPoll: polls.length ? +(transactionCount / polls.length).toFixed(2) : null,
+      failures: [...polls, ...renders].filter(x => !x.ok).slice(0, 10) });
     const { rows: [counts] } = await pool.query(`select
       (select count(*)::int from users where email like '%@benchmark.invalid') users,(select count(*)::int from user_jobs) user_jobs,
       (select count(*)::int from cv_libraries) libraries,(select count(*)::int from cv_drafts) cvs,
@@ -214,16 +335,26 @@ async function main() {
       ...phases.filter(p => p.errors).map(p => `${p.label}: ${p.errors} errors`),
       ...phases.filter(p => /read|soak/.test(p.label) && p.p95Ms > TARGETS.readP95Ms).map(p => `${p.label}: p95 ${p.p95Ms}ms > ${TARGETS.readP95Ms}ms`),
       ...phases.filter(p => /authenticated CV/.test(p.label) && p.p95Ms > TARGETS.writeP95Ms).map(p => `${p.label}: p95 ${p.p95Ms}ms > ${TARGETS.writeP95Ms}ms`),
-      ...(counts.users === 100 && counts.user_jobs === 100_000 && counts.libraries === 110 && counts.cvs === 100 && counts.applications === 100 && counts.decisions === 100 && counts.queued_tasks === 30 ? [] : [`fixture/count mismatch: ${JSON.stringify(counts)}`]),
+      ...phases.filter(p => p.routes && p.followUpRenders).flatMap(p => [
+        ...Object.entries(p.routes).filter(([, r]) => r.p95Ms > TARGETS.pollP95Ms).map(([route, r]) => `${p.label}: ${route} p95 ${r.p95Ms}ms > ${TARGETS.pollP95Ms}ms`),
+        ...(p.followUpRenders.errors ? [`${p.label}: ${p.followUpRenders.errors} follow-up render errors`] : []),
+        ...(p.followUpRenders.p95Ms > TARGETS.readP95Ms ? [`${p.label}: follow-up render p95 ${p.followUpRenders.p95Ms}ms > ${TARGETS.readP95Ms}ms`] : []),
+      ]),
+      ...(counts.users === shape.expected.users && counts.user_jobs === shape.expected.userJobs && counts.libraries === shape.expected.libraries && counts.cvs === shape.expected.cvs
+        && counts.applications === shape.expected.applications && counts.decisions === shape.expected.decisions && counts.queued_tasks === shape.expected.queuedTasks ? [] : [`fixture/count mismatch: ${JSON.stringify(counts)}`]),
     ];
     const report = { at: new Date().toISOString(), passed: failures.length === 0, failures,
       environment: { node: process.version, cpu: cpus()[0]?.model, cpuCount: cpus().length, hostMemoryMiB: Math.round(totalmem() / 1048576), database: url.pathname.slice(1) },
-      target: { registeredUsers: 100, simultaneouslyActiveUsers: 10, soakSeconds, idleSeconds }, counts, thresholds: TARGETS, phases, resources,
+      target: { registeredUsers: shape.accounts, companies: shape.companies, followsPerAccount: shape.follows, jobsPerCompany: shape.jobsPerCompany,
+        simultaneouslyActiveUsers: 10, pollingTabs: shape.pollingTabs, pollingSeconds: shape.pollingSeconds, soakSeconds, idleSeconds },
+      counts, expected: shape.expected, thresholds: TARGETS, pollCadence: POLL_CADENCE, phases, resources,
       limitations: ['Local single Next.js process and local PostgreSQL; short warm workload with no think time.',
         'CV archive/restore crosses the authenticated HTTP boundary. Decision, Library and queue fixtures use production tables directly; their browser form handling, queue-start latency and completed worker/model work are not measured.',
         'The local inspector used for heap samples adds small diagnostic overhead and is bound to loopback.',
         'Synthetic populated CV/Library/application data is smaller than p95 documents. No imports, public shares, Chromium, external providers or paid models run.',
-        'This does not establish hosted connection, memory, network, serverless fan-out or sustained-soak headroom.'] };
+        'This does not establish hosted connection, memory, network, serverless fan-out or sustained-soak headroom.',
+        'The daily-window phase polls at the live cadence throughout; real tabs back off to a minute once nothing they show moves, so this is the busy case. Its worker is a stand-in that marks scans done and records a scan row for each; no scan, fetch or model work runs.',
+        'Database transactions per second are read from pg_stat_database, which every connection updates on its own schedule, and include the stand-in worker\'s one statement every ten seconds.'] };
     await writeFile(process.env.USERS_REPORT_PATH ?? '/tmp/ava-users-report.json', JSON.stringify(report, null, 2) + '\n');
     console.log(JSON.stringify({ passed: report.passed, counts, phases: phases.map(({ label, errors, p95Ms, seconds }) => ({ label, errors, p95Ms, seconds })), failures }));
     if (!report.passed) process.exitCode = 1;

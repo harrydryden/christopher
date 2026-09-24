@@ -27,7 +27,10 @@ beforeAll(async () => {
 
 afterAll(async () => { await deps?.close(); });
 beforeEach(async () => {
-  await db.execute(sql`truncate tasks, ai_calls, worker_events restart identity cascade`);
+  // `/status` reads the whole deployment, so this file owns every table the reading counts: a hold,
+  // an overdue company or an account over budget another file left behind would otherwise land in
+  // the figures asserted below.
+  await db.execute(sql`truncate tasks, ai_calls, ai_reservations, worker_events, companies, discovery_sources, users restart identity cascade`);
   process.env.WORKER_STATUS_TOKEN = TOKEN;
 });
 afterEach(() => { delete process.env.WORKER_STATUS_TOKEN; });

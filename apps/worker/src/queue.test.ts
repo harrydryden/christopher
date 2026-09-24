@@ -3,7 +3,7 @@ import { renewTask, completeTask, assertTaskOwnership } from "./queue";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {createDb, enqueueTask, listUserIds, listWorkerEvents, schema, setSubscriptionStatus, subscribeToCompany, type Db} from "@ava/db";
 import { AGEING_PRIORITY_FLOOR, dedupeKeyFor, isUserSettingsKey, priorityFor } from "@ava/core";
-import { ensureTestUser } from "./test-users";
+import { ensureTestUser, testDatabaseUrl } from "./test-users";
 import { runMigrations } from "@ava/db/migrate";
 import { desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
@@ -13,7 +13,9 @@ import { LeaseBusyError, withResourceLease, type RunDeps } from "./lease";
 import { reconcileCvDrafts, schedulerTick, startScheduler } from "./scheduler";
 import { CV_ABANDONED_MESSAGE, onAbandon, onInterrupted } from "./handlers";
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
+/** Every connection this file opens carries this name, so it can ask about its own sessions alone. */
+const SUITE = "ava-queue-test";
+const DATABASE_URL = testDatabaseUrl(SUITE);
 
 let deps: WorkerDeps;
 let db: Db;
@@ -42,7 +44,8 @@ afterEach(async () => {
 });
 
 beforeEach(async () => {
-  await db.execute(sql`truncate tasks, scan_runs, scans, companies, career_sources, jobs, settings, user_settings restart identity cascade`);
+  // Crash recovery below leaves AI holds as a dead process would; they are this file's to clear.
+  await db.execute(sql`truncate tasks, scan_runs, scans, companies, career_sources, jobs, settings, user_settings, ai_reservations restart identity cascade`);
   now = new Date("2026-09-05T06:05:00Z");
 });
 
@@ -51,7 +54,9 @@ describe("task queue", () => {
     const client = createDb(DATABASE_URL, { max: 3 });
     try {
       await Promise.all([runMigrations(client.db), runMigrations(client.db)]);
-      const locks = await client.db.execute(sql`select count(*)::int as n from pg_locks where locktype = 'advisory' and objid = 74233101`);
+      // pg_locks is the whole cluster's: another database's migration takes the same key.
+      const locks = await client.db.execute(sql`select count(*)::int as n from pg_locks where locktype = 'advisory' and objid = 74233101
+        and database = (select oid from pg_database where datname = current_database())`);
       expect(locks.rows[0]!.n).toBe(0);
     } finally {
       await client.pool.end();
@@ -587,8 +592,11 @@ describe("execution model", () => {
     await claimed;
 
     // The handler is still running when the cap fires: its task goes straight back on the queue
-    // rather than waiting out the five-minute stale lock, and keeps its attempt.
-    await queue.stop(50);
+    // rather than waiting out the five-minute stale lock, and keeps its attempt. The grace is what
+    // this case is about; the hand-back and the hold release get a bound no loaded database can
+    // reach, because `stop()` stops waiting for either once its bound passes, and the assertions
+    // below would then read the rows before the writes landed.
+    await queue.stop(50, 30_000);
     const [row] = await db.select().from(schema.tasks);
     expect(row!.status).toBe("queued");
     expect(row!.attempts).toBe(0);
@@ -1036,7 +1044,7 @@ describe("crash recovery", () => {
         const sweep = requeueStale(db, TASK_STALE_AFTER_MS, "sweeper", { deps, onAbandon: { discover: async () => { abandoned++; } } });
         // Commit the renewal only once the sweep's write is waiting on the row.
         for (let tick = 0; tick < 500; tick++) {
-          const waiting = await db.execute(sql`select 1 from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()`);
+          const waiting = await db.execute(sql`select 1 from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database() and application_name = ${SUITE}`);
           if (waiting.rows.length) break;
           await sleep(10);
         }
@@ -1307,24 +1315,46 @@ describe("keeping a run alive, and stopping one that is over", () => {
     let observed!: { sameSignal: boolean; renewedBefore: boolean; renewedAfter: boolean; fenced: string };
     let settled!: () => void;
     const done = new Promise<void>(resolve => { settled = resolve; });
+    // The lease renews in a transaction of its own on the run's database handle, so counting those
+    // transactions says exactly which renewals began, and when they have all landed; waiting a
+    // fixed time for "any renewal in flight" failed whenever a loaded database took longer.
+    const renewals = new Set<Promise<unknown>>();
+    let renewalsBegun = 0;
+    const counting = (handle: Db): Db => new Proxy(handle, {
+      get(target, property, receiver) {
+        if (property !== "transaction") return Reflect.get(target, property, receiver);
+        return (...args: Parameters<Db["transaction"]>) => {
+          renewalsBegun++;
+          const renewal = target.transaction(...args);
+          renewals.add(renewal);
+          void renewal.finally(() => renewals.delete(renewal)).catch(() => undefined);
+          return renewal;
+        };
+      },
+    });
     const queue = new TaskQueue(deps, {
-      discover: (_task, runDeps, ctx) => withResourceLease(runDeps, key, async locked => {
+      discover: (_task, runDeps, ctx) => withResourceLease({ ...runDeps, db: counting(runDeps.db) }, key, async locked => {
         const first = await expiresAt();
         let renewedBefore = false;
         for (let tick = 0; tick < 100 && !renewedBefore; tick++) { await sleep(10); renewedBefore = (await expiresAt()) !== first; }
-        // The handler ignores its abort, as a scan or a discovery does today.
-        await new Promise(resolve => ctx.signal.addEventListener("abort", resolve, { once: true }));
-        await sleep(60); // any renewal already in flight lands
+        // The handler ignores its abort, as a scan or a discovery does today. On a loaded machine
+        // the deadline can fire before this line is reached, and a listener added then never runs.
+        if (!ctx.signal.aborted) await new Promise(resolve => ctx.signal.addEventListener("abort", resolve, { once: true }));
+        // Every renewal that began before the abort lands, however long the database takes.
+        while (renewals.size) await Promise.allSettled([...renewals]);
+        const begunAtAbort = renewalsBegun;
         const atAbort = await expiresAt();
-        await sleep(150); // seven renewal intervals
-        const renewedAfter = (await expiresAt()) !== atAbort;
+        await sleep(150); // seven renewal intervals, in which a lease still renewing would begin several
+        const renewedAfter = renewalsBegun !== begunAtAbort || (await expiresAt()) !== atAbort;
         const fenced = await db.transaction(async tx => locked.assertOwnership!(tx as unknown as Db)).then(() => "passed", (e: Error) => e.message);
         observed = { sameSignal: (runDeps as RunDeps).signal === ctx.signal, renewedBefore, renewedAfter, fenced };
         settled();
         await zombie;
         return {};
       }, { renewEveryMs: 20 }),
-    }, { concurrency: 1, workerId: "zombie", deadlines: { discover: 400 } });
+      // The deadline must leave room for the first 20 ms renewal to land before it fires, or there is
+      // no "before" to compare with; a loaded database has taken hundreds of milliseconds over one.
+    }, { concurrency: 1, workerId: "zombie", deadlines: { discover: 2_000 } });
     await enqueueTask(db, "discover", { companyId: "slow" }, { maxAttempts: 2 });
     await queue.runTask((await claimTask(db, "zombie"))!);
     await done;
@@ -1372,7 +1402,7 @@ describe("keeping a run alive, and stopping one that is over", () => {
       const started = Date.now();
       expect(await renewTask(db, task)).toBeNull();
       expect(Date.now() - started).toBeLessThan(4_000);
-      const waiting = await db.execute(sql`select 1 from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()`);
+      const waiting = await db.execute(sql`select 1 from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database() and application_name = ${SUITE}`);
       expect(waiting.rows).toHaveLength(0);
     } finally {
       release();

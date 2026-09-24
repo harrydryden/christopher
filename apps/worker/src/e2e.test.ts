@@ -4,6 +4,10 @@
  * scan it, apply the keyword and location gate, then detect a removed role two scans later.
  *
  * Requires a database: set TEST_DATABASE_URL (defaults to the local ava_test database).
+ *
+ * Most cases carry a budget above the suite's 30-second default, because each drives discovery and
+ * whole scans through the queue against the test server, paced per host like a real board: the
+ * slowest, a Workday board read past 150 pages, takes about 35 seconds on a loaded four-core machine.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {createDb, readCompanyLogo, retireSourceRoles, schema, enqueueTask, reevaluateGate, subscribeToCompany, type Db, type User} from "@ava/db";
@@ -598,15 +602,23 @@ describe("functional review regressions", () => {
     expect((await jobsInTable()).map((r) => r.title)).toEqual(["Operations Analyst", "Operations Lead", "Operations Manager"]);
 
     // The board grows past what ten pages can hold and the three followed roles fall off the end.
-    // Two consecutive scans is exactly what closes a role, so if a truncated listing ever counted
-    // as a complete one, this is where the false "closed" rows would appear.
+    // Two consecutive scans at least six hours apart is exactly what closes a role, so if a
+    // truncated listing ever counted as a complete one, this is where the false "closed" rows
+    // would appear. The scans are a day apart, as daily scans are. On one moment of the test's
+    // clock they would also share `started_at`, which the scan takes from that clock, and "the
+    // latest scan" read below would be whichever of the three the database returned first.
     server.setRoutes({ "api.smartrecruiters.com": smartRecruitersRoutes("capped") });
-    for (const _ of [1, 2]) {
+    for (const day of ["2026-09-06", "2026-09-07"]) {
+      now = new Date(`${day}T06:00:00Z`);
       const [current] = await db.select().from(schema.careerSources).where(eq(schema.careerSources.id, source!.id));
       const outcome = await _scanSourceForTests(deps, company!, current!, settings, null);
-      expect(outcome.status).toBe("partial");
-      expect(outcome.closedCount).toBe(0);
-      expect(outcome.postingsFound).toBe(10_000);
+      // The whole outcome and the scan it recorded, so a failure says what the scan saw.
+      const [recorded] = await db.select({ status: schema.scans.status, error: schema.scans.error, postingsFound: schema.scans.postingsFound, requests: schema.scans.requests, startedAt: schema.scans.startedAt })
+        .from(schema.scans).where(eq(schema.scans.sourceId, source!.id)).orderBy(desc(schema.scans.startedAt)).limit(1);
+      expect({ outcome, recorded }).toMatchObject({
+        outcome: { status: "partial", closedCount: 0, postingsFound: 10_000 },
+        recorded: { status: "partial", postingsFound: 10_000, startedAt: now },
+      });
     }
 
     const rows = await jobsInTable();

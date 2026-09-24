@@ -5,6 +5,7 @@
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb, schema, type Db } from "@ava/db";
+import { createTestDb } from "@/test/db";
 import { runMigrations } from "@ava/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { signInTestUser } from "@/test/auth";
@@ -28,7 +29,7 @@ import { companyApplicationCount, companyScanTiming, listCompanies } from "@/lib
 import { scanTimingLine } from "@/app/(app)/companies/scan-line";
 
 beforeAll(async () => {
-  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
+  const client = createTestDb();
   database = client.db;
   pool = client.pool;
   await runMigrations(database);
@@ -38,7 +39,7 @@ afterAll(async () => { await pool?.end(); });
 
 beforeEach(async () => {
   await database.execute(sql`truncate companies, tasks, settings, users restart identity cascade`);
-  ({ user: first, cookie: firstCookie } = await signInTestUser(database, process.env.SESSION_SECRET!, "one@example.com"));
+  ({ user: first, cookie: firstCookie } = await signInTestUser(database, process.env.SESSION_SECRET!, "one@example.com", "admin"));
   ({ user: second, cookie: secondCookie } = await signInTestUser(database, process.env.SESSION_SECRET!, "two@example.com", "member"));
   // Filters first: `addCompanies` refuses an account that has never chosen its gate, so both
   // accounts start with one saved, exactly as a person reaches the form through setup.

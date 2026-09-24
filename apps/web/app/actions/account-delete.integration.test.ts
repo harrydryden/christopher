@@ -8,6 +8,7 @@
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb, schema, type Db } from "@ava/db";
+import { createTestDb } from "@/test/db";
 import { runMigrations } from "@ava/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { signInTestUser } from "@/test/auth";
@@ -26,7 +27,7 @@ import { deleteUser } from "./account";
 import { deleteAccount } from "@/lib/accounts";
 
 beforeAll(async () => {
-  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_b");
+  const client = createTestDb();
   database = client.db;
   pool = client.pool;
   await runMigrations(database);
@@ -35,18 +36,18 @@ beforeAll(async () => {
 afterAll(async () => { await pool?.end(); });
 beforeEach(async () => {
   await database.execute(sql`truncate cv_versions, users restart identity cascade`);
-  ({ user: admin, cookie: session } = await signInTestUser(database, process.env.SESSION_SECRET!, "owner@example.com"));
+  ({ user: admin, cookie: session } = await signInTestUser(database, process.env.SESSION_SECRET!, "owner@example.com", "admin"));
   await database.update(schema.users).set({ claimedAt: new Date() }).where(eq(schema.users.id, admin.id));
 });
 
 it("deletes another administrator only while the caller is still a claimed administrator", async () => {
-  const { user: other } = await signInTestUser(database, process.env.SESSION_SECRET!, "second@example.com");
+  const { user: other } = await signInTestUser(database, process.env.SESSION_SECRET!, "second@example.com", "admin");
   await database.update(schema.users).set({ claimedAt: new Date() }).where(eq(schema.users.id, other.id));
   await expect(deleteUser(other.id)).resolves.toBeUndefined();
   // The race the lock is for: the caller stopped being an administrator, or stopped counting as a
   // claimed one, after the action admitted them. `requireAdmin` would refuse the whole call now, so
   // the library is asked directly, as the transaction would find things.
-  const { user: third } = await signInTestUser(database, process.env.SESSION_SECRET!, "third@example.com");
+  const { user: third } = await signInTestUser(database, process.env.SESSION_SECRET!, "third@example.com", "admin");
   await database.update(schema.users).set({ claimedAt: new Date() }).where(eq(schema.users.id, third.id));
   await database.update(schema.users).set({ role: "member" }).where(eq(schema.users.id, admin.id));
   await expect(deleteAccount(admin.id, third.id)).rejects.toThrow(/no longer an administrator/);

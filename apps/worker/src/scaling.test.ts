@@ -5,9 +5,11 @@ import { runMigrations } from "@ava/db/migrate";
 import { aiBudgetWindowStart } from "@ava/core";
 import { sql } from "drizzle-orm";
 import { reserveAi } from "./budget";
-import { ensureTestUser } from "./test-users";
+import { ensureTestUser, testDatabaseUrl } from "./test-users";
 import { selectExamples } from "./recommendation-context";
-const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
+/** Every connection this file opens carries this name, so it can ask about its own sessions alone. */
+const SUITE = "ava-scaling-test";
+const { db, pool } = createDb(testDatabaseUrl(SUITE));
 beforeAll(() => runMigrations(db));
 beforeEach(() => db.execute(sql`truncate ai_calls, ai_reservations`));
 afterAll(() => pool.end());
@@ -73,6 +75,10 @@ it("holds one account's capacity against its own budget and window, and marks th
 it("zeroes every account's spend counter as the account-budget migration lands, and does nothing on a second run", async () => {
   const statements = (await readFile(new URL("../../../packages/db/drizzle/0021_account_ai_budgets.sql", import.meta.url), "utf8"))
     .split("--> statement-breakpoint").map((statement) => statement.trim()).filter(Boolean);
+  // The migration writes a marker for every account there is, so this test owns every account:
+  // one another file left behind would be given a marker here and carry it into that file's run.
+  await db.execute(sql`truncate users restart identity cascade`);
+  await db.execute(sql`delete from settings where key in ('aiBudgetResetAt', 'monthlyAiBudgetUsd')`);
   const user = await ensureTestUser(db, "budget-migration@example.com");
   // The state the migration meets: spend on the books and no reset marker for anyone. The spend is
   // dated a minute ago so the assertions below cannot turn on which side of one millisecond the
@@ -184,7 +190,8 @@ it("fences a reclaimed operation without holding a database transaction across e
   const key = `test-operation-${Date.now()}`;
   await withResourceLease(deps, key, async locked => {
     await expect(withResourceLease(deps, key, async () => true)).rejects.toBeInstanceOf(LeaseBusyError);
-    const transactions = await db.execute(sql`select count(*)::int as n from pg_stat_activity where datname=current_database() and state='idle in transaction'`);
+    const transactions = await db.execute(sql`select count(*)::int as n from pg_stat_activity
+      where datname = current_database() and application_name = ${SUITE} and state = 'idle in transaction'`);
     expect(transactions.rows[0]!.n).toBe(0);
     await db.execute(sql`update resource_leases set owner=gen_random_uuid() where key=${key}`);
     await expect(db.transaction(async tx => locked.assertOwnership!(tx as unknown as typeof db))).rejects.toThrow("lease lost");
@@ -222,7 +229,7 @@ it("lets a lease renewal give up on a row its own write transaction holds, witho
       // Two renewals fall due while the row is held; each gives up well before the next.
       for (let tick = 0; tick < 35; tick++) {
         await new Promise(resolve => setTimeout(resolve, 200));
-        const waiting = await pool.query("select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()");
+        const waiting = await pool.query("select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database() and application_name = $1", [SUITE]);
         most = Math.max(most, Number(waiting.rows[0]!.n));
       }
       return most;

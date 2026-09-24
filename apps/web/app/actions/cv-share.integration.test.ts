@@ -9,6 +9,7 @@
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb, resolveCvShareComment as resolveCommentRow, schema, type Db } from "@ava/db";
+import { createTestDb } from "@/test/db";
 import { runMigrations } from "@ava/db/migrate";
 import { desc, eq, isNull, sql } from "drizzle-orm";
 import { signInTestUser, ensureTestUser } from "@/test/auth";
@@ -67,7 +68,7 @@ const DESCRIPTION = "Lead a team and improve operations. This advert must never 
 const SECTION_ANCHOR = cvSectionBlockId("job");
 
 beforeAll(async () => {
-  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
+  const client = createTestDb();
   database = client.db;
   pool = client.pool;
   await runMigrations(database);

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb, schema, type Db } from "@ava/db";
+import { createTestDb } from "@/test/db";
 import type { User } from "@ava/db/schema";
 import { runMigrations } from "@ava/db/migrate";
 import { eq, sql } from "drizzle-orm";
@@ -15,7 +16,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 import { saveDiscoverySource, updateDiscoverySource, checkDiscoverySource, importDiscoveryDocument } from "./discovery-sources";
 import { acceptSuggestion, rejectSuggestion, findMoreSuggestions } from "./suggestions";
 function form(values: Record<string, string>) { const data = new FormData(); for (const [key, value] of Object.entries(values)) data.set(key, value); return data; }
-beforeAll(async () => { const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test"); database = client.db; pool = client.pool; await runMigrations(database); user = await ensureTestUser(database); });
+beforeAll(async () => { const client = createTestDb(); database = client.db; pool = client.pool; await runMigrations(database); user = await ensureTestUser(database); });
 afterAll(async () => { if (database) await database.execute(sql`truncate discovery_sources cascade`); await pool?.end(); });
 beforeEach(async () => {
   auth.requireUser.mockReset(); auth.requireUser.mockImplementation(async () => user);

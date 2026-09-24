@@ -219,7 +219,9 @@ async function serverActionModules(dir: string): Promise<string[]> {
 
 it("classifies every export of every server-action module, each exactly once", async () => {
   const exported: string[] = [];
-  for (const path of await serverActionModules(__dirname)) {
+  // Wherever one lives: a "use server" module in lib/ or components/ is as much an endpoint.
+  const roots = [__dirname, join(__dirname, "..", "lib"), join(__dirname, "..", "components")];
+  for (const path of (await Promise.all(roots.map(serverActionModules))).flat()) {
     const module = relative(__dirname, path);
     const loaded = (await import(path)) as Record<string, unknown>;
     for (const [name, value] of Object.entries(loaded)) if (typeof value === "function") exported.push(`${module}#${name}`);

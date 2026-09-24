@@ -12,8 +12,11 @@ export default defineConfig({
     environment: "node",
     // Password hashing at production cost would dominate the account tests; the old cost is plenty here.
     env: { AVA_SCRYPT_N: "16384" },
-    testTimeout: 120_000,
-    hookTimeout: 120_000,
+    // Long enough for a loaded CI machine, short enough that a hung pool or a missing resolve names
+    // its test inside the job's budget. A case that needs longer says so, and why, beside it.
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
+    slowTestThreshold: 10_000,
     fileParallelism: false,
   },
 });

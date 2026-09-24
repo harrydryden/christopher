@@ -4,6 +4,10 @@
  * scan it, apply the keyword and location gate, then detect a removed role two scans later.
  *
  * Requires a database: set TEST_DATABASE_URL (defaults to the local ava_test database).
+ *
+ * Most cases carry a budget above the suite's 30-second default, because each drives discovery and
+ * whole scans through the queue against the test server, paced per host like a real board: the
+ * slowest, a Workday board read past 150 pages, takes about 35 seconds on a loaded four-core machine.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {createDb, readCompanyLogo, retireSourceRoles, schema, enqueueTask, reevaluateGate, subscribeToCompany, type Db, type User} from "@ava/db";

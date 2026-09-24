@@ -18,15 +18,17 @@ import {
 function run(initialVersion: string | undefined, readings: WorkReading[]) {
   let state: WorkPollState = initialWorkPoll(initialVersion);
   let refreshes = 0;
+  let reloads = 0;
   const waits: Array<number | null> = [];
   for (const reading of readings) {
     const step = stepWorkPoll(state, reading);
     state = step.state;
     if (step.refresh) refreshes++;
+    if (step.reload) reloads++;
     waits.push(step.next);
     if (step.next === null) break;
   }
-  return { refreshes, waits, state };
+  return { refreshes, reloads, waits, state };
 }
 
 const active = (version: string): WorkReading => ({ active: true, version });
@@ -95,10 +97,11 @@ describe("stepWorkPoll", () => {
     expect(failedWorkPoll(state).next).toBe(state.wait);
   });
 
-  it("refreshes when the work finishes and stops asking after a few unanswered refreshes", () => {
+  it("reloads when finished work remains unrendered after two soft refreshes", () => {
     const finished = { active: false, version: "" };
-    const { refreshes, waits } = run("v1", Array.from({ length: 10 }, () => finished));
-    expect(refreshes).toBe(SETTLED_REFRESHES);
+    const { refreshes, reloads, waits } = run("v1", Array.from({ length: 10 }, () => finished));
+    expect(refreshes).toBe(SETTLED_REFRESHES - 1);
+    expect(reloads).toBe(1);
     expect(waits).toHaveLength(SETTLED_REFRESHES);
     expect(waits.at(-1)).toBeNull();
     // Each refresh of finished work comes at the first interval: a lost one is retried in ten
@@ -108,9 +111,10 @@ describe("stepWorkPoll", () => {
 
   it("starts counting settled refreshes again when new work appears", () => {
     const finished = { active: false, version: "" };
-    const { refreshes, waits } = run("v1", [finished, finished, active("v2"), finished, finished, finished]);
-    // Two settled refreshes, the refresh for new work, then three more settled ones before stopping.
-    expect(refreshes).toBe(6);
+    const { refreshes, reloads, waits } = run("v1", [finished, finished, active("v2"), finished, finished, finished]);
+    // Two soft refreshes, the refresh for new work, then two more and a document reload.
+    expect(refreshes).toBe(5);
+    expect(reloads).toBe(1);
     expect(waits.at(-1)).toBeNull();
   });
 });

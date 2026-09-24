@@ -46,9 +46,9 @@ export interface WorkPollState {
 }
 
 /**
- * How many times a finished reading refreshes a page that is still showing this poller. The first
- * refresh normally renders the page without it; the others cover a refresh that did not land, and
- * then the poller stops rather than asking about finished work forever.
+ * How many times finished work is acted on while this poller remains mounted. Two soft refreshes
+ * normally render the completed page without it; the last reading falls back to a document reload
+ * if neither refresh landed.
  */
 export const SETTLED_REFRESHES = 3;
 
@@ -84,35 +84,37 @@ export function failedWorkPoll(state: WorkPollState): { state: WorkPollState; ne
  * bounded number of times. A page that rendered no version is refreshed once per change and the
  * change is then counted as seen, so it is refreshed once per change rather than on every tick.
  */
-export function stepWorkPoll(previous: WorkPollState, reading: WorkReading): { state: WorkPollState; refresh: boolean; next: number | null } {
+export function stepWorkPoll(previous: WorkPollState, reading: WorkReading): { state: WorkPollState; refresh: boolean; reload: boolean; next: number | null } {
   const state: WorkPollState = previous.failures ? { ...previous, failures: 0 } : previous;
   if (!reading.active) {
     // A finished build the page has not shown is the failure a poller exists to prevent, so the
-    // few refreshes asked for finished work come at the first interval, not a backed-off one.
+    // few attempts for finished work come at the first interval, not a backed-off one.
     const settled = state.settled + 1;
-    return { state: { ...state, seen: reading.version, requested: undefined, retries: 0, wait: FIRST_POLL_MS, settled }, refresh: true, next: settled < SETTLED_REFRESHES ? FIRST_POLL_MS : null };
+    // A dropped RSC response can leave Next's soft refresh stuck in flight. If the old poller is
+    // still mounted after two soft refreshes, a document reload recovers the finished page.
+    return { state: { ...state, seen: reading.version, requested: undefined, retries: 0, wait: FIRST_POLL_MS, settled }, refresh: settled < SETTLED_REFRESHES, reload: settled === SETTLED_REFRESHES, next: settled < SETTLED_REFRESHES ? FIRST_POLL_MS : null };
   }
   if (state.seen === undefined) {
     // The baseline for a page that rendered nothing: its later readings are compared with this.
     const wait = nextPollDelay(state.wait, false);
-    return { state: { ...state, seen: reading.version, wait, settled: 0 }, refresh: false, next: wait };
+    return { state: { ...state, seen: reading.version, wait, settled: 0 }, refresh: false, reload: false, next: wait };
   }
   if (state.seen === reading.version) {
     const wait = nextPollDelay(state.wait, false);
-    return { state: { ...state, requested: undefined, retries: 0, wait, settled: 0 }, refresh: false, next: wait };
+    return { state: { ...state, requested: undefined, retries: 0, wait, settled: 0 }, refresh: false, reload: false, next: wait };
   }
   if (!state.rendered) {
-    return { state: { ...state, seen: reading.version, wait: FIRST_POLL_MS, settled: 0 }, refresh: true, next: FIRST_POLL_MS };
+    return { state: { ...state, seen: reading.version, wait: FIRST_POLL_MS, settled: 0 }, refresh: true, reload: false, next: FIRST_POLL_MS };
   }
   if (state.requested !== reading.version) {
-    return { state: { ...state, requested: reading.version, retries: 0, wait: FIRST_POLL_MS, settled: 0 }, refresh: true, next: FIRST_POLL_MS };
+    return { state: { ...state, requested: reading.version, retries: 0, wait: FIRST_POLL_MS, settled: 0 }, refresh: true, reload: false, next: FIRST_POLL_MS };
   }
   if (state.retries < REFRESH_RETRIES) {
-    return { state: { ...state, retries: state.retries + 1, wait: FIRST_POLL_MS, settled: 0 }, refresh: true, next: FIRST_POLL_MS };
+    return { state: { ...state, retries: state.retries + 1, wait: FIRST_POLL_MS, settled: 0 }, refresh: true, reload: false, next: FIRST_POLL_MS };
   }
   // The page never shows this version: stop asking for it, and compare with it from now on.
   const wait = nextPollDelay(state.wait, false);
-  return { state: { ...state, seen: reading.version, requested: undefined, retries: 0, wait, settled: 0 }, refresh: false, next: wait };
+  return { state: { ...state, seen: reading.version, requested: undefined, retries: 0, wait, settled: 0 }, refresh: false, reload: false, next: wait };
 }
 
 /** The banner's cadence while a run is in progress or about to start, and what it backs off to. */

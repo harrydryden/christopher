@@ -535,7 +535,10 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     const saveTraffic = [];
     const startedAt = Date.now();
     const stamp = () => `+${((Date.now() - startedAt) / 1000).toFixed(1)}s`;
-    const interesting = (request) => request.method() === "POST" || request.url().includes("/cv/") || request.headers()["rsc"] === "1";
+    // Every request, not only the action's own: a redirect the router applies renders the next
+    // page's client components, and a script chunk that never arrives holds that render, and the
+    // save button with it, with nothing else to show for it.
+    const interesting = () => true;
     const onRequest = (request) => {
       if (interesting(request)) saveTraffic.push(`${stamp()} → ${request.method()} ${request.url()} rsc=${request.headers()["rsc"] ?? "-"} next-action=${request.headers()["next-action"] ?? "-"}`);
     };

@@ -60,7 +60,7 @@ export default async function AdminAccountsPage({ searchParams }: { searchParams
 
       <Card title="Accounts">
         <p className="mb-3 text-14 text-muted">
-          Everyone with an account. Each has its own monthly AI budget, the only budget there is: it resets on the 1st, its holder sets it on Settings and you can set it for anyone here. <Link href="/admin/health" className="text-fg underline">Operations</Link> shows what the spend bought. Deleting an account removes everything it owns; shared companies and postings stay. A reset link lets you onboard or unblock someone when email delivery is not set up: it works once, for an hour, and confirms their address.
+          Everyone with an account. Each has its own monthly AI budget, the only budget there is: it resets on the 1st, its holder sets it on Settings and you can set it for anyone here. <Link prefetch={false} href="/admin/health" className="text-fg underline">Operations</Link> shows what the spend bought. Deleting an account removes everything it owns; shared companies and postings stay. A reset link lets you onboard or unblock someone when email delivery is not set up: it works once, for an hour, and confirms their address.
         </p>
         {pages > 1 && <Pagination page={page} total={total} size={ACCOUNTS_PER_PAGE} path="/admin" label="Account pages" />}
         <Table>

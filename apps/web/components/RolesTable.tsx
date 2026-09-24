@@ -75,7 +75,7 @@ function BuildCvOffer({ jobId, details }: { jobId: string; details: RoleDetailsV
   if (!details.cvQuote)
     return (
       <p className="text-12 text-muted">
-        Save your Library first: a CV is written from what is in it. <Link href="/library" className="underline">Open Library</Link>
+        Save your Library first: a CV is written from what is in it. <Link prefetch={false} href="/library" className="underline">Open Library</Link>
       </p>
     );
   if (details.cvQuote.refusal) return <p className="text-12 text-warn" role="status">{details.cvQuote.refusal}</p>;
@@ -112,7 +112,7 @@ function SortTH({ label, sortKey, links, sort, dir, className = "" }: {
   const active = sort === sortKey;
   return (
     <TH className={className} aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}>
-      <Link href={href} title={`Sort by ${label.toLowerCase()}`} className={`no-underline hover:underline ${active ? "text-fg" : ""}`}>
+      <Link prefetch={false} href={href} title={`Sort by ${label.toLowerCase()}`} className={`no-underline hover:underline ${active ? "text-fg" : ""}`}>
         {label}
         {active && <span aria-hidden="true">{dir === "asc" ? " ↑" : " ↓"}</span>}
       </Link>
@@ -461,7 +461,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                     />
                   </TD>
                   {!hideCompany && <TD>
-                    <Link href={`/companies/${row.companyId}`} className="flex items-center gap-1.5 no-underline hover:underline">
+                    <Link prefetch={false} href={`/companies/${row.companyId}`} className="flex items-center gap-1.5 no-underline hover:underline">
                       {/* The same icon the company page shows: the captured logo when there is one,
                           and the browser's own chain behind it. A bare <img> here is why Hims had a
                           logo on its company page and a blank square on its roles. */}
@@ -492,7 +492,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                     <FitBar score={row.fitScore} title={fitTitle(row)} state={row.scoreStateText} />
                   </TD>
                   <TD className="text-right">
-                    {row.workflowStatus === "user-shortlisted" ? <Link href={`/applications?job=${row.id}`} className={buttonClass("secondary", "sm", "whitespace-nowrap no-underline")}>{applicationLabel(row)}</Link>
+                    {row.workflowStatus === "user-shortlisted" ? <Link prefetch={false} href={`/applications?job=${row.id}`} className={buttonClass("secondary", "sm", "whitespace-nowrap no-underline")}>{applicationLabel(row)}</Link>
                     : archived ? <Button size="sm" disabled={archivingId !== null || reasonBox?.pending} onClick={() => void archiveRow(row.id)}>{archivingId === row.id ? "Restoring…" : "Restore"}</Button>
                     : <Button
                       size="sm"
@@ -562,7 +562,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                               keeps the link to the application that holds its CV. */}
                           {buildHere && detail?.state === "ready" && <BuildCvOffer jobId={row.id} details={detail.details} />}
                           <div className="flex flex-wrap items-center gap-4 text-12">
-                            {!buildHere && <Link href={`/applications?job=${row.id}`} className="font-semibold underline">{applicationLabel(row)}</Link>}
+                            {!buildHere && <Link prefetch={false} href={`/applications?job=${row.id}`} className="font-semibold underline">{applicationLabel(row)}</Link>}
                             <a href={row.url} target="_blank" rel="noopener noreferrer" className="text-muted underline">View vacancy ↗</a>
                             <a href={row.companyHomepageUrl} target="_blank" rel="noopener noreferrer" className="text-muted underline">Company website ↗</a>
                           </div>

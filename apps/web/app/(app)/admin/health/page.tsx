@@ -345,7 +345,7 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
             <TBody>
               {largestInputs.map((row) => (
                 <TR key={row.sourceId}>
-                  <TD><Link href={`/admin/catalogue?q=${encodeURIComponent(row.companyName)}`} className="hover:underline">{row.companyName}</Link></TD>
+                  <TD><Link prefetch={false} href={`/admin/catalogue?q=${encodeURIComponent(row.companyName)}`} className="hover:underline">{row.companyName}</Link></TD>
                   <TD>{row.sourceType}</TD>
                   <TD className="text-muted">{row.fetchMethod ?? "—"}</TD>
                   <TD className={`text-right ${heartbeat?.vitals && row.bytes > heartbeat.vitals.heapLimitMb * 1_048_576 * 0.1 ? "text-warn" : ""}`}>{formatBytes(row.bytes)}</TD>
@@ -365,7 +365,7 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
           <span className="text-14 text-muted">spent since {shortDate(since)}, across every account and the work no account asked for</span>
         </div>
         <p className="mb-3 text-14 text-muted">
-          Spending is bounded per account: each has its own monthly budget, which it sets on Settings and which you can set for anyone in <Link href="/admin" className="text-fg underline">Accounts</Link>, where each account&apos;s own figure and window are shown. An account that has spent its month has its optional calls (company and filter suggestions) skipped until the 1st.
+          Spending is bounded per account: each has its own monthly budget, which it sets on Settings and which you can set for anyone in <Link prefetch={false} href="/admin" className="text-fg underline">Accounts</Link>, where each account&apos;s own figure and window are shown. An account that has spent its month has its optional calls (company and filter suggestions) skipped until the 1st.
         </p>
         <section>
           <h3 className="text-14 text-muted">Usage by account, feature and model</h3>
@@ -636,14 +636,14 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
             {attentionSources.map((s) => (
               <li key={s.id} className="flex flex-wrap items-center gap-2">
                 <Badge tone={sourceStatusTone(s.status)}>{s.status === "needs_confirmation" ? "needs confirmation" : s.status}</Badge>
-                <Link href={`/admin/catalogue?q=${encodeURIComponent(s.companyName)}`} className="font-medium text-fg hover:underline">{s.companyName}</Link>
+                <Link prefetch={false} href={`/admin/catalogue?q=${encodeURIComponent(s.companyName)}`} className="font-medium text-fg hover:underline">{s.companyName}</Link>
                 <span className="text-12 text-muted">{s.type}</span>
               </li>
             ))}
             {noSourceCompanies.map((c) => (
               <li key={c.id} className="flex flex-wrap items-center gap-2">
                 <Badge tone="red">no source</Badge>
-                <Link href={`/admin/catalogue?q=${encodeURIComponent(c.name)}`} className="font-medium text-fg hover:underline">{c.name}</Link>
+                <Link prefetch={false} href={`/admin/catalogue?q=${encodeURIComponent(c.name)}`} className="font-medium text-fg hover:underline">{c.name}</Link>
               </li>
             ))}
           </ul>
@@ -667,7 +667,7 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
             <TBody>
               {problemScans.map((p) => (
                 <TR key={p.scan.id}>
-                  <TD><Link href={`/admin/catalogue?q=${encodeURIComponent(p.companyName)}`} className="hover:underline">{p.companyName}</Link></TD>
+                  <TD><Link prefetch={false} href={`/admin/catalogue?q=${encodeURIComponent(p.companyName)}`} className="hover:underline">{p.companyName}</Link></TD>
                   <TD>{p.sourceType}</TD>
                   <TD><Badge tone={scanStatusTone(p.scan.status)}>{p.scan.status}</Badge></TD>
                   <TD className="whitespace-nowrap" title={p.scan.startedAt.toISOString()}>{relativeTime(p.scan.startedAt, now)}</TD>

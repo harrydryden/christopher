@@ -92,7 +92,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
       </Card>
       </div>
 
-      <SearchForm action="/companies" className="mb-4 flex flex-wrap items-end gap-3"><label className="grid gap-1.5"><span className={labelClass}>Search companies</span><input name="q" defaultValue={q} maxLength={200} className={`h-11 w-80 ${inputClass}`} /></label><Button type="submit" className="h-11">Search</Button><SearchPending />{q && <Link className="self-center text-13 underline" href="/companies">Clear</Link>}</SearchForm>
+      <SearchForm action="/companies" className="mb-4 flex flex-wrap items-end gap-3"><label className="grid gap-1.5"><span className={labelClass}>Search companies</span><input name="q" defaultValue={q} maxLength={200} className={`h-11 w-80 ${inputClass}`} /></label><Button type="submit" className="h-11">Search</Button><SearchPending />{q && <Link prefetch={false} className="self-center text-13 underline" href="/companies">Clear</Link>}</SearchForm>
       <Pagination page={page} total={total} path="/companies" params={{ q }}/>
       {work.active && <div className="mb-4"><AutoRefresh scope="company" initialVersion={work.version} message="Company scanning or discovery is pending. Status updates automatically." /></div>}
       {rows.length === 0 ? (
@@ -114,7 +114,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
             {rows.map(({ company, subscription, lastScan, openRoles, reviewRoles, shortlistedRoles, sourceType, followers, discovering, discoveryState, needsSource, lastDiscovery }) => (
               <TR key={company.id}>
                 <TD>
-                  <Link href={`/companies/${company.id}`} className="flex items-center gap-2 no-underline hover:underline">
+                  <Link prefetch={false} href={`/companies/${company.id}`} className="flex items-center gap-2 no-underline hover:underline">
                     <CompanyFavicon {...companyIcon(company)} />
                     <span className="font-semibold text-fg">{company.name}</span>
                   </Link>
@@ -136,7 +136,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                       <Badge tone="amber">no careers source</Badge>
                       <p className="mt-1 text-12 text-muted">
                         {lastDiscovery === "not_found" ? "Could not find the careers page." : lastDiscovery === "needs_confirmation" ? "Needs a source confirmed." : "Not discovered yet."}{" "}
-                        <Link href={`/companies/${company.id}#careers-url`} className="text-fg underline">Add careers URL</Link>
+                        <Link prefetch={false} href={`/companies/${company.id}#careers-url`} className="text-fg underline">Add careers URL</Link>
                       </p>
                     </>
                   ) : (
@@ -158,21 +158,21 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                 </TD>
                 <TD>
                   {openRoles > 0 ? (
-                    <Link className="no-underline hover:underline" href={`/companies/${company.id}#roles`}>{openRoles}</Link>
+                    <Link prefetch={false} className="no-underline hover:underline" href={`/companies/${company.id}#roles`}>{openRoles}</Link>
                   ) : (
                     <span className="text-muted">0</span>
                   )}
                 </TD>
                 <TD>
                   {reviewRoles > 0 ? (
-                    <Link className="no-underline hover:underline" href={`/companies/${company.id}?view=auto-matched#roles`}>{reviewRoles}</Link>
+                    <Link prefetch={false} className="no-underline hover:underline" href={`/companies/${company.id}?view=auto-matched#roles`}>{reviewRoles}</Link>
                   ) : (
                     <span className="text-muted">0</span>
                   )}
                 </TD>
                 <TD>
                   {shortlistedRoles > 0 ? (
-                    <Link className="no-underline hover:underline" href={`/companies/${company.id}?view=user-shortlisted#roles`}>{shortlistedRoles}</Link>
+                    <Link prefetch={false} className="no-underline hover:underline" href={`/companies/${company.id}?view=user-shortlisted#roles`}>{shortlistedRoles}</Link>
                   ) : (
                     <span className="text-muted">0</span>
                   )}

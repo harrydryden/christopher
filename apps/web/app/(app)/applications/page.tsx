@@ -96,7 +96,7 @@ export default async function ApplicationsPage({
           company ? (
             <>
               Every role you are pursuing at {company.name}.{" "}
-              <Link href={`/applications?filter=${filter}`} className="underline">Show all companies</Link>
+              <Link prefetch={false} href={`/applications?filter=${filter}`} className="underline">Show all companies</Link>
             </>
           ) : (
             "Every role you are pursuing, from shortlist to outcome."
@@ -121,7 +121,7 @@ export default async function ApplicationsPage({
       {/* The same shape as the roles tabs: links, so the segment is in the URL and shareable. */}
       <nav aria-label="Application progress" className="mb-4 flex flex-wrap gap-2">
         {PIPELINE_FILTERS.map((segment) => (
-          <Link
+          <Link prefetch={false}
             key={segment}
             href={segmentHref(segment)}
             aria-current={segment === filter ? "page" : undefined}

@@ -70,7 +70,7 @@ function KeywordPrompt() {
   return (
     <p className="text-12 text-muted">
       It is outside your filters, so a scan would not have caught it.{" "}
-      <Link href="/settings#keywords" className="text-fg underline">Update your keywords</Link> so similar roles reach your table.
+      <Link prefetch={false} href="/settings#keywords" className="text-fg underline">Update your keywords</Link> so similar roles reach your table.
     </p>
   );
 }
@@ -95,7 +95,7 @@ function ImportStatus({ row, companyId }: { row: PostingImportRow; companyId: st
   return (
     <div className="space-y-1">
       <p className="text-14">
-        Added «<Link href={`/companies/${companyId}?view=auto-matched#roles`} className="text-fg underline">{result.title ?? host}</Link>»
+        Added «<Link prefetch={false} href={`/companies/${companyId}?view=auto-matched#roles`} className="text-fg underline">{result.title ?? host}</Link>»
         {result.existing && <span className="text-muted"> · already in the catalogue</span>}
       </p>
       {outsideFilters && <KeywordPrompt />}
@@ -193,7 +193,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
             )}
             <span className="block text-12">
               {applications > 0 ? (
-                <Link href={`/applications?company=${company.id}&filter=all`} className="text-fg underline">
+                <Link prefetch={false} href={`/applications?company=${company.id}&filter=all`} className="text-fg underline">
                   {applications} {applications === 1 ? "application" : "applications"}
                 </Link>
               ) : (
@@ -542,7 +542,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
 
             <p className="text-12 text-muted">
               Deleting the company or a source for every follower is done from{" "}
-              <Link href={`/admin/catalogue?q=${encodeURIComponent(company.domain)}`} className="text-fg underline">Admin › Company catalogue</Link>.
+              <Link prefetch={false} href={`/admin/catalogue?q=${encodeURIComponent(company.domain)}`} className="text-fg underline">Admin › Company catalogue</Link>.
             </p>
           </div>
         </details>

@@ -71,7 +71,7 @@ function HealthItemRow({ item, unverified }: { item: HealthItem; unverified: boo
       <div className="flex flex-wrap items-center gap-2">
         <Badge tone={KIND_TONES[item.kind]}>{KIND_LABELS[item.kind]}</Badge>
         {company && (
-          <Link href={`/companies/${company.id}`} className="text-14 font-medium text-fg hover:underline">
+          <Link prefetch={false} href={`/companies/${company.id}`} className="text-14 font-medium text-fg hover:underline">
             {company.name}
           </Link>
         )}
@@ -86,7 +86,7 @@ function HealthItemRow({ item, unverified }: { item: HealthItem; unverified: boo
 
       {item.kind === "budget" && (
         <p className="text-14">
-          <Link href="/settings#ai-budget" className="text-fg underline">Raise your monthly budget on Settings</Link>, or ask an administrator.
+          <Link prefetch={false} href="/settings#ai-budget" className="text-fg underline">Raise your monthly budget on Settings</Link>, or ask an administrator.
         </p>
       )}
 

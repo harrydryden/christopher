@@ -13,8 +13,8 @@ export function Pagination({ page, total, size = 50, path, params = {}, pagePara
   return <nav aria-label={label} className="my-4 flex flex-wrap items-center justify-between gap-3 text-13">
     <span className="text-muted">{total.toLocaleString("en-GB")} {total === 1 ? "result" : "results"} · Page {page} of {pages}</span>
     <div className="flex gap-4">
-      {page > 1 && <Link className="inline-flex min-h-11 items-center underline" href={href(page - 1)}>Previous</Link>}
-      {page < pages && <Link className="inline-flex min-h-11 items-center underline" href={href(page + 1)}>Next</Link>}
+      {page > 1 && <Link prefetch={false} className="inline-flex min-h-11 items-center underline" href={href(page - 1)}>Previous</Link>}
+      {page < pages && <Link prefetch={false} className="inline-flex min-h-11 items-center underline" href={href(page + 1)}>Next</Link>}
     </div>
   </nav>;
 }

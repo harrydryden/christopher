@@ -61,7 +61,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       )}
       <div className="flex flex-1 flex-col md:flex-row">
         <aside className="flex w-full shrink-0 flex-col border-b-2 border-line p-3 md:w-48 md:border-b-0 md:border-r-2">
-          <Link href="/" className="mb-4 block p-2" aria-label="AVA home">
+          <Link prefetch={false} href="/" className="mb-4 block p-2" aria-label="AVA home">
             <Mark size={48} />
           </Link>
           <nav aria-label="Main navigation" className="flex flex-wrap gap-0.5 md:block md:space-y-0.5">
@@ -77,7 +77,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
             ))}
           </nav>
           <div className="mt-auto space-y-2 px-2 pt-4 text-13">
-            <Link href="/account" className="block truncate text-muted no-underline hover:underline" title={user.email}>
+            <Link prefetch={false} href="/account" className="block truncate text-muted no-underline hover:underline" title={user.email}>
               {user.name || user.email}
               {user.role === "admin" && <span className="ml-1 text-11 text-faint">admin</span>}
             </Link>

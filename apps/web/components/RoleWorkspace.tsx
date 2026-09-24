@@ -60,7 +60,7 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
   const viewHref = (status: RoleStatus) => `${path}?view=${status}${!companyId && filters.company ? `&company=${filters.company}` : ""}#roles`;
   return <section id="roles">
     <nav aria-label="Role status" className="mb-4 flex flex-wrap gap-2">
-      {ROLE_TABS.map(status => <Link key={status} href={viewHref(status)} aria-current={status === view ? "page" : undefined}
+      {ROLE_TABS.map(status => <Link prefetch={false} key={status} href={viewHref(status)} aria-current={status === view ? "page" : undefined}
         className={`ds-pixel border-2 px-3 py-2 text-11 no-underline ${status === view ? "border-fg bg-fg text-bg" : "border-transparent text-muted hover:bg-sunken hover:text-fg"}`}>
         {ROLE_STATUS_LABELS[status]}{" "}<span className="ml-1 tabular-nums">{counts[status]}</span>
         {status === "user-shortlisted" && counts[status] > 0 && applied > 0 && <span className="ml-1 tabular-nums">· {applied} applied</span>}
@@ -74,9 +74,9 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
       emptyState={<EmptyState title={counts[view] ? "No roles match these filters" : view === "auto-matched" ? "No roles awaiting review" : `No ${ROLE_STATUS_LABELS[view].toLowerCase()} roles`}
         description={counts[view] ? "Clear the filters to see the other roles in this view." : undefined} />} />
     {result.pageCount > 1 && <nav aria-label="Role pages" className="my-4 flex items-center gap-4 text-13">
-      {result.page > 1 && <Link className="underline" href={href(result.page - 1)}>Previous</Link>}
+      {result.page > 1 && <Link prefetch={false} className="underline" href={href(result.page - 1)}>Previous</Link>}
       <span>Page {result.page} of {result.pageCount}</span>
-      {result.page < result.pageCount && <Link className="underline" href={href(result.page + 1)}>Next</Link>}
+      {result.page < result.pageCount && <Link prefetch={false} className="underline" href={href(result.page + 1)}>Next</Link>}
     </nav>}
     {/* The same legend the Applications page carries, so a stage badge on a row is explained where
         the badge is, not one page away. */}
@@ -97,9 +97,9 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
         <RolesTable key={`${query}:archived:${archivedResult.page}`} rows={archivedRows} archived hideCompany={!!companyId}
           emptyState={<EmptyState title="No archived roles" description="Archived roles are ones you put away or that stopped matching your filters." />} />
         {archivedResult.pageCount > 1 && <nav aria-label="Archived role pages" className="mt-4 flex items-center gap-4 text-13">
-          {archivedResult.page > 1 && <Link className="underline" href={archivedHref(archivedResult.page - 1)}>Previous</Link>}
+          {archivedResult.page > 1 && <Link prefetch={false} className="underline" href={archivedHref(archivedResult.page - 1)}>Previous</Link>}
           <span>Page {archivedResult.page} of {archivedResult.pageCount}</span>
-          {archivedResult.page < archivedResult.pageCount && <Link className="underline" href={archivedHref(archivedResult.page + 1)}>Next</Link>}
+          {archivedResult.page < archivedResult.pageCount && <Link prefetch={false} className="underline" href={archivedHref(archivedResult.page + 1)}>Next</Link>}
         </nav>}
       </Card>
     </div>}

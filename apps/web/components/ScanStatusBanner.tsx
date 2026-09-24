@@ -82,7 +82,7 @@ export function ScanStatusBanner({ initialText, initialLive, initialWakeInMs }: 
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [initialText, initialLive, initialWakeInMs]);
-  return <Link href="/health" className="text-13 underline decoration-dotted"
+  return <Link prefetch={false} href="/health" className="text-13 underline decoration-dotted"
     title="This batch only: newly stored matching vacancies, not your review queue. Individual company refreshes are separate. Open scan history for details.">
     {text}{stale && " · Live update unavailable"}
   </Link>;

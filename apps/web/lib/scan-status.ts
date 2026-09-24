@@ -1,11 +1,50 @@
+import { localDateParts, type SystemSettings } from "@ava/core";
+import type { ScanRun } from "@ava/db/schema";
 import { getLatestScanRun } from "./queries/companies";
 import { getSystemSettings } from "./settings";
 import { scanBannerText } from "./scan-banner";
 import { scanRunReport } from "./scan-run-report";
+import type { ScanPollHint } from "./polling";
 
-/** The shared daily run, counted for one account's companies. */
-export async function getScanStatus(userId: string) {
+const HOUR_MS = 3_600_000;
+const DAY_MS = 86_400_000;
+
+const minutesOf = (hm: string) => {
+  const [h, m] = hm.split(":").map(Number);
+  return (h ?? 0) * 60 + (m ?? 0);
+};
+
+/**
+ * When the banner in an open tab needs to ask again. Its figures move only while a run is in
+ * progress, and a run starts only at the scheduled time, so it asks while one is running or due
+ * within the hour and otherwise sleeps until that hour begins. A run started today also wakes it
+ * just after midnight, when "Today" in its text stops being true. A manual run is rare and started
+ * by an administrator: their page renders the banner again, and another reader's tab picks it up
+ * when it is next looked at (`BANNER_RECHECK_MS`) or fully rendered.
+ */
+export function scanPollHint(run: Pick<ScanRun, "startedAt" | "finishedAt"> | null, schedule: Pick<SystemSettings, "scanTime" | "timezone">, now: Date): ScanPollHint {
+  if (run && !run.finishedAt) return { live: true, wakeInMs: null };
+  const today = localDateParts(now, schedule.timezone);
+  // Every zone the schedule can name is offset by whole minutes, so the seconds are the same here.
+  const sinceMidnight = minutesOf(today.hm) * 60_000 + (now.getTime() % 60_000);
+  const started = run ? localDateParts(run.startedAt, schedule.timezone) : null;
+  const ranToday = !!started && started.ymd === today.ymd && started.hm >= schedule.scanTime;
+  let untilDue = minutesOf(schedule.scanTime) * 60_000 - sinceMidnight;
+  // The scheduler starts a due run within a minute. Once today's has run, or an hour has passed
+  // without it starting (no worker is running, and asking would not start one), watch for tomorrow's.
+  if (ranToday || untilDue <= -HOUR_MS) untilDue += DAY_MS;
+  if (untilDue <= HOUR_MS) return { live: true, wakeInMs: null };
+  let wakeInMs = untilDue - HOUR_MS;
+  if (started?.ymd === today.ymd) wakeInMs = Math.min(wakeInMs, DAY_MS - sinceMidnight);
+  return { live: false, wakeInMs };
+}
+
+/** The shared daily run, counted for one account's companies, and when the banner should ask again. */
+export async function getScanStatus(userId: string, now = new Date()) {
   const [stored, settings] = await Promise.all([getLatestScanRun(), getSystemSettings()]);
   const run = stored ? await scanRunReport(stored, userId) : null;
-  return { text: scanBannerText(run, settings.timezone, new Date()) + (run?.historicalOnly ? " · Stored summary; source detail unavailable" : "") };
+  return {
+    text: scanBannerText(run, settings.timezone, now) + (run?.historicalOnly ? " · Stored summary; source detail unavailable" : ""),
+    ...scanPollHint(stored, settings, now),
+  };
 }

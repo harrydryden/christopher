@@ -20,7 +20,7 @@ export default async function ForgotPasswordPage({ searchParams }: { searchParam
   return (
     <AuthShell
       title="Reset your password"
-      footer={<p><Link href="/login" className="underline">Back to sign in</Link></p>}
+      footer={<p><Link prefetch={false} href="/login" className="underline">Back to sign in</Link></p>}
     >
       {sp.sent ? (
         <p className="text-14" role="status">

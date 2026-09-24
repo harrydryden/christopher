@@ -23,7 +23,7 @@ import { aiOutcome } from "@ava/db";
 const CANCELLED = "Cancelled because another call in the same task failed.";
 
 beforeAll(async () => {
-  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
+  const client = createTestDb();
   database = client.db;
   pool = client.pool;
   await runMigrations(database);
@@ -472,6 +472,7 @@ it("counts build motions and failure kinds, and reads nothing from a database wi
 import { countHealthItems, healthItemDetail, healthItemHeadline, healthItems, SOURCE_FAILING_AFTER } from "./health";
 import { formatUsd } from "@/lib/format";
 import { subscribeToCompany } from "@ava/db";
+import { createTestDb } from "@/test/db";
 
 async function resetAttention() {
   await database.execute(sql`truncate companies, ai_calls, user_settings, users restart identity cascade`);

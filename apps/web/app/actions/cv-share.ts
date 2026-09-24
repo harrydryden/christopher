@@ -52,6 +52,10 @@ export async function createCvShareLink(
     if (!draft) return fail("That CV could not be found.");
     if (!draft.content) return fail("This CV has nothing to show yet. Build it before sharing it.");
     if (draft.archivedAt) return fail("This revision has been archived. Share the current one instead.");
+    // A reader is shown wording the factual review has passed, and only that: a failed build's
+    // wording, or a revision still being written, is not one to send anyone.
+    if (draft.status !== "ready" || !draft.assessment)
+      return fail("Share this CV once its build and assessment have finished.");
 
     const token = newCvShareToken();
     const days = cvShareDays(form.get("days"));

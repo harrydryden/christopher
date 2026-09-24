@@ -55,3 +55,39 @@ export async function subscribedCompanyIds(db: Writer, userId: string, statuses:
     .where(and(eq(companySubscriptions.userId, userId), inArray(companySubscriptions.status, statuses)));
   return rows.map(r => r.companyId);
 }
+
+/** The job event a retired role carries: a closure, and the reason it was not a scan's. */
+export const SOURCE_RETIRED_REASON = "source_retired";
+
+/**
+ * Close the open roles of sources nobody scans any more: a source disabled (by a person, or
+ * superseded when discovery confirmed another), and every source of a company nobody follows.
+ * Nothing will ever reconcile those roles again, so left open they would read as live for ever,
+ * and a company followed again would admit months-old "open" roles.
+ *
+ * This is not a scan's closure and does not pretend to be one: no listing was read. It is the
+ * lifecycle of the source, caused by a person or by discovery. `closed_at` is the last time a
+ * scan saw the role, and the `closed` event says why (`reason: source_retired`). Only roles a
+ * scan observed are retired; a role a follower pasted was never that source's to lose. A source
+ * that comes back into use reopens what it still lists on its next scan, as any closed role is.
+ *
+ * Without a scope it sweeps the whole catalogue (the daily run does); an action that disables one
+ * source passes that `sourceId`.
+ */
+export async function retireSourceRoles(db: Writer, scope: { sourceId?: string; companyId?: string } = {}, now = new Date()): Promise<number> {
+  const sourceId = scope.sourceId ?? null;
+  const companyId = scope.companyId ?? null;
+  const result = await db.execute(sql`with retired as (
+      update jobs j set status = 'closed', closed_at = j.last_seen_at, updated_at = ${now}
+      from career_sources cs join companies c on c.id = cs.company_id
+      where cs.id = j.source_id and j.status = 'open' and j.origin = 'scan'
+        and (cs.status = 'disabled' or c.status = 'archived')
+        and (${sourceId}::uuid is null or cs.id = ${sourceId}::uuid)
+        and (${companyId}::uuid is null or c.id = ${companyId}::uuid)
+      returning j.id, j.source_id
+    )
+    insert into job_events (job_id, type, payload)
+    select id, 'closed', jsonb_build_object('reason', ${SOURCE_RETIRED_REASON}::text, 'sourceId', source_id) from retired
+    returning job_id`);
+  return result.rows.length;
+}

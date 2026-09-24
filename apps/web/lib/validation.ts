@@ -54,7 +54,23 @@ function fingerprint(text: string): string {
  * never the message itself, which may carry SQL, parameters, CV contents or evidence — and the
  * caller's fallback is shown instead.
  */
+/**
+ * The errors Next.js throws to navigate — `redirect()`, `notFound()` and the HTTP fallbacks —
+ * recognised by their digest, as the framework's own `unstable_rethrow` recognises them. Checked
+ * here rather than through that import so the many suites that mock `next/navigation` with only a
+ * `redirect` keep working.
+ */
+function isNavigationSignal(error: unknown): boolean {
+  const digest = (error as { digest?: unknown } | null)?.digest;
+  return typeof digest === "string" && /^(NEXT_REDIRECT|NEXT_NOT_FOUND|NEXT_HTTP_ERROR_FALLBACK)/.test(digest);
+}
+
 export function actionError(error: unknown, fallback: string, event = "action_failed"): ActionResult {
+  // A gate's answer is not the action's failure: a redirect it asked for (to confirm the address)
+  // must reach the router, and a refusal to a signed-out or unentitled caller must reach the page
+  // as itself, so the person is asked to sign in rather than told the save could not be made.
+  if (isNavigationSignal(error)) throw error;
+  if (error instanceof Error && (error.message === "Unauthorised" || error.message === "Forbidden")) throw error;
   if (isUserFacingError(error)) return fail(error.message);
   const name = error instanceof Error ? error.name.slice(0, 64) : typeof error;
   const message = error instanceof Error ? error.message : String(error);

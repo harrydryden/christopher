@@ -19,7 +19,7 @@ export default async function ResetPasswordPage({ searchParams }: { searchParams
   const error = sp.error ? (ERROR_MESSAGES[sp.error] ?? "Something went wrong. Try again.") : null;
 
   return (
-    <AuthShell title="Choose a new password" footer={<p><Link href="/forgot-password" className="underline">Request a new link</Link></p>}>
+    <AuthShell title="Choose a new password" footer={<p><Link prefetch={false} href="/forgot-password" className="underline">Request a new link</Link></p>}>
       {!token ? (
         <p className="text-14 text-danger">{ERROR_MESSAGES.invalid_token}</p>
       ) : (

@@ -52,6 +52,39 @@ jobs:
       - name: Test release and evaluation scripts
         run: pnpm exec node --test scripts/*.test.mjs
 
+  # The worker suite again, in a shuffled file order and under a flipped query plan. Both are
+  # cheap and catch the class of test that passes only because of the order rows happen to come
+  # back in: a suite that leaks state into another file, or a scan fixture whose rows share one
+  # frozen timestamp and are told apart by whichever the planner returns first.
+  order-independence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ava_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ava_test
+      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ava_test
+      AVA_DISABLE_BROWSER: "1"
+      PGOPTIONS: "-c enable_indexscan=off -c enable_bitmapscan=off"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @ava/worker exec vitest run --sequence.shuffle.files --sequence.seed ${{ github.run_number }}
+
   # Everything that needs a real browser: the headless Chromium test and the smoke
   # run, which builds the interface, signs in, fetches every page and drives the CV
   # workspace through Playwright. Runs beside `check`, not after it.

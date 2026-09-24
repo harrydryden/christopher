@@ -21,7 +21,7 @@ export function NavLink({
   // A sidebar entry owns every page its section reaches, so the CV workspace keeps Applications lit.
   const active = href === "/" ? pathname === "/" : pathname.startsWith(href) || (href === "/companies" && pathname === "/suggestions") || (href === "/applications" && pathname.startsWith("/cv")) || (href === "/settings" && ["/learning", "/account"].includes(pathname));
   return (
-    <Link
+    <Link prefetch={false}
       href={href}
       aria-current={active ? "page" : undefined}
       className={`ds-pixel flex items-center justify-between gap-2 border-2 px-3 py-1.5 text-11 no-underline ${indent ? "md:ml-3" : ""} ${

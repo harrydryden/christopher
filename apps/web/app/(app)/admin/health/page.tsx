@@ -1,7 +1,6 @@
 import { workloadMetrics } from "@ava/db";
 import { aiBudgetWindowStart, CV_BUILD_MOTIONS, CV_FAILURE_POLICIES, type CvFailureKind } from "@ava/core";
 import { CV_STAGE_LABELS } from "@/lib/cv-build-narrative";
-import { users } from "@ava/db/schema";
 import Link from "next/link";
 import { retryTask } from "@/app/actions/health";
 import { Badge, scanStatusTone, sourceStatusTone, taskStatusTone } from "@/components/Badge";
@@ -11,6 +10,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { requireAdmin } from "@/lib/auth";
+import { RefusalNotice } from "@/components/RefusalNotice";
 import { db } from "@/lib/db";
 import { totalAiUsage } from "@/lib/ai-usage";
 import { formatBytes, formatCount, formatDelta, formatDuration, formatLatency, formatPercent, formatStepDuration, formatUsd, formatUsdPrecise, relativeTime, shortDate } from "@/lib/format";
@@ -21,20 +21,15 @@ import {
   getCvBuildCosts,
   getCvBuildFailureKinds,
   getCvBuildMotions,
-  getLastCrashRecovery,
   getQueueCounts,
   getScoredRoleCost,
-  getTotalAiSpend,
-  getWorkerStatus,
   listCompaniesWithNoSource,
   listFailedTasks,
   listLargestScanInputs,
   listRecentProblemScans,
   listRecentScanRuns,
-  listRecentWorkerEvents,
-  listRetryingTasks,
-  listRunningTasks,
   listSourcesNeedingAttention,
+  operationsActivity,
   outboundTraffic,
 } from "@/lib/queries/health";
 
@@ -53,43 +48,52 @@ const WORKER_EVENT_TONE: Partial<Record<string, "green" | "blue" | "amber" | "re
   vitals: "neutral",
 };
 
-export default async function AdminOperationsPage() {
+export default async function AdminOperationsPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   await requireAdmin();
+  const sp = await searchParams;
   const now = new Date();
   // Budgets belong to accounts and each has its own window; this page is the deployment's report,
   // so it counts the calendar month that everybody's budget resets on.
   const since = aiBudgetWindowStart(now, null);
-  const [metrics, status, crash, running, retrying, events, largestInputs, attentionSources, noSourceCompanies, problemScans, failedTasks, queueCounts, spend, usage, scanRuns, accounts, traffic, cvCosts, scoredRoles, cvMotions, cvFailures] = await Promise.all([
+  // Nineteen statements in three groups of at most eight, rather than every card's queries at once
+  // into a pool of three connections, where the ones still waiting after ten seconds fail the page.
+  // The worker and the queue first; the activity names its subjects and the spend table's accounts
+  // in one statement once the usage has been read.
+  const usagePending = getAiUsage(since);
+  const [metrics, activity, failedTasks, queueCounts, usage] = await Promise.all([
     workloadMetrics(db()),
-    getWorkerStatus(now),
-    getLastCrashRecovery(),
-    listRunningTasks(25),
-    listRetryingTasks(25),
-    listRecentWorkerEvents(30),
+    operationsActivity(now, usagePending.then((groups) => groups.map((group) => group.userId))),
+    listFailedTasks(50),
+    getQueueCounts(),
+    usagePending,
+  ]);
+  // Then the catalogue and its scans.
+  const [largestInputs, attentionSources, noSourceCompanies, problemScans, scanRuns] = await Promise.all([
     listLargestScanInputs(7, 10),
     listSourcesNeedingAttention(),
     listCompaniesWithNoSource(),
     listRecentProblemScans(undefined, 7),
-    listFailedTasks(50),
-    getQueueCounts(),
-    getTotalAiSpend(since),
-    getAiUsage(since),
     listRecentScanRuns(10),
-    db().select({ id: users.id, email: users.email }).from(users),
+  ]);
+  // Then what the spend bought.
+  const [traffic, cvCosts, scoredRoles, cvMotions, cvFailures] = await Promise.all([
     outboundTraffic(7),
     getCvBuildCosts(20),
     getScoredRoleCost(30),
     getCvBuildMotions(30),
     getCvBuildFailureKinds(30),
   ]);
-  const emailById = new Map(accounts.map((a) => [a.id, a.email]));
+  const { status, crash, running, retrying, events } = activity;
   const totals = totalAiUsage(usage);
-  const accountName = (userId: string | null) => (userId ? emailById.get(userId) ?? userId : "Shared");
+  // Every call since the month began, whoever it was for: the usage table's own total.
+  const spend = totals.costUsd;
+  const accountName = (userId: string | null) => (userId ? activity.accountEmail(userId) ?? userId : "Shared");
   const heartbeat = status.heartbeat;
 
   return (
     <div className="space-y-6">
       <PageHeader title="Operations" description="Everything the shared worker is doing, across every account and every company in the catalogue." />
+      <RefusalNotice sentence={sp.error} className="mb-4" />
 
       <Card
         title="Background worker"
@@ -341,7 +345,7 @@ export default async function AdminOperationsPage() {
             <TBody>
               {largestInputs.map((row) => (
                 <TR key={row.sourceId}>
-                  <TD><Link href={`/admin/catalogue?q=${encodeURIComponent(row.companyName)}`} className="hover:underline">{row.companyName}</Link></TD>
+                  <TD><Link prefetch={false} href={`/admin/catalogue?q=${encodeURIComponent(row.companyName)}`} className="hover:underline">{row.companyName}</Link></TD>
                   <TD>{row.sourceType}</TD>
                   <TD className="text-muted">{row.fetchMethod ?? "—"}</TD>
                   <TD className={`text-right ${heartbeat?.vitals && row.bytes > heartbeat.vitals.heapLimitMb * 1_048_576 * 0.1 ? "text-warn" : ""}`}>{formatBytes(row.bytes)}</TD>
@@ -361,7 +365,7 @@ export default async function AdminOperationsPage() {
           <span className="text-14 text-muted">spent since {shortDate(since)}, across every account and the work no account asked for</span>
         </div>
         <p className="mb-3 text-14 text-muted">
-          Spending is bounded per account: each has its own monthly budget, which it sets on Settings and which you can set for anyone in <Link href="/admin" className="text-fg underline">Accounts</Link>, where each account&apos;s own figure and window are shown. An account that has spent its month has its optional calls (company and filter suggestions) skipped until the 1st.
+          Spending is bounded per account: each has its own monthly budget, which it sets on Settings and which you can set for anyone in <Link prefetch={false} href="/admin" className="text-fg underline">Accounts</Link>, where each account&apos;s own figure and window are shown. An account that has spent its month has its optional calls (company and filter suggestions) skipped until the 1st.
         </p>
         <section>
           <h3 className="text-14 text-muted">Usage by account, feature and model</h3>
@@ -632,14 +636,14 @@ export default async function AdminOperationsPage() {
             {attentionSources.map((s) => (
               <li key={s.id} className="flex flex-wrap items-center gap-2">
                 <Badge tone={sourceStatusTone(s.status)}>{s.status === "needs_confirmation" ? "needs confirmation" : s.status}</Badge>
-                <Link href={`/admin/catalogue?q=${encodeURIComponent(s.companyName)}`} className="font-medium text-fg hover:underline">{s.companyName}</Link>
+                <Link prefetch={false} href={`/admin/catalogue?q=${encodeURIComponent(s.companyName)}`} className="font-medium text-fg hover:underline">{s.companyName}</Link>
                 <span className="text-12 text-muted">{s.type}</span>
               </li>
             ))}
             {noSourceCompanies.map((c) => (
               <li key={c.id} className="flex flex-wrap items-center gap-2">
                 <Badge tone="red">no source</Badge>
-                <Link href={`/admin/catalogue?q=${encodeURIComponent(c.name)}`} className="font-medium text-fg hover:underline">{c.name}</Link>
+                <Link prefetch={false} href={`/admin/catalogue?q=${encodeURIComponent(c.name)}`} className="font-medium text-fg hover:underline">{c.name}</Link>
               </li>
             ))}
           </ul>
@@ -663,7 +667,7 @@ export default async function AdminOperationsPage() {
             <TBody>
               {problemScans.map((p) => (
                 <TR key={p.scan.id}>
-                  <TD><Link href={`/admin/catalogue?q=${encodeURIComponent(p.companyName)}`} className="hover:underline">{p.companyName}</Link></TD>
+                  <TD><Link prefetch={false} href={`/admin/catalogue?q=${encodeURIComponent(p.companyName)}`} className="hover:underline">{p.companyName}</Link></TD>
                   <TD>{p.sourceType}</TD>
                   <TD><Badge tone={scanStatusTone(p.scan.status)}>{p.scan.status}</Badge></TD>
                   <TD className="whitespace-nowrap" title={p.scan.startedAt.toISOString()}>{relativeTime(p.scan.startedAt, now)}</TD>

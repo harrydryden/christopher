@@ -16,13 +16,15 @@ import { and, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { handlers } from "./handlers";
-import { handleImportPosting } from "./handlers/import-posting";
+import { handleImportPosting, onCompanyHost } from "./handlers/import-posting";
+import { handleFetchDescription } from "./handlers/description";
+import { reevaluateGate } from "@ava/db";
 import { TaskQueue } from "./queue";
 import { ensureTestUser } from "./test-users";
 import { startTestServer, type TestServer } from "./test-server";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
-const HOSTS = ["www.pasted.test", "pasted.test"];
+const HOSTS = ["www.pasted.test", "pasted.test", "www.elsewhere.test"];
 
 const STAFF_ENGINEER = "https://www.pasted.test/jobs/staff-engineer";
 const THIN = "https://www.pasted.test/jobs/thin";
@@ -68,6 +70,11 @@ beforeAll(async () => {
         <meta property="og:site_name" content="Pasted Ltd"></head><body><h1>Engineer, Data</h1><p>Apply here.</p></body></html>` },
       // A listing, not a role: nothing on it names a job, so there is no title to take.
       "/jobs": { body: "<!doctype html><html><head></head><body><ul><li>roles</li></ul></body></html>" },
+    },
+    // Somebody else's site, with a page that reads like one of this company's roles.
+    "www.elsewhere.test": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /\n", contentType: "text/plain" },
+      "/jobs/staff-engineer": { body: jsonLdPage("Staff Engineer, Platform", "https://www.elsewhere.test/jobs/staff-engineer", DESCRIPTION) },
     },
   }, HOSTS);
 
@@ -234,4 +241,90 @@ it("throws when the site cannot be reached, so the queue retries with its backof
   await expect(handleImportPosting(importTask(unreachable), deps))
     .rejects.toThrow("Could not fetch elsewhere.test: network error");
   expect(await db.select().from(schema.jobs)).toHaveLength(0);
+});
+
+it("puts an import back for when a host that asked us to wait will be read again", async () => {
+  // Paced for an hour: the fetcher sends nothing and says when the host may be asked again.
+  await db.execute(sql`insert into host_pacing (host, next_at) values ('www.pasted.test', now() + interval '1 hour')
+    on conflict (host) do update set next_at = excluded.next_at`);
+  try {
+    const result = await handleImportPosting(importTask(STAFF_ENGINEER), deps) as { ok: false; reason: string; retryAt: string };
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("asked us to wait");
+    expect(await db.select().from(schema.jobs)).toHaveLength(0);
+    const [retry] = await tasksOfType("import_posting");
+    expect(retry!.payload).toMatchObject({ userId: importer.id, companyId: company.id, url: STAFF_ENGINEER, hostBusyRetries: 1 });
+    expect(Math.abs(retry!.runAfter!.getTime() - new Date(result.retryAt).getTime())).toBeLessThan(1000);
+    expect(retry!.runAfter!.getTime()).toBeGreaterThan(Date.now() + 50 * 60_000);
+
+    // When the pace allows, the import that was put back stores the role as usual.
+    await db.execute(sql`delete from host_pacing`);
+    await db.update(schema.tasks).set({ runAfter: new Date() }).where(eq(schema.tasks.id, retry!.id));
+    await queue.drain();
+    expect(await db.select().from(schema.jobs)).toHaveLength(1);
+    expect((await viewsFor(importer)).filter(v => v.inTable)).toHaveLength(1);
+  } finally {
+    await db.execute(sql`delete from host_pacing`);
+  }
+});
+
+it("keeps a posting pasted from another site for the account that pasted it alone", async () => {
+  const foreign = "https://www.elsewhere.test/jobs/staff-engineer";
+  const result = await handleImportPosting(importTask(foreign), deps) as { ok: true; jobId: string };
+  expect(result.ok).toBe(true);
+  const [job] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, result.jobId));
+  expect(job).toMatchObject({ origin: "user", addedBy: importer.id, shared: false });
+  expect(await viewsFor(importer)).toHaveLength(1);
+  // The follower whose gate matches it by title is never offered it: not at import, not when its
+  // gate is re-run, and not when a description arrives for it.
+  expect(await viewsFor(matching)).toHaveLength(0);
+  await reevaluateGate(db, matching.id, await deps.userSettings(matching.id), now);
+  await handleFetchDescription({ payload: { jobId: result.jobId } } as never, deps);
+  expect(await viewsFor(matching)).toHaveLength(0);
+  expect(await viewsFor(importer)).toHaveLength(1);
+});
+
+it("shares a posting pasted from the company's own site with every follower whose gate matches", async () => {
+  const result = await handleImportPosting(importTask(STAFF_ENGINEER), deps) as { ok: true; jobId: string };
+  const [job] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, result.jobId));
+  expect(job!.shared).toBe(true);
+  expect((await viewsFor(matching)).map(v => v.jobId)).toEqual([result.jobId]);
+});
+
+it("keeps a stored role a second account pasted in its table, whatever its gate and later re-runs", async () => {
+  const first = await handleImportPosting(importTask(STAFF_ENGINEER), deps) as { ok: true; jobId: string };
+  // The third account's gate turns the role away; it pastes the link anyway.
+  const again = await handleImportPosting(importTask(STAFF_ENGINEER, missing), deps) as { ok: true; jobId: string; existing: boolean };
+  expect(again).toMatchObject({ ok: true, existing: true, jobId: first.jobId });
+  const [view] = await viewsFor(missing);
+  expect(view).toMatchObject({ inTable: true, addedByUrl: true, archivedAt: null });
+  // Every boot and every settings save re-runs the gate: the role it asked for stays.
+  await reevaluateGate(db, missing.id, await deps.userSettings(missing.id), now);
+  const [kept] = await viewsFor(missing);
+  expect(kept).toMatchObject({ inTable: true, archivedAt: null });
+
+  // Asking again for a role the gate had put away brings it back.
+  await db.update(schema.userJobs).set({ inTable: false, archivedAt: now, gateArchivedAt: now, addedByUrl: false })
+    .where(and(eq(schema.userJobs.userId, matching.id), eq(schema.userJobs.jobId, first.jobId)));
+  await handleImportPosting(importTask(STAFF_ENGINEER, matching), deps);
+  const [back] = await viewsFor(matching);
+  expect(back).toMatchObject({ inTable: true, archivedAt: null, addedByUrl: true });
+});
+
+it("knows a company's own hosts from its domain, its sources and its own boards", () => {
+  const company = { domain: "acme.example", homepageUrl: "https://www.acme-robotics.example/" };
+  const sources = [
+    { type: "greenhouse", url: "https://job-boards.greenhouse.io/acme", apiUrl: "https://boards-api.greenhouse.io/v1/boards/acme/jobs", atsSlug: "acme" },
+    { type: "html", url: "https://careers.acmejobs.example/listing", apiUrl: null, atsSlug: null },
+  ];
+  expect(onCompanyHost("https://acme.example/jobs/1", company, sources)).toBe(true);
+  expect(onCompanyHost("https://jobs.acme.example/1", company, sources)).toBe(true);
+  expect(onCompanyHost("https://www.acme-robotics.example/careers/1", company, sources)).toBe(true);
+  expect(onCompanyHost("https://careers.acmejobs.example/role/9", company, sources)).toBe(true);
+  expect(onCompanyHost("https://job-boards.greenhouse.io/acme/jobs/4001", company, sources)).toBe(true);
+  // A vendor's host is shared by every customer: another company's board on it is not this one's.
+  expect(onCompanyHost("https://job-boards.greenhouse.io/someone-else/jobs/4001", company, sources)).toBe(false);
+  expect(onCompanyHost("https://notacme.example/jobs/1", company, sources)).toBe(false);
+  expect(onCompanyHost("https://evil.example/acme.example/jobs/1", company, sources)).toBe(false);
+  expect(onCompanyHost("not a url", company, sources)).toBe(false);
 });

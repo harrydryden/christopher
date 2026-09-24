@@ -4,7 +4,7 @@ import { Card } from "./Card";
 import { EmptyState } from "./EmptyState";
 import { RolesTable } from "./RolesTable";
 import { RolesFilterBar } from "./RolesFilterBar";
-import { appliedRoleCount, attachEvents, buildRoleRowVM, DEFAULT_SORT_DIR, fetchRecentEventsFor, fetchRolePage, fetchRoleCounts, filtersToQueryString, parseRolesFilters, resolveRoleView, type RawSearchParams, type RolesFilters, type SortKey } from "@/lib/queries/jobs";
+import { appliedRoleCount, attachEvents, buildRoleRowVM, DEFAULT_SORT_DIR, fetchRecentEventsFor, fetchRolePage, fetchRoleCounts, filtersToQueryString, parseRolesFilters, resolveRoleView, roleTabFor, type RawSearchParams, type RolesFilters, type SortKey } from "@/lib/queries/jobs";
 import { listCompanyOptions } from "@/lib/queries/companies";
 import { pipelineCompany, pipelineStageCounts } from "@/lib/queries/applications";
 
@@ -27,15 +27,17 @@ function sortLinksFor(path: string, view: RoleStatus, filters: RolesFilters): Pa
 export async function RoleWorkspace({ userId, searchParams, companyId }: { userId: string; searchParams: RawSearchParams; companyId?: string }) {
   const sp = searchParams;
   const scoped = companyId ? { company: companyId } : {};
-  // Counts first, then the page: a link that names no view opens on Matched unless this scope has
-  // no matched roles, so the counts are an input to every read below them.
-  const counts = await fetchRoleCounts(userId, parseRolesFilters({ ...sp, ...scoped }).company || undefined);
-  const view = resolveRoleView(sp, counts);
+  // A link that names no view opens on Matched unless this scope has no matched roles, so only such
+  // a link waits for the counts; one that names its view (every tab, sort and page link does) reads
+  // the counts beside the page.
+  const countsPending = fetchRoleCounts(userId, parseRolesFilters({ ...sp, ...scoped }).company || undefined);
+  const view = roleTabFor(sp) ?? resolveRoleView(sp, await countsPending);
   const dismissed = view === "user-dismissed";
   const filters = parseRolesFilters({ ...sp, view, ...scoped });
   const archivedFilters = parseRolesFilters({ ...sp, view: "archived", ...scoped });
   const path = companyId ? `/companies/${companyId}` : "/";
-  const [result, archivedResult, options, stageCounts] = await Promise.all([
+  const [counts, result, archivedResult, options, stageCounts] = await Promise.all([
+    countsPending,
     fetchRolePage(userId, filters, false, null, Number(sp.page)),
     // The archived section is only rendered under Dismissed, so nothing else pays for the read.
     dismissed ? fetchRolePage(userId, archivedFilters, true, null, Number(sp.archivedPage)) : null,
@@ -58,7 +60,7 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
   const viewHref = (status: RoleStatus) => `${path}?view=${status}${!companyId && filters.company ? `&company=${filters.company}` : ""}#roles`;
   return <section id="roles">
     <nav aria-label="Role status" className="mb-4 flex flex-wrap gap-2">
-      {ROLE_TABS.map(status => <Link key={status} href={viewHref(status)} aria-current={status === view ? "page" : undefined}
+      {ROLE_TABS.map(status => <Link prefetch={false} key={status} href={viewHref(status)} aria-current={status === view ? "page" : undefined}
         className={`ds-pixel border-2 px-3 py-2 text-11 no-underline ${status === view ? "border-fg bg-fg text-bg" : "border-transparent text-muted hover:bg-sunken hover:text-fg"}`}>
         {ROLE_STATUS_LABELS[status]}{" "}<span className="ml-1 tabular-nums">{counts[status]}</span>
         {status === "user-shortlisted" && counts[status] > 0 && applied > 0 && <span className="ml-1 tabular-nums">· {applied} applied</span>}
@@ -72,9 +74,9 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
       emptyState={<EmptyState title={counts[view] ? "No roles match these filters" : view === "auto-matched" ? "No roles awaiting review" : `No ${ROLE_STATUS_LABELS[view].toLowerCase()} roles`}
         description={counts[view] ? "Clear the filters to see the other roles in this view." : undefined} />} />
     {result.pageCount > 1 && <nav aria-label="Role pages" className="my-4 flex items-center gap-4 text-13">
-      {result.page > 1 && <Link className="underline" href={href(result.page - 1)}>Previous</Link>}
+      {result.page > 1 && <Link prefetch={false} className="underline" href={href(result.page - 1)}>Previous</Link>}
       <span>Page {result.page} of {result.pageCount}</span>
-      {result.page < result.pageCount && <Link className="underline" href={href(result.page + 1)}>Next</Link>}
+      {result.page < result.pageCount && <Link prefetch={false} className="underline" href={href(result.page + 1)}>Next</Link>}
     </nav>}
     {/* The same legend the Applications page carries, so a stage badge on a row is explained where
         the badge is, not one page away. */}
@@ -95,9 +97,9 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
         <RolesTable key={`${query}:archived:${archivedResult.page}`} rows={archivedRows} archived hideCompany={!!companyId}
           emptyState={<EmptyState title="No archived roles" description="Archived roles are ones you put away or that stopped matching your filters." />} />
         {archivedResult.pageCount > 1 && <nav aria-label="Archived role pages" className="mt-4 flex items-center gap-4 text-13">
-          {archivedResult.page > 1 && <Link className="underline" href={archivedHref(archivedResult.page - 1)}>Previous</Link>}
+          {archivedResult.page > 1 && <Link prefetch={false} className="underline" href={archivedHref(archivedResult.page - 1)}>Previous</Link>}
           <span>Page {archivedResult.page} of {archivedResult.pageCount}</span>
-          {archivedResult.page < archivedResult.pageCount && <Link className="underline" href={archivedHref(archivedResult.page + 1)}>Next</Link>}
+          {archivedResult.page < archivedResult.pageCount && <Link prefetch={false} className="underline" href={archivedHref(archivedResult.page + 1)}>Next</Link>}
         </nav>}
       </Card>
     </div>}

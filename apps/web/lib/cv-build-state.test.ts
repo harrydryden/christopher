@@ -5,6 +5,7 @@
  */
 import { expect, it } from "vitest";
 import {
+  CV_WORKER_STOPPED_MESSAGE,
   cvBuildState,
   cvStepsSignature,
   cvWorkVersion,
@@ -289,4 +290,13 @@ it("carries the ledger and the failure into the poll's version", () => {
   // A recorded failure changes it, and so does the same kind failing on the next attempt.
   expect(cvWorkVersion({ ...still, failure: failure() }, now)).not.toBe(cvWorkVersion(still, now));
   expect(cvWorkVersion({ ...still, failure: failure({ attempt: 2 }) }, now)).not.toBe(cvWorkVersion({ ...still, failure: failure() }, now));
+});
+
+it("says a queued build is waiting for a worker that is not running, rather than simply waiting", () => {
+  const queued = draft({ status: "queued", buildStage: null, progressAt: null });
+  expect(cvBuildState(queued, task({ status: "queued", attempts: 0, startedAt: null, workerStopped: true }), now))
+    .toMatchObject({ phase: "waiting", tone: "amber", message: CV_WORKER_STOPPED_MESSAGE });
+  // A running build has a worker by definition, and a queued one with a live worker waits as usual.
+  expect(cvBuildState(queued, task({ status: "queued", attempts: 0, startedAt: null, workerStopped: false }), now).message)
+    .toBe("Waiting for the worker.");
 });

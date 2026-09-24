@@ -35,7 +35,7 @@ export default async function HealthPage() {
       <PageHeader
         title="Health"
         description="Everything that needs you, and how the companies you follow are being read."
-        actions={user.role === "admin" ? <Link href="/admin/health" className="text-13 underline">Operations for the whole deployment</Link> : undefined}
+        actions={user.role === "admin" ? <Link prefetch={false} href="/admin/health" className="text-13 underline">Operations for the whole deployment</Link> : undefined}
       />
 
       <Card title={`Needs you (${itemCount})`}>
@@ -47,7 +47,7 @@ export default async function HealthPage() {
             {itemCount > items.length && (
               <p className="text-12 text-muted">
                 Showing the first {items.length} of {itemCount}. Resolve some, or browse the rest from{" "}
-                <Link href="/companies" className="text-fg underline">Companies</Link>.
+                <Link prefetch={false} href="/companies" className="text-fg underline">Companies</Link>.
               </p>
             )}
           </div>
@@ -77,7 +77,7 @@ export default async function HealthPage() {
             <TBody>
               {problemScans.map((p) => (
                 <TR key={p.scan.id}>
-                  <TD><Link href={`/companies/${p.companyId}`} className="hover:underline">{p.companyName}</Link></TD>
+                  <TD><Link prefetch={false} href={`/companies/${p.companyId}`} className="hover:underline">{p.companyName}</Link></TD>
                   <TD>{p.sourceType}</TD>
                   <TD><Badge tone={scanStatusTone(p.scan.status)}>{p.scan.status}</Badge></TD>
                   <TD className="whitespace-nowrap" title={p.scan.startedAt.toISOString()}>{relativeTime(p.scan.startedAt, now)}</TD>

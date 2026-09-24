@@ -1,28 +1,68 @@
 "use server";
 
-import { requireUser, requireVerifiedUser } from "@/lib/auth";
+import { needsEmailConfirmation, requireUser, requireVerifiedUser } from "@/lib/auth";
 
 import { appendProfile, latestProfileFor, setSubscriptionStatus } from "@ava/db";
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { filterSuggestions, tagVocabulary } from "@ava/db/schema";
+import { redirect } from "next/navigation";
+import { filterSuggestions, tagVocabulary, type User } from "@ava/db/schema";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/enqueue";
 import { countRolesInTable } from "@/lib/queries/learning";
 import { describeFilterSuggestion, extractSuggestionValue } from "@/lib/filterSuggestions";
 import { getSettings, setUserSetting, saveSettingsAndGate } from "@/lib/settings";
-import { actionError, fail, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
+import { actionError, fail, zUuid, type ActionResult } from "@/lib/validation";
 
+/**
+ * The Learning page binds its forms straight to these actions, so an expected refusal — a stale
+ * page, an empty or overlong answer — goes back to the page as a sentence (`?error=`) rather than
+ * being thrown into a crash page that loses what was typed.
+ */
+function refuseOnLearning(sentence: string): never {
+  redirect(`/learning?${new URLSearchParams({ error: sentence }).toString()}`);
+}
+
+/**
+ * Pinned statements and answers go into every profile synthesis verbatim, so each one is a
+ * sentence or a paragraph rather than a document, and there are only so many of them.
+ */
+const PINNED_STATEMENT_LIMIT = 2_000;
+const PINNED_STATEMENTS_MAX = 50;
+
+const PROFILE_CHANGED = "Your preference profile changed since this page loaded, often because a new version was synthesised. Reload Learning and make the change again.";
+
+/**
+ * Append a version the person wrote. The worker writes versions too — a synthesis is queued after
+ * most decisions — so a page opened before one landed is stale, which is a refusal with a reason.
+ */
+async function appendOwnProfile(userId: string, expectedVersion: number, input: Parameters<typeof appendProfile>[3]): Promise<void> {
+  if (!Number.isInteger(expectedVersion) || expectedVersion < 0) refuseOnLearning(PROFILE_CHANGED);
+  try {
+    await appendProfile(db(), userId, expectedVersion, input);
+  } catch (error) {
+    if (((await latestProfileFor(db(), userId))?.version ?? 0) !== expectedVersion) refuseOnLearning(PROFILE_CHANGED);
+    throw error;
+  }
+}
+
+/**
+ * Everything on Learning that ends in a model call — a profile synthesis or a re-score — waits for a
+ * confirmed address, like every other action that spends (R-6.3's seed profile is the exception
+ * below). Reading the page, rejecting a suggestion and accepting a tag spend nothing and do not.
+ */
 export async function savePinnedStatements(formData: FormData): Promise<void> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   const raw = String(formData.get("pinnedStatements") ?? "");
   const lines = raw
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
+  if (lines.length > PINNED_STATEMENTS_MAX) refuseOnLearning(`Pin at most ${PINNED_STATEMENTS_MAX} statements.`);
+  if (lines.some((line) => line.length > PINNED_STATEMENT_LIMIT)) refuseOnLearning(`Keep each pinned statement under ${PINNED_STATEMENT_LIMIT.toLocaleString("en-GB")} characters.`);
   const latest = await latestProfileFor(db(), user.id);
   const expectedVersion = Number(formData.get("profileVersion") ?? latest?.version ?? 0);
-  await appendProfile(db(), user.id, expectedVersion, {
+  await appendOwnProfile(user.id, expectedVersion, {
     markdown: latest?.markdown ?? (await getSettings()).seedProfile,
     pinnedStatements: lines, openQuestions: latest?.openQuestions ?? [],
     sourceDecisionCount: latest?.sourceDecisionCount ?? 0, model: "user",
@@ -32,19 +72,20 @@ export async function savePinnedStatements(formData: FormData): Promise<void> {
 }
 
 export async function answerOpenQuestion(questionId: string, formData: FormData): Promise<void> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   const answer = String(formData.get("answer") ?? "").trim();
-  if (!answer) throw new UserFacingError("An answer is required.");
+  if (!answer) refuseOnLearning("Write an answer before saving it.");
+  if (answer.length > PINNED_STATEMENT_LIMIT) refuseOnLearning(`Keep an answer under ${PINNED_STATEMENT_LIMIT.toLocaleString("en-GB")} characters.`);
   const latest = await latestProfileFor(db(), user.id);
-  if (!latest) throw new UserFacingError("No preference profile exists yet.");
-  const questions = latest.openQuestions ?? [];
+  const questions = latest?.openQuestions ?? [];
   const question = questions.find((q) => q.id === questionId);
-  if (!question) throw new UserFacingError("Question not found.");
+  if (!latest || !question) refuseOnLearning(PROFILE_CHANGED);
+  if (latest.pinnedStatements.length >= PINNED_STATEMENTS_MAX) refuseOnLearning(`Your profile already pins ${PINNED_STATEMENTS_MAX} statements. Remove one before answering.`);
 
   const updatedQuestions = questions.map((q) => (q.id === questionId ? { ...q, answer } : q));
   const updatedPinned = [...latest.pinnedStatements, `Q: ${question.question} A: ${answer}`];
   const expectedVersion = Number(formData.get("profileVersion") ?? latest.version);
-  await appendProfile(db(), user.id, expectedVersion, {
+  await appendOwnProfile(user.id, expectedVersion, {
     markdown: latest.markdown, openQuestions: updatedQuestions, pinnedStatements: updatedPinned,
     sourceDecisionCount: latest.sourceDecisionCount, model: "user",
   });
@@ -58,12 +99,17 @@ const SEED_PROFILE_LIMIT = 5_000;
 /**
  * The one write behind both seed-profile cards (R-6.3). Settings is where setup asks for it and
  * Learning is where it stays editable, so the two forms differ only in what they return.
+ *
+ * Setup asks for the seed profile before the address is confirmed, so the text is saved for any
+ * account; the synthesis it prompts is model work and waits for the confirmation. Nothing is lost
+ * by waiting: scoring reads the seed profile itself until a synthesised one exists, and the first
+ * decision after confirming queues the synthesis.
  */
-async function writeSeedProfile(userId: string, raw: string): Promise<string | null> {
+async function writeSeedProfile(user: User, raw: string): Promise<string | null> {
   const text = String(raw ?? "");
   if (text.length > SEED_PROFILE_LIMIT) return `Keep your seed profile under ${SEED_PROFILE_LIMIT.toLocaleString("en-GB")} characters. A few sentences is plenty.`;
-  await setUserSetting(userId, "seedProfile", text);
-  await enqueue("synthesize_profile", { userId, force: true });
+  await setUserSetting(user.id, "seedProfile", text);
+  if (!needsEmailConfirmation(user)) await enqueue("synthesize_profile", { userId: user.id, force: true });
   revalidatePath("/learning");
   revalidatePath("/settings");
   revalidatePath("/");
@@ -72,14 +118,14 @@ async function writeSeedProfile(userId: string, raw: string): Promise<string | n
 
 export async function saveSeedProfile(formData: FormData): Promise<void> {
   const user = await requireUser();
-  const error = await writeSeedProfile(user.id, String(formData.get("seedProfile") ?? ""));
-  if (error) throw new UserFacingError(error);
+  const error = await writeSeedProfile(user, String(formData.get("seedProfile") ?? ""));
+  if (error) refuseOnLearning(error);
 }
 
 /** The Settings card's twin, for a `SettingsForm` that shows its errors inline. */
 export async function saveSeedProfileSetting(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const user = await requireUser();
-  const error = await writeSeedProfile(user.id, String(formData.get("seedProfile") ?? ""));
+  const error = await writeSeedProfile(user, String(formData.get("seedProfile") ?? ""));
   return error ? fail(error) : { ok: true };
 }
 
@@ -93,7 +139,8 @@ export async function saveSeedProfileSetting(_prev: ActionResult, formData: Form
  * straight into a `<form action>`, which React types as returning nothing at all.
  */
 export async function acceptFilterSuggestionWithReport(suggestionId: string): Promise<ActionResult> {
-  const user = await requireUser();
+  // Accepting re-evaluates the gate and re-scores the table, which is model work.
+  const user = await requireVerifiedUser();
   const parsedId = zUuid().safeParse(suggestionId);
   if (!parsedId.success) return fail("Suggestion not found.");
   const id = parsedId.data;
@@ -119,12 +166,15 @@ export async function acceptFilterSuggestionWithReport(suggestionId: string): Pr
       await db().update(filterSuggestions).set({ status: "rejected", resolvedAt: new Date() }).where(eq(filterSuggestions.id, id));
       revalidatePath("/learning");
       return { ok: true, message: "Settled: hiding roles by score is retired." };
-    } else if (suggestion.type === "pause_company" && extracted.kind === "company") {
-      await setSubscriptionStatus(db(), user.id, extracted.companyId, "paused");
+    } else if (suggestion.type === "pause_company") {
+      // A pause names one of the account's followed companies by id; a suggestion that names none
+      // (stored before the id was kept, or by a model that made one up) settles nothing.
+      if (extracted.kind !== "company") return fail("This suggestion does not name a company you follow. Reject it and pause the company from Companies instead.");
+      if (!(await setSubscriptionStatus(db(), user.id, extracted.companyId, "paused"))) return fail("You no longer follow that company, so there is nothing to pause.");
     }
 
+    // The gate save above already re-evaluated the table, or queued the pass that will.
     await db().update(filterSuggestions).set({ status: "accepted", resolvedAt: new Date() }).where(eq(filterSuggestions.id, id));
-    await enqueue("reevaluate_gate", { userId: user.id });
     revalidatePath("/learning");
     revalidatePath("/settings");
     revalidatePath("/");
@@ -143,9 +193,10 @@ export async function acceptFilterSuggestionWithReport(suggestionId: string): Pr
   }
 }
 
-/** The Learning card's form-shaped twin of `acceptFilterSuggestionWithReport`. */
+/** The Learning card's form-shaped twin of `acceptFilterSuggestionWithReport`: a refusal goes back to the page. */
 export async function acceptFilterSuggestion(suggestionId: string): Promise<void> {
-  await acceptFilterSuggestionWithReport(suggestionId);
+  const result = await acceptFilterSuggestionWithReport(suggestionId);
+  if (!result.ok) refuseOnLearning(result.error);
 }
 
 /** Mine the latest scan of every source for role types and seniority labels the gate is missing. */
@@ -157,7 +208,9 @@ export async function suggestFromScansNow(): Promise<void> {
 
 export async function rejectFilterSuggestion(suggestionId: string): Promise<void> {
   const user = await requireUser();
-  const id = zUuid().parse(suggestionId);
+  const parsed = zUuid().safeParse(suggestionId);
+  if (!parsed.success) refuseOnLearning("That suggestion has already been settled.");
+  const id = parsed.data;
   await db().update(filterSuggestions).set({ status: "rejected", resolvedAt: new Date() }).where(and(eq(filterSuggestions.id, id), eq(filterSuggestions.userId, user.id)));
   revalidatePath("/learning");
 }
@@ -176,12 +229,12 @@ export async function rescoreAllRoles(): Promise<void> {
 }
 
 export async function savePreferenceProfile(formData: FormData): Promise<void> {
-  const user = await requireUser();
+  const user = await requireVerifiedUser();
   const markdown = String(formData.get("markdown") ?? "").trim();
-  if (!markdown || markdown.length > 50_000) throw new UserFacingError("Enter a profile of between 1 and 50,000 characters.");
+  if (!markdown || markdown.length > 50_000) refuseOnLearning("Enter a profile of between 1 and 50,000 characters.");
   const expectedVersion = Number(formData.get("profileVersion") ?? 0);
   const latest = await latestProfileFor(db(), user.id);
-  await appendProfile(db(), user.id, expectedVersion, {
+  await appendOwnProfile(user.id, expectedVersion, {
     markdown, pinnedStatements: latest?.pinnedStatements ?? [], openQuestions: latest?.openQuestions ?? [],
     sourceDecisionCount: latest?.sourceDecisionCount ?? 0, model: "user",
   });
@@ -191,7 +244,7 @@ export async function savePreferenceProfile(formData: FormData): Promise<void> {
 
 export async function acceptReasonTag(tag: string): Promise<void> {
   const user = await requireUser();
-  if (!tag || tag.length > 100) throw new UserFacingError("Invalid reason tag.");
+  if (!tag || tag.length > 100) refuseOnLearning("That reason tag is not in your list.");
   await db().update(tagVocabulary).set({ accepted: true }).where(and(eq(tagVocabulary.userId, user.id), eq(tagVocabulary.tag, tag)));
   revalidatePath("/learning");
 }

@@ -7,6 +7,7 @@
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb, createCvShare, addCvShareComment, revokeCvShare, schema, type Db } from "@ava/db";
+import { createTestDb } from "@/test/db";
 import { runMigrations } from "@ava/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { ensureTestUser } from "@/test/auth";
@@ -42,7 +43,7 @@ const CONTENT = materialiseCv(LIBRARY, {
 const SECRET_DESCRIPTION = "A confidential advert the reader must never be shown.";
 
 beforeAll(async () => {
-  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
+  const client = createTestDb();
   database = client.db;
   pool = client.pool;
   await runMigrations(database);

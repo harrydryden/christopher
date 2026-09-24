@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export function pageNumber(raw?: string): number {
   const n = Number(raw ?? 1);
   return Number.isSafeInteger(n) && n > 0 ? Math.min(n, 100000) : 1;
@@ -11,8 +13,8 @@ export function Pagination({ page, total, size = 50, path, params = {}, pagePara
   return <nav aria-label={label} className="my-4 flex flex-wrap items-center justify-between gap-3 text-13">
     <span className="text-muted">{total.toLocaleString("en-GB")} {total === 1 ? "result" : "results"} · Page {page} of {pages}</span>
     <div className="flex gap-4">
-      {page > 1 && <a className="inline-flex min-h-11 items-center underline" href={href(page - 1)}>Previous</a>}
-      {page < pages && <a className="inline-flex min-h-11 items-center underline" href={href(page + 1)}>Next</a>}
+      {page > 1 && <Link prefetch={false} className="inline-flex min-h-11 items-center underline" href={href(page - 1)}>Previous</Link>}
+      {page < pages && <Link prefetch={false} className="inline-flex min-h-11 items-center underline" href={href(page + 1)}>Next</Link>}
     </div>
   </nav>;
 }

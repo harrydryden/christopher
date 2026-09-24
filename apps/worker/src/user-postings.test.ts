@@ -10,7 +10,7 @@ import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import { createDb, schema, subscribeToCompany, type Db, type User } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { normalisePostingUrl, sha1 } from "@ava/core";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { _scanSourceForTests } from "./handlers/scan";
@@ -188,4 +188,23 @@ it("closes an adopted role by the ordinary two-miss rule once the board drops it
   expect(closed.status).toBe("closed");
   expect(closed.closedAt).toBeInstanceOf(Date);
   expect((await eventsFor(pasted.id)).map(e => e.type)).toContain("closed");
+});
+
+it("gives every other follower whose gate matches a view of an adopted role in the same scan", async () => {
+  const pasted = await pastedRole();
+  // Pasted from somewhere else first: private to its importer until the company's own board lists it.
+  await db.update(schema.jobs).set({ shared: false }).where(eq(schema.jobs.id, pasted.id));
+  const engineer = await ensureTestUser(db, "engineer@example.com", "member");
+  const gate = { includeKeywords: ["engineer"], excludeKeywords: [], matchFields: ["title"], locationTerms: [], includeRemote: true };
+  await db.insert(schema.userSettings).values({ userId: engineer.id, key: "gate", value: gate });
+  await subscribeToCompany(db, engineer.id, company.id);
+  deps.invalidateSettings();
+
+  server.setRoutes(board([LISTED, LISTED_PASTED]));
+  await scan();
+  expect(await read(pasted.id)).toMatchObject({ origin: "scan", shared: true });
+  const [theirs] = await db.select().from(schema.userJobs).where(and(eq(schema.userJobs.userId, engineer.id), eq(schema.userJobs.jobId, pasted.id)));
+  expect(theirs).toMatchObject({ inTable: true, keywordTerms: ["engineer"] });
+  // The importer keeps the one view they had.
+  expect(await db.select().from(schema.userJobs).where(and(eq(schema.userJobs.userId, user.id), eq(schema.userJobs.jobId, pasted.id)))).toHaveLength(1);
 });

@@ -145,7 +145,10 @@ async function recordResult(deps: WorkerDeps, company: typeof schema.companies.$
     const best = result.best;
     const same = existing.find((source) => source.type === best.spec.type &&
       (best.spec.atsSlug ? source.atsSlug === best.spec.atsSlug && source.atsSite === (best.spec.atsSite ?? null) : source.url === best.spec.url));
-    if (existing.length > 0 && !same) {
+    // A source somebody switched off stays off: an administrator retired it, or a confirmed source
+    // superseded this guess, and a scheduled re-discovery undoing that would bring back for every
+    // follower what one person deliberately stopped. It goes to Health for a person to choose.
+    if (existing.length > 0 && (!same || same.status === "disabled" || same.status === "blocked")) {
       status = "needs_confirmation";
     } else {
       chosenSourceId = await upsertSource(tx as unknown as Db, company.id, best, same?.confirmedByUser ?? false);
@@ -248,7 +251,9 @@ export async function upsertSource(db: Db, companyId: string, candidate: Discove
     verifiedAt: new Date(),
   };
   if (match) {
-    await db.update(schema.careerSources).set(values).where(eq(schema.careerSources.id, match.id));
+    // Only a person's choice turns a switched-off source back on; discovery refreshes the rest.
+    const keepOff = (match.status === "disabled" || match.status === "blocked") && !confirmedByUser;
+    await db.update(schema.careerSources).set(keepOff ? { ...values, status: match.status } : values).where(eq(schema.careerSources.id, match.id));
     return match.id;
   }
   const [created] = await db.insert(schema.careerSources).values(values).returning({ id: schema.careerSources.id });

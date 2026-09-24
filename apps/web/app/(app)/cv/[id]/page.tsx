@@ -159,7 +159,7 @@ export default async function CvDraftPage({
   return (
     <div className="w-full space-y-5">
       <nav aria-label="CV navigation">
-        <Link
+        <Link prefetch={false}
           href={draft.jobId ? `/applications?job=${draft.jobId}` : "/applications"}
           className="text-14 font-medium text-muted hover:text-fg hover:underline"
         >
@@ -268,7 +268,7 @@ export default async function CvDraftPage({
 
 
 
-              <Link href="/library" className="text-14 underline">
+              <Link prefetch={false} href="/library" className="text-14 underline">
                 Open Library
               </Link>
             </div>
@@ -285,7 +285,7 @@ export default async function CvDraftPage({
             )}
             {draft.gapQuiz?.continuationDraftId && (
               <p className="border border-line-muted p-4 text-14">
-                Your answers were saved to the Library. <Link className="underline" href={`/cv/${draft.gapQuiz.continuationDraftId}`}>Open the continuing CV build</Link>.
+                Your answers were saved to the Library. <Link prefetch={false} className="underline" href={`/cv/${draft.gapQuiz.continuationDraftId}`}>Open the continuing CV build</Link>.
               </p>
             )}
             {busy && build && (
@@ -329,7 +329,9 @@ export default async function CvDraftPage({
             costs={cvEditCosts(draft.model, cvDraftSize(draft))}
             blocked={blocked}
             commentCounts={commentCounts}
-            share={<CvShareCard draftId={id} shares={sharing.shares} now={now} />}
+            // A link is of a finished, assessed revision (the action refuses anything else), so the
+            // card is offered only then — or kept where links already exist, so they can be ended.
+            share={(draft.status === "ready" && draft.assessment) || sharing.shares.length > 0 ? <CvShareCard draftId={id} shares={sharing.shares} now={now} /> : undefined}
             buildLog={
               <CvBuildLog steps={steps} now={now} maxAttempts={maxAttempts} context={narrativeContext} />
             }
@@ -338,7 +340,7 @@ export default async function CvDraftPage({
                 <section className="space-y-3 border-2 border-line bg-raised p-4">
                   <CvDisclosure label="application tracking">
                     {application ? (
-                      <Link href={draft.jobId ? `/applications?job=${draft.jobId}` : "/applications"} className="underline">
+                      <Link prefetch={false} href={draft.jobId ? `/applications?job=${draft.jobId}` : "/applications"} className="underline">
                         Application recorded — view status and frozen PDF
                       </Link>
                     ) : !draft.finalisedAt ? (

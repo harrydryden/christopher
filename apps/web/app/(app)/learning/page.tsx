@@ -13,10 +13,11 @@ import { getSettings } from "@/lib/settings";
 import { selectClass } from "@/components/Field";
 import { SearchForm, SearchPending } from "@/components/SearchForm";
 import { requireUser } from "@/lib/auth";
+import { RefusalNotice } from "@/components/RefusalNotice";
 
 export const dynamic = "force-dynamic";
 
-export default async function LearningPage({ searchParams }: { searchParams: Promise<{ v?: string }> }) {
+export default async function LearningPage({ searchParams }: { searchParams: Promise<{ v?: string; error?: string }> }) {
   const user = await requireUser();
   const sp = await searchParams;
   const requestedVersion = sp.v ? Number(sp.v) : undefined;
@@ -52,6 +53,8 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
           </>
         }
       />
+
+      <RefusalNotice sentence={sp.error} className="mb-4" />
 
       <Card
         title="Preference profile"

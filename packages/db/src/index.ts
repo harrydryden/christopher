@@ -8,7 +8,7 @@ export * as schema from "./schema";
 export { createDb, getDb, poolErrorCount, poolStats, slowQueryCount, type Db, type CreateDbOptions, type SlowQuery } from "./client";
 export { enqueueTask, pendingTaskCounts, taskById, activeTaskFor, type EnqueueOptions } from "./tasks";
 
-export { reevaluateGate, archiveNonMatches, type GateScope, type ArchiveScope } from "./gate";
+export { reevaluateGate, archiveNonMatches, isGateArchive, restoreGateArchive, GATE_RESTORE_EVENT, REEVALUATE_CLOSED_DAYS, type GateScope, type ArchiveScope, type ReevaluateOptions } from "./gate";
 export { appendProfile, latestProfileFor } from "./profiles";
 export { workloadMetrics } from "./scaling";
 export { addHttpHostDaily, listHttpHostDaily, pruneHttpHostDaily, emptyHttpCounters, latencyBucketIndex, LATENCY_BUCKET_UPPER_MS, type HttpHostCounters, type HttpHostDailyDelta, type HttpHostDailyRow } from "./http-rollup";
@@ -27,7 +27,7 @@ export { cvRoleKey } from "./cv-role-key";
 
 export { upsertLibraryReviews, latestLibraryReviews, libraryReviewsSignature, pruneLibraryReviews, type LibraryReviewUpsert } from "./library-reviews";
 
-export { syncCompanyStatus, subscribeToCompany, setSubscriptionStatus, subscribedCompanyIds } from "./subscriptions";
+export { syncCompanyStatus, subscribeToCompany, setSubscriptionStatus, subscribedCompanyIds, retireSourceRoles, SOURCE_RETIRED_REASON } from "./subscriptions";
 export { storeCompanyLogo, noteLogoFailure, readCompanyLogo, companiesDueLogoCapture, LOGO_REFRESH_AFTER_MS, type StoredLogo } from "./company-logos";
 export { BOOTSTRAP_USER_ID, BOOTSTRAP_EMAIL, DEFAULT_ADMIN_EMAILS, SEED_TAGS, adminEmailsFrom, completeAccountClaim, createUser, isEntitledEmail, isPlaceholderEmail, listUserIds, normaliseEmail, promoteIfEntitled, seedTagVocabulary, type CreateUserInput, type CreateUserResult } from "./users";
 

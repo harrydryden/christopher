@@ -15,11 +15,14 @@ let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 let user: User;
 let other: User;
-vi.mock("@/lib/db", () => ({ db: () => database }));
+const reads = vi.hoisted(() => ({ n: 0 }));
+vi.mock("@/lib/db", () => ({ db: () => { reads.n++; return database; } }));
+import { accountAiSpend } from "@ava/db";
+import { createTestDb } from "@/test/db";
 import { accountAiBudget, accountAiBudgets } from "./accounts";
 
 beforeAll(async () => {
-  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
+  const client = createTestDb();
   database = client.db;
   pool = client.pool;
   await runMigrations(database);
@@ -95,4 +98,45 @@ it("counts one account's window from its own marker alone, whatever another acco
   expect(untouched.countingSince).toBeNull();
   expect(untouched.spentUsd).toBe(5);
   expect(await accountAiBudget(other.id, now)).toMatchObject({ spentUsd: 0, countingSince: reset });
+});
+
+it("reads any number of accounts' budgets in one statement, each in its own window", async () => {
+  // Admin › Accounts used to send one spend query per listed account into a three-connection pool.
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const accounts = [user, other];
+  for (let n = 0; n < 58; n++) accounts.push(await ensureTestUser(database, `listed-${n}@example.com`, "member"));
+  await database.insert(schema.aiCalls).values(accounts.flatMap((account, n) => [
+    { userId: account.id, callSite: "CV", model: "claude-fable-5-1", costUsd: n + 1, at: monthStart },
+    { userId: account.id, callSite: "A5", model: "claude-sonnet-5", costUsd: 0.5, at: new Date(now.getTime() - 60_000) },
+  ]));
+  // Every third account was reset an hour ago, so only its last minute counts.
+  const reset = new Date(now.getTime() - 3_600_000);
+  await database.insert(schema.userSettings).values(accounts.filter((_, n) => n % 3 === 0).map((account) => ({ userId: account.id, key: "aiBudgetResetAt", value: reset.toISOString() })));
+  await database.insert(schema.userSettings).values({ userId: other.id, key: "aiBudgetUsd", value: 40 });
+
+  reads.n = 0;
+  const budgets = await accountAiBudgets(accounts.map((account) => account.id), now);
+  expect(reads.n).toBe(1);
+  expect(budgets.size).toBe(accounts.length);
+  for (const [n, account] of accounts.entries()) {
+    const budget = budgets.get(account.id)!;
+    expect(budget.spentUsd).toBeCloseTo(await accountAiSpend(database, account.id, budget.since), 6);
+    expect(budget.spentUsd).toBeCloseTo(n % 3 === 0 ? 0.5 : n + 1.5, 6);
+    expect(budget.countingSince?.getTime() ?? null).toBe(n % 3 === 0 ? reset.getTime() : null);
+  }
+  expect(budgets.get(other.id)!.limitUsd).toBe(40);
+});
+
+it("sums again by core's rule when the database would read a marker differently", async () => {
+  // PostgreSQL reads "tomorrow" as a time; core does not, and core's reading is the budget.
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  await database.insert(schema.aiCalls).values({ userId: user.id, callSite: "CV", model: "claude-fable-5-1", costUsd: 3, at: monthStart });
+  await database.insert(schema.userSettings).values({ userId: user.id, key: "aiBudgetResetAt", value: "tomorrow" });
+  reads.n = 0;
+  const budget = (await accountAiBudgets([user.id], now)).get(user.id)!;
+  expect(budget).toMatchObject({ spentUsd: 3, countingSince: null });
+  expect(budget.since.getTime()).toBe(monthStart.getTime());
+  expect(reads.n).toBe(2);
 });

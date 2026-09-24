@@ -367,6 +367,12 @@ export const jobs = pgTable(
     closedAt: ts("closed_at"),
     status: text("status", { enum: JOB_STATUSES }).notNull().default("open"),
     missingScans: integer("missing_scans").notNull().default(0),
+    /**
+     * When an open posting was first missing from a successful scan; cleared whenever a scan lists
+     * it. The closing miss must come at least `MIN_CLOSE_SEPARATION_MS` after this, so two misses
+     * are two observations rather than one made twice.
+     */
+    firstMissedAt: ts("first_missed_at"),
     seeded: boolean("seeded").notNull().default(false),
     reopenedCount: integer("reopened_count").notNull().default(0),
     repostOfJobId: uuid("repost_of_job_id"),
@@ -383,6 +389,11 @@ export const jobs = pgTable(
     origin: text("origin", { enum: JOB_ORIGINS }).notNull().default("scan"),
     /** The account that pasted the URL, for a posting with `origin = 'user'`. */
     addedBy: uuid("added_by").references(() => users.id, { onDelete: "set null" }),
+    /**
+     * False for a posting pasted from a host that is not the company's own: it is kept for the
+     * account that pasted it (`added_by`) and never offered to any other follower's gate.
+     */
+    shared: boolean("shared").notNull().default(true),
     createdAt: tsNow("created_at"),
     updatedAt: tsNow("updated_at"),
   },
@@ -391,6 +402,9 @@ export const jobs = pgTable(
     index("jobs_company_status_idx").on(t.companyId, t.status),
     index("jobs_first_seen_idx").on(t.firstSeenAt),
     index("jobs_company_origin_idx").on(t.companyId, t.origin),
+    // Created by migration 0036: a pasted posting's importer, and a source's new roles by day.
+    index("jobs_added_by_idx").on(t.addedBy).where(sql`${t.addedBy} is not null`),
+    index("jobs_source_first_seen_idx").on(t.sourceId, t.firstSeenAt),
   ],
 );
 
@@ -429,10 +443,26 @@ export const userJobs = pgTable(
     scoreState: text("score_state", { enum: SCORE_STATES }).$type<ScoreState>(),
     /** When `scoreState` was last set. A `queued` state older than the task deadline is stale. */
     scoreStateAt: ts("score_state_at"),
+    /**
+     * When the last scoring of this view completed. Beside a null `fitScore` it means the model was
+     * asked and gave no usable answer, so a scan does not queue the same inputs again every day.
+     */
+    scoredAt: ts("scored_at"),
     hidden: boolean("hidden").notNull().default(false),
     /** True when the row was created for a posting the scan had already seen (day-one of a subscription). */
     seeded: boolean("seeded").notNull().default(false),
     archivedAt: ts("archived_at"),
+    /**
+     * When the gate put this view away. While `archivedAt` still equals it the archive is the
+     * gate's, and the view returns as soon as the gate admits it again; an archive a person made
+     * never matches.
+     */
+    gateArchivedAt: ts("gate_archived_at"),
+    /**
+     * The account asked for this posting by pasting its URL. The gate treats that like a decision:
+     * the view stays in this account's table whatever its keywords say.
+     */
+    addedByUrl: boolean("added_by_url").notNull().default(false),
     createdAt: tsNow("created_at"),
     updatedAt: tsNow("updated_at"),
   },
@@ -689,7 +719,13 @@ export const aiCalls = pgTable(
     stage: text("stage"),
     at: tsNow("at"),
   },
-  (t) => [index("ai_calls_at_idx").on(t.at), index("ai_calls_user_at_idx").on(t.userId, t.at), index("ai_calls_site_at_idx").on(t.callSite, t.at)],
+  (t) => [
+    index("ai_calls_at_idx").on(t.at),
+    index("ai_calls_user_at_idx").on(t.userId, t.at),
+    index("ai_calls_site_at_idx").on(t.callSite, t.at),
+    // Created by migration 0038: the cost-per-build sample, by draft within the last ninety days.
+    index("ai_calls_cv_ref_at_idx").on(t.refId, t.at).where(sql`${t.refType} like 'cv-%' and ${t.refId} is not null`),
+  ],
 );
 
 export type User = typeof users.$inferSelect;

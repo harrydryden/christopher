@@ -41,7 +41,7 @@ export default async function SignupPage({
 
   if (sp.pending) {
     return (
-      <AuthShell title="Confirm your email" footer={<p><Link href="/login" className="underline">Back to sign in</Link></p>}>
+      <AuthShell title="Confirm your email" footer={<p><Link prefetch={false} href="/login" className="underline">Back to sign in</Link></p>}>
         <p className="text-14" role="status">
           {sp.sent ? "A new confirmation link is on its way. " : "Nearly there. "}
           Administrator accounts sign in only after the address is confirmed: open the link we sent to <span className="text-fg">{sp.email}</span> and enter your password.
@@ -61,7 +61,7 @@ export default async function SignupPage({
       title="Create an account"
       footer={
         <p>
-          Already have one? <Link href={next !== "/" ? `/login?next=${encodeURIComponent(next)}` : "/login"} className="text-fg underline">Sign in</Link>
+          Already have one? <Link prefetch={false} href={next !== "/" ? `/login?next=${encodeURIComponent(next)}` : "/login"} className="text-fg underline">Sign in</Link>
         </p>
       }
     >

@@ -523,16 +523,63 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       path: "tmp/cv-review-tabs/evaluation-mobile.png",
       fullPage: true,
     });
-    await page
-      .getByRole("button", {
-        name: "Save Direct Edits",
-        exact: true,
-      })
-      .click();
-    await page.waitForURL(
-      (url) =>
-        url.pathname.startsWith("/cv/") && !url.pathname.endsWith(readyId),
-    );
+    // What the save sends and what comes back, kept for the failure message: a server action is a
+    // POST to the page's own URL, and a save that never left the page has none.
+    const saveTraffic = [];
+    const startedAt = Date.now();
+    const stamp = () => `+${((Date.now() - startedAt) / 1000).toFixed(1)}s`;
+    const interesting = (request) => request.method() === "POST" || request.url().includes("/cv/") || request.headers()["rsc"] === "1";
+    const onRequest = (request) => {
+      if (interesting(request)) saveTraffic.push(`${stamp()} → ${request.method()} ${request.url()} rsc=${request.headers()["rsc"] ?? "-"} next-action=${request.headers()["next-action"] ?? "-"}`);
+    };
+    const onResponse = (response) => {
+      if (interesting(response.request())) saveTraffic.push(`${stamp()} ← ${response.status()} ${response.url()} x-action-redirect=${response.headers()["x-action-redirect"] ?? "-"} type=${response.headers()["content-type"] ?? "-"}`);
+    };
+    const onFinished = (request) => {
+      if (interesting(request)) saveTraffic.push(`${stamp()} ✓ finished ${request.url()}`);
+    };
+    const onFailed = (request) => {
+      if (interesting(request)) saveTraffic.push(`${stamp()} ✗ ${request.url()} ${request.failure()?.errorText ?? "failed"}`);
+    };
+    const consoleErrors = [];
+    const onConsole = (message) => { if (message.type() === "error") consoleErrors.push(message.text()); };
+    page.on("request", onRequest);
+    page.on("response", onResponse);
+    page.on("requestfinished", onFinished);
+    page.on("requestfailed", onFailed);
+    page.on("console", onConsole);
+    const saveButton = page.getByRole("button", { name: "Save Direct Edits", exact: true });
+    await saveButton.click();
+    try {
+      // Longer than the database's thirty-second statement timeout, so a render held up by a lock
+      // fails as one, and the failure below names it, rather than this wait giving up first.
+      await page.waitForURL(
+        (url) =>
+          url.pathname.startsWith("/cv/") && !url.pathname.endsWith(readyId),
+        { timeout: 45_000 },
+      );
+    } catch (error) {
+      // The failure names what the page said instead of navigating: the action's refusal, if any,
+      // the state of the button, the action requests seen, and anything the console complained of.
+      const said = await page
+        .locator('[role="alert"], [role="status"]')
+        .allInnerTexts()
+        .catch(() => []);
+      const buttons = await page
+        .getByRole("button", { name: /Save Direct Edits|Saving…/ })
+        .evaluateAll((nodes) => nodes.map((node) => `${node.textContent?.trim()} disabled=${node.disabled} form=${node.getAttribute("form")} type=${node.getAttribute("type")}`))
+        .catch(() => []);
+      throw new Error(
+        `${error.message}\nstill at ${page.url()}; the page says: ${JSON.stringify(said)}\nsave buttons: ${JSON.stringify(buttons)}\nsave traffic: ${JSON.stringify(saveTraffic)}\nconsole errors: ${JSON.stringify(consoleErrors)}`,
+        { cause: error },
+      );
+    } finally {
+      page.off("request", onRequest);
+      page.off("response", onResponse);
+      page.off("requestfinished", onFinished);
+      page.off("requestfailed", onFailed);
+      page.off("console", onConsole);
+    }
     const childId = new URL(page.url()).pathname.split("/").pop();
     const {
       rows: [child],

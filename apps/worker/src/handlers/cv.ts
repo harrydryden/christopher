@@ -6,6 +6,7 @@ import {
 } from "@ava/core/cv-pdf";
 import {
   createCvAssessment,
+  cvAssessmentCurrent,
   validateCvRubric,
 } from "@ava/core/cv-review";
 import {
@@ -20,8 +21,8 @@ import { cvTailoringEvidence, validateCvTailoringPlan } from "@ava/core/cv-tailo
 import { buildCvGapQuiz } from "@ava/core/cv-gap-quiz";
 import { compareCvQuality, diagnoseCvQuality } from "@ava/core/cv-quality";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
-import { completeCv, cvRoleKey, recordAiCall, schema, type Task, type Db } from "@ava/db";
-import { createAiEngine, estimateCvBuildUsd, CANCELLED_ERROR, type AiFailure, type AiUsageRecord } from "@ava/ai";
+import { completeCv, cvRoleKey, schema, type Task, type Db } from "@ava/db";
+import { createAiEngine, estimateCvBuildUsd, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, type AiFailure, type AiUsageRecord } from "@ava/ai";
 import {
   CvContentSchema,
   CvPlanSchema,
@@ -52,7 +53,7 @@ import {
   type CvCallDoing,
 } from "@ava/core/cv-build-failure";
 import { withResourceLease } from "../lease";
-import { tryReserveAi, type AiHold } from "../budget";
+import { recordAiUsage, tryReserveAi, type AiHold } from "../budget";
 import { backoffMs, type TaskRunContext } from "../queue";
 import { CvJournal, type CvJournalLoss, type CvOpenStep } from "./cv-journal";
 import type { WorkerDeps } from "../context";
@@ -116,7 +117,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
       (payload.improvements !== undefined && (!Array.isArray(payload.improvements) || !payload.improvements.every(value => typeof value === "string")))) {
     throw new Error("Invalid CV generation task.");
   }
-  const { draftId, mode, rubric: sourceRubric, improvements: sourceImprovements } = payload as {
+  const { draftId, mode: requestedMode, rubric: suppliedRubric, improvements: suppliedImprovements } = payload as {
     draftId: string;
     rubric?: Parameters<typeof validateCvRubric>[1];
     improvements?: string[];
@@ -132,13 +133,15 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
   const stop = new AbortController();
   /** Why this build must stop, when something outside the work itself decided it. */
   let interrupted: CvBuildStop | CvDeletedError | undefined;
-  const stopBuild = (reason: CvBuildStop | CvDeletedError) => {
+  const stopBuild = (reason: CvBuildStop | CvDeletedError, cause: unknown = reason) => {
     interrupted ??= reason;
-    stop.abort(reason);
+    // The engine labels each stopped call by what aborted it, so a stop the task's own signal
+    // brought (its deadline) is passed on as that, and a deadline is recorded as a deadline.
+    stop.abort(cause);
   };
-  if (ctx?.signal.aborted) stopBuild(new CvBuildStop("worker_interrupted", CV_LOST_PLACE_MESSAGE));
+  if (ctx?.signal.aborted) stopBuild(new CvBuildStop("worker_interrupted", CV_LOST_PLACE_MESSAGE), ctx.signal.reason);
   else ctx?.signal.addEventListener("abort",
-    () => stopBuild(new CvBuildStop("worker_interrupted", CV_LOST_PLACE_MESSAGE)), { once: true });
+    () => stopBuild(new CvBuildStop("worker_interrupted", CV_LOST_PLACE_MESSAGE), ctx.signal.reason), { once: true });
   const lost = (loss: CvJournalLoss) => stopBuild(loss === "deleted"
     ? new CvDeletedError()
     : new CvBuildStop("worker_interrupted", loss === "hold" ? CV_HOLD_LOST_MESSAGE : CV_LOST_PLACE_MESSAGE));
@@ -194,6 +197,11 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
     // What this build has already paid for. A retry reads it and skips those calls; publication
     // clears it, because a published CV has nothing left to resume.
     let checkpoint: CvBuildCheckpoint = draft.buildCheckpoint ?? {};
+    // What the revision's first task asked for, when this task is a retry that was not told: the
+    // mode, the improvements and the parent's rubric are kept on the checkpoint for exactly this.
+    const mode = requestedMode ?? checkpoint.mode;
+    const sourceRubric = suppliedRubric ?? checkpoint.sourceRubric;
+    const sourceImprovements = suppliedImprovements ?? checkpoint.improvements;
     let generationError: string | undefined;
     // The last failure each call site reported, and the last record it wrote. A cancelled sibling
     // records no failure of its own, so the batch that actually ended the audit is the one read.
@@ -250,6 +258,13 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
         }
       });
       const { library } = inputs;
+      // A build stopped during its optional improvement had already written, assessed and saved
+      // its baseline, and the fence says the improvement is not tried twice. Its saved assessment
+      // still describes the saved wording, so it is published as it stands: re-running the audit
+      // bought the dearest stage of the build a second time for the same answer.
+      const baseline = inputs.reusedContent && checkpoint.improvementAttempted &&
+        cvAssessmentCurrent(draft.assessment, inputs.saved!, draft.jobDescription, library)
+        ? draft.assessment! : undefined;
       // One hold for the whole build, at what it is expected to cost, against the budget of the
       // account that asked for it. A build that account can afford is admitted and never fails
       // part-way over budget accounting; one it cannot afford is refused here, before it spends
@@ -261,7 +276,8 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
       // three times what it can spend refused resumptions the month could plainly afford. Such an
       // attempt may still pay for a rubric it has not inherited, which is cents against a hold
       // measured in dollars, and the hold covers the calls where the money actually is.
-      const expected = estimateCvBuildUsd(draft.model, {
+      // Publishing a saved baseline calls no model at all, so it holds nothing.
+      const expected = baseline ? 0 : estimateCvBuildUsd(draft.model, {
         libraryBytes: Buffer.byteLength(JSON.stringify(library)),
         descriptionBytes: Buffer.byteLength(draft.jobDescription),
       }, inputs.reusedContent
@@ -318,13 +334,15 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
         onUsage: async ({ failure, ...usage }) => {
           // The failure that ended a build is the one to report: not a batch cancelled because of
           // it, and not a sibling that happened to finish cleanly afterwards.
-          if (usage.error && usage.error !== CANCELLED_ERROR) generationError = usage.error;
+          if (usage.error && usage.error !== CANCELLED_ERROR && !usage.error.startsWith(INTERRUPTED_ERROR_PREFIX) && !usage.error.startsWith(DEADLINE_ERROR_PREFIX)) generationError = usage.error;
           if (usage.stage) {
             callUsage.set(usage.stage, { ...usage, ...(failure ? { failure } : {}) });
             if (failure) callFailures.set(usage.stage, failure);
           }
-          // `failure` is the same event named; `ai_calls` keeps the text it always kept.
-          await recordAiCall(deps.db, draft.userId, usage);
+          // `failure` is the same event named; `ai_calls` keeps the text it always kept. With the
+          // build's hold, the record and the hold's reduction land in one transaction, and a record
+          // that cannot be written keeps the hold rather than letting the spend go unaccounted.
+          await recordAiUsage(deps.db, draft.userId, usage, { hold });
         },
       });
       /**
@@ -582,7 +600,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
       });
       return checked;
       };
-      let assessment = await assessContent(content!);
+      let assessment = baseline ?? await assessContent(content!);
       const opportunityIds = new Set(diagnoseCvQuality(assessment, content!).evidencedOpportunityGap.requirementIds);
       const opportunities = assessment.review.matches.filter(match => opportunityIds.has(match.requirementId));
       if (semantic && mode !== "assess" && !checkpoint.improvementAttempted && opportunities.length > 0) {

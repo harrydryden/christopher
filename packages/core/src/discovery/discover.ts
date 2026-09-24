@@ -4,6 +4,7 @@
  */
 import { absoluteUrl, ensureHttpUrl, extractDomain, normalizeUrl, sameDomain, scanWindow, sha1, stripHtml } from "../normalize";
 import { isExplicitEmptyListing } from "../ats/html";
+import { assertPublicHttpUrl } from "../url-safety";
 import type { FetchInit, RawPosting, SourceSpec } from "../types";
 import { confidenceFor, outcomeFor } from "./confidence";
 import { countAnchors, extractMeta, harvestLinks, scoreLink, WELL_KNOWN_PATHS } from "./links";
@@ -98,13 +99,15 @@ class Run {
   }
 
   /**
-   * Discovery follows only http(s) URLs without credentials, whatever a page or the model offers.
-   * The fetcher and the browser apply the address guard to every request they make as well.
+   * Discovery follows only http(s) URLs on the public internet, without credentials, whatever a
+   * page or the model offers: a private or local address is not followed and costs no fetch from
+   * the budget. The fetcher and the browser resolve every name and apply the same rule again, so
+   * this is the cheap refusal, not the only one.
    */
   permitted(url: string): boolean {
     try {
-      const u = new URL(url);
-      return (u.protocol === "https:" || u.protocol === "http:") && !u.username && !u.password;
+      assertPublicHttpUrl(url);
+      return true;
     } catch {
       return false;
     }
@@ -805,7 +808,10 @@ export async function discoverCareersSources(homepageUrl: string, ctx: Discovery
     // well-known ones; the rest of the list would only spend the budget, two paced seconds a probe,
     // that sitemaps and the model need.
     let misses = 0;
-    for (const url of [...priorityProbes, ...remainingPathProbes]) {
+    // A homepage given by IP literal has no subdomains: `careers.203.0.113.5` is not an address at
+    // all, and building it must not end the run.
+    const parseable = (url: string) => { try { new URL(url); return true; } catch { return false; } };
+    for (const url of [...priorityProbes, ...remainingPathProbes].filter(parseable)) {
       if (!run.budgetLeft() || (await run.hasResolvableCandidate())) break;
       if (misses >= MAX_CONSECUTIVE_MISSES) {
         run.say(`${misses} probes in a row found nothing; stopping path probes`);

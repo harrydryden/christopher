@@ -335,6 +335,20 @@ it("keeps the original scoring criteria when retention has deleted the parent", 
   expect(AiEngine.prototype.buildCv).toHaveBeenCalledWith(expect.objectContaining({ rubric, improvements: ["Clarify team leadership"] }), expect.anything());
 });
 
+it("retries a rebuild as it was first asked for when the retry's task names only the draft", async () => {
+  vi.spyOn(AiEngine.prototype, "buildCv").mockResolvedValue({ summary: "Operations leader", sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] });
+  const { task, deps, draft } = await setup();
+  // What saveCvDraft keeps on a rebuild, and what "Retry generation" queues: the draft id alone.
+  const rubric = rubricFixture("Lead a team");
+  await client.db.update(schema.cvDrafts)
+    .set({ buildCheckpoint: { mode: "improve", improvements: ["Clarify team leadership"], sourceRubric: rubric } })
+    .where(eq(schema.cvDrafts.id, draft.id));
+  await handleGenerateCv(task, deps);
+  // The parent is long gone; its rubric and the improvements still come with the revision.
+  expect(AiEngine.prototype.analyseCvJob).not.toHaveBeenCalled();
+  expect(AiEngine.prototype.buildCv).toHaveBeenCalledWith(expect.objectContaining({ rubric, improvements: ["Clarify team leadership"] }), expect.anything());
+});
+
 it("stops before writing or assessment when the CV is deleted during analysis", async () => {
   const { task, deps, draft } = await setup();
   vi.spyOn(AiEngine.prototype, "analyseCvJob").mockImplementation(async description => {

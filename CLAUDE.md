@@ -36,8 +36,10 @@ The worker suites share one database and truncate between tests, so `fileParalle
 
 ## Rules that are load-bearing
 
-- **Only a successful scan may close a role**, and only after two consecutive misses. Anything that
-  weakens this produces false "closed" rows, which is the failure the user will notice first.
+- **Only a successful scan may close a role**, and only after two consecutive misses at least six
+  hours apart. Anything that weakens this produces false "closed" rows, which is the failure the
+  user will notice first. The one lifecycle exception is a retired source (spec: "Retired sources"):
+  its roles close as of when they were last seen, with a `closed` event whose reason says so.
 - **The keyword and location gate is a hard filter the user controls.** The model ranks within it and
   proposes changes; it never removes a role from the table on its own.
 - **The catalogue is shared; the table is per account.** `companies`, `career_sources` and every

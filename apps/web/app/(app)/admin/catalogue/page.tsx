@@ -84,7 +84,7 @@ export default async function AdminCataloguePage({ searchParams }: { searchParam
                         <Badge tone={sourceStatusTone(source.status)}>{source.status === "needs_confirmation" ? "needs confirmation" : source.status}</Badge>
                         <a href={source.url} target="_blank" rel="noopener noreferrer" className="min-w-0 flex-1 truncate text-fg no-underline hover:underline">{source.url}</a>
                         <form action={removeCatalogueSource.bind(null, source.id)}>
-                          <ConfirmSubmitButton variant="ghost" confirmMessage="Delete this source for every follower? Its scan history stays, but it will no longer be scanned.">Delete</ConfirmSubmitButton>
+                          <ConfirmSubmitButton variant="ghost" confirmMessage="Stop scanning this source for every follower? Its postings and history stay; followers' untouched roles from it move to Archived.">Retire</ConfirmSubmitButton>
                         </form>
                       </li>
                     ))}

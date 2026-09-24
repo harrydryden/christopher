@@ -6,15 +6,16 @@
  * role and taking over the migrated owner's data. Proof is a Google sign-in Google has verified, the
  * confirmation link completed with the account's password, or a reset link used to set a password.
  */
-import { and, eq, isNull, ne } from "drizzle-orm";
+import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { adminEmailsFrom, completeAccountClaim, createUser, isEntitledEmail, isPlaceholderEmail, normaliseEmail, promoteIfEntitled, type CreateUserResult } from "@ava/db";
-import { authAccounts, authTokens, sessions, users, type User } from "@ava/db/schema";
+import { authAccounts, authTokens, cvVersions, sessions, users, type User } from "@ava/db/schema";
 import { hashPassword, needsRehash, passwordProblem, verifyPassword } from "@ava/core";
 import { consumeAuthToken, issueAuthToken, peekAuthToken } from "./auth-tokens";
 import { db } from "./db";
 import { sendEmail } from "./email";
 import type { GoogleProfile } from "./google";
 import { getSystemSettings } from "./settings";
+import { UserFacingError } from "./validation";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -227,4 +228,26 @@ export async function confirmEmailWithToken(token: string, proof: { sessionUserI
 export async function issueResetLink(userId: string, origin: string): Promise<string> {
   const token = await issueAuthToken(userId, "password_reset");
   return `${origin}/reset-password?token=${token}`;
+}
+
+/**
+ * Remove an account on an administrator's behalf. Two administrators removing each other at once,
+ * or one removing the account that made them an administrator moments earlier, must not leave the
+ * deployment with nobody who can sign in as one. So the whole thing runs under one lock on the
+ * accounts, and the caller is re-read inside it: while the caller is a claimed administrator and
+ * is not the target, at least one claimed administrator survives the commit. The action checks the
+ * caller's right to be here; this re-checks it against the race.
+ */
+export async function deleteAccount(callerId: string, targetId: string): Promise<void> {
+  if (callerId === targetId) throw new UserFacingError("You cannot delete your own account here.");
+  await db().transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('ava:users'))`);
+    const [caller] = await tx.select({ role: users.role, claimedAt: users.claimedAt }).from(users).where(eq(users.id, callerId));
+    if (caller?.role !== "admin" || !caller.claimedAt) throw new UserFacingError("You are no longer an administrator.");
+    await tx.delete(sessions).where(eq(sessions.userId, targetId));
+    // The account's CV rows cascade; the per-day version numbers are keyed by role rather than by
+    // account, so they are removed by the account prefix of that key.
+    await tx.execute(sql`delete from ${cvVersions} where ${cvVersions.roleKey} like ${`${targetId}:%`}`);
+    await tx.delete(users).where(eq(users.id, targetId));
+  });
 }

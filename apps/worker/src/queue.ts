@@ -843,7 +843,9 @@ export class TaskQueue {
       const deadlineMs = deadlineMsFor(task.type, this.opts.deadlines);
       // The run's signal travels with its deps, so whatever the handler holds on the run's behalf
       // — a resource lease — lets go when the queue gives up on it.
-      const runDeps: RunDeps = { ...this.deps, signal: stop.signal, assertOwnership: db => assertRunOwnership(db, task, stop.signal) };
+      // The run's own engine shares the client, budget and ledger, and stops with the run: a
+      // deadline or a lost lease ends the calls in flight rather than waiting out their retries.
+      const runDeps: RunDeps = { ...this.deps, ai: this.deps.ai.withSignal(stop.signal), signal: stop.signal, assertOwnership: db => assertRunOwnership(db, task, stop.signal) };
       const work = handler(task, runDeps, { signal: stop.signal });
       const result = await withDeadline(work, deadlineMs, task.type, started, stop).catch(err => {
         // The handler is told to stop, but it settles in its own time: its outcome is logged

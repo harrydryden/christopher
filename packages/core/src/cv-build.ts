@@ -208,6 +208,15 @@ export interface CvBuildCheckpoint {
   contentAt?: string;
   /** The queue attempt that wrote the checkpoint, so a resumed build can say what it reused. */
   attempt?: number;
+  /**
+   * What the revision's own task asked for, kept for its retries. A rebuild is queued with its
+   * parent's rubric and the improvements to make; "Retry generation" queues a fresh task that
+   * knows only the draft, and the rolling archive can have removed the parent by then, so without
+   * these a retried rebuild paid for a new rubric and was written as a plain build.
+   */
+  mode?: "improve";
+  improvements?: string[];
+  sourceRubric?: CvRubric;
 }
 
 /** One step of a build as the page and Operations read it. */

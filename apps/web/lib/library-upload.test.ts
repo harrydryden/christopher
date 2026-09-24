@@ -4,6 +4,7 @@
 import { expect, it } from "vitest";
 import { LIBRARY_IMPORT_MAX_BYTES } from "@ava/db";
 import { LIBRARY_UPLOAD_MAX_BYTES, UPLOAD_ACCEPT, uploadKind } from "./library-upload";
+import nextConfig from "../next.config";
 
 const bytes = (...magic: number[]) => Uint8Array.from([...magic, ...new Array(32).fill(0x20)]);
 const PDF = bytes(0x25, 0x50, 0x44, 0x46, 0x2d);
@@ -27,6 +28,15 @@ it("refuses what it does not read, including a zip that is not a Word document",
 
 it("refuses at the size the column itself refuses at, so the form and the database agree", () => {
   expect(LIBRARY_UPLOAD_MAX_BYTES).toBe(LIBRARY_IMPORT_MAX_BYTES);
+});
+
+it("lets a server action carry the largest upload the form accepts, with room for its framing", () => {
+  // Next refuses an action body over this before the action can say anything about the file.
+  const limit = String(nextConfig.experimental?.serverActions?.bodySizeLimit ?? "1mb");
+  const match = /^(\d+(?:\.\d+)?)mb$/i.exec(limit);
+  expect(match, `bodySizeLimit ${limit} is written in megabytes`).not.toBeNull();
+  const bytes = Number(match![1]) * 1024 * 1024;
+  expect(bytes).toBeGreaterThanOrEqual(LIBRARY_UPLOAD_MAX_BYTES + 512 * 1024);
 });
 
 it("offers the picker both formats, by media type and by extension", () => {

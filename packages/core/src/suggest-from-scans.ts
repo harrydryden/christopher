@@ -17,7 +17,7 @@
  *    inflections (strategy / strategic) the wildcard form is proposed, since
  *    whole-word matching is exactly what made the user miss them.
  */
-import { compileTerm, evaluateGate, evaluateLocation, type GateInput, type GateSettings } from "./gate";
+import { compileGate, compileTerm, evaluateLocation, type GateInput, type GateSettings } from "./gate";
 
 export interface ScannedTitle extends GateInput {
   title: string;
@@ -88,24 +88,76 @@ function toSuggestion(term: string, matches: ScannedTitle[]): TermSuggestion {
  * Group inflections that share a stem of at least five letters and propose the
  * wildcard when two or more distinct words share it: strategy + strategic ->
  * "strateg*". A single word is proposed as itself.
+ *
+ * A word can only join a group whose stem shares its first five letters, so the
+ * groups are indexed by those five letters and a word is offered only the groups
+ * in its own block — in the order the whole map holds them, which is the order a
+ * scan of every group would have met them in. Linear in the words rather than in
+ * words times groups.
  */
 function wildcardGroups(words: string[]): Map<string, string[]> {
   const groups = new Map<string, string[]>();
+  const blocks = new Map<string, string[]>();
   const sorted = [...new Set(words)].sort();
   for (const word of sorted) {
     let placed = false;
-    for (const [stem, members] of groups) {
+    const block = word.length >= 5 ? blocks.get(word.slice(0, 5)) : undefined;
+    for (const [at, stem] of (block ?? []).entries()) {
       const shared = commonPrefix(stem, word);
       if (shared.length >= 5 && shared.length >= Math.min(stem.length, word.length) - 3) {
+        const members = groups.get(stem)!;
+        // A stem another group already holds is overwritten where it stands, as a map does.
+        const standing = shared !== stem && groups.has(shared);
         groups.delete(stem);
         groups.set(shared, [...members, word]);
+        // Otherwise it moved to the end of the map, so to the end of its block too.
+        block!.splice(at, 1);
+        if (!standing) block!.push(shared);
         placed = true;
         break;
       }
     }
-    if (!placed) groups.set(word, [word]);
+    if (!placed) {
+      groups.set(word, [word]);
+      if (word.length >= 5) (blocks.get(word.slice(0, 5)) ?? blocks.set(word.slice(0, 5), []).get(word.slice(0, 5))!).push(word);
+    }
   }
   return groups;
+}
+
+/**
+ * Every word of every title, read as the term compiler reads words (runs of letters and digits,
+ * without case), with the positions of the titles it appears in. A term's matches are then a
+ * lookup — the titles holding that word, or any word starting with a wildcard's stem — instead of
+ * one regular expression run over every title per term.
+ */
+function wordIndex(pool: ScannedTitle[]): { find: (term: string) => number[] } {
+  const index = new Map<string, number[]>();
+  pool.forEach((posting, position) => {
+    for (const word of new Set(posting.title.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])) {
+      (index.get(word) ?? index.set(word, []).get(word)!).push(position);
+    }
+  });
+  const sorted = [...index.keys()].sort();
+  const firstAtLeast = (key: string) => {
+    let low = 0;
+    let high = sorted.length;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (sorted[mid]! < key) low = mid + 1;
+      else high = mid;
+    }
+    return low;
+  };
+  return {
+    find(term: string) {
+      if (!term.endsWith("*")) return index.get(term) ?? [];
+      const stem = term.slice(0, -1);
+      const hits = new Set<number>();
+      for (let at = firstAtLeast(stem); at < sorted.length && sorted[at]!.startsWith(stem); at++) for (const position of index.get(sorted[at]!)!) hits.add(position);
+      return [...hits].sort((a, b) => a - b);
+    },
+  };
 }
 
 function commonPrefix(a: string, b: string): string {
@@ -117,14 +169,15 @@ function commonPrefix(a: string, b: string): string {
 export function suggestFromScans(postings: ScannedTitle[], gate: GateSettings, opts: { minAdmits?: number; limit?: number } = {}): ScanSuggestions {
   const minAdmits = opts.minAdmits ?? 3;
   const limit = opts.limit ?? 8;
+  // Each gate variant compiled once for the whole pool, rather than once per posting.
+  const full = compileGate(gate);
+  const withoutSeniority = compileGate({ ...gate, seniorityKeywords: [] });
+  const withoutKeywords = compileGate({ ...gate, includeKeywords: [] });
   const inGeography = postings.filter((p) => evaluateLocation(p, gate).ok);
-  const unmatched = inGeography.filter((p) => !evaluateGate(p, gate).inTable);
+  const unmatched = inGeography.filter((p) => !full.evaluate(p).inTable);
 
   // Seniority: roles the keywords and location already accept, held back only by the level list.
-  const heldBySeniority = unmatched.filter((p) => {
-    const g = evaluateGate(p, { ...gate, seniorityKeywords: [] });
-    return g.inTable;
-  });
+  const heldBySeniority = unmatched.filter((p) => withoutSeniority.evaluate(p).inTable);
   const seniority = SENIORITY_VOCABULARY
     .filter((label) => !covered(label, gate.seniorityKeywords ?? []))
     .map((label) => {
@@ -139,8 +192,9 @@ export function suggestFromScans(postings: ScannedTitle[], gate: GateSettings, o
   // seniority list exists, that no include term covers and no exclude term hits.
   // With no include terms the gate reduces to location, exclusions and
   // seniority — exactly the pool a new role term would have to admit from.
-  const candidates = unmatched.filter((p) => evaluateGate(p, { ...gate, includeKeywords: [] }).inTable);
+  const candidates = unmatched.filter((p) => withoutKeywords.evaluate(p).inTable);
   const byWord = collect(candidates, (p) => tokens(p.title));
+  const words = wordIndex(candidates);
   // Group every word first: a single "partnership" beside two "partnerships" is
   // what makes the wildcard worth proposing, so the count threshold applies to
   // the group, never the word.
@@ -149,9 +203,8 @@ export function suggestFromScans(postings: ScannedTitle[], gate: GateSettings, o
   for (const [stem, members] of groups) {
     const term = members.length > 1 ? `${stem}*` : members[0]!;
     if (covered(term, gate.includeKeywords) || members.some((m) => covered(m, gate.includeKeywords))) continue;
-    const re = compileTerm(term)!;
     if (gate.excludeKeywords.some((e) => compileTerm(e)?.test(term))) continue;
-    const matches = candidates.filter((p) => re.test(p.title));
+    const matches = words.find(term).map((position) => candidates[position]!);
     if (matches.length >= minAdmits) roleTypes.push(toSuggestion(term, matches));
   }
   roleTypes.sort((a, b) => b.admits - a.admits || b.companies - a.companies);

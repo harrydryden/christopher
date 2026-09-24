@@ -1,4 +1,4 @@
-import { MAX_ACCOUNT_AI_BUDGET_USD } from "@ava/core";
+import { MAX_ACCOUNT_AI_BUDGET_USD, MAX_MEMBER_AI_BUDGET_USD } from "@ava/core";
 import { CvAppearance } from "@/components/CvAppearance";
 import { getDefaultCvAppearance } from "@/lib/cv-appearance";
 import { saveCvModel, saveCvAppearance } from "@/app/actions/cv";
@@ -153,7 +153,7 @@ export default async function SettingsPage() {
         <SettingsForm action={saveAiBudget}>
           <label className={labelClass}>
             <span className={fieldLabelClass}>Monthly AI budget (USD)</span>
-            <input name="aiBudgetUsd" type="number" min={0} max={MAX_ACCOUNT_AI_BUDGET_USD} step={1} defaultValue={budget.limitUsd} className={fieldClass} />
+            <input name="aiBudgetUsd" type="number" min={0} max={admin ? MAX_ACCOUNT_AI_BUDGET_USD : Math.max(MAX_MEMBER_AI_BUDGET_USD, budget.limitUsd)} step={1} defaultValue={budget.limitUsd} className={fieldClass} />
             <span className="text-12 text-muted">Scoring, suggestions and CV builds stop for this account once the month&apos;s budget is spent.</span>
           </label>
         </SettingsForm>

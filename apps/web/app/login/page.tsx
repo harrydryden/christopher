@@ -38,10 +38,10 @@ export default async function LoginPage({
       footer={
         <>
           <p>
-            New here? <Link href={next !== "/" ? `/signup?next=${encodeURIComponent(next)}` : "/signup"} className="text-fg underline">Create an account</Link>
+            New here? <Link prefetch={false} href={next !== "/" ? `/signup?next=${encodeURIComponent(next)}` : "/signup"} className="text-fg underline">Create an account</Link>
           </p>
           <p>
-            <Link href="/forgot-password" className="underline">Forgotten your password?</Link>
+            <Link prefetch={false} href="/forgot-password" className="underline">Forgotten your password?</Link>
           </p>
         </>
       }

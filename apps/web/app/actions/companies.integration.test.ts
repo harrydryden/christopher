@@ -5,6 +5,7 @@
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb, schema, type Db } from "@ava/db";
+import { createTestDb } from "@/test/db";
 import { runMigrations } from "@ava/db/migrate";
 import { eq, sql } from "drizzle-orm";
 import { signInTestUser } from "@/test/auth";
@@ -23,12 +24,12 @@ vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (session ? {
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
-import { addCompanies, importPosting, refreshCompanyLogo, rescanCompany, saveCompanyNotes, suggestCompanyName, unfollowCompany } from "./companies";
+import { addCompanies, archiveCompany, importPosting, pasteDiscoveryUrl, refreshCompanyLogo, rescanCompany, resumeCompany, saveCompanyNotes, suggestCompanyName, unfollowCompany } from "./companies";
 import { companyApplicationCount, companyScanTiming, listCompanies } from "@/lib/queries/companies";
 import { scanTimingLine } from "@/app/(app)/companies/scan-line";
 
 beforeAll(async () => {
-  const client = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test");
+  const client = createTestDb();
   database = client.db;
   pool = client.pool;
   await runMigrations(database);
@@ -38,7 +39,7 @@ afterAll(async () => { await pool?.end(); });
 
 beforeEach(async () => {
   await database.execute(sql`truncate companies, tasks, settings, users restart identity cascade`);
-  ({ user: first, cookie: firstCookie } = await signInTestUser(database, process.env.SESSION_SECRET!, "one@example.com"));
+  ({ user: first, cookie: firstCookie } = await signInTestUser(database, process.env.SESSION_SECRET!, "one@example.com", "admin"));
   ({ user: second, cookie: secondCookie } = await signInTestUser(database, process.env.SESSION_SECRET!, "two@example.com", "member"));
   // Filters first: `addCompanies` refuses an account that has never chosen its gate, so both
   // accounts start with one saved, exactly as a person reaches the form through setup.
@@ -153,7 +154,8 @@ it("queues one import per posting, however the URL was decorated, and only for a
   await importPosting(company.id, urlForm("https://job-boards.greenhouse.io/acme/jobs/1234567?utm_source=newsletter&gh_src=abc#apply"));
   const queued = await tasksOfType("import_posting");
   expect(queued).toHaveLength(1);
-  expect(queued[0]!.payload).toEqual({ userId: first.id, companyId: company.id, url: "https://job-boards.greenhouse.io/acme/jobs/1234567" });
+  // Acme has no Greenhouse board of its own, so the posting is flagged to stay this account's.
+  expect(queued[0]!.payload).toEqual({ userId: first.id, companyId: company.id, url: "https://job-boards.greenhouse.io/acme/jobs/1234567", foreignHost: true });
 
   // The same posting pasted again, from the board this time: one task, not two.
   await importPosting(company.id, urlForm("  https://job-boards.greenhouse.io/acme/jobs/1234567/  "));
@@ -342,4 +344,108 @@ it("gives each companies-list row its open, review and shortlisted counts and th
   await database.insert(schema.careerSources)
     .values({ companyId: company.id, type: "greenhouse", url: "https://boards.greenhouse.io/acme", status: "active" });
   expect((await listCompanies(first.id))[0]!.sourceType).toBe("greenhouse");
+});
+
+/** `count` companies the account already follows, straight into the tables. */
+async function alreadyFollowing(userId: string, count: number, prefix = "held") {
+  const rows = await database.insert(schema.companies).values(Array.from({ length: count }, (_, n) => ({
+    name: `${prefix} ${n}`, domain: `${prefix}${n}.example`, homepageUrl: `https://${prefix}${n}.example`,
+  }))).returning({ id: schema.companies.id });
+  await database.insert(schema.companySubscriptions).values(rows.map(row => ({ userId, companyId: row.id })));
+  return rows.map(row => row.id);
+}
+
+it("refuses a submission of more than 25 companies, in a sentence on the page, and writes nothing", async () => {
+  const lines = Array.from({ length: 26 }, (_, n) => `https://many${n}.example`).join("\n");
+  await expect(addCompanies(urls(lines))).rejects.toThrow(`redirect:/companies?error=${encodeURIComponent("Add at most 25 companies at a time. This list has 26.").replace(/%20/g, "+")}`);
+  expect(await database.select().from(schema.companies)).toHaveLength(0);
+  expect(await database.select().from(schema.tasks)).toHaveLength(0);
+});
+
+it("holds a member to 200 followed companies, counted under one lock, and leaves administrators unlimited", async () => {
+  session = secondCookie;
+  await alreadyFollowing(second.id, 198);
+  // Two at once from one account: one fills the allowance, the other is refused whole.
+  const outcomes = await Promise.allSettled([
+    addCompanies(urls("https://new-a.example\nhttps://new-b.example")),
+    addCompanies(urls("https://new-c.example\nhttps://new-d.example")),
+  ]);
+  const messages = outcomes.map(outcome => outcome.status === "rejected" ? String((outcome.reason as Error).message) : "resolved");
+  expect(messages.filter(message => message.startsWith("redirect:/companies?added=2"))).toHaveLength(1);
+  // The second is counted after the first commits, so it sees the allowance already full.
+  expect(messages.filter(message => message.includes("error=") && message.includes("up+to+200+companies%2C+and+you+follow+200"))).toHaveLength(1);
+  const following = await database.select().from(schema.companySubscriptions).where(eq(schema.companySubscriptions.userId, second.id));
+  expect(following).toHaveLength(200);
+  expect(await database.select().from(schema.companies)).toHaveLength(200);
+
+  // Following one already followed adds nothing to the count, so it is not refused.
+  await expect(addCompanies(urls("https://held1.example"))).rejects.toThrow("redirect:/companies?added=0");
+  // An archived follow is outside the allowance, and bringing it back counts like a new one.
+  const [held] = await database.select().from(schema.companies).where(eq(schema.companies.domain, "held0.example"));
+  await archiveCompany(held!.id);
+  await expect(addCompanies(urls("https://new-e.example"))).rejects.toThrow("redirect:/companies?added=1");
+  await expect(resumeCompany(held!.id)).rejects.toThrow("redirect:/companies?error=");
+  const [archived] = await database.select().from(schema.companySubscriptions)
+    .where(eq(schema.companySubscriptions.companyId, held!.id));
+  expect(archived!.status).toBe("archived");
+
+  // The administrator is not limited.
+  session = firstCookie;
+  await alreadyFollowing(first.id, 200, "admin");
+  await expect(addCompanies(urls("https://admin-more.example"))).rejects.toThrow("redirect:/companies?added=1");
+});
+
+it("records who added a company, admits five followed companies inline and queues the rest", async () => {
+  // Seven companies already in the catalogue, each with a stored role the gate admits.
+  const ids = await alreadyFollowing(second.id, 7, "known");
+  for (const [n, companyId] of ids.entries()) {
+    const [source] = await database.insert(schema.careerSources).values({ companyId, type: "html", url: `https://known${n}.example/jobs` }).returning();
+    await database.insert(schema.jobs).values({ companyId, sourceId: source!.id, externalKey: "1", title: "Operations Lead", normalizedTitle: "operations lead", url: `https://known${n}.example/jobs/1` });
+  }
+  await expect(addCompanies(urls(Array.from({ length: 7 }, (_, n) => `https://known${n}.example`).join("\n")))).rejects.toThrow("redirect:/companies?added=0&followed=7");
+  expect(await database.select().from(schema.userJobs).where(eq(schema.userJobs.userId, first.id))).toHaveLength(5);
+  const queued = await tasksOfType("reevaluate_gate");
+  expect(queued.map(task => task.dedupeKey).sort()).toEqual(ids.slice(5).map(id => `reevaluate_gate:${first.id}:${id}`).sort());
+
+  await expect(addCompanies(urls("https://brand-new.example"))).rejects.toThrow("redirect:/companies?added=1");
+  const [created] = await database.select().from(schema.companies).where(eq(schema.companies.domain, "brand-new.example"));
+  expect(created!.addedBy).toBe(first.id);
+});
+
+it("keeps one pasted discovery in hand per company", async () => {
+  const company = await followedCompany();
+  await pasteDiscoveryUrl(company.id, urlForm("https://acme.example/careers"));
+  await expect(pasteDiscoveryUrl(company.id, urlForm("https://acme.example/jobs"))).rejects.toThrow("still being checked");
+  expect((await tasksOfType("discover")).filter(task => (task.payload as { reason?: string }).reason === "pasted")).toHaveLength(1);
+  await database.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.type, "discover"));
+  await pasteDiscoveryUrl(company.id, urlForm("https://acme.example/jobs"));
+  expect((await tasksOfType("discover")).filter(task => task.status === "queued")).toHaveLength(1);
+});
+
+it("flags a pasted posting that is not on the company's own hosts, so the worker keeps it private", async () => {
+  const company = await followedCompany();
+  await database.insert(schema.careerSources).values({ companyId: company.id, type: "greenhouse", url: "https://job-boards.greenhouse.io/acme", atsSlug: "acme" });
+  await importPosting(company.id, urlForm("https://careers.acme.example/jobs/ops-lead"));
+  await importPosting(company.id, urlForm("https://job-boards.greenhouse.io/acme/jobs/1"));
+  await importPosting(company.id, urlForm("https://job-boards.greenhouse.io/rival/jobs/1"));
+  await importPosting(company.id, urlForm("https://attacker.example/acme-senior-operations"));
+  const flags = Object.fromEntries((await tasksOfType("import_posting")).map(task => [(task.payload as { url: string }).url, (task.payload as { foreignHost: boolean }).foreignHost]));
+  expect(flags).toEqual({
+    "https://careers.acme.example/jobs/ops-lead": false,
+    "https://job-boards.greenhouse.io/acme/jobs/1": false,
+    "https://job-boards.greenhouse.io/rival/jobs/1": true,
+    "https://attacker.example/acme-senior-operations": true,
+  });
+});
+
+it("refuses addresses the worker will never fetch, in a sentence, before anything is queued", async () => {
+  await expect(addCompanies(urls("http://10.0.0.1\nhttp://printer.local\nhttps://acme.example"))).rejects.toThrow(
+    `redirect:/companies?${new URLSearchParams({ added: "1", skipped: "10.0.0.1 is a private or local network address, printer.local is a local network name" }).toString()}`,
+  );
+  expect((await database.select().from(schema.companies)).map(row => row.domain)).toEqual(["acme.example"]);
+  const [company] = await database.select().from(schema.companies);
+  await expect(importPosting(company!.id, urlForm("http://192.168.1.10/jobs/1"))).rejects.toThrow("192.168.1.10 is a private or local network address.");
+  await expect(pasteDiscoveryUrl(company!.id, urlForm("http://metadata.google.internal/careers"))).rejects.toThrow("metadata.google.internal is a local network name.");
+  expect(await tasksOfType("import_posting")).toHaveLength(0);
+  expect((await tasksOfType("discover")).filter(task => (task.payload as { reason?: string }).reason === "pasted")).toHaveLength(0);
 });

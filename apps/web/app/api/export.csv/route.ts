@@ -5,7 +5,7 @@ import { csvRow } from "@/lib/csv";
 import {
   fetchRoleRows,
   parseRolesFilters,
-  type RawSearchParams, scoreStateText } from "@/lib/queries/jobs";
+  type RawSearchParams, type RoleCursor, scoreStateText } from "@/lib/queries/jobs";
 
 export const dynamic = "force-dynamic";
 /** Seconds: a 20,000-row export is read in 40 blocks, and 60 is the ceiling on every plan. */
@@ -27,7 +27,9 @@ const HEADER = ["company", "website", "role", "location", "url", "live_for_days"
  * A spreadsheet's worth of roles, not a database dump: the read is bounded so one export can never
  * pull an unbounded table into memory, and the rows are written out in blocks rather than joined
  * into one string. The blocks come from the same SQL the table pages — same filters, same sort — so
- * the file and the screen cannot disagree about a view (R-7.5).
+ * the file and the screen cannot disagree about a view (R-7.5). Each block is read after the last
+ * row of the one before, never at an offset: the fortieth block of an offset read makes the database
+ * walk the 19,500 rows before it again.
  */
 const MAX_ROWS = 20_000;
 const BLOCK = 500;
@@ -44,7 +46,7 @@ export async function GET(request: NextRequest) {
   const archived = request.nextUrl.searchParams.get("archive") === "1" || request.nextUrl.searchParams.get("view") === "archived";
 
   const encoder = new TextEncoder();
-  let offset = 0;
+  let after: RoleCursor | null = null;
   let written = 0;
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -52,7 +54,7 @@ export async function GET(request: NextRequest) {
     },
     async pull(controller) {
       // The CSV has no description column, so these are the table's own summary rows.
-      const rows = await fetchRoleRows(user.id, filters, archived, { offset, limit: BLOCK, now });
+      const rows = await fetchRoleRows(user.id, filters, archived, { after, limit: BLOCK, now });
       if (rows.length === 0) {
         controller.close();
         return;
@@ -80,11 +82,11 @@ export async function GET(request: NextRequest) {
         ]) + "\r\n";
       }
       written += block.length;
-      offset += block.length;
+      after = block.at(-1)?.cursor ?? after;
       if (written >= MAX_ROWS) {
         // The cap is only worth naming when something was actually left out, so a view of exactly
         // 20,000 rows asks the database for one more row rather than claiming it was truncated.
-        const more = block.length < rows.length || (await fetchRoleRows(user.id, filters, archived, { offset, limit: 1, now })).length > 0;
+        const more = block.length < rows.length || (await fetchRoleRows(user.id, filters, archived, { after, limit: 1, now })).length > 0;
         if (more) text += csvRow([CAP_NOTICE]) + "\r\n";
         controller.enqueue(encoder.encode(text));
         controller.close();

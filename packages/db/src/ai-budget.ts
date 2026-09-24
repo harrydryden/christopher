@@ -36,35 +36,65 @@ export async function totalAiSpend(db: Db, since: Date): Promise<number> {
  * The outcome taxonomy
  *
  * `ai_calls` carries one boolean, and not everything it marks false is a model that let us down.
- * A batch cancelled because a sibling failed, and a stream cut off at the stall ceiling, are the
- * engine stopping work — the first is a cost the deployment chose to stop paying, the second is a
- * vendor symptom. Counting either as a failure makes one bad CV build look like four broken calls,
- * which is the number an operator would act on. The taxonomy is derived, never stored: no column,
- * and older rows classify the same way as new ones.
+ * A batch cancelled because a sibling failed, a call stopped because its task ran out of time or
+ * lost its lease, and a stream cut off at the stall ceiling, are the engine stopping work — the
+ * first two are a cost the deployment chose to stop paying, the last is a vendor symptom. Counting
+ * any of them as a failure makes one bad CV build look like four broken calls, which is the number
+ * an operator would act on. The taxonomy is derived, never stored: no column, and older rows
+ * classify the same way as new ones.
  * ------------------------------------------------------------------------------------------- */
 
 export const AI_OUTCOMES = ["ok", "cancelled", "stalled", "failed"] as const;
 export type AiOutcome = (typeof AI_OUTCOMES)[number];
 
-/** The prefixes packages/ai writes for its two non-failures; its own test pins them from that end. */
-const CANCELLED_PREFIX = "Cancelled because another call";
+/**
+ * The prefixes packages/ai writes for the calls it stopped itself: a batch cancelled because a
+ * sibling failed, and a call its run stopped at the task deadline or for a lost lease. All three
+ * are the deployment deciding to stop paying, so all three are `cancelled`; the label says which.
+ * Its own test pins them from that end.
+ */
+const CANCELLED_PREFIXES = ["Cancelled because another call", "Stopped at the task deadline:", "Stopped by the worker:"];
 const STALLED_PREFIX = "Stream timed out:";
+/**
+ * The labels of an answer the model gave that could not be used: it declined, ran out of room,
+ * left a server-tool turn unfinished, or returned something the schema rejects. Each is a failure of the call, but the provider served
+ * it, so none of them is evidence of an outage.
+ */
+const ANSWER_PREFIXES = ["refusal:", "Model output limit reached", "schema rejected:", "no parseable output", "Server tool turn still paused"];
 
 /** What one recorded call actually was. `ok` and `error` are all it takes. */
 export function aiOutcome(row: { ok: boolean; error?: string | null }): AiOutcome {
   if (row.ok) return "ok";
   const error = row.error ?? "";
-  if (error.startsWith(CANCELLED_PREFIX)) return "cancelled";
+  if (CANCELLED_PREFIXES.some((prefix) => error.startsWith(prefix))) return "cancelled";
   if (error.startsWith(STALLED_PREFIX)) return "stalled";
   return "failed";
 }
 
+const startsWithAny = (prefixes: string[]) =>
+  sql.join(prefixes.map((prefix) => sql`coalesce(error, '') like ${prefix + "%"}`), sql` or `);
+
 /** The same rule in SQL, so an aggregate and a row can never disagree about one call. */
 export const aiOutcomeSql = sql`case
   when ok then 'ok'
-  when error like ${CANCELLED_PREFIX + "%"} then 'cancelled'
+  when ${startsWithAny(CANCELLED_PREFIXES)} then 'cancelled'
   when error like ${STALLED_PREFIX + "%"} then 'stalled'
   else 'failed' end`;
+
+/**
+ * Whether a failed call is the provider's failure: a transport error, a rate limit, an overload,
+ * a refused key or a stalled stream. What outage detection may count — never a call the engine
+ * stopped itself, and never an answer the model gave that the call site could not use.
+ */
+export function isAiProviderFailure(row: { ok: boolean; error?: string | null }): boolean {
+  const outcome = aiOutcome(row);
+  if (outcome === "ok" || outcome === "cancelled") return false;
+  const error = row.error ?? "";
+  return !ANSWER_PREFIXES.some((prefix) => error.startsWith(prefix));
+}
+
+/** The same rule in SQL, as a predicate over an `ai_calls` row. */
+export const aiProviderFailureSql = sql`(not ok and not (${startsWithAny(CANCELLED_PREFIXES)}) and not (${startsWithAny(ANSWER_PREFIXES)}))`;
 
 /** One line per account, call site and model: what was spent, what it bought, and how it behaved. */
 export interface AiAccountUsage {
@@ -75,7 +105,7 @@ export interface AiAccountUsage {
   calls: number;
   /** Calls the model let us down on. They were still billed, so they still count. */
   failed: number;
-  /** Batches the engine stopped paying for because a sibling had already failed. */
+  /** Calls the engine stopped paying for: a sibling had already failed, or the task's run was stopped. */
   cancelled: number;
   /** Streams cut off at the stall ceiling: a vendor symptom, not a broken prompt. */
   stalled: number;
@@ -174,12 +204,19 @@ export interface CvBuildCosts {
   stages: string[];
 }
 
-/** The last `limit` CV builds that spent anything, newest first, each one itemised by stage. */
+/** How far back the sampled builds may reach: an Operations page reads this month's costs, not the ledger's history. */
+const CV_BUILD_COST_WINDOW = sql`now() - interval '90 days'`;
+
+/**
+ * The last `limit` CV builds that spent anything, newest first, each one itemised by stage. The
+ * sample is taken from the last ninety days, so the grouping walks a bounded slice of the ledger
+ * rather than every CV call ever made.
+ */
 export async function costPerCvBuild(db: Db, limit = 20): Promise<CvBuildCosts> {
   const rows = await db.execute<{ draftId: string; stage: string | null; calls: number; costUsd: number; at: Date }>(sql`
     with builds as (
       select ref_id, max(at) as last_at from ai_calls
-      where ref_type like 'cv-%' and ref_id is not null
+      where ref_type like 'cv-%' and ref_id is not null and at >= ${CV_BUILD_COST_WINDOW}
       group by ref_id order by max(at) desc limit ${limit}
     )
     select c.ref_id as "draftId", c.stage, count(*)::int as calls,
@@ -337,6 +374,11 @@ export async function releaseOrphanedCvHolds(db: Db, graceMinutes = 2): Promise<
  * (extraction, discovery) has none while every CV call has one.
  */
 export interface AiCallRecord {
+  /**
+   * The row's id, when the caller chooses it. A caller that retries a write whose acknowledgement
+   * was lost passes the same id each time, so a commit that did land is not written twice.
+   */
+  id?: string;
   callSite: string;
   model: string;
   inputTokens: number;
@@ -357,10 +399,12 @@ export interface AiCallRecord {
  *
  * Every engine writes through here, so a column added to the ledger reaches every call site at
  * once: the two that existed had drifted into writing different subsets of the row, and a budget
- * read from a table missing one of them is wrong in the direction that spends money.
+ * read from a table missing one of them is wrong in the direction that spends money. With an `id`
+ * the write is idempotent: the same id again writes nothing.
  */
-export async function recordAiCall(db: Db, userId: string | null, record: AiCallRecord): Promise<void> {
+export async function recordAiCall(db: Pick<Db, "insert">, userId: string | null, record: AiCallRecord): Promise<void> {
   await db.insert(aiCalls).values({
+    ...(record.id ? { id: record.id } : {}),
     userId,
     callSite: record.callSite,
     model: record.model,
@@ -375,5 +419,5 @@ export async function recordAiCall(db: Db, userId: string | null, record: AiCall
     refType: record.refType ?? null,
     refId: record.refId ?? null,
     stage: record.stage ?? null,
-  });
+  }).onConflictDoNothing({ target: aiCalls.id });
 }

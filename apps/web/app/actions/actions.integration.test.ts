@@ -10,6 +10,7 @@ import {
 } from "../../../../packages/core/test/cv-review-fixture";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDb, schema, subscribeToCompany, type Db } from "@ava/db";
+import { createTestDb } from "@/test/db";
 import { DEFAULT_CV_THEME, CV_THEMES } from "@ava/core/cv";
 import { DEFAULT_ACCOUNT_AI_BUDGET_USD, DEFAULT_SETTINGS, modelForCallSite } from "@ava/core";
 import { runMigrations } from "@ava/db/migrate";
@@ -103,10 +104,7 @@ import { listAccounts, resetAccountAiSpend, setAccountAiBudget, setUserRole } fr
 import { accountAiBudgets } from "@/lib/queries/accounts";
 
 beforeAll(async () => {
-  const client = createDb(
-    process.env.TEST_DATABASE_URL ??
-      "postgres://postgres:postgres@127.0.0.1:5432/ava_test",
-  );
+  const client = createTestDb();
   database = client.db;
   pool = client.pool;
   await runMigrations(database);
@@ -119,7 +117,8 @@ beforeEach(async () => {
   await database.execute(
     sql`truncate cv_libraries, cv_drafts, companies, decisions, tasks, settings, preference_profiles, tag_vocabulary, users restart identity cascade`,
   );
-  ({ user, cookie: session } = await signInTestUser(database, process.env.SESSION_SECRET!));
+  // An administrator: several cases below exercise the shared catalogue and account management.
+  ({ user, cookie: session } = await signInTestUser(database, process.env.SESSION_SECRET!, "tester@example.com", "admin"));
   // Filters first: `addCompanies` refuses an account that has never chosen its gate.
   await database.insert(schema.userSettings).values({ userId: user.id, key: "gate", value: DEFAULT_SETTINGS.gate });
 });
@@ -762,19 +761,19 @@ it("returns only the newest requested events per role", async () => {
   expect(events.get(job.id)!.map((e) => e.payload.i)).toEqual([29, 28, 27]);
 });
 
-it("atomically adds 1,000 companies and queues setup, with a bounded response for duplicate imports", async () => {
+it("atomically adds a full submission of companies and queues setup, with a bounded response for duplicate imports", async () => {
   const form = new FormData();
   form.set(
     "urls",
-    Array.from({ length: 1000 }, (_, n) => `https://bulk${n}.example`).join(
+    Array.from({ length: 25 }, (_, n) => `https://bulk${n}.example`).join(
       "\n",
     ),
   );
-  await expect(addCompanies(form)).rejects.toThrow("redirect:/companies?added=1000");
-  expect(await database.select({id:schema.companies.id}).from(schema.companies)).toHaveLength(1000);
-  expect(await database.select({id:schema.tasks.id}).from(schema.tasks).where(eq(schema.tasks.type,"discover"))).toHaveLength(1000);
+  await expect(addCompanies(form)).rejects.toThrow("redirect:/companies?added=25");
+  expect(await database.select({id:schema.companies.id}).from(schema.companies)).toHaveLength(25);
+  expect(await database.select({id:schema.tasks.id}).from(schema.tasks).where(eq(schema.tasks.type,"discover"))).toHaveLength(25);
   await expect(addCompanies(form)).rejects.toThrow("added=0");
-  expect(await database.select({id:schema.tasks.id}).from(schema.tasks)).toHaveLength(1000);
+  expect(await database.select({id:schema.tasks.id}).from(schema.tasks)).toHaveLength(25);
 });
 
 describe("four-status role workflow", () => {

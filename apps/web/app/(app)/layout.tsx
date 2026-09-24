@@ -28,9 +28,15 @@ const NAV_ITEMS: Array<{ href: string; label: string; indent?: boolean }> = [
   { href: "/health", label: "Health", indent: true },
 ];
 
+/** Health's entry with its count, streamed in so the shell never waits for the count. */
+async function HealthNavLink({ userId, href, indent, children }: { userId: string; href: string; indent?: boolean; children: ReactNode }) {
+  const count = await countHealthItems(userId);
+  return <NavLink href={href} indent={indent} count={count}>{children}</NavLink>;
+}
+
 async function ScanBanner({ userId }: { userId: string }) {
   const status = await getScanStatus(userId);
-  return <ScanStatusBanner initialText={status.text} />;
+  return <ScanStatusBanner initialText={status.text} initialLive={status.live} initialWakeInMs={status.wakeInMs} />;
 }
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
@@ -38,8 +44,6 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   const current = await getCurrentUser();
   if (!current) redirect("/login?error=signed_out");
   const { user } = current;
-  // What Health would show: on the entry itself, so the number is seen from wherever you are.
-  const healthCount = await countHealthItems(user.id);
 
   return (
     <WorkspaceShell><NavigationMetrics />
@@ -57,18 +61,23 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       )}
       <div className="flex flex-1 flex-col md:flex-row">
         <aside className="flex w-full shrink-0 flex-col border-b-2 border-line p-3 md:w-48 md:border-b-0 md:border-r-2">
-          <Link href="/" className="mb-4 block p-2" aria-label="AVA home">
+          <Link prefetch={false} href="/" className="mb-4 block p-2" aria-label="AVA home">
             <Mark size={48} />
           </Link>
           <nav aria-label="Main navigation" className="flex flex-wrap gap-0.5 md:block md:space-y-0.5">
-            {[...NAV_ITEMS, ...(user.role === "admin" ? [{ href: "/admin", label: "Admin" }] : [])].map((item) => (
-              <NavLink key={item.href} href={item.href} indent={item.indent} count={item.href === "/health" ? healthCount : null}>
+            {[...NAV_ITEMS, ...(user.role === "admin" ? [{ href: "/admin", label: "Admin" }] : [])].map((item) => item.href === "/health" ? (
+              // What Health would show: on the entry itself, so the number is seen from wherever you are.
+              <Suspense key={item.href} fallback={<NavLink href={item.href} indent={item.indent}>{item.label}</NavLink>}>
+                <HealthNavLink userId={user.id} href={item.href} indent={item.indent}>{item.label}</HealthNavLink>
+              </Suspense>
+            ) : (
+              <NavLink key={item.href} href={item.href} indent={item.indent}>
                 {item.label}
               </NavLink>
             ))}
           </nav>
           <div className="mt-auto space-y-2 px-2 pt-4 text-13">
-            <Link href="/account" className="block truncate text-muted no-underline hover:underline" title={user.email}>
+            <Link prefetch={false} href="/account" className="block truncate text-muted no-underline hover:underline" title={user.email}>
               {user.name || user.email}
               {user.role === "admin" && <span className="ml-1 text-11 text-faint">admin</span>}
             </Link>

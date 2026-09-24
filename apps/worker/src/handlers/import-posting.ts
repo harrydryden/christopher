@@ -32,6 +32,7 @@ import {
 } from "@ava/core";
 import { and, eq, ne } from "drizzle-orm";
 import { makeFetchContext, type WorkerDeps } from "../context";
+import { HostBusyError } from "../fetcher";
 import { log } from "../log";
 
 const MAX_DESCRIPTION = 30_000;
@@ -53,7 +54,10 @@ interface GateSummary {
 
 export type ImportResult =
   | { ok: true; jobId: string; title: string; existing: boolean; gate: GateSummary }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; retryAt?: string };
+
+/** How many times one import is put back for a host that asked us to wait, before it gives up. */
+const MAX_HOST_BUSY_DEFERRALS = 3;
 
 const summarise = (verdict: GateResult): GateSummary => ({
   inTable: verdict.inTable,
@@ -70,6 +74,40 @@ const hostOf = (url: string): string => {
     return url;
   }
 };
+
+/** A URL's host, lower-cased and without a leading `www.`; null when it is not a URL. */
+const bareHost = (url: string | null | undefined): string | null => {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+};
+
+const within = (host: string, parent: string) => host === parent || host.endsWith(`.${parent}`);
+
+/**
+ * Whether a posting URL is on one of the company's own hosts: its domain or homepage, the host of
+ * a careers source it has (unless that is an applicant-tracking vendor's, which every customer
+ * shares), or its own board on such a vendor, recognised by the vendor and the board's slug.
+ */
+export function onCompanyHost(
+  url: string,
+  company: { domain: string | null; homepageUrl: string | null },
+  sources: Array<{ type: string; url: string; apiUrl: string | null; atsSlug: string | null }>,
+): boolean {
+  const host = bareHost(url);
+  if (!host) return false;
+  const own = [company.domain?.toLowerCase().replace(/^www\./, "") ?? null, bareHost(company.homepageUrl)];
+  for (const source of sources) for (const address of [source.url, source.apiUrl]) {
+    const sourceHost = bareHost(address);
+    if (sourceHost && !ats.isAtsHost(sourceHost)) own.push(sourceHost);
+  }
+  if (own.some(parent => parent && within(host, parent))) return true;
+  const board = ats.specFromAnyUrl(url);
+  return !!board?.atsSlug && sources.some(source => source.type === board.type && source.atsSlug?.toLowerCase() === board.atsSlug!.toLowerCase());
+}
 
 /** How a failed fetch reads in a sentence, so a retried task's `tasks.error` says something useful. */
 function transportReason(err: unknown): string {
@@ -88,6 +126,7 @@ function transportReason(err: unknown): string {
 
 export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise<unknown> {
   const { userId, companyId, url } = task.payload as unknown as TaskPayloads["import_posting"];
+  const deferrals = (task.payload as { hostBusyRetries?: number }).hostBusyRetries ?? 0;
   const now = deps.now();
   const host = hostOf(url);
 
@@ -141,9 +180,19 @@ export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise
   } catch (err) {
     failure = err;
   }
+  // The host has asked us to wait longer than a slot may, and nothing was sent. The browser would
+  // be refused the same way, so the import is put back for when the host allows it.
+  if (failure instanceof HostBusyError && deferrals < MAX_HOST_BUSY_DEFERRALS) {
+    const retryAt = failure.retryAt;
+    const payload = { ...(task.payload as Record<string, unknown>), hostBusyRetries: deferrals + 1 };
+    const base = (task.dedupeKey ?? dedupeKeyFor("import_posting", { userId, companyId, url }) ?? `import_posting:${userId}:${companyId}:${url}`).replace(/:host-busy:\d+$/, "");
+    await enqueueTask(deps.db, "import_posting", payload, { dedupeKey: `${base}:host-busy:${retryAt.getTime()}`, priority: priorityFor("import_posting"), runAfter: retryAt });
+    log.info("import put back: host busy", { url, host: failure.host, retryAt: retryAt.toISOString() });
+    return { ok: false, reason: `${host} has asked us to wait before reading it again. The import will try again at ${retryAt.toISOString().slice(11, 16)} UTC.`, retryAt: retryAt.toISOString() } satisfies ImportResult;
+  }
   // A site that refuses the worker serves the page to a browser, and a page that arrived with no
   // text in it is a shell waiting for its JavaScript. Both are what the renderer is for.
-  if ((failure || (html !== null && stripHtml(html).length < JS_SHELL_TEXT)) && ctx.render) {
+  if (((failure && !(failure instanceof HostBusyError)) || (html !== null && stripHtml(html).length < JS_SHELL_TEXT)) && ctx.render) {
     try {
       const rendered = await ctx.render(url);
       if (rendered.html && (rendered.status === null || rendered.status < 400)) {
@@ -176,21 +225,26 @@ export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise
     return { ok: false, reason: "This company has no careers source yet. Add its careers URL first." } satisfies ImportResult;
   }
 
-  // Every other follower's gate decides for itself whether this role reaches them, so their
-  // settings are read here rather than from inside the transaction.
-  const others = await deps.db
-    .select({ userId: schema.companySubscriptions.userId })
-    .from(schema.companySubscriptions)
-    .where(and(eq(schema.companySubscriptions.companyId, companyId), ne(schema.companySubscriptions.status, "archived")));
-  const followers = await Promise.all(
-    others.filter((f) => f.userId !== userId).map(async (f) => ({ userId: f.userId, settings: await deps.userSettings(f.userId) })),
-  );
-
   const descriptionText = extracted.descriptionText?.slice(0, MAX_DESCRIPTION) ?? null;
   const locations = extracted.locations ?? (extracted.location ? [extracted.location] : []);
   // The URL the person pasted is the one they will click again, so a cosmetic redirect does not
   // replace it; a redirect that landed on a different posting URL does.
   const storedUrl = normalisePostingUrl(finalUrl) === canonical ? url : finalUrl;
+  // Only a posting on the company's own hosts joins the catalogue for every follower. A link to
+  // anywhere else, or one that redirected there, is this account's alone: it is stored for them and
+  // never offered to another follower's gate, so one paste cannot put a stranger's page, filed under
+  // a company everyone follows, into everyone's table.
+  const shared = onCompanyHost(url, company, sources) && onCompanyHost(storedUrl, company, sources);
+
+  // Every other follower's gate decides for itself whether a shared role reaches them, so their
+  // settings are read here rather than from inside the transaction.
+  const others = shared ? await deps.db
+    .select({ userId: schema.companySubscriptions.userId })
+    .from(schema.companySubscriptions)
+    .where(and(eq(schema.companySubscriptions.companyId, companyId), ne(schema.companySubscriptions.status, "archived"))) : [];
+  const followers = await Promise.all(
+    others.filter((f) => f.userId !== userId).map(async (f) => ({ userId: f.userId, settings: await deps.userSettings(f.userId) })),
+  );
   const row: typeof schema.jobs.$inferInsert = {
     companyId,
     sourceId: source.id,
@@ -215,6 +269,7 @@ export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise
     descriptionFetchedAt: descriptionText ? now : null,
     origin: "user",
     addedBy: userId,
+    shared,
   };
 
   // ---- One transaction ---------------------------------------------------------------------
@@ -242,7 +297,7 @@ export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise
       userId, jobId: created.id,
       keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms,
       excluded: verdict.excluded, locationOk: verdict.locationOk,
-      inTable: true, nearMiss: false, seeded: false, createdAt: now, updatedAt: now,
+      inTable: true, nearMiss: false, seeded: false, createdAt: now, updatedAt: now, addedByUrl: true,
       // The score is queued in the same transaction, so the view says so from the moment it exists.
       scoreState: "queued", scoreStateAt: now,
     }).onConflictDoNothing();
@@ -263,7 +318,7 @@ export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise
       });
     }
 
-    log.info("posting imported", { company: company.name, userId, jobId: created.id, title: created.title, url: storedUrl, inTable: verdict.inTable, followers: followers.length });
+    log.info("posting imported", { company: company.name, userId, jobId: created.id, title: created.title, url: storedUrl, inTable: verdict.inTable, shared, followers: followers.length });
     return { ok: true, jobId: created.id, title: created.title, existing: false, gate: summarise(verdict) };
   });
 }
@@ -271,7 +326,9 @@ export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise
 /**
  * The posting is already in the catalogue — this account had not seen it, or pasted it twice.
  * Nothing about the shared row changes; what may be missing is this account's view of it, and
- * having asked for the role by its URL is reason enough to have one.
+ * having asked for the role by its URL is reason enough to have one. The view is marked as asked
+ * for (`added_by_url`), which the gate respects like a decision, and one the gate had turned away
+ * or archived is brought back: the person has just said they want it.
  */
 async function adoptExistingView(
   jobId: string,
@@ -285,20 +342,28 @@ async function adoptExistingView(
     title: job.title, department: job.department, description: job.descriptionText,
     location: job.location, locations: job.locations, remote: job.remote,
   }, settings.gate);
-  const [view] = await deps.db.select({ userId: schema.userJobs.userId }).from(schema.userJobs)
-    .where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId))).limit(1);
+  const [view] = await deps.db.select({ inTable: schema.userJobs.inTable, archivedAt: schema.userJobs.archivedAt, addedByUrl: schema.userJobs.addedByUrl, fitScore: schema.userJobs.fitScore, scoredAt: schema.userJobs.scoredAt })
+    .from(schema.userJobs).where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId))).limit(1);
+  const score = async () => {
+    const payload = { userId, jobId };
+    await enqueueTask(deps.db, "score_job", payload, { dedupeKey: dedupeKeyFor("score_job", payload), priority: 1 });
+  };
   if (!view) {
     const inserted = await deps.db.insert(schema.userJobs).values({
       userId, jobId,
       keywordMatched: verdict.keywordMatched, keywordTerms: verdict.keywordTerms,
       excluded: verdict.excluded, locationOk: verdict.locationOk,
-      inTable: true, nearMiss: false, seeded: false, createdAt: now, updatedAt: now,
+      inTable: true, nearMiss: false, seeded: false, createdAt: now, updatedAt: now, addedByUrl: true,
       scoreState: "queued", scoreStateAt: now,
     }).onConflictDoNothing().returning({ userId: schema.userJobs.userId });
-    if (inserted.length) {
-      const payload = { userId, jobId };
-      await enqueueTask(deps.db, "score_job", payload, { dedupeKey: dedupeKeyFor("score_job", payload), priority: 1 });
-    }
+    if (inserted.length) await score();
+  } else if (!view.inTable || view.archivedAt || !view.addedByUrl) {
+    const unscored = view.fitScore === null && view.scoredAt === null && job.status === "open";
+    await deps.db.update(schema.userJobs).set({
+      inTable: true, archivedAt: null, gateArchivedAt: null, addedByUrl: true, updatedAt: now,
+      ...(unscored ? { scoreState: "queued" as const, scoreStateAt: now } : {}),
+    }).where(and(eq(schema.userJobs.userId, userId), eq(schema.userJobs.jobId, jobId)));
+    if (unscored) await score();
   }
   return { ok: true, jobId, title: job.title, existing: true, gate: summarise(verdict) };
 }

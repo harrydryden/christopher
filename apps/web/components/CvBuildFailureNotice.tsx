@@ -52,7 +52,7 @@ export function CvBuildFailureNotice({
       {way.links.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {way.links.map((link) => (
-            <Link key={link.href} href={link.href} className={buttonClass("secondary", "md", "no-underline")}>
+            <Link prefetch={false} key={link.href} href={link.href} className={buttonClass("secondary", "md", "no-underline")}>
               {link.label}
             </Link>
           ))}

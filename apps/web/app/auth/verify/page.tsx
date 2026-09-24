@@ -23,7 +23,7 @@ export default async function VerifyPage({ searchParams }: { searchParams: Promi
 
   if (!preview) {
     return (
-      <AuthShell title="Confirm your email" footer={<p><Link href={current ? "/account" : "/login"} className="underline">{current ? "Back to your account" : "Back to sign in"}</Link></p>}>
+      <AuthShell title="Confirm your email" footer={<p><Link prefetch={false} href={current ? "/account" : "/login"} className="underline">{current ? "Back to your account" : "Back to sign in"}</Link></p>}>
         <p className="text-14 text-danger" role="alert">{ERROR_MESSAGES.invalid}</p>
         <p className="mt-2 text-13 text-muted">{current ? "Send a new link from your Account page." : "Sign in and send a new link from your Account page, or use the sign-up page if your account is still waiting for confirmation."}</p>
       </AuthShell>
@@ -32,7 +32,7 @@ export default async function VerifyPage({ searchParams }: { searchParams: Promi
 
   const own = current?.user.id === preview.userId;
   return (
-    <AuthShell title="Confirm your email" footer={<p><Link href="/forgot-password" className="underline">Forgotten your password?</Link></p>}>
+    <AuthShell title="Confirm your email" footer={<p><Link prefetch={false} href="/forgot-password" className="underline">Forgotten your password?</Link></p>}>
       <form action={confirmEmail} className="flex flex-col gap-3">
         <input type="hidden" name="token" value={token} />
         <p className="text-14">

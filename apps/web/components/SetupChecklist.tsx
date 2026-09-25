@@ -39,7 +39,7 @@ export function SetupChecklist({ checklist, variant }: { checklist: Checklist; v
       {explanation && <p className="mb-3 text-14">{EMPTY_TABLE_SENTENCE}</p>}
       <div className="mb-2 flex items-baseline justify-between gap-3">
         <h2 className="ds-pixel text-10 text-muted">
-          {explanation ? "Start here" : "Finish setting up"} · {checklist.summary}
+          {explanation ? "Start here" : "Setup"} · {checklist.summary}
         </h2>
         {!explanation && (
           <form action={dismissSetupChecklist}>

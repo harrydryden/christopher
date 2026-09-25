@@ -35,7 +35,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Account" description={user.email} />
+      <PageHeader title="Account" />
       {notice && <p role="status" className="border-2 border-ok px-3 py-2 text-14 text-ok">{notice}</p>}
 
       <Card title="Profile">
@@ -53,12 +53,8 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
         {!user.emailVerifiedAt && (
           <form action={resendVerification} className="mt-3 flex flex-wrap items-center gap-3">
             <Button type="submit" size="sm">Send confirmation email</Button>
-            <span className="text-12 text-muted">
-              {needsEmailConfirmation(user)
-                ? "The link asks for your password."
-                : "Nothing is blocked while this is unconfirmed; confirming just proves the address. The link asks for your password."}
-            </span>
-            {!emailConfigured() && <span className="text-12 text-warn">Email delivery is not configured on this deployment; the link only reaches the server log.</span>}
+            <span className="text-12 text-muted">The link asks for your password.</span>
+            {!emailConfigured() && <span className="text-12 text-warn">Email is not configured here; the link only reaches the server log.</span>}
           </form>
         )}
       </Card>
@@ -71,7 +67,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
               <input name="currentPassword" type="password" required autoComplete="current-password" className={`max-w-sm ${inputClass}`} />
             </label>
           ) : (
-            <p className="text-14 text-muted">You sign in with Google. Setting a password lets you sign in with your email as well.</p>
+            <p className="text-14 text-muted">A password lets you sign in with your email as well as Google.</p>
           )}
           <label className={labelClassName}>
             <span className={labelClass}>New password</span>
@@ -99,15 +95,11 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
       </Card>
 
       <Card title="Sessions">
-        <p className="mb-3 text-14 text-muted">Sign out of every other browser and device. This one stays signed in.</p>
         <form action={signOutEverywhere}>
           <Button type="submit" size="sm">Sign out everywhere else</Button>
         </form>
       </Card>
 
-      {user.role === "admin" && (
-        <p className="text-14 text-muted">Your monthly AI budget is in <a href="/settings" className="text-fg underline">Settings</a>. Accounts, registration, the shared schedule, models and the company catalogue are managed in <a href="/admin" className="text-fg underline">Admin</a>.</p>
-      )}
     </div>
   );
 }

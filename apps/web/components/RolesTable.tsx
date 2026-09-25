@@ -14,7 +14,7 @@ import { SafeMarkdown } from "@/components/SafeMarkdown";
 import { SettingsForm } from "@/components/SettingsForm";
 import type { RoleDetailsVM, RoleRowVM, SortDir, SortKey } from "@/lib/queries/jobs";
 
-import { APPLICATION_STATUS_LABELS, ROLE_STAGE_LABELS, ROLE_STATUS_LABELS, roleStageRank } from "@ava/core/role-workflow";
+import { APPLICATION_STATUS_LABELS, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS, ROLE_STATUS_LABELS, roleStageRank } from "@ava/core/role-workflow";
 
 type ReasonKind = "apply" | "skip";
 
@@ -25,7 +25,7 @@ const NOTICE_MS = 5000;
 const COLLAPSED_DESCRIPTION_CHARS = 400;
 
 /** The nudge R-6.1 asks for: a reason on apply is wanted, never required. */
-const APPLY_REASON_HINT = "One line on why helps the ranking. Enter to skip.";
+const APPLY_REASON_HINT = "One line on why helps the ranking (optional)";
 
 /** "In process · Interview": the stage, and — for the three steps it collapses — which one. */
 function stageLabel(row: RoleRowVM): string {
@@ -75,7 +75,7 @@ function BuildCvOffer({ jobId, details }: { jobId: string; details: RoleDetailsV
   if (!details.cvQuote)
     return (
       <p className="text-12 text-muted">
-        Save your Library first: a CV is written from what is in it. <Link prefetch={false} href="/library" className="underline">Open Library</Link>
+        Save your Library first. <Link prefetch={false} href="/library" className="underline">Open Library</Link>
       </p>
     );
   if (details.cvQuote.refusal) return <p className="text-12 text-warn" role="status">{details.cvQuote.refusal}</p>;
@@ -90,7 +90,6 @@ function BuildCvOffer({ jobId, details }: { jobId: string; details: RoleDetailsV
   return (
     <SettingsForm action={requestCv} submitLabel={label}>
       <input type="hidden" name="jobId" value={jobId} />
-      <p className="text-12 text-muted">We’ll match your evidence to the role, offer up to four optional questions, then write and check your CV. The estimate includes one improvement pass if useful.</p>
     </SettingsForm>
   );
 }
@@ -141,7 +140,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
       const result = await archiveRoles([id], !archived);
       if (!result.ok) setFlashError(result.error);
       else setRemovedIds(ids => new Set([...ids, id]));
-    } catch { setFlashError("Could not save. Reload to check the current state before retrying."); }
+    } catch { setFlashError("Could not save. Reload and retry."); }
     finally { actionsInFlight.current.delete(id); setArchivingId(null); }
     });
   }
@@ -176,7 +175,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
         setGroupReason(null);
         router.refresh();
       } catch {
-        setGroupError("Could not save. Reload to check the current state before retrying.");
+        setGroupError("Could not save. Reload and retry.");
       } finally { setGroupPending(null); }
     });
   }
@@ -222,7 +221,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
         const result = await roleDetails(jobId);
         setDetails(current => ({ ...current, [jobId]: result.ok ? { state: "ready", details: result.details } : { state: "error", error: result.error } }));
       } catch {
-        setDetails(current => ({ ...current, [jobId]: { state: "error", error: "Could not load this role. Reload and try again." } }));
+        setDetails(current => ({ ...current, [jobId]: { state: "error", error: "Could not load this role. Reload to retry." } }));
       }
     });
   }
@@ -268,7 +267,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
     else if (previous) showNotice(jobId, `${decision === "apply" ? "Shortlisted" : "Dismissed"} ${previous.title}${hideCompany ? "" : ` at ${previous.companyName}`}`);
     router.refresh();
     } catch {
-      const error = "Could not save. Reload to check the current state before retrying.";
+      const error = "Could not save. Reload and retry.";
       if (isBoxed) setReasonBox(b => b?.jobId === jobId ? { ...b, pending: false, error } : b);
       else setFlashError(error);
     } finally { actionsInFlight.current.delete(jobId); }
@@ -288,7 +287,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
         setRemovedIds(ids => { const next = new Set(ids); next.delete(jobId); return next; });
         router.refresh();
       } catch {
-        setFlashError("Could not save. Reload to check the current state before retrying.");
+        setFlashError("Could not save. Reload and retry.");
       } finally { actionsInFlight.current.delete(jobId); }
     });
   }
@@ -374,7 +373,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
               <>
                 <Button size="sm" variant="primary" disabled={groupBusy} onClick={() => submitGroupDecision("apply", "")}>Shortlist</Button>
                 <Button size="sm" disabled={groupBusy} onClick={() => { setGroupError(null); setGroupReason(""); }}>Dismiss</Button>
-                <Button size="sm" variant="ghost" disabled={groupBusy} onClick={() => submitGroupDecision(null, "")}>Undo decisions</Button>
+                <Button size="sm" variant="ghost" disabled={groupBusy} onClick={() => submitGroupDecision(null, "")}>Undo</Button>
                 <Button size="sm" variant="ghost" disabled={groupBusy}
                   onClick={() => runGroup(archived ? "Restoring…" : "Archiving…", () => archiveRoles(selectedIds, !archived), () => true)}>
                   {archived ? "Restore" : "Archive"}
@@ -392,7 +391,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
           </div>
           {groupReason !== null && (
             <div className="flex flex-col gap-2">
-              <label className="ds-label" htmlFor="group-reason">One reason for all {selectedIds.length}</label>
+              <label className="ds-label" htmlFor="group-reason">Reason for all {selectedIds.length}</label>
               <textarea
                 id="group-reason"
                 value={groupReason}
@@ -403,7 +402,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                   if (event.key === "Escape") { event.stopPropagation(); setGroupReason(null); event.currentTarget.blur(); }
                   else if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); submitGroupDecision("skip", groupReason); }
                 }}
-                placeholder="Why are these not for you? (required)"
+                placeholder="Why not? (required)"
                 className="w-full resize-y border-2 border-line-muted bg-bg px-2 py-1 font-mono text-12 text-fg placeholder:text-faint focus:border-line focus:outline-none"
               />
               <div className="flex gap-2">
@@ -476,7 +475,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                       </button>
                       {row.addedByYou && <Badge tone="neutral">Added by you</Badge>}
                       {/* Where a shortlisted role has got to, on the row rather than only inside it. */}
-                      {movedOn(row) && <Badge tone={stageTone(row.stage)}>{stageLabel(row)}</Badge>}
+                      {movedOn(row) && <Badge tone={stageTone(row.stage)} title={ROLE_STAGE_DESCRIPTIONS[row.stage]}>{stageLabel(row)}</Badge>}
                     </span>
                     <p className="mt-1 text-12 text-muted"><span title={row.liveForTitle}>{row.liveForText}</span>{row.status === "closed" && <span className="ml-2 text-warn">Vacancy closed</span>}</p>
                   </TD>
@@ -515,10 +514,10 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                           <p className="text-12 text-muted">{[row.department, row.employmentType].filter(Boolean).join(" · ")}</p>
                           {row.salaryText && <p className="text-14 text-fg"><span className="ds-label mr-2">Salary</span>{row.salaryText}</p>}
                           <div>
-                            <h3 className="ds-label mb-1">Why this is here</h3>
+                            <h3 className="ds-label mb-1">Why it matched</h3>
                             {row.keywordTerms.length > 0 && (
                               <div className="mb-1 flex flex-wrap gap-1.5">
-                                {row.keywordTerms.map(term => <Badge key={term} tone="gray" title="A keyword of yours that this role matched">{term}</Badge>)}
+                                {row.keywordTerms.map(term => <Badge key={term} tone="gray" title="Your keyword">{term}</Badge>)}
                               </div>
                             )}
                             {detail?.state === "ready" && <p className="text-13 text-muted">{detail.details.locationReason}</p>}
@@ -535,7 +534,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                             </div>
                           )}
                           <div>
-                            <h3 className="ds-label mb-1">Role description</h3>
+                            <h3 className="ds-label mb-1">Description</h3>
                             {detail?.state === "loading" && <span className="inline-block text-muted"><Monogram size={16} searching title="Loading the description" /></span>}
                             {detail?.state === "error" && <p className="text-13 text-danger">{detail.error}</p>}
                             {detail?.state === "ready" && (detail.details.description?.trim() ? (
@@ -554,7 +553,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                                 )}
                               </>
                             ) : (
-                              <p className="text-13 text-muted">No description stored yet. Open the vacancy to read it.</p>
+                              <p className="text-13 text-muted">No description stored. Open the vacancy.</p>
                             ))}
                           </div>
                           {row.events.filter(event => event.label.includes("archiv")).map(event => <p key={event.id} className="text-12 text-muted">{event.label}</p>)}
@@ -564,7 +563,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                           <div className="flex flex-wrap items-center gap-4 text-12">
                             {!buildHere && <Link prefetch={false} href={`/applications?job=${row.id}`} className="font-semibold underline">{applicationLabel(row)}</Link>}
                             <a href={row.url} target="_blank" rel="noopener noreferrer" className="text-muted underline">View vacancy ↗</a>
-                            <a href={row.companyHomepageUrl} target="_blank" rel="noopener noreferrer" className="text-muted underline">Company website ↗</a>
+                            <a href={row.companyHomepageUrl} target="_blank" rel="noopener noreferrer" className="text-muted underline">Website ↗</a>
                           </div>
                         </div>
                         <div className="space-y-3">
@@ -609,7 +608,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                               if (!boxed.pending) void submitDecision(row.id, boxed.kind, boxed.text);
                             }
                           }}
-                          placeholder={boxed.kind === "skip" ? "Why is this not for you? (required)" : APPLY_REASON_HINT}
+                          placeholder={boxed.kind === "skip" ? "Why not? (required)" : APPLY_REASON_HINT}
                           rows={boxed.kind === "skip" ? 2 : 1}
                           className="w-full resize-y border-2 border-line-muted bg-bg px-2 py-1 font-mono text-12 text-fg placeholder:text-faint focus:border-line focus:outline-none"
                         />
@@ -631,7 +630,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                     ) : row.decision ? (
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge tone={decisionTone(row.decision.decision)}>{ROLE_STATUS_LABELS[row.decision.decision === "apply" ? "user-shortlisted" : "user-dismissed"]}</Badge>
-                        {movedOn(row) && <Badge tone={stageTone(row.stage)}>{stageLabel(row)}</Badge>}
+                        {movedOn(row) && <Badge tone={stageTone(row.stage)} title={ROLE_STAGE_DESCRIPTIONS[row.stage]}>{stageLabel(row)}</Badge>}
                         <span className="text-12 text-muted" title={row.decision.createdTitle}>Decided {row.decision.createdLabel}</span>
                         {row.decision.reason && <p className="w-full text-14 text-fg">{row.decision.reason}</p>}
                         <button type="button" onClick={() => openReasonBox(row.id, row.decision!.decision, row.decision!.reason)} className="text-12 text-muted underline hover:text-fg">
@@ -644,7 +643,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                           }}
                           className="text-12 text-muted underline hover:text-fg"
                         >
-                          Reset my decision
+                          Reset
                         </button>
                       </div>
                     ) : (

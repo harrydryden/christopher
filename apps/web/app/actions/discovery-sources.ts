@@ -99,7 +99,7 @@ export async function checkDiscoverySource(id: string): Promise<DiscoveryActionR
   if (!source?.enabled) return { ok: false, error: "Enable this source before running a check." };
   const queued = await enqueue("monitor_source", { sourceId: source.id });
   revalidatePath("/suggestions");
-  return { ok: true, message: queued ? "Check queued. Recommendations will appear in Review when it finishes." : "This source already has a check queued or running." };
+  return { ok: true, message: queued ? "Check queued. Suggestions will appear in Review when it finishes." : "This source already has a check queued or running." };
 }
 
 export async function importDiscoveryDocument(id: string, form: FormData): Promise<DiscoveryActionResult> {

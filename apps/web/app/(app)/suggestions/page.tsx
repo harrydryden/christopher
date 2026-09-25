@@ -33,7 +33,7 @@ import { needsEmailConfirmation, requireUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
-/** A recommendation's face: what the deck shows on top and the history lists. */
+/** A suggestion's face: what the deck shows on top and the history lists. */
 function SuggestionCardContent({ row }: { row: SuggestionRow }) {
   const { suggestion, profile, similarToNames } = row;
   const verification = suggestion.verification;
@@ -47,10 +47,9 @@ function SuggestionCardContent({ row }: { row: SuggestionRow }) {
     {similarToNames.length > 0 && <p className="text-14 text-muted">Similar to {similarToNames.join(", ")}</p>}
     <div className="flex flex-wrap items-center gap-2 text-14">
       {typeof verification?.openRoles === "number" && <Badge tone="neutral">{verification.openRoles} roles found</Badge>}
-      {typeof verification?.matchingRoles === "number" && <Badge tone="blue">{verification.matchingRoles} filter matches in sample</Badge>}
-      {verification?.careersSource && <a href={verification.careersSource.url} target="_blank" rel="noreferrer" className="text-fg underline">View careers page ↗</a>}
+      {typeof verification?.matchingRoles === "number" && <Badge tone="blue" title="From a sample of roles, not a complete count. A company can be worth following without a current match.">{verification.matchingRoles} matches in sample</Badge>}
+      {verification?.careersSource && <a href={verification.careersSource.url} target="_blank" rel="noreferrer" className="text-fg underline">Careers page ↗</a>}
     </div>
-    {typeof verification?.matchingRoles === "number" && <p className="text-12 text-muted">Matches use a sample of roles, not a complete vacancy count. A company can be worth tracking without a current match.</p>}
     {suggestion.evidence && <section className="bg-sunken p-3 text-14">
       <h3 className="font-medium">Evidence from {suggestion.evidence.sourceName}</h3>
       <div className="mt-2">{suggestion.evidence.url ? <a href={suggestion.evidence.url} target="_blank" rel="noreferrer" className="text-fg underline">{suggestion.evidence.title} ↗</a> : <p>{suggestion.evidence.title}</p>}
@@ -74,7 +73,7 @@ function CatalogueBox({ q, matches, domain, blockedReason }: { q: string; matche
   const listed = domain !== null && matches.some(match => match.domain === domain);
   return <section aria-label="Follow a company" className="mb-6 border-2 border-line bg-raised p-4">
     <SearchForm action="/suggestions" className="flex flex-wrap items-end gap-3">
-      <label className="grid min-w-0 flex-1 gap-1.5"><span className={labelClass}>Search the catalogue or paste a homepage</span>
+      <label className="grid min-w-0 flex-1 gap-1.5"><span className={labelClass}>Search or paste a homepage</span>
         <input name="q" type="search" defaultValue={q} maxLength={200} placeholder="Acme, or acme.com" className={`h-11 w-full ${inputClass}`}/></label>
       <Button type="submit" className="h-11">Search</Button><SearchPending />
       {q && <Link prefetch={false} className="inline-flex min-h-11 items-center text-13 underline" href="/suggestions">Clear</Link>}
@@ -95,10 +94,10 @@ function CatalogueBox({ q, matches, domain, blockedReason }: { q: string; matche
       {domain && !listed && <form action={addCompanies} className="flex flex-wrap items-center justify-between gap-3 border-t border-line-faint py-2">
         <input type="hidden" name="urls" value={q}/>
         <input type="hidden" name="returnTo" value="/suggestions"/>
-        <span className="text-14"><span className="font-semibold">{domain}</span> <span className="text-muted">was not found in the catalogue. Adding it finds its careers page once for everyone; if it is already there, you simply follow it.</span></span>
+        <span className="text-14"><span className="font-semibold">{domain}</span> <span className="text-muted">is not in the catalogue yet.</span></span>
         <Button type="submit" variant="primary" size="sm" className="min-h-11" disabled={!!blockedReason}>Add {domain}</Button>
       </form>}
-      {!matches.length && !domain && <p className="text-14 text-muted">Nothing in the catalogue matches “{q}”. Paste the company’s homepage to add it.</p>}
+      {!matches.length && !domain && <p className="text-14 text-muted">No match for “{q}”. Paste its homepage to add it.</p>}
     </div>}
   </section>;
 }
@@ -133,8 +132,8 @@ export default async function SuggestionsPage({ searchParams }: { searchParams: 
   // Following starts scanning, so the gate is chosen first; the actions refuse on the same rules.
   const blockedReason = unverified ? VERIFY_SENTENCE : !gateChosen ? CHOOSE_GATE_SENTENCE : null;
   const empty = <>
-    <EmptyState title={active.length ? "Discovery is in progress" : "No companies waiting for review"} description={active.length ? "Your checks are queued or running. Refresh progress to see new recommendations." : "Add a source or find similar companies to bring in recommendations."}/>
-    {!active.length && <div className="mt-3 text-center"><a href="/suggestions?view=sources" className={buttonClass("primary", "md", "no-underline")}>Add a discovery source</a></div>}
+    <EmptyState title={active.length ? "Discovery is in progress" : "No companies to review"} description={active.length ? "New suggestions appear here as checks finish." : "Add a source to bring in suggestions."}
+      action={active.length ? undefined : <a href="/suggestions?view=sources" className={buttonClass("primary", "md", "no-underline")}>Add a source</a>}/>
   </>;
   return <div className="mx-auto max-w-5xl">
     <PageHeader title="Discover companies"/>
@@ -145,21 +144,21 @@ export default async function SuggestionsPage({ searchParams }: { searchParams: 
     <AddedNotice added={params.added} followed={params.followed} skipped={params.skipped} className="mb-4"/>
     {params.notice && <p role="status" className="mb-4 border border-line-muted p-3 text-14">{params.notice.slice(0, 300)}</p>}
     {broken.length > 0 && <div role="alert" className="mb-4 border-2 border-warn p-3 text-14 text-warn">
-      <p className="font-semibold">{broken.length === 1 ? "1 source is not being checked automatically" : `${broken.length} sources are not being checked automatically`}</p>
-      <p className="mt-1">{broken.map(s => s.name).join(", ")}. <a href="/suggestions?view=sources" className="underline">See what happened</a>.</p>
+      <p><span className="font-semibold">{broken.length === 1 ? "1 source is not being checked" : `${broken.length} sources are not being checked`}:</span> {broken.map(s => s.name).join(", ")}. <a href="/suggestions?view=sources" className="underline">See why</a></p>
     </div>}
-        {!settings.suggestionsEnabled && <p role="status" className="mb-4 p-3 text-14 text-warn">Discovery is disabled for your account. You can still review recommendations and manage sources. <a href="/settings" className="underline">Enable company suggestions in Settings</a>.</p>}
-    {active.length > 0 && <div role="status" className="mb-4 flex flex-wrap items-center justify-between gap-2 border border-line-muted p-3 text-14"><span>{active.filter(t => t.status === "running").length} checks running · {active.filter(t => t.status === "queued").length} queued. New recommendations will appear in Review.</span><a href={view === "review" ? "/suggestions" : `/suggestions?view=${view}`} className="underline">Refresh progress</a></div>}
+        {!settings.suggestionsEnabled && <p role="status" className="mb-4 p-3 text-14 text-warn">Company suggestions are off. <a href="/settings" className="underline">Turn them on in Settings</a></p>}
+    {active.length > 0 && <div role="status" className="mb-4 flex flex-wrap items-center justify-between gap-2 border border-line-muted p-3 text-14"><span>{active.filter(t => t.status === "running").length} checks running · {active.filter(t => t.status === "queued").length} queued</span><a href={view === "review" ? "/suggestions" : `/suggestions?view=${view}`} className="text-12 text-muted underline hover:text-fg">Refresh</a></div>}
     {view === "sources" ? <DiscoverySources userId={user.id}/> : view === "history" ? <>
-      <p className="mb-4 text-14 text-muted">Recently reviewed and expired recommendations; none of them is suggested again.</p>
+      <p className="mb-4 text-14 text-muted">Recently reviewed companies are not suggested again.</p>
       <SearchForm action="/suggestions" className="flex flex-wrap items-end gap-3"><input type="hidden" name="view" value="history"/><label className="grid gap-1.5"><span className={labelClass}>Search history</span><input name="q" defaultValue={q} maxLength={200} className={`h-11 w-80 ${inputClass}`}/></label><Button type="submit" className="h-11">Search</Button><SearchPending /></SearchForm>
       <Pagination page={page} total={historyTotal} path="/suggestions" params={{ view, q }}/>
-      {resolved.length ? <div className="space-y-4">{resolved.map(row => <div key={row.suggestion.id}><SuggestionCard row={row}/>{row.suggestion.resolvedAt && <p className="mt-1 text-12 text-muted">{row.suggestion.status === "expired" ? "Expired" : "Reviewed"} {relativeTime(row.suggestion.resolvedAt, now)}</p>}</div>)}</div> : <EmptyState title={q ? "No matching history" : "No review history yet"} description={q ? "Try another company name or clear your search." : "Companies you add or dismiss will appear here."}/>}
+      {resolved.length ? <div className="space-y-4">{resolved.map(row => <div key={row.suggestion.id}><SuggestionCard row={row}/>{row.suggestion.resolvedAt && <p className="mt-1 text-12 text-muted">{row.suggestion.status === "expired" ? "Expired" : "Reviewed"} {relativeTime(row.suggestion.resolvedAt, now)}</p>}</div>)}</div> : <EmptyState title={q ? "No matching history" : "No review history yet"} description={q ? "Try another name." : "Companies you follow or dismiss appear here."}/>}
     </> : <>
       <CatalogueBox q={q} matches={matches} domain={domain} blockedReason={blockedReason}/>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <div><h2 className="ds-pixel text-12">Companies to review</h2><p className="text-14 text-muted">Recommended from companies you follow and <a href="/suggestions?view=sources" className="underline">your sources</a>; nothing is followed automatically. <a href="/learning" className="underline">Refine your preference profile</a> to improve relevance.</p></div>
-        <DiscoverySourceForm action={findMoreSuggestions} returnTo="/suggestions" pendingLabel="Queuing search…"><Button className="min-h-11" type="submit" disabled={!settings.suggestionsEnabled || similarActive}>{similarActive ? "Similar-company search queued" : "Find similar companies"}</Button></DiscoverySourceForm>
+        <h2 className="ds-pixel text-12">Companies to review</h2>
+        {/* Occasional, so a text control rather than a second button beside the deck's own. */}
+        <DiscoverySourceForm action={findMoreSuggestions} returnTo="/suggestions" pendingLabel="Queuing search…"><Button variant="ghost" size="sm" type="submit" disabled={!settings.suggestionsEnabled || similarActive}>{similarActive ? "Search queued" : "Find similar companies"}</Button></DiscoverySourceForm>
       </div>
       <SuggestionDeck
         cards={pending.map(row => ({ id: row.suggestion.id, name: row.suggestion.name, body: <SuggestionCardContent row={row}/> }))}

@@ -203,7 +203,7 @@ export default async function CvDraftPage({
         description={
           <>
             <p className="text-12 text-muted">
-              The saved company advert used to write and assess this CV.
+              The advert this CV was written against.
             </p>
             <p className="whitespace-pre-wrap text-14 leading-relaxed">
               {draft.jobDescription}
@@ -213,13 +213,12 @@ export default async function CvDraftPage({
                 <a className="underline" href="/library">
                   Open Library
                 </a>{" "}
-                · This description is the exact snapshot used for writing and
-                scoring.{" "}
+                · The exact snapshot used for writing and scoring.{" "}
                 {(!draft.jobSource || draft.jobSource.method === "unknown") &&
-                  "Extraction provenance was not recorded for this older description; compare it with the full company advert before relying on the score."}{" "}
+                  "Its provenance was not recorded; check it against the full advert before relying on the score."}{" "}
                 {draft.jobSource?.kind === "user_supplied"
-                  ? "It was supplied by you; verify it matches the company’s full advert."
-                  : "It was saved from the company role record."}{" "}
+                  ? "You supplied it; check it matches the full advert."
+                  : "Saved from the role record."}{" "}
                 {draft.jobSource?.url && (
                   <a
                     className="underline"
@@ -341,22 +340,19 @@ export default async function CvDraftPage({
                   <CvDisclosure label="application tracking">
                     {application ? (
                       <Link prefetch={false} href={draft.jobId ? `/applications?job=${draft.jobId}` : "/applications"} className="underline">
-                        Application recorded — view status and frozen PDF
+                        Application recorded · view it
                       </Link>
                     ) : !draft.finalisedAt ? (
                       <p className="text-14">
-                        Finalise the assessed CV before recording an
-                        application.
+                        Finalise the CV to record an application.
                       </p>
                     ) : (
                       <SettingsForm
                         action={recordApplication.bind(null, id)}
-                        submitLabel="Record application with this saved CV"
+                        submitLabel="Record application"
                       >
                         <p className="text-14">
-                          Use this after submitting this CV revision. This
-                          records your application; it does not send anything to
-                          the employer.
+                          Records that you applied; nothing is sent to the employer.
                         </p>
                         <label className="flex flex-col gap-1.5 text-14">
                           Application date

@@ -29,7 +29,7 @@ export default async function AdminCataloguePage({ searchParams }: { searchParam
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Company catalogue" description="Every company anyone follows, stored once and scanned once a day. Names, websites and sources are shared, so changes here reach every follower." />
+      <PageHeader title="Company catalogue" description="Changes here reach every follower." />
 
       <SearchForm action="/admin/catalogue" className="flex flex-wrap items-end gap-3">
         <label className="grid gap-1.5"><span className={labelClass}>Search the catalogue</span><input name="q" defaultValue={q} maxLength={200} className={`h-11 w-80 ${inputClass}`} /></label>
@@ -69,7 +69,7 @@ export default async function AdminCataloguePage({ searchParams }: { searchParam
                 <label className="flex flex-col gap-1.5 text-14">
                   <span className={labelClass}>Main website</span>
                   <input name="homepageUrl" defaultValue={company.homepageUrl} required maxLength={2048} className={inputClass} />
-                  <span className="text-12 text-muted">Changing the website refreshes the logo. Followers use Re-discover on their company page to find the careers page again.</span>
+                  <span className="text-12 text-muted">Changing the website refreshes the logo.</span>
                 </label>
               </SettingsForm>
               <div className="space-y-3">

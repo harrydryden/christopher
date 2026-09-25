@@ -54,11 +54,11 @@ export interface SetupChecklist {
 
 /** The sentence under an empty table: a blank table means nothing has happened yet. */
 export const EMPTY_TABLE_SENTENCE =
-  "Your table is empty because nothing has run yet, not because nothing matches. Finish these five steps and the first scan fills it.";
+  "Nothing has run yet. Finish these steps to fill your table.";
 
 /** What the gate does, in one sentence, wherever the gate is offered. */
 export const GATE_SENTENCE =
-  "AVA keeps a role only when its title contains one of these words and it is in one of these places or is remote. Change it whenever you like; the table updates at once.";
+  "A role is kept only when its title contains one of these words and it is in one of these places or remote.";
 
 /** The example in an empty include-keywords field, so nobody scans against a word they never chose. */
 export const GATE_EXAMPLE = "e.g. operations, chief of staff, programme";
@@ -67,7 +67,7 @@ export const GATE_EXAMPLE = "e.g. operations, chief of staff, programme";
 export const CHOOSE_GATE_SENTENCE = "Choose your keywords and locations first, so the first scan runs against your filters.";
 
 /** At least one include keyword, so a saved gate never admits every role a company posts. */
-export const GATE_NEEDS_KEYWORD_SENTENCE = "Enter at least one keyword, so the gate never admits every role a company posts.";
+export const GATE_NEEDS_KEYWORD_SENTENCE = "Enter at least one keyword.";
 
 export function buildSetupChecklist(facts: SetupFacts): SetupChecklist {
   const followed = Math.max(0, facts.companiesFollowed);
@@ -76,7 +76,7 @@ export function buildSetupChecklist(facts: SetupFacts): SetupChecklist {
       id: "email",
       shortLabel: "Email",
       label: "Confirm your email",
-      description: "Scanning, discovery and CV builds start once your address is confirmed.",
+      description: "Scans, discovery and CV builds wait for it.",
       href: "/account",
       done: facts.emailConfirmed,
     },
@@ -84,7 +84,7 @@ export function buildSetupChecklist(facts: SetupFacts): SetupChecklist {
       id: "gate",
       shortLabel: "Filters",
       label: "Choose keywords and locations",
-      description: "Your filters decide which roles reach your table; nothing is scanned against words you did not choose.",
+      description: "They decide which roles reach your table.",
       href: "/settings#keywords",
       done: facts.gateChosen,
     },
@@ -92,7 +92,7 @@ export function buildSetupChecklist(facts: SetupFacts): SetupChecklist {
       id: "seed-profile",
       shortLabel: "Seed profile",
       label: "Write the seed profile",
-      description: "A few sentences on what you are looking for, which seed the ranking and are never overwritten.",
+      description: "A few sentences on what you want; they seed the ranking.",
       href: "/settings#seed-profile",
       done: facts.seedProfileWritten,
     },
@@ -100,7 +100,7 @@ export function buildSetupChecklist(facts: SetupFacts): SetupChecklist {
       id: "companies",
       shortLabel: "Companies",
       label: `Follow ${COMPANIES_TARGET} companies`,
-      description: "Each one is scanned once a day and its matching roles arrive in your table.",
+      description: "Each is scanned daily for matching roles.",
       href: "/suggestions",
       done: followed >= COMPANIES_TARGET,
       progress: `${Math.min(followed, COMPANIES_TARGET)} of ${COMPANIES_TARGET}`,
@@ -109,7 +109,7 @@ export function buildSetupChecklist(facts: SetupFacts): SetupChecklist {
       id: "library",
       shortLabel: "Library",
       label: "Fill the Library",
-      description: "Your jobs and what you did in them, which every CV is built from.",
+      description: "Every CV is built from it.",
       href: "/library",
       done: facts.libraryFilled,
     },

@@ -10,21 +10,26 @@ import { archiveCompany, pauseCompany, resumeCompany, unfollowCompany } from "@/
 import { Button } from "@/components/Button";
 import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
 import type { CompanySubscription } from "@ava/db/schema";
+import type { ReactNode } from "react";
 
 export function CompanyControls({
   companyId,
   companyName,
   status,
+  refresh,
 }: {
   companyId: string;
   companyName: string;
   status: CompanySubscription["status"];
+  /** An occasional control the caller keeps out of the row, such as the companies table's Refresh. */
+  refresh?: ReactNode;
 }) {
   return (
     <details className="border-2 border-line-muted bg-raised">
       <summary className="ds-pixel cursor-pointer px-2.5 py-1 text-10 text-fg">Manage</summary>
       <div className="space-y-2 border-t-2 border-line-muted p-2">
         <div className="flex flex-wrap gap-2">
+          {refresh}
           {status === "active" ? (
             <form action={pauseCompany.bind(null, companyId)}>
               <Button type="submit" size="sm">Pause scanning</Button>
@@ -48,8 +53,7 @@ export function CompanyControls({
           </form>
         </div>
         <p className="text-12 text-muted">
-          Pausing keeps this company and its roles and stops the daily scan; hiding takes it off your list and keeps
-          everything; stopping following removes its roles from your table. Other followers are unaffected.
+          Pause stops the daily scan; Hide takes it off your list and keeps everything; Stop following removes its roles from your table.
         </p>
       </div>
     </details>

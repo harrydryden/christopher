@@ -92,16 +92,7 @@ export default async function ApplicationsPage({
     <div className="max-w-6xl space-y-5">
       <PageHeader
         title={company ? `Applications at ${company.name}` : "Applications"}
-        description={
-          company ? (
-            <>
-              Every role you are pursuing at {company.name}.{" "}
-              <Link prefetch={false} href={`/applications?filter=${filter}`} className="underline">Show all companies</Link>
-            </>
-          ) : (
-            "Every role you are pursuing, from shortlist to outcome."
-          )
-        }
+        description={company ? <Link prefetch={false} href={`/applications?filter=${filter}`} className="underline">Show all companies</Link> : undefined}
       />
       {/* Where everything stands, in one line, before the segments narrow it. A stage nothing has
           reached is shown at zero rather than left out: the shape of the pipeline is the point. */}
@@ -132,7 +123,7 @@ export default async function ApplicationsPage({
         ))}
       </nav>
       {/* A CV on this page is still being written: the cells follow it without a reload. */}
-      {building && <AutoRefresh scope="cv" initialVersion={cvWork.version} message="A CV for one of these roles is being built. This page updates itself." />}
+      {building && <AutoRefresh scope="cv" initialVersion={cvWork.version} message="A CV is being built; this page updates itself." />}
       <ApplicationsTable
         key={`${filter}:${result.page}:${company?.id ?? ""}`}
         rows={result.rows}

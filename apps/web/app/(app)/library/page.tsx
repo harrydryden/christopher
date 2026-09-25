@@ -49,10 +49,7 @@ export default async function LibraryPage({ searchParams }: {
   // nothing on the screen to lose.
   return (
     <div className="max-w-6xl space-y-5">
-      <PageHeader
-        title="Library"
-        description="The evidence every CV is written from. A job’s rows are used once they are confirmed."
-      />
+      <PageHeader title="Library" />
       <LibraryImportProposals imports={imports} version={library?.version ?? 0} />
       {reading > 0 && <LibraryImportPoller pending={reading} />}
       <CvLibraryEditor

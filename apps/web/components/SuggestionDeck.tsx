@@ -93,7 +93,7 @@ export function SuggestionDeck({ cards, empty, disabledReason }: { cards: DeckCa
         setDx(0);
         router.refresh();
       } catch {
-        setError("This change could not be completed. Please try again.");
+        setError("Could not save. Try again.");
         setDx(0);
       } finally {
         busy.current = false;
@@ -169,9 +169,9 @@ export function SuggestionDeck({ cards, empty, disabledReason }: { cards: DeckCa
   const transition = dragging || reducedMotion ? "none" : "transform 240ms steps(4, end)";
 
   return (
-    <section ref={root} aria-label="Recommendations to review" className="space-y-3">
+    <section ref={root} aria-label="Suggestions to review" className="space-y-3">
       <p className="text-12 text-muted">
-        {visible.length} to review · drag right or press <kbd>→</kbd> to follow, drag left or press <kbd>←</kbd> to dismiss.
+        {visible.length} to review · drag or press <kbd>→</kbd> follow, <kbd>←</kbd> dismiss
       </p>
       <div className="overflow-x-clip p-3">
         <div className="relative">
@@ -208,7 +208,7 @@ export function SuggestionDeck({ cards, empty, disabledReason }: { cards: DeckCa
       {notice && <p role="status" className="text-14 text-ok">{notice}</p>}
 
       <details className="border-t border-line-muted pt-3">
-        <summary className="cursor-pointer py-1 text-14 underline">Dismiss with a reason…</summary>
+        <summary className="cursor-pointer py-1 text-12 text-muted underline">Dismiss with a reason…</summary>
         <form
           className="mt-2 grid gap-2"
           onSubmit={(event) => {
@@ -218,7 +218,7 @@ export function SuggestionDeck({ cards, empty, disabledReason }: { cards: DeckCa
           }}
         >
           <label className="grid gap-1.5">
-            <span className={labelClass}>Why is {current.name} unsuitable?</span>
+            <span className={labelClass}>Why not {current.name}?</span>
             <textarea
               name="reason"
               value={reason}
@@ -229,8 +229,7 @@ export function SuggestionDeck({ cards, empty, disabledReason }: { cards: DeckCa
               className="w-full border border-line-muted bg-transparent p-2"
             />
           </label>
-          <p className="text-12 text-muted">Your reason shapes future recommendations. A swipe left files it too when one is written here.</p>
-          <div><Button className="min-h-11" type="submit" size="sm" disabled={disabled || pending}>Dismiss with this reason</Button></div>
+          <div><Button className="min-h-11" type="submit" size="sm" disabled={disabled || pending}>Dismiss</Button></div>
         </form>
       </details>
     </section>

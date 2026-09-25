@@ -8,7 +8,7 @@ export function AddedNotice({ added, followed, skipped, className = "" }: { adde
   return (
     <div role="status" className={`border-2 border-ok px-3 py-2 text-14 text-ok ${className}`}>
       Added {added.slice(0, 6)} new {added === "1" ? "company" : "companies"}.
-      {followed && <span className="block">Followed {followed.slice(0, 6)} already-tracked {followed === "1" ? "company" : "companies"}; their matching roles are in your table now.</span>}
+      {followed && <span className="block">Followed {followed.slice(0, 6)} {followed === "1" ? "company" : "companies"} already in the catalogue.</span>}
       {skipped && <span className="block">Skipped (already yours or invalid): {skipped.slice(0, 1000)}</span>}
     </div>
   );

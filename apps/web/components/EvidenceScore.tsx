@@ -62,7 +62,7 @@ export function EvidenceSummary({
       {!waiting && refusal && evidence.source === "rules" && (
         <p className="text-12 text-warn">{refusal}</p>
       )}
-      {stale && <p className="text-12 text-muted">These rows have changed since they were scored. Save the library to score them from your tags, then Re-score for the full review.</p>}
+      {stale && <p className="text-12 text-muted">These rows changed since they were scored. Save, then Re-score.</p>}
       {evidence.prompts.length > 0 && (
         <ul className="space-y-1">
           {evidence.prompts.map(prompt => (

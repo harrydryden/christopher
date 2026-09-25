@@ -7,7 +7,7 @@ import { jobRemovalConfirm } from "../components/EmploymentHistoryTable";
 import { libraryEvidence } from "./cv-library-reviews";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
-vi.mock("@/app/actions/cv", () => ({ saveCvLibrary: vi.fn() }));
+vi.mock("@/app/actions/cv", () => ({ saveCvLibrary: vi.fn(), rescoreLibrary: vi.fn() }));
 
 /** The markup a person can read: everything but the hidden field the save posts. */
 const onScreen = (html: string) => html.replace(/name="library" value="[^"]*"/, "");
@@ -23,7 +23,7 @@ it("renders a labelled confirmation checkbox for every responsibility with its s
   expect(checkboxes[0]).toContain('checked=""');
   expect(checkboxes[1]).not.toContain('checked=""');
   expect(html).toContain('aria-label="Acme Director responsibilities and outcomes"');
-  expect(html).toMatch(/<th[^>]*>#<\/th><th[^>]*>Confirmed<\/th><th[^>]*>Narrative<\/th><th[^>]*>Type<\/th>/);
+  expect(html).toMatch(/<th[^>]*>#<\/th><th[^>]*>Confirmed<\/th><th[^>]*>Narrative<\/th><th[^>]*>Type<\/th><th[^>]*>Score<\/th>/);
   expect(html).toContain('aria-label="Job 1 industry descriptions"');
   expect(html).toContain("Healthcare, SaaS");
   expect(html).toMatch(/<th[^>]*>Company<\/th><th[^>]*>Industry descriptions<\/th><th[^>]*>Job title<\/th>/);
@@ -32,11 +32,11 @@ it("renders a labelled confirmation checkbox for every responsibility with its s
   // employment history is evidence of itself, so the sentence says nothing about a status.
   expect(html).toContain("1 of 2 rows confirmed");
   expect(html).toContain("Confirm all");
-  expect(html).toContain("Save library");
-  // The save and what is at stake stay in view; this library can be built from as it stands.
+  // Nothing has changed, so there is nothing to save and no bar offering to: saving is the
+  // person's own act, and the control for it appears once there is something to save.
+  expect(html).not.toContain("Save library");
+  expect(html).not.toContain("sticky top-0");
   expect(html).toContain("Ready to build: yes");
-  expect(html).toMatch(/sticky bottom-0[^"]*"[\s\S]*Save library/);
-  expect(html).toContain("Version 2");
   // The employment grid is a table above `md` and stacked cards below it.
   expect(html).toContain('class="hidden md:block"');
   expect(html).toContain('class="space-y-3 md:hidden"');
@@ -100,24 +100,21 @@ it("tags every row with the types it serves and says what the job is still missi
       details: "Led a team\nCut handovers by 40% after the site moved", confirmedResponsibilities: ["Led a team"],
       rowFacets: { "Led a team": ["responsibility"], "Cut handovers by 40% after the site moved": ["problem", "outcome", "metric"] } }] };
   const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library, version: 4 }));
-  // One control per row, named by the row it belongs to, and findable whether or not it is open.
-  expect(html).toMatch(/<details role="group" aria-label="Type of row 1"/);
-  expect(html).toMatch(/<summary aria-label="Type of row 1"/);
-  expect(html).toMatch(/<details role="group" aria-label="Type of row 2"/);
-  // The summary reads back what is chosen; past two it is the first two and how many more.
-  expect(html).toContain("Responsibilities</span>");
-  expect(html).toContain("Problems solved · Outcomes +1");
-  // Six checkboxes in the panel, in the order the Library asks for them. The panel is laid out
-  // against the viewport rather than the cell, so the scroller around the table cannot clip it.
-  const panel = html.slice(html.indexOf('<div class="fixed', html.indexOf('aria-label="Type of row 1"')));
-  expect(panel.match(/Responsibilities|Problems solved|Outcomes|Metrics moved|Milestones reached|Working style/g)!.slice(0, 6))
-    .toEqual(["Responsibilities", "Problems solved", "Outcomes", "Metrics moved", "Milestones reached", "Working style"]);
+  // One menu button per row, named by the row it belongs to, closed until it is opened.
+  expect(html).toMatch(/<button type="button" aria-label="Type of row 1" aria-haspopup="menu" aria-expanded="false"/);
+  expect(html).toMatch(/<button type="button" aria-label="Type of row 2" aria-haspopup="menu" aria-expanded="false"/);
+  expect(html).not.toContain('role="menu"');
+  // The trigger reads back every type chosen, each as the pixel label the menu calls it.
+  const second = html.slice(html.indexOf('aria-label="Type of row 2"'));
+  expect(second.slice(0, second.indexOf("</button>")).match(/>(Problems solved|Outcomes|Metrics moved)</g))
+    .toEqual([">Problems solved<", ">Outcomes<", ">Metrics moved<"]);
+  // The trigger fills its cell at the narrative's own minimum height, so the two line up.
+  expect(html).toMatch(/<td class="h-px[^"]*"><div class="h-full"><button[^>]*class="[^"]*h-full min-h-16/);
+  expect(html).toMatch(/<textarea[^>]*class="block min-h-16/);
   // What the six types say is missing, from the tags on screen: one row carrying three covers all
   // three, and the word facet is nowhere a person can read it.
   expect(html).toContain("No milestones reached or working style yet");
   expect(html).not.toMatch(/\bfacets? (untagged|are covered)/);
-  // The stored version is text beside Save, not only the hidden input the save posts.
-  expect(html).toContain("Version 4");
 });
 
 it("prompts for a type on a row that has none", () => {
@@ -125,7 +122,7 @@ it("prompts for a type on a row that has none", () => {
     employment: [{ id: "job", company: "Acme", jobTitle: "Director", startDate: "2020", endDate: "", current: true }],
     entries: [{ id: "one", kind: "experience", status: "active", employmentId: "job", heading: "Director", details: "Led a team", confirmedResponsibilities: [] }] };
   const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library, version: 1 }));
-  expect(html).toContain("Choose a type");
+  expect(html).toContain("Choose types");
   expect(html).toContain("No outcomes or metrics moved yet · 4 other types untagged");
 });
 
@@ -153,9 +150,48 @@ it("shows the evidence a stored review reports, with a question and a control th
   expect(html).toContain("Evaluating…");
   expect(html).toContain("What changed as a result?");
   expect(html).toContain("Add a row for this");
-  // A score gates nothing: the rows, the confirmation and the save are all still there.
-  expect(html).toContain("Save library");
+  // A score gates nothing: the rows and the confirmation are all still there.
   expect(html).toContain('aria-label="Confirm Acme Director entry 1"');
+  // A pass is already running, so there is nothing to re-score and no bar.
+  expect(html).not.toContain("Re-score");
+});
+
+it("offers the re-score once saved rows have changed since the last review, and scores each row", () => {
+  const library: CvLibrary = { name: "Test", contact: "", profile: "", structuredExperience: true,
+    employment: [{ id: "job", company: "Acme", jobTitle: "Director", startDate: "2020", endDate: "", current: true }],
+    entries: [{ id: "one", kind: "experience", status: "active", employmentId: "job", heading: "Director",
+      details: "Led a team\nCut handover time from 3 days to 4 hours across the UK network", confirmedResponsibilities: ["Led a team"],
+      rowFacets: { "Cut handover time from 3 days to 4 hours across the UK network": ["outcome"] } }] };
+  // No stored review describes these rows and no pass is running: the saved rows are scored from
+  // the person's own tags, and the bar offers the full review.
+  const evidence = libraryEvidence(library, new Map(), { pending: false, refusal: null });
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library, version: 3, evidence }));
+  expect(html).toMatch(/sticky top-0[^"]*border-b-2 border-line bg-bg[\s\S]*Rows changed since the last review\.[\s\S]*>Re-score</);
+  expect(html).not.toContain("Save library");
+  expect(html).toContain("Scored from your own tags. Re-score for the full review.");
+  // One score per row, with what it measures in its title.
+  expect(html).toMatch(/title="Row evidence 0\/100: [^"]*"><span[^>]*>0</);
+  expect(html).toMatch(/title="Row evidence 100\/100: [^"]*"><span[^>]*>100</);
+
+  // Never saved: nothing to re-score.
+  expect(renderToStaticMarkup(createElement(CvLibraryEditor, { library, version: 0, evidence }))).not.toContain("Rows changed since the last review");
+});
+
+it("gives each contact detail its own field, calls the overview a bio, and has no JSON import or export", () => {
+  const library: CvLibrary = { name: "Rowan Mercer", contact: "Manchester, UK · rowan@example.test · +44 7700 900123", profile: "Operations leader", entries: [{ id: "s", kind: "skill", heading: "Tools", details: "SQL" }] };
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library, version: 2 }));
+  // Opened through the upgrade: the address and the number move to their fields, the rest stays.
+  expect(html).toMatch(/<span class="ds-label">Email<\/span><input type="email"[^>]*value="rowan@example.test"/);
+  expect(html).toMatch(/<span class="ds-label">Phone<\/span><input type="tel"[^>]*value="\+44 7700 900123"/);
+  expect(html).toMatch(/<span class="ds-label">Location<\/span><input type="text"[^>]*value=""/);
+  expect(html).toMatch(/<span class="ds-label">Other contact details<\/span><input type="text"[^>]*value="Manchester, UK"/);
+  // Every intro line is the same control.
+  expect(html).toMatch(/<span class="ds-label">Name<\/span><input type="text"/);
+  expect(html).toContain('<span class="ds-label">Bio</span>');
+  expect(html).not.toMatch(/career overview/i);
+  expect(html).not.toMatch(/Import library JSON|Export library/);
+  // Opening the old shape is not an edit: nothing to save.
+  expect(html).not.toContain("Unsaved changes");
 });
 
 it("opens the Experience tab on a gap carried from a CV, with the requirement quoted", () => {

@@ -9,6 +9,7 @@ import {
   evidenceRatingFor,
   facetForPrompt,
   libraryEntryInputHash,
+  libraryRowScore,
   normaliseLibraryReview,
   reviewableRows,
   rulesLibraryReview,
@@ -105,6 +106,26 @@ describe("scoreLibraryRows", () => {
     expect(scoreLibraryRows([row({ facets: ["metric", "outcome"] })]).coverage).toMatchObject({ outcome: 1, metric: 1 });
     // A type repeated on one row is one row's worth of it, not two.
     expect(scoreLibraryRows([row({ facets: ["outcome", "outcome"] })]).coverage.outcome).toBe(1);
+  });
+});
+
+describe("libraryRowScore", () => {
+  it("gives a quarter for each of the four things a row is judged on", () => {
+    expect(libraryRowScore(row({ facets: [] })).score).toBe(0);
+    expect(libraryRowScore(row()).score).toBe(25);
+    expect(libraryRowScore(row({ specific: true, quantified: true })).score).toBe(75);
+    const full = libraryRowScore(row({ facets: ["outcome", "metric"], specific: true, quantified: true, outcomeLinked: true }));
+    expect(full).toEqual({ score: 100, signals: { typed: true, specific: true, quantified: true, outcomeLinked: true } });
+  });
+
+  it("scores a row the review could not tie to the wording at 0, as the entry's score counts it", () => {
+    expect(libraryRowScore(row({ verified: false, specific: true, quantified: true, outcomeLinked: true })).score).toBe(0);
+  });
+
+  it("scores a baseline row from the person's own tags and wording", () => {
+    const stored = library("Cut handover time from 3 days to 4 hours across the UK warehouse network", { "Cut handover time from 3 days to 4 hours across the UK warehouse network": "metric" });
+    const review = rulesLibraryReview(stored.entries[0]!, stored);
+    expect(libraryRowScore(review.rows[0]!)).toEqual({ score: 100, signals: { typed: true, specific: true, quantified: true, outcomeLinked: true } });
   });
 });
 

@@ -92,10 +92,10 @@ const PAGES = [
   ["/admin/health", ["Operations"]],
   // The CV list has gone: `/cv` is a redirect into the applications table, which holds the CVs.
   ["/cv", { redirectsTo: "/applications" }],
-  ["/library", ["Library", "Intro", "Website", "Experience", "Education, skills and interests",
+  ["/library", ["Library", "Intro", "Email", "Phone", "Location", "Other contact details", "Bio", "Website",
+    "Experience", "Education, skills and interests",
     "Import a document", "Upload a CV", "Paste text", "Read your website",
     "AVA does not read LinkedIn itself.",
-    "Versions", "Nothing saved yet. Your first save becomes version 1.",
     "Writing preferences", "Writing style", "Saved phrasing", "No library saved yet"]],
   ["/applications", ["Applications", "Active", "Closed", "Roles by stage", "What the stages mean"]],
   ["/?archive=1", ["Roles", "Archived"], "Dismissed"],

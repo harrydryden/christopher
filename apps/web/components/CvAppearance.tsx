@@ -134,7 +134,7 @@ export function CvAppearance({ value, onChange, name }: { value?: CvTheme; onCha
           }}
         >
           <strong className="text-16">Your name</strong>
-          <p className="text-12">Contact details · LinkedIn</p>
+          <p className="text-12">Email · Phone · Location · LinkedIn</p>
           <div
             className="p-3"
             style={{

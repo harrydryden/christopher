@@ -873,6 +873,9 @@ export class AiEngine {
       theme: _theme,
       name: _name,
       contact: _contact,
+      email: _email,
+      phone: _phone,
+      location: _location,
       linkedinUrl: _linkedin,
       websiteUrl: _website,
       ...evidenceLibrary

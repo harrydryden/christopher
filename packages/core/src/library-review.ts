@@ -161,6 +161,29 @@ export function scoreLibraryRows(rows: LibraryRowReview[]): {
   return { score, rating: evidenceRatingFor(score), coverage, missing: BY_WEIGHT.filter(facet => coverage[facet] === 0) };
 }
 
+/** The four things one row is scored on, in the order a row's score explains them. */
+export const LIBRARY_ROW_SIGNALS = ["typed", "specific", "quantified", "outcomeLinked"] as const;
+export type LibraryRowSignal = (typeof LIBRARY_ROW_SIGNALS)[number];
+
+/**
+ * One row's own score, 0 to 100 in steps of 25: a quarter each for serving at least one of the six
+ * types, being specific, carrying a number, and being tied to an outcome. These are the per-row
+ * judgements `scoreLibraryRows` sums across an entry, read for the row alone, so a row's score and
+ * its entry's never disagree about what counts. An unverified row — one the review could not tie to
+ * the person's wording — scores 0, as it counts for nothing in the entry's score either.
+ *
+ * Like the entry's score it is computed here from classifications and gates nothing.
+ */
+export function libraryRowScore(row: LibraryRowReview): { score: number; signals: Record<LibraryRowSignal, boolean> } {
+  const signals: Record<LibraryRowSignal, boolean> = {
+    typed: row.verified && row.facets.length > 0,
+    specific: row.verified && row.specific,
+    quantified: row.verified && row.quantified,
+    outcomeLinked: row.verified && row.outcomeLinked,
+  };
+  return { score: 25 * LIBRARY_ROW_SIGNALS.filter(signal => signals[signal]).length, signals };
+}
+
 /** The questions for the facets an entry is missing: the heaviest three, in weight order. */
 function promptsForMissing(missing: EvidenceFacet[]): string[] {
   return missing.slice(0, 3).map(facet => EVIDENCE_FACET_PROMPTS[facet]);

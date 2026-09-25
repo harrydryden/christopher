@@ -55,14 +55,14 @@ export function EvidenceSummary({
         {waiting && <span className="text-12 text-muted" role="status">Evaluating…</span>}
         {!waiting && evidence.source === "rules" && (
           <span className="text-12 text-muted">
-            {refusal ? "Scored from your own tags." : "Scored from your own tags, pending a full review."}
+            {refusal || !evidence.provisional ? "Scored from your own tags." : "Scored from your own tags. Re-score for the full review."}
           </span>
         )}
       </div>
       {!waiting && refusal && evidence.source === "rules" && (
         <p className="text-12 text-warn">{refusal}</p>
       )}
-      {stale && <p className="text-12 text-muted">These rows have changed since they were scored. Save the library to score them again.</p>}
+      {stale && <p className="text-12 text-muted">These rows have changed since they were scored. Save the library to score them from your tags, then Re-score for the full review.</p>}
       {evidence.prompts.length > 0 && (
         <ul className="space-y-1">
           {evidence.prompts.map(prompt => (

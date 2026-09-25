@@ -19,6 +19,7 @@ import {
 import {
   evidenceRatingFor,
   facetForPrompt,
+  libraryRowScore,
   rulesLibraryReview,
   type LibraryEntryReview,
   type LibraryReviewSource,
@@ -100,6 +101,7 @@ export function libraryEvidence(
         missingLine: missingFacetLine(review.missing),
         prompts: promptsOf(review),
         reviewedRows: review.rows.map(row => row.row),
+        rows: review.rows.map(row => ({ row: row.row, ...libraryRowScore(row) })),
       };
     });
   return {

@@ -48,6 +48,7 @@ import {
   finaliseCvDraft,
   answerCvGapQuiz,
   requestCv,
+  rescoreLibrary,
   saveCvAppearance,
   saveCvDraft,
   saveCvLibrary,
@@ -311,8 +312,10 @@ describe("the CV pipeline end to end, against a scripted model", () => {
     save.set("library", JSON.stringify(libraryFixture()));
     save.set("version", "0");
     expect(await saveCvLibrary({ ok: true }, save)).toEqual({ ok: true });
-    // The save queues the evidence review of the version it just wrote, keyed by the account so a
-    // burst of saves runs once.
+    // A save from the editor queues no evidence review: re-scoring is the person's to ask for.
+    // Asked for, it reviews the newest version, keyed by the account so a burst of asks runs once.
+    expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "review_library"))).toEqual([]);
+    expect(await rescoreLibrary({ ok: true }, new FormData())).toEqual({ ok: true });
     const [review] = await database
       .select()
       .from(schema.tasks)

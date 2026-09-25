@@ -1,6 +1,6 @@
 /**
  * The Library page's reads, against the database: the evidence it shows, the poll token it hands
- * its poller, and the version history it compares.
+ * its poller, and the saved versions a diff compares.
  *
  * The save, the review row and the queue row are all real here, because the three things that can
  * go wrong are wiring rather than arithmetic: a review stored against wording that has since been
@@ -28,9 +28,9 @@ vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (session ? {
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
-import { saveCvLibrary } from "@/app/actions/cv";
+import { rescoreLibrary, saveCvLibrary } from "@/app/actions/cv";
 import { GET as reviewsRoute } from "@/app/api/cv/library/reviews/route";
-import { diffCvLibraries, requestedDiff } from "./cv-library-diff";
+import { diffCvLibraries } from "./cv-library-diff";
 import { cvLibraryReadiness } from "./cv-ready";
 import { archivedBlocks, editableEmployment, openStoredLibrary, removeJob, restoreJob } from "./cv-library-rows";
 import {
@@ -99,8 +99,15 @@ it("shows the badge, the prompts and the poll token a saved Library's reviews pr
   const stored = (await getOwnCvLibrary(user.id))!;
   expect(stored.version).toBe(1);
 
-  // The save queued the pass, so every entry reads as evaluating against the baseline computed
+  // The save queued nothing: its rows are scored here from the person's own tags, provisionally,
+  // and nothing is evaluating — which is what puts the Re-score button on the page.
+  const saved = await getLibraryEvidence(user.id, stored);
+  expect(saved.entries[0]).toMatchObject({ source: "rules", provisional: true, evaluating: false });
+  expect(saved.evaluating).toBe(false);
+
+  // Re-scoring queues the pass, so every entry reads as evaluating against the baseline computed
   // here rather than as scored.
+  expect(await rescoreLibrary({ ok: true }, new FormData())).toEqual({ ok: true });
   const queued = await getLibraryEvidence(user.id, stored);
   const baseline = rulesLibraryReview(stored.content.entries[0]!, stored.content);
   expect(queued.entries).toHaveLength(1);
@@ -152,6 +159,9 @@ it("shows the badge, the prompts and the poll token a saved Library's reviews pr
   expect(scored.entries[0]).toMatchObject({ source: "model", provisional: false, evaluating: false, score: 69, rating: "good" });
   expect(scored.evaluating).toBe(false);
   expect(scored.line).toBe("Evidence: Good");
+  // Each row scored on its own from the review: a type and specific is half; the second row has
+  // all four signals.
+  expect(scored.entries[0]!.rows.map(row => row.score)).toEqual([50, 100]);
   // Each prompt is one question; the one that is a type's own question carries that type for the
   // "Add a row for this" control, and the one the model wrote itself does not.
   expect(scored.entries[0]!.prompts).toEqual([
@@ -297,6 +307,7 @@ it("treats a review of wording that has since been edited as no review at all", 
 
 it("shows the refusal the worker recorded instead of waiting for a pass that will not run", async () => {
   await save(libraryFixture(["Led a team of nine"]), 0);
+  expect(await rescoreLibrary({ ok: true }, new FormData())).toEqual({ ok: true });
   const stored = (await getOwnCvLibrary(user.id))!;
   const refusal = "Library evidence review needs about $0.12 of AI budget; your budget of $5 has $0.00 left this month (it resets on the 1st). Raise it on Settings, or ask an administrator.";
   await database
@@ -318,8 +329,7 @@ it("lists this account's versions newest first and compares two of them", async 
   expect(versions.map(row => row.version)).toEqual([3, 2, 1]);
   expect(versions[0]!.createdAt).toBeInstanceOf(Date);
 
-  const wanted = requestedDiff({ diff: "1,3" }, versions.map(row => row.version))!;
-  const contents = await getLibraryVersionContents(user.id, [wanted.from, wanted.to]);
+  const contents = await getLibraryVersionContents(user.id, [1, 3]);
   const diff = diffCvLibraries(contents.get(1)!, contents.get(3)!, 1, 3);
   expect(diff.blocks).toHaveLength(1);
   expect(diff.blocks[0]).toMatchObject({

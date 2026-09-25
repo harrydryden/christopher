@@ -6,7 +6,7 @@ export default function Loading() {
       {/* The mark carries the motion here, so the skeleton no longer pulses
           alongside it — two competing animations read as jitter. */}
       <div className="flex items-center gap-3">
-        <Mark size={32} searching title="Loading" />
+        <Mark size={24} searching title="Loading" className="text-brand" />
         <p className="text-14 text-muted">Loading…</p>
       </div>
       <div className="space-y-4">

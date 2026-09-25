@@ -5,9 +5,9 @@
 
    Two layers:
 
-   1. Raw + semantic custom properties on `:root`, flipped wholesale by
-      `[data-theme="light"]`. Only the semantic names change between themes;
-      the raw palette is the same eleven greys either way.
+   1. Raw + semantic custom properties on `:root`. There is one scheme: crisp white screens
+      with black ink and deep-grey support text, framed by the brand-green sidebar whose copy is
+      light green. Only the semantic names are read by components.
    2. An `@theme` block that hands the semantic names to Tailwind, so
       `--color-fg` gives `text-fg` / `bg-fg` / `border-fg`, and so on.
 
@@ -22,9 +22,9 @@
 --------------------------------------------------------------------------- */
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 
-  /* Base palette. Black ground, white ink, nine greys for structure. */
+  /* Base palette. White ground, black ink, nine greys for structure. */
   --black: #000000;
   --white: #ffffff;
   --grey-900: #111111;
@@ -37,59 +37,43 @@
   --grey-200: #dddddd;
   --grey-100: #f2f2f2;
 
-  /* Status: one hue each, used as full ink or outline, always with text. */
-  --status-ok: #4fd18b;
-  --status-warn: #f0b429;
-  --status-danger: #ff5c5c;
-  --status-info: #6fb3ff;
+  /* Brand. The green is the chrome (sidebar, sign-in panel, primary actions, the mark); the
+     light green is the copy that sits on it. Ink on green is 7.6:1, muted ink 5.2:1. */
+  --brand-green: #25593a;
+  --brand-green-deep: #1c4a2e;
+  --brand-green-light: #e8fecc;
+  --brand-green-soft: #b8d9a0;
 
-  /* Semantic roles (dark is the default). */
-  --bg: var(--black);
-  --bg-raised: var(--grey-900);
-  --bg-sunken: var(--grey-800);
-  --bg-inverse: var(--white);
-  --fg: var(--white);
-  --fg-muted: var(--grey-400);
-  --fg-faint: var(--grey-600);
-  --fg-inverse: var(--black);
-  --line: var(--white);
-  --line-muted: var(--grey-700);
-  --line-faint: var(--grey-800);
-  --shadow-hard: var(--grey-600);
-  --selection: rgb(255 255 255 / 0.28);
-  --focus: var(--white);
-  --track: var(--grey-700);
-  --row-highlight: var(--grey-800);
-  --accent: var(--white);
-  --accent-fg: var(--black);
-}
+  /* Status: one hue each, used as full ink or outline, always with text. Tuned for white:
+     each is at least 5:1 on the ground. */
+  --status-ok: #1a7f4b;
+  --status-warn: #9a6400;
+  --status-danger: #c62828;
+  --status-info: #1f5fa8;
 
-/* Light mode is the same system inverted. Nothing but these names changes. */
-[data-theme="light"] {
-  color-scheme: light;
+  /* Semantic roles. */
   --bg: var(--white);
   --bg-raised: var(--white);
   --bg-sunken: var(--grey-100);
   --bg-inverse: var(--black);
   --fg: var(--black);
-  --fg-muted: var(--grey-500);
-  --fg-faint: var(--grey-300);
+  --fg-muted: var(--grey-600);   /* deep grey, 9.7:1 on white */
+  --fg-faint: var(--grey-400);   /* placeholders, 3.5:1 */
   --fg-inverse: var(--white);
   --line: var(--black);
-  --line-muted: var(--grey-200);
-  --line-faint: var(--grey-100);
-  --shadow-hard: var(--grey-300);
-  --selection: rgb(0 0 0 / 0.18);
-  --focus: var(--black);
+  --line-muted: var(--grey-300);
+  --line-faint: var(--grey-200);
+  --shadow-hard: var(--grey-400);
+  --selection: rgb(37 89 58 / 0.22);
+  --focus: var(--brand-green);
   --track: var(--grey-200);
   --row-highlight: var(--grey-100);
-  --accent: var(--black);
-  --accent-fg: var(--white);
-  /* The dark hues are tuned for a black ground and fail contrast on white. */
-  --status-ok: #1a7f4b;
-  --status-warn: #9a6400;
-  --status-danger: #c62828;
-  --status-info: #1f5fa8;
+  --accent: var(--brand-green);
+  --accent-fg: var(--brand-green-light);
+  --brand: var(--brand-green);
+  --brand-hover: var(--brand-green-deep);
+  --brand-ink: var(--brand-green-light);
+  --brand-ink-muted: var(--brand-green-soft);
 }
 
 @theme static {
@@ -133,6 +117,14 @@
   --color-accent: var(--accent);
   --color-accent-fg: var(--accent-fg);
 
+  /* Brand. `bg-brand` is the sidebar and sign-in panel, `text-brand-ink` the copy on it,
+     `text-brand-ink-muted` its secondary copy, `bg-brand-hover` a hover on green. `text-brand`
+     draws the mark on white. */
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-ink-muted: var(--brand-ink-muted);
+
   /* Type. Silkscreen for headings, labels and numerals; Plex Mono for prose
      and every control. The families come from next/font in app/layout.tsx. */
   --font-pixel: var(--font-pixel-family), "Courier New", monospace;
@@ -168,23 +160,32 @@
   --tracking-label: 0.16em;
 
   /* Shape. Radius 0 everywhere, so the radius scale stays empty. Shadows are
-     hard offsets with no blur; the grey follows the theme. */
+     hard offsets with no blur, in a mid grey that reads on white. */
   --shadow-hard-1: 2px 2px 0 var(--shadow-hard);
   --shadow-hard-2: 4px 4px 0 var(--shadow-hard);
   --shadow-hard-3: 8px 8px 0 var(--shadow-hard);
-  --inset-shadow-cursor: inset 4px 0 0 var(--fg);
+  --inset-shadow-cursor: inset 4px 0 0 var(--brand);
 
   /* Motion is stepped, never eased. */
   --ease-step-2: steps(2, end);
   --ease-step-4: steps(4, end);
-  --animate-mark-turn: ds-mark-turn 2.4s steps(8, end) infinite;
+  --animate-mark-turn: ds-mark-turn 2.4s step-end infinite;
 }
 
-/* The mark's letters turn once in eight 45-degree steps on a 200ms beat, then rest upright. */
+/* The mark's letters turn once about their own upright axis, in eight 45-degree steps on a 200ms
+   beat (the width is the cosine of the angle), then rest upright. A turn about the vertical axis
+   only ever narrows a letter towards its own centre line, so kerned letters cannot collide. */
 @keyframes ds-mark-turn {
-  0%       { transform: rotate(0deg); }
-  66.6667% { transform: rotate(360deg); }   /* 1.6s: eight steps of 45 degrees */
-  100%     { transform: rotate(360deg); }   /* 0.8s: held upright */
+  0%       { transform: scaleX(1); }
+  8.3333%  { transform: scaleX(0.7071); }
+  16.6667% { transform: scaleX(0); }
+  25%      { transform: scaleX(-0.7071); }
+  33.3333% { transform: scaleX(-1); }
+  41.6667% { transform: scaleX(-0.7071); }
+  50%      { transform: scaleX(0); }
+  58.3333% { transform: scaleX(0.7071); }
+  66.6667% { transform: scaleX(1); }   /* 1.6s: eight steps */
+  100%     { transform: scaleX(1); }   /* 0.8s: held upright */
 }
 
 html {
@@ -202,6 +203,15 @@ body {
 
 ::selection {
   background: var(--selection);
+}
+
+/* Anything on the brand green: the sidebar and the sign-in panel. The focus ring and selection
+   switch to the light green, because the page's green ring would vanish on its own colour. */
+@utility ds-on-brand {
+  --focus: var(--brand-ink);
+  --selection: rgb(232 254 204 / 0.3);
+  background-color: var(--brand);
+  color: var(--brand-ink);
 }
 
 /* Links are underlined, not coloured: there is no link hue in this system. */
@@ -309,9 +319,11 @@ kbd {
   transform-origin: center;
 }
 
-/* While searching, every letter turns, one 200ms beat behind the letter before it. At pitch 16
-   neighbours never touch: a letter's 12-cell box at 45 degrees reaches 8.49 cells from its centre,
-   the one beside it reaches 6 at most, and 14.49 is short of the 16 between their centres. */
+/* While searching, every letter turns, one 200ms beat behind the letter before it. The letters are
+   kerned (pitch 14 on a 24-cell tile, boxes 20 wide), so an in-plane rotation would collide: a box
+   at 45 degrees reaches 14.1 cells from its centre, and its neighbour's centre is 14 away. The turn
+   is about each letter's vertical axis instead, which only ever narrows a row towards the letter's
+   own centre, so no turning letter can reach cells its upright self did not already stay clear of. */
 .ds-mark-turning > .ds-mark-letter { animation: var(--animate-mark-turn); }
 .ds-mark-turning > .ds-mark-letter:nth-of-type(2) { animation-delay: 0.2s; }
 .ds-mark-turning > .ds-mark-letter:nth-of-type(3) { animation-delay: 0.4s; }

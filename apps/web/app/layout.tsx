@@ -30,8 +30,10 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  // The ground colour. The mark is white on black at every size.
-  themeColor: "#000000",
+  // The brand green: the sidebar and the favicon's triangle. A viewport colour
+  // cannot read a CSS custom property, so this literal mirrors --brand-green in
+  // globals.css.
+  themeColor: "#25593a",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

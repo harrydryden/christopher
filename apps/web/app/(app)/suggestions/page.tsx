@@ -95,7 +95,7 @@ function CatalogueBox({ q, matches, domain, blockedReason }: { q: string; matche
       {domain && !listed && <form action={addCompanies} className="flex flex-wrap items-center justify-between gap-3 border-t border-line-faint py-2">
         <input type="hidden" name="urls" value={q}/>
         <input type="hidden" name="returnTo" value="/suggestions"/>
-        <span className="text-14"><span className="font-semibold">{domain}</span> <span className="text-muted">is not in the catalogue yet. Adding it finds its careers page once for everyone.</span></span>
+        <span className="text-14"><span className="font-semibold">{domain}</span> <span className="text-muted">was not found in the catalogue. Adding it finds its careers page once for everyone; if it is already there, you simply follow it.</span></span>
         <Button type="submit" variant="primary" size="sm" className="min-h-11" disabled={!!blockedReason}>Add {domain}</Button>
       </form>}
       {!matches.length && !domain && <p className="text-14 text-muted">Nothing in the catalogue matches “{q}”. Paste the company’s homepage to add it.</p>}
@@ -158,13 +158,13 @@ export default async function SuggestionsPage({ searchParams }: { searchParams: 
     </> : <>
       <CatalogueBox q={q} matches={matches} domain={domain} blockedReason={blockedReason}/>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <div><h2 className="ds-pixel text-12">Companies to review</h2><p className="text-14 text-muted">Recommended from companies you follow and <a href="/suggestions?view=sources" className="underline">your sources</a>; nothing is followed automatically.</p></div>
+        <div><h2 className="ds-pixel text-12">Companies to review</h2><p className="text-14 text-muted">Recommended from companies you follow and <a href="/suggestions?view=sources" className="underline">your sources</a>; nothing is followed automatically. <a href="/learning" className="underline">Refine your preference profile</a> to improve relevance.</p></div>
         <DiscoverySourceForm action={findMoreSuggestions} returnTo="/suggestions" pendingLabel="Queuing search…"><Button className="min-h-11" type="submit" disabled={!settings.suggestionsEnabled || similarActive}>{similarActive ? "Similar-company search queued" : "Find similar companies"}</Button></DiscoverySourceForm>
       </div>
       <SuggestionDeck
         cards={pending.map(row => ({ id: row.suggestion.id, name: row.suggestion.name, body: <SuggestionCardContent row={row}/> }))}
         empty={empty}
-        disabledReason={unverified ? VERIFY_SENTENCE : undefined}
+        disabledReason={blockedReason ?? undefined}
       />
     </>}
   </div>;

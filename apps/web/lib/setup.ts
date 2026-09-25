@@ -101,7 +101,7 @@ export function buildSetupChecklist(facts: SetupFacts): SetupChecklist {
       shortLabel: "Companies",
       label: `Follow ${COMPANIES_TARGET} companies`,
       description: "Each one is scanned once a day and its matching roles arrive in your table.",
-      href: "/companies#add",
+      href: "/suggestions",
       done: followed >= COMPANIES_TARGET,
       progress: `${Math.min(followed, COMPANIES_TARGET)} of ${COMPANIES_TARGET}`,
     },

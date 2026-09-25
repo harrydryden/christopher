@@ -15,9 +15,6 @@ export interface DeckCard {
 
 /** How far a card has to travel before letting go decides it. */
 const THRESHOLD = 120;
-/** The reason a swipe files when nothing was typed; R-8.4 asks every dismissal for one. */
-export const DECK_DISMISS_REASON = "Dismissed from the deck";
-
 type Direction = "left" | "right";
 
 /**
@@ -27,6 +24,7 @@ type Direction = "left" | "right";
  * for a dismissal that should teach the next recommendations something.
  */
 export function SuggestionDeck({ cards, empty, disabledReason }: { cards: DeckCard[]; empty: ReactNode; disabledReason?: string }) {
+  const root = useRef<HTMLElement>(null);
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [gone, setGone] = useState<ReadonlySet<string>>(() => new Set());
@@ -77,8 +75,11 @@ export function SuggestionDeck({ cards, empty, disabledReason }: { cards: DeckCa
         if (direction === "right") {
           result = await acceptSuggestion(card.id);
         } else {
+          // A swipe with nothing typed files no reason: a placeholder would be read by the
+          // preference profile as if the person had written it. The company stays excluded.
           const form = new FormData();
-          form.set("reason", typed || DECK_DISMISS_REASON);
+          form.set("reason", typed);
+          if (!typed) form.set("quick", "1");
           result = await rejectSuggestion(card.id, form);
         }
         if (!result.ok) {
@@ -102,11 +103,18 @@ export function SuggestionDeck({ cards, empty, disabledReason }: { cards: DeckCa
 
   const decideRef = useRef(decide);
   decideRef.current = decide;
+  // Arrow keys act only while a card can be decided, and only when focus is on the page itself or
+  // inside the deck: a key pressed on a nav link or a catalogue Follow button must not follow or
+  // dismiss a company, and arrow-key scrolling stays intact when nothing is here to decide.
+  const canDecide = useRef(false);
+  canDecide.current = !!current && !disabled;
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
       if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (!canDecide.current || busy.current) return;
       const target = event.target as HTMLElement | null;
+      if (target && target !== document.body && !root.current?.contains(target)) return;
       if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
       event.preventDefault();
       decideRef.current(event.key === "ArrowRight" ? "right" : "left");
@@ -161,7 +169,7 @@ export function SuggestionDeck({ cards, empty, disabledReason }: { cards: DeckCa
   const transition = dragging || reducedMotion ? "none" : "transform 240ms steps(4, end)";
 
   return (
-    <section aria-label="Recommendations to review" className="space-y-3">
+    <section ref={root} aria-label="Recommendations to review" className="space-y-3">
       <p className="text-12 text-muted">
         {visible.length} to review · drag right or press <kbd>→</kbd> to follow, drag left or press <kbd>←</kbd> to dismiss.
       </p>

@@ -26,7 +26,7 @@ describe("buildSetupChecklist", () => {
       ["email", "/account"],
       ["gate", "/settings#keywords"],
       ["seed-profile", "/settings#seed-profile"],
-      ["companies", "/companies#add"],
+      ["companies", "/suggestions"],
       ["library", "/library"],
     ]);
     expect(checklist.total).toBe(5);

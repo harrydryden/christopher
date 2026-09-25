@@ -117,6 +117,15 @@ it("requires a reason and retains a dismissal once reviewed", async () => {
   const row = await recommendation();
   expect((await rejectSuggestion(row.id, form({ reason: " " }))).ok).toBe(false);
   expect((await rejectSuggestion(row.id, form({ reason: "Wrong industry" }))).ok).toBe(true);
+});
+it("lets a swipe dismiss without a reason, filing none and teaching nothing", async () => {
+  const row = await recommendation();
+  const result = await rejectSuggestion(row.id, form({ reason: "", quick: "1" }));
+  expect(result.ok).toBe(true);
+  const [stored] = await database.select().from(schema.companySuggestions).where(eq(schema.companySuggestions.id, row.id));
+  expect(stored!.status).toBe("rejected");
+  expect(stored!.rejectionReason).toBeNull();
+  expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "synthesize_profile"))).toHaveLength(0);
   expect((await acceptSuggestion(row.id)).ok).toBe(false);
 });
 it("authenticates before attempting a mutation", async () => {

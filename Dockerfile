@@ -20,6 +20,9 @@ RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 
 # Install dependencies first so the layer is cached until a manifest changes.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+# The lockfile records a hash of every patched dependency, and pnpm checks it against the patch
+# files even for packages this filtered install leaves out.
+COPY patches ./patches
 COPY packages/db/package.json packages/db/
 COPY packages/core/package.json packages/core/
 COPY packages/ai/package.json packages/ai/

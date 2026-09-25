@@ -1,6 +1,7 @@
 import { latestApplicationFor, roleStageSql, roleStatusSql } from "@ava/db";
 import { MANUAL_RESCAN_INTERVAL_MS } from "@ava/core";
-import { and, asc, desc, eq, gte, inArray, isNotNull, ne, sql, getTableColumns, ilike, or } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, ne, sql, getTableColumns, ilike, or, type SQL } from "drizzle-orm";
+import { DEFAULT_COMPANY_SORT, type CompanySort, type CompanySortKey } from "@/lib/company-sort";
 import {
   cvDrafts,
   decisions,
@@ -58,26 +59,53 @@ function companySearch(q: string) {
   return q ? or(ilike(companies.name, `%${escaped}%`), ilike(companies.domain, `%${escaped}%`)) : undefined;
 }
 
-export async function listCompanies(userId: string, page = 1, q = ""): Promise<CompanyListRow[]> {
-  const followed = await db().select({ company: companies, subscription: companySubscriptions }).from(companySubscriptions)
+/**
+ * The Tracked companies table, fifty rows a page, sorted in SQL so every page agrees with the
+ * next. The role counts are one grouped subquery joined to the page's rows, so a count column can
+ * order the page as well as fill it; `sort` only ever comes from `parseCompanySort`'s whitelist.
+ */
+export async function listCompanies(userId: string, page = 1, q = "", order: CompanySort = DEFAULT_COMPANY_SORT): Promise<CompanyListRow[]> {
+  const counts = db()
+    .select({
+      companyId: jobs.companyId,
+      openRoles: sql<number>`count(*) filter (where ${userJobs.inTable} and ${userJobs.archivedAt} is null and ${jobs.status} = 'open')::int`.as("open_roles"),
+      reviewRoles: sql<number>`count(*) filter (where ${roleStatusSql} = 'auto-matched')::int`.as("review_roles"),
+      shortlistedRoles: sql<number>`count(*) filter (where ${roleStatusSql} = 'user-shortlisted')::int`.as("shortlisted_roles"),
+    })
+    .from(userJobs)
+    .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
+    .leftJoin(decisions, and(eq(decisions.userId, userId), eq(decisions.jobId, jobs.id), eq(decisions.superseded, false)))
+    .where(eq(userJobs.userId, userId))
+    .groupBy(jobs.companyId)
+    .as("role_counts");
+  // Whitelisted expressions only. Source and last scan are read where the row reads them: the
+  // oldest active source (a failing one when nothing is active), and the newest scan of any source.
+  const sortExpressions: Record<CompanySortKey, SQL> = {
+    company: sql`lower(${companies.name})`,
+    source: sql`(select cs.type from career_sources cs where cs.company_id = ${companies.id} and cs.status in ('active', 'failing')
+      order by (cs.status = 'active') desc, cs.created_at asc limit 1)`,
+    status: sql`(select max(s.started_at) from scans s join career_sources cs on cs.id = s.source_id where cs.company_id = ${companies.id})`,
+    open: sql`coalesce(${counts.openRoles}, 0)`,
+    review: sql`coalesce(${counts.reviewRoles}, 0)`,
+    shortlisted: sql`coalesce(${counts.shortlistedRoles}, 0)`,
+  };
+  const direction = order.dir === "desc" ? sql`desc` : sql`asc`;
+  const followed = await db().select({
+    company: companies,
+    subscription: companySubscriptions,
+    openRoles: counts.openRoles,
+    reviewRoles: counts.reviewRoles,
+    shortlistedRoles: counts.shortlistedRoles,
+  }).from(companySubscriptions)
     .innerJoin(companies, eq(companies.id, companySubscriptions.companyId))
+    .leftJoin(counts, eq(counts.companyId, companies.id))
     .where(and(eq(companySubscriptions.userId, userId), companySearch(q)))
-    .orderBy(asc(companies.name), companies.id).limit(50).offset((page - 1) * 50);
+    // A company with no source or no scan goes last whichever way the column runs.
+    .orderBy(sql`${sortExpressions[order.sort]} ${direction} nulls last`, asc(companies.name), companies.id)
+    .limit(50).offset((page - 1) * 50);
   if (!followed.length) return [];
   const ids = followed.map(c => c.company.id);
-  const [counts, lastScans, discoveringRows, sourceRows, discoveryRows, followerRows] = await Promise.all([
-    db()
-      .select({
-        companyId: jobs.companyId,
-        openRoles: sql<number>`count(*) filter (where ${userJobs.inTable} and ${userJobs.archivedAt} is null and ${jobs.status} = 'open')::int`,
-        reviewRoles: sql<number>`count(*) filter (where ${roleStatusSql} = 'auto-matched')::int`,
-        shortlistedRoles: sql<number>`count(*) filter (where ${roleStatusSql} = 'user-shortlisted')::int`,
-      })
-      .from(userJobs)
-      .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
-      .leftJoin(decisions, and(eq(decisions.userId, userId), eq(decisions.jobId, jobs.id), eq(decisions.superseded, false)))
-      .where(and(eq(userJobs.userId, userId), inArray(jobs.companyId, ids)))
-      .groupBy(jobs.companyId),
+  const [lastScans, discoveringRows, sourceRows, discoveryRows, followerRows] = await Promise.all([
     db()
       .selectDistinctOn([careerSources.companyId], {
         companyId: careerSources.companyId,
@@ -119,20 +147,19 @@ export async function listCompanies(userId: string, page = 1, q = ""): Promise<C
     if (!current || (active && !current.active)) sourceTypeByCompany.set(row.companyId, { type: row.type, active });
   }
   const lastDiscoveryByCompany = new Map(discoveryRows.map((r) => [r.companyId, r.status]));
-  const countsByCompany = new Map(counts.map((c) => [c.companyId, c]));
   const lastScanByCompany = new Map(lastScans.map((s) => [s.companyId, { status: s.status, startedAt: s.startedAt }]));
   const followersByCompany = new Map(followerRows.map((f) => [f.companyId, f.n]));
   const discoveringSet = new Set(
     discoveringRows.map((r) => (r.payload as { companyId?: string }).companyId).filter((id): id is string => !!id),
   );
 
-  return followed.map(({ company, subscription }) => ({
+  return followed.map(({ company, subscription, openRoles, reviewRoles, shortlistedRoles }) => ({
     company,
     subscription,
     lastScan: lastScanByCompany.get(company.id) ?? null,
-    openRoles: countsByCompany.get(company.id)?.openRoles ?? 0,
-    reviewRoles: countsByCompany.get(company.id)?.reviewRoles ?? 0,
-    shortlistedRoles: countsByCompany.get(company.id)?.shortlistedRoles ?? 0,
+    openRoles: Number(openRoles ?? 0),
+    reviewRoles: Number(reviewRoles ?? 0),
+    shortlistedRoles: Number(shortlistedRoles ?? 0),
     sourceType: sourceTypeByCompany.get(company.id)?.type ?? null,
     followers: followersByCompany.get(company.id) ?? 0,
     discovering: discoveringSet.has(company.id),
@@ -141,6 +168,46 @@ export async function listCompanies(userId: string, page = 1, q = ""): Promise<C
     needsSource: !withSource.has(company.id),
     lastDiscovery: (lastDiscoveryByCompany.get(company.id) as CompanyListRow["lastDiscovery"]) ?? null,
   }));
+}
+
+/** One catalogue company found by the Discover tab's search, and where this account stands with it. */
+export interface CatalogueMatch {
+  id: string;
+  name: string;
+  domain: string;
+  homepageUrl: string;
+  faviconUrl: string | null;
+  logoFetchedAt: Date | null;
+  /** This account's subscription status; null when it has never followed the company. */
+  followStatus: CompanySubscription["status"] | null;
+}
+
+export const CATALOGUE_SEARCH_LIMIT = 10;
+
+/**
+ * The shared catalogue by name or domain, for following a company someone already added. Archived
+ * companies — nobody follows them — are left out: pasting the homepage still follows one through
+ * `addCompanies`. Names that start with the query come first, then A–Z.
+ */
+export async function searchCatalogue(userId: string, q: string): Promise<CatalogueMatch[]> {
+  const query = q.trim().slice(0, 200);
+  if (!query) return [];
+  const prefix = `${query.replace(/[\\%_]/g, "\\$&")}%`;
+  return db()
+    .select({
+      id: companies.id,
+      name: companies.name,
+      domain: companies.domain,
+      homepageUrl: companies.homepageUrl,
+      faviconUrl: companies.faviconUrl,
+      logoFetchedAt: companies.logoFetchedAt,
+      followStatus: companySubscriptions.status,
+    })
+    .from(companies)
+    .leftJoin(companySubscriptions, and(eq(companySubscriptions.companyId, companies.id), eq(companySubscriptions.userId, userId)))
+    .where(and(ne(companies.status, "archived"), companySearch(query)))
+    .orderBy(sql`(${companies.name} ilike ${prefix} or ${companies.domain} ilike ${prefix}) desc`, asc(companies.name), companies.id)
+    .limit(CATALOGUE_SEARCH_LIMIT);
 }
 
 export async function listCompanyOptions(userId: string): Promise<Array<{ id: string; name: string }>> {

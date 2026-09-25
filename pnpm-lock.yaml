@@ -7,6 +7,11 @@ settings:
 overrides:
   postcss: 8.5.28
 
+patchedDependencies:
+  next@15.5.25:
+    hash: 64fb010f8c02a9b7df85600c66509fbc9da697ac11b04f84e440505af3084f78
+    path: patches/next@15.5.25.patch
+
 importers:
 
   .:
@@ -40,7 +45,7 @@ importers:
         version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)
       next:
         specifier: '15'
-        version: 15.5.25(@types/node@26.4.1)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        version: 15.5.25(patch_hash=64fb010f8c02a9b7df85600c66509fbc9da697ac11b04f84e440505af3084f78)(@types/node@26.4.1)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       pdfkit:
         specifier: ^0.20.2
         version: 0.20.2
@@ -3185,7 +3190,7 @@ snapshots:
 
   nanoid@3.3.18: {}
 
-  next@15.5.25(@types/node@26.4.1)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
+  next@15.5.25(patch_hash=64fb010f8c02a9b7df85600c66509fbc9da697ac11b04f84e440505af3084f78)(@types/node@26.4.1)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
     dependencies:
       '@next/env': 15.5.25
       '@swc/helpers': 0.5.15

@@ -69,8 +69,8 @@ interface DiscoveryCandidateView {
 function KeywordPrompt() {
   return (
     <p className="text-12 text-muted">
-      It is outside your filters, so a scan would not have caught it.{" "}
-      <Link prefetch={false} href="/settings#keywords" className="text-fg underline">Update your keywords</Link> so similar roles reach your table.
+      Outside your filters.{" "}
+      <Link prefetch={false} href="/settings#keywords" className="text-fg underline">Update your keywords</Link> to catch similar roles.
     </p>
   );
 }
@@ -84,7 +84,6 @@ function ImportStatus({ row, companyId }: { row: PostingImportRow; companyId: st
     return (
       <div className="space-y-1">
         <p className="text-14 text-danger">{row.error ?? `Could not import ${host}.`}</p>
-        <p className="text-12 text-muted">Try again — paste the link above.</p>
       </div>
     );
   }
@@ -178,10 +177,10 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
         }
         description={
           <>
-            <a href={company.homepageUrl} target="_blank" rel="noopener noreferrer" className="break-all no-underline hover:underline">
+            <a href={company.homepageUrl} target="_blank" rel="noopener noreferrer" className="break-all no-underline hover:underline"
+              title={`Shared catalogue entry, followed by ${followers} ${followers === 1 ? "account" : "accounts"}`}>
               {company.homepageUrl}
             </a>
-            <span className="block text-12 text-faint">Shared catalogue entry · followed by {followers} {followers === 1 ? "account" : "accounts"} · scanned once a day for all of them</span>
             {/* The A9 profile, for every follower: it is what the company suggestions they are
                 asked to judge are built from. Refresh profile stays an administrator's. */}
             {profile && (profile.oneLiner || profileFacts.length > 0 || profile.tags.length > 0) && (
@@ -208,12 +207,11 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
               Rescan
             </Button>
           </form>
-          <form action={rediscoverCompany.bind(null, company.id)}>
-            <Button type="submit" size="sm" disabled={unverified} title={unverified ? VERIFY_SENTENCE : undefined}>
-              Re-discover
-            </Button>
-          </form>
-          <CompanyControls companyId={company.id} companyName={company.name} status={subscription.status} />
+          {/* Re-discover is occasional, so it sits in the Manage menu beside Pause and Hide. */}
+          <CompanyControls companyId={company.id} companyName={company.name} status={subscription.status}
+            refresh={<form action={rediscoverCompany.bind(null, company.id)}>
+              <Button type="submit" size="sm" disabled={unverified} title={unverified ? VERIFY_SENTENCE : undefined}>Re-discover</Button>
+            </form>} />
           {/* Beside Rescan, because it is the answer to "did that do anything?" */}
           <p className="w-full text-12 text-muted">{scanLine}</p>
           {unverified && <VerifyNotice className="w-full" />}
@@ -228,7 +226,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
               {competing.candidate.spec!.url} ↗
             </a>{" "}
             {competing.candidate.spec?.type && <Badge tone="neutral">{competing.candidate.spec.type}</Badge>}{" "}
-            {Math.round((competing.candidate.confidence ?? 0) * 100)}% · {competing.candidate.method}. A source is already scanning, so this one waits for a follower to confirm it.
+            {Math.round((competing.candidate.confidence ?? 0) * 100)}% · {competing.candidate.method}. Not used until a follower confirms it.
           </span>
           <form action={useDiscoveryCandidate.bind(null, latestRun.id, competing.index)}>
             <Button type="submit" size="sm" disabled={unverified} title={unverified ? VERIFY_SENTENCE : undefined}>Use this</Button>
@@ -236,7 +234,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
         </div>
       )}
 
-      {work.active && <AutoRefresh scope="company" initialVersion={work.version} message="Work is pending for your companies. Status updates automatically." />}
+      {work.active && <AutoRefresh scope="company" initialVersion={work.version} message="Work in progress; this page updates itself." />}
 
       {needsSetup ? (
         <Card title="What has happened so far">
@@ -255,12 +253,12 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
               <div className="space-y-2">
                 <p className="text-14 text-muted">
                   {discoveryState
-                    ? "Discovery is looking for this company's careers page. Paste the URL if you know it."
+                    ? "Looking for the careers page. Paste the URL if you know it."
                     : latestRun?.status === "needs_confirmation" && candidates.length > 0
                       ? `Discovery found ${candidates.length} ${candidates.length === 1 ? "candidate" : "candidates"}; pick one below or paste the URL.`
                       : latestRun?.status === "not_found"
-                        ? "Discovery found no careers page for this company. Paste its careers or board URL, or run discovery again."
-                        : "Nobody has confirmed a careers page for this company yet. Paste its careers or board URL, or pick a candidate discovery found."}
+                        ? "No careers page found. Paste its careers or board URL, or re-discover."
+                        : "No careers page confirmed yet. Paste its careers or board URL, or pick a candidate."}
                 </p>
                 {latestRun?.status === "not_found" && !discoveryState && (
                   <form action={rediscoverCompany.bind(null, company.id)}>
@@ -314,7 +312,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
                 <h3 className="ds-label">Suggest a name</h3>
                 <SettingsForm action={suggestCompanyName.bind(null, company.id)} submitLabel={admin ? "Rename" : "Suggest"}>
                   <p className="text-12 text-muted">
-                    The name and website are shared by every follower, so a change is an administrator&rsquo;s.
+                    Names are shared, so an administrator makes the change.
                     {suggestion && <span className="block text-fg">You suggested «{suggestion.name}» · awaiting an administrator</span>}
                   </p>
                   <label className="flex flex-col gap-1.5 text-14">
@@ -346,7 +344,7 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
                 placeholder="https://job-boards.greenhouse.io/acme/jobs/1234567"
                 className={inputClass}
               />
-              <span className="text-12 text-muted">Paste the full link to one posting the scan has not collected. It is checked, stored and added to your table.</span>
+              <span className="text-12 text-muted">One posting the scan missed; it is added to your table.</span>
             </label>
             <Button type="submit" variant="primary" size="sm" disabled={unverified}>Add role</Button>
           </form>

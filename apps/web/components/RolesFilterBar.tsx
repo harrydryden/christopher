@@ -53,16 +53,13 @@ export function RolesFilterBar({
         </select>
       </label>}
       <label className="flex flex-col gap-1.5">
-        <span className={labelClass}>Search title</span>
+        <span className={labelClass}>Title</span>
         <input type="text" name="q" defaultValue={filters.q} placeholder="Search…" className={`w-50 ${inputClass}`} />
       </label>
       <div className="ml-auto flex flex-wrap items-center gap-3">
-        <a href={exportHref} className="text-13 text-muted underline hover:text-fg" title="Every role in this view, with these filters and this sort">
-          Export CSV
-        </a>
         <SearchPending />
         <button type="submit" className={buttonClass("primary")}>
-          Apply filters
+          Apply
         </button>
         <a href={`${path}?view=${view}`} className={buttonClass("ghost", "md", "no-underline")}>
           Reset
@@ -70,7 +67,7 @@ export function RolesFilterBar({
       </div>
       {/* Availability is the filter people reach for, so it sits in the open as chips. */}
       <fieldset className="flex w-full flex-wrap items-center gap-2">
-        <legend className="sr-only">Vacancy availability</legend>
+        <legend className="sr-only">Availability</legend>
         <span className={labelClass}>Availability</span>
         {STATUS_VALUES.map(status => <label key={status} className={chipClass}>
           <input type="checkbox" name="status" value={status} defaultChecked={filters.status.includes(status)} className="h-4 w-4" />{STATUS_LABELS[status]}
@@ -80,10 +77,10 @@ export function RolesFilterBar({
         </label>}
       </fieldset>
       <details className="w-full">
-        <summary className="cursor-pointer text-12 text-muted">More filters and sorting</summary>
+        <summary className="cursor-pointer text-12 text-muted">More filters</summary>
         <div className="mt-3 flex flex-wrap items-end gap-3">
       <label className="flex flex-col gap-1.5">
-        <span className={labelClass}>Location contains</span>
+        <span className={labelClass}>Location</span>
         <input type="text" name="location" defaultValue={filters.location} placeholder="e.g. London" className={`w-36 ${inputClass}`} />
       </label>
 
@@ -113,6 +110,10 @@ export function RolesFilterBar({
         </select>
       </label>
 
+          {/* Rarely needed, so it sits with the other occasional controls. */}
+          <a href={exportHref} className="ml-auto self-center text-13 text-muted underline hover:text-fg" title="Every role in this view, with these filters and this sort">
+            Export CSV
+          </a>
         </div>
       </details>
 

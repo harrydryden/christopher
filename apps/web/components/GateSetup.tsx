@@ -43,8 +43,7 @@ export function GateSetup({
               className={textareaClass}
             />
             <span className="text-12 text-muted">
-              One per line or comma-separated, matched as whole words in the title. A trailing * matches the start of a word: <code>operat*</code> matches
-              Operations and Operational. Quote a phrase to match it exactly.
+              One per line or comma-separated, whole words in the title. <code>operat*</code> matches Operations and Operational; quote a phrase to match it exactly.
             </span>
           </label>
           <label className={fieldClass}>
@@ -67,7 +66,7 @@ export function GateSetup({
               placeholder="e.g. London, UK"
               className={textareaClass}
             />
-            <span className="text-12 text-muted">A country admits its cities. Leave this empty to accept every location.</span>
+            <span className="text-12 text-muted">A country admits its cities. Leave empty to accept every location.</span>
           </label>
           <label className="flex items-center gap-2 text-14">
             <input type="checkbox" name="includeRemote" value="1" defaultChecked={stored ? stored.includeRemote : true} className="h-4 w-4" />

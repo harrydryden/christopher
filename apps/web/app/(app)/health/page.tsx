@@ -34,19 +34,18 @@ export default async function HealthPage() {
     <div className="space-y-6">
       <PageHeader
         title="Health"
-        description="Everything that needs you, and how the companies you follow are being read."
-        actions={user.role === "admin" ? <Link prefetch={false} href="/admin/health" className="text-13 underline">Operations for the whole deployment</Link> : undefined}
+        actions={user.role === "admin" ? <Link prefetch={false} href="/admin/health" className="text-13 underline">Operations</Link> : undefined}
       />
 
       <Card title={`Needs you (${itemCount})`}>
         {items.length === 0 ? (
-          <EmptyState title="Nothing needs you" description="Every company you follow has a careers page that is being read, and your AI budget has room in it." />
+          <EmptyState title="Nothing needs you" description="Every company you follow is being read and your budget has room." />
         ) : (
           <div className="space-y-3">
             <HealthItems items={items} unverified={unverified} />
             {itemCount > items.length && (
               <p className="text-12 text-muted">
-                Showing the first {items.length} of {itemCount}. Resolve some, or browse the rest from{" "}
+                Showing {items.length} of {itemCount}. The rest are on{" "}
                 <Link prefetch={false} href="/companies" className="text-fg underline">Companies</Link>.
               </p>
             )}

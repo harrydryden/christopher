@@ -19,7 +19,7 @@ export function FollowCompanyButton({ companyId, companyName, label = "Follow", 
         setResult({ ok: true, text: outcome.message ?? `You now follow ${companyName}.` });
         router.refresh();
       } catch {
-        setResult({ ok: false, text: "This change could not be completed. Please try again." });
+        setResult({ ok: false, text: "Could not save. Try again." });
       }
     });
   }

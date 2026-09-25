@@ -22,7 +22,7 @@ export function LibraryImportProposals({ imports, version }: { imports: LibraryI
         <Card key={view.id} title={view.headline}>
           {view.state === "reading" && !view.stalled && (
             <p role="status" className="text-14 text-muted">
-              Reading your document… This usually takes a minute or two. You can carry on editing below.
+              Reading your document (a minute or two)…
             </p>
           )}
 
@@ -33,8 +33,7 @@ export function LibraryImportProposals({ imports, version }: { imports: LibraryI
           {view.state === "reading" && view.stalled && (
             <div className="grid gap-3">
               <p role="status" className="text-14 text-warn">
-                This document has been waiting to be read for a while. AVA will still read it
-                if it comes back to it; dismiss it if you would rather import it again.
+                This is taking longer than usual. Dismiss it to import it again.
               </p>
               <LibraryImportForm
                 action={dismissLibraryImport.bind(null, view.id)}
@@ -73,13 +72,12 @@ export function LibraryImportProposals({ imports, version }: { imports: LibraryI
           {view.state === "proposed" && view.proposal && (
             <div className="grid gap-4">
               <p className="text-14 text-muted">
-                Tick what is yours. They arrive with their rows unconfirmed; confirm the ones you
-                have checked.
+                Tick what is yours. Rows arrive unconfirmed.
               </p>
 
               <LibraryImportForm
                 action={acceptLibraryImport.bind(null, view.id)}
-                submitLabel="Add the selected items"
+                submitLabel="Add selected"
                 pendingLabel="Adding…"
                 className="grid gap-4"
               >

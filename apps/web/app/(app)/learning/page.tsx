@@ -46,7 +46,7 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
               </Button>
             </form>
             <form action={rescoreAllRoles}>
-              <Button type="submit" size="sm">
+              <Button type="submit" size="sm" variant="ghost">
                 Re-score all
               </Button>
             </form>
@@ -86,7 +86,7 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
             <SafeMarkdown markdown={profile.markdown} />
           </div>
         ) : (
-          <EmptyState title="No profile yet" description="Once you have made a few decisions, a preference profile is synthesised automatically (or click Re-synthesise now)." />
+          <EmptyState title="No profile yet" description="It is written from your decisions once you have made a few." />
         )}
       </Card>
 
@@ -96,14 +96,14 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
           <label htmlFor="profile-markdown" className="text-14">Your current preferences</label>
           <textarea id="profile-markdown" name="markdown" required maxLength={50000} rows={10} defaultValue={profile?.markdown ?? settings.seedProfile}
             className="w-full border border-line-muted px-2 py-1.5 text-14" />
-          <p className="text-12 text-muted">Saving creates a new version and queues scores for open roles. Previous versions remain available above.</p>
+          <p className="text-12 text-muted">Saving creates a new version and re-scores open roles.</p>
           <div><Button type="submit" variant="primary" size="sm">Save profile version</Button></div>
         </form>
       </Card>}
 
       {isLatest && <Card title="Pinned statements">
         <p className="mb-2 text-12 text-muted">
-          One per line. These are preserved verbatim by every future synthesis, on top of your decisions.
+          One per line, kept verbatim by every future synthesis.
         </p>
         <form action={savePinnedStatements} className="flex flex-col gap-2">
           <input type="hidden" name="profileVersion" value={profile?.version ?? 0} />
@@ -123,7 +123,7 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
 
       <Card title="Open questions">
         {!profile || profile.openQuestions.length === 0 ? (
-          <EmptyState title="No open questions" description="When the synthesiser is unsure how to generalise from your decisions, it asks here." />
+          <EmptyState title="No open questions" description="Questions about your decisions appear here." />
         ) : (
           <div className="space-y-3">
             {profile.openQuestions.map((q) => (
@@ -147,7 +147,7 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
                       Save answer
                     </Button>
                   </form>
-                ) : <p className="text-12 text-muted">View the latest profile to answer this question.</p>}
+                ) : <p className="text-12 text-muted">Answer on the latest profile.</p>}
               </div>
             ))}
           </div>
@@ -156,8 +156,7 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
 
       <Card title="Seed profile">
         <p className="mb-2 text-12 text-muted">
-          What you wrote at setup: seniority, sectors, locations, compensation floor, deal-breakers. Never overwritten by the model, and editable
-          here or on <a href="/settings#seed-profile" className="text-fg underline">Settings</a>.
+          What you wrote at setup; never overwritten.
         </p>
         <form action={saveSeedProfile} className="flex flex-col gap-2">
           <textarea
@@ -175,7 +174,7 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
       </Card>
 
       <Card title="Reason tags">
-        <p className="mb-3 text-14 text-muted">Review model-proposed tags and edit the tags on your 20 most recent decisions. Your edits are preserved if a tagging task finishes later.</p>
+        <p className="mb-3 text-14 text-muted">Tags on your 20 most recent decisions. Your edits are kept.</p>
         {tags.vocabulary.filter(tag => !tag.accepted).map(tag => (
           <form key={tag.tag} action={acceptReasonTag.bind(null, tag.tag)} className="mb-2 flex items-center gap-3">
             <span className="text-14">{tag.tag}{tag.description ? ` — ${tag.description}` : ""}</span>
@@ -188,7 +187,7 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
             <h3 className="text-14">{decision.jobTitle} · {decision.companyName} · {decision.decision}</h3>
             <p className="my-2 text-14 text-muted">{decision.reason}</p>
             <form action={saveDecisionTags.bind(null, decision.id)} className="flex flex-col gap-2">
-              <label htmlFor={`tags-${decision.id}`} className="text-12">Reason tags (hold Ctrl or Command to select several)</label>
+              <label htmlFor={`tags-${decision.id}`} className="text-12">Reason tags (Ctrl or Command for several)</label>
               <select id={`tags-${decision.id}`} name="tags" multiple defaultValue={decision.tags}
                 className="min-h-28 border border-line-muted p-2 text-14">
                 {tags.vocabulary.filter(tag => tag.accepted).map(tag => <option key={tag.tag} value={tag.tag}>{tag.tag}</option>)}
@@ -229,9 +228,9 @@ export default async function LearningPage({ searchParams }: { searchParams: Pro
           <Button type="submit" size="sm" title="Read the latest scan of every company for role words and seniority labels your filters are turning away">Mine recent scans</Button>
         </form>
       }>
-        <p className="mb-3 text-12 text-muted">From your decisions weekly, and from the latest scans after every daily run: role types and seniority labels that would admit roles in your location which the current filters turn away. Accepting adds the term and re-evaluates the table.</p>
+        <p className="mb-3 text-12 text-muted">Terms your filters turn away that would admit roles in your locations. Accepting adds the term.</p>
         {suggestions.length === 0 ? (
-          <EmptyState title="No pending filter suggestions" description="Nothing waiting. Suggestions arrive after the daily run, or press Mine recent scans." />
+          <EmptyState title="No pending filter suggestions" description="Suggestions arrive after the daily run." />
         ) : (
           <div className="space-y-3">
             {suggestions.map(({ suggestion, companyName }) => (

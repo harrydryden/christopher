@@ -20,15 +20,13 @@ export function LibraryImportCard() {
     <Card title="Import a document">
       <div className="grid gap-5">
         <p className="text-14 text-muted">
-          Start from a document you already have. AVA reads it, proposes what it says, and
-          adds nothing to your Library until you have ticked through it.
+          Nothing is added to your Library until you tick it.
         </p>
 
         <section className="grid gap-2">
           <h3 className="ds-pixel text-12 text-fg">Upload a CV</h3>
           <p className="text-12 text-muted">
-            A PDF or Word document, up to 5 MB. For LinkedIn, open your profile, choose More → Save
-            to PDF, and upload that file: AVA does not read LinkedIn itself.
+            PDF or Word, up to 5 MB. For LinkedIn, upload its More → Save to PDF export. AVA does not read LinkedIn itself.
           </p>
           <LibraryImportForm action={importLibraryDocument} submitLabel="Import document" pendingLabel="Uploading…">
             <input type="hidden" name="kind" value="cv" />
@@ -42,12 +40,12 @@ export function LibraryImportCard() {
         <section className="grid gap-2 border-t-2 border-line-muted pt-5">
           <h3 className="ds-pixel text-12 text-fg">Paste text</h3>
           <p className="text-12 text-muted">
-            The text of your CV or profile, between 100 and 40,000 characters. One document at a time.
+            100 to 40,000 characters, one document at a time.
           </p>
           <LibraryImportForm action={importLibraryDocument} submitLabel="Import text" pendingLabel="Importing…">
             <input type="hidden" name="kind" value="paste" />
             <label className={labelClass}>
-              Your CV or profile
+              Text
               <textarea name="content" required minLength={100} maxLength={40000} rows={6} className={`${inputClass} mt-1.5 resize-y`} />
             </label>
           </LibraryImportForm>
@@ -56,8 +54,7 @@ export function LibraryImportCard() {
         <section className="grid gap-2 border-t-2 border-line-muted pt-5">
           <h3 className="ds-pixel text-12 text-fg">Read your website</h3>
           <p className="text-12 text-muted">
-            The address of a page about you — your own site, or your portfolio. It is fetched as
-            politely as any careers page, and job sites are never read.
+            Your own site or portfolio. Job sites are never read.
           </p>
           <LibraryImportForm action={importLibraryDocument} submitLabel="Read page" pendingLabel="Queuing…">
             <input type="hidden" name="kind" value="website" />

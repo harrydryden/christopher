@@ -92,7 +92,7 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Operations" description="Everything the shared worker is doing, across every account and every company in the catalogue." />
+      <PageHeader title="Operations" description="The shared worker, across every account." />
       <RefusalNotice sentence={sp.error} className="mb-4" />
 
       <Card

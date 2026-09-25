@@ -93,7 +93,7 @@ export function EmploymentHistoryTable({ employment, entries, onChange, onRemove
         <button type="button" title="Remove job" aria-label={`Remove job ${i + 1}`} className="text-12 text-muted underline hover:text-fg" onClick={() => remove(job)}>Remove</button>
       </div>
     </div>)}</div>}
-    {!employment.length && <p className="text-14 text-muted">Add your first job, then add its responsibilities and outcomes below.</p>}
+    {!employment.length && <p className="text-14 text-muted">Add your first job. A job’s rows are used once they are confirmed.</p>}
     <button type="button" className="text-14 underline" onClick={() => onChange([...employment, { id: crypto.randomUUID(), company: "", jobTitle: "", startDate: "", endDate: "", current: false }])}>Add job</button>
   </section>;
 }

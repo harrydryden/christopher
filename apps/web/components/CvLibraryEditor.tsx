@@ -21,8 +21,8 @@ const empty: CvLibrary = { name: "", contact: "", profile: "", employment: [], s
 
 /** The rejection this editor can recover from, rather than asking for the work to be retyped. */
 const OBSOLETE = "The library changed. Reload before saving.";
-const LEAVE = "You have unsaved Library changes. Leave this page and lose them?";
-const DISCARD = "Discard your unsaved Library changes? This puts back the library as it was last saved.";
+const LEAVE = "Leave and lose your unsaved Library changes?";
+const DISCARD = "Discard your unsaved Library changes?";
 const clockOf = (at: Date) => at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 /** What a row is keyed by everywhere it is remembered: confirmations, types and reviews. */
 const rowKey = (text: string) => responsibilityRows(text)[0] ?? "";
@@ -193,7 +193,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
       setVersion(stored.version);
       setNotice(merged.note);
     } catch {
-      setNotice("Could not read the saved library. Your text is still here; try again before leaving this page.");
+      setNotice("Could not read the saved library. Your text is still here; try again.");
     }
   }
 
@@ -309,10 +309,9 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
     {line("websiteUrl", "Website", { type: "url", placeholder: "https://example.com" })}
     {/* Whatever else the header should carry. A library saved when contact details were one line
         keeps everything that was not an email address or a phone number here. */}
-    {line("contact", "Other contact details", { placeholder: "Anything else for the CV header, such as right to work" })}
+    {line("contact", "Other contact details", { placeholder: "e.g. right to work" })}
     <label className="block space-y-1.5 text-14"><span className={labelClass}>Bio</span>
-      <textarea rows={4} className={`resize-y ${input}`} value={value.profile ?? ""} placeholder="Who you are and the work you do, in a few sentences." onChange={e => setValue({ ...value, profile: e.target.value })} />
-      <span className="block text-12 text-muted">Each CV’s profile is written from your bio and your confirmed rows.</span>
+      <textarea rows={4} className={`resize-y ${input}`} value={value.profile ?? ""} placeholder="Who you are and the work you do." onChange={e => setValue({ ...value, profile: e.target.value })} />
     </label>
     </div>
     <div role="tabpanel" id="library-panel-experience" aria-labelledby="library-tab-experience" hidden={tab !== 'experience'} className="space-y-4" onInvalidCapture={event => revealInvalidField(event, 'experience')}>
@@ -348,8 +347,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
             onAddRow={(prompt: EvidencePrompt) => addRowFor(currentJob, prompt.facet)}
           />}
           {entry && untagged && untagged !== score?.missingLine && <p className="text-12 text-muted">{untagged}</p>}
-          {rows.length > 20 && <p role="alert" className="text-14 text-warn">All existing wording has been preserved. Combine related rows to reach 20 or fewer before saving.</p>}
-          {rows.length > 0 && <p className="text-12 text-muted sm:hidden">Scroll across the table for row types and row actions.</p>}
+          {rows.length > 20 && <p role="alert" className="text-14 text-warn">Combine rows to 20 or fewer before saving.</p>}
           {rows.length > 0 && <div className="relative overflow-x-auto border-2 border-line"><table className="w-full min-w-[820px] text-left text-14" aria-label={`${currentJob.company} ${currentJob.jobTitle} responsibilities and outcomes`}>
             <thead className="ds-pixel bg-sunken text-9 tracking-th text-muted"><tr><th scope="col" className="w-10 border-b-2 border-line px-3 py-2">#</th><th scope="col" className="w-28 border-b-2 border-line px-3 py-2 text-center">Confirmed</th><th scope="col" className="border-b-2 border-line px-3 py-2">Narrative</th><th scope="col" className="w-60 border-b-2 border-line px-3 py-2">Type</th><th scope="col" className="w-32 border-b-2 border-line px-3 py-2">Score</th><th scope="col" className="w-20 border-b-2 border-line px-3 py-2"><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>{rows.map((row, index) => {
@@ -411,7 +409,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
     {archived.length > 0 && <details className="border-2 border-line-muted px-3 py-2">
       <summary className="cursor-pointer text-12 text-muted">{`Archived jobs (${archived.length})`}</summary>
       <div className="mt-2 space-y-3 border-t-2 border-line-faint pt-2">
-        <p className="text-12 text-muted">Removing a job archives its rows rather than deleting them. Restoring one puts it back in employment history with its rows, tags and confirmations; save the library to keep it.</p>
+        <p className="text-12 text-muted">A restore is unsaved; save the library to keep it.</p>
         <ul className="space-y-2">{archived.map(block => <li key={block.entryId} className="flex flex-wrap items-center justify-between gap-3 text-14">
           {/* One string, so the heading and its row count are one line of text wherever this is
               read: on the page, by a screen reader, and by the smoke script. */}
@@ -428,9 +426,9 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
     {value.entries.map((entry, i) => entry.kind === "experience" || !isActiveEvidence(entry) ? null : <fieldset key={entry.id} className="space-y-3 border-2 border-line-muted p-4">
       <legend className="px-1 text-14 font-semibold">Evidence {i + 1}</legend>
       <label className="grid gap-1.5"><span className={labelClass}>Type</span><select aria-label={`Evidence ${i + 1} type`} className={selectClass} value={entry.kind} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, kind: e.target.value as typeof entry.kind, skillItems: e.target.value === "skill" ? x.skillItems : undefined, employmentId: undefined } : x) })}>{["education", "skill", "interest"].map(kind => <option key={kind}>{kind}</option>)}</select></label>
-      <label className="grid gap-1.5"><span className={labelClass}>Evidence label (for example: AI governance programme)</span><input required className={input} value={entry.heading} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, heading: e.target.value } : x) })} /></label>
-      {entry.kind === "skill" && <label className="grid gap-1.5"><span className={labelClass}>Individual skills — one per line</span><textarea rows={4} className={input} aria-label={`Individual skills: ${entry.heading}`} onBlur={() => setValue(current => ({ ...current, entries: current.entries.map(item => item.id === entry.id ? { ...item, skillItems: item.skillItems?.map(skill => skill.trim()).filter(Boolean).length ? item.skillItems.map(skill => skill.trim()).filter(Boolean) : undefined } : item) }))} value={entry.skillItems?.join("\n") ?? ""} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, skillItems: e.target.value ? e.target.value.split("\n") : undefined } : x) })} />
-        <span className="block text-12 text-muted">Up to 20 skills, 80 characters each. Enter labels explicitly; existing prose is not split automatically. Leave blank to retain prose rendering. The supporting details below remain evidence.</span>
+      <label className="grid gap-1.5"><span className={labelClass}>Evidence label</span><input required placeholder="e.g. AI governance programme" className={input} value={entry.heading} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, heading: e.target.value } : x) })} /></label>
+      {entry.kind === "skill" && <label className="grid gap-1.5"><span className={labelClass}>Individual skills, one per line</span><textarea rows={4} className={input} aria-label={`Individual skills: ${entry.heading}`} onBlur={() => setValue(current => ({ ...current, entries: current.entries.map(item => item.id === entry.id ? { ...item, skillItems: item.skillItems?.map(skill => skill.trim()).filter(Boolean).length ? item.skillItems.map(skill => skill.trim()).filter(Boolean) : undefined } : item) }))} value={entry.skillItems?.join("\n") ?? ""} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, skillItems: e.target.value ? e.target.value.split("\n") : undefined } : x) })} />
+        <span className="block text-12 text-muted">Up to 20. Leave blank to show the details as prose.</span>
       </label>}
       <label className="grid gap-1.5"><span className={labelClass}>Details</span><textarea required rows={5} className={input} value={entry.details} onChange={e => setValue({ ...value, entries: value.entries.map((x, n) => n === i ? { ...x, details: e.target.value } : x) })} /></label>
       <div className="flex gap-3">

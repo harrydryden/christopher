@@ -44,7 +44,7 @@ export function SuggestionsStrip({ items }: { items: SuggestionChip[] }) {
         setMessage(result.message ?? `Added “${item.term}”.`);
         router.refresh();
       } catch {
-        setError("Could not save that. Reload and try again.");
+        setError("Could not save. Reload and retry.");
       } finally { setPendingId(null); }
     });
   }
@@ -59,7 +59,7 @@ export function SuggestionsStrip({ items }: { items: SuggestionChip[] }) {
         setMessage(`Dismissed “${item.term}”.`);
         router.refresh();
       } catch {
-        setError("Could not save that. Reload and try again.");
+        setError("Could not save. Reload and retry.");
       } finally { setPendingId(null); }
     });
   }

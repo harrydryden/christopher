@@ -51,9 +51,13 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
 
   return (
     <div>
+      {/* `#add` is where the setup checklist points: adding and following live on Discover. */}
       <PageHeader
         title="Companies"
-        description={`Companies are shared across every account and scanned once a day — ${nextScanSentence(system.scanTime, system.timezone)}. Following one gives you its roles through your own filters.`}
+        actions={<>
+          <span className="text-12 text-muted" title="Every company is scanned once a day for all its followers">{nextScanSentence(system.scanTime, system.timezone)}</span>
+          <Link id="add" prefetch={false} href="/suggestions" className={buttonLinkClass("secondary")}>Follow a company</Link>
+        </>}
       />
 
       <RefusalNotice sentence={sp.error} className="mb-4" />
@@ -67,17 +71,13 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
         </div>
       )}
 
-      {/* `#add` is where the setup checklist points: adding and following now live on Discover. */}
-      <p id="add" className="mb-2 text-13 text-muted">
-        To add or follow a company, use <Link prefetch={false} href="/suggestions" className="text-fg underline">Discover companies</Link>.
-      </p>
       <Pagination page={page} total={total} path="/companies" params={companySortParams(order)}/>
       {/* Silent: the status column is what changes, and it changes in place. */}
       {work.active && <AutoRefresh scope="company" initialVersion={work.version} message={null} />}
       {rows.length === 0 ? (
         <EmptyState
           title="No companies yet"
-          description="Search the catalogue or paste a homepage on the Discover tab to follow a company’s careers page."
+          description="Follow a company to see its matching roles here."
           action={<Link prefetch={false} href="/suggestions" className={buttonLinkClass("primary")}>Discover companies</Link>}
         />
       ) : (
@@ -90,11 +90,11 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
               <SortTH label="Open" sortKey="open" order={order} title="Roles your filters admitted that are still open" />
               <SortTH label="Review" sortKey="review" order={order} title="Matched roles you have not decided on" />
               <SortTH label="Shortlisted" sortKey="shortlisted" order={order} title="Roles here you chose to pursue" />
-              <TH>Actions</TH>
+              <TH><span className="sr-only">Actions</span></TH>
             </tr>
           </THead>
           <TBody>
-            {rows.map(({ company, subscription, lastScan, openRoles, reviewRoles, shortlistedRoles, sourceType, followers, discovering, discoveryState, needsSource, lastDiscovery }) => (
+            {rows.map(({ company, subscription, lastScan, openRoles, reviewRoles, shortlistedRoles, sourceType, discovering, discoveryState, needsSource, lastDiscovery }) => (
               <TR key={company.id}>
                 <TD>
                   <Link prefetch={false} href={`/companies/${company.id}`} className="flex items-center gap-2 no-underline hover:underline">
@@ -104,7 +104,6 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                   <a href={company.homepageUrl} target="_blank" rel="noopener noreferrer" className="block text-12 text-muted no-underline hover:underline">
                     {company.domain}
                   </a>
-                  {followers > 1 && <span className="block text-12 text-faint">Followed by {followers} accounts</span>}
                 </TD>
                 <TD>
                   {/* What a scan reads: a feed is worth knowing about, because an HTML fallback is
@@ -118,7 +117,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                     <>
                       <Badge tone="amber">no careers source</Badge>
                       <p className="mt-1 text-12 text-muted">
-                        {lastDiscovery === "not_found" ? "Could not find the careers page." : lastDiscovery === "needs_confirmation" ? "Needs a source confirmed." : "Not discovered yet."}{" "}
+                        {lastDiscovery === "not_found" ? "Not found." : lastDiscovery === "needs_confirmation" ? "Needs confirming." : "Not discovered yet."}{" "}
                         <Link prefetch={false} href={`/companies/${company.id}#careers-url`} className="text-fg underline">Add careers URL</Link>
                       </p>
                     </>
@@ -161,16 +160,15 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                   )}
                 </TD>
                 <TD>
-                  <div className="flex flex-wrap items-start gap-2">
-                    {subscription.status === "active" && (
+                  {/* Refresh is occasional, so it sits in the row's Manage menu rather than beside it. */}
+                  <CompanyControls companyId={company.id} companyName={company.name} status={subscription.status}
+                    refresh={subscription.status === "active" ? (
                       <RefreshCompanyButton
                         companyId={company.id}
                         running={discoveryState === "running"}
                         blockedReason={unverified ? VERIFY_SENTENCE : undefined}
                       />
-                    )}
-                    <CompanyControls companyId={company.id} companyName={company.name} status={subscription.status} />
-                  </div>
+                    ) : undefined} />
                 </TD>
               </TR>
             ))}

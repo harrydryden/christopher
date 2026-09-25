@@ -133,7 +133,7 @@ export default async function SettingsPage() {
         <CvAppearance key={JSON.stringify(appearance)} name="theme" value={appearance} />
       </SettingsForm>
 
-      <p className="text-14 text-muted">Writing preferences and version history are on the <a href="/library" className="text-fg underline">Library</a> page.</p>
+      <p className="text-14 text-muted">Writing preferences are on the <a href="/library" className="text-fg underline">Library</a> page.</p>
 
       <Card title="CV model">
         <SettingsForm action={saveCvModel}>

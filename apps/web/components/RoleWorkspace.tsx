@@ -61,7 +61,7 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
   return <section id="roles">
     <nav aria-label="Role status" className="mb-4 flex flex-wrap gap-2">
       {ROLE_TABS.map(status => <Link prefetch={false} key={status} href={viewHref(status)} aria-current={status === view ? "page" : undefined}
-        className={`ds-pixel border-2 px-3 py-2 text-11 no-underline ${status === view ? "border-fg bg-fg text-bg" : "border-transparent text-muted hover:bg-sunken hover:text-fg"}`}>
+        className={`ds-pixel border-2 px-3 py-2 text-11 no-underline ${status === view ? "border-accent bg-accent text-accent-fg" : "border-transparent text-muted hover:bg-sunken hover:text-fg"}`}>
         {ROLE_STATUS_LABELS[status]}{" "}<span className="ml-1 tabular-nums">{counts[status]}</span>
         {status === "user-shortlisted" && counts[status] > 0 && applied > 0 && <span className="ml-1 tabular-nums">· {applied} applied</span>}
       </Link>)}

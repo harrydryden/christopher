@@ -150,7 +150,7 @@ export function CvWorkspace({
                     ?.querySelectorAll<HTMLButtonElement>('[role="tab"]')
                     [next]?.focus();
                 }}
-                className={`ds-pixel shrink-0 border-2 px-3 py-2 text-11 ${selected === tab ? "border-accent bg-accent text-accent-fg" : "border-transparent text-muted hover:bg-raised"}`}
+                className={`ds-pixel shrink-0 border-2 px-3 py-2 text-11 ${selected === tab ? "border-accent bg-accent text-accent-fg" : "border-transparent text-muted hover:bg-sunken"}`}
               >
                 {label}
               </button>

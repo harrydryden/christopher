@@ -47,12 +47,12 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <WorkspaceShell><NavigationMetrics />
-      <div className="flex items-center gap-3 border-b-2 border-line bg-raised px-4 py-2 text-13">
+      <div className="flex items-center gap-3 border-b border-line-muted bg-raised px-4 py-2 text-13">
         <Monogram size={16} />
         <Suspense fallback={<span className="text-muted">Loading scan status…</span>}><ScanBanner userId={user.id} /></Suspense>
       </div>
       {needsEmailConfirmation(user) && (
-        <div className="flex flex-wrap items-center gap-3 border-b-2 border-line bg-sunken px-4 py-2 text-13" role="status">
+        <div className="flex flex-wrap items-center gap-3 border-b border-line-muted bg-sunken px-4 py-2 text-13" role="status">
           <span>{VERIFY_SENTENCE} The link asks for your password.</span>
           <form action={resendVerification}>
             <button type="submit" className="underline">Send the link again</button>
@@ -60,8 +60,8 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         </div>
       )}
       <div className="flex flex-1 flex-col md:flex-row">
-        <aside className="flex w-full shrink-0 flex-col border-b-2 border-line p-3 md:w-48 md:border-b-0 md:border-r-2">
-          <Link prefetch={false} href="/" className="mb-4 block p-2" aria-label="AVA home">
+        <aside className="ds-on-brand flex w-full shrink-0 flex-col p-3 md:w-48">
+          <Link prefetch={false} href="/" className="mb-4 block p-2 text-brand-ink" aria-label="AVA home">
             <Mark size={48} />
           </Link>
           <nav aria-label="Main navigation" className="flex flex-wrap gap-0.5 md:block md:space-y-0.5">
@@ -77,12 +77,12 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
             ))}
           </nav>
           <div className="mt-auto space-y-2 px-2 pt-4 text-13">
-            <Link prefetch={false} href="/account" className="block truncate text-muted no-underline hover:underline" title={user.email}>
+            <Link prefetch={false} href="/account" className="block truncate text-brand-ink-muted no-underline hover:text-brand-ink hover:underline" title={user.email}>
               {user.name || user.email}
-              {user.role === "admin" && <span className="ml-1 text-11 text-faint">admin</span>}
+              {user.role === "admin" && <span className="ml-1 text-11 text-brand-ink-muted">admin</span>}
             </Link>
             <form action={logout}>
-              <button type="submit" className="underline">
+              <button type="submit" className="text-brand-ink underline">
                 Sign out
               </button>
             </form>

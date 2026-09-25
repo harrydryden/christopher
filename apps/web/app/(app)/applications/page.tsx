@@ -125,7 +125,7 @@ export default async function ApplicationsPage({
             key={segment}
             href={segmentHref(segment)}
             aria-current={segment === filter ? "page" : undefined}
-            className={`ds-pixel border-2 px-3 py-2 text-11 no-underline ${segment === filter ? "border-fg bg-fg text-bg" : "border-transparent text-muted hover:bg-sunken hover:text-fg"}`}
+            className={`ds-pixel border-2 px-3 py-2 text-11 no-underline ${segment === filter ? "border-accent bg-accent text-accent-fg" : "border-transparent text-muted hover:bg-sunken hover:text-fg"}`}
           >
             {PIPELINE_FILTER_LABELS[segment]} <span className="ml-1 tabular-nums">{result.counts[segment]}</span>
           </Link>

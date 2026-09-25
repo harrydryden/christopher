@@ -28,8 +28,11 @@ const RESTORE_INSTEAD = "This job is in Archived jobs below; restore it instead 
 /** The field labels the editor puts above its controls. */
 const FIELDS: Record<string, string> = {
   name: "Name",
-  contact: "Contact details",
-  profile: "Career overview",
+  contact: "Other contact details",
+  email: "Email",
+  phone: "Phone",
+  location: "Location",
+  profile: "Bio",
   linkedinUrl: "LinkedIn",
   websiteUrl: "Website",
   company: "Company",

@@ -19,6 +19,7 @@ import {
   normaliseCvLibrary,
   responsibilityRows,
   setRowFacets,
+  splitLegacyContact,
   updateResponsibilityRows,
   type CvLibrary,
   type Employment,
@@ -35,13 +36,20 @@ type CvEntry = CvLibrary["entries"][number];
  * so a library stored under an older schema could throw; the Library is the page that exists to
  * fix such a library, so it is consolidated unparsed rather than taken down, exactly as the editor
  * has always done with the content handed to it.
+ *
+ * Contact details are upgraded here too. A library saved when they were one free-text line opens
+ * with an email address and a phone number that line held unambiguously in their own fields, and
+ * everything else still in `contact`, shown as "Other contact details" (`splitLegacyContact`).
+ * Nothing is dropped, and nothing is written until the person saves.
  */
 export function openStoredLibrary(raw: unknown): CvLibrary {
+  let opened: CvLibrary;
   try {
-    return normaliseCvLibrary(raw);
+    opened = normaliseCvLibrary(raw);
   } catch {
-    return consolidateExperience(raw as CvLibrary);
+    opened = consolidateExperience(raw as CvLibrary);
   }
+  return splitLegacyContact(opened);
 }
 
 /** The evidence block written for one job, if there is one yet. */

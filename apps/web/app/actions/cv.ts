@@ -13,7 +13,7 @@ import { DEFAULT_CV_THEME, CvThemeSchema, CvWritingPreferencesSchema, resolveCvW
 import { CvGapAnswerSchema, CvGapQuizSchema, addGapAnswersToLibrary, type CvGapAnswer } from "@ava/core/cv-gap-quiz";
 import { requireUser, requireVerifiedUser } from "@/lib/auth";
 import { cvLibraryIssues } from "@/lib/cv-library-issues";
-import { latestLibrary, writeCvLibraryVersion, type Tx } from "@/lib/cv-library-write";
+import { enqueueLibraryReview, latestLibrary, writeCvLibraryVersion, type Tx } from "@/lib/cv-library-write";
 import { assertCvBuildCapacity, lockCvBuildCapacity } from "@/lib/cv-build-capacity";
 import { lockRoleView } from "@/lib/decisions";
 import { cvBuildQuote } from "@/lib/cv-quote";
@@ -127,8 +127,11 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
     submitted = JSON.parse(raw);
     const parsed = CvLibrarySchema.parse(submitted);
     const content = { ...parsed, theme: parsed.theme ?? DEFAULT_CV_THEME };
+    // Saving is only ever the person's own act, and so is re-scoring: the save stores the version
+    // and the page scores its rows from the person's own tags straight away; the full review is
+    // what the Re-score button asks for (`rescoreLibrary`).
     await db().transaction(async (tx) => {
-      await writeCvLibraryVersion(tx, user.id, Number(form.get("version")), () => content);
+      await writeCvLibraryVersion(tx, user.id, Number(form.get("version")), () => content, { review: false });
     });
   } catch (error) {
     if (error instanceof z.ZodError) return fail(cvLibraryIssues(error, submitted));
@@ -136,6 +139,25 @@ export async function saveCvLibrary(_prev: ActionResult, form: FormData): Promis
   }
   revalidatePath("/library");
   revalidatePath("/cv");
+  return ok();
+}
+
+/**
+ * Re-score the saved Library: queue the evidence review (A12) of the newest version, which scores
+ * every entry whose rows changed since it was last reviewed and carries every other entry's review
+ * forward unchanged. The Library offers it once rows have changed since the last review, and never
+ * on its own: it spends the account's AI budget, so it waits to be asked.
+ */
+export async function rescoreLibrary(_prev: ActionResult, _form: FormData): Promise<ActionResult> {
+  const user = await requireVerifiedUser();
+  try {
+    const latest = await latestLibrary(db(), user.id);
+    if (!latest) return fail("Save the library before re-scoring it.");
+    await enqueueLibraryReview(db(), user.id, latest.version);
+  } catch (error) {
+    return actionError(error, "Could not start the re-score. Please try again.");
+  }
+  revalidatePath("/library");
   return ok();
 }
 

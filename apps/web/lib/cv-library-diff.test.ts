@@ -7,7 +7,7 @@
  */
 import { expect, it } from "vitest";
 import type { CvLibrary, Employment } from "@ava/core/cv";
-import { diffCvLibraries, diffRows, libraryDiffSummary, requestedDiff } from "./cv-library-diff";
+import { diffCvLibraries, diffRows, libraryDiffSummary } from "./cv-library-diff";
 import { openStoredLibrary } from "./cv-library-rows";
 
 const acme: Employment = { id: "acme", company: "Acme", jobTitle: "Operations Director", startDate: "2023-01", endDate: "", current: true };
@@ -116,14 +116,18 @@ it("says plainly when two versions are the same", () => {
   expect(libraryDiffSummary(diff)).toBe("No changes between these versions");
 });
 
-it("reads a comparison out of the URL, in order, and refuses anything else", () => {
-  const available = [1, 2, 7, 9];
-  expect(requestedDiff({ diff: "7,9" }, available)).toEqual({ from: 7, to: 9 });
-  expect(requestedDiff({ diff: "9,7" }, available)).toEqual({ from: 7, to: 9 });
-  expect(requestedDiff({ a: "1", b: "2" }, available)).toEqual({ from: 1, to: 2 });
-  expect(requestedDiff({ diff: "7,7" }, available)).toBeNull();
-  // A version this account has not saved is not a comparison it can be shown.
-  expect(requestedDiff({ diff: "7,8" }, available)).toBeNull();
-  expect(requestedDiff({ diff: "seven,nine" }, available)).toBeNull();
-  expect(requestedDiff({}, available)).toBeNull();
+it("names each contact detail and the bio that changed, and not a contact line an upgrade split", () => {
+  // Stored before contact details had fields, and the same details after the person saved them in
+  // their fields: both open through the same upgrade, so moving them is not a change they made.
+  const old = { ...library(), contact: "London · rowan@example.test" };
+  const saved = library({ email: "rowan@example.test", contact: "London" });
+  expect(diffCvLibraries(openStoredLibrary(old), openStoredLibrary(saved), 1, 2).unchanged).toBe(true);
+
+  const moved = library({ email: "rowan@example.test", phone: "+44 7700 900123", location: "London", contact: "", profile: "Operations leader" });
+  const diff = diffCvLibraries(saved, moved, 2, 3);
+  expect(diff.intro).toEqual(["Phone", "Location", "Other contact details", "Bio"]);
+  expect(diff.unchanged).toBe(false);
+  expect(libraryDiffSummary(diff)).toBe("Phone, Location, Other contact details, Bio changed");
+  // A field left blank and a field never written are the same to the person reading it.
+  expect(diffCvLibraries(library(), library({ email: "", phone: "" }), 3, 4).unchanged).toBe(true);
 });

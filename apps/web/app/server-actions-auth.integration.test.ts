@@ -113,7 +113,7 @@ const GATES: Record<string, Record<string, Gate>> = {
   "actions/cv.ts": {
     saveCvLibrary: "user", answerCvGapQuiz: "verified", saveCvWritingPreferences: "user", saveCvAppearance: "user",
     saveCvModel: "user", manageCvs: "user", requestCv: "verified", saveCvDraft: "verified", assessCvDraft: "verified",
-    finaliseCvDraft: "user",
+    finaliseCvDraft: "user", rescoreLibrary: "verified",
   },
   "actions/decisions.ts": { roleDetails: "user", decide: "user", saveDecisionTags: "verified", archiveRoles: "user", decideRoles: "user" },
   "actions/discovery-sources.ts": {

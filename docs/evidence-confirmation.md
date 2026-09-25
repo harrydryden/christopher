@@ -1,6 +1,6 @@
 # Responsibility confirmation
 
-Each responsibility or outcome appears in a table with **#**, **Confirmed** and **Narrative** columns. The job block shows how many rows are confirmed. Confirm the facts you can substantiate, set the block to **Active**, then select **Save library**.
+Each responsibility or outcome appears in a table with **#**, **Confirmed** and **Narrative** columns. The job block shows how many rows are confirmed. Confirm the facts you can substantiate, then select **Save library** in the bar that appears above the editor once there are unsaved changes.
 
 - New and existing experience rows start unconfirmed unless their exact wording has an explicit saved confirmation. An Active block alone does not confirm its rows.
 - New CVs and role qualification use only confirmed rows from Active experience blocks. Draft and Inactive blocks remain excluded even when their rows are confirmed.

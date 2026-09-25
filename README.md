@@ -171,7 +171,7 @@ writes nothing to the database.
 
 Settings supports separate role and title-seniority keyword lists, combined with location filtering. Use `strateg*` for strategy/strategic. The table groups roles by what you have decided, and archive/restore is reversible. Dismissing a role asks for a reason, because that is what the ranking learns from.
 
-CV builder maintains a versioned evidence library and creates saved CVs for individual roles using a separately selected Anthropic model. Import/export the library as JSON, edit draft text, and download a selectable-text A4 PDF. Apply migrations and run the background worker with `ANTHROPIC_API_KEY` before generating. Missing credentials are shown on the draft; local tests do not call paid models. See [the specification](docs/SPEC.md) and [validation record](docs/REVIEW-PLAN.md).
+CV builder maintains a versioned evidence library and creates saved CVs for individual roles using a separately selected Anthropic model. Start the library from an existing CV, profile PDF, website or pasted text, edit draft text, and download a selectable-text A4 PDF. Apply migrations and run the background worker with `ANTHROPIC_API_KEY` before generating. Missing credentials are shown on the draft; local tests do not call paid models. See [the specification](docs/SPEC.md) and [validation record](docs/REVIEW-PLAN.md).
 
 ### Discover companies from external sources
 

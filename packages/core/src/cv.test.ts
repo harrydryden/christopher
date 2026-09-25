@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { migrateEmploymentHistory, EmploymentSchema, evidenceHeading, materialiseCv, groupCvLibrary, companyForEntry, CvLibrarySchema, EVIDENCE_FACETS, consolidateExperience, eligibleCvEvidence, normaliseCvLibrary, rowFacets, setRowFacets, updateResponsibilityRows, type CvLibrary, type Employment } from "./cv";
+import { contactLine, splitLegacyContact, migrateEmploymentHistory, EmploymentSchema, evidenceHeading, materialiseCv, groupCvLibrary, companyForEntry, CvLibrarySchema, EVIDENCE_FACETS, consolidateExperience, eligibleCvEvidence, normaliseCvLibrary, rowFacets, setRowFacets, updateResponsibilityRows, type CvLibrary, type Employment } from "./cv";
 const library: CvLibrary = { name: "Test Candidate", contact: "London", profile: "Operations", entries: [
   { id: "recent", kind: "experience", heading: "Director · Acme · 2023-present", details: "Led operations", confirmedResponsibilities: ["Led operations"] },
   { id: "older", kind: "education", heading: "BSc · University · 2010", details: "Economics" },
@@ -351,5 +351,49 @@ describe("row types", () => {
     expect(upgraded.structuredExperience).toBe(true);
     expect(upgraded.facetedRows).toBe(true);
     expect(normaliseCvLibrary(upgraded)).toEqual(upgraded);
+  });
+});
+
+describe("contact details", () => {
+  const plan = { summary: "Operations leader", sections: [{ entryId: "recent", bullets: ["Led operations"] }], gaps: [] };
+
+  it("prints email · phone · location, then the free-text line, on one CV line", () => {
+    const withFields: CvLibrary = { ...library, email: "rowan@example.test", phone: "+44 7700 900123", location: "Manchester, UK", contact: "Portfolio on request" };
+    expect(contactLine(withFields)).toBe("rowan@example.test · +44 7700 900123 · Manchester, UK · Portfolio on request");
+    expect(materialiseCv(withFields, plan).contact).toBe("rowan@example.test · +44 7700 900123 · Manchester, UK · Portfolio on request");
+    // Blank parts are skipped, and a library from before the fields prints what it always did.
+    expect(contactLine({ ...library, email: "", phone: " ", location: "Leeds", contact: "" })).toBe("Leeds");
+    expect(materialiseCv(library, plan).contact).toBe("London");
+  });
+
+  it("parses a library saved before the fields existed, and refuses an address that is not one", () => {
+    expect(CvLibrarySchema.parse(library)).not.toHaveProperty("email");
+    expect(CvLibrarySchema.safeParse({ ...library, email: "rowan@example.test", phone: "+44 7700 900123", location: "Leeds" }).success).toBe(true);
+    expect(CvLibrarySchema.safeParse({ ...library, email: "" }).success).toBe(true);
+    expect(CvLibrarySchema.safeParse({ ...library, email: "rowan at example" }).success).toBe(false);
+    expect(CvLibrarySchema.safeParse({ ...library, location: "Leeds\nUK" }).success).toBe(false);
+    // The printed line has the CV's own limit, whichever fields make it up.
+    expect(CvLibrarySchema.safeParse({ ...library, contact: "x".repeat(480), location: "Manchester, United Kingdom" }).success).toBe(false);
+  });
+
+  it("moves an unambiguous address and number out of an old free-text line and keeps the rest", () => {
+    const opened = splitLegacyContact({ ...library, contact: "Manchester, UK · rowan.mercer@example.test · +44 7700 900123" });
+    expect(opened).toMatchObject({ email: "rowan.mercer@example.test", phone: "+44 7700 900123", contact: "Manchester, UK" });
+    expect(opened.location).toBeUndefined();
+    // Nothing is lost: every part of the old line is in exactly one field.
+    expect(contactLine(opened).split(" · ").sort()).toEqual(["+44 7700 900123", "Manchester, UK", "rowan.mercer@example.test"]);
+    // Run twice, it does nothing more.
+    expect(splitLegacyContact(opened)).toBe(opened);
+  });
+
+  it("guesses nothing: a lone phrase, two addresses or a library already upgraded stay as they are", () => {
+    const city = { ...library, contact: "London" };
+    expect(splitLegacyContact(city)).toBe(city);
+    const two = { ...library, contact: "a@example.test | b@example.test" };
+    expect(splitLegacyContact(two)).toBe(two);
+    const upgraded = { ...library, email: "", contact: "c@example.test" };
+    expect(splitLegacyContact(upgraded)).toBe(upgraded);
+    const inline = { ...library, contact: "Email me at a@example.test" };
+    expect(splitLegacyContact(inline)).toBe(inline);
   });
 });

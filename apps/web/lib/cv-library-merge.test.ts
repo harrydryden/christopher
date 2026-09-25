@@ -39,7 +39,7 @@ it("keeps every edit the stored version did not touch, and says so", () => {
     "Ran a service desk of nine across two distribution centres.",
   );
   expect(merged.library.profile).toBe("Operations leader in regulated healthcare.");
-  expect(merged.kept).toEqual(["Career overview", "Northwind · Head of Operations"]);
+  expect(merged.kept).toEqual(["Bio", "Northwind · Head of Operations"]);
   expect(merged.dropped).toEqual([]);
   expect(merged.note).toContain("Reloaded version 7");
   expect(merged.note).toContain("Check it, then save again.");

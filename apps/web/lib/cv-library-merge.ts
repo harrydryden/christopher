@@ -33,11 +33,14 @@ export interface CvLibraryMerge {
 type Entry = CvLibrary["entries"][number];
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
-const INTRO = ["name", "contact", "profile", "linkedinUrl", "websiteUrl"] as const;
+const INTRO = ["name", "email", "phone", "location", "contact", "profile", "linkedinUrl", "websiteUrl"] as const;
 const INTRO_LABELS: Record<(typeof INTRO)[number], string> = {
   name: "Name",
-  contact: "Contact details",
-  profile: "Career overview",
+  email: "Email",
+  phone: "Phone",
+  location: "Location",
+  contact: "Other contact details",
+  profile: "Bio",
   linkedinUrl: "LinkedIn",
   websiteUrl: "Website",
 };

@@ -8,7 +8,7 @@
  * sentence, and it has to stay both across an edit.
  */
 import { expect, it } from "vitest";
-import { rowFacets, type CvLibrary, type Employment } from "@ava/core/cv";
+import { contactLine, rowFacets, type CvLibrary, type Employment } from "@ava/core/cv";
 import {
   addJobRow,
   archivedBlocks,
@@ -217,4 +217,20 @@ it("opens a library the schema would refuse rather than failing in front of the 
   const opened = openStoredLibrary({ ...library("Led a team"), name: "" });
   expect(opened.name).toBe("");
   expect(jobRows(opened, "acme")).toEqual(["Led a team"]);
+});
+
+it("opens a library whose contact details were one line with each detail in its own field, losing nothing", () => {
+  // The shape every library had before email, phone and location were fields: one free-text line.
+  const stored = { ...library("Led a team"), contact: "Manchester, UK · rowan.mercer@example.test · +44 7700 900123" };
+  const opened = openStoredLibrary(stored);
+  expect(opened).toMatchObject({ email: "rowan.mercer@example.test", phone: "+44 7700 900123", contact: "Manchester, UK" });
+  // A place cannot be told from any other phrase, so it stays in the other line for the person to move.
+  expect(opened.location).toBeUndefined();
+  expect(contactLine(opened).split(" · ").sort()).toEqual(stored.contact.split(" · ").sort());
+  // Opening what was opened changes nothing, so the editor's baseline and its value agree.
+  expect(openStoredLibrary(opened)).toEqual(opened);
+  // A line with nothing to move is left exactly as it was stored.
+  expect(openStoredLibrary(library("Led a team")).contact).toBe("London");
+  // So is a library the schema refuses, which still opens with its details upgraded.
+  expect(openStoredLibrary({ ...stored, name: "" })).toMatchObject({ email: "rowan.mercer@example.test", contact: "Manchester, UK" });
 });

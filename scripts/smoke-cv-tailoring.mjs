@@ -138,8 +138,8 @@ export async function verifyCvTailoringWorkspace(baseUrl, cookie, databaseUrl, u
     const evidenceInput = page.getByRole("textbox", { name: /Synthetic Works Operations Director evidence 2/ });
     await evidenceInput.waitFor();
     const evidenceRow = evidenceInput.locator("xpath=ancestor::tr");
-    // The row's Type is one dropdown that takes several types at once: a group on the disclosure, a summary that opens it.
-    assert.equal(await evidenceRow.getByRole("group", { name: "Type of row 2", exact: true }).count(), 1);
+    // The row's Type is one dropdown that takes several types at once: a menu button that opens the six types.
+    assert.equal(await evidenceRow.getByRole("button", { name: "Type of row 2", exact: true }).count(), 1);
     assert.equal(await evidenceRow.getByRole("button", { name: /Remove Synthetic Works Operations Director evidence 2/ }).count(), 1);
     await evidenceRow.scrollIntoViewIfNeeded();
     await page.screenshot({ path: "tmp/cv-tailoring-smoke/library-evidence-desktop.png", fullPage: true });
@@ -156,7 +156,7 @@ export async function verifyCvTailoringWorkspace(baseUrl, cookie, databaseUrl, u
     await evidenceRow.scrollIntoViewIfNeeded();
     const rowScroller = evidenceRow.locator("xpath=ancestor::div[contains(@class,'overflow-x-auto')]");
     assert.ok((await rowScroller.evaluate(element => element.scrollWidth >= element.clientWidth)), "the evidence table must remain usable through its own horizontal scroller");
-    const mobileTag = evidenceRow.locator('summary[aria-label="Type of row 2"]');
+    const mobileTag = evidenceRow.locator('button[aria-label="Type of row 2"]');
     assert.equal(await mobileTag.isEnabled(), true);
     await mobileTag.focus();
     await page.screenshot({ path: "tmp/cv-tailoring-smoke/library-evidence-mobile.png", fullPage: true });

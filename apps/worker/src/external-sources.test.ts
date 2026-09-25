@@ -51,7 +51,7 @@ it("never follows LinkedIn links, and deduplicates tracking links elsewhere", ()
 });
 it("never fetches a LinkedIn source, and processes only what was imported", async () => {
   const [source] = await client.db.insert(schema.discoverySources).values({
-    name: "Scaling Europe", kind: "linkedin", url: "https://www.linkedin.com/newsletters/scaling-europe-daily", nextRunAt: now,
+    userId, name: "Scaling Europe", kind: "linkedin", url: "https://www.linkedin.com/newsletters/scaling-europe-daily", nextRunAt: now,
   }).returning();
   const fetchText = vi.spyOn(deps.fetcher, "fetchText");
   await client.db.insert(schema.discoveryDocuments).values({ sourceId: source!.id, title: "Pasted edition", content, fingerprint: "pasted" });
@@ -74,7 +74,7 @@ it("queues due enabled sources only, once across repeated scheduler ticks", asyn
 });
 it("renders a newsletter page that serves a JavaScript shell, and reads its editions", async () => {
   const [source] = await client.db.insert(schema.discoverySources).values({
-    name: "Scaling Europe Daily", kind: "website", url: "https://scaling-europe.beehiiv.com/", nextRunAt: now,
+    userId, name: "Scaling Europe Daily", kind: "website", url: "https://scaling-europe.beehiiv.com/", nextRunAt: now,
   }).returning();
   const edition = "Acme Robotics raised funding to expand its London operations team. ".repeat(3);
   vi.spyOn(deps.fetcher, "fetchText").mockImplementation(async (url: string) => ({
@@ -99,7 +99,7 @@ it("renders a newsletter page that serves a JavaScript shell, and reads its edit
 });
 it("keeps the normal cadence for a source whose site refuses every automated reader", async () => {
   const [source] = await client.db.insert(schema.discoverySources).values({
-    name: "Closed Archive", kind: "website", url: "https://closed.example/archive", nextRunAt: now,
+    userId, name: "Closed Archive", kind: "website", url: "https://closed.example/archive", nextRunAt: now,
   }).returning();
   vi.spyOn(deps.fetcher, "fetchText").mockRejectedValue(new Error("robots.txt disallows https://closed.example/archive"));
   await handleMonitorSource(task(source!.id), deps);

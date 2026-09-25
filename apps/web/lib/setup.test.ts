@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSetupChecklist, COMPANIES_TARGET, type SetupFacts } from "./setup";
+import { buildSetupChecklist, COMPANIES_TARGET, setupMilestones, type SetupFacts } from "./setup";
 
 const NOTHING: SetupFacts = {
   emailConfirmed: false,
@@ -77,5 +77,24 @@ describe("buildSetupChecklist", () => {
     expect(hidden.dismissed).toBe(true);
     expect(hidden.complete).toBe(false);
     expect(hidden.doneCount).toBe(0);
+  });
+});
+
+describe("setupMilestones", () => {
+  it("marks done steps, exactly one current step, and the rest to do", () => {
+    const states = (facts: SetupFacts) => setupMilestones(buildSetupChecklist(facts)).map((step) => step.state);
+    expect(states(NOTHING)).toEqual(["current", "todo", "todo", "todo", "todo"]);
+    expect(states({ ...NOTHING, emailConfirmed: true, gateChosen: true })).toEqual(["done", "done", "current", "todo", "todo"]);
+    // A step skipped early is the one pointed at, even with later ones finished.
+    expect(states({ ...NOTHING, libraryFilled: true, seedProfileWritten: true })).toEqual(["current", "todo", "done", "todo", "done"]);
+    expect(states(EVERYTHING)).toEqual(["done", "done", "done", "done", "done"]);
+  });
+
+  it("gives every milestone a short label and a one-sentence description for the line beneath", () => {
+    for (const step of setupMilestones(buildSetupChecklist(NOTHING))) {
+      expect(step.shortLabel.length).toBeGreaterThan(0);
+      expect(step.shortLabel.length).toBeLessThanOrEqual(12);
+      expect(step.description.replace(/\.$/, "")).not.toContain(". ");
+    }
   });
 });

@@ -1,9 +1,11 @@
 import { localDateParts, type SystemSettings } from "@ava/core";
 import type { ScanRun } from "@ava/db/schema";
 import { getLatestScanRun } from "./queries/companies";
+import { fetchRoleCounts } from "./queries/jobs";
+import { followingCount, lastCompletedScanAt } from "./queries/scan-strip";
+import { suggestionCount } from "./queries/suggestions";
 import { getSystemSettings } from "./settings";
-import { scanBannerText } from "./scan-banner";
-import { scanRunReport } from "./scan-run-report";
+import type { ScanStripFacts } from "./scan-banner";
 import type { ScanPollHint } from "./polling";
 
 const HOUR_MS = 3_600_000;
@@ -39,12 +41,29 @@ export function scanPollHint(run: Pick<ScanRun, "startedAt" | "finishedAt"> | nu
   return { live: false, wakeInMs };
 }
 
-/** The shared daily run, counted for one account's companies, and when the banner should ask again. */
-export async function getScanStatus(userId: string, now = new Date()) {
-  const [stored, settings] = await Promise.all([getLatestScanRun(), getSystemSettings()]);
-  const run = stored ? await scanRunReport(stored, userId) : null;
+/** What the status strip says for one account, and when an open tab should ask again. */
+export type ScanStatus = ScanStripFacts & ScanPollHint;
+
+/**
+ * The strip's four facts for one account — last completed scan of a company it follows, how many it
+ * follows, roles still to review (the Matched tab's count) and pending company suggestions — plus
+ * whether the shared run is in progress, and the poll hint for the tab that shows them.
+ */
+export async function getScanStatus(userId: string, now = new Date()): Promise<ScanStatus> {
+  const [stored, settings, lastScanAt, following, roleCounts, newCompanyMatches] = await Promise.all([
+    getLatestScanRun(),
+    getSystemSettings(),
+    lastCompletedScanAt(userId),
+    followingCount(userId),
+    fetchRoleCounts(userId),
+    suggestionCount(userId),
+  ]);
   return {
-    text: scanBannerText(run, settings.timezone, now) + (run?.historicalOnly ? " · Stored summary; source detail unavailable" : ""),
+    scanning: !!stored && !stored.finishedAt,
+    lastScanAt: lastScanAt ? lastScanAt.toISOString() : null,
+    following,
+    newRoleMatches: roleCounts["auto-matched"] ?? 0,
+    newCompanyMatches,
     ...scanPollHint(stored, settings, now),
   };
 }

@@ -36,7 +36,7 @@ async function SettingsNavLink({ userId, href, children }: { userId: string; hre
 
 async function ScanBanner({ userId }: { userId: string }) {
   const status = await getScanStatus(userId);
-  return <ScanStatusBanner initialText={status.text} initialLive={status.live} initialWakeInMs={status.wakeInMs} />;
+  return <ScanStatusBanner initial={status} />;
 }
 
 export default async function AppLayout({ children }: { children: ReactNode }) {

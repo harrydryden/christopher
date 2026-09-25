@@ -5,7 +5,14 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("./queries/companies", () => ({ getLatestScanRun: vi.fn(async () => mocks.latest) }));
 vi.mock("./settings", () => ({ getSystemSettings: vi.fn(async () => ({ scanTime: "06:00", timezone: "Europe/London" })) }));
-vi.mock("./scan-run-report", () => ({ scanRunReport: vi.fn(async (run: Record<string, unknown>) => ({ ...run, historicalOnly: false })) }));
+vi.mock("./queries/scan-strip", () => ({
+  lastCompletedScanAt: vi.fn(async (userId: string) => (userId === "scanned" ? new Date("2026-09-11T04:30:00Z") : null)),
+  followingCount: vi.fn(async (userId: string) => (userId === "scanned" ? 6 : 0)),
+}));
+vi.mock("./queries/jobs", () => ({
+  fetchRoleCounts: vi.fn(async (userId: string) => ({ "auto-matched": userId === "scanned" ? 3 : 0, "user-shortlisted": 4, "user-dismissed": 5, archived: 1 })),
+}));
+vi.mock("./queries/suggestions", () => ({ suggestionCount: vi.fn(async (userId: string) => (userId === "scanned" ? 2 : 0)) }));
 
 import { getScanStatus, scanPollHint } from "./scan-status";
 
@@ -74,11 +81,21 @@ describe("scanPollHint", () => {
 describe("getScanStatus", () => {
   beforeEach(() => { mocks.latest = null; });
 
-  it("says when the banner should ask again alongside its text", async () => {
-    expect(await getScanStatus("user", at(-3 * HOUR))).toEqual({ text: "No scan batches yet", live: false, wakeInMs: 2 * HOUR });
-    mocks.latest = { startedAt: at(0), finishedAt: null, trigger: "schedule", companiesTotal: 2, companiesOk: 1, companiesFailed: 0, newRoles: 0 };
+  it("says the four facts and when the banner should ask again", async () => {
+    expect(await getScanStatus("user", at(-3 * HOUR))).toEqual({
+      scanning: false, lastScanAt: null, following: 0, newRoleMatches: 0, newCompanyMatches: 0, live: false, wakeInMs: 2 * HOUR,
+    });
+    // New role matches are the Matched tab's count alone: shortlisted and dismissed roles are decided.
+    expect(await getScanStatus("scanned", at(-3 * HOUR))).toMatchObject({
+      lastScanAt: "2026-09-11T04:30:00.000Z", following: 6, newRoleMatches: 3, newCompanyMatches: 2,
+    });
+  });
+
+  it("is scanning while the shared run is in progress", async () => {
+    mocks.latest = { startedAt: at(0), finishedAt: null, trigger: "schedule" };
     const status = await getScanStatus("user", at(10 * MINUTE));
-    expect(status.live).toBe(true);
-    expect(status.text).toContain("In progress");
+    expect(status).toMatchObject({ scanning: true, live: true });
+    mocks.latest = { startedAt: at(0), finishedAt: at(30 * MINUTE), trigger: "schedule" };
+    expect((await getScanStatus("user", at(40 * MINUTE))).scanning).toBe(false);
   });
 });

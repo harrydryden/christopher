@@ -386,6 +386,15 @@ describe("contact details", () => {
     expect(splitLegacyContact(opened)).toBe(opened);
   });
 
+  it("leaves a tightly punctuated line alone when rejoining it would break the cap", () => {
+    // Rejoining with " · " adds two characters per separator; a line near the limit would open
+    // over it and the next unrelated save would be refused. Such a line stays as it was.
+    // 103 parts joined by ";" is 493 characters; joined by " · " it would be 697.
+    const tight = { ...library, contact: ["a@b.test", "0161 496 0000", ...Array.from({ length: 100 }, () => "x"), "y".repeat(270)].join(";") };
+    expect(contactLine(tight).length).toBe(493);
+    expect(splitLegacyContact(tight)).toBe(tight);
+  });
+
   it("guesses nothing: a lone phrase, two addresses or a library already upgraded stay as they are", () => {
     const city = { ...library, contact: "London" };
     expect(splitLegacyContact(city)).toBe(city);

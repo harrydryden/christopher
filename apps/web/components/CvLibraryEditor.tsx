@@ -87,7 +87,11 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
    * survives a reload and says nothing about a save that changed only the intro. Offered only while
    * nothing is on the screen to save and no pass is already running.
    */
-  const unreviewed = version > 0 && !evidence.evaluating && evidence.entries.some(entry => entry.provisional);
+  // Offered for any entry the model has not scored, not only one whose rows changed: a pass the
+  // budget refused, or the model left unread, holds a rules-only row, and a save no longer queues
+  // the next pass on its own. Asking again is cheap; a refused pass returns before any model call.
+  const changedRows = evidence.entries.some(entry => entry.provisional);
+  const unreviewed = version > 0 && !evidence.evaluating && evidence.entries.some(entry => entry.provisional || entry.source !== "model");
 
   // What the form posted, for the moment it lands. `onSubmit` records it; this is the belt for
   // that brace, because a version left behind by a save makes the *next* save look obsolete.
@@ -249,7 +253,8 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
   const asked = (need ?? "").trim();
   // The bar at the top of the editor is there only when there is something to do in it: changes to
   // save, the saved rows to re-score, or a sentence about either.
-  const refused = !rescoreState.ok ? rescoreState.error : "";
+  // A refusal is shown only while there is still something to re-score; a later pass clears it.
+  const refused = !rescoreState.ok && (unreviewed || rescoring) ? rescoreState.error : "";
   const bar = dirty || unreviewed || rescoring || !!notice || !!refused;
   return <form action={action} onSubmit={() => { submitted.current = value; }} className="min-w-0 space-y-4 pb-4">
     {/* Saving is only ever the person's own act, so the control that does it is pinned above the
@@ -264,7 +269,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
         {!state.ok && <span role="alert" className="text-14 text-danger">{state.error}</span>}
         {obsolete && <button type="button" className={buttonClass("secondary")} onClick={reloadAndKeep}>Reload and keep my text</button>}
       </> : (unreviewed || rescoring) && <>
-        <span className="text-14" role="status">{savedAt ? `Saved ${clockOf(savedAt)}. ` : ""}Rows changed since the last review.</span>
+        <span className="text-14" role="status">{savedAt ? `Saved ${clockOf(savedAt)}. ` : ""}{changedRows ? "Rows changed since the last review." : "Some rows have no full review yet."}</span>
         <button type="button" disabled={rescoring} className={buttonClass("primary")} onClick={() => startTransition(() => rescore(new FormData()))}>{rescoring ? "Re-scoring…" : "Re-score"}</button>
       </>}
       {refused && <span role="alert" className="text-14 text-danger">{refused}</span>}

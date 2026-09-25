@@ -314,7 +314,10 @@ export function splitLegacyContact<T extends ContactFields>(library: T): T {
   const phone = phones.length === 1 ? phones[0] : undefined;
   if (!email && !phone) return library;
   const rest = parts.filter(part => part !== email && part !== phone).join(" · ");
-  return { ...library, ...(email ? { email } : {}), ...(phone ? { phone } : {}), contact: rest };
+  const upgraded = { ...library, ...(email ? { email } : {}), ...(phone ? { phone } : {}), contact: rest };
+  // Rejoining with " · " can lengthen a tightly punctuated line. An upgrade must never leave a
+  // library that was savable unsavable, so a line the cap would then refuse is left as it was.
+  return contactLine(upgraded).length > CONTACT_LINE_LIMIT ? library : upgraded;
 }
 
 /** Legacy headings can supply a company, but never imply that two jobs are the same. */

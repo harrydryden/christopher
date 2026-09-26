@@ -13,8 +13,8 @@
  * Every read here carries the account: the Library, the settings, the spend, the holds, and the
  * role, which is read through this account's `user_jobs` view rather than the shared catalogue.
  */
-import { and, desc, eq, gt, sql } from "drizzle-orm";
-import { aiReservations, accountAiSpend, cvLibraries, jobs, userJobs } from "@ava/db";
+import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
+import { aiReservations, accountAiSpend, cvDrafts, cvLibraries, jobs, userJobs } from "@ava/db";
 import {
   aiBudgetRefusalMessage,
   aiBudgetWindowStart,
@@ -25,7 +25,7 @@ import {
 // The one estimator the worker admits builds with, so the price quoted here and the price held
 // there cannot drift. The interface does not depend on `@ava/ai` by name — the worker it
 // drives does — and this module is the package's pure pricing table, with no imports of its own.
-import { estimateCvBuildUsd, type CvBuildSize } from "../../../packages/ai/src/pricing";
+import { estimateCvBuildUsd, type CvBuildParts, type CvBuildSize } from "../../../packages/ai/src/pricing";
 import { db } from "@/lib/db";
 import { formatUsd } from "@/lib/format";
 import { getSettingsFor } from "@/lib/settings";
@@ -38,9 +38,15 @@ export interface CvBuildQuote {
   spentUsd: number;
   /** Capacity this account's own calls in flight are holding. */
   heldUsd: number;
+  /**
+   * What this account's builds still waiting in the queue are expected to cost. They hold nothing
+   * until the worker admits them, and a button that ignored them offered a build the worker would
+   * refuse once the queue ahead of it had spent its share.
+   */
+  queuedUsd: number;
   /** The account's monthly budget. */
   limitUsd: number;
-  /** What is left of it: the limit less spend and holds, never below zero. */
+  /** What is left of it: the limit less spend, holds and queued builds, never below zero. */
   leftUsd: number;
   /** The sentence the worker would refuse with, or null when the estimate fits. */
   refusal: string | null;
@@ -77,6 +83,60 @@ function libraryBytesFor(content: unknown, writingPreferences: unknown, theme: u
   }
 }
 
+/** The columns of a queued draft its expected cost is measured from. */
+export interface QueuedCvDraft {
+  model: string;
+  libraryBytes: number;
+  descriptionBytes: number;
+  hasContent: boolean;
+  checkpoint: { tailoringEnabled?: boolean; quizCompleted?: boolean; improvementAttempted?: boolean; contentAt?: string; mode?: string } | null;
+}
+
+/**
+ * What a queued draft's build will pay for, chosen the way the worker chooses it at admission: saved
+ * wording is assessed (with the optional revision still to come for a tailored build that has not
+ * tried it); a build without wording plans and writes, and a continuation after the quiz does not
+ * pay for the planning it already did.
+ */
+export function queuedDraftParts(draft: Pick<QueuedCvDraft, "hasContent" | "checkpoint">): CvBuildParts {
+  const checkpoint = draft.checkpoint ?? {};
+  if (draft.hasContent)
+    return checkpoint.tailoringEnabled && !checkpoint.improvementAttempted && checkpoint.contentAt ? "tailored_assessment" : "assessment";
+  if (checkpoint.tailoringEnabled || checkpoint.mode === "improve") return checkpoint.quizCompleted ? "tailored_completion" : "tailored";
+  return "all";
+}
+
+/** The expected cost of every build this account has waiting in the queue. */
+async function queuedBuildsUsd(userId: string): Promise<number> {
+  const rows = await db()
+    .select({
+      model: cvDrafts.model,
+      libraryBytes: sql<number>`octet_length(${cvDrafts.librarySnapshot}::text)::int`,
+      descriptionBytes: sql<number>`octet_length(${cvDrafts.jobDescription})::int`,
+      hasContent: sql<boolean>`${cvDrafts.content} is not null`,
+      checkpoint: sql<QueuedCvDraft["checkpoint"]>`${cvDrafts.buildCheckpoint}`,
+    })
+    .from(cvDrafts)
+    .where(and(eq(cvDrafts.userId, userId), eq(cvDrafts.status, "queued"), isNull(cvDrafts.archivedAt)))
+    // Guarded: a database without the checkpoint column prices every queued build as a whole one.
+    .catch(async () =>
+      (await db()
+        .select({
+          model: cvDrafts.model,
+          libraryBytes: sql<number>`octet_length(${cvDrafts.librarySnapshot}::text)::int`,
+          descriptionBytes: sql<number>`octet_length(${cvDrafts.jobDescription})::int`,
+          hasContent: sql<boolean>`${cvDrafts.content} is not null`,
+        })
+        .from(cvDrafts)
+        .where(and(eq(cvDrafts.userId, userId), eq(cvDrafts.status, "queued"), isNull(cvDrafts.archivedAt)))).map((row) => ({ ...row, checkpoint: null })),
+    );
+  return rows.reduce(
+    (sum, row) =>
+      sum + estimateCvBuildUsd(row.model, { libraryBytes: Number(row.libraryBytes ?? 0), descriptionBytes: Number(row.descriptionBytes ?? 0) }, queuedDraftParts(row)),
+    0,
+  );
+}
+
 /**
  * What building a CV for this role would cost the account, and whether its budget admits it.
  *
@@ -85,7 +145,13 @@ function libraryBytesFor(content: unknown, writingPreferences: unknown, theme: u
  * monthly budget alone; the deployment's optional day and discovery caps live in the worker's
  * environment and are its to apply.
  */
-export async function cvBuildQuote(userId: string, jobId: string, now: Date = new Date()): Promise<CvBuildQuote> {
+export async function cvBuildQuote(
+  userId: string,
+  jobId: string,
+  now: Date = new Date(),
+  /** A description the person pasted, which is what the build will be written against. */
+  options: { description?: string } = {},
+): Promise<CvBuildQuote> {
   const database = db();
   const settings = await getSettingsFor(userId);
   const [library] = await database
@@ -104,11 +170,15 @@ export async function cvBuildQuote(userId: string, jobId: string, now: Date = ne
     .limit(1);
   const size: CvBuildSize = {
     libraryBytes: libraryBytesFor(library?.content, settings.cvWritingPreferences, settings.cvTheme),
-    descriptionBytes: role?.description ? Buffer.byteLength(role.description) : 0,
+    descriptionBytes: options.description?.trim()
+      ? Buffer.byteLength(options.description.trim())
+      : role?.description
+        ? Buffer.byteLength(role.description)
+        : 0,
   };
   const estimateUsd = estimateCvBuildUsd(settings.cvModel, size, "tailored");
   const since = aiBudgetWindowStart(now, settings.aiBudgetResetAt);
-  const [spentUsd, heldUsd] = await Promise.all([
+  const [spentUsd, heldUsd, queuedUsd] = await Promise.all([
     accountAiSpend(database, userId, since),
     // Holds that have expired are capacity nothing can still be spending; the worker deletes them
     // inside the budget lock, and a quote read a moment before that must not count them either.
@@ -117,22 +187,25 @@ export async function cvBuildQuote(userId: string, jobId: string, now: Date = ne
       .from(aiReservations)
       .where(and(eq(aiReservations.userId, userId), gt(aiReservations.expiresAt, now)))
       .then((rows) => Number(rows[0]?.held ?? 0)),
+    queuedBuildsUsd(userId),
   ]);
   const limitUsd = settings.aiBudgetUsd;
-  const fits = spentUsd + heldUsd + estimateUsd <= limitUsd;
+  const fits = spentUsd + heldUsd + queuedUsd + estimateUsd <= limitUsd;
   return {
     estimateUsd,
     spentUsd,
     heldUsd,
+    queuedUsd,
     limitUsd,
-    leftUsd: Math.max(0, limitUsd - spentUsd - heldUsd),
+    leftUsd: Math.max(0, limitUsd - spentUsd - heldUsd - queuedUsd),
     refusal: fits
       ? null
       : aiBudgetRefusalMessage("This build", estimateUsd, {
           limit: "account",
           limitUsd,
           spent: spentUsd,
-          held: heldUsd,
+          // Builds waiting in the queue will hold their share the moment the worker admits them.
+          held: heldUsd + queuedUsd,
         }),
     libraryBytes: size.libraryBytes,
     hasLibrary: !!library,

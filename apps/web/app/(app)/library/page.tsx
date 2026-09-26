@@ -11,7 +11,7 @@ import { saveCvWritingPreferences } from "@/app/actions/cv";
 import { getCvWritingPreferences } from "@/lib/cv-writing-preferences";
 import { openStoredLibrary } from "@/lib/cv-library-rows";
 import { getLibraryEvidence, getOwnCvLibrary, libraryReviewSignature } from "@/lib/queries/cv";
-import { listLibraryImports } from "@/lib/queries/library-imports";
+import { libraryImportProgress, listLibraryImports } from "@/lib/queries/library-imports";
 import { requireUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -34,6 +34,8 @@ export default async function LibraryPage({ searchParams }: {
   // Documents still being read. The page watches for them below, and stops watching when the
   // refresh that lands the last proposal re-renders this without any.
   const reading = imports.filter(item => item.state === "reading").length;
+  // The fingerprint the poller compares against, read only while there is something to watch.
+  const importProgress = reading > 0 ? await libraryImportProgress(user.id) : null;
 
   // What the editor opens: the stored content, upgraded from whatever release wrote it. A library
   // saved before a row could carry several types, with a block stored as a draft, or with its
@@ -51,7 +53,7 @@ export default async function LibraryPage({ searchParams }: {
     <div className="max-w-6xl space-y-5">
       <PageHeader title="Library" />
       <LibraryImportProposals imports={imports} version={library?.version ?? 0} />
-      {reading > 0 && <LibraryImportPoller pending={reading} />}
+      {importProgress && <LibraryImportPoller pending={reading} signature={importProgress.signature} />}
       <CvLibraryEditor
         library={content}
         version={library?.version ?? 0}

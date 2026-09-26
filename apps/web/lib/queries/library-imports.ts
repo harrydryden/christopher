@@ -5,7 +5,7 @@
  * CV, and it belongs to them alone. The data layer in `@ava/db` does the work; this turns
  * its rows into the views the page renders and keeps the page to one query.
  */
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { listOpenLibraryImports, getLibraryImport } from "@ava/db";
 import { libraryImports } from "@ava/db/schema";
 import { db } from "@/lib/db";
@@ -29,6 +29,31 @@ export async function listLibraryImports(userId: string, limit = 10): Promise<Li
       .filter(row => row.kept).map(row => row.id))
     : new Set<string>();
   return rows.map(row => libraryImportView(row, kept.has(row.id)));
+}
+
+export interface LibraryImportProgress {
+  /** Imports still being read: the page's "reading" state (no error, and no proposal yet). */
+  reading: number;
+  /** Moves when an import is answered, started, or taken off the page, and not otherwise. */
+  signature: string;
+}
+
+/**
+ * How this account's imports in flight stand, in one aggregate over its open rows, for the
+ * Library's import poller: it asks this rather than re-rendering the whole page on every tick,
+ * and refreshes only when it moves. Scoped by account; reads no document or proposal.
+ */
+export async function libraryImportProgress(userId: string): Promise<LibraryImportProgress> {
+  const [row] = await db()
+    .select({
+      open: sql<number>`count(*)::int`,
+      reading: sql<number>`(count(*) filter (where ${libraryImports.error} is null and (${libraryImports.processedAt} is null or ${libraryImports.proposal} is null)))::int`,
+      latest: sql<string>`coalesce(max(${libraryImports.processedAt})::text, '')`,
+    })
+    .from(libraryImports)
+    .where(and(eq(libraryImports.userId, userId), isNull(libraryImports.resolvedAt)));
+  const reading = row?.reading ?? 0;
+  return { reading, signature: `${row?.open ?? 0}:${reading}:${row?.latest ?? ""}` };
 }
 
 /** One import of this account's, with the document it was read from. */

@@ -313,3 +313,24 @@ it("the persisted one-shot fence prevents a retry buying a second improvement", 
   expect(scripted.calls).not.toContain("author");
   expect(scripted.calls).not.toContain("improvement");
 });
+
+it("corrects a writer answer citing a source the Library does not hold inside the build, without spending a task attempt", async () => {
+  const scripted = scriptedClient(); deps.aiClient = scripted.client;
+  const create = scripted.client.messages.create;
+  let authors = 0;
+  scripted.client.messages.create = async (params, options, call) => {
+    const response = await create(params, options, call) as ParseResponse & { parsed_output: { sections: Array<{ bulletSources: Array<Array<{ sourceId: string }>> }> } };
+    if (call?.promptId === "cv.author" && ++authors === 1) response.parsed_output.sections[0]!.bulletSources[0]![0]!.sourceId = "entry:one:row:99";
+    return response;
+  };
+  const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric });
+  await queue().drain();
+  const saved = await draftAfter(draft.id);
+  expect(saved.status).toBe("ready");
+  expect(authors).toBe(2);
+  const [task] = await db.select().from(schema.tasks);
+  expect(task).toMatchObject({ status: "done", attempts: 1 });
+  const steps = await listCvBuildSteps(db, userId, draft.id);
+  expect(steps.find(step => step.motion === "rewrite")?.detail).toMatchObject({ attempt: 2, corrections: 1 });
+  expect(scripted.authorInputs[1]!.layoutFeedback).toMatchObject({ corrections: [expect.stringContaining("<rejected_answer_problem>Unknown CV source: entry:one:row:99</rejected_answer_problem>")] });
+});

@@ -9,7 +9,6 @@ import {
   responsibilityRows,
   cvTailoringEvidence,
   validateCvTailoringPlan,
-  validateCvPlanProvenance,
   reviewableRows,
   rowFacets,
   validateLibraryReview,
@@ -1317,12 +1316,9 @@ export class AiEngine {
     const plan = await this.run<CvPlan>(entry, {
       user: { stable: [library, role], ...(Object.keys(volatile).length ? { tail: JSON.stringify(volatile) } : {}) },
     }, ref);
-    if (!plan || !input.tailoringPlan) return plan;
-    try {
-      return validateCvPlanProvenance(plan, input.library);
-    } catch (error) {
-      throw new CvBuildStop("output_invalid", `The written CV's sources could not be verified: ${(error as Error).message}`);
-    }
+    // Provenance is checked by the caller, not here: the fitter corrects an answer citing a source
+    // the Library does not hold inside the build, which it cannot do with an error thrown from the call.
+    return plan;
   }
 
   // A1 ---------------------------------------------------------------------

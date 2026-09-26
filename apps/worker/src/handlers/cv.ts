@@ -18,7 +18,7 @@ import {
   type CvReviewPlan,
   type CvRubric,
 } from "@ava/core/cv-assessment";
-import { cvTailoringEvidence, validateCvTailoringPlan, type CvTailoringPlan } from "@ava/core/cv-tailoring";
+import { cvTailoringEvidence, validateCvPlanProvenance, validateCvTailoringPlan, type CvTailoringPlan } from "@ava/core/cv-tailoring";
 import { buildCvGapQuiz } from "@ava/core/cv-gap-quiz";
 import { compareCvQuality, diagnoseCvQuality } from "@ava/core/cv-quality";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
@@ -932,6 +932,13 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
               improvements: args.opportunities.map(item => item.improvement).filter(Boolean),
               writingBudget: budget, maxPages: cvMaxPages(library.theme),
             }, ref("improvement", "cv-author", stageCtx.signal, opened.step?.id)), "improvement", AUTHOR_CALL);
+            // Every citation must name a source row that exists and says what it quotes. The
+            // optional pass has one call and no correction loop: an unverifiable answer keeps the original.
+            try {
+              validateCvPlanProvenance(plan, library);
+            } catch (error) {
+              throw new CvBuildStop("output_invalid", `The written CV's sources could not be verified: ${(error as Error).message}`);
+            }
             const omitted = library.entries.filter(entry =>
               (entry.kind === "experience" || entry.kind === "education") &&
               !plan.sections.some(section => section.entryId === entry.id));

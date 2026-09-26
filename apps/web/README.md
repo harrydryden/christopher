@@ -11,7 +11,8 @@ worker (`apps/worker`) picks those up and does the scraping, scanning and AI cal
 
 | Variable | Required | Notes |
 |---|---|---|
-| `DATABASE_URL` | yes | Postgres connection string. Pooled with at most 3 connections per serverless function. |
+| `DATABASE_URL` | yes | Postgres connection string. Each serverless instance pools at most 6 connections through PgBouncer (Render's port 6432) and 3 on a direct endpoint (`lib/db.ts`, docs/DEPLOY.md). |
+| `WEB_DB_POOL_MAX` | no | A whole number from 1 to 20 that replaces that pool width; anything else is ignored. |
 | `SESSION_SECRET` | yes | Any long random string. Signs the session cookie (HMAC-SHA256), which names a row in `sessions`. Changing it signs everyone out. |
 | `APP_URL` | no | Public origin for emailed links and the Google redirect URI. Defaults to the request's forwarded host. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | no | Enables "Continue with Google" (OAuth 2.0 code flow with PKCE; redirect URI `<APP_URL>/auth/google/callback`). |

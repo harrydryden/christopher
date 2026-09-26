@@ -13,6 +13,7 @@ import { SafeMarkdown } from "@/components/SafeMarkdown";
 import { SettingsForm } from "@/components/SettingsForm";
 import type { RoleDetailsVM, RoleRowVM, SortDir, SortKey } from "@/lib/queries/jobs";
 import { missingDecisionReason } from "@/lib/decision-reason";
+import { reportRoleRefusal } from "@/lib/role-refusals";
 
 import { APPLICATION_STATUS_LABELS, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS, ROLE_STATUS_LABELS, roleStageRank } from "@ava/core/role-workflow";
 
@@ -178,17 +179,36 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
       return new Set([...ids].filter(id => inFlight.current.has(id)));
     });
   }, [inputRows]);
+  // The table is keyed on the query and page, so paging or filtering while a write is out replaces
+  // it. A refusal that lands after that goes to the workspace's notices, which outlive the table.
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  /** True when this table is gone and the refusal was handed to the notices instead. */
+  function reportedElsewhere(what: string, error: string): boolean {
+    if (mounted.current) return false;
+    reportRoleRefusal(what, error);
+    return true;
+  }
+  const titleOf = (id: string) => rows.find(row => row.id === id)?.title ?? departed.current.get(id)?.row.title ?? "this role";
+
   const [archivingId, setArchivingId] = useState<string | null>(null);
   function archiveRow(id: string) {
     if (inFlight.current.has(id)) return;
+    const title = titleOf(id);
     const run = new Promise<boolean>(resolve => startTransition(async () => {
       setArchivingId(id); setFlashError(null);
       let saved = false;
       try {
         const result = await archiveRoles([id], !archived);
-        if (!result.ok) setFlashError(result.error);
+        if (!result.ok) { if (!reportedElsewhere(title, result.error)) setFlashError(result.error); }
         else { saved = true; setRemovedIds(ids => withId(ids, id)); }
-      } catch { setFlashError("Could not save. Reload and retry."); }
+      } catch {
+        const error = "Could not save. Reload and retry.";
+        if (!reportedElsewhere(title, error)) setFlashError(error);
+      }
       finally { settle(id, run); setArchivingId(null); resolve(saved); }
     }));
     track(id, run);
@@ -229,6 +249,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
     setSelected(new Set());
     setGroupReason(null);
     const putBack = (error: string) => {
+      if (reportedElsewhere(ids.length === 1 ? titleOf(ids[0]!) : `${ids.length} roles`, error)) return;
       setRemovedIds(previous => new Set([...previous].filter(id => !gone.includes(id))));
       setSelected(new Set(ids));
       setGroupReason(reason);
@@ -350,7 +371,9 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
       setReasonBox(b => (b ? { ...b, pending: true, error: null } : b));
     }
 
+    const title = previous?.title ?? "this role";
     const refused = (error: string) => {
+      if (reportedElsewhere(title, error)) return;
       if (leaves) {
         setRemovedIds(ids => withoutId(ids, jobId));
         if (noticeRef.current?.jobId === jobId) clearNotice();
@@ -391,7 +414,9 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
     setFlashError(null);
     setRemovedIds(ids => withoutId(ids, jobId));
     setReturning(ids => withId(ids, jobId));
+    const title = titleOf(jobId);
     const refused = (error: string) => {
+      if (reportedElsewhere(`the undo of ${title}`, error)) return;
       setRemovedIds(ids => withId(ids, jobId));
       setReturning(ids => withoutId(ids, jobId));
       setFlashError(error);

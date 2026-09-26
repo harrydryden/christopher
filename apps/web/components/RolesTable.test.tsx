@@ -23,6 +23,8 @@ vi.mock("next/link", () => ({ default: ({ children, href }: { children: ReactNod
 
 import { RolesTable } from "./RolesTable";
 import { SKIP_REASON_REQUIRED } from "@/lib/decision-reason";
+import { RoleRefusalNotices } from "./RoleRefusalNotices";
+import { dismissRoleRefusal, roleRefusals } from "@/lib/role-refusals";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -285,4 +287,27 @@ it("forgets an undo that had nothing to undo because its decision was refused", 
 
   render([SECOND]);
   expect(titles()).toEqual([SECOND.title]);
+});
+
+it("shows a refusal that lands after the table was replaced beside the new one, which lists the row again", async () => {
+  for (const refusal of roleRefusals()) dismissRoleRefusal(refusal.id);
+  const workspace = (key: string, rows: RoleRowVM[]) => act(() => root.render(<>
+    <RoleRefusalNotices />
+    <RolesTable key={key} rows={rows} keyboard emptyState={<p>Nothing to review</p>} />
+  </>));
+  const saving = deferred();
+  actions.decide.mockReturnValue(saving.promise);
+  workspace("page-1", [FIRST, SECOND]);
+  press("a");
+  press("Enter", reasonBox()!);
+  expect(titles()).toEqual([SECOND.title]);
+
+  // The person pages on while it is saved: a new table, from a render that still lists the role.
+  workspace("page-1:sorted", [FIRST, SECOND]);
+  await answer(saving, { ok: false, error: "Could not save your decision. Please try again." });
+  expect(text()).toContain("Could not save Head of Operations: Could not save your decision. Please try again.");
+  expect(titles()).toEqual([FIRST.title, SECOND.title]);
+
+  act(() => button("Dismiss").click());
+  expect(text()).not.toContain("Could not save Head of Operations");
 });

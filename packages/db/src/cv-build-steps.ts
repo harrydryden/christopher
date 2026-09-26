@@ -24,7 +24,7 @@ export interface StartCvBuildStep {
  * two rows in one place and no way to order them. The unique index on `(draft_id, seq)` is what
  * makes the guarantee the database's; the lock is what keeps the second writer from meeting it.
  */
-export async function startCvBuildStep(db: Db, step: StartCvBuildStep): Promise<string> {
+export async function startCvBuildStep(db: Pick<Db, "transaction">, step: StartCvBuildStep): Promise<string> {
   const { stage, title } = CV_BUILD_MOTIONS[step.motion];
   return db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`cv:steps:${step.draftId}`}, 0))`);
@@ -46,7 +46,7 @@ export interface FinishCvBuildStep {
 }
 
 /** Close a step with its outcome; `ms` is measured from its own `started_at` by the database. */
-export async function finishCvBuildStep(db: Db, id: string, outcome: FinishCvBuildStep): Promise<void> {
+export async function finishCvBuildStep(db: Pick<Db, "update">, id: string, outcome: FinishCvBuildStep): Promise<void> {
   await db.update(cvBuildSteps).set({
     status: outcome.status,
     finishedAt: sql`now()`,
@@ -91,7 +91,7 @@ export async function listCvBuildSteps(db: Db, userId: string, draftId: string):
     .where(and(eq(cvBuildSteps.draftId, draftId), eq(cvBuildSteps.userId, userId)))
     .orderBy(cvBuildSteps.seq);
   return rows.map(row => ({
-    id: row.id, seq: row.seq, attempt: row.attempt, stage: row.stage, motion: row.motion, title: row.title, status: row.status,
+    id: row.id, seq: row.seq, attempt: row.attempt, taskId: row.taskId, stage: row.stage, motion: row.motion, title: row.title, status: row.status,
     startedAt: row.startedAt, finishedAt: row.finishedAt, ms: row.ms, detail: row.detail, error: row.error, failure: row.failure,
   }));
 }

@@ -24,10 +24,21 @@ export interface EnqueueRow extends EnqueueOptions {
   payload: Record<string, unknown>;
 }
 
+/**
+ * A CV build's payload names its account. A producer that knows only the draft has the draft's
+ * owner added in the same statement, read from the row the task is for, so the claim's per-account
+ * ordering and every ledger that reads `payload->>'userId'` see it without a second round trip.
+ */
+function payloadFor(row: EnqueueRow) {
+  if (row.type !== "generate_cv" || typeof row.payload.userId === "string" || typeof row.payload.draftId !== "string")
+    return row.payload;
+  return sql`${JSON.stringify(row.payload)}::jsonb || coalesce((select jsonb_build_object('userId', user_id::text) from cv_drafts where id::text = ${row.payload.draftId}), '{}'::jsonb)`;
+}
+
 function valuesFor(row: EnqueueRow) {
   return {
     type: row.type,
-    payload: row.payload,
+    payload: payloadFor(row),
     dedupeKey: row.dedupeKey ?? null,
     priority: row.priority ?? 5,
     runAfter: row.runAfter ?? sql`now()`,

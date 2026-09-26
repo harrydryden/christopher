@@ -1,7 +1,8 @@
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { CvBuildFailure } from "@ava/core";
 import type { Db } from "./client";
-import { cvDrafts, cvShareComments, cvShares } from "./schema";
+import { cvDrafts, cvShareComments, cvShares, cvTailoringPlans } from "./schema";
+import type { CvTailoringPlan } from "@ava/core/cv-tailoring";
 import { cvRoleKey } from "./cv-role-key";
 import {
   archiveRetention,
@@ -374,4 +375,66 @@ export async function abandonCvDraft(
       .returning({ id: cvDrafts.id });
     return rows.length ? { userId: draft.userId } : null;
   });
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** The name a revision goes by on the page: its UTC creation day and daily version, "26-Sep-V3". */
+export function cvRevisionName(createdAt: Date, version: number): string {
+  return `${String(createdAt.getUTCDate()).padStart(2, "0")}-${MONTHS[createdAt.getUTCMonth()]}-V${version}`;
+}
+
+/** What adopting an improvement came to: the revision it saved, or why the original was kept. */
+export type CvImprovedRevision =
+  | { adopted: true; id: string; revision: number; version: number; name: string }
+  | { adopted: false; reason: string };
+
+/**
+ * Save a build's stronger candidate as a new revision of the baseline it improved, the way a
+ * Rebuild saves one: the next revision number for the role, `parentId` on the baseline, published
+ * through the same completion and retention as any build, so the baseline becomes the role's
+ * archive and the improvement its current CV.
+ *
+ * The baseline was published before the improvement was attempted, so the person may have moved
+ * on in the meantime. The improvement is adopted only while the baseline is still the role's
+ * current CV — ready, not archived, and with no newer revision started since — and never over
+ * something they have done: a Rebuild or an edit they asked for wins over optional polish. Runs in
+ * the caller's transaction, behind its fence, under the role's lifecycle lock.
+ */
+/**
+ * Keep the plan a published CV was written against beside it, for replay. One per draft; the
+ * account is named so nothing reads a plan without its owner. Inside the caller's transaction.
+ */
+export async function saveCvTailoringPlan(tx: Pick<Db, "insert">, draftId: string, userId: string, plan: CvTailoringPlan): Promise<void> {
+  await tx.insert(cvTailoringPlans).values({ draftId, userId, plan })
+    .onConflictDoUpdate({ target: cvTailoringPlans.draftId, set: { plan } });
+}
+
+export async function saveImprovedCvRevision(
+  tx: Transaction,
+  baselineId: string,
+  values: Pick<typeof cvDrafts.$inferInsert, "content" | "assessment">,
+  tailoringPlan?: CvTailoringPlan,
+): Promise<CvImprovedRevision> {
+  await lockCvDraft(tx, baselineId);
+  const [baseline] = await tx.select().from(cvDrafts).where(eq(cvDrafts.id, baselineId));
+  if (!baseline) return { adopted: false, reason: "the CV was deleted before the stronger revision was ready" };
+  if (baseline.status !== "ready" || baseline.archivedAt)
+    return { adopted: false, reason: "the CV was archived before the stronger revision was ready" };
+  const [newer] = await tx.select({ id: cvDrafts.id }).from(cvDrafts).where(and(
+    sameRole(baseline), ne(cvDrafts.id, baseline.id), sql`${cvDrafts.createdAt} > ${baseline.createdAt}`, ne(cvDrafts.status, "failed"),
+  )).limit(1);
+  if (newer) return { adopted: false, reason: "a newer revision of this CV was started before the stronger revision was ready" };
+  const revision = await nextCvRevision(tx, baseline, { spare: baseline.id });
+  const [row] = await tx.insert(cvDrafts).values({
+    userId: baseline.userId, jobId: baseline.jobId, jobTitle: baseline.jobTitle, companyName: baseline.companyName,
+    jobDescription: baseline.jobDescription, jobSource: baseline.jobSource, libraryVersion: baseline.libraryVersion,
+    librarySnapshot: baseline.librarySnapshot, model: baseline.model, status: "generating", revision,
+    parentId: baseline.id, ...values,
+  }).returning({ id: cvDrafts.id, createdAt: cvDrafts.createdAt });
+  await completeCv(tx, row!.id, { status: "ready", revision, buildStage: null, buildCheckpoint: null, failure: null });
+  if (tailoringPlan) await saveCvTailoringPlan(tx, row!.id, baseline.userId, tailoringPlan);
+  const version = await tx.execute<{ version: number }>(sql`select version from cv_versions where cv_id = ${row!.id}`);
+  const daily = Number(version.rows[0]?.version ?? revision);
+  return { adopted: true, id: row!.id, revision, version: daily, name: cvRevisionName(row!.createdAt, daily) };
 }

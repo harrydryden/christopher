@@ -29,10 +29,15 @@ export interface EnqueueRow extends EnqueueOptions {
  * owner added in the same statement, read from the row the task is for, so the claim's per-account
  * ordering and every ledger that reads `payload->>'userId'` see it without a second round trip.
  */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function payloadFor(row: EnqueueRow) {
   if (row.type !== "generate_cv" || typeof row.payload.userId === "string" || typeof row.payload.draftId !== "string")
     return row.payload;
-  return sql`${JSON.stringify(row.payload)}::jsonb || coalesce((select jsonb_build_object('userId', user_id::text) from cv_drafts where id::text = ${row.payload.draftId}), '{}'::jsonb)`;
+  // Compared as a uuid so the draft is found by its primary key rather than by casting every id to
+  // text; an id that is not a uuid names no draft, and is left for the handler to refuse.
+  if (!UUID.test(row.payload.draftId)) return row.payload;
+  return sql`${JSON.stringify(row.payload)}::jsonb || coalesce((select jsonb_build_object('userId', user_id::text) from cv_drafts where id = ${row.payload.draftId}::uuid), '{}'::jsonb)`;
 }
 
 function valuesFor(row: EnqueueRow) {

@@ -521,7 +521,10 @@ function failureNote(step: CvJournalStep): string | null {
  * One step, one line. `now` gives a running step its elapsed figure; the page keeps it moving with
  * a clock of its own between readings of the progress feed.
  */
-export function narrateStep(step: CvJournalStep, now: Date = new Date(), context: NarrativeContext = {}): NarratedStep {
+export function narrateStep(input: CvJournalStep, now: Date = new Date(), context: NarrativeContext = {}): NarratedStep {
+  // A status a worker a release ahead writes that this interface has never heard of reads as the
+  // grey, figure-free line of a skipped motion, never as a blank glyph or a red "Could not".
+  const step: CvJournalStep = input.status in GLYPH ? input : { ...input, status: "skipped" };
   const usd = number(step.detail, "usd");
   const optional = OPTIONAL_MOTIONS.has(step.motion) || !!context.afterPublish;
   const status: NarratedStatus =

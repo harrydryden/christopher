@@ -7,10 +7,11 @@
  * Requires a database: set TEST_DATABASE_URL (defaults to the local ava_test database).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, type SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { createDb } from "./client";
 import { runMigrations } from "./migrate";
-import { tasks } from "./schema";
+import { cvDrafts, tasks, users } from "./schema";
 import { activeTaskFor, enqueueTask } from "./tasks";
 
 const { db, pool } = createDb(process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test", { max: 1 });
@@ -23,6 +24,31 @@ const review = () => enqueueTask(db, "review_library", { userId: "00000000-0000-
 /** What the queue's claim does to a row. */
 const claim = (id: string) => db.update(tasks).set({ status: "running", startedAt: new Date(), attempts: sql`${tasks.attempts} + 1` }).where(eq(tasks.id, id));
 const rows = () => db.select({ id: tasks.id, status: tasks.status }).from(tasks).orderBy(tasks.createdAt);
+
+describe("a CV build's payload", () => {
+  it("names the draft's owner, found by the draft's primary key", async () => {
+    await db.execute(sql`truncate users restart identity cascade`);
+    const [user] = await db.insert(users).values({ email: "payload-owner@example.com" }).returning();
+    const [draft] = await db.insert(cvDrafts).values({
+      userId: user!.id, jobTitle: "Role", companyName: "Co", jobDescription: "Lead.", libraryVersion: 1, librarySnapshot: {} as never, model: "test-model",
+    }).returning();
+    const id = await enqueueTask(db, "generate_cv", { draftId: draft!.id });
+    const [row] = await db.select({ payload: tasks.payload }).from(tasks).where(eq(tasks.id, id!));
+    expect(row!.payload).toEqual({ draftId: draft!.id, userId: user!.id });
+
+    // The owner is looked up by `id = $1::uuid`, which the primary key answers, not by casting
+    // every draft's id to text.
+    let sent: SQL | undefined;
+    const capture = { insert: () => ({ values: (value: Array<{ payload: SQL }>) => { sent = value[0]!.payload; return { onConflictDoNothing: () => ({ returning: async () => [] }) }; } }) };
+    await enqueueTask(capture as never, "generate_cv", { draftId: draft!.id });
+    const text = new PgDialect().sqlToQuery(sent!).sql;
+    expect(text).toMatch(/where id = \$\d+::uuid/);
+    expect(text).not.toMatch(/where id::text/);
+
+    // An id that is not a uuid names no draft: the payload goes as it was, without an error.
+    expect(await enqueueTask(db, "generate_cv", { draftId: "not-a-uuid" }, { dedupeKey: "generate_cv:not-a-uuid" })).toBeTruthy();
+  });
+});
 
 describe("the dedupe key", () => {
   it("absorbs a second enqueue while the first is still waiting", async () => {

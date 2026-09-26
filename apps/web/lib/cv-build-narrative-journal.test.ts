@@ -452,6 +452,13 @@ describe("an audit resumed from its checkpoint", () => {
   });
 });
 
+describe("a status this interface has never heard of", () => {
+  it("reads as a skipped motion: grey, no figures, never a blank glyph or a red failure", () => {
+    const odd = narrateStep(step("check_plan", "paused" as CvJournalStep["status"], { usd: 0.4 }, { title: "Checking the writer kept every role" }), now);
+    expect(odd).toMatchObject({ glyph: "–", tone: "gray", status: "skipped", text: "Skipped checking the writer kept every role", meta: "US$0.40" });
+  });
+});
+
 describe("what a build came to", () => {
   it("totals each attempt by its own clock and leaves out the days between them", () => {
     nextSeq = 0;

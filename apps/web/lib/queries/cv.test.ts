@@ -216,6 +216,36 @@ it("includes a quiz continuation task in account CV work status", async () => {
   expect(status.version).not.toBe("");
 });
 
+it("follows a ready CV while its improvement runs, and never moves for a budget admission", async () => {
+  const draft = await seedDraft({ status: "ready", buildStage: null });
+  expect((await getCvWorkStatus(user.id)).active).toBe(false);
+  // The improvement pass after publication: its queue row is still running.
+  await database.insert(schema.tasks).values({ type: "generate_cv", payload: { draftId: draft.id }, dedupeKey: `generate_cv:${draft.id}`, status: "running", attempts: 1 });
+  const step = (seq: number, motion: string, status: "running" | "done" = "running") =>
+    database.insert(schema.cvBuildSteps).values({
+      draftId: draft.id, userId: user.id, attempt: 1, seq, stage: "assessing", motion: motion as "improve_content", title: motion, status, detail: {},
+    });
+  await step(1, "improve_content");
+  const improving = await getCvWorkStatus(user.id);
+  expect(improving).toMatchObject({ active: true, improving: [draft.id] });
+  // The re-check's admission opens and closes around the pass: the version does not move for it.
+  await step(2, "admit_budget");
+  expect((await getCvWorkStatus(user.id)).version).toBe(improving.version);
+  await database.update(schema.cvBuildSteps).set({ status: "done" }).where(sql`seq = 2`);
+  expect((await getCvWorkStatus(user.id)).version).toBe(improving.version);
+
+  // The queue row finishes and nothing is open: the pass is over, and the version moves once more.
+  await database.update(schema.tasks).set({ status: "done" });
+  await database.update(schema.cvBuildSteps).set({ status: "done" });
+  const over = await getCvWorkStatus(user.id);
+  expect(over).toMatchObject({ active: false, improving: [] });
+  expect(over.version).not.toBe(improving.version);
+  // A running row left by a process that died long ago is not work.
+  await step(3, "compare_content");
+  await database.update(schema.cvBuildSteps).set({ startedAt: new Date(Date.now() - 60 * 60_000) }).where(sql`seq = 3`);
+  expect((await getCvWorkStatus(user.id)).active).toBe(false);
+});
+
 it("moves the account's CV version once per motion, not once per batch", async () => {
   const draft = await seedDraft({ status: "generating" });
   const step = (seq: number, motion: string, detail: Record<string, unknown> = {}) =>

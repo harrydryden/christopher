@@ -144,12 +144,14 @@ export async function saveAiSettings(_prev: ActionResult, formData: FormData): P
 
 /**
  * The per-stage model and effort routes, for every account. Administrator-only: a route overrides
- * each account's own CV model for its stage. What the form sends is sanitised by the engine's own
- * rules, so a model or effort the provider would refuse is dropped rather than stored.
+ * each account's own CV model for its stage. What the form sends is checked by the engine's own
+ * rules, so a model or effort the provider would refuse is refused with an error, and nothing is stored.
  */
 export async function saveStageRoutes(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   await requireAdmin();
-  await setSystemSetting("stageRoutes", stageRoutesFromForm(formData));
+  const parsed = stageRoutesFromForm(formData);
+  if (!parsed.ok) return fail(parsed.error);
+  await setSystemSetting("stageRoutes", parsed.routes);
   revalidatePath("/admin/settings");
   return ok();
 }

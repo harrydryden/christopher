@@ -117,6 +117,17 @@ it("returns only what moved since the reader's last look", async () => {
   expect(moved.signature).not.toBe(first.signature);
 });
 
+it("answers another account's draft exactly as it answers a draft that does not exist", async () => {
+  const { draft } = await seed();
+  signedIn = await ensureTestUser(database, "cv-progress-stranger@example.com");
+  const foreign = await read(draft.id);
+  const missing = await read(crypto.randomUUID());
+  expect(foreign.status).toBe(404);
+  expect({ status: foreign.status, body: foreign.body, cache: foreign.headers.get("cache-control") }).toEqual({
+    status: missing.status, body: missing.body, cache: missing.headers.get("cache-control"),
+  });
+});
+
 it("refuses what it should, and answers a worker behind the interface without an error", async () => {
   const { draft } = await seed();
   expect((await read("not-a-uuid")).status).toBe(400);

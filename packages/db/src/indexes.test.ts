@@ -72,6 +72,8 @@ const cases: Case[] = [
   ["an account's running CV builds", sql`select count(*) from tasks r where r.type = 'generate_cv' and r.status = 'running' and r.payload->>'userId' = ${id}`, "tasks_cv_running_user_idx"],
   // The scan banner, Health and the suggestion sweep.
   ["roles first seen in one scan", sql`select 1 from jobs where source_id = ${id} and first_seen_at >= now() - interval '1 hour' and first_seen_at <= now()`, "jobs_source_first_seen_idx"],
+  // The status strip's last completed scan, one source at a time (0042).
+  ["a source's last completed scan", sql`select max(finished_at) from scans where source_id = ${id} and finished_at is not null and status <> 'failed'`, "scans_source_completed_idx"],
   ["recent problem scans", sql`select 1 from scans where status <> 'ok' and started_at >= now() - interval '7 days'`, "scans_started_idx"],
   ["the suggestion expiry", sql`update company_suggestions set status = 'expired' where status = 'pending' and created_at < now() - interval '30 days'`, "company_suggestions_pending_created_idx"],
   ["the failed-task list", sql`select * from tasks where status = 'failed' order by finished_at desc limit 50`, "tasks_status_finished_idx"],

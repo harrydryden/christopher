@@ -107,16 +107,7 @@ export async function listCompanies(userId: string, page = 1, q = "", order: Com
   if (!followed.length) return [];
   const ids = followed.map(c => c.company.id);
   const [lastScans, discoveringRows, sourceRows, discoveryRows, followerRows] = await Promise.all([
-    db()
-      .selectDistinctOn([careerSources.companyId], {
-        companyId: careerSources.companyId,
-        status: scans.status,
-        startedAt: scans.startedAt,
-      })
-      .from(scans)
-      .innerJoin(careerSources, eq(scans.sourceId, careerSources.id))
-      .where(inArray(careerSources.companyId, ids))
-      .orderBy(careerSources.companyId, desc(scans.startedAt)),
+    latestScanByCompany(ids),
     db()
       .select({ payload: tasks.payload, status: tasks.status })
       .from(tasks)
@@ -169,6 +160,24 @@ export async function listCompanies(userId: string, page = 1, q = "", order: Com
     needsSource: !withSource.has(company.id),
     lastDiscovery: (lastDiscoveryByCompany.get(company.id) as CompanyListRow["lastDiscovery"]) ?? null,
   }));
+}
+
+/**
+ * The newest scan of any source of each company, for a page of companies. Each source's newest
+ * start is one probe of `scans_source_started_idx` (an index-only `max`), and only that row is read
+ * back, so the cost follows the page's sources, not the scans the catalogue has retained: sorting
+ * every retained scan of the page's companies cost 6.5 ms at 7,560 rows and grew daily.
+ */
+export async function latestScanByCompany(ids: string[]): Promise<Array<{ companyId: string; status: Scan["status"]; startedAt: Date }>> {
+  if (!ids.length) return [];
+  const result = await db().execute<{ company_id: string; status: Scan["status"]; started_at: Date | string }>(sql`
+    select distinct on (src.company_id) src.company_id, s.status, s.started_at
+    from ${careerSources} src
+    cross join lateral (select max(newest.started_at) as at from ${scans} newest where newest.source_id = src.id) latest
+    join ${scans} s on s.source_id = src.id and s.started_at = latest.at
+    where src.company_id in (${sql.join(ids.map(id => sql`${id}`), sql`, `)})
+    order by src.company_id, s.started_at desc`);
+  return result.rows.map(row => ({ companyId: row.company_id, status: row.status, startedAt: new Date(row.started_at) }));
 }
 
 /** One catalogue company found by the Discover tab's search, and where this account stands with it. */
@@ -629,12 +638,7 @@ export async function listCatalogue(viewerId: string, page = 1, q = ""): Promise
       .from(careerSources)
       .where(inArray(careerSources.companyId, ids))
       .orderBy(asc(careerSources.createdAt)),
-    db()
-      .selectDistinctOn([careerSources.companyId], { companyId: careerSources.companyId, status: scans.status, startedAt: scans.startedAt })
-      .from(scans)
-      .innerJoin(careerSources, eq(scans.sourceId, careerSources.id))
-      .where(inArray(careerSources.companyId, ids))
-      .orderBy(careerSources.companyId, desc(scans.startedAt)),
+    latestScanByCompany(ids),
   ]);
   const followers = new Map(followerRows.map((r) => [r.companyId, r.n]));
   const viewer = new Set(viewerRows.map((r) => r.companyId));

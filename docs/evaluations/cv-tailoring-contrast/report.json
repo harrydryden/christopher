@@ -1,6 +1,8 @@
 {
   "at": "2026-09-20T13:00:22.738Z",
   "status": "automated_checks_passed",
+  "unverified": true,
+  "unverifiedReason": "Graded before the prompt registry existed, so it names no prompt set and does not vouch for the shipped prompts. Kept for the record; docs/evaluations/cv-replay/report.json is the report at the shipped prompt set.",
   "syntheticCandidate": true,
   "model": "claude-fable-5-1",
   "capUsd": 3.5,

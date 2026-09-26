@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { STAGE_ROUTE_IDS } from "@ava/core";
 import { CV_FITTER_ATTEMPTS, cvStageModel, estimateCostUsd, estimateCvBuildUsd, estimateStage } from "./pricing";
-import { PROMPTS, PROMPT_IDS } from "./prompt-registry";
+import { EFFORT_OUTPUT_SCALE, PROMPTS, PROMPT_IDS, expectedOutputTokens } from "./prompt-registry";
 import { createAiEngine } from "./engine";
 
 it("reserves both writing/checking passes and releases completed planning work at the quiz pause", () => {
@@ -38,8 +38,15 @@ it("prices a stage the administrator routed elsewhere at its own model, and the 
   const size = { libraryBytes: 45_000, descriptionBytes: 9_000 };
   expect(cvStageModel("cv.review", model)).toBe(model);
   expect(cvStageModel("cv.review", model, { "cv.review": { model: "claude-sonnet-5" } })).toBe("claude-sonnet-5");
-  // An effort-only route changes no price here: the estimate is calibrated in tokens.
-  expect(estimateCvBuildUsd(model, size, "all", { "cv.review": { effort: "medium" } })).toBe(estimateCvBuildUsd(model, size, "all"));
+  // An effort-only route changes no token's price, only how many the stage writes: the audit at
+  // medium is priced at its calibrated output scaled down, and nothing else moves.
+  const auditAt = (effort: "medium" | "xhigh") => estimateCvBuildUsd(model, size, "assessment", { "cv.review": { effort } });
+  const wholeAudit = estimateCvBuildUsd(model, size, "assessment");
+  const auditOutputUsd = estimateCostUsd(model, { inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 5 * 7_000 });
+  expect(auditAt("medium")).toBeCloseTo(wholeAudit - auditOutputUsd * (1 - EFFORT_OUTPUT_SCALE.medium), 5);
+  expect(auditAt("xhigh")).toBeGreaterThan(wholeAudit);
+  expect(estimateCvBuildUsd(model, size, "all", { "cv.review": { effort: "medium" } }))
+    .toBeCloseTo(estimateCvBuildUsd(model, size, "all") - (wholeAudit - auditAt("medium")), 5);
   const audit = (m: string) => estimateCvBuildUsd(m, size, "assessment");
   const routed = estimateCvBuildUsd(model, size, "all", { "cv.review": { model: "claude-sonnet-5" } });
   expect(routed).toBeCloseTo(estimateCvBuildUsd(model, size, "all") - audit(model) + audit("claude-sonnet-5"), 5);
@@ -60,6 +67,14 @@ it("estimates one stage from its layout: cached blocks written once at their lif
   // Routed to another model, the same stage is priced there.
   expect(estimateStage(review, { stableBytes: [30_000, 9_000], tailBytes: 6_000, calls: 5 }, { cvModel: "claude-fable-5-1", routes: { "cv.review": { model: "claude-sonnet-5" } } }))
     .toBeLessThan(usd);
+  // Routed to medium effort, the same stage is expected to write less, and is priced for what it writes.
+  const sizes = { stableBytes: [30_000, 9_000], tailBytes: 6_000, calls: 5 };
+  const medium = estimateStage(review, sizes, { cvModel: "claude-fable-5-1", routes: { "cv.review": { effort: "medium" } } });
+  expect(expectedOutputTokens(review, "medium")).toBe(Math.round(review.expectedOutputTokens * EFFORT_OUTPUT_SCALE.medium));
+  expect(medium).toBeCloseTo(estimateStage(review, { ...sizes, outputTokens: expectedOutputTokens(review, "medium") }, { cvModel: "claude-fable-5-1" }), 6);
+  expect(medium).toBeLessThan(usd);
+  // Never past the call's ceiling, however high the effort.
+  for (const id of PROMPT_IDS) expect(expectedOutputTokens(PROMPTS[id], "max")).toBeLessThanOrEqual(PROMPTS[id].maxTokens);
   // A single-shot entry with no stable blocks: its system prompt is a five-minute write.
   const rubric = PROMPTS["cv.rubric"];
   expect(estimateStage(rubric, { tailBytes: 9_000 }, { cvModel: "claude-fable-5-1" })).toBeCloseTo(estimateCostUsd("claude-fable-5-1", {

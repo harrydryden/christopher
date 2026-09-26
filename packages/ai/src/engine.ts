@@ -39,6 +39,7 @@ import * as P from "./prompts";
 import type * as S from "./schemas";
 import { CV_REVIEW_BATCH_SIZE, PROMPTS, layoutFor, resolveRoute, type LayoutParts, type PromptEntry, type StageRoutes } from "./prompt-registry";
 import { canonicalEvidence, evidenceBlockId } from "./evidence";
+import { cvClaimMemoKeys, type CvClaimMemo, type CvClaimMemoRoute } from "./claim-memo";
 import { AiGovernor, defaultGovernor, retryAfterMs, type GovernorStats } from "./governor";
 import { modelSupportsServerFallback } from "./model-capabilities";
 
@@ -640,6 +641,13 @@ export interface CvAssessOptions extends CvAssessHooks {
    * names the same requirements and claims as long as the input is the same.
    */
   only?: readonly number[];
+  /**
+   * The claim verdicts of an earlier audit of the same build (`cvClaimMemoFrom`), for the re-audit
+   * of a revision (`pass: "revision"` only, and never with `only`). A claim whose memo key is
+   * filed is not sent: its verdict is merged back into the review under the claim's id. Every
+   * requirement is still assessed, and the batches are sliced from the claims that are sent.
+   */
+  claimMemo?: CvClaimMemo;
 }
 
 /** One batch of an audit, as it ended. */
@@ -666,14 +674,26 @@ export interface CvAssessResult {
   batches: CvAssessBatchResult[];
   /** The whole audit, when this run ran every batch and every one is done; otherwise null. */
   review: CvReviewPlan | null;
+  /** How many claims were answered from `claimMemo` rather than sent; the engine always says, a stand-in may not. */
+  reusedClaims?: number;
 }
 
 /** The error a batch fails with when its answer did not cover its requirements and claims once each. */
 export const ASSESSMENT_COVERAGE_ERROR = "The assessment did not cover every requested requirement and claim exactly once. The fitted CV is saved; retry its assessment.";
 
-/** The finished batches of one audit as its review, or null when they do not make a valid one. */
-export function mergeCvAssessBatches(results: readonly CvReviewPlan[]): CvReviewPlan | null {
-  const review = { matches: results.flatMap(result => result.matches), claims: results.flatMap(result => result.claims) };
+/**
+ * The finished batches of one audit as its review, or null when they do not make a valid one.
+ * Given the audit's claims and the verdicts it reused, the claims are put back in the order of
+ * the CV, each reused verdict in its claim's place.
+ */
+export function mergeCvAssessBatches(results: readonly CvReviewPlan[], reused?: { claims: readonly CvClaimItem[]; verdicts: ReadonlyMap<string, CvReviewPlan["claims"][number]> }): CvReviewPlan | null {
+  const fresh = results.flatMap(result => result.claims);
+  const byId = new Map(fresh.map(claim => [claim.claimId, claim]));
+  const claims = reused?.verdicts.size
+    ? reused.claims.map(claim => reused.verdicts.get(claim.id) ?? byId.get(claim.id)).filter((claim): claim is CvReviewPlan["claims"][number] => !!claim)
+    : fresh;
+  if (reused?.verdicts.size && claims.length !== reused.claims.length) return null;
+  const review = { matches: results.flatMap(result => result.matches), claims };
   const parsed = CvReviewPlanSchema.safeParse(review);
   return parsed.success ? parsed.data : null;
 }
@@ -1109,6 +1129,18 @@ export class AiEngine {
   ): Promise<CvAssessResult> {
     const pass: CvAssessPass = options.pass ?? "draft";
     const entry = pass === "revision" ? PROMPTS["cv.review_candidate"] : PROMPTS["cv.review"];
+    if (options.claimMemo && (pass !== "revision" || options.only))
+      throw new Error("A claim memo is for the re-audit of a revision, which runs every batch.");
+    // The claims whose verdicts the memo already holds, under this audit's own prompt and route.
+    const reused = new Map<string, CvReviewPlan["claims"][number]>();
+    if (options.claimMemo) {
+      const keys = cvClaimMemoKeys(input, await this.claimMemoRoute(pass));
+      for (const claim of input.claims) {
+        const verdict = options.claimMemo[keys.get(claim.id)!];
+        if (verdict) reused.set(claim.id, { claimId: claim.id, ...structuredClone(verdict) });
+      }
+    }
+    const assessed: CvAssessInput = reused.size ? { ...input, claims: input.claims.filter(claim => !reused.has(claim.id)) } : input;
     // The re-audit of a revised candidate is its own stage, so its cost never merges with the first audit's.
     const stage = pass === "revision" ? "review_candidate" : ref.stage ?? "review";
     const { requirements: _requirements, ...rubricContext } = input.rubric;
@@ -1119,7 +1151,7 @@ export class AiEngine {
     const stable = JSON.stringify({ evidence: input.library ? canonicalEvidence(input.library) : input.evidence, rubric: rubricContext });
     const entryIds = input.library ? new Set(input.library.entries.map(item => item.id)) : undefined;
     const printed = JSON.stringify({ cv: input.cv });
-    const batches = cvReviewBatches(input, CV_REVIEW_BATCH_SIZE);
+    const batches = cvReviewBatches(assessed, CV_REVIEW_BATCH_SIZE);
     const indices = options.only ? [...new Set(options.only)].filter(index => index >= 0 && index < batches.length).sort((a, b) => a - b)
       : batches.map((_, index) => index);
     // One controller for the audit: a batch that fails cancels its siblings, and so does the run's
@@ -1210,8 +1242,21 @@ export class AiEngine {
     }
     const ran = indices.map(index => outcomes.get(index)!);
     const whole = !options.only || indices.length === batches.length;
-    const review = whole && ran.every(batch => batch.status === "done") ? mergeCvAssessBatches(ran.map(batch => batch.result!)) : null;
-    return { pass, total: batches.length, batches: ran, review };
+    const review = whole && ran.every(batch => batch.status === "done")
+      ? mergeCvAssessBatches(ran.map(batch => batch.result!), { claims: input.claims, verdicts: reused }) : null;
+    return { pass, total: batches.length, batches: ran, review, reusedClaims: reused.size };
+  }
+
+  /**
+   * The prompt version, model and effort an audit pass runs at, which its claim verdicts' memo keys
+   * name (`cvClaimMemoKeys`). Resolved as the pass's calls resolve them: the administrator's route
+   * for the entry, else the call site's model, which a CV build's engine answers with its CV model.
+   */
+  async claimMemoRoute(pass: CvAssessPass): Promise<CvClaimMemoRoute> {
+    const entry = pass === "revision" ? PROMPTS["cv.review_candidate"] : PROMPTS["cv.review"];
+    const route = resolveRoute(entry, await this.stageRoutes());
+    const model = route.model !== "cvModel" && route.model !== "callSite" ? route.model : await this.options.getModel(entry.callSite);
+    return { promptVersion: entry.version, model, effort: route.effort };
   }
 
   async buildCv(
@@ -1982,4 +2027,13 @@ function validate<T>(schema: z.ZodType, value: unknown): { data: T } | { error: 
 
 export function createAiEngine(options: AiEngineOptions): AiEngine {
   return new AiEngine(options);
+}
+
+/**
+ * A provider client for a caller that wraps it — a recording, say — before handing it to an
+ * engine. An engine given a client leaves retrying to that client, so this one keeps the SDK's own
+ * retries of a request that failed before its response began.
+ */
+export function createProviderClient(apiKey: string): AiClientLike {
+  return new Anthropic({ apiKey, maxRetries: SDK_MAX_RETRIES }) as unknown as AiClientLike;
 }

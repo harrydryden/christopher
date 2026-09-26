@@ -326,27 +326,14 @@ function excerpt(text: string, pattern: RegExp): string {
 
 export function scriptedReview(payload: ReviewPayload, unmet: RegExp): CvReviewPlan {
   const caveats = payload.rubric?.caveats ?? [];
-  // A batch can carry requirements with no claims; the fixture needs a claim to cite.
-  const review: CvReviewPlan =
-    payload.requirements.length && !payload.claims.length
-      ? {
-          matches: payload.requirements.map((requirement) => ({
-            requirementId: requirement.id,
-            status: "unknown" as const,
-            libraryStatus: "unknown" as const,
-            cvEvidence: [],
-            libraryEvidence: [],
-            reason: "This batch carried no printed claims to assess against.",
-            improvement: "",
-          })),
-          claims: [],
-        }
-      : reviewFixture({
-          rubric: { requirements: payload.requirements, caveats },
-          cv: payload.cv,
-          claims: payload.claims,
-          evidence: payload.evidence,
-        });
+  // Requirements are judged against the printed CV, claims against their own sources, so a batch
+  // with no claims (a revision's re-check that reused every verdict) is judged like any other.
+  const review: CvReviewPlan = reviewFixture({
+    rubric: { requirements: payload.requirements, caveats },
+    cv: payload.cv,
+    claims: payload.claims,
+    evidence: payload.evidence,
+  });
   for (const match of review.matches) {
     const requirement = payload.requirements.find((item) => item.id === match.requirementId);
     if (!requirement || !unmet.test(requirement.quote)) continue;
@@ -420,7 +407,15 @@ export function createScriptedAiClient(options: ScriptedAiOptions = {}): Scripte
   const expectedBatches = (payload: ReviewPayload) => {
     const claims = payload.cv.filter((item) => !item.id.endsWith(":heading")).length;
     const requirements = rubric?.requirements.length ?? payload.requirements.length;
-    return Math.max(1, Math.ceil(Math.max(requirements, claims) / REVIEW_BATCH_SIZE));
+    const whole = Math.max(1, Math.ceil(Math.max(requirements, claims) / REVIEW_BATCH_SIZE));
+    // A revision's re-check sends only the claims the baseline's audit did not judge, so it may have
+    // fewer batches than the whole CV would. The engine spreads the requirements evenly, so the
+    // first batch's share names how many batches there are; the whole-CV count wins a tie.
+    if (!rubric || !payload.requirements.length) return whole;
+    const counts: number[] = [];
+    for (let count = Math.ceil(requirements / REVIEW_BATCH_SIZE); count <= Math.max(whole, requirements); count++)
+      if (Math.ceil(requirements / count) === payload.requirements.length) counts.push(count);
+    return counts.includes(whole) ? whole : counts[0] ?? whole;
   };
 
   const client: AiClientLike = {

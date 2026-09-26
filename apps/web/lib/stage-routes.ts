@@ -3,7 +3,15 @@
  * can render and as the stored value a submitted form becomes. The setting itself, its ids and its
  * sanitiser belong to the model engine (`stageRoutes`, `STAGE_ROUTE_IDS`, `sanitiseStageRoutes`).
  */
-import { sanitiseStageRoutes, STAGE_ROUTE_IDS, type StageRouteId, type StageRoutes } from "@ava/core";
+import {
+  EVALUATED_ROUTES,
+  sanitiseStageRoutes,
+  stageRouteDrift,
+  STAGE_ROUTE_IDS,
+  type EvaluatedRoutes,
+  type StageRouteId,
+  type StageRoutes,
+} from "@ava/core";
 
 /** What each prompt registry entry is called on the page; the CV build's stages come first. */
 const STAGE_LABELS: Record<string, string> = {
@@ -44,4 +52,23 @@ export function stageRoutesFromForm(form: FormData): StageRoutes {
     if (model || effort) raw[id] = { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
   }
   return sanitiseStageRoutes(raw);
+}
+
+/** A route's model as a person reads it: the account's own CV model, or the model named. */
+function modelWords(model: string, resolved?: string): string {
+  if (model === "cvModel") return resolved ? `the account's CV model (${resolved} when graded)` : "the account's CV model";
+  if (model === "callSite") return "the call site's model";
+  return model;
+}
+
+/**
+ * Health's warning, one sentence per stage the `stageRoutes` setting runs at a model or effort the
+ * last committed evaluation report did not grade (`stageRouteDrift`). Empty when every overridden
+ * stage runs at what was graded.
+ */
+export function stageRouteWarnings(routes: StageRoutes | null | undefined, evaluated: EvaluatedRoutes = EVALUATED_ROUTES): string[] {
+  const report = `${evaluated.report || "the last evaluation report"}${evaluated.promptSetVersion ? ` (prompt set ${evaluated.promptSetVersion}${evaluated.unverified ? ", unverified" : ""})` : ""}`;
+  return stageRouteDrift(routes, evaluated).map(({ id, routed, graded }) =>
+    `${STAGE_LABELS[id] ?? id} runs on ${modelWords(routed.model)} at ${routed.effort} effort, but ${report} graded it on ` +
+    `${modelWords(graded.model, graded.resolvedModel)} at ${graded.effort} effort. Replay a draft at this route and commit its report before relying on it.`);
 }

@@ -1,12 +1,15 @@
 export {
   ASSESSMENT_COVERAGE_ERROR, mergeCvAssessBatches, SERVER_FALLBACK_BETA, STREAM_IDLE_MS, stallMessage, streamIdleMsFromEnv,
-  AiEngine, a3OutputCeiling, createAiEngine, classifyAiFailure, decisionDigest, extractJsonBlock, filterSuggestionKey, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX,
+  AiEngine, a3OutputCeiling, createAiEngine, createProviderClient, classifyAiFailure, decisionDigest, extractJsonBlock, filterSuggestionKey, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX,
   INTERRUPTED_ERROR_PREFIX, MAX_PAUSE_CONTINUATIONS, NO_OUTPUT_ERROR, OUTPUT_LIMIT_ERROR, PAUSED_ERROR, REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, SDK_MAX_RETRIES, STREAM_CEILING_MS,
 } from "./engine";
 export type { CvAssessBatchResult, CvAssessInput, CvAssessOptions, CvAssessPass, CvAssessResult } from "./engine";
+export { cvClaimMemoFrom, cvClaimMemoKey, cvClaimMemoKeys, cvRubricHash } from "./claim-memo";
+export type { CvClaimMemo, CvClaimMemoRoute, CvClaimVerdict } from "./claim-memo";
+export { UNVERIFIED_CLAIM_REASON } from "./cv-review-batch";
 export type { AiCallMeta, AiEngineOptions, AiFailure, AiFailureKind, AiUsageRecord, AiClientLike, AiStreamLike, CvAssessBatchEvent, CvAssessHooks, DecisionForDigest, LibraryReviewBatchEvent, LibraryReviewHooks, ParseResponse, Ref, ReserveHint } from "./engine";
 export {
-  CV_PROMPT_IDS, CV_REVIEW_BATCH_SIZE, EFFORTS, PROMPTS, PROMPT_IDS, assertCacheLayout, cvCallSiteTable, isPromptId, layoutFor, promptEntry,
+  CV_PROMPT_IDS, CV_REVIEW_BATCH_SIZE, EFFORT_OUTPUT_SCALE, EFFORTS, PROMPTS, PROMPT_IDS, assertCacheLayout, cvCallSiteTable, expectedOutputTokens, isPromptId, layoutFor, promptEntry,
   promptSetVersion, promptVersion, resolveRoute, routedModel,
 } from "./prompt-registry";
 export type {
@@ -30,3 +33,5 @@ export type { GovernorOptions, GovernorStats } from "./governor";
 export { modelSupportsEffort, modelSupportsServerFallback } from "./model-capabilities";
 export * as schemas from "./schemas";
 export * as prompts from "./prompts";
+export { RecordingClient, ReplayClient, ReplayMissError, readRecording, recordedRequest, recordingKey, requestInputHash } from "./record-client";
+export type { RecordedCall, RecordingClientOptions, RecordingKey } from "./record-client";

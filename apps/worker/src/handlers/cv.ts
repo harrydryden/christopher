@@ -22,8 +22,8 @@ import { cvTailoringEvidence, validateCvTailoringPlan, type CvTailoringPlan } fr
 import { buildCvGapQuiz } from "@ava/core/cv-gap-quiz";
 import { compareCvQuality, diagnoseCvQuality } from "@ava/core/cv-quality";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
-import { completeCv, cvRoleKey, releaseAiHolds, saveCvTailoringPlan, saveImprovedCvRevision, schema, skipOpenCvBuildSteps, type Task, type Db } from "@ava/db";
-import { ASSESSMENT_COVERAGE_ERROR, createAiEngine, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, type AiFailure, type CvAssessBatchResult } from "@ava/ai";
+import { completeCv, cvRoleKey, type AiCallRecord, releaseAiHolds, saveCvTailoringPlan, saveImprovedCvRevision, schema, skipOpenCvBuildSteps, type Task, type Db } from "@ava/db";
+import { ASSESSMENT_COVERAGE_ERROR, createAiEngine, CANCELLED_ERROR, cvClaimMemoFrom, cvClaimMemoKeys, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, type AiFailure, type CvAssessBatchResult, type CvClaimMemo } from "@ava/ai";
 import {
   CvContentSchema,
   CvPlanSchema,
@@ -58,7 +58,7 @@ import {
   type CvCallDoing,
 } from "@ava/core/cv-build-failure";
 import { withResourceLease } from "../lease";
-import { recordAiUsage, tryReserveAi, type AiHold } from "../budget";
+import { recordAiUsage, tryReserveAi, type AiBudgetLimits, type AiBudgetRefusal, type AiHold } from "../budget";
 import { backoffMs, type TaskRunContext } from "../queue";
 import { CvJournal, type CvJournalLoss, type CvOpenStep } from "./cv-journal";
 import {
@@ -130,11 +130,24 @@ function keptBecause(sentence: string): string {
   return trimmed.charAt(0).toLowerCase() + trimmed.slice(1);
 }
 
+/**
+ * Where a build's budget holds and cost records go. A queued build uses the database's budget
+ * (`tryReserveAi`, `recordAiUsage`); a replay (`cv-replay.ts`) holds nothing and keeps its records
+ * in memory, so rebuilding a draft to grade it never reserves or charges an account's budget.
+ */
+export interface CvBuildSink {
+  reserve(expectedUsd: number, limits: AiBudgetLimits): Promise<AiHold | { refused: AiBudgetRefusal }>;
+  record(usage: AiCallRecord, hold: AiHold | undefined): Promise<void>;
+}
+
+/** A run of the handler: the queue's context, and optionally a sink other than the database's. */
+export type CvRunContext = TaskRunContext & { sink?: CvBuildSink };
+
 /** What the saved writing recorded: which attempt produced it and the budget scale it fitted at. */
 type WriteCheckpoint = { writeAttempt: number; scale: number };
 
 /** All generation and review modes use the same immutable input snapshot and lease. */
-export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskRunContext) {
+export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRunContext) {
   const payload = task.payload;
   if (!payload || typeof payload !== "object" || typeof payload.draftId !== "string" || !UUID.test(payload.draftId) ||
       (payload.userId !== undefined && (typeof payload.userId !== "string" || !UUID.test(payload.userId))) ||
@@ -207,6 +220,10 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
       return { skipped: true, reason: "account" };
     }
 
+    const sink: CvBuildSink = ctx?.sink ?? {
+      reserve: (expected, limits) => tryReserveAi(deps.db, "CV", expected, limits, deps.now(), 30),
+      record: (usage, hold) => recordAiUsage(deps.db, draft.userId, usage, { hold }),
+    };
     // A queued row always carries both; a hand-made task in a test may not, and an attempt that
     // is not a number would reach the ledger as a broken row.
     const attempt = Number.isFinite(task.attempts) ? Math.max(1, task.attempts) : 1;
@@ -359,7 +376,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
        */
       const admit = async (stageName: CvBuildStageName, expected: number): Promise<CvStageHold> =>
         journal.run("admit_budget", { stage: stageName, expectedUsd: usd(expected) }, async step => {
-          const admitted = await tryReserveAi(deps.db, "CV", expected, {
+          const admitted = await sink.reserve(expected, {
             account: { userId: draft.userId, budgetUsd: account.aiBudgetUsd, since },
             daily: deps.env.dailyAiBudgetUsd ?? 1000000,
             discovery: deps.env.discoveryAiBudgetUsd ?? 1000000,
@@ -367,7 +384,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
             // Which build this hold is for, so giving up on one build never releases another's.
             refId: draft.id,
             replaceRef: true,
-          }, deps.now(), 30);
+          });
           if ("refused" in admitted) {
             step.add({ limitUsd: admitted.refused.limitUsd, heldUsd: usd(admitted.refused.held),
               leftUsd: usd(Math.max(0, admitted.refused.limitUsd - admitted.refused.spent - admitted.refused.held)) });
@@ -440,7 +457,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
           // `failure` is the same event named; `ai_calls` keeps the text it always kept. With the
           // stage's hold, the record and the hold's reduction land in one transaction, and a record
           // that cannot be written keeps the hold rather than letting the spend go unaccounted.
-          await recordAiUsage(deps.db, draft.userId, usage, { hold });
+          await sink.record(usage, hold);
         },
       });
       /**
@@ -673,9 +690,25 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
 
       // ---- The audit ---------------------------------------------------------------------------
       /**
+       * The baseline audit's claim verdicts, filed by memo key (`cvClaimMemoKeys`) beside its batches
+       * in the checkpoint. The revision's re-check sends only the claims the revision changed and
+       * takes the rest from here. Keyed like every stage by the prompt set and the model, and each
+       * verdict's own key names the prompt version, model and effort, so a memo made under other
+       * prompts or another route is never used.
+       */
+      type ClaimMemoInputs = { rubric: CvRubric; evidence: ReturnType<typeof cvEvidenceItems> };
+      const claimMemoStage: CvStage<ClaimMemoInputs, CvClaimMemo> = {
+        name: "audit.claims", admission: "audit", motion: "assess_batch",
+        key: input => input,
+        estimate: () => 0,
+        run: async () => { throw new Error("The claim memo is written from a finished audit."); },
+        validate: value => value,
+      };
+      /**
        * Assess one candidate: every batch not already held, as stages of one admission, then the
        * score. The baseline's batches are saved as they finish, so a failed batch is the only one a
-       * retry pays for; the revision's re-check runs after publication and saves nothing.
+       * retry pays for; the revision's re-check runs after publication, saves nothing, and asks only
+       * about the claims the baseline's audit did not already judge.
        */
       const assessContent = async (candidate: CvContent, pass: CvAuditPass, knownPages?: number): Promise<CvAssessment> => {
         await stage("assessing");
@@ -701,9 +734,11 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
           });
         const pending = batches.map((_, index) => index).filter(index => !held.has(index));
         const admission: CvBuildStageName = pass === "draft" ? "audit" : "reaudit";
-        // The first requirement each batch checks, counted from one, for its title.
-        const firsts: number[] = [];
-        batches.forEach((batch, index) => firsts.push(index ? firsts[index - 1]! + batches[index - 1]!.requirements.length : 1));
+        const memoInputs: ClaimMemoInputs = { rubric, evidence: items.evidence };
+        const claimMemo = pass === "revision" ? runner.lookup(claimMemoStage, memoInputs) : undefined;
+        /** The revision's audit as the engine merged it, with the memo's verdicts in place. */
+        let merged: CvReviewPlan | null = null;
+        let total = batches.length;
         const batchSteps = new Map<number, CvOpenStep<"assess_batch">>();
         const retrySteps = new Map<number, CvOpenStep<"assess_retry">>();
         const ran: CvAssessBatchResult[] = [];
@@ -717,11 +752,14 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
               {
                 pass,
                 // Only the batches this build does not already hold: a retry pays for what it lost.
-                only: pending,
+                // The revision's re-check holds none, and sends only the claims the memo lacks.
+                ...(pass === "draft" ? { only: pending } : claimMemo ? { claimMemo } : {}),
                 onBatch: async event => {
                   const position = `(batch ${event.index + 1} of ${event.total})`;
                   if (event.phase === "start") {
-                    const first = firsts[event.index]!;
+                    // The engine spreads the requirements evenly over its batches, as `cvAuditBatches`
+                    // does; a re-check that sends fewer claims has fewer batches than this build's slicing.
+                    const first = event.index * Math.ceil(rubric.requirements.length / event.total) + 1;
                     const parts = [
                       event.requirements ? `requirements ${first}–${first + event.requirements - 1}` : "",
                       event.claims ? `${event.claims} ${event.claims === 1 ? "claim" : "claims"}` : "",
@@ -755,6 +793,8 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
                 },
               }));
           ran.push(...audit.batches);
+          merged = audit.review;
+          total = audit.total;
           for (const result of audit.batches) {
             if (result.status === "done" && result.result) {
               held.set(result.index, result.result);
@@ -773,22 +813,23 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
               await journal.close(step, "skipped", { cancelled: true });
               continue;
             }
-            const stopped = batchStop(result, batches.length);
+            const stopped = batchStop(result, total);
             await journal.close(step, "failed", undefined, {
               error: stopped.message.slice(0, 1000), failure: cvBuildFailureFor(stopped, { attempt, maxAttempts }),
             });
           }
         }
         const failed = ran.find(result => result.status === "failed");
-        if (failed || held.size < batches.length) {
+        // The revision's audit is the engine's merge, which puts the memo's verdicts back in place;
+        // otherwise, and for an engine that merged nothing, the batches in order.
+        const inOrder = Array.from({ length: total }, (_, index) => held.get(index));
+        const review: CvReviewPlan | null = (pass === "revision" ? merged : null)
+          ?? (inOrder.every(Boolean) ? { matches: inOrder.flatMap(batch => batch!.matches), claims: inOrder.flatMap(batch => batch!.claims) } : null);
+        if (failed || !review) {
           if (interrupted) throw interrupted;
-          throw failed ? batchStop(failed, batches.length) : new CvBuildStop("assessment_incomplete", "The assessment did not finish every batch.", { motion: "assess_batch" });
+          throw failed ? batchStop(failed, total) : new CvBuildStop("assessment_incomplete", "The assessment did not finish every batch.", { motion: "assess_batch" });
         }
-        const review: CvReviewPlan = {
-          matches: batches.flatMap((_, index) => held.get(index)!.matches),
-          claims: batches.flatMap((_, index) => held.get(index)!.claims),
-        };
-        return journal.run("assemble", { pageCount, ...(pass === "revision" ? { pass } : {}) }, async step => {
+        const assessed = await journal.run("assemble", { pageCount, ...(pass === "revision" ? { pass } : {}) }, async step => {
           let value: CvAssessment;
           try {
             value = createCvAssessment({
@@ -809,6 +850,10 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
           step.add(assessmentTally(value.review));
           return value;
         });
+        // The verdicts the revision's re-check may reuse: filed under the baseline audit's own route.
+        if (pass === "draft")
+          await runner.save(claimMemoStage, memoInputs, cvClaimMemoFrom(review, cvClaimMemoKeys(items, await ai.claimMemoRoute("draft"))));
+        return assessed;
       };
       /** The failure one batch's result names, as the build throws it. */
       function batchStop(result: CvAssessBatchResult, total: number): CvBuildStop {

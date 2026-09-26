@@ -460,8 +460,20 @@ describe("the CV pipeline end to end, against a scripted model", () => {
       Math.max(assessment.rubric.requirements.length, claimCount) / REVIEW_BATCH_SIZE,
     );
     expect(expectedBatches).toBeGreaterThan(1);
-    expect(reviewCalls).toHaveLength(expectedBatches * 2);
     const baselineReviewCalls = reviewCalls.slice(0, expectedBatches);
+    // The revision's re-check sends every requirement but only the claims the baseline's audit did
+    // not already judge, so it needs no more batches than those claims and the requirements fill.
+    const recheckCalls = reviewCalls.slice(expectedBatches);
+    const recheckClaims = recheckCalls.flatMap((call) => call.payload.claims.map((item) => item.id));
+    expect(recheckCalls.every((call) => call.promptId === "cv.review_candidate")).toBe(true);
+    expect(recheckCalls.flatMap((call) => call.payload.requirements.map((item) => item.id))).toEqual(
+      assessment.rubric.requirements.map((item) => item.id),
+    );
+    expect(recheckClaims.length).toBeLessThan(claimCount);
+    expect(recheckCalls).toHaveLength(
+      Math.ceil(Math.max(assessment.rubric.requirements.length, recheckClaims.length) / REVIEW_BATCH_SIZE),
+    );
+    expect(fake.events.some((event) => event.startsWith("barrier-timeout:"))).toBe(false);
     expect(baselineReviewCalls.every((call) => call.payload.corrections === undefined)).toBe(true);
     // The evidence and rubric outlive a revision, so they are cached ahead of the CV, itself cached
     // ahead of the batch; every batch sends both shared blocks byte for byte.
@@ -604,11 +616,17 @@ describe("the CV pipeline end to end, against a scripted model", () => {
     const rebuildAuthors = callsOf(rebuildCalls, "author");
     expect(rebuildAuthors).toHaveLength(2);
     expect(rebuilt.content!.fitNotes).toEqual([]);
-    expect(callsOf(rebuildCalls, "review")).toHaveLength(
+    // The baseline's audit covers every claim; the revision's re-check only the claims it changed.
+    const rebuildBaselineBatches = Math.ceil(
+      Math.max(assessment.rubric.requirements.length, cvClaimItems(rebuilt.content!).length) / REVIEW_BATCH_SIZE,
+    );
+    const rebuildRecheck = callsOf(rebuildCalls, "review").slice(rebuildBaselineBatches);
+    expect(rebuildRecheck.every((call) => call.promptId === "cv.review_candidate")).toBe(true);
+    expect(rebuildRecheck).toHaveLength(
       Math.ceil(
-        Math.max(assessment.rubric.requirements.length, cvClaimItems(rebuilt.content!).length) /
+        Math.max(assessment.rubric.requirements.length, rebuildRecheck.flatMap((call) => call.payload.claims).length) /
           REVIEW_BATCH_SIZE,
-      ) * 2,
+      ),
     );
     const rewritten = rebuildAuthors[0]!.payload;
     // Written afresh: no saved plan is seeded as layout feedback.

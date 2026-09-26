@@ -193,6 +193,35 @@ it("publishes the baseline first, then adopts one verified improvement as a new 
   expect(await db.select().from(schema.aiReservations)).toHaveLength(0);
 });
 
+it("re-checks the revision's changed claims only, beside every requirement, and reuses the baseline's other verdicts", async () => {
+  const scripted = scriptedClient();
+  const reviews: Array<{ promptId: string; requirements: string[]; claims: string[] }> = [];
+  const create = scripted.client.messages.create;
+  scripted.client.messages.create = async (params, options, call) => {
+    if (call?.promptId === "cv.review" || call?.promptId === "cv.review_candidate") {
+      const batch = JSON.parse(((params.messages as Array<{ content: Array<{ text: string }> }>)[0]!.content)[2]!.text) as
+        { requirements: Array<{ id: string }>; claims: Array<{ id: string }> };
+      reviews.push({ promptId: call.promptId, requirements: batch.requirements.map(item => item.id), claims: batch.claims.map(item => item.id) });
+    }
+    return create(params, options, call);
+  };
+  deps.aiClient = scripted.client;
+  const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric });
+  await queue().drain();
+  const [revision] = await db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, draft.id));
+  expect(revision?.status).toBe("ready");
+  const baselineClaims = reviews.filter(review => review.promptId === "cv.review").flatMap(review => review.claims);
+  expect(baselineClaims).toEqual(["profile", "section:one:0", "section:degree:0"]);
+  // The revision added one bullet: that claim alone is asked about, beside both requirements.
+  const recheck = reviews.filter(review => review.promptId === "cv.review_candidate");
+  expect(recheck.flatMap(review => review.claims)).toEqual(["section:one:1"]);
+  expect(recheck.flatMap(review => review.requirements)).toEqual(["lead", "change"]);
+  // The revision's assessment still carries a verdict for every printed claim, in the CV's order.
+  expect(revision!.assessment!.review.claims.map(claim => [claim.claimId, claim.status])).toEqual([
+    ["profile", "supported"], ["section:one:0", "supported"], ["section:one:1", "supported"], ["section:degree:0", "supported"],
+  ]);
+});
+
 it("rejects an unsupported improvement and keeps the checked baseline", async () => {
   const scripted = scriptedClient({ rejectImprovement: true }); deps.aiClient = scripted.client;
   const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric });

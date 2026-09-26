@@ -280,6 +280,11 @@ checkout on a laptop against the production database, so it is careful in two wa
   company, found by id, domain (or a URL on it) or exact name, and refuses a needle that matches
   none or several. The whole active catalogue is `cli discover --all`, which refuses a careers URL.
 
+- **`record` and `replay` never publish.** They rebuild a draft to grade it, inside a rolled-back
+  transaction, and never touch the draft, the budget or the queue (see "Evaluation reports and the
+  prompt set"). `record` and a `replay` without `--recordings` call the provider and are paid; both
+  refuse without `ANTHROPIC_API_KEY`.
+
 Inside the worker's container (Render's Shell), run it without pnpm, from `/app/apps/worker`:
 `node --import tsx src/cli.ts users`.
 
@@ -330,6 +335,94 @@ build filter skips the deploy, so the worker correctly stays on the last commit 
 and neither this check nor the scheduled operational check calls that stale. Both check out full
 history to make the comparison. The list of worker inputs is `WORKER_INPUT_PATHS` in
 `scripts/release-checks.mjs`, the same list as `render.yaml`'s build filter.
+
+## Evaluation reports and the prompt set
+
+Every prompt the engine sends is an entry in `packages/ai/src/prompt-registry.ts`, and
+`promptSetVersion()` is one hash of all of them. The committed reports under
+`docs/evaluations/<name>/report.json` say which prompt set they were graded at, and CI's `check`
+job holds them to the registry (`scripts/check-evaluation-reports.ts`):
+
+- a report graded at another prompt set fails the job unless it is marked `"unverified": true` — a
+  report kept for the record that no longer vouches for the shipped prompts;
+- at least one report must be at the shipped prompt set, so a prompt change cannot merge without a
+  report written at its version.
+
+`docs/evaluations/cv-replay/report.json` is that report. It is written by the replay command:
+
+```bash
+cd apps/worker
+pnpm cli record <draft-id>                        # live and paid: refuses without ANTHROPIC_API_KEY
+pnpm cli replay <draft-id> --recordings ../../docs/evaluations/recordings/<file>.jsonl \
+  --out ../../docs/evaluations/cv-replay/report.json
+```
+
+`record` rebuilds the draft through the real handler against the provider and writes every model
+call to a JSONL recording in `docs/evaluations/recordings/` (gitignored: it holds CV text). `replay`
+rebuilds the same draft from that recording with no key and no cost, grades it — every claim
+supported, weighted coverage not lower than the recorded run's, the page limit met, no essential
+requirement losing points, plus the structural diagnostics the build itself uses — and writes the
+report with the prompt set, the route every CV stage ran at, the cost and the wall time. Neither
+command changes anything: the rebuild runs inside a database transaction that is always rolled
+back, on a copy of the draft under a scratch account, with a budget sink that holds nothing and
+records nothing, so the draft, the account's budget, `ai_calls` and the task queue are untouched. A
+recording answers only the requests it holds: an edited prompt, a different input or another
+model or effort fails the replay, naming the prompt and version, and never reaches the provider.
+
+The expected workflow for a pull request that edits a prompt:
+
+1. Run the edited build live on a representative draft: `pnpm cli record <draft-id>` against a
+   database that has one (a development copy, or production from a checkout: both commands only
+   read). This spends that one build's cost.
+2. Replay it into the report: `pnpm cli replay <draft-id> --recordings <file> --out
+   docs/evaluations/cv-replay/report.json`. The report is at the new prompt set and, because the
+   recording came from the provider, is not marked unverified.
+3. Run `pnpm exec tsx scripts/check-evaluation-reports.ts --write`, which copies the report's graded
+   routes into `packages/core/src/evaluated-routes.ts` (what Health compares the `stageRoutes`
+   setting against; CI fails while the two disagree), and commit both with the prompt change. The
+   report's grade is what a reviewer reads.
+
+Where no key is available (CI, a contributor without one), the mechanism still runs end to end on
+the scripted client: `DATABASE_URL=<scratch database> pnpm exec tsx scripts/cv-replay-fixture.mts
+docs/evaluations/recordings/cv-replay-fixture.jsonl` publishes a synthetic draft and records its
+rebuild through the scripted client, and replaying that recording writes a report marked
+`"unverified": true` — the recording says its answers were scripted. That satisfies the gate while
+saying plainly that no model graded the new prompts; replace it with a live report before relying
+on the change. The report committed today is of this kind.
+
+## Changing a stage's effort or model
+
+Every CV stage runs at its registry route (the account's CV model, at `high` effort) unless the
+`stageRoutes` system setting overrides it (Admin › System settings, "Stage routes"). The default
+is not changed in code: moving a stage — the audit to `medium` effort, say — is the
+administrator's decision, made through the setting once a replay on real drafts has passed. Effort
+changes no token's price, only how many the stage writes, and the estimator scales each stage's
+expected output by effort (`EFFORT_OUTPUT_SCALE` in `packages/ai/src/prompt-registry.ts`); those
+ratios are an assumption until a run at the new effort has been measured.
+
+1. **Record the current route on your own drafts.** For two or three representative published CVs,
+   `pnpm cli record <draft-id>` (paid, one build each; it publishes nothing and charges no account's
+   budget). Each recording, in `docs/evaluations/recordings/`, ends with the recorded run's grade,
+   which the candidate is held to.
+2. **Replay each draft live at the candidate route, against that recording.**
+   `pnpm cli replay <draft-id> --routes '{"cv.review":{"effort":"medium"},"cv.review_candidate":{"effort":"medium"}}' --baseline <recording.jsonl> --out <candidate.json>`
+   (paid, publishes nothing). A replay from `--recordings` cannot do this: a recording answers only
+   the route it was made at, and a different effort is a miss that fails the replay by design.
+3. **Read the reports.** Every draft must grade `PASSED`: every claim supported, weighted coverage
+   not below the recording's, the page limit met, no essential requirement losing points. Compare
+   `costUsd`, `wallMs` and `byStage` with the recording's own report (its last line), and compare
+   the output tokens each audit call recorded with `EFFORT_OUTPUT_SCALE`, correcting the ratio in
+   the registry if it is far off. If any draft fails, stop here: the route stays as it is.
+4. **Commit the evidence.** Record one draft at the candidate route (`pnpm cli record <draft-id>
+   --routes '<json>'`), replay that recording into the report (`pnpm cli replay <draft-id>
+   --recordings <file> --routes '<json>' --out docs/evaluations/cv-replay/report.json`), run
+   `pnpm exec tsx scripts/check-evaluation-reports.ts --write` to update the graded routes
+   (`packages/core/src/evaluated-routes.ts`), and merge that through CI.
+5. **Flip the setting, and watch it.** Set the override on System settings. Health shows
+   administrators "Stage routes not evaluated" whenever an override differs from the route the last
+   committed report graded, so after step 4 it stays empty; before it, it names the stage. Watch
+   Operations' cost per build, retry rates and build failures over the next day's builds, and clear
+   the override to go back.
 
 ## Costs
 

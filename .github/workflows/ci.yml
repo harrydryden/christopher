@@ -51,6 +51,10 @@ jobs:
       - run: pnpm -r test
       - name: Test release and evaluation scripts
         run: pnpm exec node --test scripts/*.test.mjs
+      # The committed evaluation reports must name the prompt set that ships; a prompt change
+      # without a report at its version (verified, or marked unverified) fails here.
+      - name: Check evaluation reports against the shipped prompt set
+        run: pnpm exec tsx scripts/check-evaluation-reports.ts
 
   # The worker suite again, in a shuffled file order and under a flipped query plan. Both are
   # cheap and catch the class of test that passes only because of the order rows happen to come

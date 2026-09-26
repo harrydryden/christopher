@@ -2,8 +2,8 @@
  * The worker half of the CV load harness (scripts/cv-load.mjs starts it; do not run it by hand).
  *
  * It is the production worker's queue with the production handler map, abandonment hooks and CV
- * build cap (`maxActiveByType.generate_cv = ceil(concurrency / 2)`, as apps/worker/src/index.ts
- * sets it), against a scripted model client instead of the provider. Only the model's words and its
+ * build slots (`cvConcurrency`, as apps/worker/src/index.ts sets it from CV_CONCURRENCY), against
+ * a scripted model client instead of the provider. Only the model's words and its
  * timing are scripted: every build runs the shipped prompts through the real engine (streaming,
  * the batched cached assessment, the validators), the page fitter, PDFKit, the budget hold and its
  * renewals, the lease, the journal and the fenced writes.
@@ -13,7 +13,8 @@
  * its own request alone, using that client's exported answer builders.
  *
  * Knobs (all set by the orchestrator):
- *   WORKER_CONCURRENCY   slots, as in production (default 3)
+ *   WORKER_CONCURRENCY   general slots, as in production (default 3)
+ *   CV_CONCURRENCY       CV build slots, as in production (default 8)
  *   CV_LOAD_LATENCY_MS   "min-max" per model request, uniform (default 2000-6000)
  *   CV_LOAD_TTFB_SHARE   share of a request's latency before its first stream event (default 0.2)
  *   CV_LOAD_529_RATE     chance any one request attempt is answered 529 overloaded (default 0)
@@ -174,12 +175,11 @@ async function main() {
     }
   };
   const queue = new TaskQueue(deps, { ...handlers, generate_cv: timed }, {
-    concurrency: env.concurrency, workerId: env.workerId, onAbandon, onInterrupted,
+    concurrency: env.concurrency, cvConcurrency: env.cvConcurrency, workerId: env.workerId, onAbandon, onInterrupted,
     pollMs: Number(process.env.CV_LOAD_QUEUE_POLL_MS ?? 3000),
-    maxActiveByType: { generate_cv: Math.max(1, Math.ceil(env.concurrency / 2)) },
   });
   queue.start();
-  emit({ t: "ready", concurrency: env.concurrency, cvCap: Math.max(1, Math.ceil(env.concurrency / 2)), poolMax: env.databasePoolMax, latency, ttfbShare, overloadRate });
+  emit({ t: "ready", concurrency: env.concurrency, cvCap: env.cvConcurrency, poolMax: env.databasePoolMax, latency, ttfbShare, overloadRate });
   const sampler = setInterval(() => {
     const memory = process.memoryUsage();
     emit({ t: "sample", streams: stats.activeStreams, active: queue.activeCount, heapMb: Math.round(memory.heapUsed / 1048576), rssMb: Math.round(memory.rss / 1048576) });

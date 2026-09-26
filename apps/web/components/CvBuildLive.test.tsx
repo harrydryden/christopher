@@ -111,3 +111,18 @@ it("keeps backing off over a failure that a later reading can recover from", asy
   expect(fetch.mock.calls.length).toBeGreaterThan(2);
   expect(router.refresh).not.toHaveBeenCalled();
 });
+
+it("counts every elapsed figure on the server's clock, whatever the browser's says", async () => {
+  // The browser's clock is ten minutes behind the server that rendered the page.
+  const serverNow = T0 + 60_000;
+  vi.setSystemTime(serverNow - 10 * 60_000);
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+  const running = { ...wire(1, "write", "running"), startedAt: iso(30), title: "Writing the CV" };
+  act(() => {
+    root.render(<CvBuildLive id="draft-1" mode="build" initial={reading([running])} nowMs={serverNow} timeZone="UTC" versionLabel="18-Sep-V1" />);
+  });
+  await advance(5_000);
+  // 30 s had passed on the server when it rendered, and five more since: not "0 s" for ten minutes.
+  expect(container.textContent).toContain("Writing the CV · running 35 s");
+  expect(container.textContent).toContain("Started 1m ago");
+});

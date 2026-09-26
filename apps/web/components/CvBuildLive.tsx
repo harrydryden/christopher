@@ -71,6 +71,12 @@ export function CvBuildLive({
   const [reading, setReading] = useState(initial);
   const [build, setBuild] = useState<CvProgressBuild | null>(initial.build);
   const [now, setNow] = useState(nowMs);
+  // The browser's clock can be minutes out; every moment on this page is the server's. Taken once,
+  // at mount, as the difference between the server's clock when it rendered and the browser's now,
+  // and applied to every elapsed figure, so a skewed clock neither freezes a running motion at zero
+  // nor starts it minutes in.
+  const [skew] = useState(() => nowMs - Date.now());
+  const skewRef = useRef(skew);
   const stepsRef = useRef(steps);
   stepsRef.current = steps;
   const live = mode === "build" ? reading.active || reading.live : reading.live;
@@ -78,8 +84,9 @@ export function CvBuildLive({
   // One clock for every elapsed figure on the narrative, running only while something can move.
   useEffect(() => {
     if (!live) return;
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 1_000);
+    const tick = () => setNow(Date.now() + skewRef.current);
+    tick();
+    const timer = setInterval(tick, 1_000);
     return () => clearInterval(timer);
   }, [live]);
 
@@ -127,7 +134,7 @@ export function CvBuildLive({
         setSteps(merged);
         setReading(next_);
         if (next_.build) setBuild(next_.build);
-        setNow(Date.now());
+        setNow(Date.now() + skewRef.current);
         if (mode === "build") {
           const step = stepProgressPoll(state, { active: next_.active, version: next_.version }, changed);
           state = step.state;

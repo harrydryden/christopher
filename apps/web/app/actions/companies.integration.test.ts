@@ -24,7 +24,8 @@ vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (session ? {
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
-import { addCompanies, archiveCompany, followCompany, importPosting, pasteDiscoveryUrl, refreshCompanyLogo, rescanCompany, resumeCompany, saveCompanyNotes, suggestCompanyName, unfollowCompany } from "./companies";
+import { revalidatePath } from "next/cache";
+import { addCompanies, archiveCompany, followCompany, importPosting, pasteDiscoveryUrl, refreshCompany, refreshCompanyLogo, rescanCompany, resumeCompany, saveCompanyNotes, suggestCompanyName, unfollowCompany } from "./companies";
 import { companyApplicationCount, companyScanTiming, listCompanies, searchCatalogue } from "@/lib/queries/companies";
 import { parseCompanySort } from "@/lib/company-sort";
 import { scanTimingLine } from "@/app/(app)/companies/scan-line";
@@ -550,4 +551,47 @@ it("sorts the companies list in SQL by each whitelisted column, both ways", asyn
   // The counts filled in are the ones the page sorted by.
   const [top] = await listCompanies(first.id, 1, "", parseCompanySort("open"));
   expect([top!.openRoles, top!.reviewRoles, top!.shortlistedRoles]).toEqual([2, 2, 0]);
+});
+
+/**
+ * Follow and Refresh no longer call `router.refresh()` after the action: they rely on its own
+ * response carrying the re-rendered page, which Next does only when the action revalidates. So
+ * every way these actions succeed must revalidate the pages that show the change.
+ */
+it("revalidates the pages a follow, an unfollow and a refresh change, on every way they succeed", async () => {
+  const revalidated = vi.mocked(revalidatePath);
+  const company = await followedCompany();
+  await scannedCompany();
+  session = secondCookie;
+
+  for (const expected of [expect.stringContaining("You now follow"), "You already follow Acme."]) {
+    revalidated.mockClear();
+    expect(await followCompany(company.id)).toEqual({ ok: true, message: expected });
+    expect(revalidated.mock.calls).toEqual([["/companies"], ["/suggestions"], ["/"]]);
+  }
+
+  // Refresh while discovery is still queued: it hurries the queued task along.
+  session = firstCookie;
+  const companyPages = [["/companies"], [`/companies/${company.id}`]];
+  revalidated.mockClear();
+  await refreshCompany(company.id);
+  expect(revalidated.mock.calls).toEqual(companyPages);
+
+  // Refresh with a working source and nothing queued: a scan is queued.
+  await database.update(schema.tasks).set({ status: "done" });
+  revalidated.mockClear();
+  await refreshCompany(company.id);
+  expect(revalidated.mock.calls).toEqual(companyPages);
+  expect(await tasksOfType("scan_company")).toHaveLength(1);
+
+  // A source waiting for confirmation sends the person to the company page, revalidated first.
+  await database.update(schema.tasks).set({ status: "done" });
+  await database.update(schema.careerSources).set({ status: "needs_confirmation" });
+  revalidated.mockClear();
+  await expect(refreshCompany(company.id)).rejects.toThrow(`redirect:/companies/${company.id}`);
+  expect(revalidated.mock.calls).toEqual(companyPages);
+
+  revalidated.mockClear();
+  await expect(unfollowCompany(company.id)).rejects.toThrow("redirect:/companies");
+  expect(revalidated.mock.calls).toEqual([["/"], ["/companies"]]);
 });

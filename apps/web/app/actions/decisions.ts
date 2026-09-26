@@ -97,10 +97,11 @@ const DecideSchema = z
   .refine((v) => v.decision !== "skip" || v.reason.trim().length > 0, { message: SKIP_REASON_REQUIRED, path: ["reason"] });
 
 /**
- * The pages a decision changes: the roles table on Roles and on each company page (whichever the
- * person decided from is re-rendered in the action's own response), the companies list's counts
- * and the applications pipeline. Not the whole layout: nothing in it reads a decision, and
- * invalidating it made every later navigation render in full.
+ * The pages a decision changes: the roles table on Roles and on each company page, the companies
+ * list's counts and the applications pipeline. Any revalidation makes the action's own response
+ * carry a fresh render of the page the person decided from, which is why the table never calls
+ * `router.refresh()` after a decision: that would render and download the page a second time.
+ * Not the whole layout: nothing in it reads a decision.
  */
 function revalidateDecided(): void {
   revalidatePath("/");

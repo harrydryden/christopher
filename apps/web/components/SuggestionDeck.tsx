@@ -1,6 +1,5 @@
 "use client";
 import { useCallback, useEffect, useRef, useState, useTransition, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
 import { acceptSuggestion, rejectSuggestion } from "@/app/actions/suggestions";
 import { Button } from "@/components/Button";
 import { labelClass } from "@/components/Field";
@@ -25,7 +24,6 @@ type Direction = "left" | "right";
  */
 export function SuggestionDeck({ cards, empty, disabledReason }: { cards: DeckCard[]; empty: ReactNode; disabledReason?: string }) {
   const root = useRef<HTMLElement>(null);
-  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [gone, setGone] = useState<ReadonlySet<string>>(() => new Set());
   const [dx, setDx] = useState(0);
@@ -91,7 +89,6 @@ export function SuggestionDeck({ cards, empty, disabledReason }: { cards: DeckCa
         setGone((previous) => new Set(previous).add(card.id));
         setReason("");
         setDx(0);
-        router.refresh();
       } catch {
         setError("Could not save. Try again.");
         setDx(0);
@@ -99,7 +96,7 @@ export function SuggestionDeck({ cards, empty, disabledReason }: { cards: DeckCa
         busy.current = false;
       }
     });
-  }, [visible, disabled, reason, router]);
+  }, [visible, disabled, reason]);
 
   const decideRef = useRef(decide);
   decideRef.current = decide;

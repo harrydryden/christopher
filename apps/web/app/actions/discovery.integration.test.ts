@@ -15,6 +15,7 @@ vi.mock("@/lib/db", () => ({ db: () => database }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 import { saveDiscoverySource, updateDiscoverySource, checkDiscoverySource, importDiscoveryDocument } from "./discovery-sources";
 import { acceptSuggestion, rejectSuggestion, findMoreSuggestions } from "./suggestions";
+import { revalidatePath } from "next/cache";
 function form(values: Record<string, string>) { const data = new FormData(); for (const [key, value] of Object.entries(values)) data.set(key, value); return data; }
 beforeAll(async () => { const client = createTestDb(); database = client.db; pool = client.pool; await runMigrations(database); user = await ensureTestUser(database); });
 afterAll(async () => { if (database) await database.execute(sql`truncate discovery_sources cascade`); await pool?.end(); });
@@ -117,6 +118,22 @@ it("requires a reason and retains a dismissal once reviewed", async () => {
   const row = await recommendation();
   expect((await rejectSuggestion(row.id, form({ reason: " " }))).ok).toBe(false);
   expect((await rejectSuggestion(row.id, form({ reason: "Wrong industry" }))).ok).toBe(true);
+});
+it("revalidates the pages a swipe changes on every success, so the deck needs no refresh of its own", async () => {
+  // The deck relies on the action's own response carrying the re-rendered page, which Next sends
+  // only when the action revalidates.
+  const revalidated = vi.mocked(revalidatePath);
+  const followed = await recommendation();
+  revalidated.mockClear();
+  expect((await acceptSuggestion(followed.id)).ok).toBe(true);
+  expect(revalidated.mock.calls).toEqual([["/suggestions"], ["/companies"], ["/"]]);
+
+  for (const reason of [{ reason: "", quick: "1" }, { reason: "Recruitment agency" }] as Record<string, string>[]) {
+    await database.update(schema.companySuggestions).set({ status: "pending" });
+    revalidated.mockClear();
+    expect((await rejectSuggestion(followed.id, form(reason))).ok).toBe(true);
+    expect(revalidated.mock.calls).toEqual([["/suggestions"]]);
+  }
 });
 it("lets a swipe dismiss without a reason, filing none and teaching nothing", async () => {
   const row = await recommendation();

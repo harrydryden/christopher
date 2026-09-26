@@ -1,7 +1,6 @@
 "use client";
 
 import { Fragment, startTransition, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { decide, decideRoles, archiveRoles, roleDetails } from "@/app/actions/decisions";
 import { requestCv } from "@/app/actions/cv";
@@ -126,7 +125,6 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
   sort?: SortKey;
   dir?: SortDir;
 }) {
-  const router = useRouter();
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const rows = inputRows.filter(row => !removedIds.has(row.id));
   const actionsInFlight = useRef(new Set<string>());
@@ -173,7 +171,6 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
         setRemovedIds(previous => new Set([...previous, ...gone]));
         setSelected(new Set());
         setGroupReason(null);
-        router.refresh();
       } catch {
         setGroupError("Could not save. Reload and retry.");
       } finally { setGroupPending(null); }
@@ -265,7 +262,6 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
     // the way back, so nothing vanishes without a word.
     if (decision === null) clearNotice();
     else if (previous) showNotice(jobId, `${decision === "apply" ? "Shortlisted" : "Dismissed"} ${previous.title}${hideCompany ? "" : ` at ${previous.companyName}`}`);
-    router.refresh();
     } catch {
       const error = "Could not save. Reload and retry.";
       if (isBoxed) setReasonBox(b => b?.jobId === jobId ? { ...b, pending: false, error } : b);
@@ -285,7 +281,6 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
         const result = await decide(jobId, null, "");
         if (!result.ok) { setFlashError(result.error); return; }
         setRemovedIds(ids => { const next = new Set(ids); next.delete(jobId); return next; });
-        router.refresh();
       } catch {
         setFlashError("Could not save. Reload and retry.");
       } finally { actionsInFlight.current.delete(jobId); }

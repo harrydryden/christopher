@@ -27,6 +27,7 @@ vi.mock("@/lib/auth", () => auth);
 vi.mock("@/lib/db", () => ({ db: () => database }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
+import { revalidatePath } from "next/cache";
 import { acceptLibraryImport, dismissLibraryImport, importLibraryDocument, retryLibraryImport } from "./library-import";
 
 const ROWS = {
@@ -133,6 +134,27 @@ it("stores a pasted CV, queues one reading of it, and recognises the same docume
     .toMatchObject({ ok: true, message: expect.stringContaining("already imported") });
   expect(await imports()).toHaveLength(1);
   expect(await tasks()).toHaveLength(1);
+});
+
+it("revalidates the Library on every way an import succeeds, so the form needs no refresh of its own", async () => {
+  // The form relies on the action's own response to carry the re-rendered page, which Next
+  // sends only when the action revalidates.
+  const revalidated = vi.mocked(revalidatePath);
+  const succeeds = async (message: string) => {
+    revalidated.mockClear();
+    expect(await importLibraryDocument(form({ kind: "paste", content: DOCUMENT })))
+      .toMatchObject({ ok: true, message: expect.stringContaining(message) });
+    expect(revalidated.mock.calls).toEqual([["/library"]]);
+  };
+  await succeeds("reading your document");
+  await succeeds("It is still being read");
+  await database.update(schema.libraryImports).set({ proposal: PROPOSAL, processedAt: new Date() });
+  await succeeds("What was found in it is below");
+  const [row] = await imports();
+  revalidated.mockClear();
+  expect((await dismissLibraryImport(row!.id)).ok).toBe(true);
+  expect(revalidated.mock.calls).toEqual([["/library"]]);
+  await succeeds("reading it again");
 });
 
 it("says where the first import of the same document got to, and reads it again once it is finished with", async () => {

@@ -164,7 +164,9 @@ export async function acceptFilterSuggestionWithReport(suggestionId: string): Pr
       // Automatic score hiding is retired. A suggestion stored before that is resolved rather than
       // applied, so Accept on a stale page settles it instead of failing.
       await db().update(filterSuggestions).set({ status: "rejected", resolvedAt: new Date() }).where(eq(filterSuggestions.id, id));
+      // The Roles page's suggestions strip shows pending suggestions too.
       revalidatePath("/learning");
+      revalidatePath("/");
       return { ok: true, message: "Settled: hiding roles by score is retired." };
     } else if (suggestion.type === "pause_company") {
       // A pause names one of the account's followed companies by id; a suggestion that names none
@@ -212,7 +214,9 @@ export async function rejectFilterSuggestion(suggestionId: string): Promise<void
   if (!parsed.success) refuseOnLearning("That suggestion has already been settled.");
   const id = parsed.data;
   await db().update(filterSuggestions).set({ status: "rejected", resolvedAt: new Date() }).where(and(eq(filterSuggestions.id, id), eq(filterSuggestions.userId, user.id)));
+  // The Roles page's suggestions strip lists pending suggestions and dismisses from there.
   revalidatePath("/learning");
+  revalidatePath("/");
 }
 
 export async function resynthesizeNow(): Promise<void> {

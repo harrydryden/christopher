@@ -27,12 +27,13 @@ async function resolveSuggestionRows(rows: CompanySuggestion[]): Promise<Suggest
   }));
 }
 
-export async function listPendingSuggestions(userId: string, page = 1, q = ""): Promise<SuggestionRow[]> {
+/** Pending suggestions in deck order, `limit` to a page (the deck asks for only the few it shows). */
+export async function listPendingSuggestions(userId: string, page = 1, q = "", limit = 50): Promise<SuggestionRow[]> {
   const rows = await db()
     .select()
     .from(companySuggestions)
     .where(and(eq(companySuggestions.userId, userId), eq(companySuggestions.status, "pending"), suggestionSearch(q)))
-    .orderBy(companySuggestions.rank, desc(companySuggestions.createdAt), companySuggestions.id).limit(50).offset((page - 1) * 50);
+    .orderBy(companySuggestions.rank, desc(companySuggestions.createdAt), companySuggestions.id).limit(limit).offset((page - 1) * limit);
   return resolveSuggestionRows(rows);
 }
 

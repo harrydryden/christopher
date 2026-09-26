@@ -20,7 +20,8 @@ vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (session ? {
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
-import { acceptFilterSuggestion, answerOpenQuestion, savePinnedStatements, savePreferenceProfile, saveSeedProfile } from "./learning";
+import { revalidatePath } from "next/cache";
+import { acceptFilterSuggestion, acceptFilterSuggestionWithReport, answerOpenQuestion, rejectFilterSuggestion, savePinnedStatements, savePreferenceProfile, saveSeedProfile } from "./learning";
 
 beforeAll(async () => {
   const client = createTestDb();
@@ -82,4 +83,23 @@ it("says so when a filter suggestion was already settled, instead of doing nothi
   const [suggestion] = await database.insert(schema.filterSuggestions)
     .values({ userId: user.id, type: "keyword_include", value: { term: "strategy" }, rationale: "", status: "rejected" }).returning();
   await expect(acceptFilterSuggestion(suggestion!.id)).rejects.toThrow(refusal("That suggestion has already been settled."));
+});
+
+it("revalidates the Roles page whenever the strip above its table settles a suggestion", async () => {
+  // The strip relies on the action's own response to carry the re-rendered Roles page, which
+  // Next sends only when the action revalidates.
+  const revalidated = vi.mocked(revalidatePath);
+  const suggest = async (type: "keyword_include" | "hide_threshold", value: Record<string, unknown>) =>
+    (await database.insert(schema.filterSuggestions).values({ userId: user.id, type, value, rationale: "" }).returning())[0]!;
+
+  for (const suggestion of [await suggest("keyword_include", { term: "strategy" }), await suggest("hide_threshold", { threshold: 40 })]) {
+    revalidated.mockClear();
+    expect((await acceptFilterSuggestionWithReport(suggestion.id)).ok).toBe(true);
+    expect(revalidated).toHaveBeenCalledWith("/");
+  }
+
+  const dismissed = await suggest("keyword_include", { term: "partnerships" });
+  revalidated.mockClear();
+  await rejectFilterSuggestion(dismissed.id);
+  expect(revalidated.mock.calls).toEqual([["/learning"], ["/"]]);
 });

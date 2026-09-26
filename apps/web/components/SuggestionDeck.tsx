@@ -1,6 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState, useTransition, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
+import { startTransition, useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { acceptSuggestion, rejectSuggestion } from "@/app/actions/suggestions";
 import { Button } from "@/components/Button";
 import { labelClass } from "@/components/Field";
@@ -19,15 +18,23 @@ type Direction = "left" | "right";
 
 /**
  * Recommendations one at a time: drag right (or →, or Follow) to follow the company, drag left
- * (or ←, or Dismiss) to dismiss it. The server actions stay the authority — a refusal snaps the
- * card back with the sentence under it — and the reason form under the card is the long way round,
- * for a dismissal that should teach the next recommendations something.
+ * (or ←, or Dismiss) to dismiss it. The card leaves the moment it is decided and the next one is
+ * ready at once; the server actions stay the authority, and a refusal puts the card back on top
+ * with the sentence under it. The reason form under the card is the long way round, for a
+ * dismissal that should teach the next recommendations something.
+ *
+ * `cards` is the first few pending suggestions, not all of them; `total` is how many are pending,
+ * for the count. Each decision's own response re-renders the page, which refills the deck.
  */
-export function SuggestionDeck({ cards, empty, disabledReason }: { cards: DeckCard[]; empty: ReactNode; disabledReason?: string }) {
+export function SuggestionDeck({ cards, total = cards.length, empty, disabledReason }: {
+  cards: DeckCard[]; total?: number; empty: ReactNode; disabledReason?: string;
+}) {
   const root = useRef<HTMLElement>(null);
-  const router = useRouter();
-  const [pending, startTransition] = useTransition();
   const [gone, setGone] = useState<ReadonlySet<string>>(() => new Set());
+  // Cards whose decision the server has not answered yet, one entry each: deciding the next card
+  // never waits for the last one.
+  const [inFlight, setInFlight] = useState<ReadonlySet<string>>(() => new Set());
+  const inFlightRef = useRef(new Set<string>());
   const [dx, setDx] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [entered, setEntered] = useState(true);
@@ -36,12 +43,13 @@ export function SuggestionDeck({ cards, empty, disabledReason }: { cards: DeckCa
   const [notice, setNotice] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const start = useRef<{ x: number; pointerId: number } | null>(null);
-  const busy = useRef(false);
 
   const visible = cards.filter((card) => !gone.has(card.id));
   const current = visible[0];
   const next = visible[1];
   const disabled = !!disabledReason;
+  // Cards decided here but still in the list the page last rendered are not "to review" any more.
+  const remaining = Math.max(visible.length, total - cards.filter((card) => gone.has(card.id)).length);
 
   useEffect(() => {
     const query = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -62,13 +70,21 @@ export function SuggestionDeck({ cards, empty, disabledReason }: { cards: DeckCa
 
   const decide = useCallback((direction: Direction) => {
     const card = visible[0];
-    if (!card || busy.current || disabled) return;
-    busy.current = true;
+    if (!card || disabled || inFlightRef.current.has(card.id)) return;
+    inFlightRef.current.add(card.id);
+    setInFlight((previous) => new Set(previous).add(card.id));
     setError(null);
     setNotice(null);
-    // Off the edge while the server answers; back to the middle if it refuses.
-    setDx(direction === "right" ? window.innerWidth : -window.innerWidth);
+    // Gone now: the next card is on top and can be decided while this one is saved.
+    setGone((previous) => new Set(previous).add(card.id));
+    setDx(0);
     const typed = reason.trim();
+    setReason("");
+    const refused = (sentence: string) => {
+      setGone((previous) => { const kept = new Set(previous); kept.delete(card.id); return kept; });
+      setError(sentence);
+      if (typed) setReason((now) => now || typed);
+    };
     startTransition(async () => {
       try {
         let result;
@@ -82,24 +98,16 @@ export function SuggestionDeck({ cards, empty, disabledReason }: { cards: DeckCa
           if (!typed) form.set("quick", "1");
           result = await rejectSuggestion(card.id, form);
         }
-        if (!result.ok) {
-          setError(result.error);
-          setDx(0);
-          return;
-        }
+        if (!result.ok) { refused(result.error); return; }
         setNotice(result.message ?? (direction === "right" ? `${card.name} followed.` : `${card.name} dismissed.`));
-        setGone((previous) => new Set(previous).add(card.id));
-        setReason("");
-        setDx(0);
-        router.refresh();
       } catch {
-        setError("Could not save. Try again.");
-        setDx(0);
+        refused("Could not save. Try again.");
       } finally {
-        busy.current = false;
+        inFlightRef.current.delete(card.id);
+        setInFlight((previous) => { const left = new Set(previous); left.delete(card.id); return left; });
       }
     });
-  }, [visible, disabled, reason, router]);
+  }, [visible, disabled, reason]);
 
   const decideRef = useRef(decide);
   decideRef.current = decide;
@@ -112,7 +120,7 @@ export function SuggestionDeck({ cards, empty, disabledReason }: { cards: DeckCa
     function onKey(event: KeyboardEvent) {
       if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
       if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-      if (!canDecide.current || busy.current) return;
+      if (!canDecide.current) return;
       const target = event.target as HTMLElement | null;
       if (target && target !== document.body && !root.current?.contains(target)) return;
       if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
@@ -124,7 +132,7 @@ export function SuggestionDeck({ cards, empty, disabledReason }: { cards: DeckCa
   }, []);
 
   function onPointerDown(event: ReactPointerEvent<HTMLElement>) {
-    if (disabled || busy.current || event.button !== 0) return;
+    if (disabled || event.button !== 0) return;
     // Links and controls on the card keep their own clicks.
     if ((event.target as HTMLElement).closest("a, button, input, textarea, select, label, summary")) return;
     start.current = { x: event.clientX, pointerId: event.pointerId };
@@ -150,11 +158,19 @@ export function SuggestionDeck({ cards, empty, disabledReason }: { cards: DeckCa
     setDx(0);
   }
 
+  const saving = inFlight.size > 0;
+  const busyHere = inFlight.has(current?.id ?? "");
+
   if (!current) {
     return (
       <div className="space-y-3">
+        {error && <p role="alert" className="text-14 text-danger">{error}</p>}
         {notice && <p role="status" className="border-2 border-ok px-3 py-2 text-14 text-ok">{notice}</p>}
-        {empty}
+        {/* Every card on hand was decided faster than the answers came back: the next ones
+            arrive with them, so this is a wait, not an empty deck. */}
+        {saving && remaining > 0
+          ? <p role="status" className="flex items-center gap-2 text-14 text-muted"><Monogram size={16} searching title="Saving" /> Loading the next companies…</p>
+          : empty}
       </div>
     );
   }
@@ -171,7 +187,7 @@ export function SuggestionDeck({ cards, empty, disabledReason }: { cards: DeckCa
   return (
     <section ref={root} aria-label="Suggestions to review" className="space-y-3">
       <p className="text-12 text-muted">
-        {visible.length} to review · drag or press <kbd>→</kbd> follow, <kbd>←</kbd> dismiss
+        {remaining} to review · drag or press <kbd>→</kbd> follow, <kbd>←</kbd> dismiss
       </p>
       <div className="overflow-x-clip p-3">
         <div className="relative">
@@ -179,7 +195,7 @@ export function SuggestionDeck({ cards, empty, disabledReason }: { cards: DeckCa
           <article
             key={current.id}
             aria-label={current.name}
-            aria-busy={pending || undefined}
+            aria-busy={busyHere || undefined}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
@@ -199,9 +215,9 @@ export function SuggestionDeck({ cards, empty, disabledReason }: { cards: DeckCa
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <Button className="min-h-11" onClick={() => decide("left")} disabled={disabled || pending}>⟵ Dismiss</Button>
-        <Button className="min-h-11" variant="primary" onClick={() => decide("right")} disabled={disabled || pending}>Follow ⟶</Button>
-        {pending && <Monogram size={16} searching title="Saving" />}
+        <Button className="min-h-11" onClick={() => decide("left")} disabled={disabled || busyHere}>⟵ Dismiss</Button>
+        <Button className="min-h-11" variant="primary" onClick={() => decide("right")} disabled={disabled || busyHere}>Follow ⟶</Button>
+        {saving && <Monogram size={16} searching title="Saving" />}
       </div>
       {disabledReason && <p role="status" className="text-12 text-warn">{disabledReason}</p>}
       {error && <p role="alert" className="text-14 text-danger">{error}</p>}
@@ -229,7 +245,7 @@ export function SuggestionDeck({ cards, empty, disabledReason }: { cards: DeckCa
               className="w-full border border-line-muted bg-transparent p-2"
             />
           </label>
-          <div><Button className="min-h-11" type="submit" size="sm" disabled={disabled || pending}>Dismiss</Button></div>
+          <div><Button className="min-h-11" type="submit" size="sm" disabled={disabled || busyHere}>Dismiss</Button></div>
         </form>
       </details>
     </section>

@@ -230,8 +230,10 @@ export async function setRoleStage(jobId: string, _prev: ActionResult, form: For
   } catch (error) {
     return actionError(error, "Could not update this role. Please try again.");
   }
+  // The pages that show a role's stage: the pipeline, and the roles table on Roles and on the
+  // company page. Not the layout: nothing in it reads a stage.
   revalidatePath("/applications");
-  revalidatePath("/", "layout");
+  revalidatePath("/");
   if (companyId) revalidatePath(`/companies/${companyId}`);
   return ok();
 }
@@ -385,8 +387,10 @@ export async function manageRoleCv(jobId: string | null, cvId: string, action: s
     if (!(CV_ACTIONS as readonly string[]).includes(action)) return { ok: false, error: "Choose Archive, Restore or Delete." };
     await actionCvs(db(), user.id, [cvId], action as (typeof CV_ACTIONS)[number]);
     const row = jobId ? await pipelineRowForJob(user.id, jobId) : null;
+    // The pages that show a role's CV and stage; nothing in the layout reads either.
     revalidatePath("/applications");
-    revalidatePath("/", "layout");
+    revalidatePath("/");
+    revalidatePath("/companies/[id]", "page");
     return { ok: true, row };
   } catch (error) {
     const failed = actionError(error, "Could not update this CV. Please try again.");

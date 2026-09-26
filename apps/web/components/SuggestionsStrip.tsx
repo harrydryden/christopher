@@ -1,7 +1,6 @@
 "use client";
 
 import { startTransition, useState } from "react";
-import { useRouter } from "next/navigation";
 import { acceptFilterSuggestionWithReport, rejectFilterSuggestion } from "@/app/actions/learning";
 import { Monogram } from "@/components/brand/Monogram";
 
@@ -22,7 +21,6 @@ export interface SuggestionChip {
  * they change, and it says what accepting admitted.
  */
 export function SuggestionsStrip({ items }: { items: SuggestionChip[] }) {
-  const router = useRouter();
   const [settled, setSettled] = useState<Set<string>>(new Set());
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -42,7 +40,6 @@ export function SuggestionsStrip({ items }: { items: SuggestionChip[] }) {
         if (!result.ok) { setError(result.error); return; }
         settle(item.id);
         setMessage(result.message ?? `Added “${item.term}”.`);
-        router.refresh();
       } catch {
         setError("Could not save. Reload and retry.");
       } finally { setPendingId(null); }
@@ -57,7 +54,6 @@ export function SuggestionsStrip({ items }: { items: SuggestionChip[] }) {
         await rejectFilterSuggestion(item.id);
         settle(item.id);
         setMessage(`Dismissed “${item.term}”.`);
-        router.refresh();
       } catch {
         setError("Could not save. Reload and retry.");
       } finally { setPendingId(null); }

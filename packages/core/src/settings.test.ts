@@ -147,3 +147,19 @@ it("validates stored appearance and keeps the legacy fallback when absent", () =
   expect(resolveSettings([], [{ key: "cvTheme", value: { ...theme, maxPages: 9 } }]).cvTheme).toBeUndefined();
   expect(resolveSettings([], [{ key: "cvTheme", value: { ...theme, primary: "bad" } }]).cvTheme).toBeUndefined();
 });
+
+it("reads the administrator's stage routes from the shared table, dropping anything that would fail at call time", async () => {
+  const { sanitiseStageRoutes } = await import("./settings");
+  expect(DEFAULT_SETTINGS.stageRoutes).toEqual({});
+  const routes = resolveSystemSettings([{ key: "stageRoutes", value: {
+    "cv.review": { effort: "medium" },
+    "cv.author": { model: "claude-sonnet-5", effort: "high" },
+    "cv.rubric": { model: "gpt-4", effort: "extreme" },
+    "not.a.stage": { effort: "low" },
+    A5: "high",
+  } }]).stageRoutes;
+  expect(routes).toEqual({ "cv.review": { effort: "medium" }, "cv.author": { model: "claude-sonnet-5", effort: "high" } });
+  expect(sanitiseStageRoutes([{ effort: "low" }])).toEqual({});
+  // An account's own rows never route a stage: the setting is the deployment's.
+  expect(Object.keys(resolveUserSettings([{ key: "stageRoutes", value: { "cv.review": { effort: "low" } } }]))).not.toContain("stageRoutes");
+});

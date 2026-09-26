@@ -715,8 +715,23 @@ export const aiCalls = pgTable(
     error: text("error"),
     refType: text("ref_type"),
     refId: text("ref_id"),
-    /** Which step of a multi-call feature this was (a CV build: rubric, author, review, review_retry), so a build's cost can be explained, not only summed. */
+    /** Which step of a multi-call feature this was (a CV build: rubric, planning, author, improvement, review, review_candidate, and their `_retry`), so a build's cost can be explained, not only summed. */
     stage: text("stage"),
+    /** The prompt registry entry that produced the call (`packages/ai/src/prompt-registry.ts`), and the short hash of its prompt text and schema. */
+    promptId: text("prompt_id"),
+    promptVersion: text("prompt_version"),
+    /** Milliseconds from sending the request to the first stream event: the wait the person feels before anything happens. */
+    ttftMs: integer("ttft_ms"),
+    /** The longest silence between two stream events, which is what the idle timeout measures. */
+    maxEventGapMs: integer("max_event_gap_ms"),
+    /** The provider's `stop_reason` for an answered call; null for one that never got an answer. */
+    stopReason: text("stop_reason"),
+    /** The provider's request id, for a support ticket about one call. */
+    requestId: text("request_id"),
+    /** How many times the request was sent: 1 unless the engine retried a rate limit, overload or dropped connection. */
+    attempt: integer("attempt"),
+    /** The build step (or other caller step) this call belongs to, so a step's calls can be listed with it. */
+    stepId: text("step_id"),
     at: tsNow("at"),
   },
   (t) => [

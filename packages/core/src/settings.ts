@@ -8,6 +8,7 @@
  * most code wants to read. Defaults apply when a key is missing.
  */
 import { CvWritingPreferencesSchema, type CvWritingPreferences } from "./cv-writing-preferences";
+import { isKnownModel } from "./models";
 import { CvThemeSchema, type CvTheme } from "./cv-theme";
 import type { GateSettings } from "./gate";
 
@@ -25,6 +26,53 @@ export interface SystemSettings {
   weeklyDay: number;
   /** Whether anyone may create an account. Addresses listed in ADMIN_EMAILS always may. */
   registrationOpen: boolean;
+  /**
+   * The administrator's per-stage routes: for a prompt registry entry (`STAGE_ROUTE_IDS`), the
+   * model and effort it runs at instead of its default. A stage left out, or a field left out,
+   * keeps the default — the account's CV model or the call site's model, at the entry's effort.
+   * A model here applies to every account, over its own CV model choice, for that stage alone.
+   */
+  stageRoutes: StageRoutes;
+}
+
+/** Efforts a stage may be routed at: the provider's own levels. */
+export const STAGE_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type StageEffort = (typeof STAGE_EFFORTS)[number];
+export interface StageRoute {
+  model?: string;
+  effort?: StageEffort;
+}
+export type StageRoutes = Partial<Record<StageRouteId, StageRoute>>;
+
+/**
+ * The prompt registry's entry ids (`packages/ai/src/prompt-registry.ts`), which are what a stage
+ * route is keyed by. Kept here so the interface can list them without depending on the AI package;
+ * the registry's own test holds the two lists equal.
+ */
+export const STAGE_ROUTE_IDS = [
+  "A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10", "A10.sources", "A11", "A12",
+  "cv.rubric", "cv.planning", "cv.author", "cv.improvement", "cv.review", "cv.review_candidate",
+] as const;
+export type StageRouteId = (typeof STAGE_ROUTE_IDS)[number];
+
+/**
+ * Stored stage routes, cleaned: an unknown stage, a model outside the supported list and an effort
+ * the provider does not know are dropped rather than trusted, because each of them would fail at
+ * call time — for every account at once.
+ */
+export function sanitiseStageRoutes(value: unknown): StageRoutes {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const out: StageRoutes = {};
+  for (const [id, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (!(STAGE_ROUTE_IDS as readonly string[]).includes(id) || !raw || typeof raw !== "object") continue;
+    const { model, effort } = raw as Record<string, unknown>;
+    const route: StageRoute = {
+      ...(typeof model === "string" && isKnownModel(model) ? { model } : {}),
+      ...(typeof effort === "string" && (STAGE_EFFORTS as readonly string[]).includes(effort) ? { effort: effort as StageEffort } : {}),
+    };
+    if (route.model || route.effort) out[id as StageRouteId] = route;
+  }
+  return out;
 }
 
 export interface UserSettings {
@@ -84,6 +132,7 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   respectRobotsTxt: true,
   weeklyDay: 0,
   registrationOpen: false,
+  stageRoutes: {},
 };
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
@@ -157,6 +206,10 @@ function applyRows(out: AppSettings, rows: SettingsRow[]): void {
     }
     if (key === "aiBudgetResetAt") {
       if (typeof val === "string" && !Number.isNaN(Date.parse(val))) out.aiBudgetResetAt = val;
+      continue;
+    }
+    if (key === "stageRoutes") {
+      out.stageRoutes = sanitiseStageRoutes(val);
       continue;
     }
     if (key === "gate" && typeof val === "object") {

@@ -9,6 +9,7 @@
  * into what was spent. The writes here are `recordAiCall`, which appends the row a finished call
  * leaves behind, and `releaseAiHolds`, which drops holds whose call can no longer be in flight.
  */
+import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import type { Db } from "./client";
 import { aiCalls } from "./schema";
@@ -392,6 +393,46 @@ export interface AiCallRecord {
   refType?: string | null;
   refId?: string | null;
   stage?: string | null;
+  /** Added by migration 0040; written only where the columns exist (see `aiCallStreamColumnsPresent`). */
+  promptId?: string | null;
+  promptVersion?: string | null;
+  ttftMs?: number | null;
+  maxEventGapMs?: number | null;
+  stopReason?: string | null;
+  requestId?: string | null;
+  attempt?: number | null;
+  stepId?: string | null;
+}
+
+/** The columns migration 0040 added, which a database a release behind may not have yet. */
+const STREAM_COLUMNS = ["prompt_id", "prompt_version", "ttft_ms", "max_event_gap_ms", "stop_reason", "request_id", "attempt", "step_id"];
+let streamColumnsPresent: Promise<boolean> | null = null;
+
+/**
+ * Whether `ai_calls` has migration 0040's columns. Asked once and remembered when they are there;
+ * asked again on the next write when they are not, so the first write after the migration lands
+ * starts recording them. A probe that fails reads as absent: the row still lands, without them.
+ */
+function aiCallStreamColumnsPresent(db: Pick<Db, "execute">): Promise<boolean> {
+  streamColumnsPresent ??= db
+    .execute<{ n: number }>(sql`select count(*)::int as n from information_schema.columns
+      where table_schema = 'public' and table_name = 'ai_calls'
+        and column_name in (${sql.join(STREAM_COLUMNS.map((column) => sql`${column}`), sql`, `)})`)
+    .then((result) => {
+      const present = Number(result.rows[0]?.n ?? 0) === STREAM_COLUMNS.length;
+      if (!present) streamColumnsPresent = null;
+      return present;
+    })
+    .catch(() => {
+      streamColumnsPresent = null;
+      return false;
+    });
+  return streamColumnsPresent;
+}
+
+/** Forget what the probe found, for a test that removes or restores the columns. */
+export function resetAiCallColumnsProbe(): void {
+  streamColumnsPresent = null;
 }
 
 /**
@@ -402,7 +443,19 @@ export interface AiCallRecord {
  * read from a table missing one of them is wrong in the direction that spends money. With an `id`
  * the write is idempotent: the same id again writes nothing.
  */
-export async function recordAiCall(db: Pick<Db, "insert">, userId: string | null, record: AiCallRecord): Promise<void> {
+export async function recordAiCall(db: Pick<Db, "insert" | "execute">, userId: string | null, record: AiCallRecord): Promise<void> {
+  // A worker a release ahead of its database — or an interface ahead of the worker's migration —
+  // still records the call and its cost; only the newer figures wait for the columns. The query
+  // builder names every column the schema declares, so that write is spelled out by hand.
+  if (!await aiCallStreamColumnsPresent(db)) {
+    await db.execute(sql`insert into ai_calls (id, user_id, call_site, model, input_tokens, output_tokens, cache_read_tokens,
+        cache_write_tokens, cost_usd, duration_ms, ok, error, ref_type, ref_id, stage)
+      values (${record.id ?? randomUUID()}, ${userId}, ${record.callSite}, ${record.model}, ${record.inputTokens}, ${record.outputTokens},
+        ${record.cacheReadTokens}, ${record.cacheWriteTokens}, ${record.costUsd}, ${record.durationMs}, ${record.ok}, ${record.error ?? null},
+        ${record.refType ?? null}, ${record.refId ?? null}, ${record.stage ?? null})
+      on conflict (id) do nothing`);
+    return;
+  }
   await db.insert(aiCalls).values({
     ...(record.id ? { id: record.id } : {}),
     userId,
@@ -419,5 +472,16 @@ export async function recordAiCall(db: Pick<Db, "insert">, userId: string | null
     refType: record.refType ?? null,
     refId: record.refId ?? null,
     stage: record.stage ?? null,
+    promptId: record.promptId ?? null,
+    promptVersion: record.promptVersion ?? null,
+    ttftMs: wholeMs(record.ttftMs),
+    maxEventGapMs: wholeMs(record.maxEventGapMs),
+    stopReason: record.stopReason ?? null,
+    requestId: record.requestId ?? null,
+    attempt: record.attempt ?? null,
+    stepId: record.stepId ?? null,
   }).onConflictDoNothing({ target: aiCalls.id });
 }
+
+const wholeMs = (value: number | null | undefined) =>
+  typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.round(value)) : null;

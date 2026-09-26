@@ -1,4 +1,4 @@
-import { getAccountWorkStatus, getCompanyWorkStatus, getCvWorkStatus } from "@/lib/work-status";
+import { getAccountWorkStatus, getCompanyWorkStatus, getCvWorkStatus, getRolesWorkStatus } from "@/lib/work-status";
 import { routeUser } from '@/lib/route-auth';
 import { zUuid } from '@/lib/validation';
 import { readCvProgress } from '@/lib/queries/cv';
@@ -22,10 +22,11 @@ export async function GET(request: Request) {
     return Response.json({ active: reading?.active ?? false, version: reading?.version ?? 'missing' }, { headers: { 'cache-control': 'no-store' } });
   }
   // A page that renders one half's version asks for that half, so the version it compares is the
-  // one it rendered: the roles and companies pages watch their companies' work, and a page listing
-  // CVs watches only builds.
+  // one it rendered: the companies pages watch their companies' work task by task, the Roles page
+  // the same work but only as tasks arrive and finish, and a page listing CVs watches only builds.
   const scope = params.get('scope');
   if (scope === 'company') return Response.json(await getCompanyWorkStatus(user.id), { headers: { 'cache-control': 'no-store' } });
+  if (scope === 'roles') return Response.json(await getRolesWorkStatus(user.id), { headers: { 'cache-control': 'no-store' } });
   if (scope === 'cv') return Response.json(await getCvWorkStatus(user.id), { headers: { 'cache-control': 'no-store' } });
   if (scope !== null) return Response.json({ ok: false, error: 'Invalid scope' }, { status: 400 });
   // Nothing narrower asked for: everything this account is waiting on — its companies' scans and

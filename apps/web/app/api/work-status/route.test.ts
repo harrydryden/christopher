@@ -6,6 +6,7 @@ vi.mock('@/lib/work-status', () => ({
   getAccountWorkStatus: vi.fn(async () => ({ active: false, version: 'idle' })),
   getCompanyWorkStatus: vi.fn(async () => ({ active: true, version: 'companies' })),
   getCvWorkStatus: vi.fn(async () => ({ active: true, version: 'cvs' })),
+  getRolesWorkStatus: vi.fn(async () => ({ active: true, version: 'roles' })),
 }));
 vi.mock('@/lib/queries/cv', () => ({ readCvProgress: vi.fn() }));
 
@@ -38,6 +39,16 @@ describe('GET /api/work-status authentication', () => {
     const { getCompanyWorkStatus, getCvWorkStatus } = await import('@/lib/work-status');
     expect(getCompanyWorkStatus).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000001');
     expect(getCvWorkStatus).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000001');
+  });
+
+  it("answers the Roles page with its own version of the same work", async () => {
+    mocks.current = { user: { id: '00000000-0000-4000-8000-000000000001' } };
+    const roles = await GET(new Request('http://localhost/api/work-status?scope=roles'));
+    expect(roles.status).toBe(200);
+    expect(roles.headers.get('cache-control')).toContain('no-store');
+    await expect(roles.json()).resolves.toEqual({ active: true, version: 'roles' });
+    const { getRolesWorkStatus } = await import('@/lib/work-status');
+    expect(getRolesWorkStatus).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000001');
   });
 
   it('refuses a scope it does not know', async () => {

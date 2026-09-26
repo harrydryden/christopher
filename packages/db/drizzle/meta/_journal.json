@@ -281,6 +281,13 @@
       "when": 1791367200000,
       "tag": "0041_cv_build_stages",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1791453600000,
+      "tag": "0042_scans_source_completed_index",
+      "breakpoints": true
     }
   ]
 }

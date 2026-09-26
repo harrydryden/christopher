@@ -16,12 +16,24 @@ async function userRows(userId: string, writer: Writer = db()) {
   return writer.select({ key: userSettingsTable.key, value: userSettingsTable.value }).from(userSettingsTable).where(eq(userSettingsTable.userId, userId));
 }
 
+/**
+ * The same rows read once per request. The status strip, the page and a CV quote each want the
+ * settings, and a render asked for the system rows up to three times and an account's rows twice.
+ * `cache` is scoped to one server render (it memoises nothing in a server action, which may write),
+ * and the account's rows stay keyed by `userId`. A caller with its own writer, a transaction that
+ * may just have written, always reads afresh.
+ */
+const requestSystemRows = cache(() => systemRows());
+const requestUserRows = cache((userId: string) => userRows(userId));
+
 /** The schedule, models and scan policy: one set for the whole deployment. */
-export const getSystemSettings = cache(async (): Promise<SystemSettings> => resolveSystemSettings(await systemRows()));
+export const getSystemSettings = cache(async (): Promise<SystemSettings> => resolveSystemSettings(await requestSystemRows()));
 
 /** One account's settings merged onto the system ones. */
-export async function getSettingsFor(userId: string, writer: Writer = db()): Promise<AppSettings> {
-  const [system, user] = await Promise.all([systemRows(writer), userRows(userId, writer)]);
+export async function getSettingsFor(userId: string, writer?: Writer): Promise<AppSettings> {
+  const [system, user] = await Promise.all(writer
+    ? [systemRows(writer), userRows(userId, writer)]
+    : [requestSystemRows(), requestUserRows(userId)]);
   return resolveSettings(system, user);
 }
 

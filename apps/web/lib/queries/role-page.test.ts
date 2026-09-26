@@ -8,7 +8,7 @@ import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb, schema, subscribeToCompany, type Db } from "@ava/db";
 import { createTestDb } from "@/test/db";
 import { runMigrations } from "@ava/db/migrate";
-import { sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { ensureTestUser } from "@/test/auth";
 import type { User } from "@ava/db/schema";
 
@@ -27,7 +27,7 @@ vi.mock("react", async (importOriginal) => {
   };
   return { ...actual, cache };
 });
-import { fetchRoleCounts, fetchRolePage, parseRolesFilters } from "./jobs";
+import { fetchRoleCounts, fetchRolePage, fetchRoleRows, parseRolesFilters } from "./jobs";
 import { RoleWorkspace } from "@/components/RoleWorkspace";
 
 let user: User;
@@ -98,4 +98,76 @@ it("reads the counts beside the page when the link names its view", async () => 
   expect(value).toBeTruthy();
   // The counts, the page's count and rows, the company list and the stage counts, all at once.
   expect(widest).toBeGreaterThanOrEqual(5);
+});
+
+/** The first element under `node` whose props match, depth first. */
+function findElement(node: unknown, match: (props: Record<string, unknown>) => boolean): { key: string | null; props: Record<string, unknown> } | null {
+  if (!node || typeof node !== "object") return null;
+  if (Array.isArray(node)) {
+    for (const child of node) { const found = findElement(child, match); if (found) return found; }
+    return null;
+  }
+  const element = node as { key?: string | null; props?: Record<string, unknown> };
+  if (element.props && match(element.props)) return { key: element.key ?? null, props: element.props };
+  return element.props ? findElement(element.props.children, match) : null;
+}
+
+/** Statements in the order they started and finished, labelled for the two asserted on. */
+async function sequenced<T>(read: () => Promise<T>) {
+  const events: string[] = [];
+  const label = (text: string) => text.includes("json_build_array(") ? "rows" : /^select case\s+when/.test(text) && text.includes("group by") ? "counts" : "other";
+  const query = pool.query.bind(pool) as (...args: unknown[]) => Promise<unknown>;
+  const spy = vi.spyOn(pool, "query").mockImplementation(((...args: unknown[]) => {
+    const first = args[0] as string | { text: string };
+    const name = label(typeof first === "string" ? first : first.text);
+    events.push(`start ${name}`);
+    return query(...args).finally(() => { events.push(`end ${name}`); });
+  }) as never);
+  try {
+    return { value: await read(), events };
+  } finally {
+    spy.mockRestore();
+  }
+}
+
+it("reads the landing URL's Matched page beside the counts instead of after them", async () => {
+  const { value, events } = await sequenced(() => RoleWorkspace({ userId: user.id, searchParams: {} }));
+  expect(events.indexOf("start rows")).toBeGreaterThanOrEqual(0);
+  expect(events.indexOf("start rows")).toBeLessThan(events.indexOf("end counts"));
+  // One page read: the guess was right.
+  expect(events.filter((event) => event === "start rows")).toHaveLength(1);
+  expect(findElement(value, (props) => props["aria-current"] === "page")?.key).toBe("auto-matched");
+});
+
+it("opens on Shortlisted when nothing is matched, reading that page once the counts say so", async () => {
+  const rows = await database.select({ id: schema.jobs.id, title: schema.jobs.title }).from(schema.jobs);
+  await database.insert(schema.decisions).values(rows.map((job, i) => ({ userId: user.id, jobId: job.id, decision: i < 3 ? "apply" as const : "skip" as const, jobTitle: job.title, companyName: "Acme" })));
+  const { value, events } = await sequenced(() => RoleWorkspace({ userId: user.id, searchParams: {} }));
+  expect(events.filter((event) => event === "start rows")).toHaveLength(2);
+  expect(findElement(value, (props) => props["aria-current"] === "page")?.key).toBe("user-shortlisted");
+  const table = findElement(value, (props) => Array.isArray(props.rows) && "keyboard" in props);
+  expect((table?.props.rows as unknown[]).length).toBe(3);
+});
+
+it("counts exactly the roles the page read admits, for every kind of filter", async () => {
+  const rows = await database.select({ id: schema.jobs.id, title: schema.jobs.title }).from(schema.jobs).orderBy(schema.jobs.externalKey);
+  await database.insert(schema.decisions).values(rows.slice(0, 5).map((job) => ({ userId: user.id, jobId: job.id, decision: "apply" as const, jobTitle: job.title, companyName: "Acme" })));
+  // A superseded decision is not the active one, and must not double a row in the count.
+  await database.insert(schema.decisions).values({ userId: user.id, jobId: rows[0]!.id, decision: "skip", jobTitle: rows[0]!.title, companyName: "Acme", superseded: true });
+  await database.update(schema.userJobs).set({ fitScore: 80 }).where(inArray(schema.userJobs.jobId, rows.slice(0, 20).map((job) => job.id)));
+  await database.update(schema.userJobs).set({ archivedAt: new Date() }).where(eq(schema.userJobs.jobId, rows[59]!.id));
+  const views: Array<[Record<string, string>, boolean]> = [
+    [{ view: "auto-matched" }, false],
+    [{ view: "user-shortlisted" }, false],
+    [{ view: "auto-matched", company: companyId }, false],
+    [{ view: "auto-matched", company: crypto.randomUUID() }, false],
+    [{ view: "auto-matched", minFit: "50", q: "role 1" }, false],
+    [{ view: "archived" }, true],
+  ];
+  for (const [params, archived] of views) {
+    const filters = parseRolesFilters(params);
+    const { total } = await fetchRolePage(user.id, filters, archived, null, 1);
+    expect(total, JSON.stringify(params)).toBe((await fetchRoleRows(user.id, filters, archived, { limit: 1000 })).length);
+  }
+  expect((await fetchRolePage(user.id, parseRolesFilters({ view: "user-shortlisted" }), false, null, 1)).total).toBe(5);
 });

@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { desc, eq, inArray, sql, and, ilike } from "drizzle-orm";
 import { companies, companyProfiles, companySuggestions, type CompanyProfile, type CompanySuggestion } from "@ava/db/schema";
 import { db } from "@/lib/db";
@@ -55,8 +56,13 @@ export async function getSuggestion(userId: string, id: string): Promise<Company
 function suggestionSearch(q: string) {
   return q ? ilike(companySuggestions.name, `%${q.slice(0, 200).replace(/[\\%_]/g, "\\$&")}%`) : undefined;
 }
-export async function suggestionCount(userId: string, history = false, q = "") {
+/** Read once per request: the status strip and the Suggestions page both count the pending ones. */
+const countSuggestions = cache(async (userId: string, history: boolean, q: string) => {
   const [row] = await db().select({ n: sql<number>`count(*)::int` }).from(companySuggestions)
     .where(and(eq(companySuggestions.userId, userId), history ? inArray(companySuggestions.status, ["accepted", "rejected", "expired"]) : eq(companySuggestions.status, "pending"), suggestionSearch(q)));
   return row?.n ?? 0;
+});
+
+export function suggestionCount(userId: string, history = false, q = ""): Promise<number> {
+  return countSuggestions(userId, history, q);
 }

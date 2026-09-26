@@ -15,7 +15,8 @@ let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 let user: User;
 let other: User;
-vi.mock("@/lib/db", () => ({ db: () => database }));
+const reads = vi.hoisted(() => ({ n: 0 }));
+vi.mock("@/lib/db", () => ({ db: () => { reads.n++; return database; } }));
 vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined }) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
@@ -131,4 +132,17 @@ it("treats a chosen gate as an account's own row, never the administrator's", as
   await expect(requireChosenGate(user.id)).resolves.toBeUndefined();
   // Still nobody else's.
   expect(await hasChosenGate(other.id)).toBe(false);
+});
+
+it("reads every fact in one statement, and only this account's", async () => {
+  await setting(user.id, "gate", { keywords: ["operations"] });
+  await setting(user.id, "seedProfile", "Operations lead");
+  await setting(other.id, "setupDismissedAt", "2026-09-01T00:00:00.000Z");
+  await followCompany(user.id, "one.example");
+  await followCompany(other.id, "two.example");
+  reads.n = 0;
+  const facts = await setupStatus(user.id);
+  expect(reads.n).toBe(1);
+  expect(facts).toMatchObject({ gateChosen: true, seedProfileWritten: true, companiesFollowed: 1, dismissedAt: null });
+  expect(await setupStatus(other.id)).toMatchObject({ gateChosen: false, companiesFollowed: 1, dismissedAt: "2026-09-01T00:00:00.000Z" });
 });

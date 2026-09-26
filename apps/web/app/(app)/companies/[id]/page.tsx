@@ -3,6 +3,8 @@ import { RoleWorkspace } from "@/components/RoleWorkspace";
 import type { RawSearchParams } from "@/lib/queries/jobs";
 import { SettingsForm } from "@/components/SettingsForm";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
+import type { User } from "@ava/db/schema";
 import {
   disableSource,
   enableSource,
@@ -33,7 +35,6 @@ import { getCompanyWorkStatus } from "@/lib/work-status";
 import { narrateCompanySetup } from "@/lib/company-timeline";
 import {
   companyApplicationCount,
-  companyDiscoveryState,
   companyFollowerCount,
   companyScanTiming,
   companySetupRows,
@@ -41,6 +42,7 @@ import {
   getCompanyProfile,
   getCompanyScans,
   getCompanySources,
+  getLatestDiscoveryLog,
   getLatestDiscoveryRun,
   pendingNameSuggestion,
   recentPostingImports,
@@ -102,21 +104,25 @@ function ImportStatus({ row, companyId }: { row: PostingImportRow; companyId: st
   );
 }
 
-export default async function CompanyDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<RawSearchParams> }) {
-  const user = await requireUser();
-  const { id } = await params;
-  const company = await getCompany(user.id, id);
-  if (!company) notFound();
-  const admin = user.role === "admin";
-  const now = new Date();
+type LoadedCompany = NonNullable<Awaited<ReturnType<typeof getCompany>>>;
 
-  const [sources, latestRun, scans, profile, followers, discoveryState, imports, ungated, suggestion, work, timing, applications, system, setup] = await Promise.all([
+/**
+ * Everything on the page but the roles, for one company and one account: fourteen reads side by
+ * side, and what the page derives from them. The page starts this as soon as it knows the company
+ * and hands the one promise to both halves that show it, so it runs beside the roles table's own
+ * chain (counts, then the page, then its events) instead of in front of it.
+ */
+async function loadCompanyDetails(user: User, company: LoadedCompany, now: Date) {
+  const id = company.id;
+  const admin = user.role === "admin";
+  const [sources, latestRun, scans, discoveryLog, profile, followers, imports, ungated, suggestion, work, timing, applications, system, setup] = await Promise.all([
     getCompanySources(id),
     getLatestDiscoveryRun(id),
-    getCompanyScans(id, 20),
+    // The scan history and the discovery log are shown only in an administrator's diagnostics.
+    admin ? getCompanyScans(id, 20) : [],
+    admin ? getLatestDiscoveryLog(id) : [],
     getCompanyProfile(id),
     companyFollowerCount(id),
-    companyDiscoveryState(id),
     recentPostingImports(user.id, id, 5),
     ungatedUserPostings(user.id, id),
     pendingNameSuggestion(user.id, id),
@@ -127,6 +133,8 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
     companySetupRows(user.id, id),
   ]);
 
+  // Shared discovery queued or running: the setup timeline's own reading of the same tasks.
+  const discoveryState = setup.discoveryTask?.state ?? null;
   const candidates = (latestRun?.candidates ?? []) as DiscoveryCandidateView[];
   const subscription = company.subscription;
   const icon = companyIcon(company);
@@ -165,8 +173,16 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
     ].filter((fact): fact is string => !!fact)
     : [];
 
+  return { admin, now, sources, latestRun, scans, discoveryLog, profile, followers, imports, ungated, suggestion, work, applications, discoveryState, candidates, subscription, icon, unverified, scanLine, setupSteps, needsSetup, competing, profileFacts };
+}
+
+type CompanyDetails = Awaited<ReturnType<typeof loadCompanyDetails>>;
+
+/** Above the roles: the header, work in progress, and the setup story or the card that fixes it. */
+async function CompanyOverview({ company, details }: { company: LoadedCompany; details: Promise<CompanyDetails> }) {
+  const { admin, latestRun, profile, followers, suggestion, work, applications, discoveryState, candidates, subscription, icon, unverified, scanLine, setupSteps, needsSetup, competing, profileFacts } = await details;
   return (
-    <div className="space-y-6">
+    <>
       <PageHeader
         title={
           <span className="flex items-center gap-3">
@@ -326,10 +342,15 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
         </div>
       )}
 
-      <Card title="Roles">
-        <RoleWorkspace userId={user.id} searchParams={await searchParams} companyId={id} />
-      </Card>
+    </>
+  );
+}
 
+/** Below the roles: adding a posting by hand, the notepad and the administrator's diagnostics. */
+async function CompanyMore({ company, details }: { company: LoadedCompany; details: Promise<CompanyDetails> }) {
+  const { admin, now, sources, latestRun, scans, discoveryLog, profile, imports, ungated, subscription, unverified } = await details;
+  return (
+    <>
       <Card title="Add a role">
         <div className="space-y-5">
           <form action={importPosting.bind(null, company.id)} className="flex flex-wrap items-end gap-3">
@@ -488,11 +509,11 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
               )}
             </section>
 
-            {latestRun && Array.isArray(latestRun.log) && latestRun.log.length > 0 && (
+            {discoveryLog.length > 0 && (
               <section className="space-y-2">
                 <h3 className="ds-label">Discovery log</h3>
                 <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap border-2 border-line-muted p-3 text-12 text-muted">
-                  {(latestRun.log as unknown[]).map((line) => String(line)).join("\n")}
+                  {discoveryLog.map((line) => String(line)).join("\n")}
                 </pre>
               </section>
             )}
@@ -545,6 +566,46 @@ export default async function CompanyDetailPage({ params, searchParams }: { para
           </div>
         </details>
       )}
+    </>
+  );
+}
+
+/** What stands in for the header until the company's details arrive: its name, as the page will say it. */
+function CompanyOverviewFallback({ company }: { company: LoadedCompany }) {
+  const icon = companyIcon(company);
+  return (
+    <div role="status" aria-live="polite" className="space-y-4">
+      <PageHeader title={<span className="flex items-center gap-3"><CompanyFavicon src={icon.src} domain={icon.domain} size={32} />{company.name}</span>} />
+      <div className="h-32 border-2 border-line-faint" />
+    </div>
+  );
+}
+
+export default async function CompanyDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<RawSearchParams> }) {
+  const user = await requireUser();
+  const { id } = await params;
+  const company = await getCompany(user.id, id);
+  if (!company) notFound();
+  const details = loadCompanyDetails(user, company, new Date());
+  // Both halves await it; this only keeps a failure from being reported as unhandled before they do.
+  details.catch(() => undefined);
+  const sp = await searchParams;
+
+  return (
+    <div className="space-y-6">
+      <Suspense fallback={<CompanyOverviewFallback company={company} />}>
+        <CompanyOverview company={company} details={details} />
+      </Suspense>
+
+      <Card title="Roles">
+        <Suspense fallback={<p role="status" className="text-14 text-muted">Loading roles…</p>}>
+          <RoleWorkspace userId={user.id} searchParams={sp} companyId={id} />
+        </Suspense>
+      </Card>
+
+      <Suspense>
+        <CompanyMore company={company} details={details} />
+      </Suspense>
     </div>
   );
 }

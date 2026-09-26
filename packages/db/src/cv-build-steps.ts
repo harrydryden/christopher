@@ -125,8 +125,15 @@ export async function cvBuildStepsSignature(db: Db, draftId: string): Promise<st
 
 export interface CvBuildMotionStat {
   motion: CvBuildMotion;
+  /** Every row of the motion in the window, however it ended: the failure rate's denominator. */
   runs: number;
   failed: number;
+  /**
+   * The rows that finished (`done`). The medians are taken over these alone, and an estimate is
+   * gated on their count: a skipped motion took no time, and a failed or interrupted one stopped
+   * part-way, so either would drag "usually about" towards a figure no real run takes.
+   */
+  done: number;
   medianMs: number | null;
   medianUsd: number | null;
 }
@@ -138,8 +145,9 @@ export async function cvBuildMotionStats(db: Db, days = 30): Promise<CvBuildMoti
     motion: cvBuildSteps.motion,
     runs: sql<number>`count(*)::int`,
     failed: sql<number>`count(*) filter (where ${cvBuildSteps.status} = 'failed')::int`,
-    medianMs: sql<number | null>`percentile_cont(0.5) within group (order by ${cvBuildSteps.ms})::int`,
-    medianUsd: sql<number | null>`percentile_cont(0.5) within group (order by (${cvBuildSteps.detail}->>'usd')::float8)`,
+    done: sql<number>`count(*) filter (where ${cvBuildSteps.status} = 'done')::int`,
+    medianMs: sql<number | null>`(percentile_cont(0.5) within group (order by ${cvBuildSteps.ms}) filter (where ${cvBuildSteps.status} = 'done'))::int`,
+    medianUsd: sql<number | null>`percentile_cont(0.5) within group (order by (${cvBuildSteps.detail}->>'usd')::float8) filter (where ${cvBuildSteps.status} = 'done')`,
   }).from(cvBuildSteps).where(gte(cvBuildSteps.startedAt, since)).groupBy(cvBuildSteps.motion).orderBy(desc(sql`count(*)`));
   return rows.map(row => ({ ...row, medianUsd: row.medianUsd === null ? null : Number(row.medianUsd) }));
 }

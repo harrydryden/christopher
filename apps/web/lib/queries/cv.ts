@@ -381,7 +381,7 @@ export async function getOwnCvBuildSteps(userId: string, draftId: string): Promi
 
 /**
  * How long each motion usually takes, for the estimate beside a running motion and the time left
- * once writing has closed. Only motions with at least `CV_MEDIAN_MIN_RUNS` runs in thirty days are
+ * once writing has closed. Only motions with at least `CV_MEDIAN_MIN_RUNS` finished runs in thirty days are
  * kept, because a median of three builds is an anecdote.
  *
  * Read across every account, but it carries nothing of anyone's: a motion name and a duration. It
@@ -394,7 +394,7 @@ let medians: { at: number; value: Promise<CvMotionMedians> } | null = null;
 export function getCvMotionMedians(now: number = Date.now()): Promise<CvMotionMedians> {
   if (medians && now - medians.at < MEDIANS_TTL_MS) return medians.value;
   const value = cvBuildMotionStats(db(), 30)
-    .then((stats) => Object.fromEntries(stats.filter((stat) => stat.runs >= CV_MEDIAN_MIN_RUNS && stat.medianMs !== null && stat.medianMs > 0).map((stat) => [stat.motion, stat.medianMs!])))
+    .then((stats) => Object.fromEntries(stats.filter((stat) => stat.done >= CV_MEDIAN_MIN_RUNS && stat.medianMs !== null && stat.medianMs > 0).map((stat) => [stat.motion, stat.medianMs!])))
     .catch(() => {
       medians = null;
       return {} as CvMotionMedians;

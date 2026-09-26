@@ -16,6 +16,7 @@ let pool: ReturnType<typeof createDb>["pool"];
 let user: User;
 vi.mock("@/lib/db", () => ({ db: () => database }));
 import { getAiUsage, getCvBuildCosts, getCvBuildFailureKinds, getCvBuildMotions, getScoredRoleCost, getTotalAiSpend } from "./health";
+import { getCvMotionMedians, resetCvMotionMedians } from "./cv";
 import { totalAiUsage } from "@/lib/ai-usage";
 import { aiOutcome } from "@ava/db";
 
@@ -439,6 +440,9 @@ it("counts build motions and failure kinds, and reads nothing from a database wi
   // The median of two is their midpoint, and a motion that spent nothing has no median cost.
   const rubric = motions.find((row) => row.motion === "rubric")!;
   expect(rubric.medianMs).toBe(50_000);
+  // The dropped writing attempt counts towards the failure rate, never towards how long writing takes.
+  const write = motions.find((row) => row.motion === "write")!;
+  expect(write).toMatchObject({ runs: 2, failed: 1, done: 1, medianMs: 120_000, p95Ms: 120_000 });
   expect(rubric.medianUsd).toBeCloseTo(0.3, 5);
   expect(motions[2]!.medianUsd).toBeNull();
 
@@ -459,6 +463,26 @@ it("counts build motions and failure kinds, and reads nothing from a database wi
   } finally {
     await database.execute(sql`alter table cv_build_steps_hidden rename to cv_build_steps`);
   }
+});
+
+it("estimates a motion from its finished runs only, and only once enough have finished", async () => {
+  const [cv] = await database.insert(schema.cvDrafts).values({
+    userId: user.id, jobTitle: "Operations Director", companyName: "Example", jobDescription: "Lead a team.",
+    libraryVersion: 1, librarySnapshot: {} as never, model: "test-model",
+  }).returning();
+  const at = new Date(Date.now() - 2 * MINUTE);
+  const base = { draftId: cv!.id, userId: user.id, attempt: 1, stage: "fitting" as const, motion: "measure" as const, title: "Measuring the PDF", startedAt: at };
+  let seq = 0;
+  const rows = (status: "done" | "skipped" | "failed", ms: number, n: number) =>
+    Array.from({ length: n }, () => ({ ...base, seq: ++seq, status, ms, detail: {} }));
+  // Four measurements that finished and four that did not: eight rows, but not five real runs.
+  await database.insert(schema.cvBuildSteps).values([...rows("done", 3_000, 4), ...rows("skipped", 0, 3), ...rows("failed", 10, 1)]);
+  resetCvMotionMedians();
+  expect(await getCvMotionMedians()).toEqual({});
+  await database.insert(schema.cvBuildSteps).values(rows("done", 3_000, 1));
+  resetCvMotionMedians();
+  expect(await getCvMotionMedians()).toEqual({ measure: 3_000 });
+  resetCvMotionMedians();
 });
 
 /* ---------------------------------------------------------------------------------------------

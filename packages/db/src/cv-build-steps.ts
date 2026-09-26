@@ -85,6 +85,20 @@ export async function failOpenCvBuildSteps(
   return rows.length;
 }
 
+/**
+ * Close a published draft's steps that are still `running` as skipped and cancelled: the optional
+ * improvement that ran after publication was cut off with its process, and nothing is coming back
+ * to finish it — a retry of a ready draft does nothing. Not a failure: the CV is ready.
+ */
+export async function skipOpenCvBuildSteps(db: Pick<Db, "update">, draftId: string): Promise<number> {
+  const rows = await db.update(cvBuildSteps).set({
+    status: "skipped", finishedAt: sql`now()`,
+    ms: sql`greatest(0, (extract(epoch from now()) - extract(epoch from ${cvBuildSteps.startedAt})) * 1000)::int`,
+    detail: sql`${cvBuildSteps.detail} || '{"cancelled": true}'::jsonb`,
+  }).where(and(eq(cvBuildSteps.draftId, draftId), eq(cvBuildSteps.status, "running"))).returning({ id: cvBuildSteps.id });
+  return rows.length;
+}
+
 /** The draft's steps in order, for the page. Read through the owner, never without one. */
 export async function listCvBuildSteps(db: Db, userId: string, draftId: string): Promise<CvBuildStepView[]> {
   const rows = await db.select().from(cvBuildSteps)

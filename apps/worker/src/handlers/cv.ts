@@ -22,7 +22,7 @@ import { cvTailoringEvidence, validateCvTailoringPlan, type CvTailoringPlan } fr
 import { buildCvGapQuiz } from "@ava/core/cv-gap-quiz";
 import { compareCvQuality, diagnoseCvQuality } from "@ava/core/cv-quality";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
-import { completeCv, cvRoleKey, releaseAiHolds, saveCvTailoringPlan, saveImprovedCvRevision, schema, type Task, type Db } from "@ava/db";
+import { completeCv, cvRoleKey, releaseAiHolds, saveCvTailoringPlan, saveImprovedCvRevision, schema, skipOpenCvBuildSteps, type Task, type Db } from "@ava/db";
 import { ASSESSMENT_COVERAGE_ERROR, createAiEngine, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, type AiFailure, type CvAssessBatchResult } from "@ava/ai";
 import {
   CvContentSchema,
@@ -192,7 +192,15 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
       .select()
       .from(schema.cvDrafts)
       .where(eq(schema.cvDrafts.id, draftId));
-    if (!draft || draft.status === "ready" || draft.status === "awaiting_evidence" || draft.archivedAt) return { skipped: true };
+    if (draft?.status === "ready") {
+      // A published CV is not built again. If this task is the one whose optional improvement was
+      // cut off with its process, the motions it left open are closed here, as skipped: nothing
+      // else will, and the page would otherwise go on showing them running.
+      const closed = await skipOpenCvBuildSteps(deps.db, draft.id).catch(() => 0);
+      if (closed) log.info("closed the steps an interrupted improvement left open", { draftId, closed });
+      return { skipped: true };
+    }
+    if (!draft || draft.status === "awaiting_evidence" || draft.archivedAt) return { skipped: true };
     // A payload naming another account is not this draft's task: nothing is read or written for it.
     if (payloadUserId && payloadUserId !== draft.userId) {
       log.warn("CV task names a different account from its draft; ignored", { draftId, taskId: task.id });

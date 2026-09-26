@@ -853,3 +853,18 @@ it("refuses to open a step for an attempt that no longer owns its task", async (
   expect(losses).toEqual(["fenced"]);
   expect(await steps(draft.id)).toHaveLength(0);
 });
+
+it("closes the motions an interrupted improvement left open when its task comes back to a published CV", async () => {
+  const draft = await makeDraft({ status: "ready" });
+  await startCvBuildStep(db, { draftId: draft.id, userId, attempt: 1, motion: "assess_batch", detail: { pass: "revision", batch: 2 } });
+  deps.aiClient = scriptedClient().client;
+
+  await queueFor().drain();
+
+  const rows = await steps(draft.id);
+  expect(rows).toHaveLength(1);
+  // The CV is ready, so the cut-off optional work is skipped rather than failed, and nothing is re-run.
+  expect(rows[0]).toMatchObject({ status: "skipped", detail: { pass: "revision", batch: 2, cancelled: true } });
+  expect((await draftAfter(draft.id)).status).toBe("ready");
+  expect(await aiCallsByStage()).toEqual({});
+});

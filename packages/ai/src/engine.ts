@@ -39,6 +39,8 @@ import * as P from "./prompts";
 import type * as S from "./schemas";
 import { CV_REVIEW_BATCH_SIZE, PROMPTS, layoutFor, resolveRoute, type LayoutParts, type PromptEntry, type StageRoutes } from "./prompt-registry";
 import { canonicalEvidence, evidenceBlockId } from "./evidence";
+import { AiGovernor, defaultGovernor, retryAfterMs, type GovernorStats } from "./governor";
+import { modelSupportsServerFallback } from "./model-capabilities";
 
 export type { Effort } from "./prompt-registry";
 
@@ -65,6 +67,11 @@ export interface AiFailure {
   kind: AiFailureKind;
   /** The HTTP status, when the provider gave one; a dropped connection has none. */
   status?: number;
+  /**
+   * For a stalled stream, what cut it off: `idle` when no event arrived for `afterMs`, `ceiling`
+   * when the stream was still open after `afterMs` however much was arriving.
+   */
+  stall?: { reason: "idle" | "ceiling"; afterMs: number };
 }
 
 export interface AiUsageRecord {
@@ -95,6 +102,18 @@ export interface AiUsageRecord {
   /** The registry entry that produced the call, and the version of its prompt. */
   promptId?: string;
   promptVersion?: string;
+  /** Milliseconds from sending the request that was answered to its first stream event. */
+  ttftMs?: number;
+  /** The longest silence between two stream events of that request. */
+  maxEventGapMs?: number;
+  /** The provider's `stop_reason`, for a call it answered. */
+  stopReason?: string;
+  /** The provider's id for the request, for a support ticket about one call. */
+  requestId?: string;
+  /** How many times the request was sent: more than one when the engine retried a throttle or a dropped connection. */
+  attempt?: number;
+  /** The caller's step this call belongs to, from `Ref.stepId`. */
+  stepId?: string;
 }
 
 export interface Ref {
@@ -107,6 +126,10 @@ export interface Ref {
    */
   stage?: string;
   userId?: string;
+  /** The caller's own step (a CV build step's id), recorded so a step's calls can be listed with it. */
+  stepId?: string;
+  /** Overrides the entry's priority at the stream governor. */
+  priority?: "interactive" | "background";
   /**
    * Stops this one call: the request, the SDK's retries, and the wait for either. A handler passes
    * its run's signal, so a task that outran its deadline or lost its lease stops paying for an
@@ -139,6 +162,11 @@ export interface AiClientLike {
      */
     stream?(params: Record<string, unknown>, options?: Record<string, unknown>, call?: AiCallMeta): AiStreamLike;
   };
+  /**
+   * The SDK's beta namespace, used for a call routed through the server-side refusal fallback
+   * (`useServerFallback`). A client without it — a fake, say — is called without the fallback.
+   */
+  beta?: { messages: AiClientLike["messages"] };
 }
 
 /**
@@ -159,6 +187,8 @@ export interface AiStreamLike {
   abort(): void;
   /** What had arrived when the stream was cut off, so the prompt it was billed for is still recorded. */
   readonly currentMessage?: ParseResponse;
+  /** The provider's id for the request, once its response has begun. */
+  readonly request_id?: string | null;
 }
 
 export interface ParseResponse {
@@ -211,8 +241,28 @@ export interface AiEngineOptions {
    * answers nobody would read, and kept spending the account's budget to do it.
    */
   signal?: AbortSignal;
-  /** Route calls through the server-side refusal fallback. Requires a model that supports it. */
+  /**
+   * Route calls through the server-side refusal fallback: a request the model declines on safety
+   * grounds is re-run on the provider's recommended fallback model inside the same call, and billed
+   * at the model that answered (`response.model`, which is what the record is priced at). On by
+   * default, for the models that support it (`modelSupportsServerFallback`); `false` turns it off.
+   */
   useServerFallback?: boolean;
+  /**
+   * The stream governor. Engines that build their own client share the process's
+   * (`defaultGovernor`); an engine given a client shares one per client unless given this.
+   */
+  governor?: AiGovernor;
+  /**
+   * How many times the engine itself re-sends a request that failed before its response began
+   * (a throttle, an overload, a dropped connection), waiting out the governor's shared pause.
+   * Default: `SDK_MAX_RETRIES` for an engine that built its own client — whose SDK retries are then
+   * off, so the waiting is shared rather than per call — and 0 for a given client, which keeps
+   * whatever retrying that client does.
+   */
+  retries?: number;
+  /** Cut off a stream that has sent no event for this long. Default `AI_STREAM_IDLE_MS`, else five minutes. */
+  streamIdleMs?: number;
   logger?: (msg: string, data?: unknown) => void;
 }
 
@@ -263,7 +313,53 @@ interface Sending {
   onStart?: () => void;
   signal?: AbortSignal;
   meta: AiCallMeta;
+  /** Through the server-side refusal fallback: the beta namespace, with its header and parameter. */
+  fallback: boolean;
+  /** What the request that was last sent measured, filled in as it streams. */
+  stats: StreamStats;
 }
+
+interface StreamStats {
+  attempts: number;
+  ttftMs?: number;
+  maxEventGapMs?: number;
+  requestId?: string;
+}
+
+/** An engine given a client shares one governor with every engine given the same client. */
+const clientGovernors = new WeakMap<object, AiGovernor>();
+function governorFor(client: AiClientLike): AiGovernor {
+  let governor = clientGovernors.get(client);
+  if (!governor) clientGovernors.set(client, governor = new AiGovernor());
+  return governor;
+}
+
+/** A provider throttle: a rate limit or an overload, which every caller should back off from together. */
+function isThrottle(error: unknown): error is APIError {
+  return error instanceof RateLimitError || (error instanceof APIError && error.status === 529);
+}
+
+/**
+ * Whether a request that failed before its response began may be sent again: a throttle, a server
+ * error, a lock or request timeout, a dropped connection. The provider's `x-should-retry` decides
+ * when it says.
+ */
+function isRetryable(error: unknown): boolean {
+  if (error instanceof APIConnectionError) return true;
+  if (!(error instanceof APIError)) return false;
+  const header = (error.headers as Headers | undefined)?.get?.("x-should-retry");
+  if (header === "true") return true;
+  if (header === "false") return false;
+  const status = error.status ?? 0;
+  return status === 408 || status === 409 || status === 429 || status >= 500;
+}
+
+const sleep = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
+  if (signal?.aborted) return reject(signal.reason);
+  const timer = setTimeout(() => { signal?.removeEventListener("abort", stop); resolve(); }, ms);
+  const stop = () => { clearTimeout(timer); reject(signal!.reason); };
+  signal?.addEventListener("abort", stop, { once: true });
+});
 
 export const OUTPUT_LIMIT_ERROR = "Model output limit reached before the response was complete.";
 export const CANCELLED_ERROR = "Cancelled because another call in the same task failed.";
@@ -282,6 +378,23 @@ export const NO_OUTPUT_ERROR = "no parseable output";
 export const SCHEMA_ERROR_PREFIX = "schema rejected:";
 /** No answer legitimately takes this long, so a stream still open at the ceiling has stalled. */
 export const STREAM_CEILING_MS = 15 * 60_000;
+/**
+ * A stream that has sent nothing for this long has stalled, however long it has been open. Five
+ * minutes, because adaptive thinking can stream nothing visible for a while before it writes.
+ */
+export const STREAM_IDLE_MS = 5 * 60_000;
+
+/** `AI_STREAM_IDLE_MS` as a timeout, or the default when it is unset or not a positive number. */
+export function streamIdleMsFromEnv(env: Record<string, string | undefined> = process.env): number {
+  const value = Number(env.AI_STREAM_IDLE_MS);
+  return Number.isFinite(value) && value > 0 ? value : STREAM_IDLE_MS;
+}
+
+/** The most one call waits between its attempts, in all: the slack its hold allows for back-off. */
+export const RETRY_WAIT_BUDGET_MS = 60_000;
+
+/** The beta the server-side refusal fallback is requested under, in its `"default"` form. */
+export const SERVER_FALLBACK_BETA = "server-side-fallback-2026-07-01";
 /**
  * How many times a turn a server tool paused (`stop_reason: "pause_turn"`, the server's own
  * iteration limit) is resumed before the call is given up as unfinished.
@@ -305,6 +418,16 @@ function addUsage(a: Usage, b: Usage): Usage {
     cache_creation_input_tokens: (a.cache_creation_input_tokens ?? 0) + (b.cache_creation_input_tokens ?? 0),
     ...(hour ? { cache_creation: { ephemeral_1h_input_tokens: hour } } : {}),
     ...(Object.keys(tools).length ? { server_tool_use: tools } : {}),
+  };
+}
+
+/** What the request that was last sent measured, as the record carries it. */
+function streamFigures(stats: StreamStats) {
+  return {
+    ...(stats.attempts ? { attempt: stats.attempts } : {}),
+    ...(stats.ttftMs !== undefined ? { ttftMs: stats.ttftMs } : {}),
+    ...(stats.maxEventGapMs !== undefined ? { maxEventGapMs: stats.maxEventGapMs } : {}),
+    ...(stats.requestId ? { requestId: stats.requestId } : {}),
   };
 }
 
@@ -342,6 +465,10 @@ class CallCutOff extends Error {
     readonly reason?: unknown,
     /** Set when this process cut the call off: the ceiling, or a signal. */
     readonly cut?: CallCut,
+    /** Whether any of the response had arrived: a request cut off before it began was never billed and may be sent again. */
+    readonly began = false,
+    /** For a stall, what cut it off. */
+    readonly stall?: AiFailure["stall"],
   ) {
     super(message);
   }
@@ -370,8 +497,25 @@ function cutFor(reason: unknown): Exclude<CallCut, "stalled"> {
   return "interrupted";
 }
 
-function cutMessage(cut: CallCut, reason: unknown): string {
-  if (cut === "stalled") return `Stream timed out: no complete response after ${STREAM_CEILING_MS / 60_000} minutes.`;
+/** A duration as the sentence reads it: whole minutes when it is whole minutes, seconds otherwise. */
+function span(ms: number): string {
+  if (ms >= 60_000 && ms % 60_000 === 0) return `${ms / 60_000} minute${ms === 60_000 ? "" : "s"}`;
+  const seconds = Math.round(ms / 1000);
+  return `${seconds} second${seconds === 1 ? "" : "s"}`;
+}
+
+/**
+ * What a stall was, said as it happened. Both begin "Stream timed out:", which is what the ledger's
+ * outcome taxonomy matches a stall by.
+ */
+export function stallMessage(stall: NonNullable<AiFailure["stall"]>): string {
+  return stall.reason === "idle"
+    ? `Stream timed out: no events for ${span(stall.afterMs)}.`
+    : `Stream timed out: still open after ${span(stall.afterMs)}.`;
+}
+
+function cutMessage(cut: CallCut, reason: unknown, stall?: AiFailure["stall"]): string {
+  if (cut === "stalled") return stallMessage(stall ?? { reason: "ceiling", afterMs: STREAM_CEILING_MS });
   if (cut === "cancelled") return CANCELLED_ERROR;
   const why = reason instanceof Error && reason.message ? reason.message
     : typeof reason === "string" && reason ? reason : "the run was stopped.";
@@ -396,7 +540,7 @@ function anySignal(...signals: Array<AbortSignal | undefined>): AbortSignal | un
  */
 export function classifyAiFailure(error: unknown): AiFailure | null {
   if (error instanceof CallCutOff) {
-    if (error.cut === "stalled") return { kind: "stalled" };
+    if (error.cut === "stalled") return { kind: "stalled", ...(error.stall ? { stall: error.stall } : {}) };
     if (error.cut) return null;
     return classifyAiFailure(error.reason);
   }
@@ -563,17 +707,30 @@ export class AiEngine {
   readonly enabled: boolean;
   private readonly client: AiClientLike | null;
 
+  private readonly governor: AiGovernor;
+  private readonly retries: number;
+  private readonly idleMs: number;
+
   constructor(private readonly options: AiEngineOptions) {
     if (options.client) {
       this.client = options.client;
     } else if (options.apiKey) {
-      // The SDK retries only before a response begins (rate limits, overload, connection errors),
-      // so a retried call is never billed twice and a streamed answer is never re-requested part-way.
-      this.client = new Anthropic({ apiKey: options.apiKey, maxRetries: SDK_MAX_RETRIES }) as unknown as AiClientLike;
+      // The engine retries instead of the SDK, and only before a response begins (rate limits,
+      // overload, connection errors), so a retried call is never billed twice and a streamed answer
+      // is never re-requested part-way; its waiting goes through the governor's shared pause.
+      this.client = new Anthropic({ apiKey: options.apiKey, maxRetries: 0 }) as unknown as AiClientLike;
     } else {
       this.client = null;
     }
     this.enabled = this.client !== null;
+    this.retries = Math.max(0, Math.floor(options.retries ?? (options.client ? 0 : SDK_MAX_RETRIES)));
+    this.governor = options.governor ?? (options.client ? governorFor(options.client) : defaultGovernor());
+    this.idleMs = options.streamIdleMs ?? streamIdleMsFromEnv();
+  }
+
+  /** The stream cap this engine runs under and what is open under it, for Health. */
+  governorStats(): GovernorStats {
+    return this.governor.stats();
   }
 
   /**
@@ -582,7 +739,8 @@ export class AiEngine {
    * and the ledger, so a run's engine spends and records exactly as the shared one does.
    */
   withSignal(signal: AbortSignal): AiEngine {
-    return new AiEngine({ ...this.options, client: this.client ?? undefined, signal: anySignal(this.options.signal, signal) });
+    return new AiEngine({ ...this.options, client: this.client ?? undefined, governor: this.governor, retries: this.retries,
+      streamIdleMs: this.idleMs, signal: anySignal(this.options.signal, signal) });
   }
 
   private log(msg: string, data?: unknown) {
@@ -615,7 +773,47 @@ export class AiEngine {
    * request timeout bounds only the wait for it to begin; the ceiling cuts off a stalled stream.
    */
   private async complete(request: Record<string, unknown>, params: Sending): Promise<ParseResponse> {
-    const { messages } = this.client!;
+    // All the waiting one call does between its attempts stays within the minute its hold allows
+    // for back-off (`ReserveHint`): a pause that would run past it ends the call instead.
+    let waited = 0;
+    for (let attempt = 1; ; attempt++) {
+      params.stats.attempts = attempt;
+      try {
+        const response = await this.send(request, params);
+        this.governor.noteSuccess();
+        return response;
+      } catch (err) {
+        const reason = err instanceof CallCutOff ? err.reason : err;
+        // Only a request that never began may go again: nothing of it was billed, and nothing of
+        // it can be lost by asking once more. One this process cut off is never retried here.
+        const fresh = !(err instanceof CallCutOff) || (!err.cut && !err.began);
+        if (reason instanceof APIError && reason.requestID) params.stats.requestId = reason.requestID;
+        // Every engine in the process backs off from a throttle together, not one call at a time.
+        if (fresh && isThrottle(reason)) this.governor.noteThrottled(retryAfterMs(reason.headers));
+        if (!fresh || attempt > this.retries || !isRetryable(reason) || params.signal?.aborted) throw err;
+        // A server error or a dropped connection: the SDK's own back-off, half a second doubling, jittered.
+        const backOff = isThrottle(reason) ? 0 : Math.min(8_000, 500 * 2 ** (attempt - 1)) * (1 - Math.random() * 0.25);
+        if (waited + Math.max(backOff, this.governor.pauseLeftMs()) > RETRY_WAIT_BUDGET_MS) throw err;
+        const began = Date.now();
+        try {
+          if (isThrottle(reason)) await this.governor.waitForPause(params.signal);
+          else await sleep(backOff, params.signal);
+          waited += Date.now() - began;
+        } catch {
+          const cut = cutFor(params.signal?.reason);
+          throw new CallCutOff(cutMessage(cut, params.signal?.reason), undefined, reason, cut);
+        }
+      }
+    }
+  }
+
+  /**
+   * One request. A streaming client keeps the connection busy while the answer is written, so the
+   * request timeout bounds only the wait for it to begin. Two clocks cut off a stream that has
+   * stalled: the idle timeout, reset by every event, and the ceiling, from the moment it opened.
+   */
+  private async send(request: Record<string, unknown>, params: Sending): Promise<ParseResponse> {
+    const { messages } = params.fallback && this.client!.beta ? this.client!.beta : this.client!;
     const signal = params.signal;
     // The signal goes to the SDK, which stops the request and sends no retry once it sees it.
     const options = { timeout: params.timeoutMs, ...(signal ? { signal } : {}) };
@@ -630,41 +828,60 @@ export class AiEngine {
     aborted?.catch(() => {});
     const settled = <R>(work: Promise<R>): Promise<R> => aborted ? Promise.race([work, aborted]) : work;
     let stream: AiStreamLike | undefined;
-    let stalled = false;
-    let ceiling: ReturnType<typeof setTimeout> | undefined;
+    let stall: AiFailure["stall"];
+    let started = false;
+    let clock: ReturnType<typeof setTimeout> | undefined;
     try {
       if (!messages.stream) {
         const response = await settled(messages.create(request, options, params.meta));
         params.onStart?.();
+        const id = (response as { _request_id?: string | null })._request_id;
+        if (id) params.stats.requestId = id;
         return response;
       }
       const open = messages.stream(request, options, params.meta);
       stream = open;
-      let started = false;
+      const opened = Date.now();
+      let last = opened;
       open.on("streamEvent", () => {
-        if (started) return;
-        started = true;
-        params.onStart?.();
+        const now = Date.now();
+        if (!started) {
+          started = true;
+          params.stats.ttftMs = now - opened;
+          params.onStart?.();
+        } else {
+          params.stats.maxEventGapMs = Math.max(params.stats.maxEventGapMs ?? 0, now - last);
+        }
+        last = now;
       });
-      ceiling = setTimeout(() => {
-        stalled = true;
-        open.abort();
-      }, STREAM_CEILING_MS);
-      return await settled(open.finalMessage());
+      // One timer, re-armed for whichever clock runs out first, rather than one per event.
+      const check = () => {
+        const now = Date.now();
+        if (now - opened >= STREAM_CEILING_MS) stall = { reason: "ceiling", afterMs: STREAM_CEILING_MS };
+        else if (now - last >= this.idleMs) stall = { reason: "idle", afterMs: this.idleMs };
+        if (stall) return open.abort();
+        clock = setTimeout(check, Math.max(1, Math.min(this.idleMs - (now - last), STREAM_CEILING_MS - (now - opened))));
+      };
+      clock = setTimeout(check, Math.min(this.idleMs, STREAM_CEILING_MS));
+      const response = await settled(open.finalMessage());
+      const id = open.request_id ?? (response as { _request_id?: string | null })._request_id;
+      if (id) params.stats.requestId = id;
+      return response;
     } catch (err) {
-      const cut: CallCut | undefined = stalled ? "stalled" : signal?.aborted ? cutFor(signal.reason) : undefined;
+      const cut: CallCut | undefined = stall ? "stalled" : signal?.aborted ? cutFor(signal.reason) : undefined;
       // A create call that failed on its own is thrown as it came, so its class still names it.
       if (!stream && !cut) throw err;
-      throw new CallCutOff(cut ? cutMessage(cut, signal?.reason) : (err as Error).message, stream?.currentMessage, err, cut);
+      if (stream?.request_id) params.stats.requestId = stream.request_id;
+      throw new CallCutOff(cut ? cutMessage(cut, signal?.reason, stall) : (err as Error).message, stream?.currentMessage, err, cut, started, stall);
     } finally {
-      clearTimeout(ceiling);
+      clearTimeout(clock);
       if (stopWaiting) signal!.removeEventListener("abort", stopWaiting);
     }
   }
 
   private async run<T>(entry: PromptEntry, call: CallInput, ref: Ref = {}): Promise<T | null> {
     // The signal stops the call, and is not part of what is recorded about it.
-    const { signal: callerSignal, ...recorded } = ref;
+    const { signal: callerSignal, priority, ...recorded } = ref;
     // A call's own signal when it has one (an assessment batch's, which already listens to the
     // run's and the caller's), otherwise the caller's and the run's together.
     const signal = call.signal ?? anySignal(callerSignal, this.options.signal);
@@ -694,10 +911,22 @@ export class AiEngine {
     };
     const tools = entry.tools?.map(tool => ({ ...tool }));
     if (tools) request.tools = tools;
+    // A refusal is re-run server-side on the provider's recommended fallback, inside this call.
+    const fallback = this.options.useServerFallback !== false && modelSupportsServerFallback(model) && !!this.client.beta?.messages;
+    if (fallback) {
+      request.betas = [SERVER_FALLBACK_BETA];
+      request.fallbacks = "default";
+    }
     // The caller names the step when it knows better (a re-run, a revision); otherwise the entry does.
     const stage = recorded.stage ?? entry.stage;
     const identity = { ...recorded, ...(stage ? { stage } : {}), promptId: entry.id, promptVersion: entry.version };
     const meta: AiCallMeta = { promptId: entry.id, promptVersion: entry.version, ...(stage ? { stage } : {}) };
+
+    // One stream per call at the governor, held until the call has been recorded. A call stopped
+    // while it waited for one was never sent, and has nothing to record.
+    const releaseSlot = await this.governor.acquire(model, priority ?? entry.priority, signal).catch(() => null);
+    if (!releaseSlot) return null;
+    const stats: StreamStats = { attempts: 0 };
 
     // Estimated only for an engine that holds capacity per call. The CV engine holds one
     // reservation for the whole build instead, so measuring every prompt for it was work thrown
@@ -717,15 +946,24 @@ export class AiEngine {
         outputTokens: maxTokens, cacheReadTokens: 0, cacheWriteTokens: 0 })
         + requests * searches * (SERVER_TOOL_USD.web_search_requests ?? 0);
       // Held for as long as the call can possibly run, with a minute's slack for the SDK's back-off.
-      const maxDurationMs = requests * ((SDK_MAX_RETRIES + 1) * entry.timeoutMs + STREAM_CEILING_MS + 60_000);
-      settle = await this.options.reserve(callSite, estimate, recorded, { maxDurationMs });
-      if (settle === null) throw new Error("AI budget reserved or exhausted; retry later");
+      // A minute's slack covers the waiting between attempts, which `complete` keeps within it.
+      const maxDurationMs = requests * ((SDK_MAX_RETRIES + 1) * entry.timeoutMs + STREAM_CEILING_MS + RETRY_WAIT_BUDGET_MS);
+      try {
+        settle = await this.options.reserve(callSite, estimate, recorded, { maxDurationMs });
+      } catch (err) {
+        releaseSlot();
+        throw err;
+      }
+      if (settle === null) {
+        releaseSlot();
+        throw new Error("AI budget reserved or exhausted; retry later");
+      }
     }
     // What the requests before the last one used: a paused turn is resumed as a new request, and
     // every one of them is billed, so the one record this call leaves carries them all.
     let prior: Usage = {};
     try {
-      const sending: Sending = { timeoutMs: entry.timeoutMs, meta, ...(call.onStart ? { onStart: call.onStart } : {}), ...(signal ? { signal } : {}) };
+      const sending: Sending = { timeoutMs: entry.timeoutMs, meta, fallback, stats, ...(call.onStart ? { onStart: call.onStart } : {}), ...(signal ? { signal } : {}) };
       let response = await this.complete(request, sending);
       // A server tool that reached its iteration limit pauses the turn; sending the turn back, as
       // it stands, lets it carry on from there. No extra user turn: the assistant's is resumed.
@@ -768,6 +1006,8 @@ export class AiEngine {
         ok: validated !== null,
         error: "error" in outcome ? outcome.error : undefined,
         ...(failure ? { failure } : {}),
+        ...streamFigures(stats),
+        ...(response.stop_reason ? { stopReason: response.stop_reason } : {}),
         ...identity,
       };
       landed = await this.record(record);
@@ -793,6 +1033,7 @@ export class AiEngine {
         ok: false,
         error: (err as Error).message.slice(0, 500),
         ...(failure ? { failure } : {}),
+        ...streamFigures(stats),
         ...identity,
       };
       landed = await this.record(record);
@@ -800,6 +1041,7 @@ export class AiEngine {
       this.log(`${callSite} failed`, err);
       return null;
     } finally {
+      releaseSlot();
       // A call whose cost never reached the ledger keeps its hold until the hold expires.
       if (landed) await settle?.();
     }

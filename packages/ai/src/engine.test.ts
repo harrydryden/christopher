@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { STREAM_IDLE_MS } from "./engine";
 import { a3OutputCeiling, createAiEngine, decisionDigest, MAX_PAUSE_CONTINUATIONS, PAUSED_ERROR, SDK_MAX_RETRIES, extractJsonBlock, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, NO_OUTPUT_ERROR, OUTPUT_LIMIT_ERROR, REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, STREAM_CEILING_MS, type AiClientLike, type AiEngineOptions, type AiUsageRecord, type DecisionForDigest, type ParseResponse } from "./engine";
 import { APIConnectionError, APIConnectionTimeoutError, APIError, AuthenticationError, BadRequestError, InternalServerError, NotFoundError, PermissionDeniedError, RateLimitError } from "@anthropic-ai/sdk";
 import { estimateCostUsd, estimateCvBuildUsd, estimateLibraryImportUsd, estimateLibraryReviewUsd, serverToolCostUsd, SERVER_TOOL_USD } from "./pricing";
@@ -547,7 +548,7 @@ describe("helpers", () => {
     // Hour-long writes cost twice input; the rest of the writes stay at 1.25x.
     expect(estimateCostUsd("claude-fable-5-1", { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 1_000_000, cacheWrite1hTokens: 1_000_000 })).toBeCloseTo(20, 6);
     expect(estimateCostUsd("claude-fable-5-1", { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 1_000_000, cacheWrite1hTokens: 400_000 })).toBeCloseTo(0.6 * 12.5 + 0.4 * 20, 6);
-    // Opus 5.5: $4 in, $20 out, $0.20 a cached read.
+    // The newest price row: $4 in, $20 out, $0.20 a cached read.
     expect(estimateCostUsd("claude-opus-5-5", { inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 1_000_000, cacheWriteTokens: 0 })).toBeCloseTo(24.2, 6);
   });
 
@@ -922,16 +923,19 @@ describe("named failures", () => {
     expect(usage[0]!.failure).toEqual({ kind: "rate_limited", status: 429 });
   });
 
-  it("names a stalled stream by the ceiling that cut it off", async () => {
+  it("names a stalled stream by the clock that cut it off: silence, not the stream's age", async () => {
     vi.useFakeTimers();
     try {
       const { client } = streamingClient(() => new Promise(() => {}));
       const usage: AiUsageRecord[] = [];
       const engine = createAiEngine({ client, getModel: () => "claude-opus-5", onUsage: record => { usage.push(record); } });
       const pending = engine.analyseCvJob("Must lead operations");
-      await vi.advanceTimersByTimeAsync(STREAM_CEILING_MS);
+      await vi.advanceTimersByTimeAsync(STREAM_IDLE_MS - 1_000);
+      expect(usage).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(1_000);
       expect(await pending).toBeNull();
-      expect(usage[0]!.failure).toEqual({ kind: "stalled" });
+      expect(usage[0]!.failure).toEqual({ kind: "stalled", stall: { reason: "idle", afterMs: STREAM_IDLE_MS } });
+      expect(usage[0]!.error).toBe("Stream timed out: no events for 5 minutes.");
     } finally {
       vi.useRealTimers();
     }

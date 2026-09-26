@@ -1,5 +1,5 @@
 export {
-  ASSESSMENT_COVERAGE_ERROR, mergeCvAssessBatches,
+  ASSESSMENT_COVERAGE_ERROR, mergeCvAssessBatches, SERVER_FALLBACK_BETA, STREAM_IDLE_MS, stallMessage, streamIdleMsFromEnv,
   AiEngine, a3OutputCeiling, createAiEngine, classifyAiFailure, decisionDigest, extractJsonBlock, filterSuggestionKey, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX,
   INTERRUPTED_ERROR_PREFIX, MAX_PAUSE_CONTINUATIONS, NO_OUTPUT_ERROR, OUTPUT_LIMIT_ERROR, PAUSED_ERROR, REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, SDK_MAX_RETRIES, STREAM_CEILING_MS,
 } from "./engine";
@@ -25,5 +25,8 @@ export { cvStageModel, estimateStage, type StageModels, type StageSizes } from "
 export { CACHE_WRITE_1H_MULTIPLIER, CACHE_WRITE_5M_MULTIPLIER, PRICING, SERVER_TOOL_USD, estimateCostUsd, estimateCvBuildUsd, estimateLibraryImportUsd, estimateLibraryReviewUsd, priceFor, serverToolCostUsd, type LibraryReviewSize, type TokenUsage } from "./pricing";
 export { canonicalEvidence, canonicalEvidenceBlock, canonicalEvidenceItems, evidenceBlockId } from "./evidence";
 export type { CanonicalEvidence, CanonicalEvidenceEntry, CanonicalEvidenceRow } from "./evidence";
+export { AiGovernor, BASE_PAUSE_MS, DEFAULT_MAX_STREAMS, MAX_PAUSE_MS, aiGovernorStats, defaultGovernor, maxStreamsFromEnv, retryAfterMs } from "./governor";
+export type { GovernorOptions, GovernorStats } from "./governor";
+export { modelSupportsEffort, modelSupportsServerFallback } from "./model-capabilities";
 export * as schemas from "./schemas";
 export * as prompts from "./prompts";

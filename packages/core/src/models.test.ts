@@ -3,7 +3,7 @@ import { MODEL_CHOICES, MODEL_IDS, isKnownModel, modelLabel } from "./models";
 import { DEFAULT_SETTINGS } from "./settings";
 
 describe("model choices", () => {
-  it("offers the current model of each family, with Opus 5 kept beside its successor for now", () => {
+  it("offers the current model of each family, keeping one superseded choice beside its successor for now", () => {
     expect(MODEL_IDS).toEqual(["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"]);
     expect(new Set(MODEL_IDS).size).toBe(MODEL_IDS.length);
   });

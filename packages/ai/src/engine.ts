@@ -809,11 +809,14 @@ export class AiEngine {
         const fresh = !(err instanceof CallCutOff) || (!err.cut && !err.began);
         if (reason instanceof APIError && reason.requestID) params.stats.requestId = reason.requestID;
         // Every engine in the process backs off from a throttle together, not one call at a time.
-        if (fresh && isThrottle(reason)) this.governor.noteThrottled(retryAfterMs(reason.headers));
+        const asked = fresh && isThrottle(reason) ? retryAfterMs(reason.headers) : undefined;
+        if (fresh && isThrottle(reason)) this.governor.noteThrottled(asked);
         if (!fresh || attempt > this.retries || !isRetryable(reason) || params.signal?.aborted) throw err;
         // A server error or a dropped connection: the SDK's own back-off, half a second doubling, jittered.
         const backOff = isThrottle(reason) ? 0 : Math.min(8_000, 500 * 2 ** (attempt - 1)) * (1 - Math.random() * 0.25);
-        if (waited + Math.max(backOff, this.governor.pauseLeftMs()) > RETRY_WAIT_BUDGET_MS) throw err;
+        // A provider asking for longer than the budget is not waited out on a shortened pause: the
+        // call ends as rate limited, and its task goes back on the queue.
+        if (waited + Math.max(backOff, this.governor.pauseLeftMs(), asked ?? 0) > RETRY_WAIT_BUDGET_MS) throw err;
         const began = Date.now();
         try {
           if (isThrottle(reason)) await this.governor.waitForPause(params.signal);

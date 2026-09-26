@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RateLimitError } from "@anthropic-ai/sdk";
-import { AiGovernor, BASE_PAUSE_MS, MAX_PAUSE_MS, maxStreamsFromEnv, retryAfterMs } from "./governor";
-import { SERVER_FALLBACK_BETA, STREAM_CEILING_MS, createAiEngine, type AiClientLike, type AiStreamLike, type AiUsageRecord, type ParseResponse } from "./engine";
+import { AiGovernor, BASE_PAUSE_MS, MAX_PAUSE_JITTER_MS, MAX_PAUSE_MS, maxStreamsFromEnv, retryAfterMs } from "./governor";
+import { RETRY_WAIT_BUDGET_MS, SERVER_FALLBACK_BETA, STREAM_CEILING_MS, createAiEngine, type AiClientLike, type AiStreamLike, type AiUsageRecord, type ParseResponse } from "./engine";
 
 afterEach(() => { vi.useRealTimers(); });
 
@@ -105,6 +105,17 @@ describe("the stream governor", () => {
     expect(governor.noteThrottled()).toBe(BASE_PAUSE_MS);
   });
 
+  it("counts a burst of throttles met during one pause as one throttle, and keeps pause plus jitter within the retry budget", () => {
+    const now = 0;
+    const governor = new AiGovernor({ now: () => now, random: () => 0 });
+    // Seven calls of one audit burst all meet a 429 at the same instant.
+    for (let i = 0; i < 7; i++) governor.noteThrottled(1_000);
+    expect(governor.pauseLeftMs()).toBeLessThanOrEqual(BASE_PAUSE_MS + MAX_PAUSE_JITTER_MS);
+    const single = new AiGovernor({ now: () => now });
+    single.noteThrottled(60_000);
+    expect(single.pauseLeftMs()).toBeLessThanOrEqual(RETRY_WAIT_BUDGET_MS);
+  });
+
   it("reads the provider's wait from its headers, and the cap from the environment", () => {
     expect(retryAfterMs(new Headers({ "retry-after-ms": "1500" }))).toBe(1500);
     expect(retryAfterMs(new Headers({ "retry-after": "7" }))).toBe(7000);
@@ -143,6 +154,40 @@ describe("the engine under the governor", () => {
     expect(sent.slice(1).every(at => at - start >= 5_000)).toBe(true);
     expect(usage.map(record => record.attempt).sort()).toEqual([1, 2]);
     expect(usage.every(record => record.ok)).toBe(true);
+  });
+
+  it("retries every call of a throttled burst after one short shared pause", async () => {
+    vi.useFakeTimers();
+    const governor = new AiGovernor({ random: () => 1 });
+    let calls = 0;
+    const client: AiClientLike = { messages: { create: async () => {
+      calls++;
+      if (calls <= 7) throw throttle({ "retry-after": "1" });
+      return answer();
+    } } };
+    const engine = createAiEngine({ client, governor, retries: 2, getModel: () => "test-model" });
+    const burst = Array.from({ length: 7 }, () => engine.analyseCvJob("Lead operations"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toBe(7);
+    await vi.advanceTimersByTimeAsync(BASE_PAUSE_MS + MAX_PAUSE_JITTER_MS);
+    expect(await Promise.all(burst)).toEqual(Array(7).fill(RUBRIC));
+    expect(calls).toBe(14);
+  });
+
+  it("waits out a provider's retry-after of a full minute instead of giving up on it", async () => {
+    vi.useFakeTimers();
+    const governor = new AiGovernor({ random: () => 1 });
+    let calls = 0;
+    const client: AiClientLike = { messages: { create: async () => {
+      calls++;
+      if (calls === 1) throw throttle({ "retry-after": "60" });
+      return answer();
+    } } };
+    const engine = createAiEngine({ client, governor, retries: 2, getModel: () => "test-model" });
+    const pending = engine.analyseCvJob("Lead operations");
+    await vi.advanceTimersByTimeAsync(RETRY_WAIT_BUDGET_MS);
+    expect(await pending).toEqual(RUBRIC);
+    expect(calls).toBe(2);
   });
 
   it("ends a call rather than wait past the minute its hold allows for back-off", async () => {

@@ -16,10 +16,14 @@ import type { PromptPriority } from "./prompt-registry";
 export const DEFAULT_MAX_STREAMS = 24;
 /** The first pause after a throttle, doubled for each throttle after it until a call succeeds. */
 export const BASE_PAUSE_MS = 1_000;
-/** The longest one pause may last, whatever the provider asks. */
-export const MAX_PAUSE_MS = 60_000;
 /** The most a waiter's release is spread past the end of a pause. */
 export const MAX_PAUSE_JITTER_MS = 2_000;
+/**
+ * The longest one pause may last, whatever the provider asks: short enough that the pause and the
+ * most jitter a waiter adds to it still fit the minute one call may spend waiting between attempts
+ * (`RETRY_WAIT_BUDGET_MS` in the engine), so a throttle the call could wait out is waited out.
+ */
+export const MAX_PAUSE_MS = 60_000 - MAX_PAUSE_JITTER_MS;
 
 export interface GovernorStats {
   /** Streams allowed open at once, per model. */
@@ -144,10 +148,12 @@ export class AiGovernor {
   /**
    * A throttle was met. Every request not yet sent waits until the shared pause ends: at least
    * what the provider asked for, and at least a base that doubles with each throttle in a row.
-   * Returns the pause, in milliseconds from now.
+   * Throttles met while a pause is already running are one throttle, not several: a burst of
+   * calls sent together meets its 429s together, and counting each would double the pause once
+   * per call. Returns the pause, in milliseconds from now.
    */
   noteThrottled(askedMs?: number): number {
-    this.throttles += 1;
+    if (this.now() >= this.pauseEnds) this.throttles += 1;
     const base = Math.min(MAX_PAUSE_MS, BASE_PAUSE_MS * 2 ** (this.throttles - 1));
     const pause = Math.min(MAX_PAUSE_MS, Math.max(base, askedMs ?? 0));
     const ends = this.now() + pause;

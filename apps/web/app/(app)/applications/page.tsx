@@ -87,7 +87,13 @@ export default async function ApplicationsPage({
   const empty = EMPTY[filter]!;
   const segmentHref = (segment: string) =>
     `/applications?${new URLSearchParams({ filter: segment, ...(company ? { company: company.id } : {}) })}`;
-  const building = result.rows.some((row) => row.cv?.status === "queued" || row.cv?.status === "generating");
+  const buildingRows = result.rows.filter((row) => row.cv?.status === "queued" || row.cv?.status === "generating");
+  const building = buildingRows.length > 0;
+  // What the one build in flight is doing, above the table; several are counted instead.
+  const only = buildingRows.length === 1 ? buildingRows[0]! : null;
+  const buildingMessage = only
+    ? `The CV for ${only.companyName} · ${only.jobTitle} is ${only.cv!.status === "queued" ? "queued" : `being built${only.cv!.progress ? `: ${only.cv!.progress}` : ""}`}; this page updates itself.`
+    : `${buildingRows.length} CVs are being built; this page updates itself.`;
   return (
     <div className="max-w-6xl space-y-5">
       <PageHeader
@@ -123,7 +129,7 @@ export default async function ApplicationsPage({
         ))}
       </nav>
       {/* A CV on this page is still being written: the cells follow it without a reload. */}
-      {building && <AutoRefresh scope="cv" initialVersion={cvWork.version} message="A CV is being built; this page updates itself." />}
+      {building && <AutoRefresh scope="cv" initialVersion={cvWork.version} message={buildingMessage} />}
       <ApplicationsTable
         key={`${filter}:${result.page}:${company?.id ?? ""}`}
         rows={result.rows}

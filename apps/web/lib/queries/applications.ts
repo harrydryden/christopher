@@ -19,6 +19,8 @@
  * the count, the order and the row can never disagree about where a role has got to.
  */
 import { and, desc, eq, inArray, isNotNull, isNull, ne, or, sql, type AnyColumn, type SQL } from "drizzle-orm";
+import { cvBuildRowLabel } from "@/lib/cv-build-narrative";
+import type { CvJournalStep } from "@/lib/cv-build-journal";
 import { QueryBuilder } from "drizzle-orm/pg-core";
 import {
   applications,
@@ -78,6 +80,8 @@ export interface PipelineCv {
   revision: number;
   finalisedAt: Date | null;
   createdAt: Date;
+  /** What a build in flight is doing, from its newest motion: "checking batch 3 of 5". */
+  progress?: string | null;
 }
 
 export interface PipelineApplication {
@@ -571,7 +575,29 @@ async function legacyRows(userId: string, only: { keys?: string[] } = {}): Promi
  * without waiting for the page to be rendered again.
  */
 export async function pipelineRowForJob(userId: string, jobId: string): Promise<PipelineRow | null> {
-  return (await roleRows(userId, { jobId }))[0] ?? null;
+  return (await withBuildProgress(userId, await roleRows(userId, { jobId })))[0] ?? null;
+}
+
+/**
+ * Each building CV's newest motion, in the few words the table's cell has room for, read in one
+ * query for the rows on the page. Guarded: a release serving before the ledger's migration shows
+ * the plain "Building…" it showed before, rather than an error over the whole table.
+ */
+async function withBuildProgress(userId: string, rows: PipelineRow[]): Promise<PipelineRow[]> {
+  const building = rows.flatMap((row) => (row.cv && row.cv.status === "generating" ? [row.cv.id] : []));
+  if (!building.length) return rows;
+  let newest: Map<string, string | null>;
+  try {
+    const result = await db().execute<{ draftId: string; motion: string; status: CvJournalStep["status"]; detail: Record<string, unknown> | null }>(sql`
+      select distinct on (s.draft_id) s.draft_id as "draftId", s.motion, s.status, s.detail
+      from cv_build_steps s
+      where s.user_id = ${userId} and s.draft_id in (${sql.join(building.map((id) => sql`${id}::uuid`), sql`, `)})
+      order by s.draft_id, s.seq desc`);
+    newest = new Map(result.rows.map((row) => [row.draftId, cvBuildRowLabel({ motion: row.motion, status: row.status, detail: row.detail ?? {} })]));
+  } catch {
+    return rows;
+  }
+  return rows.map((row) => (row.cv && newest.has(row.cv.id) ? { ...row, cv: { ...row.cv, progress: newest.get(row.cv.id) ?? null } } : row));
 }
 
 /** The catalogue company a `?company=` filter names. Shared data, so no account scopes the read. */
@@ -617,7 +643,7 @@ export async function listPipeline(
   const hydrated = new Map([...roles, ...legacy].map((row) => [row.key, row]));
   // The index decided the order; a key it listed that hydration cannot find changed underneath
   // this read and is left out rather than rendered half-empty.
-  const rows = order.flatMap((key) => (hydrated.has(key) ? [hydrated.get(key)!] : []));
+  const rows = await withBuildProgress(userId, order.flatMap((key) => (hydrated.has(key) ? [hydrated.get(key)!] : [])));
   return { rows, page, pageCount, total, counts, stages: stageCounts };
 }
 

@@ -32,25 +32,44 @@ export const getCompanyWorkStatus = cache(async function getCompanyWorkStatus(us
 /**
  * The account's CV builds in flight, for a page that lists CVs rather than watching one.
  *
- * `/api/work-status?cv=<id>` answers for a single build in all the detail its page renders; this
+ * `/api/cv/[id]/progress` answers for a single build in all the detail its page renders; this
  * is the account-wide reading the applications table needs, where several rows can be building at
- * once and the cell only says Queued, Building… or Ready. The version carries each draft's own
- * state and the state of the queue row behind it, so a cell moves from Queued to Building… to
- * Ready without a reload — and nothing narrower, because a build's milestones live in columns a
- * deployment ahead of the worker's migration may not have yet.
+ * once and each cell says what its build is doing ("Building · checking batch 3 of 5"). The version
+ * carries each draft's own state, the state of the queue row behind it, and the name of the newest
+ * motion in its ledger — the name only, not its figures, so the table is rendered again once per
+ * motion rather than once per batch or per tick.
+ *
+ * The ledger is read under a guard: a release serving ahead of the worker's migration falls back
+ * to the draft and the queue alone, as this reading was before the ledger existed.
  */
 export const getCvWorkStatus = cache(async function getCvWorkStatus(userId: string) {
-  const [row] = await db()
-    .select({
-      n: sql<number>`count(distinct ${cvDrafts.id})::int`,
-      version: sql<string>`md5(coalesce(string_agg(${cvDrafts.id}::text || ${cvDrafts.status} || coalesce(${tasks.status}, '-'), ',' order by ${cvDrafts.id}, ${tasks.id}), ''))`,
-    })
-    .from(cvDrafts)
-    // Payload is the stable relationship: a quiz continuation deliberately has a distinct dedupe
-    // key so it cannot collide with the task whose worker just paused.
-    .leftJoin(tasks, and(eq(tasks.type, 'generate_cv'), sql`${tasks.payload}->>'draftId' = ${cvDrafts.id}::text`))
-    .where(and(eq(cvDrafts.userId, userId), inArray(cvDrafts.status, ['queued', 'generating'])));
-  return { active: (row?.n ?? 0) > 0, version: row?.version ?? "" };
+  const inFlight = and(eq(cvDrafts.userId, userId), inArray(cvDrafts.status, ['queued', 'generating']));
+  // Payload is the stable relationship: a quiz continuation deliberately has a distinct dedupe
+  // key so it cannot collide with the task whose worker just paused.
+  const task = and(eq(tasks.type, 'generate_cv'), sql`${tasks.payload}->>'draftId' = ${cvDrafts.id}::text`);
+  try {
+    const [row] = await db()
+      .select({
+        n: sql<number>`count(distinct ${cvDrafts.id})::int`,
+        version: sql<string>`md5(coalesce(string_agg(${cvDrafts.id}::text || ${cvDrafts.status} || coalesce(${tasks.status}, '-') || coalesce((
+          select s.motion from cv_build_steps s where s.draft_id = ${cvDrafts.id} and s.user_id = ${userId} order by s.seq desc limit 1
+        ), '-'), ',' order by ${cvDrafts.id}, ${tasks.id}), ''))`,
+      })
+      .from(cvDrafts)
+      .leftJoin(tasks, task)
+      .where(inFlight);
+    return { active: (row?.n ?? 0) > 0, version: row?.version ?? "" };
+  } catch {
+    const [row] = await db()
+      .select({
+        n: sql<number>`count(distinct ${cvDrafts.id})::int`,
+        version: sql<string>`md5(coalesce(string_agg(${cvDrafts.id}::text || ${cvDrafts.status} || coalesce(${tasks.status}, '-'), ',' order by ${cvDrafts.id}, ${tasks.id}), ''))`,
+      })
+      .from(cvDrafts)
+      .leftJoin(tasks, task)
+      .where(inFlight);
+    return { active: (row?.n ?? 0) > 0, version: row?.version ?? "" };
+  }
 });
 
 /**

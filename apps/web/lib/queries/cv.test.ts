@@ -26,7 +26,7 @@ let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 let user: User;
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { getOwnCvBuildTask, getOwnCvDraft, readCvProgress } from "./cv";
+import { dailyCvVersions, getOwnCvBuildTask, getOwnCvDraft, readCvProgress } from "./cv";
 import { getCvWorkStatus } from "@/lib/work-status";
 
 const BUILD_COLUMNS = ["progress_at", "build_checkpoint", "failure", "gap_quiz"] as const;
@@ -110,6 +110,31 @@ it("reads a draft and its poll row from a database the worker has not migrated y
   expect(migrated!.buildCheckpoint).toMatchObject({ attempt: 1 });
   expect(migrated!.progressAt).toBeInstanceOf(Date);
   expect((await readCvProgress(user.id, draft.id))!.draft.failure).toMatchObject({ kind: "overloaded" });
+});
+
+it("probes for the daily versions table until it exists, then remembers that it does", async () => {
+  const draft = await seedDraft();
+  let probes = 0;
+  const counting = {
+    execute: ((query: Parameters<Db["execute"]>[0]) => { probes++; return database.execute(query); }) as Db["execute"],
+    select: database.select.bind(database) as Db["select"],
+  };
+  await database.execute(sql`alter table cv_versions rename to cv_versions_hidden`);
+  try {
+    // Behind its migration: no versions, and asked again next time rather than remembered.
+    expect((await dailyCvVersions(counting, [draft.id])).size).toBe(0);
+    expect((await dailyCvVersions(counting, [draft.id])).size).toBe(0);
+    expect(probes).toBe(2);
+  } finally {
+    await database.execute(sql`alter table cv_versions_hidden rename to cv_versions`);
+  }
+  // The draft's own daily number, which the database gave it when it was written.
+  const [stored] = await database.select({ version: schema.cvVersions.version }).from(schema.cvVersions).where(sql`${schema.cvVersions.cvId} = ${draft.id}`);
+  expect(stored?.version).toBeGreaterThan(0);
+  expect((await dailyCvVersions(counting, [draft.id])).get(draft.id)).toBe(stored!.version);
+  expect((await dailyCvVersions(counting, [draft.id])).get(draft.id)).toBe(stored!.version);
+  // Present once, so answered once: the second read asked nothing about the table.
+  expect(probes).toBe(3);
 });
 
 it("signs the whole ledger in SQL the way a reader signs the rows it holds, and sends only what moved", async () => {

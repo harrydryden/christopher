@@ -3,16 +3,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   latest: null as null | Record<string, unknown>,
 }));
-vi.mock("./queries/companies", () => ({ getLatestScanRun: vi.fn(async () => mocks.latest) }));
 vi.mock("./settings", () => ({ getSystemSettings: vi.fn(async () => ({ scanTime: "06:00", timezone: "Europe/London" })) }));
 vi.mock("./queries/scan-strip", () => ({
-  lastCompletedScanAt: vi.fn(async (userId: string) => (userId === "scanned" ? new Date("2026-09-11T04:30:00Z") : null)),
-  followingCount: vi.fn(async (userId: string) => (userId === "scanned" ? 6 : 0)),
+  scanStripFacts: vi.fn(async (userId: string) => ({
+    lastScanAt: userId === "scanned" ? new Date("2026-09-11T04:30:00Z") : null,
+    following: userId === "scanned" ? 6 : 0,
+    newRoleMatches: userId === "scanned" ? 3 : 0,
+    newCompanyMatches: userId === "scanned" ? 2 : 0,
+    latestRun: mocks.latest,
+  })),
 }));
-vi.mock("./queries/jobs", () => ({
-  fetchRoleCounts: vi.fn(async (userId: string) => ({ "auto-matched": userId === "scanned" ? 3 : 0, "user-shortlisted": 4, "user-dismissed": 5, archived: 1 })),
-}));
-vi.mock("./queries/suggestions", () => ({ suggestionCount: vi.fn(async (userId: string) => (userId === "scanned" ? 2 : 0)) }));
 
 import { getScanStatus, scanPollHint } from "./scan-status";
 

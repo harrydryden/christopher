@@ -1,5 +1,5 @@
 import { AutoRefresh } from "@/components/AutoRefresh";
-import { getCompanyWorkStatus } from "@/lib/work-status";
+import { getRolesWorkStatus } from "@/lib/work-status";
 import { PageHeader } from "@/components/PageHeader";
 import { RoleWorkspace } from "@/components/RoleWorkspace";
 import { SetupChecklist } from "@/components/SetupChecklist";
@@ -16,10 +16,12 @@ export const dynamic = "force-dynamic";
 /**
  * Streams in beside the table rather than holding it back for one more round trip. Silent: it only
  * refreshes the page as work completes, and the status strip at the top says what is happening.
+ * Nothing on this page shows a task's own state, so it watches the `roles` version, which moves
+ * when a task arrives or finishes and not when one merely starts running.
  */
 async function WorkNotice({ userId }: { userId: string }) {
-  const work = await getCompanyWorkStatus(userId);
-  return work.active ? <AutoRefresh scope="company" initialVersion={work.version} message={null} /> : null;
+  const work = await getRolesWorkStatus(userId);
+  return work.active ? <AutoRefresh scope="roles" initialVersion={work.version} message={null} /> : null;
 }
 
 /** At most this many terms on one line; the Learning card carries the rest with their evidence. */

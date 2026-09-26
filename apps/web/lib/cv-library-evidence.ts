@@ -9,14 +9,8 @@
  *
  * Nothing here gates anything. A block rated None is still active evidence if the person says so.
  */
-import {
-  EVIDENCE_FACETS_BY_NEED,
-  EVIDENCE_FACET_LABELS,
-  evidenceRows,
-  rowFacets,
-  type CvLibrary,
-  type EvidenceFacet,
-} from "@ava/core/cv";
+import { EVIDENCE_FACETS_BY_NEED, EVIDENCE_FACET_LABELS, evidenceRows, rowFacets, type EvidenceFacet } from "@ava/core/cv-helpers";
+import type { CvLibrary } from "@ava/core/cv";
 // Types only: the scorer they belong to reaches `node:crypto` and never reaches the browser.
 import type { EvidenceRating, LibraryReviewSource, LibraryRowSignal } from "@ava/core/library-review";
 

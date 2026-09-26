@@ -9,15 +9,8 @@
  *
  * Nothing here gates anything. It says what is missing and names the block it is missing from.
  */
-import {
-  eligibleCvEvidence,
-  employmentHeading,
-  isActiveEvidence,
-  responsibilityRows,
-  type CvEvidenceStatus,
-  type CvLibrary,
-  type Employment,
-} from "@ava/core/cv";
+import { eligibleCvEvidence, employmentHeading, isActiveEvidence, responsibilityRows, type CvEvidenceStatus } from "@ava/core/cv-helpers";
+import type { CvLibrary, Employment } from "@ava/core/cv";
 
 /** One job's evidence as the Library shows it: how much is written, how much is confirmed. */
 export interface CvJobReadiness {

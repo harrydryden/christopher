@@ -13,7 +13,7 @@ import type { CvShare } from "@ava/db";
 import { revokeCvShareLink } from "@/app/actions/cv-share";
 import { Badge, type Tone } from "@/components/Badge";
 import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
-import { CvShareCreateForm } from "@/components/CvShareCreateForm";
+import { CvShareCreateForm } from "@/components/CvLazyWidgets";
 import { labelClass, selectClass } from "@/components/Field";
 import { relativeTime, pluralize } from "@/lib/format";
 import {

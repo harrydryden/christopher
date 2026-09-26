@@ -6,7 +6,8 @@ import { failedWorkPoll, initialWorkPoll, stepWorkPoll, type WorkReading } from 
 /**
  * Refresh the page while work it shows is in flight, and once more when that work finishes.
  *
- * `scope` names which of the account's work the page watches (its companies' or its CVs'), and
+ * `scope` names which of the account's work the page watches (its companies', the same work as the
+ * Roles page sees it, or its CVs'), and
  * `initialVersion` is that work's version as the page rendered it; a page that passes both is
  * compared with exactly what it shows. The rules live in lib/polling.ts: a refresh per changed
  * version, asked for again a few times while a page that rendered its version has not shown the
@@ -21,7 +22,7 @@ export function AutoRefresh({
   message = "Waiting for the worker to generate your CV. Status updates automatically.",
 }: {
   cvId?: string;
-  scope?: "company" | "cv";
+  scope?: "company" | "roles" | "cv";
   initialVersion?: string;
   message?: string | null;
 }) {

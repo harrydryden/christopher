@@ -34,6 +34,7 @@ vi.mock("@/lib/cv-pdf", async (original) => {
   } };
 });
 
+import { revalidatePath } from "next/cache";
 import { manageRoleCv, recordApplication, setRoleStage, updateApplication } from "./applications";
 import { decide, decideRoles } from "./decisions";
 import { pipelineRowForJob } from "@/lib/queries/applications";
@@ -285,6 +286,26 @@ it("answers a CV action with the row as the table should now show it", async () 
   }).returning();
   expect(await manageRoleCv(null, legacy!.id, "archive")).toEqual({ ok: true, row: null });
   expect(await manageRoleCv(job.id, legacy!.id, "shred")).toEqual({ ok: false, error: "Choose Archive, Restore or Delete." });
+});
+
+it("revalidates the pages that show a stage or a CV, and not the whole layout", async () => {
+  // Nothing in the layout reads a stage or a CV; a layout-wide revalidation only made every later
+  // navigation render in full.
+  const revalidated = vi.mocked(revalidatePath);
+  const { company, job } = await fixture();
+  await database.insert(schema.decisions).values({ userId: user.id, jobId: job.id, decision: "apply", reason: "", jobTitle: job.title, companyName: "Acme" });
+  const [draft] = await database.insert(schema.cvDrafts).values({
+    userId: user.id, jobId: job.id, jobTitle: job.title, companyName: "Acme", jobDescription: DESCRIPTION,
+    libraryVersion: 1, librarySnapshot: LIBRARY, model: "test", status: "ready", revision: 1,
+  }).returning();
+
+  revalidated.mockClear();
+  expect(await setRoleStage(job.id, { ok: true }, form({ status: "applied", appliedOn: "2026-09-03", notes: "" }))).toEqual({ ok: true });
+  expect(revalidated.mock.calls).toEqual([["/applications"], ["/"], [`/companies/${company.id}`]]);
+
+  revalidated.mockClear();
+  expect((await manageRoleCv(job.id, draft!.id, "archive")).ok).toBe(true);
+  expect(revalidated.mock.calls).toEqual([["/applications"], ["/"], ["/companies/[id]", "page"]]);
 });
 
 it("upgrades the role's existing application when the submitted CV is recorded, rather than adding one", async () => {

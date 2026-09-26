@@ -1,14 +1,10 @@
 "use client";
 import { useState } from "react";
-import {
-  CV_FONTS,
-  CV_PAGE_CHOICES,
-  CV_THEMES,
-  cvForeground,
-  resolveCvTheme,
-  type CvFont,
-  type CvTheme,
-} from "@ava/core/cv";
+// Only the zod-free theme values: this component ships to /settings and the CV page, and the
+// validator is not needed to pick colours. Callers pass a theme already resolved on the server
+// (or, in the CV editor, resolved once from the server-validated revision).
+import { CV_PAGE_CHOICES } from "@ava/core/cv-format";
+import { CV_FONTS, CV_THEMES, cvForeground, type CvFont, type CvTheme } from "@ava/core/cv-theme-values";
 import { selectClass } from "@/components/Field";
 
 /** Browser stand-ins for the PDF faces: AVA is Helvetica; Arial is Liberation Sans in the PDF. */
@@ -17,11 +13,12 @@ const SAMPLE_FONT_FAMILY: Record<CvFont, string> = {
   Arial: 'Arial, "Liberation Sans", Helvetica, sans-serif',
 };
 
-export function CvAppearance({ value, onChange, name }: { value?: CvTheme; onChange?: (theme: CvTheme) => void; name?: string;
+export function CvAppearance({ value, onChange, name }: { value: CvTheme; onChange?: (theme: CvTheme) => void; name?: string;
 }) {
-  // A saved theme may predate the font and page limit; resolving fills those in without a save.
-  const [local, setLocal] = useState(() => resolveCvTheme(value));
-  const theme = onChange ? resolveCvTheme(value) : local;
+  // `value` is resolved by the caller (`resolveCvTheme` on the server), so a saved theme that
+  // predates the font and page limit arrives with them filled in, without a save.
+  const [local, setLocal] = useState(value);
+  const theme = onChange ? value : local;
   const selected = Object.entries(CV_THEMES).find(([, preset]) => (["primary", "background", "surface", "pill"] as const).every(
       (key) => preset[key].toLowerCase() === theme[key].toLowerCase()))?.[0];
   function change(next: CvTheme) { setLocal(next); onChange?.(next); }

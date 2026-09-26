@@ -342,7 +342,14 @@ export const scans = pgTable(
     revalidated: integer("revalidated"),
     rawSnapshot: text("raw_snapshot"),
   },
-  (t) => [index("scans_source_started_idx").on(t.sourceId, t.startedAt), index("scans_run_idx").on(t.scanRunId), index("scans_started_idx").on(t.startedAt)],
+  (t) => [
+    index("scans_source_started_idx").on(t.sourceId, t.startedAt),
+    index("scans_run_idx").on(t.scanRunId),
+    index("scans_started_idx").on(t.startedAt),
+    // A source's last completed scan (the status strip), from the newest entry of this index alone:
+    // no other index orders by finish, so the planner cannot walk the whole catalogue's scans instead.
+    index("scans_source_completed_idx").on(t.sourceId, t.finishedAt).where(sql`${t.finishedAt} is not null and ${t.status} <> 'failed'`),
+  ],
 );
 
 /** Every posting observed on a shared source. Which of them a person sees is decided in `user_jobs`. */

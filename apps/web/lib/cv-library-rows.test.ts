@@ -15,7 +15,6 @@ import {
   editableEmployment,
   jobEntry,
   jobRows,
-  openStoredLibrary,
   pendingRowKey,
   removeJob,
   removeJobRow,
@@ -25,6 +24,7 @@ import {
   tagRow,
   withArchivedEmployment,
 } from "./cv-library-rows";
+import { openStoredLibrary } from "./cv-library-open";
 
 const job: Employment = { id: "acme", company: "Acme", jobTitle: "Operations Director", startDate: "2023-01", endDate: "", current: true };
 const globex: Employment = { id: "globex", company: "Globex", jobTitle: "Head of Operations", startDate: "2019-01", endDate: "2022-12", current: false };

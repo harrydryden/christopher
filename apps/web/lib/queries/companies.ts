@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { latestApplicationFor, roleStageSql, roleStatusSql } from "@ava/db";
 import { MANUAL_RESCAN_INTERVAL_MS } from "@ava/core";
 import { and, asc, desc, eq, gte, inArray, isNotNull, ne, sql, getTableColumns, ilike, or, type SQL } from "drizzle-orm";
@@ -106,16 +107,7 @@ export async function listCompanies(userId: string, page = 1, q = "", order: Com
   if (!followed.length) return [];
   const ids = followed.map(c => c.company.id);
   const [lastScans, discoveringRows, sourceRows, discoveryRows, followerRows] = await Promise.all([
-    db()
-      .selectDistinctOn([careerSources.companyId], {
-        companyId: careerSources.companyId,
-        status: scans.status,
-        startedAt: scans.startedAt,
-      })
-      .from(scans)
-      .innerJoin(careerSources, eq(scans.sourceId, careerSources.id))
-      .where(inArray(careerSources.companyId, ids))
-      .orderBy(careerSources.companyId, desc(scans.startedAt)),
+    latestScanByCompany(ids),
     db()
       .select({ payload: tasks.payload, status: tasks.status })
       .from(tasks)
@@ -168,6 +160,33 @@ export async function listCompanies(userId: string, page = 1, q = "", order: Com
     needsSource: !withSource.has(company.id),
     lastDiscovery: (lastDiscoveryByCompany.get(company.id) as CompanyListRow["lastDiscovery"]) ?? null,
   }));
+}
+
+/**
+ * The newest scan of any source of each company, for a page of companies. Each source's newest
+ * start is read from that source's entries in `scans_source_started_idx` (index-only), and only that
+ * row is read back, so the cost follows the page's sources, not the scans the catalogue has
+ * retained: sorting every retained scan of the page's companies cost 6.5 ms at 7,560 rows and grew
+ * daily.
+ *
+ * The `+ interval '0'` is load-bearing. A bare `max(started_at)` (or `order by started_at desc
+ * limit 1`, and even `order by source_id desc, started_at desc`, whose first key the planner drops
+ * as fixed by the source) can be answered by walking `scans_started_idx` backwards and filtering on
+ * the source, which the planner picks on small or stale statistics: for a source with no scans that
+ * reads the whole index, once per such source. An aggregate over an expression cannot use that
+ * shortcut, so the only index that helps is the one keyed on the source: one bounded range per
+ * source (its retained scans), whatever the statistics say. `indexes.test.ts` holds the plan to it.
+ */
+export async function latestScanByCompany(ids: string[]): Promise<Array<{ companyId: string; status: Scan["status"]; startedAt: Date }>> {
+  if (!ids.length) return [];
+  const result = await db().execute<{ company_id: string; status: Scan["status"]; started_at: Date | string }>(sql`
+    select distinct on (src.company_id) src.company_id, s.status, s.started_at
+    from ${careerSources} src
+    cross join lateral (select max(newest.started_at + interval '0 seconds') as at from ${scans} newest where newest.source_id = src.id) latest
+    join ${scans} s on s.source_id = src.id and s.started_at = latest.at
+    where src.company_id in (${sql.join(ids.map(id => sql`${id}`), sql`, `)})
+    order by src.company_id, s.started_at desc`);
+  return result.rows.map(row => ({ companyId: row.company_id, status: row.status, startedAt: new Date(row.started_at) }));
 }
 
 /** One catalogue company found by the Discover tab's search, and where this account stands with it. */
@@ -233,33 +252,33 @@ export async function getCompanySources(companyId: string): Promise<CareerSource
   return db().select().from(careerSources).where(eq(careerSources.companyId, companyId)).orderBy(asc(careerSources.createdAt));
 }
 
-export async function getLatestDiscoveryRun(companyId: string): Promise<DiscoveryRun | null> {
+/** A company's newest discovery run as the page shows it: everything but the step-by-step log. */
+export type LatestDiscoveryRun = Omit<DiscoveryRun, "log">;
+
+/**
+ * Read once per request: the company page and its setup timeline both want it. The `log` is left in
+ * the database; only an administrator's diagnostics show it (`getLatestDiscoveryLog`).
+ */
+export const getLatestDiscoveryRun = cache(async (companyId: string): Promise<LatestDiscoveryRun | null> => {
+  const { log: _log, ...columns } = getTableColumns(discoveryRuns);
   const rows = await db()
-    .select()
+    .select(columns)
     .from(discoveryRuns)
     .where(eq(discoveryRuns.companyId, companyId))
     .orderBy(desc(discoveryRuns.startedAt))
     .limit(1);
   return rows[0] ?? null;
-}
+});
 
-/**
- * Shared discovery queued or running for one company — the same task lookup the companies list
- * makes for a page of them, narrowed to one. Logo captures are excluded: they ride the discover
- * task but say nothing about whether a careers page is being looked for.
- */
-export async function companyDiscoveryState(companyId: string): Promise<"queued" | "running" | null> {
-  const rows = await db()
-    .select({ status: tasks.status })
-    .from(tasks)
-    .where(and(
-      eq(tasks.type, "discover"),
-      sql`coalesce(${tasks.payload}->>'logoOnly', 'false') != 'true'`,
-      inArray(tasks.status, ["queued", "running"]),
-      sql`${tasks.payload}->>'companyId' = ${companyId}`,
-    ));
-  if (!rows.length) return null;
-  return rows.some(row => row.status === "running") ? "running" : "queued";
+/** The newest discovery run's log, for the administrator's diagnostics; empty when there is none. */
+export async function getLatestDiscoveryLog(companyId: string): Promise<unknown[]> {
+  const [row] = await db()
+    .select({ log: discoveryRuns.log })
+    .from(discoveryRuns)
+    .where(eq(discoveryRuns.companyId, companyId))
+    .orderBy(desc(discoveryRuns.startedAt))
+    .limit(1);
+  return Array.isArray(row?.log) ? row.log : [];
 }
 
 export interface CompanyScanRow extends Omit<Scan, "rawSnapshot"> {
@@ -385,7 +404,8 @@ export async function companySetupRows(userId: string, companyId: string): Promi
   const [run, taskRows, sourceRows, counts] = await Promise.all([
     getLatestDiscoveryRun(companyId),
     // Logo captures ride the `discover` task and say nothing about a careers page, so they are
-    // left out here exactly as `companyDiscoveryState` leaves them out.
+    // left out here exactly as the companies list leaves them out. The company page's "looking for
+    // the careers page" is this read's discovery task.
     db()
       .select({ type: tasks.type, status: tasks.status, startedAt: tasks.startedAt })
       .from(tasks)
@@ -627,12 +647,7 @@ export async function listCatalogue(viewerId: string, page = 1, q = ""): Promise
       .from(careerSources)
       .where(inArray(careerSources.companyId, ids))
       .orderBy(asc(careerSources.createdAt)),
-    db()
-      .selectDistinctOn([careerSources.companyId], { companyId: careerSources.companyId, status: scans.status, startedAt: scans.startedAt })
-      .from(scans)
-      .innerJoin(careerSources, eq(scans.sourceId, careerSources.id))
-      .where(inArray(careerSources.companyId, ids))
-      .orderBy(careerSources.companyId, desc(scans.startedAt)),
+    latestScanByCompany(ids),
   ]);
   const followers = new Map(followerRows.map((r) => [r.companyId, r.n]));
   const viewer = new Set(viewerRows.map((r) => r.companyId));

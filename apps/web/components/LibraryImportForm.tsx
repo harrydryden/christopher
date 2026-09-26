@@ -1,6 +1,5 @@
 "use client";
 import { useRef, useState, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
 import { buttonClass, type ButtonVariant } from "@/components/Button";
 import { LIBRARY_UPLOAD_MAX_BYTES } from "@/lib/library-upload";
 import type { ActionResult } from "@/lib/validation";
@@ -8,9 +7,11 @@ import type { ActionResult } from "@/lib/validation";
 /**
  * One import form: submit, wait, and say what happened without leaving the page.
  *
- * Modelled on `DiscoverySourceForm`, with one difference that matters here: it stays put and
- * refreshes the page instead of navigating, because what the person is waiting for — "Reading
- * your document…", and then the proposal — appears further down this same page.
+ * Modelled on `DiscoverySourceForm`, with one difference that matters here: it stays put instead
+ * of navigating, because what the person is waiting for — "Reading your document…", and then the
+ * proposal — appears further down this same page. Every import action revalidates `/library` on
+ * success, so the action's own response already carries the page as it is now; a
+ * `router.refresh()` on top would only render and download it a second time.
  *
  * A file over the cap is refused before it is sent. The action refuses it too, and so does the
  * column behind it; this is the refusal that arrives immediately rather than after a five-megabyte
@@ -34,7 +35,6 @@ export function LibraryImportForm({
   confirm?: string;
   variant?: ButtonVariant;
 }) {
-  const router = useRouter();
   const busy = useRef(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -65,7 +65,6 @@ export function LibraryImportForm({
           }
           setMessage(result.message ?? "Done.");
           element.reset();
-          router.refresh();
         } catch {
           setError("That could not be sent. Your text is still here; please try again.");
         } finally {

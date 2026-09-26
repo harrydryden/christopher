@@ -1,6 +1,5 @@
 "use client";
 import { useActionState } from "react";
-import { useRouter } from "next/navigation";
 import { refreshCompany } from "@/app/actions/companies";
 import { Button } from "./Button";
 
@@ -9,10 +8,9 @@ import { Button } from "./Button";
  * the action still asks `requireVerifiedUser()` for itself, this only stops the press.
  */
 export function RefreshCompanyButton({ companyId, running, blockedReason }: { companyId: string; running: boolean; blockedReason?: string }) {
-  const router = useRouter();
+  // `refreshCompany` revalidates the company pages, so its own response carries the fresh page.
   const [, action, pending] = useActionState(async () => {
     await refreshCompany(companyId);
-    router.refresh();
   }, undefined);
   return (
     <form action={action}>

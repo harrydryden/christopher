@@ -2,13 +2,11 @@
 import { CV_PROFILE_ID, cvEditFormId, cvSectionBlockId } from "@/lib/cv-content-links";
 import { useFormStatus } from "react-dom";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import {
-  resolveCvTheme,
-  CV_LIMITS,
-  CvContentSchema,
-  cvDisplaySections,
-  type CvContent,
-} from "@ava/core/cv";
+// Zod-free parts of the CV contract only; `CvContentSchema` is loaded when a preview is asked for.
+import { CV_LIMITS } from "@ava/core/cv-format";
+import { cvDisplaySections } from "@ava/core/cv-helpers";
+import type { CvTheme } from "@ava/core/cv-theme-values";
+import type { CvContent } from "@ava/core/cv";
 import { saveCvDraft } from "@/app/actions/cv";
 import { formatUsd } from "@/lib/format";
 import type { CvEditCosts } from "@/lib/cv-quote";
@@ -64,6 +62,7 @@ function CommentCount({ n }: { n: number }) {
 export function CvDraftEditor({
   id,
   content,
+  theme: resolvedTheme,
   assessment,
   tracking,
   share,
@@ -74,6 +73,8 @@ export function CvDraftEditor({
 }: {
   id: string;
   content: CvContent;
+  /** `resolveCvTheme(content.theme)`, computed on the server so this component needs no validator. */
+  theme: CvTheme;
   assessment?: ReactNode;
   tracking?: ReactNode;
   /** Share links and their notes, rendered on the server beside the PDF controls. */
@@ -93,8 +94,9 @@ export function CvDraftEditor({
 }) {
   const formId = `cv-edit-${id}`;
   const [summary, setSummary] = useState(content.summary);
-  // A saved revision may predate the font and page limit; resolving once keeps edits comparable.
-  const [baseTheme] = useState(() => resolveCvTheme(content.theme));
+  // A saved revision may predate the font and page limit; resolved once, on the server, so edits
+  // stay comparable.
+  const [baseTheme] = useState(resolvedTheme);
   const [theme, setTheme] = useState(baseTheme);
   const [rows, setRows] = useState(
     content.sections.map((section) =>
@@ -133,6 +135,17 @@ export function CvDraftEditor({
   );
   useEffect(() => () => controller.current?.abort(), []);
   async function updatePreview() {
+    // The same check as before, loaded on first use: the schema and zod are not in the page's
+    // first load, and `/api/cv/preview` validates again on the server regardless.
+    // A chunk that cannot be fetched (offline, or a deployment that replaced it) must say so rather
+    // than leave the button doing nothing.
+    let CvContentSchema: typeof import("@ava/core/cv").CvContentSchema;
+    try {
+      ({ CvContentSchema } = await import("@ava/core/cv"));
+    } catch {
+      setError("Could not load the preview. Check your connection and try again.");
+      return;
+    }
     const parsed = CvContentSchema.safeParse(candidate);
     if (!parsed.success) {
       setError(parsed.error.issues.map((issue) => issue.message).join(" "));

@@ -120,6 +120,30 @@ it("quotes the build this account would pay for, from the same estimator the wor
   expect(quote.hasLibrary).toBe(true);
 });
 
+it("measures the stored description in the database, in the bytes a build would send", async () => {
+  // Multi-byte text: the database's octet count must be the byte length, not the character count.
+  const accented = `${DESCRIPTION}\nCafé-based naïve résumé review — ✓ 三 sites.`;
+  const job = await visibleRole(accented);
+  await saveLibrary();
+  const texts: string[] = [];
+  const query = pool.query.bind(pool) as (...args: unknown[]) => Promise<unknown>;
+  const spy = vi.spyOn(pool, "query").mockImplementation(((...args: unknown[]) => {
+    const first = args[0] as string | { text: string };
+    texts.push(typeof first === "string" ? first : first.text);
+    return query(...args);
+  }) as never);
+  const quote = await cvBuildQuote(user.id, job.id).finally(() => spy.mockRestore());
+  expect(quote.estimateUsd).toBeCloseTo(
+    estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: quote.libraryBytes, descriptionBytes: Buffer.byteLength(accented) }, "tailored"),
+    6,
+  );
+  expect(Buffer.byteLength(accented)).toBeGreaterThan(accented.length);
+  // The text itself is never read across: only its length is.
+  const reading = texts.filter((text) => text.includes("description_text"));
+  expect(reading.length).toBeGreaterThan(0);
+  for (const text of reading) expect(text).toContain("octet_length");
+});
+
 it("counts this account's own spend and its own live holds, and nobody else's", async () => {
   const job = await visibleRole();
   await saveLibrary();

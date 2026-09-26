@@ -77,14 +77,22 @@ export async function importLibraryDocument(form: FormData): Promise<ActionResul
       // `unread` is the document as it arrived, untouched: only `completeLibraryImport` clears an
       // upload's bytes, and it always stamps the row as processed at the same time.
       const unread = !row.processedAt;
-      if (unread && !row.resolvedAt) return said("You have already imported this document. It is still being read.");
+      // Every success path revalidates: the form relies on the action's own response to show the
+      // page as it is now, and a person submitting again may be looking at a page from before.
+      if (unread && !row.resolvedAt) {
+        revalidatePath("/library");
+        return said("You have already imported this document. It is still being read.");
+      }
       // Nothing was kept from it — a file that could not be converted keeps its refusal and no
       // text — so there is nothing left to read, and the same upload would fail the same way.
       if (!unread && !row.content) {
         return fail(row.error ?? "AVA could not read that document. Try a different export of it, or paste the text instead.");
       }
       // Read, and still waiting for them: what was found is on this page already.
-      if (row.proposal && !row.resolvedAt) return said("You have already imported this document. What was found in it is below.");
+      if (row.proposal && !row.resolvedAt) {
+        revalidatePath("/library");
+        return said("You have already imported this document. What was found in it is below.");
+      }
       // Finished with once — accepted, dismissed, or refused with the text kept — and now handed
       // over again deliberately. Reading it again costs one call and no second upload.
       await reopenLibraryImport(user.id, row.id);

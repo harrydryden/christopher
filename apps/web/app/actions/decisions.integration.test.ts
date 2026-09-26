@@ -24,7 +24,8 @@ vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (session ? {
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
-import { roleDetails } from "./decisions";
+import { revalidatePath } from "next/cache";
+import { archiveRoles, decide, decideRoles, roleDetails } from "./decisions";
 
 const DESCRIPTION = [
   "Head of Operations at a community health provider.",
@@ -165,5 +166,49 @@ describe("what the review panel loads on expand", () => {
     const job = await role();
     session = stranger.cookie;
     expect(await roleDetails(job.id)).toEqual({ ok: false, error: "Role not found." });
+  });
+});
+
+/**
+ * The roles table no longer calls `router.refresh()` after a decision: it relies on the action's
+ * own response carrying the re-rendered page, which Next does only when the action revalidates.
+ * So every success path must revalidate, and the pages that show a decision must be among them.
+ */
+describe("what a decision revalidates", () => {
+  const revalidated = vi.mocked(revalidatePath);
+  const DECIDED_PAGES = [["/"], ["/applications"], ["/companies"], ["/companies/[id]", "page"]];
+
+  it("revalidates the pages that show a decision on every success path of decide", async () => {
+    const job = await role(null);
+    for (const [decision, reason] of [["apply", ""], ["skip", "Wrong location"], [null, ""]] as const) {
+      revalidated.mockClear();
+      expect(await decide(job.id, decision, reason)).toEqual({ ok: true });
+      expect(revalidated.mock.calls).toEqual(DECIDED_PAGES);
+    }
+  });
+
+  it("revalidates nothing when decide refuses, so the table knows to put the row back", async () => {
+    const job = await role(null);
+    revalidated.mockClear();
+    expect(await decide(job.id, "skip", "  ")).toMatchObject({ ok: false });
+    expect(revalidated).not.toHaveBeenCalled();
+  });
+
+  it("revalidates the same pages for a group decision, a group undo and the archive", async () => {
+    const ids = [(await role(null)).id, (await role(null)).id];
+    const runs = [
+      () => decideRoles(ids, "skip", "Not interested"),
+      () => decideRoles(ids, null, ""),
+      () => archiveRoles(ids, true),
+      () => archiveRoles(ids, false),
+    ];
+    for (const run of runs) {
+      revalidated.mockClear();
+      expect(await run()).toEqual({ ok: true });
+      expect(revalidated.mock.calls).toEqual(DECIDED_PAGES);
+    }
+    revalidated.mockClear();
+    expect(await decideRoles(ids, "skip", "")).toMatchObject({ ok: false });
+    expect(revalidated).not.toHaveBeenCalled();
   });
 });

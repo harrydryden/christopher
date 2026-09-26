@@ -11,6 +11,10 @@ import { iconCandidates } from "@/lib/company-icon";
  * unverified `/favicon.ico` guess. So the browser, which those sites do let in, walks a chain:
  * the stored URL, then the site's own `/favicon.ico`, then a public icon service keyed by
  * domain. Each miss steps silently to the next; the last miss leaves the placeholder square.
+ *
+ * A roles page carries fifty of these, most below the fold, so they load lazily and decode off
+ * the main thread. Width and height are set, so nothing moves when one arrives, and an icon that
+ * fails still steps down the chain when the browser gets to it.
  */
 export function CompanyFavicon({ src, domain, size = 16 }: { src: string | null; domain?: string | null; size?: number }) {
   const candidates = iconCandidates(src, domain);
@@ -27,6 +31,8 @@ export function CompanyFavicon({ src, domain, size = 16 }: { src: string | null;
       alt=""
       width={size}
       height={size}
+      loading="lazy"
+      decoding="async"
       referrerPolicy="no-referrer"
       className="shrink-0"
       onError={() => setIndex((i) => i + 1)}

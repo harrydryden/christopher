@@ -102,6 +102,14 @@ function CatalogueBox({ q, matches, domain, blockedReason }: { q: string; matche
   </section>;
 }
 
+/**
+ * The deck shows one card and the edge of the next, so it is sent a handful rather than all the
+ * pending suggestions: each card is a server-rendered face serialised into every render of this
+ * page, including the one each swipe's action sends back. The spare cards cover swipes made before
+ * that render arrives with the next ones; the count comes from `reviewCount`.
+ */
+const DECK_CARDS = 8;
+
 export default async function SuggestionsPage({ searchParams }: { searchParams: Promise<{ view?: string; notice?: string; page?: string; q?: string; error?: string; added?: string; followed?: string; skipped?: string }> }) {
   const user = await requireUser();
   const params = await searchParams;
@@ -111,7 +119,7 @@ export default async function SuggestionsPage({ searchParams }: { searchParams: 
   const [reviewCount, historyTotal, gateChosen] = await Promise.all([suggestionCount(user.id), view === "history" ? suggestionCount(user.id, true, q) : Promise.resolve(0), hasChosenGate(user.id)]);
   const page = Math.min(pageNumber(params.page), Math.max(1, Math.ceil(historyTotal / 50)));
   const [pending, resolved, matches, sourceCount, settings, active] = await Promise.all([
-    view === "review" ? listPendingSuggestions(user.id, 1) : Promise.resolve([]), view === "history" ? listResolvedSuggestions(user.id, 50, page, q) : Promise.resolve([]),
+    view === "review" ? listPendingSuggestions(user.id, 1, "", DECK_CARDS) : Promise.resolve([]), view === "history" ? listResolvedSuggestions(user.id, 50, page, q) : Promise.resolve([]),
     view === "review" && q.trim() ? searchCatalogue(user.id, domain ?? q) : Promise.resolve([]),
     db().select().from(discoverySources).where(eq(discoverySources.userId, user.id)), getSettings(),
     db().select({ id: tasks.id, type: tasks.type, status: tasks.status }).from(tasks).where(and(
@@ -162,6 +170,7 @@ export default async function SuggestionsPage({ searchParams }: { searchParams: 
       </div>
       <SuggestionDeck
         cards={pending.map(row => ({ id: row.suggestion.id, name: row.suggestion.name, body: <SuggestionCardContent row={row}/> }))}
+        total={reviewCount}
         empty={empty}
         disabledReason={blockedReason ?? undefined}
       />

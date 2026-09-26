@@ -1,5 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { prerenderToNodeStream } from "react-dom/static";
 import { expect, it, vi } from "vitest";
 import { createCvAssessment } from "@ava/core/cv-review";
 import { materialiseCv, type CvLibrary } from "@ava/core/cv";
@@ -12,11 +13,30 @@ import {
   rubricFixture,
   reviewFixture,
 } from "../../../packages/core/test/cv-review-fixture";
+// Next resolves `next/dynamic` to its app-router implementation for app/ code; outside Next the
+// package entry is the pages-router one, which never renders the component on the server.
+vi.mock("next/dynamic", async () => {
+  const appDynamic = (await import("next/dist/shared/lib/app-dynamic")) as { default: unknown };
+  const dynamic = appDynamic.default as { default?: unknown };
+  return { default: dynamic.default ?? dynamic };
+});
 vi.mock("@/app/actions/cv", () => ({
   assessCvDraft: vi.fn(),
   finaliseCvDraft: vi.fn(),
 }));
 import { CvAssessmentPanel } from "@/components/CvAssessmentPanel";
+
+/**
+ * The panel as the server sends it, with the evaluation table in it. The table is its own chunk
+ * (components/CvLazyWidgets.tsx), which a server render waits for; `renderToStaticMarkup` cannot,
+ * so it would show only the loading fallback in the table's place.
+ */
+async function renderSettled(element: Parameters<typeof renderToStaticMarkup>[0]): Promise<string> {
+  const { prelude } = await prerenderToNodeStream(element);
+  let html = "";
+  for await (const chunk of prelude) html += String(chunk);
+  return html;
+}
 const library: CvLibrary = {
   name: "Example",
   contact: "",
@@ -36,7 +56,7 @@ const content = materialiseCv(library, {
   sections: [{ entryId: "e", bullets: ["Owned a £10m budget"] }],
   gaps: [],
 });
-it("shows evidence questions and actual unsupported wording, with no finalisation control", () => {
+it("shows evidence questions and actual unsupported wording, with no finalisation control", async () => {
   const description = "Own a budget";
   const rubric = rubricFixture(description);
   const review = reviewFixture({
@@ -66,7 +86,7 @@ it("shows evidence questions and actual unsupported wording, with no finalisatio
     model: "test",
     pageCount: 1,
   });
-  const html = renderToStaticMarkup(
+  const html = await renderSettled(
     createElement(CvAssessmentPanel, {
       id: "test",
       assessment,

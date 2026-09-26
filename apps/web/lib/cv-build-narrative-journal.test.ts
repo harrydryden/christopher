@@ -119,7 +119,7 @@ describe("the journal's wording, motion by motion", () => {
     // Without a failure record, the detail's own error is the reason, never nothing.
     expect(narrateStep(step("assess_batch", "failed", { index: 3, of: 5, error: "Stream stalled" }), now).note).toBe("Stream stalled");
 
-    const cancelled = narrateStep(step("assess_batch", "skipped", { pass: "draft", index: 3, of: 5, cancelled: true }), now);
+    const cancelled = narrateStep(step("assess_batch", "skipped", { pass: "draft", index: 3, of: 5, cancelled: true }), now, { batchFailed: true });
     expect(cancelled.text).toBe("Stopped checking batch 3 of 5: another batch failed");
     expect(cancelled.tone).toBe("gray");
     expect(cancelled.glyph).toBe("–");
@@ -331,6 +331,43 @@ describe("the narrative's shape", () => {
     expect(write!.kind === "line" && write!.line.status).toBe("interrupted");
     // With no moment to measure to, it says so without a figure.
     expect(lines(narrateBuild(steps, s(4000), { interrupted: true }))[1]).toBe("– Writing the CV · Interrupted");
+  });
+});
+
+describe("a build cut off part-way", () => {
+  it("calls an improvement the worker closed as cancelled interrupted, not unnecessary", () => {
+    // `skipOpenCvBuildSteps` closes every running row `skipped` with `cancelled: true`.
+    const cut = narrateStep(step("improve_content", "skipped", { opportunities: 2, cancelled: true }), now);
+    expect(cut.text).toBe("The optional revision was interrupted; kept the original");
+    expect(cut.tone).toBe("gray");
+    expect(text(step("assemble", "skipped", { pass: "revision", cancelled: true }))).toBe("Stopped scoring: the build was interrupted");
+    expect(text(step("admit_budget", "skipped", { stage: "reaudit", cancelled: true }, { title: "Reserving this build's share of your AI budget" }))).toBe(
+      "Interrupted while reserving this build's share of your AI budget",
+    );
+    // What the worker records when there was nothing to improve still says so.
+    expect(text(step("improve_content", "skipped", { opportunities: 0, skipped: true }))).toBe("No further supported priority evidence needed adding");
+  });
+
+  it("says another batch failed only when one did", () => {
+    nextSeq = 0;
+    const cutOff = [
+      step("publish", "done"),
+      step("improve_content", "done", { opportunities: 2 }),
+      step("assess_batch", "done", { pass: "revision", index: 1, of: 2 }),
+      step("assess_batch", "skipped", { pass: "revision", index: 2, of: 2, cancelled: true }),
+    ];
+    const group = narrateBuild(cutOff, now).find((item) => item.kind === "group");
+    expect(group!.kind === "group" && group!.group.batches.map((batch) => batch.line.text)).toEqual([
+      "Checked the revision: a batch of requirements and claims (batch 1 of 2)",
+      "Stopped checking batch 2 of 2: the build was interrupted",
+    ]);
+    nextSeq = 0;
+    const sibling = [
+      step("assess_batch", "failed", { pass: "draft", index: 1, of: 2 }),
+      step("assess_batch", "skipped", { pass: "draft", index: 2, of: 2, cancelled: true }),
+    ];
+    const failed = narrateBuild(sibling, now)[0]!;
+    expect(failed.kind === "group" && failed.group.batches[1]!.line.text).toBe("Stopped checking batch 2 of 2: another batch failed");
   });
 });
 

@@ -57,6 +57,12 @@ export interface NarrativeContext {
   stoppedAt?: Date | null;
   /** The page's own reading of the queue's allowance, for an attempt that did not record one. */
   maxAttemptsFallback?: number | null;
+  /**
+   * Set by the assessment's row for the batches inside it: whether one of them actually failed. A
+   * batch the worker closed as cancelled was stopped either because a sibling failed or because the
+   * build itself was cut off, and only this says which.
+   */
+  batchFailed?: boolean;
 }
 
 export type NarratedStatus = CvJournalStep["status"] | "interrupted";
@@ -233,8 +239,12 @@ function failedPhrase(step: CvJournalStep): string {
 }
 
 /** The line a motion the worker skipped leaves behind: what was reused instead of paid for. */
-function skippedPhrase(step: CvJournalStep): string {
+function skippedPhrase(step: CvJournalStep, context: NarrativeContext = {}): string {
   const detail = step.detail;
+  // `cancelled` is what the worker writes on a motion it closed because the build was cut off (or,
+  // for an assessment batch, because a sibling failed): it reads as that, never as the motion
+  // having had nothing to do.
+  const cancelled = flag(detail, "cancelled");
   switch (step.motion) {
     case "rubric": {
       const from = text(detail, "reused");
@@ -251,18 +261,20 @@ function skippedPhrase(step: CvJournalStep): string {
     case "measure":
       return "Skipped measuring: the wording has not changed";
     case "assess_batch": {
-      if (flag(detail, "cancelled")) {
+      if (cancelled) {
         const { index, of } = batchPosition(detail);
         const which = index === null ? "a batch" : `batch ${formatCount(index)}${of === null ? "" : ` of ${formatCount(of)}`}`;
-        return `Stopped checking ${which}: another batch failed`;
+        return `Stopped checking ${which}: ${context.batchFailed ? "another batch failed" : "the build was interrupted"}`;
       }
       return "Skipped checking requirements and claims against your evidence";
     }
     case "assess_retry":
       return "No batch needed re-checking";
     case "assemble":
+      if (cancelled) return "Stopped scoring: the build was interrupted";
       return flag(detail, "reused") ? "Kept the assessment already made" : "Skipped scoring the CV";
     case "improve_content":
+      if (cancelled) return "The optional revision was interrupted; kept the original";
       return flag(detail, "kept") ? "Tried one targeted revision; kept the original" : "No further supported priority evidence needed adding";
     case "gap_quiz":
       return "No extra evidence questions needed";
@@ -271,7 +283,7 @@ function skippedPhrase(step: CvJournalStep): string {
       return reason ? `Kept the original: ${lowerFirst(reason.replace(/\.$/, ""))}` : "Kept the original";
     }
     default:
-      return `Skipped ${lowerFirst(step.title)}`;
+      return cancelled ? `Interrupted while ${lowerFirst(step.title)}` : `Skipped ${lowerFirst(step.title)}`;
   }
 }
 
@@ -527,7 +539,7 @@ export function narrateStep(step: CvJournalStep, now: Date = new Date(), context
       : step.status === "done"
         ? donePhrase(step, context)
         : step.status === "skipped"
-          ? skippedPhrase(step)
+          ? skippedPhrase(step, context)
           : failedPhrase(step);
   const changes = step.motion === "shorten" ? names(step.detail, "changes") : [];
   const reason = optional ? text(step.detail, "reason") : null;
@@ -677,7 +689,8 @@ function narrateGroup(steps: CvJournalStep[], now: Date, context: NarrativeConte
     }
     meta = [formatStepDuration(Math.max(0, last - first.startedAt.getTime())), usd > 0 ? formatUsdPrecise(usd) : null].filter((part): part is string => part !== null).join(" · ");
   }
-  const narratedBatches: NarratedBatch[] = batches.map((step) => ({ line: narrateStep(step, now, context), retries: [] }));
+  const batchContext: NarrativeContext = { ...context, batchFailed: failed };
+  const narratedBatches: NarratedBatch[] = batches.map((step) => ({ line: narrateStep(step, now, batchContext), retries: [] }));
   const byIndex = new Map<number, NarratedBatch>();
   batches.forEach((step, i) => {
     const index = batchPosition(step.detail).index;
@@ -686,7 +699,7 @@ function narrateGroup(steps: CvJournalStep[], now: Date, context: NarrativeConte
   for (const retry of retries) {
     const index = batchPosition(retry.detail).index;
     const owner = index === null ? undefined : byIndex.get(index);
-    const line = narrateStep(retry, now, context);
+    const line = narrateStep(retry, now, batchContext);
     // A re-check of a batch this pass never showed still says what it did, on a line of its own.
     if (owner) owner.retries.push(line);
     else narratedBatches.push({ line, retries: [] });

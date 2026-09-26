@@ -152,6 +152,7 @@ import {
   listRecentWorkerEvents,
   normaliseCvBuildCosts,
   operationDate,
+  readHeartbeat,
   requiredOperationDate,
   listRetryingTasks,
   listRunningTasks,
@@ -180,6 +181,20 @@ async function writeHeartbeat(value: Record<string, unknown>) {
   await database.insert(schema.settings).values({ key: "internal:workerHeartbeat", value })
     .onConflictDoUpdate({ target: schema.settings.key, set: { value } });
 }
+
+it("reads the governor's pause as the epoch milliseconds the engine reports, and each model's share", () => {
+  const pausedUntil = Date.parse("2026-09-18T12:05:00.000Z");
+  const heartbeat = readHeartbeat({
+    at: "2026-09-18T12:00:00.000Z",
+    governor: { cap: 4, inFlight: 3, queued: 1, pausedUntil, models: { "model-a": { inFlight: 3, queued: 1 }, junk: "x" } },
+  });
+  expect(heartbeat!.governor).toEqual({
+    streamCap: 4, inFlight: 3, queued: 1, pausedUntil: new Date(pausedUntil), models: [{ model: "model-a", inFlight: 3, queued: 1 }],
+  });
+  // No pause is null, and an ISO string from an older shape still reads.
+  expect(readHeartbeat({ at: "2026-09-18T12:00:00.000Z", governor: { cap: 4, inFlight: 0, queued: 0, pausedUntil: null } })!.governor!.pausedUntil).toBeNull();
+  expect(readHeartbeat({ at: "2026-09-18T12:00:00.000Z", governor: { cap: 4, pausedUntil: "2026-09-18T12:05:00.000Z" } })!.governor!.pausedUntil).toEqual(new Date(pausedUntil));
+});
 
 it("reads both heartbeat shapes, and calls a crash-looping worker restarting however fresh its report", async () => {
   await resetWorkerFixtures();

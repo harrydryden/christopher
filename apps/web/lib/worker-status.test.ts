@@ -3,7 +3,7 @@
  * alone says a crash-looping worker is healthy. These are the rules both Health pages read.
  */
 import { expect, it } from "vitest";
-import { deriveWorkerStatus, heapSummary, workerStateTone, workerStatusSentence, type WorkerHeartbeat } from "./worker-status";
+import { deriveWorkerStatus, governorSummary, heapSummary, workerStateTone, workerStatusSentence, type WorkerHeartbeat } from "./worker-status";
 
 const now = new Date("2026-09-18T12:00:00.000Z");
 const ago = (ms: number) => new Date(now.getTime() - ms);
@@ -68,4 +68,18 @@ it("flags heap pressure separately: close to the ceiling is not the same as down
   expect(status.heapPressure).toBe(true);
   // A heartbeat written before the worker reported vitals says nothing about the heap.
   expect(deriveWorkerStatus({ heartbeat: heartbeat({ vitals: null }), restartsLastHour: 0, restartsLastDay: 0, now }).heapPressure).toBe(false);
+});
+
+it("names the stream cap as the per-model figure it is, with each busy model's share and the pause", () => {
+  const pausedUntil = new Date("2026-09-18T12:05:00.000Z");
+  expect(
+    governorSummary(
+      { streamCap: 4, inFlight: 6, queued: 2, pausedUntil, models: [{ model: "model-a", inFlight: 4, queued: 2 }, { model: "model-b", inFlight: 2, queued: 0 }, { model: "model-c", inFlight: 0, queued: 0 }] },
+      now,
+    ),
+  ).toBe("Model streams: 6 open, 2 waiting for a slot; each model may have 4 open at once; model-a 4 open, 2 waiting; model-b 2 open; paused by the provider until 12:05 UTC.");
+  // A pause that has ended, and a worker that reports no per-model figures.
+  expect(governorSummary({ streamCap: 4, inFlight: 1, queued: 0, pausedUntil: ago(1_000) }, now)).toBe(
+    "Model streams: 1 open; each model may have 4 open at once.",
+  );
 });

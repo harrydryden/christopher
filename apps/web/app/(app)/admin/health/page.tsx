@@ -15,7 +15,7 @@ import { db } from "@/lib/db";
 import { totalAiUsage } from "@/lib/ai-usage";
 import { formatBytes, formatCount, formatDelta, formatDuration, formatLatency, formatPercent, formatStepDuration, formatUsd, formatUsdPrecise, relativeTime, shortDate } from "@/lib/format";
 import { hostNeedsAttention } from "@/lib/outbound-traffic";
-import { heapSummary, workerStateTone, HEAP_WARN_FRACTION } from "@/lib/worker-status";
+import { governorSummary, heapSummary, workerStateTone, HEAP_WARN_FRACTION } from "@/lib/worker-status";
 import {
   getAiUsage,
   getCvBuildCosts,
@@ -131,14 +131,7 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
           {heartbeat.commit && <>Release <code>{heartbeat.commit.slice(0, 7)}</code>. </>}
           {heartbeat.concurrency !== null && <>{heartbeat.concurrency} slots. </>}
           {heartbeat.active !== null && <>{heartbeat.active} tasks active at the last report. </>}
-          {heartbeat.governor && (
-            <>
-              Model streams: {heartbeat.governor.inFlight ?? "unknown"} open
-              {heartbeat.governor.streamCap !== null && <> of a cap of {heartbeat.governor.streamCap}</>}
-              {heartbeat.governor.queued !== null && heartbeat.governor.queued > 0 && <>, {heartbeat.governor.queued} waiting for a slot</>}
-              {heartbeat.governor.pausedUntil && heartbeat.governor.pausedUntil > now && <>, paused by the provider until {heartbeat.governor.pausedUntil.toISOString().slice(11, 16)} UTC</>}.{" "}
-            </>
-          )}
+          {heartbeat.governor && <>{governorSummary(heartbeat.governor, now)} </>}
           Anthropic key {heartbeat.aiConfigured ? "configured" : "missing"}; browser {heartbeat.browserAvailable ? "available" : "unavailable"}. A configured key still needs a successful model call to confirm access.
         </p>}
         <p className="mt-2 text-14">{metrics.ready} tasks ready · {metrics.running} running · oldest ready task waiting {Math.round(metrics.oldest_seconds / 60)} minutes.</p>

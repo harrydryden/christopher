@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, startTransition, useEffect, useRef, useState } from "react";
+import { Fragment, startTransition, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { decide, decideRoles, archiveRoles, roleDetails } from "@/app/actions/decisions";
 import { requestCv } from "@/app/actions/cv";
@@ -12,6 +12,7 @@ import { Monogram } from "@/components/brand/Monogram";
 import { SafeMarkdown } from "@/components/SafeMarkdown";
 import { SettingsForm } from "@/components/SettingsForm";
 import type { RoleDetailsVM, RoleRowVM, SortDir, SortKey } from "@/lib/queries/jobs";
+import { missingDecisionReason } from "@/lib/decision-reason";
 
 import { APPLICATION_STATUS_LABELS, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS, ROLE_STATUS_LABELS, roleStageRank } from "@ava/core/role-workflow";
 
@@ -25,6 +26,16 @@ const COLLAPSED_DESCRIPTION_CHARS = 400;
 
 /** The nudge R-6.1 asks for: a reason on apply is wanted, never required. */
 const APPLY_REASON_HINT = "One line on why helps the ranking (optional)";
+
+function withId(ids: ReadonlySet<string>, id: string): ReadonlySet<string> {
+  return ids.has(id) ? ids : new Set(ids).add(id);
+}
+function withoutId(ids: ReadonlySet<string>, id: string): ReadonlySet<string> {
+  if (!ids.has(id)) return ids;
+  const next = new Set(ids);
+  next.delete(id);
+  return next;
+}
 
 /** "In process · Interview": the stage, and — for the three steps it collapses — which one. */
 function stageLabel(row: RoleRowVM): string {
@@ -125,22 +136,41 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
   sort?: SortKey;
   dir?: SortDir;
 }) {
-  const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
-  const rows = inputRows.filter(row => !removedIds.has(row.id));
-  const actionsInFlight = useRef(new Set<string>());
+  // Rows leave the page the moment they are decided, before the server answers; a refusal puts
+  // them back. `removedIds` is what has left; `returning` is what an undo has brought back before
+  // the page the undo re-renders arrives, drawn from `departed`, the rows as they were when they left.
+  const [removedIds, setRemovedIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [returning, setReturning] = useState<ReadonlySet<string>>(() => new Set());
+  const departed = useRef(new Map<string, { row: RoleRowVM; index: number }>());
+  const rows = useMemo(() => {
+    const list = inputRows.filter(row => !removedIds.has(row.id));
+    for (const id of returning) {
+      const gone = departed.current.get(id);
+      if (!gone || removedIds.has(id) || list.some(row => row.id === id)) continue;
+      list.splice(Math.min(gone.index, list.length), 0, gone.row);
+    }
+    return list;
+  }, [inputRows, removedIds, returning]);
+  /** One write per row at a time; each entry settles true when that write was saved. */
+  const inFlight = useRef(new Map<string, Promise<boolean>>());
   const [archivingId, setArchivingId] = useState<string | null>(null);
   function archiveRow(id: string) {
-    if (actionsInFlight.current.has(id)) return;
-    actionsInFlight.current.add(id);
-    startTransition(async () => {
-    setArchivingId(id); setFlashError(null);
-    try {
-      const result = await archiveRoles([id], !archived);
-      if (!result.ok) setFlashError(result.error);
-      else setRemovedIds(ids => new Set([...ids, id]));
-    } catch { setFlashError("Could not save. Reload and retry."); }
-    finally { actionsInFlight.current.delete(id); setArchivingId(null); }
-    });
+    if (inFlight.current.has(id)) return;
+    const run = new Promise<boolean>(resolve => startTransition(async () => {
+      setArchivingId(id); setFlashError(null);
+      let saved = false;
+      try {
+        const result = await archiveRoles([id], !archived);
+        if (!result.ok) setFlashError(result.error);
+        else { saved = true; setRemovedIds(ids => withId(ids, id)); }
+      } catch { setFlashError("Could not save. Reload and retry."); }
+      finally { settle(id, run); setArchivingId(null); resolve(saved); }
+    }));
+    inFlight.current.set(id, run);
+  }
+  /** A row's write is over, unless a later one (an undo queued behind it) has taken its place. */
+  function settle(id: string, run: Promise<boolean>) {
+    if (inFlight.current.get(id) === run) inFlight.current.delete(id);
   }
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const selectedIds = rows.filter(row => selected.has(row.id)).map(row => row.id);
@@ -158,27 +188,40 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
     });
   }
 
-  /** One call for the whole selection: it is saved together or not at all. */
+  /**
+   * One call for the whole selection: it is saved together or not at all. The rows it moves leave
+   * at once; if the server refuses, they come back still selected, with its sentence in the bar.
+   */
   function runGroup(label: string, run: () => Promise<{ ok: true; message?: string } | { ok: false; error: string }>, leaving: (row: RoleRowVM) => boolean) {
     if (groupBusy || selectedIds.length === 0) return;
     const ids = selectedIds;
+    const reason = groupReason;
+    const gone = rows.filter(row => ids.includes(row.id) && leaving(row)).map(row => row.id);
     setGroupPending(label); setGroupError(null); setFlashError(null);
+    setRemovedIds(previous => new Set([...previous, ...gone]));
+    setSelected(new Set());
+    setGroupReason(null);
+    const putBack = (error: string) => {
+      setRemovedIds(previous => new Set([...previous].filter(id => !gone.includes(id))));
+      setSelected(new Set(ids));
+      setGroupReason(reason);
+      setGroupError(error);
+    };
     startTransition(async () => {
       try {
         const result = await run();
-        if (!result.ok) { setGroupError(result.error); return; }
-        const gone = inputRows.filter(row => ids.includes(row.id) && leaving(row)).map(row => row.id);
-        setRemovedIds(previous => new Set([...previous, ...gone]));
-        setSelected(new Set());
-        setGroupReason(null);
+        if (!result.ok) putBack(result.error);
       } catch {
-        setGroupError("Could not save. Reload and retry.");
+        putBack("Could not save. Reload and retry.");
       } finally { setGroupPending(null); }
     });
   }
 
   function submitGroupDecision(decision: "apply" | "skip" | null, reason: string) {
     const ids = selectedIds;
+    // The server refuses this too; asking first keeps the rows where they are.
+    const missing = missingDecisionReason(decision, reason);
+    if (missing) { setGroupError(missing); return; }
     runGroup(decision === null ? "Undoing…" : "Saving…", () => decideRoles(ids, decision, reason),
       row => archived || (row.decision?.decision ?? null) !== decision);
   }
@@ -193,6 +236,8 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
   const [flashError, setFlashError] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ jobId: string; text: string } | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const noticeRef = useRef(notice);
+  noticeRef.current = notice;
   const reasonBoxRef = useRef(reasonBox);
   reasonBoxRef.current = reasonBox;
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -241,50 +286,102 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
     requestAnimationFrame(() => textareaRef.current?.focus());
   }
 
-  function submitDecision(jobId: string, decision: ReasonKind | null, reason: string) {
-    if (actionsInFlight.current.has(jobId)) return;
-    actionsInFlight.current.add(jobId);
-    startTransition(async () => {
-    setFlashError(null);
-    const isBoxed = reasonBoxRef.current?.jobId === jobId;
-    if (isBoxed) setReasonBox((b) => (b ? { ...b, pending: true, error: null } : b));
-    try {
-    const result = await decide(jobId, decision, reason);
-    if (!result.ok) {
-      if (isBoxed) setReasonBox((b) => (b ? { ...b, pending: false, error: result.error } : b));
-      else setFlashError(result.error);
-      return;
-    }
-    if (isBoxed) setReasonBox(null);
-    const previous = inputRows.find(row => row.id === jobId);
-    if (archived || previous?.decision?.decision !== decision) setRemovedIds(ids => new Set([...ids, jobId]));
-    // The row leaves the page the moment it is decided; the notice says where it went and offers
-    // the way back, so nothing vanishes without a word.
-    if (decision === null) clearNotice();
-    else if (previous) showNotice(jobId, `${decision === "apply" ? "Shortlisted" : "Dismissed"} ${previous.title}${hideCompany ? "" : ` at ${previous.companyName}`}`);
-    } catch {
-      const error = "Could not save. Reload and retry.";
-      if (isBoxed) setReasonBox(b => b?.jobId === jobId ? { ...b, pending: false, error } : b);
-      else setFlashError(error);
-    } finally { actionsInFlight.current.delete(jobId); }
-    });
+  function decidedText(row: RoleRowVM, decision: ReasonKind): string {
+    return `${decision === "apply" ? "Shortlisted" : "Dismissed"} ${row.title}${hideCompany ? "" : ` at ${row.companyName}`}`;
   }
 
-  /** The notice's way back: the decision is undone and the row returns to the page it left. */
-  function undoDecision(jobId: string) {
-    if (actionsInFlight.current.has(jobId)) return;
-    actionsInFlight.current.add(jobId);
-    clearNotice();
-    startTransition(async () => {
-      setFlashError(null);
+  /**
+   * Save a decision. A row the decision moves off this page leaves at once, with the notice that
+   * says where it went and offers the way back, so nothing vanishes without a word and nobody waits
+   * for the server to see it go. The server still decides: if it refuses, the row comes back with
+   * its sentence, in the reason box it was typed in or above the table.
+   */
+  function submitDecision(jobId: string, decision: ReasonKind | null, reason: string) {
+    if (inFlight.current.has(jobId)) return;
+    const box = reasonBoxRef.current?.jobId === jobId ? reasonBoxRef.current : null;
+    setFlashError(null);
+    // The server refuses this too; asking first means the common refusal never flashes the row away.
+    const missing = missingDecisionReason(decision, reason);
+    if (missing) {
+      if (box) setReasonBox(b => (b?.jobId === jobId ? { ...b, error: missing } : b));
+      else setFlashError(missing);
+      return;
+    }
+    const index = rows.findIndex(row => row.id === jobId);
+    const previous = index >= 0 ? rows[index] : undefined;
+    const leaves = archived || previous?.decision?.decision !== decision;
+
+    if (leaves) {
+      if (previous) departed.current.set(jobId, { row: previous, index });
+      setRemovedIds(ids => withId(ids, jobId));
+      setReturning(ids => withoutId(ids, jobId));
+      if (box) setReasonBox(null);
+      if (decision === null) clearNotice();
+      else if (previous) showNotice(jobId, decidedText(previous, decision));
+    } else if (box) {
+      // Re-saving the decision the row already has (a new reason): the row stays, so the box waits.
+      setReasonBox(b => (b ? { ...b, pending: true, error: null } : b));
+    }
+
+    const refused = (error: string) => {
+      if (leaves) {
+        setRemovedIds(ids => withoutId(ids, jobId));
+        if (noticeRef.current?.jobId === jobId) clearNotice();
+      }
+      if (box && !leaves) setReasonBox(b => (b?.jobId === jobId ? { ...b, pending: false, error } : b));
+      else if (box && reasonBoxRef.current === null) {
+        // Back where it was typed, unless another row's box has been opened since.
+        setExpandedId(jobId);
+        setReasonBox({ ...box, pending: false, error });
+      } else setFlashError(error);
+    };
+
+    const run = new Promise<boolean>(resolve => startTransition(async () => {
+      let saved = false;
       try {
-        const result = await decide(jobId, null, "");
-        if (!result.ok) { setFlashError(result.error); return; }
-        setRemovedIds(ids => { const next = new Set(ids); next.delete(jobId); return next; });
+        const result = await decide(jobId, decision, reason);
+        if (!result.ok) { refused(result.error); return; }
+        saved = true;
+        if (!leaves) {
+          if (box) setReasonBox(b => (b?.jobId === jobId ? null : b));
+          if (decision === null) clearNotice();
+          else if (previous) showNotice(jobId, decidedText(previous, decision));
+        }
       } catch {
-        setFlashError("Could not save. Reload and retry.");
-      } finally { actionsInFlight.current.delete(jobId); }
-    });
+        refused("Could not save. Reload and retry.");
+      } finally { settle(jobId, run); resolve(saved); }
+    }));
+    inFlight.current.set(jobId, run);
+  }
+
+  /**
+   * The notice's way back: the row returns at once and the decision is undone. Pressed while the
+   * decision is still being saved, the undo waits for it, and has nothing to do if it was refused.
+   */
+  function undoDecision(jobId: string) {
+    const prior = inFlight.current.get(jobId);
+    clearNotice();
+    setFlashError(null);
+    setRemovedIds(ids => withoutId(ids, jobId));
+    setReturning(ids => withId(ids, jobId));
+    const refused = (error: string) => {
+      setRemovedIds(ids => withId(ids, jobId));
+      setReturning(ids => withoutId(ids, jobId));
+      setFlashError(error);
+    };
+    const run = new Promise<boolean>(resolve => startTransition(async () => {
+      let saved = false;
+      try {
+        // A refused decision has already put the row back: there is nothing to undo.
+        if (prior && !(await prior)) return;
+        const result = await decide(jobId, null, "");
+        if (!result.ok) { refused(result.error); return; }
+        saved = true;
+      } catch {
+        refused("Could not save. Reload and retry.");
+      } finally { settle(jobId, run); resolve(saved); }
+    }));
+    inFlight.current.set(jobId, run);
   }
 
   // Keyboard nav: only for the primary table (the daily-inbox view). Ignored while typing.

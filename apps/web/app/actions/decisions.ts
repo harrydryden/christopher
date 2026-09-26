@@ -16,6 +16,7 @@ import { fetchRoleDetails, locationReasonText, type CvQuoteVM, type RoleDetailsV
 import { getSettingsFor } from "@/lib/settings";
 import { countStandingDecisions, queueFilterSuggestionsOnCrossing, recordDecision, restoreDismissedApplications, withdrawLiveApplications } from "@/lib/decisions";
 import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
+import { SKIP_REASON_REQUIRED } from "@/lib/decision-reason";
 
 export type RoleDetailsResult = { ok: true; details: RoleDetailsVM } | { ok: false; error: string };
 
@@ -85,9 +86,8 @@ export async function roleDetails(jobId: string): Promise<RoleDetailsResult> {
   }
 }
 
-/** Spec R-6.1: a reason is required for `skip`, and encouraged (never required) for `apply`. */
-const SKIP_REASON_REQUIRED = "Give a reason when you dismiss a role: it is what the ranking learns from.";
-
+// Spec R-6.1: a reason is required for `skip`, and encouraged (never required) for `apply`. The
+// roles table checks the same rule before sending; this is where it is enforced.
 const DecideSchema = z
   .object({
     jobId: zUuid(),

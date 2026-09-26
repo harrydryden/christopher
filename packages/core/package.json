@@ -16,6 +16,10 @@
       "types": "./src/cv-format.ts",
       "default": "./src/cv-format.ts"
     },
+    "./cv-helpers": {
+      "types": "./src/cv-helpers.ts",
+      "default": "./src/cv-helpers.ts"
+    },
     "./cv-theme-values": {
       "types": "./src/cv-theme-values.ts",
       "default": "./src/cv-theme-values.ts"

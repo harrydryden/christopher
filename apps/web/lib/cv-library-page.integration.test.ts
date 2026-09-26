@@ -32,7 +32,8 @@ import { rescoreLibrary, saveCvLibrary } from "@/app/actions/cv";
 import { GET as reviewsRoute } from "@/app/api/cv/library/reviews/route";
 import { diffCvLibraries } from "./cv-library-diff";
 import { cvLibraryReadiness } from "./cv-ready";
-import { archivedBlocks, editableEmployment, openStoredLibrary, removeJob, restoreJob } from "./cv-library-rows";
+import { archivedBlocks, editableEmployment, removeJob, restoreJob } from "./cv-library-rows";
+import { openStoredLibrary } from "./cv-library-open";
 import {
   getLibraryEvidence,
   getLibraryVersionContents,

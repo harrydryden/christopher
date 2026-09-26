@@ -1,12 +1,12 @@
 /**
  * What a client component statically imports is what the browser downloads on first load. zod
  * (about 23 KB gzipped, not tree-shakeable) and the CV schemas used to reach /settings only because
- * the theme picker imported a helper from `@ava/core/cv`. This walks the static import graph of each
- * listed client entry the way the bundler does — following value imports and re-exports, stopping at
+ * the theme picker imported a helper from `@ava/core/cv`, and to /library and /cv/[id] through the
+ * editors. This walks the static import graph of every client component the way the bundler does — following value imports and re-exports, stopping at
  * `"use server"` modules (the bundler sends a reference, not the code) and at dynamic `import()`
  * (a separate chunk, loaded only when it runs) — and fails if zod is anywhere in it.
  */
-import { readFileSync, existsSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
@@ -71,12 +71,32 @@ function zodPath(entry: string): string[] | undefined {
   return walk(path.join(WEB, entry), [entry]);
 }
 
-const ZOD_FREE_CLIENT_ENTRIES = [
-  // /settings: the theme picker is the page's only client code that touched the CV contract.
-  "components/CvAppearance.tsx",
-];
+/** Every `"use client"` module under components/ and app/: each is a client entry the bundler starts from. */
+function clientEntries(): string[] {
+  const out: string[] = [];
+  const visit = (dir: string) => {
+    for (const name of readdirSync(path.join(WEB, dir))) {
+      const relative = path.join(dir, name);
+      if (statSync(path.join(WEB, relative)).isDirectory()) { visit(relative); continue; }
+      if (!/\.tsx?$/.test(name) || /\.test\.tsx?$/.test(name)) continue;
+      if (/^\s*["']use client["']/.test(readFileSync(path.join(WEB, relative), "utf8"))) out.push(relative);
+    }
+  };
+  visit("components");
+  visit("app");
+  return out.sort();
+}
 
-it.each(ZOD_FREE_CLIENT_ENTRIES)("%s does not bundle zod", (entry) => {
+it("finds the client components it is guarding", () => {
+  // /settings' theme picker, and the Library and CV editors, the three that used to ship zod.
+  expect(clientEntries()).toEqual(expect.arrayContaining(["components/CvAppearance.tsx", "components/CvLibraryEditor.tsx", "components/CvDraftEditor.tsx"]));
+});
+
+// A client component that needs the CV schemas loads them with `await import("@ava/core/cv")` where
+// the check runs (see CvDraftEditor's preview and CvLibraryEditor's reload merge), and takes values
+// the server already resolved as props; the zod-free parts of the contract are `@ava/core/cv-format`,
+// `@ava/core/cv-helpers` and `@ava/core/cv-theme-values`.
+it.each(clientEntries())("%s does not bundle zod", (entry) => {
   expect(zodPath(entry)).toBeUndefined();
 });
 

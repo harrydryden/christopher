@@ -331,6 +331,7 @@ export default async function CvDraftPage({
             key={id}
             id={id}
             content={content}
+            theme={resolveCvTheme(content.theme)}
             // What each of the two saves is expected to cost, measured on this revision's own
             // evidence and advert with the estimator the worker admits builds against.
             costs={cvEditCosts(draft.model, cvDraftSize(draft))}

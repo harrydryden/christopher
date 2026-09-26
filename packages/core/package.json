@@ -12,6 +12,14 @@
       "types": "./src/cv.ts",
       "default": "./src/cv.ts"
     },
+    "./cv-format": {
+      "types": "./src/cv-format.ts",
+      "default": "./src/cv-format.ts"
+    },
+    "./cv-theme-values": {
+      "types": "./src/cv-theme-values.ts",
+      "default": "./src/cv-theme-values.ts"
+    },
     "./role-workflow": {
       "types": "./src/role-workflow.ts",
       "default": "./src/role-workflow.ts"

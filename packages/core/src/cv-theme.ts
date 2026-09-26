@@ -1,17 +1,9 @@
 import { z } from "zod";
 import { CV_PAGE_LIMITS } from "./cv-format";
+import { CV_FONTS, DEFAULT_CV_FONT, DEFAULT_CV_THEME, LEGACY_CV_FONT, type CvTheme } from "./cv-theme-values";
+export { CV_FONTS, CV_THEMES, DEFAULT_CV_FONT, DEFAULT_CV_THEME, cvForeground, cvMaxPages, type CvFont, type CvTheme } from "./cv-theme-values";
 
 const ColourSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Use a six-digit hex colour.");
-/**
- * AVA is the renderer's own face (the standard Helvetica every PDF viewer carries).
- * Arial embeds Liberation Sans, its metric-compatible open equivalent, so it looks the same on
- * every machine. The names are what the user chooses in Settings.
- */
-export const CV_FONTS = ["AVA", "Arial"] as const;
-export type CvFont = (typeof CV_FONTS)[number];
-export const DEFAULT_CV_FONT: CvFont = "AVA";
-/** The name the AVA face was stored under before the product was renamed. */
-const LEGACY_CV_FONT = "Christopher";
 /**
  * The font and page limit ride with the palette because everything here is captured per CV: the
  * Settings default seeds each new draft's library snapshot, and a saved revision keeps its own copy.
@@ -24,28 +16,12 @@ export const CvThemeSchema = z.object({
   font: z.preprocess((font) => (font === LEGACY_CV_FONT ? DEFAULT_CV_FONT : font), z.enum(CV_FONTS)).default(DEFAULT_CV_FONT),
   maxPages: z.number().int().min(CV_PAGE_LIMITS.min).max(CV_PAGE_LIMITS.max).default(CV_PAGE_LIMITS.default),
 });
-export type CvTheme = z.infer<typeof CvThemeSchema>;
-const layout = { introPanel: true, skillPills: true, font: DEFAULT_CV_FONT, maxPages: CV_PAGE_LIMITS.default } as const;
-export const CV_THEMES: Record<string, CvTheme> = {
-  Black: { version: 1, primary: "#000000", background: "#ffffff", surface: "#f2f2f2", pill: "#e6e6e6", ...layout },
-  Navy: { version: 1, primary: "#142D46", background: "#ffffff", surface: "#eff4f8", pill: "#e3edf5", ...layout },
-  Gold: { version: 1, primary: "#ffcc00", background: "#ffffff", surface: "#ffffff", pill: "#fff2b3", ...layout },
-  Forest: { version: 1, primary: "#285447", background: "#fffefa", surface: "#eef4ee", pill: "#dfebe2", ...layout },
-  Plum: { version: 1, primary: "#653d64", background: "#fffcff", surface: "#f5eef5", pill: "#eedfee", ...layout },
-};
-export const DEFAULT_CV_THEME = CV_THEMES.Black!;
-/** The page limit a CV, library or theme is held to; absent or legacy themes use the default. */
-export function cvMaxPages(theme?: { maxPages?: number } | null): number {
-  return theme?.maxPages ?? CV_PAGE_LIMITS.default;
-}
+// The zod-free `CvTheme` must stay exactly what the schema produces; either drifting fails typecheck.
+type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+const themeTypesAgree: Same<z.infer<typeof CvThemeSchema>, CvTheme> = true;
+void themeTypesAgree;
 /** Stored themes predate the font and page limit; unreadable ones fall back to the default. */
 export function resolveCvTheme(value: unknown): CvTheme {
   const parsed = CvThemeSchema.safeParse(value);
   return parsed.success ? parsed.data : DEFAULT_CV_THEME;
-}
-/** Black or white always provides readable contrast against an opaque sRGB fill. */
-export function cvForeground(colour: string): string {
-  const rgb = [1, 3, 5].map(i => parseInt(colour.slice(i, i + 2), 16) / 255).map(c => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
-  const luminance = rgb[0]! * 0.2126 + rgb[1]! * 0.7152 + rgb[2]! * 0.0722;
-  return luminance > 0.179 ? "#000000" : "#ffffff";
 }

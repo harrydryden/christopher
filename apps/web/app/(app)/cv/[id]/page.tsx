@@ -19,7 +19,7 @@ import { CvShareComments } from "@/components/CvShareComments";
 import { getOwnCvSharing } from "@/lib/queries/cv-shares";
 import { openCommentCounts } from "@/lib/cv-share";
 import { assertCvFinalisable, cvAssessmentCurrent } from "@ava/core/cv-review";
-import type { CvContent, CvLibrary } from "@ava/core/cv";
+import { resolveCvTheme, type CvContent, type CvLibrary } from "@ava/core/cv";
 import type { CvAssessment } from "@ava/core/cv-assessment";
 import { CvDraftEditor } from "@/components/CvDraftEditor";
 import { cvEditFormId } from "@/lib/cv-content-links";
@@ -262,7 +262,8 @@ export default async function CvDraftPage({
             <div className="mt-4 space-y-3">
               <fieldset disabled>
                 <CvAppearance
-                  value={content?.theme ?? draft.librarySnapshot.theme}
+                  // Resolved here so the client component needs no validator.
+                  value={resolveCvTheme(content?.theme ?? draft.librarySnapshot.theme)}
                 />
               </fieldset>
 

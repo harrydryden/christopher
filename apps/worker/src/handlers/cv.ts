@@ -754,9 +754,17 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         const ran: CvAssessBatchResult[] = [];
         /** The audit stage's own signal: aborted by its allowance as well as by the build's stop. */
         let stageSignal: AbortSignal | undefined;
+        // What the audit will actually send: for the revision's re-check with a memo, only the
+        // claims the memo does not hold, beside every requirement — so it is admitted at the price
+        // of those batches, not the full audit's.
+        let sending = pending.length;
+        if (claimMemo) {
+          const keys = cvClaimMemoKeys(items, await ai.claimMemoRoute("revision"));
+          sending = cvAuditBatches({ rubric, claims: items.claims.filter(claim => !claimMemo[keys.get(claim.id)!]) }).length;
+        }
         if (pending.length) {
           const audit = await runner.paid(admission, "assess_batch",
-            estimateCvStage(admission, { ...sizes, batches: pending.length }, models), stageCtx => {
+            estimateCvStage(admission, { ...sizes, batches: sending }, models), stageCtx => {
               stageSignal = stageCtx.signal;
               return ai.assessCvBatches(items,
               // The engine re-runs a batch whose attribution it had to correct, and names that

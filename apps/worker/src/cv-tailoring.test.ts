@@ -416,3 +416,49 @@ it("a re-check stopped by its stage allowance keeps the original, saying so", as
   expect(steps.filter(step => step.status === "running" || step.status === "failed").map(step => step.motion)).toEqual([]);
   expect(steps.find(step => step.motion === "adopt_revision")).toMatchObject({ status: "skipped", detail: { reason: "the re-check ran past its allowance" } });
 });
+
+it("admits the revision's re-check at the price of the batches it sends, not the full audit's", async () => {
+  const scripted = scriptedClient();
+  const create = scripted.client.messages.create;
+  const recheck: Array<{ sent: number; printed: number }> = [];
+  scripted.client.messages.create = async (params, options, call) => {
+    const response = await create(params, options, call) as ParseResponse & { parsed_output: { sections: Array<{ entryId: string; bullets: string[]; bulletSources: unknown[] }> } };
+    if (call?.promptId === "cv.improvement") {
+      // The revision keeps the five bullets the baseline had and adds one: one changed claim of many.
+      const bullets = [...Array.from({ length: 5 }, () => "Led a team"), "Delivered transformation"];
+      response.parsed_output.sections[0] = { entryId: "one", bullets,
+        bulletSources: bullets.map((text, index) => [{ sourceId: `entry:one:row:${index === 5 ? 1 : 0}`, quote: text }]) };
+    }
+    if (call?.promptId === "cv.review_candidate") {
+      const content = (params.messages as Array<{ content: Array<{ text: string }> }>)[0]!.content;
+      const printed = JSON.parse(content[1]!.text) as { cv: Array<{ id: string }> };
+      const batch = JSON.parse(content[2]!.text) as { claims: unknown[] };
+      recheck.push({ sent: batch.claims.length, printed: printed.cv.filter(item => !item.id.endsWith(":heading")).length });
+    }
+    return response;
+  };
+  deps.aiClient = scripted.client;
+  const bullets = Array.from({ length: 5 }, () => "Led a team");
+  const degree = Array.from({ length: 4 }, () => "University of Example");
+  const baseline = { name: library.name, contact: library.contact, linkedinUrl: "", websiteUrl: "", summary: "Operations leader",
+    summarySources: [{ sourceId: "source:profile", quote: "Operations leader" }],
+    sections: [{ entryId: "one", kind: "experience" as const, heading: "Director · Acme", bullets,
+      bulletSources: bullets.map(() => [{ sourceId: "entry:one:row:0", quote: "Led a team" }]) },
+    { entryId: "degree", kind: "education" as const, heading: "BSc Management", bullets: degree,
+      bulletSources: degree.map(() => [{ sourceId: "entry:degree:row:0", quote: "University of Example" }]) }], gaps: [] };
+  const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric,
+    contentAt: new Date().toISOString() });
+  await db.update(schema.cvDrafts).set({ content: baseline }).where(eq(schema.cvDrafts.id, draft.id));
+  await queue().drain();
+  expect((await draftAfter(draft.id)).status).toBe("ready");
+  // The candidate prints enough claims for two batches, but only the changed one is sent.
+  expect(recheck).toHaveLength(1);
+  expect(recheck[0]!.printed).toBeGreaterThan(8);
+  expect(recheck[0]!.sent).toBe(1);
+  const admits = (await listCvBuildSteps(db, userId, draft.id)).filter(step => step.motion === "admit_budget");
+  const reaudit = admits.find(step => step.detail.stage === "reaudit")!;
+  const sizes = { libraryBytes: Buffer.byteLength(JSON.stringify(library)), descriptionBytes: Buffer.byteLength("Lead a team. Deliver transformation.") };
+  const models = { cvModel: draft.model, routes: {} };
+  expect(reaudit.detail.expectedUsd).toBe(Number(estimateCvStage("reaudit", { ...sizes, batches: 1 }, models).toFixed(4)));
+  expect(reaudit.detail.expectedUsd).not.toBe(Number(estimateCvStage("reaudit", { ...sizes, batches: 2 }, models).toFixed(4)));
+});

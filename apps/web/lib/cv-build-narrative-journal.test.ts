@@ -413,6 +413,45 @@ describe("never red over a CV that is ready", () => {
   });
 });
 
+describe("an audit resumed from its checkpoint", () => {
+  it("counts the batches the attempt holds from the previous one as done, and says so", () => {
+    nextSeq = 0;
+    const retry = { attempt: 2 };
+    const steps = [
+      step("load_inputs", "done", {}),
+      step("assess_batch", "done", { pass: "draft", index: 1, of: 5 }),
+      step("assess_batch", "done", { pass: "draft", index: 2, of: 5 }),
+      step("assess_batch", "failed", { pass: "draft", index: 3, of: 5 }),
+      step("assess_batch", "skipped", { pass: "draft", index: 4, of: 5, cancelled: true }),
+      step("assess_batch", "skipped", { pass: "draft", index: 5, of: 5, cancelled: true }),
+      // The queue's retry holds batches 1 and 2 and writes rows only for the other three.
+      step("load_inputs", "done", { reusedRubric: true, reusedContent: true }, retry),
+      step("assess_batch", "done", { pass: "draft", index: 3, of: 5 }, retry),
+      step("assess_batch", "running", { pass: "draft", index: 4, of: 5 }, retry),
+      step("assess_batch", "running", { pass: "draft", index: 5, of: 5 }, retry),
+    ];
+    const live = narrateBuild(steps, now);
+    expect(lines(live).at(-1)).toMatch(/^… Checking requirements and claims against your evidence — 3 of 5 batches done \(2 kept from the previous attempt\) · running/);
+    expect(currentMotionLine(steps, now)).toMatch(/— 3 of 5 batches done \(2 kept from the previous attempt\) · running/);
+    expect(cvBuildProgressLine(steps, now)).toBe("Stage 4 of 4 · 3 of 5 batches done (2 kept from the previous attempt)");
+
+    const finished = steps.map((one) => (one.status === "running" ? { ...one, status: "done" as const, finishedAt: new Date(one.startedAt.getTime() + 2_000), ms: 2_000 } : one));
+    expect(lines(narrateBuild(finished, now)).at(-1)).toMatch(
+      /^✓ Checked requirements and claims against your evidence in 5 batches \(2 kept from the previous attempt\) · /,
+    );
+  });
+
+  it("keeps nothing for a first attempt, or for the revision's pass", () => {
+    nextSeq = 0;
+    const steps = [
+      step("load_inputs", "done", {}),
+      step("assess_batch", "done", { pass: "draft", index: 1, of: 3 }),
+      step("assess_batch", "running", { pass: "draft", index: 2, of: 3 }),
+    ];
+    expect(lines(narrateBuild(steps, now)).at(-1)).toMatch(/— 1 of 3 batches done · running/);
+  });
+});
+
 describe("what a build came to", () => {
   it("totals each attempt by its own clock and leaves out the days between them", () => {
     nextSeq = 0;

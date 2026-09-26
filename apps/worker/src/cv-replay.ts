@@ -20,11 +20,12 @@
  * (no key, no cost, and a miss names the prompt and version that moved), or the provider for a live
  * run, optionally through a `RecordingClient` (`recordCvDraft`), which is how a recording is made.
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { writeFileSync, appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import {
   CV_PROMPT_IDS,
   PROMPTS,
@@ -192,6 +193,35 @@ class Rollback<T> extends Error {
   }
 }
 
+/**
+ * The replay's transaction, with its nested transactions taken one at a time.
+ *
+ * Inside one transaction every nested transaction is a savepoint on the same connection, and the
+ * driver names each one after its depth, so two that overlap — a journal write and a checkpoint
+ * save from sibling audit batches — share a name, and one's `rollback to savepoint` undoes the
+ * other's work. Savepoints nest; they cannot interleave, whatever they are called. So each nested
+ * transaction started on this handle waits for the one before it to finish. One started from inside
+ * another (on the handle the outer one was given, or on this one from within it) runs at once.
+ */
+export function serialiseNestedTransactions(tx: Db): Db {
+  const inside = new AsyncLocalStorage<true>();
+  let tail: Promise<unknown> = Promise.resolve();
+  const transaction = (work: (inner: Db) => Promise<unknown>, config?: unknown) => {
+    const run = () => inside.run(true, () => (tx.transaction as unknown as (fn: typeof work, config?: unknown) => Promise<unknown>).call(tx, work, config));
+    if (inside.getStore()) return run();
+    const next = tail.then(run, run);
+    tail = next.catch(() => undefined);
+    return next;
+  };
+  return new Proxy(tx, {
+    get(target, prop) {
+      if (prop === "transaction") return transaction;
+      const value = Reflect.get(target, prop, target) as unknown;
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    },
+  });
+}
+
 export interface CvReplayOptions {
   /** The model client: a `ReplayClient`, the provider, or a `RecordingClient` around either. */
   client: AiClientLike;
@@ -202,6 +232,8 @@ export interface CvReplayOptions {
   source: CvReplayReport["source"];
   recording?: string | null;
   unverified?: boolean;
+  /** For tests: run inside the replay's transaction once the build has finished, before it rolls back. */
+  inspect?: (db: Db) => Promise<void>;
 }
 
 /** The outcome of one rebuild, before it is written anywhere. */
@@ -236,7 +268,10 @@ export async function replayCvDraft(deps: WorkerDeps, draftId: string, options: 
   let found: Found;
   try {
     await deps.db.transaction(async tx => {
-      const db = tx as unknown as Db;
+      const db = serialiseNestedTransactions(tx as unknown as Db);
+      // A rebuild waits on model calls for minutes with this transaction open and idle between
+      // statements; a session default that ends idle transactions would end the replay instead.
+      await db.execute(sql`set local idle_in_transaction_session_timeout = 0`);
       const now = deps.now();
       const [scratch] = await db.insert(schema.users).values({
         email: `replay-${randomUUID()}@replay.invalid`, name: "CV replay", role: "member", emailVerifiedAt: now, claimedAt: now,
@@ -257,6 +292,8 @@ export async function replayCvDraft(deps: WorkerDeps, draftId: string, options: 
       const replayDeps: WorkerDeps = {
         ...deps,
         db,
+        // The build's lease is taken inside this transaction and rolled back with it.
+        inTransaction: true,
         aiClient: options.client,
         // The client is given, so the key is never used; the handler only asks that one exists.
         env: { ...deps.env, anthropicApiKey: deps.env.anthropicApiKey || "replay-client-given" },
@@ -269,6 +306,7 @@ export async function replayCvDraft(deps: WorkerDeps, draftId: string, options: 
         .where(and(eq(schema.cvDrafts.userId, scratch!.id), eq(schema.cvDrafts.status, "ready"), isNull(schema.cvDrafts.archivedAt)))
         .orderBy(desc(schema.cvDrafts.createdAt)).limit(1);
       const [row] = await db.select({ error: schema.cvDrafts.error, status: schema.cvDrafts.status }).from(schema.cvDrafts).where(eq(schema.cvDrafts.id, copy!.id));
+      await options.inspect?.(db);
       throw new Rollback<Found>(final?.assessment && final.content
         ? { outcome: "published", error: null, assessment: final.assessment, content: final.content, adopted: final.id !== copy!.id }
         : { outcome: "failed", error: result?.error ?? row?.error ?? `The rebuild ended ${row?.status ?? "without a CV"}.`, assessment: null, content: null, adopted: false });

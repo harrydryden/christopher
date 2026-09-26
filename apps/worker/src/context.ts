@@ -27,6 +27,14 @@ export interface WorkerDeps {
   signal?: AbortSignal;
   /** A stand-in for the Anthropic client, so a test can drive the real CV engine with scripted answers. */
   aiClient?: AiClientLike;
+  /**
+   * `db` is one transaction that is never committed (a CV replay). A resource lease taken inside
+   * it is invisible to every other connection and ends with it, so it is not renewed: a renewal
+   * would only leave its `set local` timeouts on the whole transaction.
+   */
+  inTransaction?: boolean;
+  /** How often resource leases renew when the caller names no interval; tests shorten it. */
+  leaseRenewEveryMs?: number;
   /** System settings from the database; cached for a few seconds to avoid hammering the table. */
   settings(): Promise<SystemSettings>;
   /** One account's settings merged onto the system ones, cached the same way. */

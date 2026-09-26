@@ -197,3 +197,25 @@ it("moves a whole selection at once, and brings it all back still selected if th
   expect(text()).toContain("A selected role no longer exists.");
   expect(container.querySelector<HTMLTextAreaElement>("#group-reason")!.value).toBe("Wrong seniority");
 });
+
+it("scrolls to the cursor only when j or k moves it, never while a reason is typed or a row is decided", async () => {
+  const THIRD = role("33333333-3333-4333-8333-333333333333", "Operations Director");
+  actions.decide.mockResolvedValue({ ok: true });
+  render([FIRST, SECOND, THIRD]);
+  expect(scrolled).not.toHaveBeenCalled();
+
+  // Typing a reason re-renders the table on every keystroke; the page must stay where it is.
+  press("s");
+  for (const draft of ["W", "Wr", "Wrong", "Wrong location"]) type(reasonBox()!, draft);
+  expect(scrolled).not.toHaveBeenCalled();
+
+  // A decision changes the rows but not the cursor.
+  press("Enter", reasonBox()!);
+  await act(async () => {});
+  expect(titles()).toEqual([SECOND.title, THIRD.title]);
+  expect(scrolled).not.toHaveBeenCalled();
+
+  press("j");
+  expect(scrolled).toHaveBeenCalledTimes(1);
+  expect((scrolled.mock.contexts[0] as HTMLElement).id).toBe(`role-row-${THIRD.id}`);
+});

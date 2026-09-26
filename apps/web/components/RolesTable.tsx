@@ -435,12 +435,19 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [keyboard, rows, highlightIndex]);
 
+  // The cursor is followed only when `j` or `k` moves it. Keyed on the rows as well, this ran on
+  // every render: a keystroke in a reason box, or a row decided with the mouse further down,
+  // scrolled the page back to wherever the cursor had been left (the first row, for a mouse user).
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const followedIndex = useRef(highlightIndex);
   useEffect(() => {
-    if (highlightIndex < 0) return;
-    const row = rows[highlightIndex];
+    if (followedIndex.current === highlightIndex) return;
+    followedIndex.current = highlightIndex;
+    const row = highlightIndex >= 0 ? rowsRef.current[highlightIndex] : undefined;
     if (!row) return;
     document.getElementById(`role-row-${row.id}`)?.scrollIntoView({ block: "nearest" });
-  }, [highlightIndex, rows]);
+  }, [highlightIndex]);
 
   const undoNotice = notice && (
     <p role="status" aria-live="polite" className="mt-3 flex flex-wrap items-center gap-3 border-2 border-line-muted px-3 py-1.5 text-13 text-fg">

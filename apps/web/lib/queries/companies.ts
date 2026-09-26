@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { latestApplicationFor, roleStageSql, roleStatusSql } from "@ava/db";
 import { MANUAL_RESCAN_INTERVAL_MS } from "@ava/core";
 import { and, asc, desc, eq, gte, inArray, isNotNull, ne, sql, getTableColumns, ilike, or, type SQL } from "drizzle-orm";
@@ -233,7 +234,8 @@ export async function getCompanySources(companyId: string): Promise<CareerSource
   return db().select().from(careerSources).where(eq(careerSources.companyId, companyId)).orderBy(asc(careerSources.createdAt));
 }
 
-export async function getLatestDiscoveryRun(companyId: string): Promise<DiscoveryRun | null> {
+/** Read once per request: the company page and its setup timeline both want it. */
+export const getLatestDiscoveryRun = cache(async (companyId: string): Promise<DiscoveryRun | null> => {
   const rows = await db()
     .select()
     .from(discoveryRuns)
@@ -241,7 +243,7 @@ export async function getLatestDiscoveryRun(companyId: string): Promise<Discover
     .orderBy(desc(discoveryRuns.startedAt))
     .limit(1);
   return rows[0] ?? null;
-}
+});
 
 /**
  * Shared discovery queued or running for one company — the same task lookup the companies list

@@ -238,6 +238,39 @@ it("holds a returned row only until its undo's page arrives, so a row the server
   expect(titles()).toEqual([SECOND.title]);
 });
 
+it("holds a returned row's actions while its undo is being saved, then lets it be decided again", async () => {
+  actions.decide.mockResolvedValueOnce({ ok: true });
+  render([FIRST, SECOND]);
+  press("a");
+  press("Enter", reasonBox()!);
+  await act(async () => {});
+  render([SECOND]);
+
+  const undoing = deferred();
+  actions.decide.mockReturnValueOnce(undoing.promise);
+  act(() => button("Undo").click());
+  expect(titles()).toEqual([FIRST.title, SECOND.title]);
+
+  // The cursor is on the returned row: its shortcut does nothing, and its buttons say it is saving.
+  press("a");
+  expect(reasonBox()).toBeNull();
+  // Its review is still open from the decision; the buttons in it are the ones pressed.
+  expect(container.querySelector(`#role-review-${FIRST.id}`)).not.toBeNull();
+  const saving = button("Saving…");
+  expect(saving.disabled).toBe(true);
+  act(() => saving.click());
+  expect(actions.decide).toHaveBeenCalledTimes(2);
+
+  await answer(undoing, { ok: true });
+  render([FIRST, SECOND]);
+  const shortlist = button("Shortlist");
+  expect(shortlist.disabled).toBe(false);
+  actions.decide.mockResolvedValueOnce({ ok: true });
+  await act(async () => { shortlist.click(); });
+  expect(actions.decide).toHaveBeenCalledTimes(3);
+  expect(actions.decide).toHaveBeenLastCalledWith(FIRST.id, "apply", "");
+});
+
 it("forgets an undo that had nothing to undo because its decision was refused", async () => {
   const saving = deferred();
   actions.decide.mockReturnValueOnce(saving.promise);

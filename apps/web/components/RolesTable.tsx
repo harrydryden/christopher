@@ -155,6 +155,13 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
   }, [inputRows, removedIds, returning]);
   /** One write per row at a time; each entry settles true when that write was saved. */
   const inFlight = useRef(new Map<string, Promise<boolean>>());
+  // The same rows, for rendering: a row with a write out has its actions disabled and its shortcuts
+  // ignored, so a press is never dropped without a sign (an undo brings a row back before it is saved).
+  const [writing, setWriting] = useState<ReadonlySet<string>>(() => new Set());
+  function track(id: string, run: Promise<boolean>) {
+    inFlight.current.set(id, run);
+    setWriting(ids => withId(ids, id));
+  }
   // A returned row is held in place only until the page its undo re-renders has arrived. The first
   // new page after the undo settled carries the server's answer, so from then on the row shows only
   // if the server lists it: held longer, a row the server later drops (decided in another tab,
@@ -184,11 +191,13 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
       } catch { setFlashError("Could not save. Reload and retry."); }
       finally { settle(id, run); setArchivingId(null); resolve(saved); }
     }));
-    inFlight.current.set(id, run);
+    track(id, run);
   }
   /** A row's write is over, unless a later one (an undo queued behind it) has taken its place. */
   function settle(id: string, run: Promise<boolean>) {
-    if (inFlight.current.get(id) === run) inFlight.current.delete(id);
+    if (inFlight.current.get(id) !== run) return;
+    inFlight.current.delete(id);
+    setWriting(ids => withoutId(ids, id));
   }
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const selectedIds = rows.filter(row => selected.has(row.id)).map(row => row.id);
@@ -369,7 +378,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
         refused("Could not save. Reload and retry.");
       } finally { settle(jobId, run); resolve(saved); }
     }));
-    inFlight.current.set(jobId, run);
+    track(jobId, run);
   }
 
   /**
@@ -399,7 +408,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
         refused("Could not save. Reload and retry.");
       } finally { settle(jobId, run); resolve(saved); }
     }));
-    inFlight.current.set(jobId, run);
+    track(jobId, run);
   }
 
   // Keyboard nav: only for the primary table (the daily-inbox view). Ignored while typing.
@@ -420,6 +429,8 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
       if (isEditable || e.metaKey || e.ctrlKey || e.altKey) return;
 
       const row = highlightIndex >= 0 ? rows[highlightIndex] : undefined;
+      // A row whose write is still out takes no new decision; its buttons say so too.
+      const decidable = row && !inFlight.current.has(row.id) ? row : undefined;
       switch (e.key) {
         case "j":
           e.preventDefault();
@@ -439,10 +450,10 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
           // R-6.1: shortlisting asks for a line rather than taking the decision silently. Enter on
           // an empty box shortlists anyway, so the one-keystroke path is still one keystroke and
           // a return.
-          if (row) { e.preventDefault(); openReasonBox(row.id, "apply", row.decision?.decision === "apply" ? row.decision.reason : ""); }
+          if (decidable) { e.preventDefault(); openReasonBox(decidable.id, "apply", decidable.decision?.decision === "apply" ? decidable.decision.reason : ""); }
           break;
         case "s":
-          if (row) { e.preventDefault(); openReasonBox(row.id, "skip", row.decision?.decision === "skip" ? row.decision.reason : ""); }
+          if (decidable) { e.preventDefault(); openReasonBox(decidable.id, "skip", decidable.decision?.decision === "skip" ? decidable.decision.reason : ""); }
           break;
         default:
           break;
@@ -558,6 +569,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
         <TBody>
           {rows.map((row, index) => {
             const boxed = reasonBox?.jobId === row.id ? reasonBox : null;
+            const busy = writing.has(row.id);
             const detail = details[row.id];
             // The build replaces the link only once its price is in hand: a panel that is still
             // loading, or that could not load, keeps the link rather than offering nothing.
@@ -692,7 +704,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                             size="sm"
                             variant={boxed.kind === "apply" ? "primary" : "secondary"}
                             aria-pressed={boxed.kind === "apply"}
-                            disabled={boxed.pending} onClick={() => setReasonBox({ ...boxed, kind: "apply" })}
+                            disabled={boxed.pending || busy} onClick={() => setReasonBox({ ...boxed, kind: "apply" })}
                           >
                             Shortlist
                           </Button>
@@ -700,7 +712,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                             size="sm"
                             variant={boxed.kind === "skip" ? "primary" : "secondary"}
                             aria-pressed={boxed.kind === "skip"}
-                            disabled={boxed.pending} onClick={() => setReasonBox({ ...boxed, kind: "skip" })}
+                            disabled={boxed.pending || busy} onClick={() => setReasonBox({ ...boxed, kind: "skip" })}
                           >
                             Dismiss
                           </Button>
@@ -722,7 +734,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                               // R-7.2: enter saves. Shift+Enter is still a new line, and an empty
                               // box on a shortlist saves the decision without a reason.
                               e.preventDefault();
-                              if (!boxed.pending) void submitDecision(row.id, boxed.kind, boxed.text);
+                              if (!boxed.pending && !busy) void submitDecision(row.id, boxed.kind, boxed.text);
                             }
                           }}
                           placeholder={boxed.kind === "skip" ? "Why not? (required)" : APPLY_REASON_HINT}
@@ -734,10 +746,10 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                           <Button
                             size="sm"
                             variant="primary"
-                            disabled={boxed.pending}
+                            disabled={boxed.pending || busy}
                             onClick={() => void submitDecision(row.id, boxed.kind, boxed.text)}
                           >
-                            {boxed.pending ? "Saving…" : "Save"}
+                            {boxed.pending || busy ? "Saving…" : "Save"}
                           </Button>
                           <Button size="sm" variant="ghost" disabled={boxed.pending} onClick={() => setReasonBox(null)}>
                             Cancel
@@ -750,30 +762,31 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                         {movedOn(row) && <Badge tone={stageTone(row.stage)} title={ROLE_STAGE_DESCRIPTIONS[row.stage]}>{stageLabel(row)}</Badge>}
                         <span className="text-12 text-muted" title={row.decision.createdTitle}>Decided {row.decision.createdLabel}</span>
                         {row.decision.reason && <p className="w-full text-14 text-fg">{row.decision.reason}</p>}
-                        <button type="button" onClick={() => openReasonBox(row.id, row.decision!.decision, row.decision!.reason)} className="text-12 text-muted underline hover:text-fg">
+                        <button type="button" disabled={busy} onClick={() => openReasonBox(row.id, row.decision!.decision, row.decision!.reason)} className="text-12 text-muted underline hover:text-fg disabled:opacity-40">
                           Reconsider
                         </button>
                         <button
                           type="button"
+                          disabled={busy}
                           onClick={() => {
                             void submitDecision(row.id, null, "");
                           }}
-                          className="text-12 text-muted underline hover:text-fg"
+                          className="text-12 text-muted underline hover:text-fg disabled:opacity-40"
                         >
                           Reset
                         </button>
                       </div>
                     ) : (
                       <div className="flex gap-2">
-                        <Button size="sm" variant="primary" onClick={() => void submitDecision(row.id, "apply", "")}>
-                          Shortlist
+                        <Button size="sm" variant="primary" disabled={busy} onClick={() => void submitDecision(row.id, "apply", "")}>
+                          {busy ? "Saving…" : "Shortlist"}
                         </Button>
-                        <Button size="sm" onClick={() => openReasonBox(row.id, "skip")}>
+                        <Button size="sm" disabled={busy} onClick={() => openReasonBox(row.id, "skip")}>
                           Dismiss
                         </Button>
                       </div>
                     )}
-                    <button type="button" disabled={archivingId !== null || reasonBox?.pending} onClick={() => void archiveRow(row.id)} className="mt-2 text-12 text-muted underline disabled:opacity-40">{archivingId === row.id ? "Saving…" : archived ? "Restore" : "Archive"}</button>
+                    <button type="button" disabled={archivingId !== null || reasonBox?.pending || busy} onClick={() => void archiveRow(row.id)} className="mt-2 text-12 text-muted underline disabled:opacity-40">{archivingId === row.id ? "Saving…" : archived ? "Restore" : "Archive"}</button>
                         </div>
                       </div>
                     </td>

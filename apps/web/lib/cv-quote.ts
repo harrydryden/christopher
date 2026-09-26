@@ -264,33 +264,28 @@ export async function cvBuildQuote(
   options: { description?: string } = {},
 ): Promise<CvBuildQuote> {
   const database = db();
-  const settings = await getSettingsFor(userId);
-  const [library] = await database
-    .select({ content: cvLibraries.content })
-    .from(cvLibraries)
-    .where(eq(cvLibraries.userId, userId))
-    .orderBy(desc(cvLibraries.version))
-    .limit(1);
-  // The role as this account sees it. A role outside its table quotes on the Library alone rather
-  // than reading the shared catalogue without an account behind the read.
-  const [role] = await database
-    .select({ description: jobs.descriptionText })
-    .from(userJobs)
-    .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
-    .where(and(eq(userJobs.userId, userId), eq(jobs.id, jobId)))
-    .limit(1);
-  const size: CvBuildSize = {
-    libraryBytes: libraryBytesFor(library?.content, settings.cvWritingPreferences, settings.cvTheme),
-    descriptionBytes: options.description?.trim()
-      ? Buffer.byteLength(options.description.trim())
-      : role?.description
-        ? Buffer.byteLength(role.description)
-        : 0,
-  };
-  const estimateUsd = estimateCvBuildUsd(settings.cvModel, size, "tailored");
-  const since = aiBudgetWindowStart(now, settings.aiBudgetResetAt);
-  const [spentUsd, heldUsd, queuedUsd, inFlightUsd] = await Promise.all([
-    accountAiSpend(database, userId, since),
+  // Everything that does not need the settings starts beside them: only the spend waits, for the
+  // budget window the settings say it opened.
+  const [settings, [library], [role], heldUsd, queuedUsd, inFlightUsd] = await Promise.all([
+    getSettingsFor(userId),
+    database
+      .select({ content: cvLibraries.content })
+      .from(cvLibraries)
+      .where(eq(cvLibraries.userId, userId))
+      .orderBy(desc(cvLibraries.version))
+      .limit(1),
+    // The role as this account sees it. A role outside its table quotes on the Library alone rather
+    // than reading the shared catalogue without an account behind the read. Its size is measured in
+    // the database: the description is up to 30 KB, and only its length is wanted. `octet_length`
+    // of UTF-8 text is what `Buffer.byteLength` gives for the same string.
+    options.description?.trim()
+      ? Promise.resolve([])
+      : database
+        .select({ bytes: sql<number>`octet_length(coalesce(${jobs.descriptionText}, ''))::int` })
+        .from(userJobs)
+        .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
+        .where(and(eq(userJobs.userId, userId), eq(jobs.id, jobId)))
+        .limit(1),
     // Holds that have expired are capacity nothing can still be spending; the worker deletes them
     // inside the budget lock, and a quote read a moment before that must not count them either.
     database
@@ -301,6 +296,15 @@ export async function cvBuildQuote(
     queuedBuildsUsd(userId),
     generatingBuildsUsd(userId, now),
   ]);
+  const size: CvBuildSize = {
+    libraryBytes: libraryBytesFor(library?.content, settings.cvWritingPreferences, settings.cvTheme),
+    descriptionBytes: options.description?.trim()
+      ? Buffer.byteLength(options.description.trim())
+      : Number(role?.bytes ?? 0),
+  };
+  const estimateUsd = estimateCvBuildUsd(settings.cvModel, size, "tailored");
+  const since = aiBudgetWindowStart(now, settings.aiBudgetResetAt);
+  const spentUsd = await accountAiSpend(database, userId, since);
   const limitUsd = settings.aiBudgetUsd;
   // Builds waiting in the queue will hold their share the moment the worker admits them, and a
   // running build will admit each of its remaining stages in turn.

@@ -29,7 +29,7 @@ vi.mock("react", async (importOriginal) => {
 });
 import { getSettingsFor, getSystemSettings } from "@/lib/settings";
 import { suggestionCount } from "./suggestions";
-import { getLatestDiscoveryRun } from "./companies";
+import { getLatestDiscoveryLog, getLatestDiscoveryRun } from "./companies";
 
 beforeAll(async () => {
   const client = createTestDb();
@@ -97,4 +97,16 @@ it("reads a company's latest discovery run once per request", async () => {
   expect(a?.status).toBe("resolved");
   expect(b).toBe(a);
   expect(reads.n).toBe(1);
+});
+
+it("leaves the discovery log in the database except for the administrator's own read of it", async () => {
+  const [company] = await database.insert(schema.companies).values({ name: "Logged", domain: "logged.test", homepageUrl: "https://logged.test" }).returning();
+  await database.insert(schema.discoveryRuns).values({ companyId: company!.id, status: "failed", startedAt: new Date("2026-09-01T00:00:00Z"), log: ["old run"] });
+  await database.insert(schema.discoveryRuns).values({ companyId: company!.id, status: "not_found", startedAt: new Date("2026-09-02T00:00:00Z"), log: ["looked at /careers", "nothing there"] });
+  const run = await getLatestDiscoveryRun(company!.id);
+  expect(run?.status).toBe("not_found");
+  expect(run).not.toHaveProperty("log");
+  expect(await getLatestDiscoveryLog(company!.id)).toEqual(["looked at /careers", "nothing there"]);
+  const [empty] = await database.insert(schema.companies).values({ name: "Fresh", domain: "fresh.test", homepageUrl: "https://fresh.test" }).returning();
+  expect(await getLatestDiscoveryLog(empty!.id)).toEqual([]);
 });

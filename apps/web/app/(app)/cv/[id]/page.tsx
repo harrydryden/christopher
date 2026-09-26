@@ -73,16 +73,10 @@ export default async function CvDraftPage({
   if (!zUuid().safeParse(id).success) notFound();
   const draft = await getOwnCvDraft(user.id, id);
   if (!draft) notFound();
-  const versions = await dailyCvVersions(db(), [draft.id]);
-  const version = cvVersionLabel(draft.createdAt, versions.get(draft.id) ?? Math.max(1, draft.revision));
-  const content = draft.content;
-  const busy = draft.status === "queued" || draft.status === "generating";
-  const awaitingEvidence = draft.status === "awaiting_evidence";
-  const failed = draft.status === "failed";
-  // A build that has stopped moving is indistinguishable from a slow one without the queue row
-  // behind it: which attempt this is, whether anything still holds it, and what the last one left.
+  // Everything below is read once the draft is known to be this account's, side by side.
   const now = new Date();
-  const [progress, system, admin, latestLibrary, sharing] = await Promise.all([
+  const [versions, progress, system, admin, latestLibrary, sharing, [application]] = await Promise.all([
+    dailyCvVersions(db(), [draft.id]),
     // The build's state, the queue row behind it and every motion of its ledger, in one read: the
     // same read the progress feed makes, so the page and the feed assemble the same token.
     readCvProgress(user.id, id),
@@ -99,7 +93,21 @@ export default async function CvDraftPage({
     // The links this account has opened onto this revision, and the notes left through them.
     // Both are scoped by the account and the draft, as every per-account read is.
     getOwnCvSharing(user.id, id),
+    // The application this revision was sent with, if one was.
+    db()
+      .select({ id: applications.id })
+      .from(applications)
+      .where(and(eq(applications.cvId, id), eq(applications.userId, user.id)))
+      .limit(1),
   ]);
+  const version = cvVersionLabel(draft.createdAt, versions.get(draft.id) ?? Math.max(1, draft.revision));
+  const content = draft.content;
+  const busy = draft.status === "queued" || draft.status === "generating";
+  const awaitingEvidence = draft.status === "awaiting_evidence";
+  const failed = draft.status === "failed";
+  // A build that has stopped moving is indistinguishable from a slow one without the queue row
+  // behind it: which attempt this is, whether anything still holds it, and what the last one left:
+  // the progress read above.
   const buildTask = progress?.task ?? null;
   const steps = progress?.steps ?? [];
   const build = busy || failed ? cvBuildState(draft, buildTask, now, system.timezone) : null;
@@ -161,11 +169,6 @@ export default async function CvDraftPage({
       />
     </>
   );
-  const [application] = await db()
-    .select({ id: applications.id })
-    .from(applications)
-    .where(and(eq(applications.cvId, id), eq(applications.userId, user.id)))
-    .limit(1);
   return (
     <div className="w-full space-y-5">
       <nav aria-label="CV navigation">

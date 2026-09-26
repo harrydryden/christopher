@@ -243,10 +243,17 @@ export async function getCompanySources(companyId: string): Promise<CareerSource
   return db().select().from(careerSources).where(eq(careerSources.companyId, companyId)).orderBy(asc(careerSources.createdAt));
 }
 
-/** Read once per request: the company page and its setup timeline both want it. */
-export const getLatestDiscoveryRun = cache(async (companyId: string): Promise<DiscoveryRun | null> => {
+/** A company's newest discovery run as the page shows it: everything but the step-by-step log. */
+export type LatestDiscoveryRun = Omit<DiscoveryRun, "log">;
+
+/**
+ * Read once per request: the company page and its setup timeline both want it. The `log` is left in
+ * the database; only an administrator's diagnostics show it (`getLatestDiscoveryLog`).
+ */
+export const getLatestDiscoveryRun = cache(async (companyId: string): Promise<LatestDiscoveryRun | null> => {
+  const { log: _log, ...columns } = getTableColumns(discoveryRuns);
   const rows = await db()
-    .select()
+    .select(columns)
     .from(discoveryRuns)
     .where(eq(discoveryRuns.companyId, companyId))
     .orderBy(desc(discoveryRuns.startedAt))
@@ -254,23 +261,15 @@ export const getLatestDiscoveryRun = cache(async (companyId: string): Promise<Di
   return rows[0] ?? null;
 });
 
-/**
- * Shared discovery queued or running for one company — the same task lookup the companies list
- * makes for a page of them, narrowed to one. Logo captures are excluded: they ride the discover
- * task but say nothing about whether a careers page is being looked for.
- */
-export async function companyDiscoveryState(companyId: string): Promise<"queued" | "running" | null> {
-  const rows = await db()
-    .select({ status: tasks.status })
-    .from(tasks)
-    .where(and(
-      eq(tasks.type, "discover"),
-      sql`coalesce(${tasks.payload}->>'logoOnly', 'false') != 'true'`,
-      inArray(tasks.status, ["queued", "running"]),
-      sql`${tasks.payload}->>'companyId' = ${companyId}`,
-    ));
-  if (!rows.length) return null;
-  return rows.some(row => row.status === "running") ? "running" : "queued";
+/** The newest discovery run's log, for the administrator's diagnostics; empty when there is none. */
+export async function getLatestDiscoveryLog(companyId: string): Promise<unknown[]> {
+  const [row] = await db()
+    .select({ log: discoveryRuns.log })
+    .from(discoveryRuns)
+    .where(eq(discoveryRuns.companyId, companyId))
+    .orderBy(desc(discoveryRuns.startedAt))
+    .limit(1);
+  return Array.isArray(row?.log) ? row.log : [];
 }
 
 export interface CompanyScanRow extends Omit<Scan, "rawSnapshot"> {
@@ -396,7 +395,8 @@ export async function companySetupRows(userId: string, companyId: string): Promi
   const [run, taskRows, sourceRows, counts] = await Promise.all([
     getLatestDiscoveryRun(companyId),
     // Logo captures ride the `discover` task and say nothing about a careers page, so they are
-    // left out here exactly as `companyDiscoveryState` leaves them out.
+    // left out here exactly as the companies list leaves them out. The company page's "looking for
+    // the careers page" is this read's discovery task.
     db()
       .select({ type: tasks.type, status: tasks.status, startedAt: tasks.startedAt })
       .from(tasks)

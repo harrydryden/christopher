@@ -91,11 +91,32 @@ export async function listCvDraftPage(
   );
 }
 
+/**
+ * Whether `cv_versions` exists yet. The deployment may precede the worker's migration, so it is
+ * probed, but only until it is there: remembered once present (as `cvBuildColumnsPresent` is), so
+ * a CV page and every list of drafts stop paying a round trip for a question already answered, and
+ * a release briefly ahead of its migration still recovers by itself.
+ */
+let cvVersionsPresent: Promise<boolean> | null = null;
+
+function cvVersionsTablePresent(database: Pick<Db, "execute">): Promise<boolean> {
+  cvVersionsPresent ??= database
+    .execute<{ present: boolean }>(sql`select to_regclass('public.cv_versions') is not null as present`)
+    .then((result) => {
+      const present = !!result.rows[0]?.present;
+      if (!present) cvVersionsPresent = null;
+      return present;
+    }, (error: unknown) => {
+      cvVersionsPresent = null;
+      throw error;
+    });
+  return cvVersionsPresent;
+}
+
 /** The deployment may precede the worker's migration; keep existing CVs readable. */
 export async function dailyCvVersions(database: Pick<Db, "execute" | "select">, ids: string[]) {
   if (!ids.length) return new Map<string, number>();
-  const available = await database.execute<{ present: boolean }>(sql`select to_regclass('public.cv_versions') is not null as present`);
-  if (!available.rows[0]?.present) return new Map<string, number>();
+  if (!(await cvVersionsTablePresent(database))) return new Map<string, number>();
   const rows = await database.select({ id: cvVersions.cvId, version: cvVersions.version })
     .from(cvVersions).where(inArray(cvVersions.cvId, ids));
   return new Map(rows.map(row => [row.id, row.version]));

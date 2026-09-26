@@ -1,7 +1,7 @@
 {
   "kind": "cv-replay",
-  "at": "2026-09-26T11:10:47.590Z",
-  "draftId": "4669f899-8dca-409b-b981-362102eb204c",
+  "at": "2026-09-26T11:29:53.957Z",
+  "draftId": "a72b14a9-1441-4f5b-8ccd-b64a46dca027",
   "promptSetVersion": "914bd3e6aae5",
   "unverified": true,
   "source": "recording",
@@ -42,8 +42,8 @@
   "outcome": "published",
   "error": null,
   "misses": [],
-  "costUsd": 0.9352,
-  "calls": 8,
+  "costUsd": 0.7806,
+  "calls": 6,
   "byStage": {
     "author": {
       "calls": 1,
@@ -58,11 +58,11 @@
       "costUsd": 0.172
     },
     "review_candidate": {
-      "calls": 3,
-      "costUsd": 0.2956
+      "calls": 1,
+      "costUsd": 0.141
     }
   },
-  "wallMs": 356,
+  "wallMs": 346,
   "improvementAdopted": false,
   "baseline": {
     "source": "recording",

@@ -24,12 +24,15 @@ export function reviewFixture(input: {
     input.evidence.find((item) => item.id !== "source:profile") ??
     input.evidence[0]!;
   const evidence = [{ id: ref.id, quote: ref.text.slice(0, 200) }];
+  // A requirement is judged against the printed CV; a batch that carries no claims (a revision's
+  // re-check sends only the claims it changed) still cites the CV's first line.
+  const cited = input.claims[0] ?? input.cv.find((item) => !item.id.endsWith(":heading")) ?? input.cv[0]!;
   return {
     matches: input.rubric.requirements.map((requirement) => ({
       requirementId: requirement.id,
       status: "demonstrated",
       libraryStatus: "demonstrated",
-      cvEvidence: [{ id: input.claims[0]!.id, quote: input.claims[0]!.text }],
+      cvEvidence: [{ id: cited.id, quote: cited.text }],
       libraryEvidence: evidence,
       reason: "Fixture match",
       improvement: "",

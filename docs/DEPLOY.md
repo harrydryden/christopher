@@ -82,8 +82,8 @@ the same learning loop.
    | `pnpm db:migrate`, `seed:demo`, the drills | direct, 5432 (External) | The same lock, from your machine. |
 
    **The arithmetic.** The database allows 103 backends (`max_connections`), three of them reserved
-   for superusers. The worker holds up to `2 × WORKER_CONCURRENCY + 4` = 10 at the supported
-   concurrency of 3. On the direct endpoint every warm interface instance holds up to 3 more, so
+   for superusers. The worker holds up to `2 × (WORKER_CONCURRENCY + CV_CONCURRENCY) + 4` = 26 at
+   the supported three general slots and eight CV slots. On the direct endpoint every warm interface instance holds up to 3 more, so
    about 30 instances (fewer during a rollout, when old and new are both warm, or with the cron
    fallback's own pool of 6) exhaust the database, and every page fails with "too many clients" for
    every account at once. Through PgBouncer an instance's connections are clients, which hold no
@@ -155,7 +155,8 @@ Set these on the service:
 | `SCRAPER_CONTACT_EMAIL` | an address you read; it goes in the user agent. **Required**: in production the worker refuses to start without one, or with a placeholder such as `you@example.com` |
 | `ADMIN_EMAILS` | the same list as the interface's. The worker warns at boot when it is unset |
 | `TZ` | e.g. `Europe/London` |
-| `WORKER_CONCURRENCY` | `3` — the supported value for the 512 MB Starter instance shared with Chromium. It gives a database pool of `2 × concurrency + 4` = 10 connections. Six slots caused an observed ten-hour out-of-memory restart loop on a 41 MB listing; use six only after increasing the instance size and proving memory and database headroom under a representative soak |
+| `WORKER_CONCURRENCY` | `3` — the supported value for the 512 MB Starter instance shared with Chromium. These are the general slots (scans, discovery, imports, scoring); they never run a CV build. Six slots caused an observed ten-hour out-of-memory restart loop on a 41 MB listing; use six only after increasing the instance size and proving memory and database headroom under a representative soak |
+| `CV_CONCURRENCY` | `8` (the default; 1–30) — slots of their own for CV builds, beside the general ones. A build holds its slot for many minutes but mostly waits on the model, so it is sized apart from the memory budget: the load harness ran 50 accounts × 2 CVs through eight slots at a peak heap of about 90 MB. The database pool is `2 × (WORKER_CONCURRENCY + CV_CONCURRENCY) + 4` = 26 connections at 3 and 8. Each build is admitted against its account's budget one stage at a time, so an account's builds run side by side while its month can afford the stages in flight |
 | `WORKER_STATUS_TOKEN` | a long random string; the bearer token the worker's `/status` figures require. Give the operational check the same value (see [Release gates](RELEASE-GATES.md)) |
 | `LOG_LEVEL` | `info` (the default), or `debug`, `warn` or `error`, in any case |
 
@@ -375,8 +376,8 @@ scans all fail at once, until someone changes the plan by hand.
   indexes in memory.
 - Watch the disk figure on the database's Metrics page, and treat 70% as the point to add storage.
   Nothing in the product alerts on it yet; add it to the alert list below.
-- Connections are a separate budget from disk: the worker opens up to `2 × WORKER_CONCURRENCY + 4` direct
-  connections (10 at three slots), and the interface should use the pooled URL, as the connection
+- Connections are a separate budget from disk: the worker opens up to `2 × (WORKER_CONCURRENCY + CV_CONCURRENCY) + 4` direct
+  connections (26 at three general and eight CV slots), and the interface should use the pooled URL, as the connection
   guidance above describes.
 
 ## Observability
@@ -470,7 +471,7 @@ delivery are still outstanding. See [current gate evidence](RELEASE-GATES.md#con
 - [ ] Have the service owner supply the required recovery point objective (**RPO**) and recovery
   time objective (**RTO**). Do not invent them from the provider plan.
 - [ ] In Render, confirm the worker plan, region, `/healthz` path, database link, auto-deploy setting,
-  build filter, empty Docker Command, `WORKER_CONCURRENCY=3`, timezone and required secrets
+  build filter, empty Docker Command, `WORKER_CONCURRENCY=3`, `CV_CONCURRENCY=8`, timezone and required secrets
   (`SCRAPER_CONTACT_EMAIL` above all: without a real address the new worker will not start). The
   live services are not linked to `render.yaml`, so compare them with it by hand and resolve any
   drift deliberately.
@@ -610,7 +611,10 @@ order, from **Admin › Operations**.
    the heap ceiling above. A board in the tens of megabytes will not fit beside two other slots.
 
 The fix for a memory loop is fewer concurrent inputs or a larger instance, in that order:
-`WORKER_CONCURRENCY` is a memory budget, not a CPU one. Production runs **3**. `render.yaml` is a
+`WORKER_CONCURRENCY` is a memory budget, not a CPU one. Production runs **3**. CV builds do not
+share it: they run in `CV_CONCURRENCY` slots of their own (**8**), because a build's memory is one
+Library, one CV and a PDF render rather than a fetched listing. If a crash's likely task is a
+`generate_cv`, lower `CV_CONCURRENCY` before touching the general slots. `render.yaml` is a
 template for creating services, not a description of the live ones — **the Render dashboard is the
 source of truth** for the running worker, whose health check path and environment were set there.
 Change the value in the dashboard, and in `render.yaml` so a rebuilt service inherits it.

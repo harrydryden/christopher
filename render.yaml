@@ -65,8 +65,16 @@ services:
         # 512 MB Starter instance shared with Chromium the V8 heap ceiling is about 258 MB. Three
         # concurrent inputs is what that ceiling can hold; six was written here for throughput and
         # is what a single 41 MB careers page turned into ten hours of out-of-memory restarts.
-        # Six needs a larger instance — raise the plan first, then this. The database pool follows
-        # it (2 × concurrency + 4 connections).
+        # Six needs a larger instance — raise the plan first, then this. These slots never run a CV
+        # build: those have slots of their own (CV_CONCURRENCY). The database pool follows both
+        # (2 × (WORKER_CONCURRENCY + CV_CONCURRENCY) + 4 connections).
         value: "3"
+      - key: CV_CONCURRENCY
+        # CV builds' own slots, beside the three above: 1–30, default 8. A build holds its slot for
+        # many minutes but mostly waits on the model — its memory is one Library, one CV and a PDF
+        # render, not a fetched listing — so it is sized apart from the memory-bound slots. The load
+        # harness (scripts/cv-load.mjs) ran 50 accounts × 2 CVs through eight at a peak heap of about
+        # 90 MB. Eight slots add 16 database connections: 26 in all with three general slots.
+        value: "8"
       - key: LOG_LEVEL
         value: info

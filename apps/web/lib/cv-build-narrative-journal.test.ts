@@ -152,12 +152,16 @@ describe("the journal's wording, motion by motion", () => {
   });
 
   it("reserves the budget stage by stage, with what other calls hold", () => {
-    expect(text(step("admit_budget", "done", { stage: "writing", expectedUsd: 1.2, leftUsd: 14, limitUsd: 18.4, heldUsd: 0.4 }))).toBe(
+    expect(text(step("admit_budget", "done", { stage: "write", expectedUsd: 1.2, leftUsd: 14, limitUsd: 18.4, heldUsd: 0.4 }))).toBe(
       "Reserved US$1.20 of your AI budget for writing (US$14.00 left of US$18.40 this month, US$0.40 held by other calls in flight)",
     );
     expect(text(step("admit_budget", "done", { stage: "improve", expectedUsd: 0.9, leftUsd: 12 }))).toBe(
       "Reserved US$0.90 of your AI budget for the improvement pass (US$12.00 left this month)",
     );
+    expect(text(step("admit_budget", "done", { stage: "plan", expectedUsd: 0.2 }))).toBe("Reserved US$0.20 of your AI budget for matching your evidence");
+    expect(text(step("admit_budget", "done", { stage: "audit", expectedUsd: 0.2 }))).toBe("Reserved US$0.20 of your AI budget for checking");
+    expect(text(step("admit_budget", "done", { stage: "reaudit", expectedUsd: 0.2 }))).toBe("Reserved US$0.20 of your AI budget for checking the revision");
+    expect(text(step("admit_budget", "done", { stage: "rubric", expectedUsd: 0.2 }))).toBe("Reserved US$0.20 of your AI budget for extracting the requirements");
     expect(text(step("admit_budget", "done", { stage: "tailored_completion", expectedUsd: 0.5 }))).toBe(
       "Reserved US$0.50 of your AI budget for tailored completion",
     );

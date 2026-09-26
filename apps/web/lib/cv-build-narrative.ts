@@ -156,20 +156,18 @@ const REUSED_FROM: Record<string, string> = {
   assessment: "from the earlier assessment",
 };
 
-/** What each budget stage is called in the reservation's line. Unknown stages read as their name. */
+/**
+ * What each budget stage is called in the reservation's line: the stages the worker admits
+ * (`CV_BUILD_STAGE_NAMES` in the core package — rubric, plan, write, audit, improve, reaudit).
+ * An unknown stage reads as its name with the underscores taken out.
+ */
 const BUDGET_STAGES: Record<string, string> = {
-  preparing: "getting ready",
-  analysing: "understanding the role",
-  analysis: "understanding the role",
   rubric: "extracting the requirements",
-  planning: "matching your evidence",
-  writing: "writing",
-  fitting: "fitting the page limit",
-  assessing: "checking",
-  assessment: "checking",
-  improving: "the improvement pass",
-  improvement: "the improvement pass",
+  plan: "matching your evidence",
+  write: "writing",
+  audit: "checking",
   improve: "the improvement pass",
+  reaudit: "checking the revision",
 };
 
 function budgetStage(value: string): string {

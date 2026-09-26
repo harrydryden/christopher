@@ -274,7 +274,12 @@ export async function readCvProgress(userId: string, draftId: string, window: Cv
       ) rows on true
       where d.id = ${draftId} and d.user_id = ${userId}`);
     row = result.rows[0];
-  } catch {
+  } catch (error) {
+    // Only a schema the worker has not migrated yet is read the older way. Anything else — a
+    // statement timeout, a dropped connection — is this reading failing, and the poller backs off:
+    // answering it with an empty ledger would wipe the narrative the page already shows, and
+    // following the failed query with two more would add load to a database already struggling.
+    if (!isSchemaBehind(error)) throw error;
     return readCvProgressBehind(userId, draftId);
   }
   if (!row) return null;
@@ -305,6 +310,18 @@ export async function readCvProgress(userId: string, draftId: string, window: Cv
     steps,
     signature: `${row.n ?? 0}:${row.running ?? 0}:${row.last ?? ""}`,
   };
+}
+
+/** PostgreSQL's codes for a missing table and a missing column. */
+const SCHEMA_BEHIND = new Set(["42P01", "42703"]);
+
+/** Whether a query failed because the schema lacks a table or column, however the driver wrapped it. */
+export function isSchemaBehind(error: unknown): boolean {
+  for (let cause = error, depth = 0; cause && typeof cause === "object" && depth < 5; cause = (cause as { cause?: unknown }).cause, depth += 1) {
+    const code = (cause as { code?: unknown }).code;
+    if (typeof code === "string" && SCHEMA_BEHIND.has(code)) return true;
+  }
+  return false;
 }
 
 /** The same reading from a database the worker has not migrated: the draft and its task, no ledger. */

@@ -148,6 +148,36 @@ it("signs the whole ledger in SQL the way a reader signs the rows it holds, and 
   expect(merged.map((step) => step.seq)).toEqual([1, 2, 3, 4]);
 });
 
+it("reads the older way only when the schema is behind, and lets any other failure through", async () => {
+  const draft = await seedDraft();
+  const real = database;
+  let selects = 0;
+  const failing = (code: string) =>
+    new Proxy(real, {
+      get(target, key, receiver) {
+        if (key === "execute") return async () => { throw Object.assign(new Error(`failed with ${code}`), { code }); };
+        if (key === "select") selects += 1;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+  try {
+    // A statement timeout is this reading failing: the poller backs off, and nothing reads again.
+    database = failing("57014");
+    await expect(readCvProgress(user.id, draft.id)).rejects.toThrow("failed with 57014");
+    expect(selects).toBe(0);
+    // A missing column, even wrapped by the driver, is a worker that has not migrated yet.
+    database = new Proxy(real, {
+      get(target, key, receiver) {
+        if (key === "execute") return async () => { throw Object.assign(new Error("query failed"), { cause: Object.assign(new Error("no column"), { code: "42703" }) }); };
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    expect((await readCvProgress(user.id, draft.id))!.draft.status).toBe("generating");
+  } finally {
+    database = real;
+  }
+});
+
 it("reads another account's ledger rows as nobody's, even through its own draft id", async () => {
   const draft = await seedDraft();
   const stranger = await ensureTestUser(database, "cv-queries-stranger@example.com");

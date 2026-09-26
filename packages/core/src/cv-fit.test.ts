@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import { createCvWritingBudget, cvBudgetViolations } from './cv-budget';
-import { buildFittedCv, selectCvToFit, type CvFitEvent } from './cv-fit';
+import { buildFittedCv, CV_FIT_PROBLEM_CHARACTERS, cvFitCorrection, selectCvToFit, type CvFitEvent } from './cv-fit';
 import { DEFAULT_CV_THEME, materialiseCv, type CvLibrary, type CvPlan } from './cv';
 import { renderCvPdfWithReport } from './cv-pdf';
 // Every render the fitter asks for, counted, so a test can say how many it took.
@@ -56,7 +56,7 @@ it('gives the writer budgets before its first attempt and avoids unnecessary mod
  // motions and nothing else, so there is one vocabulary rather than two that can disagree.
  const motions: string[] = [];
  const fitted=await buildFittedCv(library,'Financial planning budgets reporting',write,undefined,async event => { motions.push(event.motion); });
- expect(motions).toEqual(["write", "write", "check_plan", "measure", "shorten"]);
+ expect(motions).toEqual(["write", "write", "check_plan", "measure", "measure", "shorten"]);
  expect(write).toHaveBeenCalledTimes(1);
  expect(write.mock.calls[0]![0].maxPages).toBe(2);
  expect(write.mock.calls[0]![0].writingBudget.blocks).toHaveLength(8);
@@ -66,15 +66,18 @@ it('gives the writer budgets before its first attempt and avoids unnecessary mod
 it('reports each motion of writing and fitting with the figures behind it',async()=>{
  const events: CvFitEvent[] = [];
  await buildFittedCv(library,'Financial planning budgets reporting',async()=>plan,undefined,async event => { events.push(event); });
- expect(events.map(e=>e.motion)).toEqual(['write','write','check_plan','measure','shorten']);
+ expect(events.map(e=>e.motion)).toEqual(['write','write','check_plan','measure','measure','shorten']);
  expect(events[0]).toMatchObject({ motion:'write', phase:'start', attempt:1, budgetScale:1, maxPages:2 });
- expect((events[0] as Extract<CvFitEvent,{phase:'start'}>).budgetCharacters).toBeGreaterThan(0);
+ expect((events[0] as Extract<CvFitEvent,{motion:'write',phase:'start'}>).budgetCharacters).toBeGreaterThan(0);
  // Six roles written, every bullet counted, and the prose measured before anything was trimmed.
  expect(events[1]).toMatchObject({ motion:'write', phase:'done', attempt:1, roles:6, bullets:38 });
- expect((events[1] as Extract<CvFitEvent,{phase:'done'}>).characters).toBeGreaterThan(1000);
+ expect((events[1] as Extract<CvFitEvent,{motion:'write',phase:'done'}>).characters).toBeGreaterThan(1000);
  expect(events[2]).toMatchObject({ motion:'check_plan', attempt:1, omitted:[], skillFormatCorrections:0 });
- expect(events[3]).toMatchObject({ motion:'measure', attempt:1, maxPages:2, pages:2 });
- const shorten = events[4] as Extract<CvFitEvent,{motion:'shorten'}>;
+ // The measurement opens before anything is rendered, and closes with what it rendered to decide.
+ expect(events[3]).toEqual({ motion:'measure', phase:'start', attempt:1, maxPages:2 });
+ expect(events[4]).toMatchObject({ motion:'measure', phase:'done', attempt:1, maxPages:2, pages:2, outcome:'fits' });
+ expect((events[4] as Extract<CvFitEvent,{motion:'measure',phase:'done'}>).renders).toBeGreaterThan(0);
+ const shorten = events[5] as Extract<CvFitEvent,{motion:'shorten'}>;
  expect(shorten.removed).toBeGreaterThan(0);
  expect(shorten.changes.length).toBeLessThanOrEqual(6);
  expect(shorten.changes[0]).toContain('prioritised');
@@ -200,4 +203,92 @@ it('corrects a retry against the budget it will be given, not the one it just mi
  expect(budgetFor(1)).toBeLessThan(budgetFor(0));
  expect(write.mock.calls[1]![0].layoutFeedback!.corrections).toContain(`r5: ${length} characters; budget ${budgetFor(1)}.`);
  expect(write.mock.calls[1]![0].layoutFeedback!.corrections).not.toContain(`r5: ${length} characters; budget ${budgetFor(0)}.`);
+});
+it('corrects an answer that cannot be materialised with one more writing call, telling the writer exactly what was wrong', async () => {
+ const events: CvFitEvent[] = [];
+ // An evidence reference the Library does not hold: the writer's mistake, not the Library's.
+ const invented: CvPlan = { ...plan, sections: [...plan.sections, { entryId: 'invented', bullets: ['Made something up'] }] };
+ const write = vi.fn().mockResolvedValueOnce(invented).mockResolvedValueOnce(plan);
+ const fitted = await buildFittedCv(library, 'Financial planning budgets reporting', write, undefined, async event => { events.push(event); });
+ expect(write).toHaveBeenCalledTimes(2);
+ expect(write.mock.calls[1]![0].layoutFeedback.corrections[0]).toContain('unknown, unconfirmed or repeated evidence references');
+ expect(write.mock.calls[1]![0].layoutFeedback.previousPlan).toBe(invented);
+ // The second attempt is a rewrite asked for by a correction: nothing was measured, so no reason.
+ const rewrite = events.filter(event => event.motion === 'write' && event.phase === 'start')[1]!;
+ expect(rewrite).toMatchObject({ attempt: 2, corrections: 1 });
+ expect(rewrite).not.toHaveProperty('reason');
+ expect(fitted.sections.some(section => section.entryId === 'invented')).toBe(false);
+});
+it('hands an answer that stays unusable after three corrected attempts to the person, as output_invalid', async () => {
+ const invented: CvPlan = { ...plan, sections: [...plan.sections, { entryId: 'invented', bullets: ['Made something up'] }] };
+ const write = vi.fn().mockResolvedValue(invented);
+ const attempt = buildFittedCv(library, 'Finance', write);
+ await expect(attempt).rejects.toMatchObject({ kind: 'output_invalid', detail: { attempts: 3 },
+  policy: { resolvedBy: 'user', retryable: false, action: 'choose_model' } });
+ await expect(attempt).rejects.toThrow('could not be used after three corrected attempts');
+ expect(write).toHaveBeenCalledTimes(3);
+});
+it('tells a rewrite why the attempt before it did not stand, with what that attempt measured', async () => {
+ const minimal: CvPlan = { ...plan, sections: plan.sections.map(section => section.entryId.startsWith('r') ? { ...section, bullets: [plan.sections[1]!.bullets[1]!] } : section) };
+ const events: CvFitEvent[] = [];
+ await expect(buildFittedCv({ ...library, theme: { ...DEFAULT_CV_THEME, maxPages: 1 } }, 'Finance', async () => minimal, undefined,
+  async event => { events.push(event); })).rejects.toThrow('after three budgeted attempts');
+ const starts = events.filter((event): event is Extract<CvFitEvent, { motion: 'write'; phase: 'start' }> => event.motion === 'write' && event.phase === 'start');
+ expect(starts[0]).not.toHaveProperty('reason');
+ expect(starts[1]).toMatchObject({ attempt: 2, reason: 'overflow', maxPages: 1 });
+ expect(starts[1]!.pages).toBeGreaterThan(1);
+ const closes = events.filter(event => event.motion === 'measure' && event.phase === 'done');
+ expect(closes.length).toBe(3);
+ expect(closes.every(event => event.motion === 'measure' && event.phase === 'done' && event.outcome === 'overflow')).toBe(true);
+});
+it('hands a page limit that only removing sole essential evidence could meet to the person after one build, not three', async () => {
+ // Fifteen roles that each keep their one achievement, and an interest the page has no room for
+ // that is nevertheless the only evidence for an essential requirement: nothing can be trimmed.
+ const roles = Array.from({ length: 15 }, (_, i) => ({ id: `x${i}`, kind: 'experience' as const, heading: `Director · Employer ${i} · 20${10 + i}`,
+  details: 'Coordinated operational delivery across distributed teams. '.repeat(8).trim(), confirmedResponsibilities: ['Coordinated operational delivery across distributed teams. '.repeat(8).trim()] }));
+ const crowded: CvLibrary = { name: 'Example', contact: 'London', profile: 'Leader', theme: { ...DEFAULT_CV_THEME, maxPages: 1 }, entries: [
+  ...roles, { id: 'i', kind: 'interest', heading: 'Interests', details: 'Chaired a national charity board' }] };
+ const rubric = { caveats: [], requirements: [{ id: 'r1', label: 'Board governance', quote: 'board', importance: 'essential' as const, category: 'experience' as const }] };
+ const tailoring = { requirements: [{ requirementId: 'r1', status: 'demonstrated' as const, evidence: [{ sourceId: 'entry:i:row:0', quote: 'Chaired a national charity board' }], reason: 'Direct.' }], gapQuestions: [] };
+ const written: CvPlan = { summary: 'Leader', summarySources: [{ sourceId: 'source:profile', quote: 'Leader' }], sections: [
+  ...roles.map(role => ({ entryId: role.id, bullets: [role.details], bulletSources: [[{ sourceId: `entry:${role.id}:row:0`, quote: role.details }]] })),
+  { entryId: 'i', bullets: ['Chaired a national charity board'], bulletSources: [[{ sourceId: 'entry:i:row:0', quote: 'Chaired a national charity board' }]] }], gaps: [] };
+ const write = vi.fn().mockResolvedValue(written);
+ const attempt = buildFittedCv(crowded, 'board', write, undefined, undefined, { plan: tailoring, rubric });
+ // The person's page limit, with the reason: the essential evidence is why it cannot shrink.
+ await expect(attempt).rejects.toMatchObject({ kind: 'page_limit_unfittable', detail: { maxPages: 1, attempts: 3, essential: true } });
+ await expect(attempt).rejects.toSatisfy((error: unknown) => (error as { policy: object }).policy && Object.keys((error as { policy: object }).policy).length === 0);
+ expect(write).toHaveBeenCalledTimes(3);
+});
+// A planned build: every summary and bullet cites the Library row it came from.
+const sourcedTarget = {
+ rubric: { caveats: [], requirements: [{ id: 'fin', label: 'Financial planning', quote: 'planning', importance: 'essential' as const, category: 'experience' as const }] },
+ plan: { requirements: [{ requirementId: 'fin', status: 'demonstrated' as const, evidence: [{ sourceId: 'entry:r0:row:0', quote: 'Financial planning budget reporting' }], reason: 'Direct.' }], gapQuestions: [] },
+};
+const sourced: CvPlan = { summary: 'Finance leader', summarySources: [{ sourceId: 'source:profile', quote: 'Finance leader' }], gaps: [], sections: [
+ ...library.entries.slice(0, 6).map(entry => ({ entryId: entry.id, bullets: [entry.confirmedResponsibilities![0]!],
+  bulletSources: [[{ sourceId: `entry:${entry.id}:row:0`, quote: entry.confirmedResponsibilities![0]! }]] })),
+ { entryId: 'e', bullets: ['BSc Economics, University.'], bulletSources: [[{ sourceId: 'entry:e:row:0', quote: 'BSc Economics, University.' }]] }] };
+const citing = (sourceId: string): CvPlan => ({ ...sourced, sections: sourced.sections.map((section, index) => index === 0
+ ? { ...section, bulletSources: [[{ sourceId, quote: section.bullets[0]! }]] } : section) });
+it('corrects a citation of a source the Library does not hold inside the build, with the problem quoted as bounded data', async () => {
+ const write = vi.fn().mockResolvedValueOnce(citing('entry:r0:row:99')).mockResolvedValueOnce(sourced);
+ const fitted = await buildFittedCv(library, 'Financial planning', write, undefined, undefined, sourcedTarget);
+ expect(write).toHaveBeenCalledTimes(2);
+ const correction: string = write.mock.calls[1]![0].layoutFeedback.corrections[0];
+ expect(correction).toMatch(/<rejected_answer_problem>Unknown CV source: entry:r0:row:99<\/rejected_answer_problem>/);
+ expect(fitted.sections.find(section => section.entryId === 'r0')!.bullets).toEqual(['Financial planning budget reporting']);
+ // An answer quoting something enormous is cut short before it goes back to the writer.
+ expect(cvFitCorrection('x'.repeat(5_000)).length).toBeLessThan(CV_FIT_PROBLEM_CHARACTERS + 400);
+});
+it('hands three unverifiable answers to the person, naming each attempt\'s problem', async () => {
+ const write = vi.fn()
+  .mockResolvedValueOnce(citing('entry:r0:row:97'))
+  .mockResolvedValueOnce(citing('entry:r0:row:98'))
+  .mockResolvedValueOnce(citing('entry:r0:row:99'));
+ const attempt = buildFittedCv(library, 'Financial planning', write, undefined, undefined, sourcedTarget);
+ await expect(attempt).rejects.toMatchObject({ kind: 'output_invalid', policy: { resolvedBy: 'user', retryable: false } });
+ const message = await attempt.catch((error: Error) => error.message);
+ for (const id of ['entry:r0:row:97', 'entry:r0:row:98', 'entry:r0:row:99']) expect(message).toContain(id);
+ expect(write).toHaveBeenCalledTimes(3);
 });

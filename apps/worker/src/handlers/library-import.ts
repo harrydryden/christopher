@@ -168,6 +168,7 @@ export async function handleImportLibraryDocument(task: Task, deps: WorkerDeps, 
     apiKey: deps.env.anthropicApiKey,
     client: deps.aiClient,
     getModel: () => model,
+    getStageRoutes: async () => (await deps.settings()).stageRoutes,
     // A deadline or a reclaimed task cuts the call off rather than paying for an answer nobody reads.
     ...(ctx?.signal ? { signal: ctx.signal } : {}),
     onUsage: async ({ failure: failed, ...usage }) => {

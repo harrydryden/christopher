@@ -12,6 +12,7 @@
     "scripts/evaluate-cv-tailoring.ts",
     "scripts/evaluate-discovery-ai.ts",
     "scripts/evaluate-extraction-ai.ts",
-    "scripts/extraction-accuracy-capture.ts"
+    "scripts/extraction-accuracy-capture.ts",
+    "scripts/check-evaluation-reports.ts"
   ]
 }

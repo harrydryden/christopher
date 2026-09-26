@@ -132,7 +132,7 @@ const GATES: Record<string, Record<string, Gate>> = {
   "actions/settings.ts": {
     saveGate: "user", saveKeywords: "user", saveMatchFields: "user", saveLocationFilter: "user", saveTableSettings: "user",
     saveSuggestionSettings: "user", saveRegistrationSettings: "admin", saveSchedule: "admin", saveAiSettings: "admin",
-    saveAiBudget: "user", runDailyScanNow: "admin",
+    saveAiBudget: "user", runDailyScanNow: "admin", saveStageRoutes: "admin",
   },
   "actions/setup.ts": { dismissSetupChecklist: "user" },
   "actions/suggestions.ts": { acceptSuggestion: "verified", rejectSuggestion: "verified", findMoreSuggestions: "verified" },

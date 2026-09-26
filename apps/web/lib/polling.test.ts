@@ -8,7 +8,10 @@ import {
   bannerPollDelay,
   failedWorkPoll,
   initialWorkPoll,
+  nextLogPoll,
   nextPollDelay,
+  PROGRESS_LONGEST_MS,
+  stepProgressPoll,
   stepWorkPoll,
   type WorkPollState,
   type WorkReading,
@@ -116,6 +119,67 @@ describe("stepWorkPoll", () => {
     expect(refreshes).toBe(5);
     expect(reloads).toBe(1);
     expect(waits.at(-1)).toBeNull();
+  });
+});
+
+describe("stepProgressPoll", () => {
+  /** The CV page's feed: readings with whether each brought rows the page did not have. */
+  function feed(initialVersion: string, readings: Array<WorkReading & { rows?: boolean }>) {
+    let state = initialWorkPoll(initialVersion);
+    let refreshes = 0;
+    let reloads = 0;
+    const waits: Array<number | null> = [];
+    for (const reading of readings) {
+      const step = stepProgressPoll(state, reading, !!reading.rows);
+      state = step.state;
+      if (step.refresh) refreshes++;
+      if (step.reload) reloads++;
+      waits.push(step.next);
+      if (step.next === null) break;
+    }
+    return { refreshes, reloads, waits };
+  }
+
+  it("never re-renders the page for rows the feed brought, only reads again sooner", () => {
+    const { refreshes, waits } = feed("generating:::", [
+      { active: true, version: "generating:::", rows: true },
+      { active: true, version: "generating:::" },
+      { active: true, version: "generating:::" },
+      { active: true, version: "generating:::" },
+      { active: true, version: "generating:::" },
+      { active: true, version: "generating:::", rows: true },
+    ]);
+    expect(refreshes).toBe(0);
+    // Sooner after rows, then backing off no further than the feed's ceiling.
+    expect(waits).toEqual([FIRST_POLL_MS, 15_000, 22_500, PROGRESS_LONGEST_MS, PROGRESS_LONGEST_MS, FIRST_POLL_MS]);
+  });
+
+  it("re-renders the page on a transition of the version", () => {
+    const { refreshes, waits } = feed("generating:::", [
+      { active: true, version: "generating:::" },
+      { active: true, version: "generating::stale:" },
+    ]);
+    expect(refreshes).toBe(1);
+    expect(waits.at(-1)).toBe(FIRST_POLL_MS);
+  });
+
+  it("keeps the finished build's settle-then-reload rule, whatever rows arrive with it", () => {
+    // The build publishes: two soft refreshes at the first interval, then one document reload if
+    // neither landed — the recovery for a dropped RSC response (#78) — and then nothing more.
+    const done = { active: false, version: "ready:::", rows: true };
+    const { refreshes, reloads, waits } = feed("generating:::", Array.from({ length: 6 }, () => done));
+    expect(refreshes).toBe(SETTLED_REFRESHES - 1);
+    expect(reloads).toBe(1);
+    expect(waits).toEqual([FIRST_POLL_MS, FIRST_POLL_MS, null]);
+  });
+});
+
+describe("nextLogPoll", () => {
+  it("reads a ready page's log while the ledger is live, and stops when it is not", () => {
+    expect(nextLogPoll(FIRST_POLL_MS, true, false)).toBe(15_000);
+    expect(nextLogPoll(PROGRESS_LONGEST_MS, true, false)).toBe(PROGRESS_LONGEST_MS);
+    expect(nextLogPoll(PROGRESS_LONGEST_MS, true, true)).toBe(FIRST_POLL_MS);
+    expect(nextLogPoll(FIRST_POLL_MS, false, true)).toBeNull();
   });
 });
 

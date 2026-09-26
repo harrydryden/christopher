@@ -82,8 +82,8 @@ the same learning loop.
    | `pnpm db:migrate`, `seed:demo`, the drills | direct, 5432 (External) | The same lock, from your machine. |
 
    **The arithmetic.** The database allows 103 backends (`max_connections`), three of them reserved
-   for superusers. The worker holds up to `2 × WORKER_CONCURRENCY + 4` = 10 at the supported
-   concurrency of 3. On the direct endpoint every warm interface instance holds up to 3 more, so
+   for superusers. The worker holds up to `2 × (WORKER_CONCURRENCY + CV_CONCURRENCY) + 4` = 26 at
+   the supported three general slots and eight CV slots. On the direct endpoint every warm interface instance holds up to 3 more, so
    about 30 instances (fewer during a rollout, when old and new are both warm, or with the cron
    fallback's own pool of 6) exhaust the database, and every page fails with "too many clients" for
    every account at once. Through PgBouncer an instance's connections are clients, which hold no
@@ -155,7 +155,8 @@ Set these on the service:
 | `SCRAPER_CONTACT_EMAIL` | an address you read; it goes in the user agent. **Required**: in production the worker refuses to start without one, or with a placeholder such as `you@example.com` |
 | `ADMIN_EMAILS` | the same list as the interface's. The worker warns at boot when it is unset |
 | `TZ` | e.g. `Europe/London` |
-| `WORKER_CONCURRENCY` | `3` — the supported value for the 512 MB Starter instance shared with Chromium. It gives a database pool of `2 × concurrency + 4` = 10 connections. Six slots caused an observed ten-hour out-of-memory restart loop on a 41 MB listing; use six only after increasing the instance size and proving memory and database headroom under a representative soak |
+| `WORKER_CONCURRENCY` | `3` — the supported value for the 512 MB Starter instance shared with Chromium. These are the general slots (scans, discovery, imports, scoring); they never run a CV build. Six slots caused an observed ten-hour out-of-memory restart loop on a 41 MB listing; use six only after increasing the instance size and proving memory and database headroom under a representative soak |
+| `CV_CONCURRENCY` | `8` (the default; 1–30) — slots of their own for CV builds, beside the general ones. A build holds its slot for many minutes but mostly waits on the model, so it is sized apart from the memory budget: the load harness ran 50 accounts × 2 CVs through eight slots at a peak heap of about 90 MB. The database pool is `2 × (WORKER_CONCURRENCY + CV_CONCURRENCY) + 4` = 26 connections at 3 and 8. Each build is admitted against its account's budget one stage at a time, so an account's builds run side by side while its month can afford the stages in flight |
 | `WORKER_STATUS_TOKEN` | a long random string; the bearer token the worker's `/status` figures require. Give the operational check the same value (see [Release gates](RELEASE-GATES.md)) |
 | `LOG_LEVEL` | `info` (the default), or `debug`, `warn` or `error`, in any case |
 
@@ -279,6 +280,11 @@ checkout on a laptop against the production database, so it is careful in two wa
   company, found by id, domain (or a URL on it) or exact name, and refuses a needle that matches
   none or several. The whole active catalogue is `cli discover --all`, which refuses a careers URL.
 
+- **`record` and `replay` never publish.** They rebuild a draft to grade it, inside a rolled-back
+  transaction, and never touch the draft, the budget or the queue (see "Evaluation reports and the
+  prompt set"). `record` and a `replay` without `--recordings` call the provider and are paid; both
+  refuse without `ANTHROPIC_API_KEY`.
+
 Inside the worker's container (Render's Shell), run it without pnpm, from `/app/apps/worker`:
 `node --import tsx src/cli.ts users`.
 
@@ -330,6 +336,104 @@ and neither this check nor the scheduled operational check calls that stale. Bot
 history to make the comparison. The list of worker inputs is `WORKER_INPUT_PATHS` in
 `scripts/release-checks.mjs`, the same list as `render.yaml`'s build filter.
 
+## Evaluation reports and the prompt set
+
+Every prompt the engine sends is an entry in `packages/ai/src/prompt-registry.ts`, and
+`promptSetVersion()` is one hash of all of them. The committed reports under
+`docs/evaluations/<name>/report.json` say which prompt set they were graded at, and CI's `check`
+job holds them to the registry (`scripts/check-evaluation-reports.ts`):
+
+- a report graded at another prompt set fails the job unless it is marked `"unverified": true` — a
+  report kept for the record that no longer vouches for the shipped prompts;
+- a replay report (`"kind": "cv-replay"`) at the shipped prompt set must record a rebuild that was
+  published (`"outcome": "published"`) and a grade that passed (`"grade": { "passed": true }`); a
+  report of a failed or ungraded run fails the job, whatever prompt set it names;
+- at least one report must be at the shipped prompt set, so a prompt change cannot merge without a
+  report written at its version;
+- and at least one report at the shipped prompt set should not be marked unverified, meaning a live
+  run graded the shipped prompts. No live run can happen in CI, so by default this is a warning
+  (the job still passes, and its log says `warning: Every committed report at the shipped prompt
+  set … is marked unverified`). With `AVA_EVAL_GATE_REQUIRE_VERIFIED` set to anything but empty,
+  `0` or `false`, it is a failure: set it where a release must be vouched for by a live run, for
+  example `AVA_EVAL_GATE_REQUIRE_VERIFIED=1 pnpm exec tsx scripts/check-evaluation-reports.ts`
+  before promoting a prompt change. The pull-request CI job does not set it.
+
+`docs/evaluations/cv-replay/report.json` is that report. It is written by the replay command:
+
+```bash
+cd apps/worker
+pnpm cli record <draft-id>                        # live and paid: refuses without ANTHROPIC_API_KEY
+pnpm cli replay <draft-id> --recordings ../../docs/evaluations/recordings/<file>.jsonl \
+  --out ../../docs/evaluations/cv-replay/report.json
+```
+
+`record` rebuilds the draft through the real handler against the provider and writes every model
+call to a JSONL recording in `docs/evaluations/recordings/` (gitignored: it holds CV text). `replay`
+rebuilds the same draft from that recording with no key and no cost, grades it — every claim
+supported, weighted coverage not lower than the recorded run's, the page limit met, no essential
+requirement losing points, plus the structural diagnostics the build itself uses — and writes the
+report with the prompt set, the route every CV stage ran at, the cost and the wall time. Neither
+command changes anything: the rebuild runs inside a database transaction that is always rolled
+back, on a copy of the draft under a scratch account, with a budget sink that holds nothing and
+records nothing, so the draft, the account's budget, `ai_calls` and the task queue are untouched. A
+recording answers only the requests it holds: an edited prompt, a different input or another
+model or effort fails the replay, naming the prompt and version, and never reaches the provider.
+
+The expected workflow for a pull request that edits a prompt:
+
+1. Run the edited build live on a representative draft: `pnpm cli record <draft-id>` against a
+   database that has one (a development copy, or production from a checkout: both commands only
+   read). This spends that one build's cost.
+2. Replay it into the report: `pnpm cli replay <draft-id> --recordings <file> --out
+   docs/evaluations/cv-replay/report.json`. The report is at the new prompt set and, because the
+   recording came from the provider, is not marked unverified.
+3. Run `pnpm exec tsx scripts/check-evaluation-reports.ts --write`, which copies the report's graded
+   routes into `packages/core/src/evaluated-routes.ts` (what Health compares the `stageRoutes`
+   setting against; CI fails while the two disagree), and commit both with the prompt change. The
+   report's grade is what a reviewer reads.
+
+Where no key is available (CI, a contributor without one), the mechanism still runs end to end on
+the scripted client: `DATABASE_URL=<scratch database> pnpm exec tsx scripts/cv-replay-fixture.mts
+docs/evaluations/recordings/cv-replay-fixture.jsonl` publishes a synthetic draft and records its
+rebuild through the scripted client, and replaying that recording writes a report marked
+`"unverified": true` — the recording says its answers were scripted. That satisfies the gate while
+saying plainly that no model graded the new prompts (the job logs the warning above); replace it
+with a live report before relying on the change. The report committed today is of this kind.
+
+## Changing a stage's effort or model
+
+Every CV stage runs at its registry route (the account's CV model, at `high` effort) unless the
+`stageRoutes` system setting overrides it (Admin › System settings, "Stage routes"). The default
+is not changed in code: moving a stage — the audit to `medium` effort, say — is the
+administrator's decision, made through the setting once a replay on real drafts has passed. Effort
+changes no token's price, only how many the stage writes, and the estimator scales each stage's
+expected output by effort (`EFFORT_OUTPUT_SCALE` in `packages/ai/src/prompt-registry.ts`); those
+ratios are an assumption until a run at the new effort has been measured.
+
+1. **Record the current route on your own drafts.** For two or three representative published CVs,
+   `pnpm cli record <draft-id>` (paid, one build each; it publishes nothing and charges no account's
+   budget). Each recording, in `docs/evaluations/recordings/`, ends with the recorded run's grade,
+   which the candidate is held to.
+2. **Replay each draft live at the candidate route, against that recording.**
+   `pnpm cli replay <draft-id> --routes '{"cv.review":{"effort":"medium"},"cv.review_candidate":{"effort":"medium"}}' --baseline <recording.jsonl> --out <candidate.json>`
+   (paid, publishes nothing). A replay from `--recordings` cannot do this: a recording answers only
+   the route it was made at, and a different effort is a miss that fails the replay by design.
+3. **Read the reports.** Every draft must grade `PASSED`: every claim supported, weighted coverage
+   not below the recording's, the page limit met, no essential requirement losing points. Compare
+   `costUsd`, `wallMs` and `byStage` with the recording's own report (its last line), and compare
+   the output tokens each audit call recorded with `EFFORT_OUTPUT_SCALE`, correcting the ratio in
+   the registry if it is far off. If any draft fails, stop here: the route stays as it is.
+4. **Commit the evidence.** Record one draft at the candidate route (`pnpm cli record <draft-id>
+   --routes '<json>'`), replay that recording into the report (`pnpm cli replay <draft-id>
+   --recordings <file> --routes '<json>' --out docs/evaluations/cv-replay/report.json`), run
+   `pnpm exec tsx scripts/check-evaluation-reports.ts --write` to update the graded routes
+   (`packages/core/src/evaluated-routes.ts`), and merge that through CI.
+5. **Flip the setting, and watch it.** Set the override on System settings. Health shows
+   administrators "Stage routes not evaluated" whenever an override differs from the route the last
+   committed report graded, so after step 4 it stays empty; before it, it names the stage. Watch
+   Operations' cost per build, retry rates and build failures over the next day's builds, and clear
+   the override to go back.
+
 ## Costs
 
 | | |
@@ -375,8 +479,8 @@ scans all fail at once, until someone changes the plan by hand.
   indexes in memory.
 - Watch the disk figure on the database's Metrics page, and treat 70% as the point to add storage.
   Nothing in the product alerts on it yet; add it to the alert list below.
-- Connections are a separate budget from disk: the worker opens up to `2 × WORKER_CONCURRENCY + 4` direct
-  connections (10 at three slots), and the interface should use the pooled URL, as the connection
+- Connections are a separate budget from disk: the worker opens up to `2 × (WORKER_CONCURRENCY + CV_CONCURRENCY) + 4` direct
+  connections (26 at three general and eight CV slots), and the interface should use the pooled URL, as the connection
   guidance above describes.
 
 ## Observability
@@ -470,7 +574,7 @@ delivery are still outstanding. See [current gate evidence](RELEASE-GATES.md#con
 - [ ] Have the service owner supply the required recovery point objective (**RPO**) and recovery
   time objective (**RTO**). Do not invent them from the provider plan.
 - [ ] In Render, confirm the worker plan, region, `/healthz` path, database link, auto-deploy setting,
-  build filter, empty Docker Command, `WORKER_CONCURRENCY=3`, timezone and required secrets
+  build filter, empty Docker Command, `WORKER_CONCURRENCY=3`, `CV_CONCURRENCY=8`, timezone and required secrets
   (`SCRAPER_CONTACT_EMAIL` above all: without a real address the new worker will not start). The
   live services are not linked to `render.yaml`, so compare them with it by hand and resolve any
   drift deliberately.
@@ -610,7 +714,10 @@ order, from **Admin › Operations**.
    the heap ceiling above. A board in the tens of megabytes will not fit beside two other slots.
 
 The fix for a memory loop is fewer concurrent inputs or a larger instance, in that order:
-`WORKER_CONCURRENCY` is a memory budget, not a CPU one. Production runs **3**. `render.yaml` is a
+`WORKER_CONCURRENCY` is a memory budget, not a CPU one. Production runs **3**. CV builds do not
+share it: they run in `CV_CONCURRENCY` slots of their own (**8**), because a build's memory is one
+Library, one CV and a PDF render rather than a fetched listing. If a crash's likely task is a
+`generate_cv`, lower `CV_CONCURRENCY` before touching the general slots. `render.yaml` is a
 template for creating services, not a description of the live ones — **the Render dashboard is the
 source of truth** for the running worker, whose health check path and environment were set there.
 Change the value in the dashboard, and in `render.yaml` so a rebuilt service inherits it.

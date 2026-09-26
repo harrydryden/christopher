@@ -85,7 +85,7 @@ export async function withResourceLease<T>(
     on conflict (key) do update set owner = excluded.owner, expires_at = excluded.expires_at
     where resource_leases.expires_at < now() returning key`);
   if (!claimed.rows.length) throw new LeaseBusyError(options.busyMessage ?? `Operation already running: ${key}`);
-  const renewEveryMs = options.renewEveryMs ?? LEASE_RENEWAL_MS;
+  const renewEveryMs = options.renewEveryMs ?? deps.leaseRenewEveryMs ?? LEASE_RENEWAL_MS;
   let renewal: Promise<unknown> = Promise.resolve();
   let renewing = false;
   // Bounded like the task heartbeat: the fence holds this row `for update` for the length of a
@@ -103,7 +103,9 @@ export async function withResourceLease<T>(
     options.onLost?.(new LeaseLostError(`Operation lease lost; refusing stale writes: ${key}`));
   };
   const timer = setInterval(() => {
-    if (renewing || signal?.aborted) return;
+    // Inside a transaction that is never committed the lease is this transaction's own, and ends
+    // with it; a renewal there would only leave `set local` timeouts on the rest of it.
+    if (renewing || signal?.aborted || deps.inTransaction) return;
     renewing = true;
     // A renewal that never settles used to latch renewal off for good: the lease then expired
     // under work that was still running, another worker claimed it, and two processes wrote for

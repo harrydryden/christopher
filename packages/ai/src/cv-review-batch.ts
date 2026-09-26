@@ -50,6 +50,9 @@ export function reviewBatchIssues(review: CvReviewPlan, context: Context): Issue
   return issues;
 }
 
+/** What a claim says when the audit could not verify its citation: no verdict, so never memoised. */
+export const UNVERIFIED_CLAIM_REASON = "The automated review could not link this claim to a valid quote from its own saved evidence. Check the wording against the original role, qualification or skill evidence before finalising.";
+
 /** After one correction attempt, preserve the complete review without accepting invalid support. */
 export function markUnverifiedFindings(review: CvReviewPlan, issues: Issue[]): CvReviewPlan {
   const result = structuredClone(review);
@@ -58,7 +61,7 @@ export function markUnverifiedFindings(review: CvReviewPlan, issues: Issue[]): C
       const claim = result.claims[issue.index]!;
       claim.status = "uncertain";
       claim.evidence = [];
-      claim.reason = "The automated review could not link this claim to a valid quote from its own saved evidence. Check the wording against the original role, qualification or skill evidence before finalising.";
+      claim.reason = UNVERIFIED_CLAIM_REASON;
     } else {
       const match = result.matches[issue.index]!;
       if (issue.kind === "cv") { match.status = "unknown"; match.cvEvidence = []; }

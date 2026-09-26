@@ -1,111 +1,104 @@
-import type { CvBuildStepView } from "@ava/core";
 import { Badge } from "./Badge";
 import { CvDisclosure } from "./CvDisclosure";
-import {
-  attemptLabel,
-  cvBuildTotals,
-  cvBuildTotalsLine,
-  narrateStep,
-  type NarrativeContext,
-} from "@/lib/cv-build-narrative";
+import type { NarratedBatch, NarratedStep, NarratedStatus, NarrativeItem } from "@/lib/cv-build-narrative";
 
 /** The glyph says nothing to a screen reader; this is what it means. */
-const SPOKEN: Record<CvBuildStepView["status"], string> = {
+const SPOKEN: Record<NarratedStatus, string> = {
   running: "in progress",
   done: "done",
   failed: "failed",
   skipped: "skipped",
+  interrupted: "interrupted",
 };
+
+function Line({ line, nested = false }: { line: NarratedStep; nested?: boolean }) {
+  return (
+    <div className={`grid grid-cols-[auto_auto_minmax(0,1fr)] items-start gap-x-2 gap-y-0.5 py-1 ${nested ? "pl-4" : ""}`}>
+      <span className="text-12 text-muted">{line.time}</span>
+      <Badge tone={line.tone} title={SPOKEN[line.status]}>
+        <span aria-hidden="true">{line.glyph}</span>
+        <span className="sr-only">{SPOKEN[line.status]}</span>
+      </Badge>
+      <div className="min-w-0 space-y-0.5">
+        <p className="break-words" title={line.hint ?? undefined}>
+          {line.text}
+          {line.meta && <span className="text-muted"> · {line.meta}</span>}
+        </p>
+        {line.note && <p className={`text-12 break-words ${line.status === "failed" ? "text-danger" : "text-muted"}`}>{line.note}</p>}
+        {!nested && <p className="ds-label">{line.stage}</p>}
+      </div>
+    </div>
+  );
+}
+
+function Batch({ batch }: { batch: NarratedBatch }) {
+  return (
+    <li>
+      <Line line={batch.line} nested />
+      {batch.retries.length > 0 && (
+        <ul aria-label="Re-checks of this batch" className="pl-4">
+          {batch.retries.map((retry) => (
+            <li key={retry.key}>
+              <Line line={retry} nested />
+            </li>
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+}
 
 /**
  * A build's motions as they happen, newest last: one line each, present tense while a motion is
  * open and past tense once it has closed, with the figures it recorded and what it cost.
  *
- * The milestone strip above says which of the four stages a build has reached; this says what it
- * is actually doing inside that stage, which is the difference between "Optimise" for four minutes
- * and "Measured 3 pages against a limit of 2 · Trimming lower-priority wording to fit".
- *
- * A running motion's elapsed figure is rendered from `now`, and the page's poll refreshes at least
- * once a minute while anything is open, so it keeps moving without a timer on the client.
+ * The items come from `narrateBuild`, which divides the attempts and gathers each pass of the
+ * assessment into one row: the batches run together, so their lines sit behind a disclosure under
+ * a row that counts them, except a batch that failed or was stopped, which is always in view.
  */
-export function CvBuildNarrative({
-  steps,
-  now,
-  maxAttempts = null,
-  context,
-}: {
-  steps: CvBuildStepView[];
-  now: Date;
-  /** The queue's allowance, for the "Attempt 2 of 3" divider. */
-  maxAttempts?: number | null;
-  context?: NarrativeContext;
-}) {
-  if (!steps.length) return null;
-  const attempts = new Set(steps.map((step) => step.attempt));
-  let attempt = steps[0]!.attempt;
+export function CvBuildNarrative({ items }: { items: NarrativeItem[] }) {
+  if (!items.length) return null;
   return (
     <ol aria-label="Build narrative" className="space-y-0.5">
-      {steps.map((step) => {
-        const narrated = narrateStep(step, now, context);
-        // Every later attempt is announced, so a line that repeats a motion is not read as a loop.
-        const divider = attempts.size > 1 && step.attempt !== attempt;
-        attempt = step.attempt;
+      {items.map((item) => {
+        if (item.kind === "divider")
+          return (
+            <li key={item.key} className="text-14">
+              <p className="ds-divider ds-pixel mt-3 pb-2 text-10 text-muted">{item.label}</p>
+            </li>
+          );
+        if (item.kind === "line")
+          return (
+            <li key={item.key} className="text-14">
+              <Line line={item.line} />
+            </li>
+          );
+        const { group } = item;
+        const quiet = group.batches.filter((batch) => !group.flagged.includes(batch));
         return (
-          <li key={step.id} className="text-14">
-            {divider && (
-              <p className="ds-divider ds-pixel mt-3 pb-2 text-10 text-muted">
-                {attemptLabel(step.attempt, maxAttempts)}
-              </p>
+          <li key={item.key} className="text-14">
+            <Line line={group.line} />
+            {group.flagged.length > 0 && (
+              <ul aria-label="Batches that stopped" className="pl-4">
+                {group.flagged.map((batch) => (
+                  <Batch key={batch.line.key} batch={batch} />
+                ))}
+              </ul>
             )}
-            <div className="grid grid-cols-[auto_auto_minmax(0,1fr)] items-start gap-x-2 gap-y-0.5 py-1">
-              <span className="text-12 text-muted">{narrated.time}</span>
-              <Badge tone={narrated.tone} title={SPOKEN[narrated.status]}>
-                <span aria-hidden="true">{narrated.glyph}</span>
-                <span className="sr-only">{SPOKEN[narrated.status]}</span>
-              </Badge>
-              <div className="min-w-0 space-y-0.5">
-                <p className="break-words" title={narrated.hint ?? undefined}>
-                  {narrated.text}
-                  {narrated.meta && <span className="text-muted"> · {narrated.meta}</span>}
-                </p>
-                {narrated.note && (
-                  <p className={`text-12 break-words ${narrated.status === "failed" ? "text-danger" : "text-muted"}`}>
-                    {narrated.note}
-                  </p>
-                )}
-                <p className="ds-label">{narrated.stage}</p>
+            {quiet.length > 0 && (
+              <div className="pl-4">
+                <CvDisclosure label={`${quiet.length === 1 ? "the batch" : `${quiet.length} batches`}`}>
+                  <ul aria-label="Assessment batches">
+                    {quiet.map((batch) => (
+                      <Batch key={batch.line.key} batch={batch} />
+                    ))}
+                  </ul>
+                </CvDisclosure>
               </div>
-            </div>
+            )}
           </li>
         );
       })}
     </ol>
-  );
-}
-
-/**
- * The same narrative after the build, kept on the Content tab behind a disclosure so "why did this
- * build cost $3.40" and "what did it actually do" stay answerable from the page rather than from
- * the worker's logs, which do not live that long.
- */
-export function CvBuildLog({
-  steps,
-  now,
-  maxAttempts = null,
-  context,
-}: {
-  steps: CvBuildStepView[];
-  now: Date;
-  maxAttempts?: number | null;
-  context?: NarrativeContext;
-}) {
-  if (!steps.length) return null;
-  return (
-    <section className="space-y-3 border-2 border-line bg-raised p-4">
-      <CvDisclosure label="build log">
-        <p className="text-14 text-muted">{cvBuildTotalsLine(cvBuildTotals(steps, now))}</p>
-        <CvBuildNarrative steps={steps} now={now} maxAttempts={maxAttempts} context={context} />
-      </CvDisclosure>
-    </section>
   );
 }

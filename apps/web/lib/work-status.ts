@@ -1,5 +1,6 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { cvDrafts, tasks } from '@ava/db/schema';
+import { CV_PROGRESS_STALE_MS } from './cv-build-state';
 import { cache } from 'react';
 import { db } from './db';
 /**
@@ -32,25 +33,61 @@ export const getCompanyWorkStatus = cache(async function getCompanyWorkStatus(us
 /**
  * The account's CV builds in flight, for a page that lists CVs rather than watching one.
  *
- * `/api/work-status?cv=<id>` answers for a single build in all the detail its page renders; this
+ * `/api/cv/[id]/progress` answers for a single build in all the detail its page renders; this
  * is the account-wide reading the applications table needs, where several rows can be building at
- * once and the cell only says Queued, Building… or Ready. The version carries each draft's own
- * state and the state of the queue row behind it, so a cell moves from Queued to Building… to
- * Ready without a reload — and nothing narrower, because a build's milestones live in columns a
- * deployment ahead of the worker's migration may not have yet.
+ * once and each cell says what its build is doing ("Building · checking batch 3 of 5"). The version
+ * carries each draft's own state, the state of the queue row behind it, and the name of the newest
+ * motion in its ledger — the name only, not its figures, so the table is rendered again once per
+ * motion rather than once per batch or per tick.
+ *
+ * The ledger is read under a guard: a release serving ahead of the worker's migration falls back
+ * to the draft and the queue alone, as this reading was before the ledger existed.
+ *
+ * `improving` names the ready CVs among them whose optional improvement is still running.
  */
 export const getCvWorkStatus = cache(async function getCvWorkStatus(userId: string) {
-  const [row] = await db()
-    .select({
-      n: sql<number>`count(distinct ${cvDrafts.id})::int`,
-      version: sql<string>`md5(coalesce(string_agg(${cvDrafts.id}::text || ${cvDrafts.status} || coalesce(${tasks.status}, '-'), ',' order by ${cvDrafts.id}, ${tasks.id}), ''))`,
-    })
-    .from(cvDrafts)
-    // Payload is the stable relationship: a quiz continuation deliberately has a distinct dedupe
-    // key so it cannot collide with the task whose worker just paused.
-    .leftJoin(tasks, and(eq(tasks.type, 'generate_cv'), sql`${tasks.payload}->>'draftId' = ${cvDrafts.id}::text`))
-    .where(and(eq(cvDrafts.userId, userId), inArray(cvDrafts.status, ['queued', 'generating'])));
-  return { active: (row?.n ?? 0) > 0, version: row?.version ?? "" };
+  // A ready CV whose improvement pass is still running counts too (`cvLedgerLive`): its queue row
+  // is still at work, or its ledger opened a motion within the stale window. The table keeps
+  // polling while it runs, and the version moves when the pass ends, so an adopted revision reaches
+  // the row without a reload.
+  const activeTask = sql`exists (select 1 from tasks a where a.payload->>'draftId' = ${cvDrafts.id}::text and a.status in ('queued', 'running'))`;
+  const openMotion = sql`exists (select 1 from cv_build_steps o where o.draft_id = ${cvDrafts.id} and o.user_id = ${userId} and o.status = 'running'
+    and o.started_at > now() - make_interval(secs => ${CV_PROGRESS_STALE_MS / 1000}))`;
+  const building = inArray(cvDrafts.status, ['queued', 'generating']);
+  const inFlight = and(eq(cvDrafts.userId, userId), or(building, and(eq(cvDrafts.status, 'ready'), isNull(cvDrafts.archivedAt), or(activeTask, openMotion))));
+  const inFlightBehind = and(eq(cvDrafts.userId, userId), or(building, and(eq(cvDrafts.status, 'ready'), isNull(cvDrafts.archivedAt), activeTask)));
+  // Payload is the stable relationship: a quiz continuation deliberately has a distinct dedupe
+  // key so it cannot collide with the task whose worker just paused.
+  const task = and(eq(tasks.type, 'generate_cv'), sql`${tasks.payload}->>'draftId' = ${cvDrafts.id}::text`);
+  try {
+    const [row] = await db()
+      .select({
+        n: sql<number>`count(distinct ${cvDrafts.id})::int`,
+        improving: sql<string[]>`coalesce(array_agg(distinct ${cvDrafts.id}::text) filter (where ${cvDrafts.status} = 'ready'), '{}')`,
+        // The motion the row's label names (`withBuildProgress`): the newest one still running, else
+        // the newest; a budget admission is never named, so the label does not flicker through it.
+        version: sql<string>`md5(coalesce(string_agg(${cvDrafts.id}::text || ${cvDrafts.status} || coalesce(${tasks.status}, '-') || coalesce((
+          select s.motion from cv_build_steps s where s.draft_id = ${cvDrafts.id} and s.user_id = ${userId} and s.motion <> 'admit_budget'
+          order by (s.status = 'running') desc, s.seq desc limit 1
+        ), '-'), ',' order by ${cvDrafts.id}, ${tasks.id}), ''))`,
+      })
+      .from(cvDrafts)
+      .leftJoin(tasks, task)
+      .where(inFlight);
+    return { active: (row?.n ?? 0) > 0, version: row?.version ?? "", improving: row?.improving ?? [] };
+  } catch {
+    // Before the ledger's migration: the draft and the queue alone.
+    const [row] = await db()
+      .select({
+        n: sql<number>`count(distinct ${cvDrafts.id})::int`,
+        improving: sql<string[]>`coalesce(array_agg(distinct ${cvDrafts.id}::text) filter (where ${cvDrafts.status} = 'ready'), '{}')`,
+        version: sql<string>`md5(coalesce(string_agg(${cvDrafts.id}::text || ${cvDrafts.status} || coalesce(${tasks.status}, '-'), ',' order by ${cvDrafts.id}, ${tasks.id}), ''))`,
+      })
+      .from(cvDrafts)
+      .leftJoin(tasks, task)
+      .where(inFlightBehind);
+    return { active: (row?.n ?? 0) > 0, version: row?.version ?? "", improving: row?.improving ?? [] };
+  }
 });
 
 /**

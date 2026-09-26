@@ -1,4 +1,4 @@
-import { runDailyScanNow, saveAiSettings, saveSchedule } from "@/app/actions/settings";
+import { runDailyScanNow, saveAiSettings, saveSchedule, saveStageRoutes } from "@/app/actions/settings";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
@@ -7,6 +7,9 @@ import { ModelSelect } from "@/components/ModelSelect";
 import { inputClass, labelClass as fieldLabelClass, selectClass } from "@/components/Field";
 import { requireAdmin } from "@/lib/auth";
 import { getSystemSettings } from "@/lib/settings";
+import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
+import { MODEL_CHOICES, STAGE_EFFORTS } from "@ava/core";
+import { stageRouteRows } from "@/lib/stage-routes";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +19,7 @@ const checkboxClass = "flex items-center gap-2 text-14";
 export default async function AdminSettingsPage() {
   await requireAdmin();
   const settings = await getSystemSettings();
+  const routes = stageRouteRows(settings.stageRoutes);
 
   return (
     <div className="space-y-6">
@@ -62,6 +66,50 @@ export default async function AdminSettingsPage() {
               <ModelSelect name="defaultModel" value={settings.defaultModel} className={selectClass} />
             </label>
           </div>
+        </SettingsForm>
+      </Card>
+
+      <Card title="Stage routes">
+        <SettingsForm action={saveStageRoutes} submitLabel="Save stage routes">
+          <p className="text-12 text-muted">
+            The model and effort each stage runs at, for every account. A stage left at <strong className="font-semibold text-fg">default</strong> uses the account&apos;s CV model (or the call site&apos;s model) at the stage&apos;s own effort.
+          </p>
+          <Table>
+            <THead>
+              <tr>
+                <TH>Stage</TH>
+                <TH>Model</TH>
+                <TH>Effort</TH>
+              </tr>
+            </THead>
+            <TBody>
+              {routes.map((row) => (
+                <TR key={row.id}>
+                  <TD className="whitespace-nowrap">{row.label}</TD>
+                  <TD>
+                    <select name={`route:${row.id}:model`} defaultValue={row.model ?? ""} aria-label={`${row.label} model`} className={selectClass}>
+                      <option value="">default</option>
+                      {MODEL_CHOICES.map((choice) => (
+                        <option key={choice.id} value={choice.id}>
+                          {choice.label}
+                        </option>
+                      ))}
+                    </select>
+                  </TD>
+                  <TD>
+                    <select name={`route:${row.id}:effort`} defaultValue={row.effort ?? ""} aria-label={`${row.label} effort`} className={selectClass}>
+                      <option value="">default</option>
+                      {STAGE_EFFORTS.map((effort) => (
+                        <option key={effort} value={effort}>
+                          {effort}
+                        </option>
+                      ))}
+                    </select>
+                  </TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
         </SettingsForm>
       </Card>
     </div>

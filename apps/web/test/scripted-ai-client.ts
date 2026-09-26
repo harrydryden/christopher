@@ -13,11 +13,9 @@
  */
 import {
   CV_LIMITS,
-  cvTailoringEvidence,
   cvRelevance,
   industryDescriptions,
   type CvBlockBudget,
-  type CvLibrary,
   type CvPlan,
   type CvWritingBudget,
 } from "@ava/core";
@@ -28,7 +26,8 @@ import type {
   CvTextItem,
 } from "@ava/core/cv-assessment";
 // The interface does not depend on @ava/ai by name; the worker it drives does.
-import type { AiClientLike, AiStreamLike } from "../../../packages/ai/src/index";
+import type { AiCallMeta, AiClientLike, AiStreamLike, CanonicalEvidence } from "../../../packages/ai/src/index";
+import { canonicalEvidenceItems } from "../../../packages/ai/src/evidence";
 import { reviewFixture } from "../../../packages/core/test/cv-review-fixture";
 
 type ParseResponse = Awaited<ReturnType<AiStreamLike["finalMessage"]>>;
@@ -52,8 +51,17 @@ interface PlanningPayload {
   };
 }
 
+/**
+ * One entry of the writer's library as recorded here: the canonical entry the writer was sent, plus
+ * `details` — its rows, one per line, as the stored library spells them — added by this client so a
+ * test can ask whether a row reached the writer without walking `rows`. `params` keeps the exact
+ * request.
+ */
+export type AuthorEntry = CanonicalEvidence["entries"][number] & { details: string };
+
 export interface AuthorPayload {
-  library: Omit<CvLibrary, "theme" | "name" | "contact" | "email" | "phone" | "location" | "linkedinUrl" | "websiteUrl">;
+  /** The canonical evidence — every row once, citable by its id — with the person's writing preferences. */
+  library: Omit<CanonicalEvidence, "entries"> & { entries: AuthorEntry[]; stylePreferences?: string; preferredWording?: string };
   jobTitle: string;
   company: string;
   description: string;
@@ -83,6 +91,11 @@ interface ScriptedBase {
   index: number;
   params: Record<string, unknown>;
   options: Record<string, unknown> | undefined;
+  /** The registry entry the engine named for this request, which is what the fake dispatches on. */
+  promptId: string;
+  promptVersion: string;
+  /** The ledger stage the engine named, when there was one. */
+  stage?: string;
   system: string;
   blocks: TextBlock[];
 }
@@ -138,13 +151,6 @@ function clip(value: string, limit: number): string {
     .replace(/[\s,;:.–-]+$/u, "")
     .trim();
   return trimmed || cut.trim() || text.slice(0, Math.max(1, limit));
-}
-
-function lines(details: string): string[] {
-  return details
-    .split(/\r?\n/)
-    .map((line) => line.replace(/^\s*[•*-]\s+/, "").trim())
-    .filter(Boolean);
 }
 
 /** Most relevant first, ties resolved by the stored order so a run is reproducible. */
@@ -225,14 +231,7 @@ export function scriptedRubric(description: string, limit = 12): CvRubric {
 type Entry = AuthorPayload["library"]["entries"][number];
 
 function sourceLines(entry: Entry): string[] {
-  if (entry.kind === "experience" && entry.confirmedResponsibilities?.length)
-    return entry.confirmedResponsibilities;
-  if (entry.kind === "skill" && !entry.skillItems)
-    return entry.details
-      .split(/[,\n]/)
-      .map((item) => item.trim())
-      .filter(Boolean);
-  return lines(entry.details);
+  return entry.rows.map((row) => row.text);
 }
 
 /** Obey the block's own allocation: at most maxBullets, each within maxBulletCharacters. */
@@ -268,7 +267,6 @@ export function scriptedPlan(payload: AuthorPayload): CvPlan {
   const previous = new Map(
     (layoutFeedback?.previousPlan.sections ?? []).map((section) => [section.entryId, section]),
   );
-  const evidence = cvTailoringEvidence(library as CvLibrary);
   const sections: CvPlan["sections"] = [];
   for (const block of writingBudget.blocks) {
     const entry = library.entries.find((candidate) => candidate.id === block.entryId);
@@ -276,13 +274,13 @@ export function scriptedPlan(payload: AuthorPayload): CvPlan {
     const prior = previous.get(block.entryId);
     if (entry.kind === "skill" && entry.skillItems?.length && block.maxSkills > 0) {
       // Exact stored labels only; the renderer prints these as pills instead of the bullets.
-      const chosen = rank(entry.skillItems, target).slice(0, block.maxSkills);
+      const chosen = rank(entry.skillItems.map((item) => item.text), target).slice(0, block.maxSkills);
       sections.push({
         entryId: block.entryId,
         skillItems: chosen,
         bullets: chosen.slice(0, CV_LIMITS.bulletsPerSection),
         bulletSources: chosen.slice(0, CV_LIMITS.bulletsPerSection).map(label => {
-          const source = evidence.find(item => item.entryId === entry.id && item.text === label)!;
+          const source = entry.skillItems!.find(item => item.text === label)!;
           return [{ sourceId: source.id, quote: label }];
         }),
       });
@@ -293,13 +291,12 @@ export function scriptedPlan(payload: AuthorPayload): CvPlan {
       block,
       shorten,
     );
-    const job = library.employment?.find((item) => item.id === entry.employmentId);
-    const industries = rank(industryDescriptions(job?.industryDescriptions), target).slice(0, 2);
+    const industries = rank(industryDescriptions(entry.employment?.industryDescriptions), target).slice(0, 2);
     sections.push({
       entryId: block.entryId,
       bullets,
       bulletSources: bullets.map(bullet => {
-        const source = evidence.find(item => item.entryId === entry.id && clean(item.text).includes(clean(bullet)))!;
+        const source = entry.rows.find(row => clean(row.text).includes(clean(bullet)))!;
         return [{ sourceId: source.id, quote: bullet }];
       }),
       ...(industries.length ? { industryDescriptions: industries } : {}),
@@ -309,7 +306,7 @@ export function scriptedPlan(payload: AuthorPayload): CvPlan {
     1,
     Math.min(writingBudget.summaryCharacters, CV_LIMITS.summaryCharacters),
   );
-  const summary = clip(layoutFeedback?.previousPlan.summary || library.profile, summaryLimit) || "Operations leader.";
+  const summary = clip(layoutFeedback?.previousPlan.summary || library.profile?.text || "", summaryLimit) || "Operations leader.";
   return {
     summary,
     summarySources: [{ sourceId: "source:profile", quote: summary }],
@@ -329,27 +326,14 @@ function excerpt(text: string, pattern: RegExp): string {
 
 export function scriptedReview(payload: ReviewPayload, unmet: RegExp): CvReviewPlan {
   const caveats = payload.rubric?.caveats ?? [];
-  // A batch can carry requirements with no claims; the fixture needs a claim to cite.
-  const review: CvReviewPlan =
-    payload.requirements.length && !payload.claims.length
-      ? {
-          matches: payload.requirements.map((requirement) => ({
-            requirementId: requirement.id,
-            status: "unknown" as const,
-            libraryStatus: "unknown" as const,
-            cvEvidence: [],
-            libraryEvidence: [],
-            reason: "This batch carried no printed claims to assess against.",
-            improvement: "",
-          })),
-          claims: [],
-        }
-      : reviewFixture({
-          rubric: { requirements: payload.requirements, caveats },
-          cv: payload.cv,
-          claims: payload.claims,
-          evidence: payload.evidence,
-        });
+  // Requirements are judged against the printed CV, claims against their own sources, so a batch
+  // with no claims (a revision's re-check that reused every verdict) is judged like any other.
+  const review: CvReviewPlan = reviewFixture({
+    rubric: { requirements: payload.requirements, caveats },
+    cv: payload.cv,
+    claims: payload.claims,
+    evidence: payload.evidence,
+  });
   for (const match of review.matches) {
     const requirement = payload.requirements.find((item) => item.id === match.requirementId);
     if (!requirement || !unmet.test(requirement.quote)) continue;
@@ -371,12 +355,23 @@ export function scriptedReview(payload: ReviewPayload, unmet: RegExp): CvReviewP
 
 // -- the client -------------------------------------------------------------
 
-function kindOf(system: string): ScriptedCallKind {
-  if (system.startsWith("Analyse the company")) return "rubric";
-  if (system.startsWith("Map every supplied fixed rubric")) return "planning";
-  if (system.includes("Write a tailored UK-English CV")) return "author";
-  if (system.includes("Independently assess the exact final CV")) return "review";
-  throw new Error(`Scripted client saw an unknown call site: ${system.slice(0, 80)}`);
+/**
+ * The call site, from the registry entry the engine names beside every request — never from the
+ * wording of a prompt, which can change without the call site changing.
+ */
+const KINDS: Record<string, ScriptedCallKind> = {
+  "cv.rubric": "rubric",
+  "cv.planning": "planning",
+  "cv.author": "author",
+  "cv.improvement": "author",
+  "cv.review": "review",
+  "cv.review_candidate": "review",
+};
+
+function kindOf(call: AiCallMeta | undefined): ScriptedCallKind {
+  const kind = call ? KINDS[call.promptId] : undefined;
+  if (!kind) throw new Error(`Scripted client saw an unknown call site: ${call?.promptId ?? "(no prompt id)"}`);
+  return kind;
 }
 
 function blocksOf(params: Record<string, unknown>): TextBlock[] {
@@ -412,7 +407,15 @@ export function createScriptedAiClient(options: ScriptedAiOptions = {}): Scripte
   const expectedBatches = (payload: ReviewPayload) => {
     const claims = payload.cv.filter((item) => !item.id.endsWith(":heading")).length;
     const requirements = rubric?.requirements.length ?? payload.requirements.length;
-    return Math.max(1, Math.ceil(Math.max(requirements, claims) / REVIEW_BATCH_SIZE));
+    const whole = Math.max(1, Math.ceil(Math.max(requirements, claims) / REVIEW_BATCH_SIZE));
+    // A revision's re-check sends only the claims the baseline's audit did not judge, so it may have
+    // fewer batches than the whole CV would. The engine spreads the requirements evenly, so the
+    // first batch's share names how many batches there are; the whole-CV count wins a tie.
+    if (!rubric || !payload.requirements.length) return whole;
+    const counts: number[] = [];
+    for (let count = Math.ceil(requirements / REVIEW_BATCH_SIZE); count <= Math.max(whole, requirements); count++)
+      if (Math.ceil(requirements / count) === payload.requirements.length) counts.push(count);
+    return counts.includes(whole) ? whole : counts[0] ?? whole;
   };
 
   const client: AiClientLike = {
@@ -421,13 +424,20 @@ export function createScriptedAiClient(options: ScriptedAiOptions = {}): Scripte
         events.push("create-attempted");
         throw new Error("The engine must stream: a scripted client is never asked to create.");
       },
-      stream(params: Record<string, unknown>, requestOptions?: Record<string, unknown>) {
+      stream(params: Record<string, unknown>, requestOptions?: Record<string, unknown>, call?: AiCallMeta) {
         const index = calls.length;
         const system = (params.system as Array<{ text: string }>)[0]!.text;
-        const kind = kindOf(system);
+        const kind = kindOf(call);
         const blocks = blocksOf(params);
         const payload = Object.assign({}, ...blocks.map((block) => JSON.parse(block.text)));
-        calls.push({ index, kind, params, options: requestOptions, system, blocks, payload });
+        // An audit given the library reads the canonical evidence; the reviewer here, like the
+        // validators, reads it as whole-block sources.
+        if (kind === "review" && payload.evidence && !Array.isArray(payload.evidence))
+          payload.evidence = canonicalEvidenceItems(payload.evidence as CanonicalEvidence);
+        if (kind === "author")
+          for (const entry of (payload as AuthorPayload).library.entries) entry.details = entry.rows.map((row) => row.text).join("\n");
+        calls.push({ index, kind, params, options: requestOptions, promptId: call!.promptId, promptVersion: call!.promptVersion,
+          ...(call!.stage ? { stage: call!.stage } : {}), system, blocks, payload });
         events.push(`issue:${kind}:${index}`);
 
         let leader = false;

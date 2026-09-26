@@ -134,6 +134,7 @@ export async function handleReviewLibrary(task: Task, deps: WorkerDeps, ctx?: Ta
     apiKey: deps.env.anthropicApiKey,
     client: deps.aiClient,
     getModel: () => model,
+    getStageRoutes: async () => (await deps.settings()).stageRoutes,
     // The pass stops when the task does: a deadline or a reclaimed task cuts off the calls in
     // flight instead of paying for answers nobody will read.
     ...(ctx?.signal ? { signal: ctx.signal } : {}),

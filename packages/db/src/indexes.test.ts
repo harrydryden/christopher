@@ -68,6 +68,8 @@ const cases: Case[] = [
   ["an account's builds in flight", sql`select d.id, t.status from cv_drafts d left join tasks t on t.type = 'generate_cv' and t.payload->>'draftId' = d.id::text where d.user_id = ${id} and d.status in ('queued', 'generating')`, "tasks_draft_idx", "joined"],
   ["a draft's live build", sql`select 1 from tasks t where t.type = 'generate_cv' and t.payload->>'draftId' = ${id} and t.status in ('queued', 'running')`, "tasks_draft_idx"],
   ["an account's last library review", sql`select * from tasks where type = 'review_library' and payload->>'userId' = ${id} order by created_at desc limit 1`, "tasks_user_idx"],
+  // The claim's fairness: how many CV builds one account already has running (0041).
+  ["an account's running CV builds", sql`select count(*) from tasks r where r.type = 'generate_cv' and r.status = 'running' and r.payload->>'userId' = ${id}`, "tasks_cv_running_user_idx"],
   // The scan banner, Health and the suggestion sweep.
   ["roles first seen in one scan", sql`select 1 from jobs where source_id = ${id} and first_seen_at >= now() - interval '1 hour' and first_seen_at <= now()`, "jobs_source_first_seen_idx"],
   ["recent problem scans", sql`select 1 from scans where status <> 'ok' and started_at >= now() - interval '7 days'`, "scans_started_idx"],

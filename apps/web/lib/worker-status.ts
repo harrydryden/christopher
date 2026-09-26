@@ -38,6 +38,38 @@ export interface WorkerHeartbeat {
   vitals: WorkerVitals | null;
   active: number | null;
   concurrency: number | null;
+  /** The model engine's stream cap and the streams open under it, when the worker reports them. */
+  governor?: WorkerGovernor | null;
+}
+
+/**
+ * The engine's stream governor. `streamCap` is a per-model cap: each model may have that many
+ * streams open at once. `inFlight` and `queued` are summed across every model, so the two are never
+ * set beside each other as "N of a cap of M"; `models` says what each model has open.
+ */
+export interface WorkerGovernor {
+  streamCap: number | null;
+  inFlight: number | null;
+  queued: number | null;
+  pausedUntil: Date | null;
+  models?: Array<{ model: string; inFlight: number; queued: number }>;
+}
+
+/**
+ * Operations' one sentence for the governor: what is open and waiting, the cap as the per-model
+ * figure it is, each busy model's own share, and the provider's pause while it lasts.
+ */
+export function governorSummary(governor: WorkerGovernor, now: Date): string {
+  const models = (governor.models ?? []).filter((entry) => entry.inFlight > 0 || entry.queued > 0);
+  let head = `Model streams: ${governor.inFlight ?? "unknown"} open`;
+  if (governor.queued !== null && governor.queued > 0) head += `, ${governor.queued} waiting for a slot`;
+  const parts = [head];
+  if (governor.streamCap !== null) parts.push(`each model may have ${governor.streamCap} open at once`);
+  if (models.length)
+    parts.push(models.map((entry) => `${entry.model} ${entry.inFlight} open${entry.queued > 0 ? `, ${entry.queued} waiting` : ""}`).join("; "));
+  if (governor.pausedUntil && governor.pausedUntil.getTime() > now.getTime())
+    parts.push(`paused by the provider until ${governor.pausedUntil.toISOString().slice(11, 16)} UTC`);
+  return `${parts.join("; ")}.`;
 }
 
 export type WorkerState = "healthy" | "restarting" | "stopped";

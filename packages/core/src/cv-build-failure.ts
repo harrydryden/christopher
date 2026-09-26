@@ -61,10 +61,38 @@ export const AUTHOR_CALL: CvCallDoing = { gerund: "writing the CV", step: "writi
 export const REVIEW_CALL: CvCallDoing = { gerund: "checking the CV against your evidence", step: "assessment" };
 
 /**
+ * What cut a stalled stream off, as the model engine records it: `idle` when nothing arrived for
+ * `afterMs`, `ceiling` when it was still open after `afterMs`. The same shape as the engine's
+ * `AiFailure["stall"]`, named here because core cannot import the engine.
+ */
+export interface CvCallStall {
+  reason: "idle" | "ceiling";
+  afterMs: number;
+}
+
+/** A duration as the sentence reads it: whole minutes when it is whole minutes, seconds otherwise. */
+function span(ms: number): string {
+  if (ms >= 60_000 && ms % 60_000 === 0) return `${ms / 60_000} minute${ms === 60_000 ? "" : "s"}`;
+  const seconds = Math.round(ms / 1000);
+  return `${seconds} second${seconds === 1 ? "" : "s"}`;
+}
+
+/**
+ * What a stall was, said as it happened — the engine's `stallMessage` in the person's words. A
+ * stall the engine did not describe is the old fifteen-minute ceiling.
+ */
+export function cvStallSentence(stall?: CvCallStall): string {
+  if (!stall) return "nothing arrived for fifteen minutes";
+  return stall.reason === "idle"
+    ? `nothing arrived for ${span(stall.afterMs)}`
+    : `the answer was still unfinished after ${span(stall.afterMs)}`;
+}
+
+/**
  * One plain sentence for a model call that did not produce a usable answer, with the figures that
  * matter. The kind is what the system acts on; this is what the person reads.
  */
-export function callFailureMessage(kind: CvFailureKind, doing: CvCallDoing, status?: number, note?: string): string {
+export function callFailureMessage(kind: CvFailureKind, doing: CvCallDoing, status?: number, note?: string, stall?: CvCallStall): string {
   const where = ` while ${doing.gerund}`;
   switch (kind) {
     case "rate_limited":
@@ -74,7 +102,7 @@ export function callFailureMessage(kind: CvFailureKind, doing: CvCallDoing, stat
     case "connection":
       return `The connection to the model provider dropped${where}.`;
     case "stalled":
-      return `The model stopped responding${where}: nothing arrived for fifteen minutes.`;
+      return `The model stopped responding${where}: ${cvStallSentence(stall)}.`;
     case "model_access":
       return `The CV model could not be reached${where}${status ? ` (HTTP ${status})` : ""}. Check model access and usage in Health, then retry.`;
     case "output_limit":
@@ -101,6 +129,14 @@ export function cvPageLimitMessage(pages: number, maxPages: number): string {
 }
 
 /**
+ * A page limit that could be met only by removing the only evidence for an essential requirement.
+ * It is the person's to resolve like any page limit: shorter Library wording or a higher limit.
+ */
+export function cvEssentialPageLimitMessage(pages: number, maxPages: number): string {
+  return `The CV is ${pages} ${pages === 1 ? "page" : "pages"} after three attempts; the limit is ${maxPages}, and shortening it further would remove the only evidence for an essential requirement. Shorten that evidence in your Library or raise the page limit in Settings.`;
+}
+
+/**
  * What stopped the build, by the class it was thrown as.
  *
  * Everything that carries its own kind is taken at its word: a `CvBuildStop` raised where the
@@ -116,7 +152,7 @@ export function classifyCvBuildFailure(error: unknown): { kind: CvFailureKind; m
     if (error.kind === "page_limit_unfittable")
       return {
         kind: error.kind,
-        message: cvPageLimitMessage(error.detail.pages ?? 0, error.detail.maxPages ?? 0),
+        message: (error.detail.essential ? cvEssentialPageLimitMessage : cvPageLimitMessage)(error.detail.pages ?? 0, error.detail.maxPages ?? 0),
         extra: { ...error.policy },
       };
     return { kind: error.kind, message: error.message, extra: { ...error.policy } };
@@ -138,10 +174,20 @@ export function classifyCvBuildFailure(error: unknown): { kind: CvFailureKind; m
  * meet the same model with the same prompt and cost the same money. The kind stays what it was,
  * so Operations still counts them together.
  */
-export function cvBuildFailureFor(error: unknown, attempts: { attempt: number; maxAttempts: number }): CvBuildFailure {
+export function cvBuildFailureFor(
+  error: unknown,
+  attempts: { attempt: number; maxAttempts: number; motion?: CvBuildFailure["motion"]; batch?: number },
+): CvBuildFailure {
   const base = classifyCvBuildFailure(error);
   let message = base.message;
-  let extra: Partial<CvBuildFailure> = { ...base.extra, ...attempts };
+  const { motion, batch, ...counts } = attempts;
+  // Where it happened: what the failure says for itself first (a batch knows its number, a refused
+  // admission its motion), then the motion the build had open when it stopped.
+  const where = {
+    ...(base.extra.motion ?? motion ? { motion: base.extra.motion ?? motion } : {}),
+    ...(base.extra.batch ?? batch ? { batch: base.extra.batch ?? batch } : {}),
+  };
+  let extra: Partial<CvBuildFailure> = { ...base.extra, ...counts, ...where };
   if (base.kind === "output_limit" || base.kind === "refused") {
     const ask = attempts.attempt >= 2;
     extra = ask

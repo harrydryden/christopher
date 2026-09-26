@@ -12,6 +12,7 @@
  */
 import type { CvLibrary, CvContent, LibraryEntryReview } from "@ava/core";
 import type { CvAssessment, CvJobSource } from "@ava/core/cv-assessment";
+import type { CvTailoringPlan } from "@ava/core/cv-tailoring";
 import type { CvBuildCheckpoint, CvBuildFailure, CvBuildMotion, CvBuildStage, CvBuildStepStatus, CvGapQuiz } from "@ava/core";
 import { sql } from "drizzle-orm";
 import { cvRoleKey } from "./cv-role-key";
@@ -694,6 +695,8 @@ export const tasks = pgTable(
     uniqueIndex("tasks_dedupe_queued_uidx").on(t.dedupeKey).where(sql`${t.status} = 'queued' and ${t.startedAt} is null and ${t.type} <> 'generate_cv' and ${t.dedupeKey} is not null`),
     uniqueIndex("tasks_dedupe_cv_build_uidx").on(t.dedupeKey).where(sql`${t.type} = 'generate_cv' and ${t.status} in ('queued', 'running') and ${t.dedupeKey} is not null`),
     index("tasks_dedupe_active_idx").on(t.dedupeKey).where(sql`${t.status} in ('queued', 'running') and ${t.dedupeKey} is not null`),
+    // How many CV builds an account has running, which the claim orders CV builds by (0041).
+    index("tasks_cv_running_user_idx").on(sql`(${t.payload}->>'userId')`).where(sql`${t.type} = 'generate_cv' and ${t.status} = 'running'`),
   ],
 );
 
@@ -715,8 +718,23 @@ export const aiCalls = pgTable(
     error: text("error"),
     refType: text("ref_type"),
     refId: text("ref_id"),
-    /** Which step of a multi-call feature this was (a CV build: rubric, author, review, review_retry), so a build's cost can be explained, not only summed. */
+    /** Which step of a multi-call feature this was (a CV build: rubric, planning, author, improvement, review, review_candidate, and their `_retry`), so a build's cost can be explained, not only summed. */
     stage: text("stage"),
+    /** The prompt registry entry that produced the call (`packages/ai/src/prompt-registry.ts`), and the short hash of its prompt text and schema. */
+    promptId: text("prompt_id"),
+    promptVersion: text("prompt_version"),
+    /** Milliseconds from sending the request to the first stream event: the wait the person feels before anything happens. */
+    ttftMs: integer("ttft_ms"),
+    /** The longest silence between two stream events, which is what the idle timeout measures. */
+    maxEventGapMs: integer("max_event_gap_ms"),
+    /** The provider's `stop_reason` for an answered call; null for one that never got an answer. */
+    stopReason: text("stop_reason"),
+    /** The provider's request id, for a support ticket about one call. */
+    requestId: text("request_id"),
+    /** How many times the request was sent: 1 unless the engine retried a rate limit, overload or dropped connection. */
+    attempt: integer("attempt"),
+    /** The build step (or other caller step) this call belongs to, so a step's calls can be listed with it. */
+    stepId: text("step_id"),
     at: tsNow("at"),
   },
   (t) => [
@@ -856,6 +874,20 @@ export const cvDrafts = pgTable("cv_drafts", {
   // The job's side of `on delete set null`, and the per-role "does this account hold a CV" probe.
   index("cv_drafts_job_user_idx").on(table.jobId, table.userId).where(sql`${table.jobId} is not null`),
 ]);
+
+/**
+ * The evidence plan a published CV's wording was written against, kept beside its assessment so
+ * the build can be replayed and explained after its checkpoint has been cleared. A table of its
+ * own rather than a column: the interface selects every column of `cv_drafts`, and deploys apart
+ * from the worker that migrates.
+ */
+export const cvTailoringPlans = pgTable("cv_tailoring_plans", {
+  // No foreign keys (see 0041): a delete trigger on cv_drafts removes a draft's plan with it.
+  draftId: uuid("draft_id").primaryKey(),
+  userId: uuid("user_id").notNull(),
+  plan: jsonb("plan").$type<CvTailoringPlan>().notNull(),
+  createdAt: tsNow("created_at"),
+}, table => [index("cv_tailoring_plans_user_idx").on(table.userId)]);
 
 /** Version ledger survives retention/deletion; contains identifiers only, no CV content. */
 export const cvVersions = pgTable("cv_versions", {

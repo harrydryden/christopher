@@ -3,6 +3,7 @@
  * outbound fetch and model call. See docs/SPEC.md section 6.
  */
 import { recordWorkerEvent, type Db } from "@ava/db";
+import { aiGovernorStats } from "@ava/ai";
 import { runMigrations } from "@ava/db/migrate";
 import { sql } from "drizzle-orm";
 import { enqueueBootGateReevaluation, seedTagVocabularies } from "./boot";
@@ -23,10 +24,10 @@ async function main() {
   const commit = process.env.RENDER_GIT_COMMIT ?? null;
   // The heap ceiling on the first line: an out-of-memory is the one failure nothing catches, and
   // the limit the process was actually given is what says whether the ceiling or the workload moved.
-  log.info("worker starting", { workerId: env.workerId, concurrency: env.concurrency, ai: deps.ai.enabled, browser: !!deps.browser, commit, vitals: vitals() });
+  log.info("worker starting", { workerId: env.workerId, concurrency: env.concurrency, cvConcurrency: env.cvConcurrency, ai: deps.ai.enabled, browser: !!deps.browser, commit, vitals: vitals() });
 
   await runMigrations(deps.db);
-  await recordWorkerEvent(deps.db, { workerId: env.workerId, kind: "boot", detail: { concurrency: env.concurrency, commit, vitals: vitals(), bootedAt: bootedAt.toISOString() } });
+  await recordWorkerEvent(deps.db, { workerId: env.workerId, kind: "boot", detail: { concurrency: env.concurrency, cvConcurrency: env.cvConcurrency, commit, vitals: vitals(), bootedAt: bootedAt.toISOString() } });
   // Before anything is claimed: whatever is still `running` belonged to the incarnation before
   // this one, and whatever this worker id is holding against an account's budget is a dead hold.
   // Doing it here rather than waiting for the scheduler is what stops the task that killed the
@@ -38,11 +39,11 @@ async function main() {
   // once. A boot on the same semantics queues nothing.
   await enqueueBootGateReevaluation(deps.db);
 
-  // CV builds hold a slot for many minutes, so they may take at most half the slots: the rest stay
-  // free for the discoveries, imports and scans queued behind a run of builds.
+  // CV builds hold a slot for many minutes while they mostly wait on the model, so they have slots
+  // of their own (CV_CONCURRENCY) beside the memory-bound general ones (WORKER_CONCURRENCY): a run
+  // of builds never holds up the discoveries, imports and scans, and a scan never holds up a build.
   const queue = new TaskQueue(deps, handlers, {
-    concurrency: env.concurrency, workerId: env.workerId, onAbandon, onInterrupted,
-    maxActiveByType: { generate_cv: Math.max(1, Math.ceil(env.concurrency / 2)) },
+    concurrency: env.concurrency, cvConcurrency: env.cvConcurrency, workerId: env.workerId, onAbandon, onInterrupted,
   });
   queue.start();
   // Written only by the persistent worker, never the short-lived web cron runner.
@@ -58,6 +59,8 @@ async function main() {
         bootedAt: bootedAt.toISOString(),
         vitals: vitals(),
         active: queue.activeCount,
+        // The model streams this process has open and waiting, per model, for Health.
+        governor: aiGovernorStats(),
       });
     } catch (err) { log.error("worker heartbeat failed", err); }
   };

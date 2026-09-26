@@ -11,7 +11,16 @@ export interface TaskPayloads {
   extract_document: { sourceId: string; documentId: string };
   verify_company: { sourceId?: string; candidateId: string };
   monitor_source: { sourceId: string };
-  generate_cv: { draftId: string };
+  /**
+   * One CV build. `userId` is the draft's owner: the claim orders CV builds by how many each
+   * account already has running, and every per-account payload names its account. Typed optional
+   * only for producers written before it: `enqueueTask` fills it from the draft, inside the same
+   * statement, whenever a producer omits it, so every stored CV task carries it. The rest is
+   * what a revision's own task asks for (a rebuild's improvements, a direct edit's `assess`, the
+   * parent's rubric); the handler copies it onto the draft's checkpoint so a retry that knows only
+   * the draft still finds it.
+   */
+  generate_cv: { draftId: string; userId?: string; mode?: "assess" | "improve"; rubric?: unknown; improvements?: string[] };
   discover: { companyId: string; logoOnly?: boolean; homepageUrl?: string; url?: string; reason?: "added" | "manual" | "failing" | "suspect_empty" | "shrunk" | "pasted" };
   scan_company: { companyId: string; scanRunId?: string; trigger?: "schedule" | "manual" };
   run_daily: { trigger: "schedule" | "manual"; runDate?: string };
@@ -78,6 +87,8 @@ export function dedupeKeyFor<T extends TaskType>(type: T, payload: TaskPayloads[
     case "extract_document": return `extract_document:${(payload as TaskPayloads["extract_document"]).documentId}`;
     case "verify_company": return `verify_company:${(payload as TaskPayloads["verify_company"]).candidateId}`;
     case "monitor_source": return `monitor_source:${(payload as TaskPayloads["monitor_source"]).sourceId}`;
+    // The draft, not the account: a draft id is already one account's, and the interface and the
+    // abandonment hooks find a build's task by exactly this key.
     case "generate_cv": return `generate_cv:${(payload as TaskPayloads["generate_cv"]).draftId}`;
     case "discover":
       { const p = payload as TaskPayloads["discover"];
@@ -190,19 +201,45 @@ export const AGEING_PRIORITY_FLOOR = Math.max(...INTERACTIVE_TASK_TYPES.map(prio
  * three minutes per company R-3.1 asks for; discovery walks several pages. Everything else is
  * short by construction.
  *
- * A CV build gets three quarters of an hour, because half an hour is reachable by a build that is
- * working perfectly: three writing attempts of up to five minutes each, the first assessment batch
- * serially before the rest, and a stream that may legitimately take the fifteen-minute stall
- * ceiling before it is cut off. The deadline is the ceiling for a build that has stopped, not a
- * budget a slow one must fit; reaching it now aborts the run's signal, so a build that outruns it
- * stops spending instead of carrying on unobserved.
+ * A CV build's deadline is the sum of its stages' allowances (`CV_STAGE_ALLOWANCE_MS`), never
+ * less than three quarters of an hour. Each stage is also stopped at its own allowance, so one
+ * runaway stage cannot spend the whole deadline and leave the stages after it none: the ceilings
+ * and the deadline agree by construction. Reaching either aborts the run's model calls, so a
+ * build that outruns it stops spending instead of carrying on unobserved.
  *
  * It lives here rather than in the worker because the interface shows elapsed time against the
  * deadline, and nothing in `apps/web` may import `apps/worker`.
  */
+/**
+ * How long each stage of a CV build may take before it is stopped, in milliseconds. Calibration
+ * constants, not measurements: each is the stage's model calls at their request timeouts with
+ * room for the streams, until the call ledger supplies a measured 95th percentile per stage.
+ *
+ * `write` is three author calls of up to five minutes and the renders between them; `audit` and
+ * `reaudit` are the first batch alone, the rest together and one attribution re-run; `improve` is
+ * one author call; `overhead` is the renders, saves and publication outside any stage.
+ */
+export const CV_STAGE_ALLOWANCE_MS = {
+  rubric: 4 * 60_000,
+  plan: 6 * 60_000,
+  write: 20 * 60_000,
+  audit: 12 * 60_000,
+  improve: 6 * 60_000,
+  reaudit: 12 * 60_000,
+  overhead: 2 * 60_000,
+} as const;
+
+/** The least a CV build is ever given, whatever the allowances add up to. */
+export const CV_BUILD_DEADLINE_FLOOR_MS = 45 * 60_000;
+
+/** The deadline a CV build's task is given: its stages' allowances added up, with a floor. */
+export function cvBuildDeadlineMs(allowances: Record<string, number> = CV_STAGE_ALLOWANCE_MS): number {
+  return Math.max(CV_BUILD_DEADLINE_FLOOR_MS, Object.values(allowances).reduce((sum, ms) => sum + ms, 0));
+}
+
 export const TASK_DEADLINES_MS: Partial<Record<TaskType, number>> & { default: number } = {
   scan_company: 3 * 60_000,
-  generate_cv: 45 * 60_000,
+  generate_cv: cvBuildDeadlineMs(),
   discover: 5 * 60_000,
   // A page fetch, a browser render when the page needs one, and one model call.
   import_posting: 4 * 60_000,

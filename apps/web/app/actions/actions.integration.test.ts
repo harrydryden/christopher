@@ -160,6 +160,28 @@ async function follow(companyId: string, ...jobIds: string[]) {
     await database.insert(schema.userJobs).values(jobIds.map((jobId) => ({ userId: user.id, jobId, inTable: true, keywordMatched: true, keywordTerms: ["operations"] }))).onConflictDoNothing();
 }
 
+
+/**
+ * The build audits batch by batch through `assessCvBatches`. Tests mock the whole-audit method,
+ * so this spy slices the audit as the engine does and answers each slice with that mock.
+ */
+async function mockAuditBatches() {
+  const { AiEngine } = await import("../../../../packages/ai/src/index");
+  const { cvAuditBatches } = await import("../../../worker/src/handlers/cv-stages");
+  type Engine = InstanceType<typeof AiEngine>;
+  type BatchArgs = Parameters<Engine["assessCvBatches"]>;
+  return vi.spyOn(AiEngine.prototype, "assessCvBatches").mockImplementation(async function (this: Engine, input: BatchArgs[0], ref: BatchArgs[1], options: BatchArgs[2]) {
+    const slices = cvAuditBatches(input);
+    const batches = [];
+    for (const index of options?.only ?? slices.map((_, i) => i)) {
+      const slice = slices[index]!;
+      const result = await this.assessCv({ ...input, rubric: { ...input.rubric, requirements: slice.requirements }, claims: slice.claims }, ref, options);
+      batches.push(result ? { index, status: "done" as const, result, usage: [] } : { index, status: "failed" as const, usage: [] });
+    }
+    return { pass: options?.pass ?? "draft", total: slices.length, batches, review: null };
+  });
+}
+
 describe("authenticated mutations", () => {
   it("refreshes known sources once and brings scheduled scans forward", async () => {
     const { company } = await fixture();
@@ -1192,6 +1214,7 @@ it("carries library styling through generation, revision, matching preview/downl
   const reviewer = vi.spyOn(AiEngine.prototype, "assessCv").mockImplementation(async (input) =>
     reviewFixture(input),
   );
+  await mockAuditBatches();
   const { handleGenerateCv } = await import("../../../worker/src/handlers/cv");
   const { GET: downloadCv } = await import("@/app/api/cv/[id]/pdf/route");
   const { POST: previewCv } = await import("@/app/api/cv/preview/route");
@@ -1514,6 +1537,7 @@ it("assesses, improves with current evidence, finalises and exports through the 
       gaps: [],
     });
     });
+  await mockAuditBatches();
   const reviewer = vi
     .spyOn(AiEngine.prototype, "assessCv")
     .mockImplementation(async (input) => {
@@ -1548,11 +1572,17 @@ it("assesses, improves with current evidence, finalises and exports through the 
       .update(schema.tasks)
       .set({ status: "done" })
       .where(eq(schema.tasks.id, task!.id));
+    // The baseline publishes first; a verified improvement is adopted afterwards as a revision
+    // of it, which is the CV the person is taken to. Follow it when there is one.
+    const [adopted] = await database
+      .select()
+      .from(schema.cvDrafts)
+      .where(eq(schema.cvDrafts.parentId, id));
     return (
       await database
         .select()
         .from(schema.cvDrafts)
-        .where(eq(schema.cvDrafts.id, id))
+        .where(eq(schema.cvDrafts.id, adopted?.id ?? id))
     )[0]!;
   }
   try {
@@ -1565,8 +1595,8 @@ it("assesses, improves with current evidence, finalises and exports through the 
     const first = (await database.select().from(schema.cvDrafts))[0]!;
     const ready = await run(first.id);
     expect(ready.status).toBe("ready");
-    // The new tailoring pass spots the evidenced SQL omission and applies its one verified
-    // automatic improvement before publishing the first revision.
+    // The tailoring pass spots the evidenced SQL omission and adopts its one verified automatic
+    // improvement as a revision of the published baseline.
     expect(ready.assessment!.score).toBe(100);
     expect(ready.jobSource!.kind).toBe("user_supplied");
     expect(ready.finalisedAt).toBeNull();
@@ -1940,20 +1970,21 @@ it("does not let manual assessment bypass a quiz pause or revive an archived dra
 });
 
 
-it("publishes real CV stage changes to the page refresher", async () => {
-  const [draft] = await database.insert(schema.cvDrafts).values({ userId: user.id, jobTitle: "Director", companyName: "Example", jobDescription: "Lead a team", libraryVersion: 1, librarySnapshot: { name: "Example", contact: "", profile: "Leader", entries: [] }, model: "test", status: "generating", buildStage: "writing" }).returning();
+it("gives the page refresher a new version on a transition, and not on every stage or minute", async () => {
+  const [draft] = await database.insert(schema.cvDrafts).values({ userId: user.id, jobTitle: "Director", companyName: "Example", jobDescription: "Lead a team", libraryVersion: 1, librarySnapshot: { name: "Example", contact: "", profile: "Leader", entries: [] }, model: "test", status: "generating", buildStage: "writing", progressAt: new Date() }).returning();
+  await database.insert(schema.tasks).values({ type: "generate_cv", payload: { draftId: draft!.id }, dedupeKey: `generate_cv:${draft!.id}`, status: "running", attempts: 1, startedAt: new Date() });
   const request = () => new Request(`http://localhost/api/work-status?cv=${draft!.id}`);
   const version = async () => ((await (await workStatus(request())).json()) as { active: boolean; version: string }).version;
   const writing = await version();
-  expect(writing).toContain("generating:writing");
+  expect(writing).toBe("generating:::");
+  // A stage change is the progress feed's to show; the page is not rendered again for it.
   await database.update(schema.cvDrafts).set({ buildStage: "fitting" }).where(eq(schema.cvDrafts.id, draft!.id));
-  const fitting = await version();
-  expect(fitting).toContain("generating:fitting");
-  expect(fitting).not.toBe(writing);
-  // The version also carries how long the build has been still, so a page waiting on a build that
-  // has stopped moving still refreshes and its "no progress for N minutes" keeps counting.
+  expect(await version()).toBe(writing);
+  // Ten minutes without progress is a transition the header has to render, once.
   await database.update(schema.cvDrafts).set({ progressAt: new Date(Date.now() - 12 * 60_000) }).where(eq(schema.cvDrafts.id, draft!.id));
-  expect(await version()).not.toBe(fitting);
+  expect(await version()).toBe("generating::stale:");
+  await database.update(schema.cvDrafts).set({ status: "ready" }).where(eq(schema.cvDrafts.id, draft!.id));
+  expect(await version()).toBe("ready:::");
 });
 
 it("saves default appearance independently of library edits and existing CVs", async () => {

@@ -1,4 +1,4 @@
-import type { CvBuildFailure, CvBuildMotion, CvBuildStepDetails, CvBuildStepStatus } from "@ava/core";
+import { usd, type CvBuildFailure, type CvBuildMotion, type CvBuildStepDetails, type CvBuildStepStatus, type CvCallUsage } from "@ava/core";
 import { failOpenCvBuildSteps, finishCvBuildStep, schema, startCvBuildStep, type Db } from "@ava/db";
 import { eq } from "drizzle-orm";
 import { LeaseLostError } from "../lease";
@@ -27,9 +27,19 @@ export interface CvJournalStep<M extends CvBuildMotion> {
  */
 export class CvOpenStep<M extends CvBuildMotion = CvBuildMotion> implements CvJournalStep<M> {
   readonly gathered: Record<string, unknown> = {};
-  constructor(readonly id: string | null) {}
+  constructor(readonly id: string | null, readonly motion?: M) {}
   add(detail: CvBuildStepDetails[M]): void {
     Object.assign(this.gathered, detail);
+  }
+  /**
+   * Charge a model call to this step, adding to whatever it has already been charged. Every call
+   * the step made counts — one that failed, or was cancelled part-way, cost what it consumed — so
+   * a step's cost is complete however it ends, not only when it ends well.
+   */
+  addCost(usage: CvCallUsage): void {
+    const tokens = usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
+    this.gathered.usd = usd(Number(this.gathered.usd ?? 0) + usage.costUsd);
+    this.gathered.tokens = Number(this.gathered.tokens ?? 0) + tokens;
   }
 }
 
@@ -79,6 +89,13 @@ export class CvJournal {
   /** Set once, the first time this journal learns the build it describes is no longer its own. */
   private lost: CvJournalLoss | null = null;
   /**
+   * Set once the CV is ready. The build goes on to its optional improvement, but a published CV has
+   * finished advancing: its `progressAt` is the last moment it did, and the page reads a moved one
+   * as a build still running. From here a step closing checks the fence and the draft and renews
+   * the stage's hold, and writes nothing to the draft.
+   */
+  private published = false;
+  /**
    * Ledger writes run one after another, however concurrent the work they describe is.
    *
    * A step takes the next `seq` for its draft, and the assessment runs its batches together: two
@@ -108,28 +125,70 @@ export class CvJournal {
     return next;
   }
 
-  /** Open a step. Never throws; a ledger that refused the row gives a step with a null id. */
+  /**
+   * The motion most recently opened and still running: where the build was when it stopped, for a
+   * failure that does not say for itself.
+   */
+  get openMotion(): CvBuildMotion | undefined {
+    let last: CvBuildMotion | undefined;
+    for (const step of this.running) if (step.motion) last = step.motion;
+    return last;
+  }
+
+  /** The CV is ready: from here nothing this journal writes may move the draft's `progressAt`. */
+  markPublished(): void {
+    this.published = true;
+  }
+
+  /**
+   * Open a step. Never throws; a ledger that refused the row gives a step with a null id.
+   *
+   * Fenced like every other write this attempt makes: the row is inserted in the transaction that
+   * checks the task is still this attempt's, so a build the deadline gave up on — which keeps
+   * running until its calls notice — cannot add motions to the narrative of the attempt that
+   * replaced it. A fence that refuses stops the journal, as a refused progress mark does.
+   */
   async open<M extends CvBuildMotion>(motion: M, detail: CvBuildStepDetails[M], title?: string): Promise<CvOpenStep<M>> {
     return this.queued(async () => {
-      if (this.silent) return new CvOpenStep<M>(null);
+      if (this.silent) return new CvOpenStep<M>(null, motion);
       try {
-        const id = await startCvBuildStep(this.options.db, {
-          draftId: this.options.draftId,
-          userId: this.options.userId,
-          taskId: this.options.taskId,
-          attempt: this.options.attempt,
-          motion,
-          ...(title ? { title } : {}),
-          detail,
+        const id = await this.options.db.transaction(async (tx) => {
+          await this.options.assertOwnership?.(tx as unknown as Db);
+          return startCvBuildStep(tx as unknown as Db, {
+            draftId: this.options.draftId,
+            userId: this.options.userId,
+            taskId: this.options.taskId,
+            attempt: this.options.attempt,
+            motion,
+            ...(title ? { title } : {}),
+            detail,
+          });
         });
-        const step = new CvOpenStep<M>(id);
+        const step = new CvOpenStep<M>(id, motion);
         this.running.add(step);
         return step;
       } catch (error) {
-        log.warn("CV build step could not be opened", { draftId: this.options.draftId, motion, error: (error as Error).message });
-        return new CvOpenStep<M>(null);
+        if (error instanceof LeaseLostError) this.stop("fenced");
+        else log.warn("CV build step could not be opened", { draftId: this.options.draftId, motion, error: (error as Error).message });
+        return new CvOpenStep<M>(null, motion);
       }
     });
+  }
+
+  /**
+   * Close a step inside the caller's transaction, so the row and what it describes commit together
+   * or not at all: publication closes its step inside the transaction that makes the CV ready, and
+   * a page that sees the CV ready sees it saved. Unlike `close`, a failure here is the caller's.
+   */
+  async closeWithin<M extends CvBuildMotion>(
+    tx: Pick<Db, "update">,
+    step: CvOpenStep<M> | null | undefined,
+    status: Closed,
+    detail?: CvBuildStepDetails[M],
+  ): Promise<void> {
+    if (!step?.id || this.silent) return;
+    await finishCvBuildStep(tx, step.id, { status, detail: { ...step.gathered, ...(detail ?? {}) }, error: null, failure: null });
+    this.running.delete(step);
   }
 
   /** Close a step with its outcome and whatever figures it gathered. Never throws. */
@@ -168,13 +227,21 @@ export class CvJournal {
   async run<T, M extends CvBuildMotion>(
     motion: M,
     detail: CvBuildStepDetails[M],
-    work: (step: CvJournalStep<M>) => Promise<T>,
+    work: (step: CvOpenStep<M>) => Promise<T>,
     options: { title?: string; status?: Closed } = {},
   ): Promise<T> {
     const step = await this.open(motion, detail, options.title);
     const result = await work(step);
     await this.close(step, options.status ?? "done");
     return result;
+  }
+
+  /**
+   * Close everything this journal still has running as skipped, with a neutral reason: optional
+   * work after publication that did not come off. The CV is ready, so nothing here is a failure.
+   */
+  async skipOpen(reason: string): Promise<void> {
+    for (const step of [...this.running]) await this.close(step, "skipped", { reason } as CvBuildStepDetails[CvBuildMotion]);
   }
 
   /**
@@ -207,8 +274,11 @@ export class CvJournal {
     try {
       const alive = await this.options.db.transaction(async (tx) => {
         await this.options.assertOwnership?.(tx as unknown as Db);
-        const rows = await tx.update(schema.cvDrafts).set({ progressAt: this.options.now() })
-          .where(eq(schema.cvDrafts.id, this.options.draftId)).returning({ id: schema.cvDrafts.id });
+        // Once published, only whether the draft is still there: its `progressAt` stays put.
+        const rows = this.published
+          ? await tx.select({ id: schema.cvDrafts.id }).from(schema.cvDrafts).where(eq(schema.cvDrafts.id, this.options.draftId))
+          : await tx.update(schema.cvDrafts).set({ progressAt: this.options.now() })
+              .where(eq(schema.cvDrafts.id, this.options.draftId)).returning({ id: schema.cvDrafts.id });
         return rows.length > 0;
       });
       // Nothing to mark: the draft was deleted while this build was running.

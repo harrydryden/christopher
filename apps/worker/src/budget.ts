@@ -97,6 +97,15 @@ export type AiBudgetLimits = {
    * hold instead of every hold the account has.
    */
   refId?: string;
+  /**
+   * Replace every hold already taken for `refId` at this call site, inside the lock that judges
+   * this one. A CV build admits one stage at a time and holds at most one stage at once, so any
+   * other hold for its draft is a dead one: a previous stage whose release was lost, or the hold of
+   * an attempt the queue killed at its deadline or lost with its process. Left in place, a retry
+   * paid for the same build twice — its own new hold beside its dead predecessor's — until the old
+   * one expired, and refused builds the month could afford.
+   */
+  replaceRef?: boolean;
 };
 
 /** A hold taken, with the figures it was measured against — read inside the lock that took it. */
@@ -151,6 +160,8 @@ export async function tryReserveAi(db: Db, callSite: string, amount: number, lim
     if (account) {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`ava:ai-budget:${account.userId}`}))`);
       await tx.execute(sql`delete from ai_reservations where user_id = ${account.userId} and expires_at <= now()`);
+      if (limits.replaceRef && limits.refId)
+        await tx.execute(sql`delete from ai_reservations where user_id = ${account.userId} and call_site = ${callSite} and ref_id = ${limits.refId}`);
       // This account's own month: what it has spent, plus what its calls in flight are holding.
       // Its holds alone, so one account's build can never be refused by another's.
       const { spent, held } = await accountAiStanding(tx, account.userId, account.since);

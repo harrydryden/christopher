@@ -141,7 +141,11 @@ export interface CvBuildSink {
 }
 
 /** A run of the handler: the queue's context, and optionally a sink other than the database's. */
-export type CvRunContext = TaskRunContext & { sink?: CvBuildSink };
+export type CvRunContext = TaskRunContext & {
+  sink?: CvBuildSink;
+  /** Per-stage allowances in place of the calibration constants; a test shortens them. */
+  stageAllowanceMs?: Partial<Record<CvBuildStageName, number>>;
+};
 
 /** What the saved writing recorded: which attempt produced it and the budget scale it fitted at. */
 type WriteCheckpoint = { writeAttempt: number; scale: number };
@@ -420,6 +424,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         model: draft.model,
         promptSetVersion: prompts,
         now: deps.now,
+        ...(ctx?.stageAllowanceMs ? { allowanceMs: ctx.stageAllowanceMs } : {}),
       });
       let currentStage: BuildStage | undefined;
       const stage = async (buildStage: BuildStage) => {
@@ -746,9 +751,13 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         const batchSteps = new Map<number, CvOpenStep<"assess_batch">>();
         const retrySteps = new Map<number, CvOpenStep<"assess_retry">>();
         const ran: CvAssessBatchResult[] = [];
+        /** The audit stage's own signal: aborted by its allowance as well as by the build's stop. */
+        let stageSignal: AbortSignal | undefined;
         if (pending.length) {
           const audit = await runner.paid(admission, "assess_batch",
-            estimateCvStage(admission, { ...sizes, batches: pending.length }, models), stageCtx => ai.assessCvBatches(items,
+            estimateCvStage(admission, { ...sizes, batches: pending.length }, models), stageCtx => {
+              stageSignal = stageCtx.signal;
+              return ai.assessCvBatches(items,
               // The engine re-runs a batch whose attribution it had to correct, and names that
               // second charge `review_retry` (`review_candidate_retry` for the revision's re-check),
               // so a build that paid twice for one batch says so.
@@ -795,7 +804,8 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
                   batchSteps.delete(event.index);
                   await journal.close(step, "done");
                 },
-              }));
+              });
+            });
           ran.push(...audit.batches);
           merged = audit.review;
           total = audit.total;
@@ -831,6 +841,12 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
           ?? (inOrder.every(Boolean) ? { matches: inOrder.flatMap(batch => batch!.matches), claims: inOrder.flatMap(batch => batch!.claims) } : null);
         if (failed || !review) {
           if (interrupted) throw interrupted;
+          // The batches that finished are saved above; the rest were cancelled because the stage
+          // ran past its allowance, not because the assessment could not be finished. That is a
+          // stalled stage, which the next attempt resumes from what was saved.
+          if (!failed && stageSignal?.aborted && !stop.signal.aborted)
+            throw pass === "draft" ? runner.stalled(admission, "assess_batch")
+              : new CvBuildStop("stalled", "The re-check ran past its allowance.", { motion: "assess_batch" });
           throw failed ? batchStop(failed, total) : new CvBuildStop("assessment_incomplete", "The assessment did not finish every batch.", { motion: "assess_batch" });
         }
         const assessed = await journal.run("assemble", { pageCount, ...(pass === "revision" ? { pass } : {}) }, async step => {

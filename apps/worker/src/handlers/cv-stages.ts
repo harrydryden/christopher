@@ -221,6 +221,18 @@ export class CvStageRunner {
     await write;
   }
 
+  /**
+   * The stop for a stage that ran past its allowance: a stalled stage, which the system retries from
+   * the checkpoint. Thrown by `within` when the work throws on the way out, and by a caller whose
+   * work returned normally with what it finished (the audit saves its finished batches first).
+   */
+  stalled(admission: CvBuildStageName, motion: CvBuildMotion): CvBuildStop {
+    const minutes = Math.max(1, Math.round(this.allowance(admission) / 60_000));
+    return new CvBuildStop("stalled",
+      `The ${CV_STAGE_LABELS[admission]} step ran past its ${minutes}-minute allowance, so it was stopped. The next attempt resumes from what this build has already saved.`,
+      { motion });
+  }
+
   /** How long a stage of this admission may run. */
   allowance(admission: CvBuildStageName): number {
     return this.options.allowanceMs?.[admission] ?? CV_STAGE_ALLOWANCE_MS[admission];
@@ -240,10 +252,7 @@ export class CvStageRunner {
     try {
       return await work({ signal });
     } catch (error) {
-      if (timer.signal.aborted && !this.options.signal.aborted)
-        throw new CvBuildStop("stalled",
-          `The ${CV_STAGE_LABELS[admission]} step ran past its ${Math.round(ms / 60_000)}-minute allowance, so it was stopped. The next attempt resumes from what this build has already saved.`,
-          { motion });
+      if (timer.signal.aborted && !this.options.signal.aborted) throw this.stalled(admission, motion);
       throw error;
     } finally {
       clearTimeout(handle);

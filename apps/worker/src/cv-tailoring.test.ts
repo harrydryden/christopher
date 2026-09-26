@@ -364,3 +364,55 @@ for (const [refused, stage] of [[3, "improve"], [4, "reaudit"]] as const) {
     expect(scripted.calls.filter(call => call === "improvement")).toHaveLength(stage === "improve" ? 0 : 1);
   });
 }
+
+it("an audit stopped by its stage allowance is a stalled stage, with the batches that finished saved for the retry", async () => {
+  const scripted = scriptedClient();
+  const create = scripted.client.messages.create;
+  // Ten claims make two batches: the one holding the profile answers, the other never does.
+  scripted.client.messages.create = async (params, options, call) => {
+    if (call?.promptId === "cv.review") {
+      const content = (params.messages as Array<{ content: Array<{ text: string }> }>)[0]!.content;
+      const batch = JSON.parse(content[2]!.text) as { claims: Array<{ id: string }> };
+      if (!batch.claims.some(claim => claim.id === "profile")) return new Promise<never>(() => {});
+    }
+    return create(params, options, call);
+  };
+  deps.aiClient = scripted.client;
+  const bullets = Array.from({ length: 5 }, () => "Led a team");
+  const degree = Array.from({ length: 4 }, () => "University of Example");
+  const baseline = { name: library.name, contact: library.contact, linkedinUrl: "", websiteUrl: "", summary: "Operations leader",
+    summarySources: [{ sourceId: "source:profile", quote: "Operations leader" }],
+    sections: [{ entryId: "one", kind: "experience" as const, heading: "Director · Acme", bullets,
+      bulletSources: bullets.map(() => [{ sourceId: "entry:one:row:0", quote: "Led a team" }]) },
+    { entryId: "degree", kind: "education" as const, heading: "BSc Management", bullets: degree,
+      bulletSources: degree.map(() => [{ sourceId: "entry:degree:row:0", quote: "University of Example" }]) }], gaps: [] };
+  const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric,
+    contentAt: new Date().toISOString() });
+  await db.update(schema.cvDrafts).set({ content: baseline }).where(eq(schema.cvDrafts.id, draft.id));
+  const [task] = await db.select().from(schema.tasks);
+  await expect(handleGenerateCv({ ...task!, attempts: 1, maxAttempts: 3 }, deps,
+    { signal: new AbortController().signal, stageAllowanceMs: { audit: 1_500 } })).rejects.toThrow(/ran past its/);
+  const after = await draftAfter(draft.id);
+  expect(after.status).toBe("generating");
+  expect(after.failure).toMatchObject({ kind: "stalled", resolvedBy: "system", retryable: true, motion: "assess_batch" });
+  expect(after.failure!.message).toMatch(/^The assessment step ran past its/);
+  // The batch that finished is in the checkpoint; only the stopped one is paid for again.
+  const stages = Object.keys(after.buildCheckpoint?.stages ?? {});
+  expect(stages.filter(name => name.startsWith("audit["))).toEqual(["audit[0]"]);
+});
+
+it("a re-check stopped by its stage allowance keeps the original, saying so", async () => {
+  const scripted = scriptedClient();
+  const create = scripted.client.messages.create;
+  scripted.client.messages.create = async (params, options, call) =>
+    call?.promptId === "cv.review_candidate" ? new Promise<never>(() => {}) : create(params, options, call);
+  deps.aiClient = scripted.client;
+  const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric });
+  const [task] = await db.select().from(schema.tasks);
+  await handleGenerateCv({ ...task!, attempts: 1, maxAttempts: 3 }, deps,
+    { signal: new AbortController().signal, stageAllowanceMs: { reaudit: 1_000 } });
+  expect((await draftAfter(draft.id)).status).toBe("ready");
+  const steps = await listCvBuildSteps(db, userId, draft.id);
+  expect(steps.filter(step => step.status === "running" || step.status === "failed").map(step => step.motion)).toEqual([]);
+  expect(steps.find(step => step.motion === "adopt_revision")).toMatchObject({ status: "skipped", detail: { reason: "the re-check ran past its allowance" } });
+});

@@ -238,7 +238,7 @@ it("counts what a running build will still admit, beyond the one stage it holds"
     buildCheckpoint: {
       v: 2, promptSetVersion: "p", tailoringEnabled: true, rubric: { requirements }, tailoringPlan: {},
       stages: { rubric: { key: "k", at: "t", value: {} }, plan: { key: "k", at: "t", value: {} }, "audit[0]": { key: "k", at: "t", value: {} } },
-    },
+    } as never,
   }).returning();
   await database.insert(schema.aiReservations).values({
     userId: user.id, callSite: "CV", amount: 0.05, refId: running!.id, expiresAt: new Date(now.getTime() + 600_000),

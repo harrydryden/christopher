@@ -63,6 +63,12 @@ export interface NarrativeContext {
    * build itself was cut off, and only this says which.
    */
   batchFailed?: boolean;
+  /**
+   * Set by `narrateBuild` for every motion that ran after the CV was published in the same attempt:
+   * the improvement pass's admissions, its re-check and its score as well as its own motions. The
+   * CV is ready, so a failure among them keeps the original and reads grey, never red.
+   */
+  afterPublish?: boolean;
 }
 
 export type NarratedStatus = CvJournalStep["status"] | "interrupted";
@@ -517,7 +523,7 @@ function failureNote(step: CvJournalStep): string | null {
  */
 export function narrateStep(step: CvJournalStep, now: Date = new Date(), context: NarrativeContext = {}): NarratedStep {
   const usd = number(step.detail, "usd");
-  const optional = OPTIONAL_MOTIONS.has(step.motion);
+  const optional = OPTIONAL_MOTIONS.has(step.motion) || !!context.afterPublish;
   const status: NarratedStatus =
     step.status === "running" && context.interrupted ? "interrupted" : step.status === "failed" && optional ? "skipped" : step.status;
   const elapsedMs = step.status === "running" ? Math.max(0, now.getTime() - step.startedAt.getTime()) : null;
@@ -540,7 +546,9 @@ export function narrateStep(step: CvJournalStep, now: Date = new Date(), context
         ? donePhrase(step, context)
         : step.status === "skipped"
           ? skippedPhrase(step, context)
-          : failedPhrase(step);
+          : optional && !OPTIONAL_MOTIONS.has(step.motion)
+            ? `${failedPhrase(step)}; kept the original`
+            : failedPhrase(step);
   const changes = step.motion === "shorten" ? names(step.detail, "changes") : [];
   const reason = optional ? text(step.detail, "reason") : null;
   const note =
@@ -680,8 +688,8 @@ function narrateGroup(steps: CvJournalStep[], now: Date, context: NarrativeConte
     const position = failedBatch ? batchPosition(failedBatch.detail) : null;
     const which = position?.index == null ? "a batch" : `batch ${formatCount(position.index)}${position.of === null ? "" : ` of ${formatCount(position.of)}`}`;
     if (failed) {
-      text = `Could not finish checking ${subject} against your evidence: ${which} failed`;
-      status = "failed";
+      text = `Could not finish checking ${subject} against your evidence: ${which} failed${context.afterPublish ? "; kept the original" : ""}`;
+      status = context.afterPublish ? "skipped" : "failed";
     } else {
       const heldText = pass === "revision" ? (held.length ? `the revision: ${held.join(" and ")}` : "the revision") : held.length ? held.join(" and ") : "requirements and claims";
       text = `Checked ${heldText} against your evidence${of === null ? "" : ` in ${count(of, "batch", "batches")}`}`;
@@ -704,7 +712,11 @@ function narrateGroup(steps: CvJournalStep[], now: Date, context: NarrativeConte
     if (owner) owner.retries.push(line);
     else narratedBatches.push({ line, retries: [] });
   }
-  const flagged = narratedBatches.filter((batch) => batch.line.status === "failed" || (batch.line.status === "skipped" && batch.line.text.startsWith("Stopped checking")));
+  // A failed batch stays in view even where the pass is optional and its line is grey.
+  const failedLines = new Set(batches.filter((step) => step.status === "failed").map((step) => step.id));
+  const flagged = narratedBatches.filter(
+    (batch) => batch.line.status === "failed" || failedLines.has(batch.line.key) || (batch.line.status === "skipped" && batch.line.text.startsWith("Stopped checking")),
+  );
   return {
     key: `group:${first.id}`,
     pass,
@@ -723,6 +735,15 @@ function narrateGroup(steps: CvJournalStep[], now: Date, context: NarrativeConte
       status,
     },
   };
+}
+
+/**
+ * The steps of one attempt that ran after its `publish` closed done, by id: the CV was ready by
+ * then, so whatever they do is optional.
+ */
+function afterPublication(steps: readonly CvJournalStep[]): Set<string> {
+  const at = steps.findIndex((step) => step.motion === "publish" && step.status === "done");
+  return new Set(at < 0 ? [] : steps.slice(at + 1).map((step) => step.id));
 }
 
 /**
@@ -750,9 +771,11 @@ export function narrateBuild(steps: readonly CvJournalStep[], now: Date = new Da
     }
     const groups = new Map<string, CvJournalStep[]>();
     const placed = new Map<string, number>();
+    const optional = afterPublication(run.steps);
+    const optionalContext: NarrativeContext = { ...runContext, afterPublish: true };
     for (const step of run.steps) {
       if (!ASSESS_MOTIONS.has(step.motion)) {
-        out.push({ kind: "line", key: step.id, line: narrateStep(step, now, runContext) });
+        out.push({ kind: "line", key: step.id, line: narrateStep(step, now, optional.has(step.id) ? optionalContext : runContext) });
         continue;
       }
       const pass = assessPass(step);
@@ -767,7 +790,7 @@ export function narrateBuild(steps: readonly CvJournalStep[], now: Date = new Da
     }
     for (const [pass, members] of groups) {
       const at = placed.get(pass)!;
-      const group = narrateGroup(members, now, runContext, pass as "draft" | "revision");
+      const group = narrateGroup(members, now, members.every((step) => optional.has(step.id)) ? optionalContext : runContext, pass as "draft" | "revision");
       out[at] = { kind: "group", key: group.key, group };
     }
   });
@@ -865,7 +888,9 @@ export function currentMotionLine(
   if (open && !context.interrupted) {
     if (ASSESS_MOTIONS.has(open.motion)) {
       const pass = assessPass(open);
-      const group = narrateGroup(run.steps.filter((step) => ASSESS_MOTIONS.has(step.motion) && assessPass(step) === pass), now, context, pass);
+      const members = run.steps.filter((step) => ASSESS_MOTIONS.has(step.motion) && assessPass(step) === pass);
+      const optional = afterPublication(run.steps);
+      const group = narrateGroup(members, now, members.every((step) => optional.has(step.id)) ? { ...context, afterPublish: true } : context, pass);
       return `${group.line.text} · ${group.line.meta}`;
     }
     const line = narrateStep(open, now, context);

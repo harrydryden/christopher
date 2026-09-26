@@ -371,6 +371,48 @@ describe("a build cut off part-way", () => {
   });
 });
 
+describe("never red over a CV that is ready", () => {
+  it("greys every failure of the improvement pass that ran after publication", () => {
+    nextSeq = 0;
+    const steps = [
+      step("admit_budget", "done", { stage: "audit", expectedUsd: 0.4 }),
+      step("assess_batch", "done", { pass: "draft", index: 1, of: 1 }),
+      step("assemble", "done", {}),
+      step("publish", "done", { revision: 1 }),
+      step("admit_budget", "failed", { stage: "improve", expectedUsd: 0.9 }, { error: "Not enough budget left this month." }),
+      step("improve_content", "done", { opportunities: 2 }),
+      step("admit_budget", "done", { stage: "reaudit", expectedUsd: 0.3 }),
+      step("assess_batch", "failed", { pass: "revision", index: 1, of: 1 }, { error: "The model returned an incomplete assessment." }),
+      step("assemble", "failed", { pass: "revision" }),
+      step("compare_content", "done", { accepted: false }),
+      step("adopt_revision", "skipped", { reason: "the revision could not be checked" }),
+    ];
+    const items = narrateBuild(steps, now);
+    const tones = items.flatMap((item) =>
+      item.kind === "line" ? [item.line.tone] : item.kind === "group" ? [item.group.line.tone, ...item.group.batches.map((batch) => batch.line.tone)] : [],
+    );
+    expect(tones).not.toContain("red");
+    expect(lines(items).slice(4)).toEqual([
+      "– Could not reserve this build's share of your AI budget; kept the original · 2.0 s",
+      "✓ Rewrote with 2 improvements · 2.0 s",
+      "✓ Reserved US$0.30 of your AI budget for checking the revision · 2.0 s",
+      "– Could not finish checking the revision against your evidence: batch 1 of 1 failed; kept the original · 2.0 s",
+      "– Could not score the CV; kept the original · 2.0 s",
+      "✓ Kept the original CV because the revision did not pass every improvement check · 2.0 s",
+      "– Kept the original: the revision could not be checked",
+    ]);
+    // The failed batch is still in view, for its reason.
+    const revision = items.find((item) => item.kind === "group" && item.group.pass === "revision");
+    expect(revision!.kind === "group" && revision!.group.flagged.map((batch) => batch.line.note)).toEqual(["The model returned an incomplete assessment."]);
+  });
+
+  it("keeps the same failures red before publication", () => {
+    nextSeq = 0;
+    const items = narrateBuild([step("assess_batch", "failed", { pass: "draft", index: 1, of: 1 }), step("assemble", "failed", {})], now);
+    expect(items.map((item) => (item.kind === "group" ? item.group.line.tone : item.kind === "line" ? item.line.tone : null))).toEqual(["red", "red"]);
+  });
+});
+
 describe("what a build came to", () => {
   it("totals each attempt by its own clock and leaves out the days between them", () => {
     nextSeq = 0;

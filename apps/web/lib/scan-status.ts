@@ -1,9 +1,6 @@
 import { localDateParts, type SystemSettings } from "@ava/core";
 import type { ScanRun } from "@ava/db/schema";
-import { getLatestScanRun } from "./queries/companies";
-import { fetchRoleCounts } from "./queries/jobs";
-import { followingCount, lastCompletedScanAt } from "./queries/scan-strip";
-import { suggestionCount } from "./queries/suggestions";
+import { scanStripFacts } from "./queries/scan-strip";
 import { getSystemSettings } from "./settings";
 import type { ScanStripFacts } from "./scan-banner";
 import type { ScanPollHint } from "./polling";
@@ -47,23 +44,18 @@ export type ScanStatus = ScanStripFacts & ScanPollHint;
 /**
  * The strip's four facts for one account — last completed scan of a company it follows, how many it
  * follows, roles still to review (the Matched tab's count) and pending company suggestions — plus
- * whether the shared run is in progress, and the poll hint for the tab that shows them.
+ * whether the shared run is in progress, and the poll hint for the tab that shows them. The facts
+ * and the run are one statement; the schedule is the request's shared settings read.
  */
 export async function getScanStatus(userId: string, now = new Date()): Promise<ScanStatus> {
-  const [stored, settings, lastScanAt, following, roleCounts, newCompanyMatches] = await Promise.all([
-    getLatestScanRun(),
-    getSystemSettings(),
-    lastCompletedScanAt(userId),
-    followingCount(userId),
-    fetchRoleCounts(userId),
-    suggestionCount(userId),
-  ]);
+  const [facts, settings] = await Promise.all([scanStripFacts(userId), getSystemSettings()]);
+  const run = facts.latestRun;
   return {
-    scanning: !!stored && !stored.finishedAt,
-    lastScanAt: lastScanAt ? lastScanAt.toISOString() : null,
-    following,
-    newRoleMatches: roleCounts["auto-matched"] ?? 0,
-    newCompanyMatches,
-    ...scanPollHint(stored, settings, now),
+    scanning: !!run && !run.finishedAt,
+    lastScanAt: facts.lastScanAt ? facts.lastScanAt.toISOString() : null,
+    following: facts.following,
+    newRoleMatches: facts.newRoleMatches,
+    newCompanyMatches: facts.newCompanyMatches,
+    ...scanPollHint(run, settings, now),
   };
 }

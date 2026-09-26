@@ -1,6 +1,7 @@
 /**
- * The status strip's own reads: the last completed scan of a company this account follows, and how
- * many it follows. Scans are shared, so both are seen through the account's subscriptions.
+ * The status strip's reads, one statement: the last completed scan of a company this account
+ * follows, how many it follows, the Matched count, pending company suggestions and the shared run.
+ * Scans are shared, so the first two are seen through the account's subscriptions.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDb, schema, type Db } from "@ava/db";
@@ -14,9 +15,15 @@ let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 let user: User;
 let other: User;
-vi.mock("@/lib/db", () => ({ db: () => database }));
+const reads = vi.hoisted(() => ({ n: 0 }));
+vi.mock("@/lib/db", () => ({ db: () => { reads.n++; return database; } }));
 
-import { followingCount, lastCompletedScanAt } from "./scan-strip";
+import { scanStripFacts } from "./scan-strip";
+import { fetchRoleCounts } from "./jobs";
+import { suggestionCount } from "./suggestions";
+
+const followingCount = async (userId: string) => (await scanStripFacts(userId)).following;
+const lastCompletedScanAt = async (userId: string) => (await scanStripFacts(userId)).lastScanAt;
 import { latestScanByCompany, listCatalogue, listCompanies } from "./companies";
 
 beforeAll(async () => {
@@ -28,7 +35,7 @@ beforeAll(async () => {
 afterAll(async () => { await pool?.end(); });
 
 beforeEach(async () => {
-  await database.execute(sql`truncate companies, settings, users restart identity cascade`);
+  await database.execute(sql`truncate companies, settings, scan_runs, users restart identity cascade`);
   user = await ensureTestUser(database, "strip@example.com", "member");
   other = await ensureTestUser(database, "strip-other@example.com", "member");
 });
@@ -72,6 +79,42 @@ it("reads the latest finished, unfailed scan of a followed company", async () =>
 
   expect((await lastCompletedScanAt(user.id))?.toISOString()).toBe("2026-09-11T05:30:00.000Z");
   expect(await lastCompletedScanAt(other.id)).toBeNull();
+});
+
+it("reads every fact in one statement, agreeing with the counts the pages use", async () => {
+  const a = await companyWithSource("counted.example");
+  const b = await companyWithSource("counted-too.example");
+  await follow(user.id, a.company.id);
+  await follow(user.id, b.company.id, "paused");
+  await follow(other.id, a.company.id);
+  const postings = await database.insert(schema.jobs).values(["One", "Two", "Three", "Four"].map((title, n) => ({
+    companyId: a.company.id, sourceId: a.source.id, externalKey: `id:${n}`, title, normalizedTitle: title.toLowerCase(), url: `https://counted.example/jobs/${n}`,
+  }))).returning();
+  await database.insert(schema.userJobs).values([
+    { userId: user.id, jobId: postings[0]!.id, inTable: true },
+    { userId: user.id, jobId: postings[1]!.id, inTable: true },
+    { userId: user.id, jobId: postings[2]!.id, inTable: true },
+    { userId: user.id, jobId: postings[3]!.id, inTable: false },
+    { userId: other.id, jobId: postings[0]!.id, inTable: true },
+  ]);
+  await database.insert(schema.decisions).values({ userId: user.id, jobId: postings[1]!.id, decision: "apply", jobTitle: "Two", companyName: "counted.example" });
+  await database.insert(schema.companySuggestions).values([
+    { userId: user.id, name: "Next", domain: "next.test", homepageUrl: "https://next.test", rank: 0 },
+    { userId: user.id, name: "Done", domain: "done.test", homepageUrl: "https://done.test", rank: 1, status: "rejected" },
+  ]);
+  await database.insert(schema.scanRuns).values([
+    { startedAt: new Date("2026-09-10T05:00:00Z"), finishedAt: new Date("2026-09-10T05:30:00Z"), runDate: "2026-09-10", trigger: "schedule" },
+    { startedAt: new Date("2026-09-11T05:00:00Z"), runDate: "2026-09-11", trigger: "manual" },
+  ]);
+
+  reads.n = 0;
+  const facts = await scanStripFacts(user.id);
+  expect(reads.n).toBe(1);
+  expect(facts).toMatchObject({ following: 1, newRoleMatches: 2, newCompanyMatches: 1 });
+  expect(facts.latestRun).toEqual({ startedAt: new Date("2026-09-11T05:00:00Z"), finishedAt: null });
+  expect(facts.newRoleMatches).toBe((await fetchRoleCounts(user.id))["auto-matched"]);
+  expect(facts.newCompanyMatches).toBe(await suggestionCount(user.id));
+  expect(await scanStripFacts(other.id)).toMatchObject({ following: 1, newRoleMatches: 1, newCompanyMatches: 0 });
 });
 
 /**

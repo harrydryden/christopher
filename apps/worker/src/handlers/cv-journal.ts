@@ -237,6 +237,14 @@ export class CvJournal {
   }
 
   /**
+   * Close everything this journal still has running as skipped, with a neutral reason: optional
+   * work after publication that did not come off. The CV is ready, so nothing here is a failure.
+   */
+  async skipOpen(reason: string): Promise<void> {
+    for (const step of [...this.running]) await this.close(step, "skipped", { reason } as CvBuildStepDetails[CvBuildMotion]);
+  }
+
+  /**
    * Close everything still running for this attempt with the failure that ended the build.
    *
    * This journal's own steps are closed one at a time so each keeps the figures it had gathered —

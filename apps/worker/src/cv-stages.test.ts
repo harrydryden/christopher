@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { CvBuildCheckpoint } from "@ava/core";
+import type { StageRoutes } from "@ava/ai";
 import type { CvRubric } from "@ava/core/cv-assessment";
 import { CvBuildStop } from "@ava/core/cv-build-failure";
 import { CvStageRunner, cvAuditBatches, estimateCvStage, type CvStage } from "./handlers/cv-stages";
@@ -111,5 +112,55 @@ describe("an audit's batches", () => {
     // Each stage is priced at the model the administrator routed it to.
     expect(estimateCvStage("rubric", sizes, { ...models, routes: { "cv.rubric": { model: "claude-haiku-4-5" } } }))
       .toBeLessThan(estimateCvStage("rubric", sizes, models));
+  });
+});
+
+describe("the stage runner's keys and routes", () => {
+  const withRoutes = (routes: StageRoutes | null, checkpoint?: CvBuildCheckpoint) => {
+    let current: CvBuildCheckpoint = checkpoint ?? { v: 2, promptSetVersion: "p1", stages: {} };
+    const runner = new CvStageRunner({
+      checkpoint: () => current,
+      persist: async next => { current = next; },
+      admit: async () => ({ release: async () => {} }),
+      signal: new AbortController().signal,
+      model: "cv-model",
+      routes,
+      promptSetVersion: "p1",
+      now: () => new Date("2026-09-26T09:00:00Z"),
+    });
+    return { runner, checkpoint: () => current };
+  };
+
+  it("reuses nothing a stage made under another route, and keeps keys made under the default route", async () => {
+    const calls = { n: 0 };
+    const first = withRoutes(null);
+    await first.runner.run(doubling(calls), { value: 2 });
+    // Routes that leave this stage at its default, or route another stage: the result stands.
+    expect(await withRoutes({}, first.checkpoint()).runner.run(doubling(calls), { value: 2 })).toMatchObject({ reused: true });
+    expect(await withRoutes({ "cv.review": { effort: "low" } }, first.checkpoint()).runner.run(doubling(calls), { value: 2 })).toMatchObject({ reused: true });
+    expect(calls.n).toBe(1);
+    // The rubric routed to another effort, then to another model: made again each time.
+    const lower = withRoutes({ "cv.rubric": { effort: "low" } }, first.checkpoint());
+    expect(await lower.runner.run(doubling(calls), { value: 2 })).toMatchObject({ reused: false });
+    expect(await withRoutes({ "cv.rubric": { model: "routed-model", effort: "low" } }, lower.checkpoint()).runner.run(doubling(calls), { value: 2 }))
+      .toMatchObject({ reused: false });
+    expect(calls.n).toBe(3);
+  });
+});
+
+describe("the stage runner's hold", () => {
+  it("lets the stage's own error through when releasing its hold also fails", async () => {
+    let checkpoint: CvBuildCheckpoint = { v: 2, promptSetVersion: "p1", stages: {} };
+    const runner = new CvStageRunner({
+      checkpoint: () => checkpoint,
+      persist: async next => { checkpoint = next; },
+      admit: async () => ({ release: async () => { throw new Error("release failed"); } }),
+      signal: new AbortController().signal,
+      model: "cv-model",
+      promptSetVersion: "p1",
+      now: () => new Date("2026-09-26T09:00:00Z"),
+    });
+    const stop = new CvBuildStop("output_invalid", "the stage's own failure");
+    await expect(runner.paid("rubric", "rubric", 0.1, async () => { throw stop; })).rejects.toBe(stop);
   });
 });

@@ -9,7 +9,8 @@ import { dedupeKeyFor } from "@ava/core";
 import { eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
-import { handleGenerateCv } from "./handlers/cv";
+import { handleGenerateCv, type CvBuildSink } from "./handlers/cv";
+import { recordAiUsage, tryReserveAi } from "./budget";
 import { estimateCvStage } from "./handlers/cv-stages";
 import { TaskQueue } from "./queue";
 import { onAbandon } from "./handlers/abandon";
@@ -312,4 +313,163 @@ it("the persisted one-shot fence prevents a retry buying a second improvement", 
   expect((await draftAfter(draft.id)).status).toBe("ready");
   expect(scripted.calls).not.toContain("author");
   expect(scripted.calls).not.toContain("improvement");
+});
+
+it("corrects a writer answer citing a source the Library does not hold inside the build, without spending a task attempt", async () => {
+  const scripted = scriptedClient(); deps.aiClient = scripted.client;
+  const create = scripted.client.messages.create;
+  let authors = 0;
+  scripted.client.messages.create = async (params, options, call) => {
+    const response = await create(params, options, call) as ParseResponse & { parsed_output: { sections: Array<{ bulletSources: Array<Array<{ sourceId: string }>> }> } };
+    if (call?.promptId === "cv.author" && ++authors === 1) response.parsed_output.sections[0]!.bulletSources[0]![0]!.sourceId = "entry:one:row:99";
+    return response;
+  };
+  const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric });
+  await queue().drain();
+  const saved = await draftAfter(draft.id);
+  expect(saved.status).toBe("ready");
+  expect(authors).toBe(2);
+  const [task] = await db.select().from(schema.tasks);
+  expect(task).toMatchObject({ status: "done", attempts: 1 });
+  const steps = await listCvBuildSteps(db, userId, draft.id);
+  expect(steps.find(step => step.motion === "rewrite")?.detail).toMatchObject({ attempt: 2, corrections: 1 });
+  expect(scripted.authorInputs[1]!.layoutFeedback).toMatchObject({ corrections: [expect.stringContaining("<rejected_answer_problem>Unknown CV source: entry:one:row:99</rejected_answer_problem>")] });
+});
+
+for (const [refused, stage] of [[3, "improve"], [4, "reaudit"]] as const) {
+  it(`keeps the published baseline neutrally when the ${stage} stage's admission is refused after publication`, async () => {
+    const scripted = scriptedClient(); deps.aiClient = scripted.client;
+    const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric });
+    let admissions = 0;
+    const sink: CvBuildSink = {
+      reserve: async (expected, limits) => ++admissions === refused
+        ? { refused: { limit: "account", limitUsd: 10, spent: 9.99, held: 0 } }
+        : tryReserveAi(db, "CV", expected, limits, new Date(), 30),
+      record: (usage, hold) => recordAiUsage(db, userId, usage, { hold }),
+    };
+    const [task] = await db.select().from(schema.tasks);
+    await handleGenerateCv({ ...task!, attempts: 1, maxAttempts: 3 }, deps, { signal: new AbortController().signal, sink });
+    const saved = await draftAfter(draft.id);
+    expect(saved.status).toBe("ready");
+    expect(saved.content?.sections[0]?.bullets).toEqual(["Led a team"]);
+    expect(await db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, draft.id))).toHaveLength(0);
+    const steps = await listCvBuildSteps(db, userId, draft.id);
+    // Nothing is left running and nothing reads as failed over a ready CV.
+    expect(steps.filter(step => step.status === "running" || step.status === "failed").map(step => step.motion)).toEqual([]);
+    const admit = steps.filter(step => step.motion === "admit_budget").at(-1)!;
+    expect(admit).toMatchObject({ status: "skipped", detail: { stage, reason: expect.stringMatching(/^this build's /) } });
+    const adopt = steps.find(step => step.motion === "adopt_revision")!;
+    expect(adopt).toMatchObject({ status: "skipped", detail: { reason: expect.stringMatching(/^this build's /) } });
+    expect(steps.at(-1)!.motion).toBe("adopt_revision");
+    expect(scripted.calls.filter(call => call === "improvement")).toHaveLength(stage === "improve" ? 0 : 1);
+  });
+}
+
+it("an audit stopped by its stage allowance is a stalled stage, with the batches that finished saved for the retry", async () => {
+  const scripted = scriptedClient();
+  const create = scripted.client.messages.create;
+  // Ten claims make two batches: the one holding the profile answers, the other never does.
+  scripted.client.messages.create = async (params, options, call) => {
+    if (call?.promptId === "cv.review") {
+      const content = (params.messages as Array<{ content: Array<{ text: string }> }>)[0]!.content;
+      const batch = JSON.parse(content[2]!.text) as { claims: Array<{ id: string }> };
+      if (!batch.claims.some(claim => claim.id === "profile")) return new Promise<never>(() => {});
+    }
+    return create(params, options, call);
+  };
+  deps.aiClient = scripted.client;
+  const bullets = Array.from({ length: 5 }, () => "Led a team");
+  const degree = Array.from({ length: 4 }, () => "University of Example");
+  const baseline = { name: library.name, contact: library.contact, linkedinUrl: "", websiteUrl: "", summary: "Operations leader",
+    summarySources: [{ sourceId: "source:profile", quote: "Operations leader" }],
+    sections: [{ entryId: "one", kind: "experience" as const, heading: "Director · Acme", bullets,
+      bulletSources: bullets.map(() => [{ sourceId: "entry:one:row:0", quote: "Led a team" }]) },
+    { entryId: "degree", kind: "education" as const, heading: "BSc Management", bullets: degree,
+      bulletSources: degree.map(() => [{ sourceId: "entry:degree:row:0", quote: "University of Example" }]) }], gaps: [] };
+  const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric,
+    contentAt: new Date().toISOString() });
+  await db.update(schema.cvDrafts).set({ content: baseline }).where(eq(schema.cvDrafts.id, draft.id));
+  const [task] = await db.select().from(schema.tasks);
+  await expect(handleGenerateCv({ ...task!, attempts: 1, maxAttempts: 3 }, deps,
+    { signal: new AbortController().signal, stageAllowanceMs: { audit: 1_500 } })).rejects.toThrow(/ran past its/);
+  const after = await draftAfter(draft.id);
+  expect(after.status).toBe("generating");
+  expect(after.failure).toMatchObject({ kind: "stalled", resolvedBy: "system", retryable: true, motion: "assess_batch" });
+  expect(after.failure!.message).toMatch(/^The assessment step ran past its/);
+  // The batch that finished is in the checkpoint; only the stopped one is paid for again.
+  const stages = Object.keys(after.buildCheckpoint?.stages ?? {});
+  expect(stages.filter(name => name.startsWith("audit["))).toEqual(["audit[0]"]);
+});
+
+it("a re-check stopped by its stage allowance keeps the original, saying so", async () => {
+  const scripted = scriptedClient();
+  const create = scripted.client.messages.create;
+  scripted.client.messages.create = async (params, options, call) =>
+    call?.promptId === "cv.review_candidate" ? new Promise<never>(() => {}) : create(params, options, call);
+  deps.aiClient = scripted.client;
+  const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric });
+  const [task] = await db.select().from(schema.tasks);
+  await handleGenerateCv({ ...task!, attempts: 1, maxAttempts: 3 }, deps,
+    { signal: new AbortController().signal, stageAllowanceMs: { reaudit: 1_000 } });
+  expect((await draftAfter(draft.id)).status).toBe("ready");
+  const steps = await listCvBuildSteps(db, userId, draft.id);
+  expect(steps.filter(step => step.status === "running" || step.status === "failed").map(step => step.motion)).toEqual([]);
+  expect(steps.find(step => step.motion === "adopt_revision")).toMatchObject({ status: "skipped", detail: { reason: "the re-check ran past its allowance" } });
+});
+
+it("admits the revision's re-check at the price of the batches it sends, not the full audit's", async () => {
+  const scripted = scriptedClient();
+  const create = scripted.client.messages.create;
+  const recheck: Array<{ sent: number; printed: number }> = [];
+  scripted.client.messages.create = async (params, options, call) => {
+    const response = await create(params, options, call) as ParseResponse & { parsed_output: { sections: Array<{ entryId: string; bullets: string[]; bulletSources: unknown[] }> } };
+    if (call?.promptId === "cv.improvement") {
+      // The revision keeps the five bullets the baseline had and adds one: one changed claim of many.
+      const bullets = [...Array.from({ length: 5 }, () => "Led a team"), "Delivered transformation"];
+      response.parsed_output.sections[0] = { entryId: "one", bullets,
+        bulletSources: bullets.map((text, index) => [{ sourceId: `entry:one:row:${index === 5 ? 1 : 0}`, quote: text }]) };
+    }
+    if (call?.promptId === "cv.review_candidate") {
+      const content = (params.messages as Array<{ content: Array<{ text: string }> }>)[0]!.content;
+      const printed = JSON.parse(content[1]!.text) as { cv: Array<{ id: string }> };
+      const batch = JSON.parse(content[2]!.text) as { claims: unknown[] };
+      recheck.push({ sent: batch.claims.length, printed: printed.cv.filter(item => !item.id.endsWith(":heading")).length });
+    }
+    return response;
+  };
+  deps.aiClient = scripted.client;
+  const bullets = Array.from({ length: 5 }, () => "Led a team");
+  const degree = Array.from({ length: 4 }, () => "University of Example");
+  const baseline = { name: library.name, contact: library.contact, linkedinUrl: "", websiteUrl: "", summary: "Operations leader",
+    summarySources: [{ sourceId: "source:profile", quote: "Operations leader" }],
+    sections: [{ entryId: "one", kind: "experience" as const, heading: "Director · Acme", bullets,
+      bulletSources: bullets.map(() => [{ sourceId: "entry:one:row:0", quote: "Led a team" }]) },
+    { entryId: "degree", kind: "education" as const, heading: "BSc Management", bullets: degree,
+      bulletSources: degree.map(() => [{ sourceId: "entry:degree:row:0", quote: "University of Example" }]) }], gaps: [] };
+  const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric,
+    contentAt: new Date().toISOString() });
+  await db.update(schema.cvDrafts).set({ content: baseline }).where(eq(schema.cvDrafts.id, draft.id));
+  await queue().drain();
+  expect((await draftAfter(draft.id)).status).toBe("ready");
+  // The candidate prints enough claims for two batches, but only the changed one is sent.
+  expect(recheck).toHaveLength(1);
+  expect(recheck[0]!.printed).toBeGreaterThan(8);
+  expect(recheck[0]!.sent).toBe(1);
+  const admits = (await listCvBuildSteps(db, userId, draft.id)).filter(step => step.motion === "admit_budget");
+  const reaudit = admits.find(step => step.detail.stage === "reaudit")!;
+  const sizes = { libraryBytes: Buffer.byteLength(JSON.stringify(library)), descriptionBytes: Buffer.byteLength("Lead a team. Deliver transformation.") };
+  const models = { cvModel: draft.model, routes: {} };
+  expect(reaudit.detail.expectedUsd).toBe(Number(estimateCvStage("reaudit", { ...sizes, batches: 1 }, models).toFixed(4)));
+  expect(reaudit.detail.expectedUsd).not.toBe(Number(estimateCvStage("reaudit", { ...sizes, batches: 2 }, models).toFixed(4)));
+});
+
+it("charges the audit's calls to a step, as every other stage's are", async () => {
+  const scripted = scriptedClient(); deps.aiClient = scripted.client;
+  const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric });
+  await queue().drain();
+  const calls = await db.select().from(schema.aiCalls).where(eq(schema.aiCalls.refId, draft.id));
+  const audit = calls.filter(call => call.stage === "review" || call.stage === "review_candidate");
+  expect(audit.length).toBeGreaterThan(0);
+  const steps = new Set((await listCvBuildSteps(db, userId, draft.id)).filter(step => step.motion === "assess_batch").map(step => step.id));
+  expect(audit.every(call => call.stepId && steps.has(call.stepId))).toBe(true);
 });

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkEvaluationReports, evaluatedReport, renderEvaluatedRoutes, reportPromptSet } from "./evaluation-report-gate.mjs";
+import { checkEvaluationReports, evaluatedReport, renderEvaluatedRoutes, reportPromptSet, requireVerifiedFromEnv } from "./evaluation-report-gate.mjs";
 
 const at = (path, report) => ({ path, report });
 
@@ -55,4 +55,35 @@ test("reads the prompt set wherever an evaluation script wrote it, and fails a r
   assert.equal(reportPromptSet({ reproducibility: { promptSetVersion: "p" } }), "p");
   const result = checkEvaluationReports([at("a/report.json", {}), at("b/report.json", { promptSetVersion: "x" })], "x");
   assert.match(result.problems[0], /names no prompt set/);
+});
+
+test("fails a replay report at the shipped prompt set whose rebuild failed or whose grade did not pass", () => {
+  const passed = { kind: "cv-replay", promptSetVersion: "new", outcome: "published", grade: { passed: true } };
+  assert.equal(checkEvaluationReports([at("a/report.json", passed)], "new").ok, true);
+  const failedGrade = checkEvaluationReports([at("a/report.json", { ...passed, grade: { passed: false } })], "new");
+  assert.equal(failedGrade.ok, false);
+  assert.match(failedGrade.problems[0], /a\/report\.json: a replay at the shipped prompt set whose grade did not pass/);
+  const ungraded = checkEvaluationReports([at("a/report.json", { ...passed, grade: undefined })], "new");
+  assert.match(ungraded.problems[0], /grade is missing/);
+  const failedBuild = checkEvaluationReports([at("a/report.json", { ...passed, outcome: "failed" })], "new");
+  assert.equal(failedBuild.ok, false);
+  assert.match(failedBuild.problems[0], /rebuild was not published \(outcome "failed"\)/);
+  // Marking it unverified does not excuse a failed run at the shipped prompt set.
+  assert.equal(checkEvaluationReports([at("a/report.json", { ...passed, unverified: true, grade: { passed: false } })], "new").ok, false);
+});
+
+test("warns when every report at the shipped prompt set is unverified, and fails when a verified one is required", () => {
+  const unverified = [at("a/report.json", { kind: "cv-replay", promptSetVersion: "new", unverified: true, outcome: "published", grade: { passed: true } })];
+  const warned = checkEvaluationReports(unverified, "new");
+  assert.equal(warned.ok, true);
+  assert.match(warned.warnings[0], /Every committed report at the shipped prompt set new is marked unverified/);
+  const required = checkEvaluationReports(unverified, "new", { requireVerified: true });
+  assert.equal(required.ok, false);
+  assert.match(required.problems[0], /marked unverified/);
+  const verified = checkEvaluationReports([...unverified, at("b/report.json", { promptSetVersion: "new" })], "new", { requireVerified: true });
+  assert.equal(verified.ok, true);
+  assert.deepEqual(verified.warnings, []);
+  assert.equal(requireVerifiedFromEnv({}), false);
+  assert.equal(requireVerifiedFromEnv({ AVA_EVAL_GATE_REQUIRE_VERIFIED: "0" }), false);
+  assert.equal(requireVerifiedFromEnv({ AVA_EVAL_GATE_REQUIRE_VERIFIED: "1" }), true);
 });

@@ -9,7 +9,6 @@ import {
   responsibilityRows,
   cvTailoringEvidence,
   validateCvTailoringPlan,
-  validateCvPlanProvenance,
   reviewableRows,
   rowFacets,
   validateLibraryReview,
@@ -809,11 +808,14 @@ export class AiEngine {
         const fresh = !(err instanceof CallCutOff) || (!err.cut && !err.began);
         if (reason instanceof APIError && reason.requestID) params.stats.requestId = reason.requestID;
         // Every engine in the process backs off from a throttle together, not one call at a time.
-        if (fresh && isThrottle(reason)) this.governor.noteThrottled(retryAfterMs(reason.headers));
+        const asked = fresh && isThrottle(reason) ? retryAfterMs(reason.headers) : undefined;
+        if (fresh && isThrottle(reason)) this.governor.noteThrottled(asked);
         if (!fresh || attempt > this.retries || !isRetryable(reason) || params.signal?.aborted) throw err;
         // A server error or a dropped connection: the SDK's own back-off, half a second doubling, jittered.
         const backOff = isThrottle(reason) ? 0 : Math.min(8_000, 500 * 2 ** (attempt - 1)) * (1 - Math.random() * 0.25);
-        if (waited + Math.max(backOff, this.governor.pauseLeftMs()) > RETRY_WAIT_BUDGET_MS) throw err;
+        // A provider asking for longer than the budget is not waited out on a shortened pause: the
+        // call ends as rate limited, and its task goes back on the queue.
+        if (waited + Math.max(backOff, this.governor.pauseLeftMs(), asked ?? 0) > RETRY_WAIT_BUDGET_MS) throw err;
         const began = Date.now();
         try {
           if (isThrottle(reason)) await this.governor.waitForPause(params.signal);
@@ -1314,12 +1316,9 @@ export class AiEngine {
     const plan = await this.run<CvPlan>(entry, {
       user: { stable: [library, role], ...(Object.keys(volatile).length ? { tail: JSON.stringify(volatile) } : {}) },
     }, ref);
-    if (!plan || !input.tailoringPlan) return plan;
-    try {
-      return validateCvPlanProvenance(plan, input.library);
-    } catch (error) {
-      throw new CvBuildStop("output_invalid", `The written CV's sources could not be verified: ${(error as Error).message}`);
-    }
+    // Provenance is checked by the caller, not here: the fitter corrects an answer citing a source
+    // the Library does not hold inside the build, which it cannot do with an error thrown from the call.
+    return plan;
   }
 
   // A1 ---------------------------------------------------------------------

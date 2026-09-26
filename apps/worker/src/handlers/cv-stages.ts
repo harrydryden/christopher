@@ -25,6 +25,8 @@ import {
   PROMPTS,
   estimateStage,
   promptSetVersion as registryPromptSetVersion,
+  resolveRoute,
+  type PromptId,
   type StageRoutes,
 } from "@ava/ai";
 import {
@@ -35,6 +37,7 @@ import {
 } from "@ava/core";
 import { CvBuildStop } from "@ava/core/cv-build-failure";
 import type { CvClaimItem, CvRubric } from "@ava/core/cv-assessment";
+import { log } from "../log";
 
 /** The version of the prompts every checkpoint entry is pinned to: the model package's registry hash. */
 export function promptSetVersion(): string {
@@ -174,11 +177,27 @@ export interface CvStageRunnerOptions {
   /** The build's own stop: a deadline, a lost lease, a released hold, a deleted draft. */
   signal: AbortSignal;
   model: string;
+  /**
+   * The administrator's per-stage routes this attempt runs under. A stage routed away from its
+   * registry default is keyed by the route it resolved to, so a result made under one route is not
+   * reused under another.
+   */
+  routes?: StageRoutes | null;
   promptSetVersion: string;
   now: () => Date;
   /** Per-stage allowances; the calibration constants unless a test shortens them. */
   allowanceMs?: Partial<Record<CvBuildStageName, number>>;
 }
+
+/** The prompts each admission's calls are made with, whose routes decide what its result was made under. */
+const ADMISSION_PROMPTS: Record<CvBuildStageName, PromptId[]> = {
+  rubric: ["cv.rubric"],
+  plan: ["cv.planning"],
+  write: ["cv.author"],
+  audit: ["cv.review"],
+  improve: ["cv.improvement"],
+  reaudit: ["cv.review_candidate"],
+};
 
 function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 32);
@@ -192,7 +211,26 @@ export class CvStageRunner {
 
   /** The key a stage's result is saved under: its inputs, the prompt set and the model. */
   keyFor<I, O>(stage: CvStage<I, O>, inputs: I): string {
-    return digest({ stage: stage.name, inputs: stage.key(inputs), prompts: this.options.promptSetVersion, model: this.options.model });
+    const route = this.routeFor(stage.admission);
+    return digest({ stage: stage.name, inputs: stage.key(inputs), prompts: this.options.promptSetVersion, model: this.options.model,
+      ...(route ? { route } : {}) });
+  }
+
+  /**
+   * The resolved model and effort of each of the stage's prompts that a stage route moves off its
+   * registry default, or undefined when none does: a build under the default routes keeps the keys
+   * it always had, so a checkpoint made before routes were keyed is still reused.
+   */
+  private routeFor(admission: CvBuildStageName): Record<string, { model: string; effort: string }> | undefined {
+    const routes = this.options.routes;
+    if (!routes) return undefined;
+    const moved = ADMISSION_PROMPTS[admission].flatMap(id => {
+      const entry = PROMPTS[id];
+      const route = resolveRoute(entry, routes);
+      if (route.model === entry.route.model && route.effort === entry.route.effort) return [];
+      return [[id, { model: route.model === "cvModel" ? this.options.model : route.model, effort: route.effort }] as const];
+    });
+    return moved.length ? Object.fromEntries(moved) : undefined;
   }
 
   /** A saved result made from the same inputs, prompts and model, if it still validates. */
@@ -221,6 +259,18 @@ export class CvStageRunner {
     await write;
   }
 
+  /**
+   * The stop for a stage that ran past its allowance: a stalled stage, which the system retries from
+   * the checkpoint. Thrown by `within` when the work throws on the way out, and by a caller whose
+   * work returned normally with what it finished (the audit saves its finished batches first).
+   */
+  stalled(admission: CvBuildStageName, motion: CvBuildMotion): CvBuildStop {
+    const minutes = Math.max(1, Math.round(this.allowance(admission) / 60_000));
+    return new CvBuildStop("stalled",
+      `The ${CV_STAGE_LABELS[admission]} step ran past its ${minutes}-minute allowance, so it was stopped. The next attempt resumes from what this build has already saved.`,
+      { motion });
+  }
+
   /** How long a stage of this admission may run. */
   allowance(admission: CvBuildStageName): number {
     return this.options.allowanceMs?.[admission] ?? CV_STAGE_ALLOWANCE_MS[admission];
@@ -240,10 +290,7 @@ export class CvStageRunner {
     try {
       return await work({ signal });
     } catch (error) {
-      if (timer.signal.aborted && !this.options.signal.aborted)
-        throw new CvBuildStop("stalled",
-          `The ${CV_STAGE_LABELS[admission]} step ran past its ${Math.round(ms / 60_000)}-minute allowance, so it was stopped. The next attempt resumes from what this build has already saved.`,
-          { motion });
+      if (timer.signal.aborted && !this.options.signal.aborted) throw this.stalled(admission, motion);
       throw error;
     } finally {
       clearTimeout(handle);
@@ -253,11 +300,18 @@ export class CvStageRunner {
   /** Admit, run under the allowance, and release whatever the stage did not spend. */
   async paid<T>(admission: CvBuildStageName, motion: CvBuildMotion, expectedUsd: number, work: (ctx: CvStageContext) => Promise<T>): Promise<T> {
     const hold = await this.options.admit(admission, expectedUsd);
+    let result: T;
     try {
-      return await this.within(admission, motion, work);
-    } finally {
-      await hold.release();
+      result = await this.within(admission, motion, work);
+    } catch (error) {
+      // The stage's own error is what the build must classify: a release that also fails is
+      // logged, never allowed to replace it.
+      await hold.release().catch((releaseError: unknown) =>
+        log.warn("CV stage hold could not be released", { stage: admission, error: (releaseError as Error)?.message }));
+      throw error;
     }
+    await hold.release();
+    return result;
   }
 
   /**

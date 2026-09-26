@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import { createCvWritingBudget, cvBudgetViolations } from './cv-budget';
-import { buildFittedCv, selectCvToFit, type CvFitEvent } from './cv-fit';
+import { buildFittedCv, CV_FIT_PROBLEM_CHARACTERS, cvFitCorrection, selectCvToFit, type CvFitEvent } from './cv-fit';
 import { DEFAULT_CV_THEME, materialiseCv, type CvLibrary, type CvPlan } from './cv';
 import { renderCvPdfWithReport } from './cv-pdf';
 // Every render the fitter asks for, counted, so a test can say how many it took.
@@ -250,7 +250,7 @@ it('hands a page limit that only removing sole essential evidence could meet to 
   ...roles, { id: 'i', kind: 'interest', heading: 'Interests', details: 'Chaired a national charity board' }] };
  const rubric = { caveats: [], requirements: [{ id: 'r1', label: 'Board governance', quote: 'board', importance: 'essential' as const, category: 'experience' as const }] };
  const tailoring = { requirements: [{ requirementId: 'r1', status: 'demonstrated' as const, evidence: [{ sourceId: 'entry:i:row:0', quote: 'Chaired a national charity board' }], reason: 'Direct.' }], gapQuestions: [] };
- const written: CvPlan = { summary: 'Leader', sections: [
+ const written: CvPlan = { summary: 'Leader', summarySources: [{ sourceId: 'source:profile', quote: 'Leader' }], sections: [
   ...roles.map(role => ({ entryId: role.id, bullets: [role.details], bulletSources: [[{ sourceId: `entry:${role.id}:row:0`, quote: role.details }]] })),
   { entryId: 'i', bullets: ['Chaired a national charity board'], bulletSources: [[{ sourceId: 'entry:i:row:0', quote: 'Chaired a national charity board' }]] }], gaps: [] };
  const write = vi.fn().mockResolvedValue(written);
@@ -258,5 +258,37 @@ it('hands a page limit that only removing sole essential evidence could meet to 
  // The person's page limit, with the reason: the essential evidence is why it cannot shrink.
  await expect(attempt).rejects.toMatchObject({ kind: 'page_limit_unfittable', detail: { maxPages: 1, attempts: 3, essential: true } });
  await expect(attempt).rejects.toSatisfy((error: unknown) => (error as { policy: object }).policy && Object.keys((error as { policy: object }).policy).length === 0);
+ expect(write).toHaveBeenCalledTimes(3);
+});
+// A planned build: every summary and bullet cites the Library row it came from.
+const sourcedTarget = {
+ rubric: { caveats: [], requirements: [{ id: 'fin', label: 'Financial planning', quote: 'planning', importance: 'essential' as const, category: 'experience' as const }] },
+ plan: { requirements: [{ requirementId: 'fin', status: 'demonstrated' as const, evidence: [{ sourceId: 'entry:r0:row:0', quote: 'Financial planning budget reporting' }], reason: 'Direct.' }], gapQuestions: [] },
+};
+const sourced: CvPlan = { summary: 'Finance leader', summarySources: [{ sourceId: 'source:profile', quote: 'Finance leader' }], gaps: [], sections: [
+ ...library.entries.slice(0, 6).map(entry => ({ entryId: entry.id, bullets: [entry.confirmedResponsibilities![0]!],
+  bulletSources: [[{ sourceId: `entry:${entry.id}:row:0`, quote: entry.confirmedResponsibilities![0]! }]] })),
+ { entryId: 'e', bullets: ['BSc Economics, University.'], bulletSources: [[{ sourceId: 'entry:e:row:0', quote: 'BSc Economics, University.' }]] }] };
+const citing = (sourceId: string): CvPlan => ({ ...sourced, sections: sourced.sections.map((section, index) => index === 0
+ ? { ...section, bulletSources: [[{ sourceId, quote: section.bullets[0]! }]] } : section) });
+it('corrects a citation of a source the Library does not hold inside the build, with the problem quoted as bounded data', async () => {
+ const write = vi.fn().mockResolvedValueOnce(citing('entry:r0:row:99')).mockResolvedValueOnce(sourced);
+ const fitted = await buildFittedCv(library, 'Financial planning', write, undefined, undefined, sourcedTarget);
+ expect(write).toHaveBeenCalledTimes(2);
+ const correction: string = write.mock.calls[1]![0].layoutFeedback.corrections[0];
+ expect(correction).toMatch(/<rejected_answer_problem>Unknown CV source: entry:r0:row:99<\/rejected_answer_problem>/);
+ expect(fitted.sections.find(section => section.entryId === 'r0')!.bullets).toEqual(['Financial planning budget reporting']);
+ // An answer quoting something enormous is cut short before it goes back to the writer.
+ expect(cvFitCorrection('x'.repeat(5_000)).length).toBeLessThan(CV_FIT_PROBLEM_CHARACTERS + 400);
+});
+it('hands three unverifiable answers to the person, naming each attempt\'s problem', async () => {
+ const write = vi.fn()
+  .mockResolvedValueOnce(citing('entry:r0:row:97'))
+  .mockResolvedValueOnce(citing('entry:r0:row:98'))
+  .mockResolvedValueOnce(citing('entry:r0:row:99'));
+ const attempt = buildFittedCv(library, 'Financial planning', write, undefined, undefined, sourcedTarget);
+ await expect(attempt).rejects.toMatchObject({ kind: 'output_invalid', policy: { resolvedBy: 'user', retryable: false } });
+ const message = await attempt.catch((error: Error) => error.message);
+ for (const id of ['entry:r0:row:97', 'entry:r0:row:98', 'entry:r0:row:99']) expect(message).toContain(id);
  expect(write).toHaveBeenCalledTimes(3);
 });

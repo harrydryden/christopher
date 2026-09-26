@@ -18,7 +18,7 @@ import { handleGenerateCv } from "./handlers/cv";
 import { onAbandon } from "./handlers/abandon";
 import { ensureTestUser } from "./test-users";
 import { seedReplayFixtureDraft } from "./cv-replay-fixture";
-import { mergeStageRoutes, readRecordingHeader, recordCvDraft, replayCvDraft, replayFromRecording } from "./cv-replay";
+import { mergeStageRoutes, readRecordingHeader, recordCvDraft, replayCvDraft, replayFromRecording, serialiseNestedTransactions } from "./cv-replay";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
 
@@ -140,4 +140,50 @@ it("replays live at a candidate route, sending the audit at that effort, graded 
 it("lays the command's routes over the deployment's, field by field", () => {
   expect(mergeStageRoutes({ "cv.review": { model: "claude-sonnet-5" }, "cv.author": { effort: "xhigh" } }, { "cv.review": { effort: "medium" } }))
     .toEqual({ "cv.review": { model: "claude-sonnet-5", effort: "medium" }, "cv.author": { effort: "xhigh" } });
+});
+
+it("keeps the replay transaction's own timeouts through a rebuild longer than a lease renewal interval", async () => {
+  const draft = await publishedDraft();
+  const settings: Record<string, string> = {};
+  deps.leaseRenewEveryMs = 50;
+  try {
+    // The scripted client holds each audit batch 200ms, so the rebuild spans several renewal intervals.
+    const { report } = await replayCvDraft(deps, draft.id, {
+      client: createScriptedAiClient({ barrierMs: 200 }).client, source: "live",
+      inspect: async tx => {
+        for (const name of ["statement_timeout", "lock_timeout", "idle_in_transaction_session_timeout"])
+          settings[name] = (await tx.execute<{ value: string }>(sql`select current_setting(${name}) as value`)).rows[0]!.value;
+      },
+    });
+    expect(report.outcome).toBe("published");
+    expect(report.wallMs).toBeGreaterThan(200);
+  } finally {
+    deps.leaseRenewEveryMs = undefined;
+  }
+  // A lease renewal's `set local` timeouts outlive its savepoint; none ran inside the replay, so the
+  // statement and lock timeouts are the connection's own, and idle time never ends the replay.
+  const own = async (name: string) => (await db.execute<{ value: string }>(sql`select current_setting(${name}) as value`)).rows[0]!.value;
+  expect(settings).toEqual({ statement_timeout: await own("statement_timeout"), lock_timeout: await own("lock_timeout"), idle_in_transaction_session_timeout: "0" });
+  expect(settings.statement_timeout).not.toBe("5s");
+}, 120_000);
+
+it("takes the replay transaction's nested transactions one at a time, so one's rollback cannot undo another's work", async () => {
+  await db.execute(sql`create temporary table if not exists replay_nesting (label text)`);
+  await db.execute(sql`truncate replay_nesting`);
+  const kept = await db.transaction(async tx => {
+    const serial = serialiseNestedTransactions(tx as unknown as Db);
+    const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    const first = serial.transaction(async inner => {
+      await inner.execute(sql`insert into replay_nesting values ('kept')`);
+      await pause(50);
+    });
+    const second = serial.transaction(async inner => {
+      await pause(10);
+      await inner.execute(sql`insert into replay_nesting values ('undone')`);
+      throw new Error("roll this one back");
+    }).catch(() => undefined);
+    await Promise.all([first, second]);
+    return (await tx.execute<{ label: string }>(sql`select label from replay_nesting order by label`)).rows.map(row => row.label);
+  });
+  expect(kept).toEqual(["kept"]);
 });

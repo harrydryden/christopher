@@ -150,6 +150,8 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
     // Read through the settings loader, so a cold cache — at boot, or after an invalidation — reads
     // the administrator's choice rather than falling back to a model nobody chose.
     getModel: async (callSite) => modelForCallSite(await settings(), callSite),
+    // The administrator's per-stage model and effort, read through the same loader.
+    getStageRoutes: async () => (await settings()).stageRoutes,
     onUsage,
     logger: (msg, data) => log.debug(`ai ${msg}`, data),
   });

@@ -18,6 +18,11 @@ export const CV_BUILD_MOTIONS = {
   gap_quiz: { stage: "analysing", title: "Preparing a few optional evidence questions" },
   improve_content: { stage: "assessing", title: "Strengthening important evidence the first draft missed" },
   compare_content: { stage: "assessing", title: "Checking the revision improves coverage without weakening your CV" },
+  /**
+   * The last motion of a build whose optional improvement ran after the baseline was published:
+   * the stronger candidate saved as a new revision of the same chain, or the original kept.
+   */
+  adopt_revision: { stage: "publishing", title: "Deciding whether to adopt the stronger revision" },
   write: { stage: "writing", title: "Writing the CV" },
   check_plan: { stage: "writing", title: "Checking the writer kept every role and qualification" },
   measure: { stage: "fitting", title: "Measuring the PDF against your page limit" },
@@ -40,7 +45,29 @@ export type CvStepCost = { usd?: number; tokens?: number };
 type CvWritingDetail = CvStepCost & {
   attempt?: number; budgetCharacters?: number; budgetScale?: number; maxPages?: number;
   roles?: number; bullets?: number; characters?: number;
+  /**
+   * Set only on a `write` recorded as `skipped`: the wording was already written by an earlier
+   * attempt of this build and saved with its checkpoint, so nothing was paid for. `attempt` is then
+   * the writing attempt (1-3) that produced the reused wording.
+   */
+  reused?: "checkpoint";
+  /**
+   * A `rewrite` only: why the previous attempt did not stand. `overflow` is a measured PDF over the
+   * page limit, `layout_error` a layout the renderer could not place at all; `pages` and `maxPages`
+   * are that previous measurement. Absent on a rewrite asked for by a correction instead.
+   */
+  reason?: "overflow" | "layout_error";
+  pages?: number;
+  /**
+   * A `rewrite` asked for because the previous answer was unusable as written (a wrong skill
+   * format, an evidence reference that does not exist, a repeated section): how many corrections
+   * the writer was given. Carries no `reason`, because nothing was measured.
+   */
+  corrections?: number;
 };
+
+/** Which audit a batch or a score belongs to: the baseline's, or the optional revision's re-check. */
+export type CvAuditPass = "draft" | "revision";
 
 /**
  * The figures each motion records, named per motion.
@@ -49,38 +76,94 @@ type CvWritingDetail = CvStepCost & {
  * anything in it and the interface had to guess what a motion carried. This is the vocabulary:
  * one entry per motion, every key optional because a step gathers its figures as it goes (opened
  * with what is known, closed with what it learnt). The journal is generic over the motion, so a
- * figure written under the wrong motion does not compile.
+ * figure written under the wrong motion does not compile. A count that would be zero is left out
+ * rather than written, so the page never prints "0 claims".
  */
 export type CvBuildStepDetails = {
   load_inputs: {
     libraryVersion?: number; descriptionCharacters?: number; mode?: "build" | "assess" | "improve";
     roles?: number; qualifications?: number; skillBlocks?: number;
     reusedRubric?: boolean; reusedContent?: boolean;
+    /** The queue row's attempt ceiling, beside the attempt the step already carries. */
+    maxAttempts?: number;
   };
-  admit_budget: { expectedUsd?: number; limitUsd?: number; heldUsd?: number; leftUsd?: number; resumed?: boolean };
+  /**
+   * One admission per stage, taken inside the account's budget lock immediately before the stage
+   * runs. `stage` names it (rubric, plan, write, audit, improve, reaudit); `heldUsd` is what the
+   * account's other work in flight holds, excluding this stage's own hold.
+   */
+  admit_budget: {
+    stage?: CvBuildStageName; expectedUsd?: number; limitUsd?: number; heldUsd?: number; leftUsd?: number;
+  };
   rubric: CvStepCost & {
     reused?: "checkpoint" | "parent" | "assessment";
     requirements?: number; essential?: number; desirable?: number; responsibilities?: number;
   };
+  /** Recorded as `skipped` with `reused: true` when the plan came from this build's checkpoint. */
   plan_evidence: CvStepCost & { requirements?: number; supported?: number; questions?: number; reused?: boolean };
   gap_quiz: { questions?: number; skipped?: boolean };
-  improve_content: CvStepCost & { opportunities?: number; skipped?: boolean; reason?: string };
+  /**
+   * The optional improvement's writing call. Done: `opportunities`, the evidence gaps it was asked
+   * to close. Closed `skipped` with `kept: true` and a neutral `reason` when the call failed or
+   * its answer was unusable: the published original stands, and that is not a failure.
+   */
+  improve_content: CvStepCost & { opportunities?: number; skipped?: boolean; reason?: string; kept?: boolean };
   compare_content: { accepted?: boolean; reasons?: string[] };
+  /**
+   * Done: the stronger revision was saved as a new revision of the same chain - its id, revision
+   * number, daily version and the name the page shows it by ("26-Sep-V3"). Skipped: the original
+   * was kept, and `reason` says why in a sentence ("Kept the original: <reason>").
+   */
+  adopt_revision: {
+    /** The adopted revision's own draft: the page links to `/cv/<draftId>`. `revisionId` is the same id. */
+    draftId?: string; revisionId?: string; revision?: number; version?: number;
+    /** The name the page shows the revision by; `name` is the same text. */
+    label?: string; name?: string; reason?: string;
+  };
   write: CvWritingDetail;
   /** A second or third writing attempt against a smaller budget; the same figures as `write`. */
   rewrite: CvWritingDetail;
   check_plan: { omitted?: string[]; skillFormatCorrections?: number };
-  measure: { pages?: number; maxPages?: number };
+  /**
+   * Opened before the PDF is rendered, closed with what it measured. `renders` counts the PDFs
+   * rendered to reach the answer (the fitter bisects over trims); `outcome` is `fits`, `overflow`
+   * (still over the limit after trimming), or `layout_error` (nothing could be placed).
+   */
+  measure: { pages?: number; maxPages?: number; renders?: number; outcome?: "fits" | "overflow" | "layout_error" };
   shorten: { removed?: number; pages?: number; changes?: string[] };
-  assess_batch: CvStepCost & { batch?: number; batches?: number; requirements?: number; claims?: number };
-  assess_retry: CvStepCost & { batch?: number; corrections?: number };
+  /**
+   * `pass` says which audit the batch belongs to. A batch cancelled because a sibling failed closes
+   * `skipped` with `cancelled: true`; the failed batch closes `failed` with the error and failure
+   * on the step itself.
+   */
+  assess_batch: CvStepCost & {
+    batch?: number; batches?: number; requirements?: number; claims?: number;
+    /** The same position as `batch` of `batches`, one-based, under the names the page reads. */
+    index?: number; of?: number;
+    pass?: CvAuditPass; cancelled?: boolean;
+  };
+  /** `index` is `batch` again, one-based, under the name the page reads. */
+  assess_retry: CvStepCost & { batch?: number; index?: number; corrections?: number; pass?: CvAuditPass };
+  /** `reused: true` (status `skipped`) when a published baseline's assessment was taken as it stood. */
   assemble: {
     pageCount?: number;
     demonstrated?: number; partial?: number; missing?: number; unknown?: number;
     supported?: number; unsupported?: number; uncertain?: number;
+    reused?: boolean; pass?: CvAuditPass;
   };
-  publish: { revision?: number; archivedPrevious?: boolean };
+  /**
+   * Closed inside the transaction that makes the CV ready. `reservedUsd` is what this attempt's
+   * stages were admitted at in all; `spentUsd` is what the whole build has recorded, every attempt.
+   */
+  publish: { revision?: number; archivedPrevious?: boolean; reservedUsd?: number; spentUsd?: number };
 };
+
+/**
+ * The stages a build admits against the budget, one hold each, in the order they run. The audit is
+ * one admission for all of its batches still to run; `improve` and `reaudit` run after publication.
+ */
+export const CV_BUILD_STAGE_NAMES = ["rubric", "plan", "write", "audit", "improve", "reaudit"] as const;
+export type CvBuildStageName = (typeof CV_BUILD_STAGE_NAMES)[number];
 
 /** The figures one motion records; every motion's when the motion is not yet known. */
 export type CvBuildStepDetail<M extends CvBuildMotion = CvBuildMotion> = CvBuildStepDetails[M];
@@ -164,6 +247,8 @@ export interface CvBuildFailure {
   message: string;
   /** The motion that failed. */
   motion?: CvBuildMotion;
+  /** The assessment batch that failed, one-based, when the failure was one batch's. */
+  batch?: number;
   attempt?: number;
   maxAttempts?: number;
   /** When the queue will try again, for a failure the system is resolving. */
@@ -191,17 +276,43 @@ export function cvBuildFailure(
 }
 
 /**
+ * One stage's saved result: the key it was made under (a hash of its inputs, the prompt set and
+ * the model), when, and the value a resumed attempt reuses instead of paying for it again.
+ */
+export interface CvStageCheckpoint {
+  key: string;
+  at: string;
+  value: unknown;
+}
+
+/**
  * What a build has already paid for, kept on the draft so a retry resumes instead of starting
- * over: the rubric (one model call), and the moment the written CV was saved (the dearest call).
- * A retry with a rubric here skips the rubric call; one whose draft carries content that still
- * fits its page limit skips writing and re-runs only the assessment.
+ * over.
+ *
+ * Version 2 keeps one entry per stage under `stages`, each with the key it was made under, and
+ * pins the prompt set that made them: a build resumed after a redeploy reuses only what the same
+ * prompts produced. The version 1 flags remain beside it, written as mirrors, because the interface
+ * reads `rubric`, `rubricAt` and `contentAt` to say what a retry will not pay for again, and copies
+ * the task-intent fields (`mode`, `improvements`, `sourceRubric`, `tailoringEnabled`,
+ * `quizCompleted`) onto a retried or continued draft. A version 1 checkpoint - no `v` - is read as
+ * it always was.
  */
 export interface CvBuildCheckpoint {
+  /** 2 for a checkpoint written with per-stage entries; absent on a version 1 checkpoint. */
+  v?: 2;
+  /** The prompt set the stage entries were made by. */
+  promptSetVersion?: string;
+  /** Per-stage results, by stage name: rubric, plan, write, and audit[i] for each batch. */
+  stages?: Record<string, CvStageCheckpoint>;
   /** New builds opt into planned shaping; legacy checkpoints remain readable. */
   tailoringEnabled?: boolean;
   tailoringPlan?: CvTailoringPlan;
   quizCompleted?: boolean;
-  /** Set before spending on the single optional revision, so retries never repeat it. */
+  /**
+   * Version 1 only: set before spending on the single optional revision, so retries never repeat
+   * it. Version 2 publishes the baseline first and improves after, on the same task, so there is
+   * nothing to fence: a retry of a published build is skipped.
+   */
   improvementAttempted?: boolean;
   rubric?: CvRubric;
   rubricAt?: string;
@@ -210,13 +321,43 @@ export interface CvBuildCheckpoint {
   attempt?: number;
   /**
    * What the revision's own task asked for, kept for its retries. A rebuild is queued with its
-   * parent's rubric and the improvements to make; "Retry generation" queues a fresh task that
-   * knows only the draft, and the rolling archive can have removed the parent by then, so without
-   * these a retried rebuild paid for a new rubric and was written as a plain build.
+   * parent's rubric and the improvements to make; a direct edit with its parent's rubric and
+   * `assess`. "Retry generation" queues a fresh task that knows only the draft, and the rolling
+   * archive can have removed the parent by then, so without these a retried rebuild paid for a new
+   * rubric and was written as a plain build, and a retried direct edit was rewritten from the
+   * Library instead of keeping the person's wording.
    */
-  mode?: "improve";
+  mode?: "improve" | "assess";
   improvements?: string[];
   sourceRubric?: CvRubric;
+}
+
+/**
+ * A stored checkpoint as the worker reads it: version 2 as written, version 1 as it always was.
+ *
+ * A version 2 checkpoint made by a different prompt set keeps only what the task asked for - the
+ * mode, the improvements, the parent's rubric, the tailoring and quiz flags - and drops every paid
+ * result, including the version 1 mirrors of them, so nothing the old prompts produced is reused.
+ * A version 1 checkpoint predates the pin and is trusted as it was, so the builds in flight at the
+ * release that introduces version 2 are not paid for twice.
+ */
+export function readCvBuildCheckpoint(
+  raw: CvBuildCheckpoint | null | undefined,
+  promptSetVersion: string,
+): { checkpoint: CvBuildCheckpoint; discarded: boolean } {
+  const stored = raw ?? {};
+  if (stored.v !== 2 || stored.promptSetVersion === promptSetVersion)
+    return { checkpoint: { ...stored, v: 2, promptSetVersion, stages: { ...(stored.stages ?? {}) } }, discarded: false };
+  const { tailoringEnabled, quizCompleted, mode, improvements, sourceRubric } = stored;
+  return {
+    checkpoint: {
+      v: 2, promptSetVersion, stages: {},
+      ...(tailoringEnabled !== undefined ? { tailoringEnabled } : {}),
+      ...(quizCompleted !== undefined ? { quizCompleted } : {}),
+      ...(mode ? { mode } : {}), ...(improvements ? { improvements } : {}), ...(sourceRubric ? { sourceRubric } : {}),
+    },
+    discarded: true,
+  };
 }
 
 /** One step of a build as the page and Operations read it. */
@@ -224,6 +365,8 @@ export interface CvBuildStepView {
   id: string;
   seq: number;
   attempt: number;
+  /** The queue row this step's attempt ran under; absent on rows read by an older reader. */
+  taskId?: string | null;
   stage: CvBuildStage;
   motion: CvBuildMotion;
   title: string;

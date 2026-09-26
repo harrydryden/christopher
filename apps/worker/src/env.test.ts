@@ -42,10 +42,12 @@ describe("the production boot line", () => {
   it("records concurrency, the pool ceiling and the heap limit", () => {
     const lines = captured();
     const env = readEnv({ ...PRODUCTION, SCRAPER_CONTACT_EMAIL: "crawler@ava.dev", WORKER_CONCURRENCY: "3" });
-    expect(env.databasePoolMax).toBe(10);
+    // Three general slots and the default eight CV slots, two connections each, and a margin.
+    expect(env.cvConcurrency).toBe(8);
+    expect(env.databasePoolMax).toBe(26);
     const boot = lines.find(line => line.msg === "worker environment");
     expect(boot?.level).toBe("info");
-    expect(boot?.data).toMatchObject({ concurrency: 3, browserConcurrency: 1, databasePoolMax: 10 });
+    expect(boot?.data).toMatchObject({ concurrency: 3, cvConcurrency: 8, browserConcurrency: 1, databasePoolMax: 26 });
     expect(boot?.data?.heapLimitMb).toBeGreaterThan(0);
     expect(lines.some(line => line.level === "warn")).toBe(false);
   });
@@ -59,7 +61,14 @@ describe("the production boot line", () => {
     expect(lines).toEqual([]);
   });
 
-  it("sizes the pool from the slots", () => {
-    expect(readEnv({ ...BASE, WORKER_CONCURRENCY: "6" }).databasePoolMax).toBe(16);
+  it("sizes the pool from both kinds of slot", () => {
+    expect(readEnv({ ...BASE, WORKER_CONCURRENCY: "6" }).databasePoolMax).toBe(32);
+    expect(readEnv({ ...BASE, WORKER_CONCURRENCY: "3", CV_CONCURRENCY: "1" }).databasePoolMax).toBe(12);
+  });
+
+  it("bounds the CV slots from one to thirty", () => {
+    expect(readEnv({ ...BASE, CV_CONCURRENCY: "30" }).cvConcurrency).toBe(30);
+    expect(() => readEnv({ ...BASE, CV_CONCURRENCY: "0" })).toThrow(/1–30/);
+    expect(() => readEnv({ ...BASE, CV_CONCURRENCY: "31" })).toThrow(/1–30/);
   });
 });

@@ -7,8 +7,14 @@ export interface WorkerEnv {
   anthropicApiKey: string | undefined;
   contactEmail: string;
   port: number;
+  /** The general slots (`WORKER_CONCURRENCY`): a memory budget, shared by scans, discovery and imports. */
   concurrency: number;
-  /** The ceiling of the database pool the worker opens: two connections per slot plus a margin (see createDeps). */
+  /** Slots of their own for CV builds (`CV_CONCURRENCY`), beside the general ones. */
+  cvConcurrency: number;
+  /**
+   * The ceiling of the database pool the worker opens: two connections per slot, general and CV
+   * alike, plus a margin (see createDeps).
+   */
   databasePoolMax: number;
   scanSpreadMinutes?: number;
   browserConcurrency?: number;
@@ -41,13 +47,17 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env): WorkerEnv {
     }
   }
   const concurrency = bounded(env.WORKER_CONCURRENCY, 3, 1, 30);
+  // A CV build mostly waits on the model: its memory is its library, one CV and a PDF render, not
+  // a fetched listing, so its slots are sized apart from the memory-bound ones.
+  const cvConcurrency = bounded(env.CV_CONCURRENCY, 8, 1, 30);
   const read: WorkerEnv = {
     databaseUrl,
     anthropicApiKey: env.ANTHROPIC_API_KEY || undefined,
     contactEmail: contactEmailFrom(env.SCRAPER_CONTACT_EMAIL, production),
     port: Number(env.PORT ?? 8080),
     concurrency,
-    databasePoolMax: concurrency * 2 + 4,
+    cvConcurrency,
+    databasePoolMax: (concurrency + cvConcurrency) * 2 + 4,
     scanSpreadMinutes: bounded(env.SCAN_SPREAD_MINUTES, 60, 0, 720),
     browserConcurrency: bounded(env.BROWSER_CONCURRENCY, 1, 1, 8),
     dailyAiBudgetUsd: bounded(env.DAILY_AI_BUDGET_USD, 1000000, 0, 1000000),
@@ -62,6 +72,7 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env): WorkerEnv {
     // restart loop can be read against what the process was actually given.
     log.info("worker environment", {
       concurrency: read.concurrency,
+      cvConcurrency: read.cvConcurrency,
       browserConcurrency: read.browserConcurrency,
       databasePoolMax: read.databasePoolMax,
       heapLimitMb: Math.round(v8.getHeapStatistics().heap_size_limit / 1_048_576),

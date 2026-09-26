@@ -40,3 +40,14 @@ describe("task deadlines", () => {
     for (const type of ["generate_cv", "scan_company", "discover"] as const) expect(SHORT_TASK_TYPES).not.toContain(type);
   });
 });
+
+describe("the CV build deadline", () => {
+  it("is the stages' allowances added up, never under three quarters of an hour", async () => {
+    const { CV_STAGE_ALLOWANCE_MS, CV_BUILD_DEADLINE_FLOOR_MS, cvBuildDeadlineMs } = await import("./tasks");
+    const sum = Object.values(CV_STAGE_ALLOWANCE_MS).reduce((total, ms) => total + ms, 0);
+    expect(deadlineMsFor("generate_cv")).toBe(Math.max(CV_BUILD_DEADLINE_FLOOR_MS, sum));
+    // Every stage's own stop comes before the deadline, so one runaway stage leaves the rest room.
+    for (const ms of Object.values(CV_STAGE_ALLOWANCE_MS)) expect(ms).toBeLessThan(deadlineMsFor("generate_cv"));
+    expect(cvBuildDeadlineMs({ rubric: 60_000 })).toBe(CV_BUILD_DEADLINE_FLOOR_MS);
+  });
+});

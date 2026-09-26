@@ -36,6 +36,11 @@ it("says what a model call that produced nothing usable was doing, in the reader
     .toBe("The connection to the model provider dropped while checking the CV against your evidence.");
   expect(callFailureMessage("stalled", AUTHOR_CALL))
     .toBe("The model stopped responding while writing the CV: nothing arrived for fifteen minutes.");
+  // The engine says which stall it was: silence, or an answer still unfinished at the ceiling.
+  expect(callFailureMessage("stalled", AUTHOR_CALL, undefined, undefined, { reason: "idle", afterMs: 300_000 }))
+    .toBe("The model stopped responding while writing the CV: nothing arrived for 5 minutes.");
+  expect(callFailureMessage("stalled", REVIEW_CALL, undefined, undefined, { reason: "ceiling", afterMs: 900_000 }))
+    .toBe("The model stopped responding while checking the CV against your evidence: the answer was still unfinished after 15 minutes.");
   expect(callFailureMessage("model_access", RUBRIC_CALL, 403))
     .toBe("The CV model could not be reached while extracting the role's requirements (HTTP 403). Check model access and usage in Health, then retry.");
   expect(callFailureMessage("output_limit", AUTHOR_CALL, undefined, "(attempt 2 of 3)"))
@@ -126,4 +131,18 @@ it("gives every failure kind a policy, so nothing reaches the page without a nex
     // Either the system is coming back, or the person is told what to do about it.
     expect(failure.retryable || failure.action !== undefined).toBe(true);
   }
+});
+
+it("hands a page limit that only removing essential evidence could meet to the person, as a page limit", () => {
+  const overflow = new CvFitFailure("page_limit_unfittable", "raw", { pages: 3, maxPages: 2, attempts: 3, essential: true });
+  const failure = cvBuildFailureFor(overflow, attempts);
+  expect(failure).toMatchObject({ kind: "page_limit_unfittable", resolvedBy: "user", retryable: false, action: "shorten_or_raise_pages" });
+  expect(failure.message).toBe("The CV is 3 pages after three attempts; the limit is 2, and shortening it further would remove the only evidence for an essential requirement. Shorten that evidence in your Library or raise the page limit in Settings.");
+});
+
+it("says where a build stopped: the failure's own motion and batch first, then the motion the build had open", () => {
+  const batch = new CvBuildStop("assessment_incomplete", "Batch 2 missed a claim.", { motion: "assess_batch", batch: 2 });
+  expect(cvBuildFailureFor(batch, { ...attempts, motion: "assemble" })).toMatchObject({ motion: "assess_batch", batch: 2 });
+  expect(cvBuildFailureFor(new CvBuildStop("stalled", "Stopped."), { ...attempts, motion: "write" })).toMatchObject({ motion: "write" });
+  expect(cvBuildFailureFor(new CvBuildStop("stalled", "Stopped."), attempts)).not.toHaveProperty("motion");
 });

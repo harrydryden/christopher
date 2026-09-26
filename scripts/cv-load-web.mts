@@ -124,10 +124,14 @@ async function main() {
   }));
   process.stdout.write(JSON.stringify({ t: "requested", ok: requests.filter(r => r.ok).length, failed: requests.filter(r => !r.ok).length }) + "\n");
 
-  // Every draft settled (ready, failed, or paused for evidence), or the harness's own ceiling.
+  // Every draft settled (ready, failed, or paused for evidence) and every build's task finished —
+  // a published CV's optional improvement runs on after it is ready, under the same task — or the
+  // harness's own ceiling.
   const deadline = startedAt + shape.maxSeconds * 1000;
   for (;;) {
-    const { rows: [open] } = await pool.query<{ n: number }>(`select count(*)::int n from cv_drafts where status in ('queued','generating')`);
+    const { rows: [open] } = await pool.query<{ n: number }>(`select
+      (select count(*)::int from cv_drafts where status in ('queued','generating'))
+      + (select count(*)::int from tasks where type = 'generate_cv' and status in ('queued','running')) as n`);
     if (!open!.n || Date.now() > deadline) break;
     await new Promise(resolve => setTimeout(resolve, 2_000));
   }

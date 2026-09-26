@@ -23,6 +23,8 @@
  *                               the interface refuses a fourth build in flight)
  *   CV_LOAD_WINDOW_SECONDS      the requests are spread across this window (default 10)
  *   CV_LOAD_CONCURRENCY         WORKER_CONCURRENCY (default 3, what production runs)
+ *   CV_CONCURRENCY              the worker's CV build slots, beside the general ones (default 8, as
+ *                               apps/worker/src/env.ts defaults it); CV_LOAD_CV_CONCURRENCY also works
  *   CV_LOAD_LATENCY_MS          per model request, uniform MIN-MAX (default 2000-6000). The whole run
  *                               scales with it: a build is 12 requests, about 8 of them in sequence,
  *                               so a 50 x 2 run at concurrency 3 takes about 7 minutes at 600-1800
@@ -96,6 +98,7 @@ export function loadShape(env = process.env) {
     draftsPerAccount: whole('CV_LOAD_DRAFTS', 2, 1, 5),
     windowSeconds: whole('CV_LOAD_WINDOW_SECONDS', 10, 0, 600),
     concurrency: whole('CV_LOAD_CONCURRENCY', 3, 1, 30),
+    cvConcurrency: whole(env.CV_CONCURRENCY !== undefined ? 'CV_CONCURRENCY' : 'CV_LOAD_CV_CONCURRENCY', 8, 1, 30),
     latency: parseLatency(env.CV_LOAD_LATENCY_MS),
     ttfbShare: share('CV_LOAD_TTFB_SHARE', 0.2, 0.9),
     overloadRate: share('CV_LOAD_529_RATE', 0, 0.5),
@@ -115,11 +118,11 @@ export function parseLatency(raw) {
   return { min, max };
 }
 
-/** The worker's CV build cap for a concurrency, as apps/worker/src/index.ts sets it. */
-export const cvBuildCap = concurrency => Math.max(1, Math.ceil(concurrency / 2));
+/** The worker's CV build slots: CV_CONCURRENCY, apart from the general slots (apps/worker/src/index.ts). */
+export const cvBuildCap = (_concurrency, cvConcurrency = 8) => cvConcurrency;
 
-/** The worker's database pool for a concurrency, as apps/worker/src/env.ts sizes it. */
-export const workerPoolMax = concurrency => concurrency * 2 + 4;
+/** The worker's database pool for its general and CV slots, as apps/worker/src/env.ts sizes it. */
+export const workerPoolMax = (concurrency, cvConcurrency = 8) => (concurrency + cvConcurrency) * 2 + 4;
 
 export function assertScratchDatabase(input) {
   let url;
@@ -390,6 +393,7 @@ async function main() {
       ...common,
       DATABASE_URL: withAppName(url, 'cvload-worker'),
       WORKER_CONCURRENCY: String(shape.concurrency),
+      CV_CONCURRENCY: String(shape.cvConcurrency),
       // No real key and nowhere real to send one: any call that escaped the scripted client fails locally.
       ANTHROPIC_API_KEY: 'cv-load-scripted-no-network',
       ANTHROPIC_BASE_URL: 'http://127.0.0.1:9',
@@ -452,7 +456,7 @@ async function main() {
     const appMax = app => Math.max(0, ...samples.map(s => s.apps[app]?.n ?? 0));
     const report = {
       at: new Date().toISOString(),
-      shape: { ...shape, builds: shape.accounts * shape.draftsPerAccount, cvBuildCap: cvBuildCap(shape.concurrency), workerPoolMax: workerPoolMax(shape.concurrency) },
+      shape: { ...shape, builds: shape.accounts * shape.draftsPerAccount, cvBuildCap: cvBuildCap(shape.concurrency, shape.cvConcurrency), workerPoolMax: workerPoolMax(shape.concurrency, shape.cvConcurrency) },
       environment: { node: process.version, cpu: cpus()[0]?.model, cpuCount: cpus().length, hostMemoryMiB: Math.round(totalmem() / 1048576), database: url.pathname.slice(1) },
       timedOut: webResult.timedOut, totalSeconds: +totalSeconds.toFixed(1),
       settleSeconds: +((webResult.settledAt - webResult.startedAt) / 1000).toFixed(1),

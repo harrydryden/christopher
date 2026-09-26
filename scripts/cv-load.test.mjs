@@ -30,8 +30,10 @@ test('latency is one number or a range', () => {
 });
 
 test('the worker figures follow the production formulas', () => {
-  assert.deepEqual([1, 2, 3, 6, 30].map(cvBuildCap), [1, 1, 2, 3, 15]);
-  assert.deepEqual([3, 30].map(workerPoolMax), [10, 64]);
+  // CV builds have slots of their own, beside the general ones, and the pool is sized from both.
+  assert.deepEqual([1, 8, 30].map(cv => cvBuildCap(3, cv)), [1, 8, 30]);
+  assert.equal(workerPoolMax(3, 8), 26);
+  assert.equal(workerPoolMax(30, 30), 124);
 });
 
 test('every account asks for each of its CVs once, inside the window, in time order, the same way every run', () => {

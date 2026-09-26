@@ -21,7 +21,7 @@ let pool: ReturnType<typeof createDb>["pool"];
 let user: User;
 let other: User;
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { cvBuildQuote, cvEditCosts, cvQuoteButtonLine, cvQuoteLine, queuedDraftParts } from "./cv-quote";
+import { cvBuildQuote, cvEditCosts, cvQuoteButtonLine, cvQuoteLine, generatingDraftRemainingUsd, queuedDraftParts } from "./cv-quote";
 
 const DESCRIPTION = [
   "Head of Operations at a community health provider.",
@@ -215,13 +215,54 @@ it("counts the builds this account has waiting in the queue, which hold nothing 
     userId: user.id, jobTitle: "Role", companyName: "Co", jobDescription: DESCRIPTION, libraryVersion: 1,
     librarySnapshot: snapshot, model: "claude-fable-5-1", status, buildCheckpoint: { tailoringEnabled: true },
   });
-  // Only the queued one: a generating build has been admitted and holds its own share already.
+  // Only the queued one here: the generating build is counted by its remaining stages, below.
   await database.insert(schema.cvDrafts).values([draft("queued"), draft("generating"), draft("ready")]);
   const quote = await cvBuildQuote(user.id, job.id);
+  expect(quote.inFlightUsd).toBeGreaterThan(0);
   const expected = estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: Buffer.byteLength(JSON.stringify(snapshot)), descriptionBytes: Buffer.byteLength(DESCRIPTION) }, "tailored");
   // Measured in the database, as jsonb text, which spaces its separators: within a cent.
   expect(quote.queuedUsd).toBeCloseTo(expected, 2);
-  expect(quote.leftUsd).toBeCloseTo(alone.leftUsd - quote.queuedUsd, 6);
+  expect(quote.leftUsd).toBeCloseTo(alone.leftUsd - quote.queuedUsd - quote.inFlightUsd, 6);
+});
+
+it("counts what a running build will still admit, beyond the one stage it holds", async () => {
+  const job = await visibleRole();
+  await saveLibrary();
+  const now = new Date();
+  const snapshot = { name: "Example", contact: "", profile: "Leader", entries: [] };
+  const requirements = Array.from({ length: 20 }, (_, i) => ({ id: `r${i}` }));
+  // Tailored, rubric and plan paid for, one of three audit batches saved: writing is running now.
+  const [running] = await database.insert(schema.cvDrafts).values({
+    userId: user.id, jobTitle: "Role", companyName: "Co", jobDescription: DESCRIPTION, libraryVersion: 1,
+    librarySnapshot: snapshot, model: "test-model", status: "generating",
+    buildCheckpoint: {
+      v: 2, promptSetVersion: "p", tailoringEnabled: true, rubric: { requirements }, tailoringPlan: {},
+      stages: { rubric: { key: "k", at: "t", value: {} }, plan: { key: "k", at: "t", value: {} }, "audit[0]": { key: "k", at: "t", value: {} } },
+    },
+  }).returning();
+  await database.insert(schema.aiReservations).values({
+    userId: user.id, callSite: "CV", amount: 0.05, refId: running!.id, expiresAt: new Date(now.getTime() + 600_000),
+  });
+  const quote = await cvBuildQuote(user.id, job.id, now);
+  const size = { libraryBytes: Buffer.byteLength(JSON.stringify(snapshot)), descriptionBytes: Buffer.byteLength(DESCRIPTION) };
+  const base = { model: "test-model", ...size, hasRubric: true, hasPlan: true, hasContent: false, requirements: 20, tailoringEnabled: true, mode: null, improvementAttempted: false };
+  const expected = generatingDraftRemainingUsd({ ...base, stageKeys: ["rubric", "plan", "audit[0]"], heldUsd: 0.05 });
+  // Measured in the database, as jsonb text, which spaces its separators: within a cent.
+  expect(quote.inFlightUsd).toBeCloseTo(expected, 2);
+  expect(quote.heldUsd).toBeCloseTo(0.05, 6);
+  // Writing, two audit batches, the improvement and its re-check are still to come; the rubric and
+  // the plan are not, and neither is the batch already saved.
+  const whole = generatingDraftRemainingUsd({ ...base, hasRubric: false, hasPlan: false, stageKeys: [], heldUsd: 0 });
+  expect(expected).toBeGreaterThan(0);
+  expect(expected).toBeLessThan(whole);
+  // A build assessing saved wording pays for no writing and no improvement.
+  expect(generatingDraftRemainingUsd({ ...base, mode: "assess", stageKeys: ["rubric"], heldUsd: 0 })).toBeLessThan(expected);
+
+  // Committed to that build, the month cannot afford another: the refusal names both kinds of hold.
+  await database.insert(schema.userSettings).values({ userId: user.id, key: "aiBudgetUsd", value: quote.estimateUsd + 0.05 + expected / 2 });
+  const refused = await cvBuildQuote(user.id, job.id, now);
+  expect(refused.refusal).toContain("held by builds queued or in flight");
+  expect(refused.refusal).not.toContain("held by calls in flight");
 });
 
 it("chooses what a queued build will pay for the way the worker does", () => {

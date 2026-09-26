@@ -242,8 +242,8 @@ it("retains authored content when assessment fails, then retries assessment with
     .where(eq(schema.cvDrafts.id, draft.id));
   expect(failed!.status).toBe("failed");
   expect(failed!.content!.summary).toBe(plan.summary);
-  expect(failed!.error).toBe("The model's answer to the assessment step could not be used.");
-  expect(failed!.failure).toMatchObject({ kind: "output_invalid" });
+  expect(failed!.error).toBe("The model's answer to the assessment step could not be used (batch 1 of 1).");
+  expect(failed!.failure).toMatchObject({ kind: "output_invalid", motion: "assess_batch", batch: 1 });
   expect(failed!.finalisedAt).toBeNull();
   task.payload = { draftId: draft.id, mode: "assess" };
   await handleGenerateCv(task, deps);
@@ -407,11 +407,12 @@ it("refuses a build this account cannot afford before spending anything, then ad
   expect((await client.db.execute<{ n: string }>(sql`select count(*)::text as n from ai_reservations`)).rows[0]!.n).toBe("0");
 });
 
-it("refuses a second build for the same account while the first is still holding its capacity", async () => {
+it("admits a second build's stages beside the first while the month can afford them, and refuses the stage it cannot, by name", async () => {
   const { task, deps, draft } = await setup();
   const [second] = await client.db.insert(schema.cvDrafts).values({ userId, jobTitle: "Operations Lead", companyName: "Acme", jobDescription: "Lead a team", libraryVersion: 1, librarySnapshot: draft.librarySnapshot, model: "claude-sonnet-5" }).returning();
-  // A build of this fixture costs about $0.55: enough budget for one at a time, not for two.
-  deps.userSettings = accountBudget(1);
+  // The writing stage of this fixture is held at about $0.48 and its rubric at about $0.05: with
+  // the first build's writing held, the second can still afford its rubric, but not its writing.
+  deps.userSettings = accountBudget(0.9);
   let releaseFirst: (() => void) | undefined;
   const started = new Promise<void>((resolve) => {
     vi.spyOn(AiEngine.prototype, "buildCv").mockImplementation(async () => {
@@ -422,14 +423,17 @@ it("refuses a second build for the same account while the first is still holding
   });
   const first = handleGenerateCv(task, deps);
   await started;
-  // The first build's hold is live and belongs to this account, so the second is refused by it
-  // rather than by recorded spend: nothing has been billed yet.
+  // The first build's writing hold is live and belongs to this account, so the second is refused
+  // by it rather than by recorded spend: nothing has been billed yet. It is refused at the stage
+  // that would not fit — part-way, before that stage spends anything — and says which.
   expect(await client.db.select().from(schema.aiCalls)).toHaveLength(0);
   await handleGenerateCv({ ...task, payload: { draftId: second!.id } } as typeof task, deps);
   const refused = await draftAfter(second!.id);
   expect(refused.status).toBe("failed");
-  expect(refused.error).toContain("held by calls in flight");
-  expect(refused.error).toContain("your budget of $1");
+  expect(refused.failure).toMatchObject({ kind: "budget_exhausted", resolvedBy: "user", action: "raise_budget", motion: "admit_budget" });
+  expect(refused.error).toMatch(/^This build's writing needs about \$0\.\d\d of AI budget; your budget of \$0\.9 has \$0\.\d\d left this month after \$0\.\d\d held by calls in flight/);
+  const admitted = await client.db.execute<{ stage: string; status: string }>(sql`select detail->>'stage' as stage, status from cv_build_steps where draft_id = ${second!.id} and motion = 'admit_budget' order by seq`);
+  expect(admitted.rows).toEqual([{ stage: "rubric", status: "done" }, { stage: "write", status: "failed" }]);
   releaseFirst?.();
   await first;
   expect((await draftAfter(draft.id)).status).toBe("ready");

@@ -7,7 +7,7 @@
  * backoff and a real second claim.
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { actionCvs, enqueueTask, failOpenCvBuildSteps, listCvBuildSteps, schema, startCvBuildStep, type Db } from "@ava/db";
+import { actionCvs, enqueueTask, failOpenCvBuildSteps, listCvBuildSteps, schema, startCvBuildStep, type Db, type Task } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { InternalServerError, RateLimitError, type AiClientLike, type ParseResponse } from "@ava/ai";
 import { DEFAULT_CV_THEME, materialiseCv } from "@ava/core/cv";
@@ -114,7 +114,7 @@ async function makeDraft(over: Partial<typeof schema.cvDrafts.$inferInsert> = {}
     userId, jobTitle: "Operations Director", companyName: "Acme", jobDescription: "Lead a team",
     libraryVersion: 1, librarySnapshot: library, model: "claude-sonnet-5", ...over,
   }).returning();
-  const payload = { draftId: draft!.id };
+  const payload = { draftId: draft!.id, userId };
   await enqueueTask(db, "generate_cv", payload, { dedupeKey: dedupeKeyFor("generate_cv", payload) });
   return draft!;
 }
@@ -146,20 +146,30 @@ it("narrates every motion of a clean build, with the figures and the cost of eac
   await queueFor().drain();
 
   const rows = await steps(draft.id);
+  // Each stage is admitted against the budget immediately before it runs, and only then.
   expect(motions(rows)).toEqual([
-    "load_inputs", "admit_budget", "rubric", "write", "check_plan", "measure", "assess_batch", "assemble", "publish",
+    "load_inputs", "admit_budget", "rubric", "admit_budget", "write", "check_plan", "measure",
+    "admit_budget", "assess_batch", "assemble", "publish",
   ]);
   expect(rows.every(row => row.status === "done")).toBe(true);
   expect(rows.every(row => row.attempt === 1 && row.finishedAt !== null && row.ms !== null)).toBe(true);
+  expect(rows.every(row => row.taskId === rows[0]!.taskId && row.taskId !== null)).toBe(true);
   const byMotion = Object.fromEntries(rows.map(row => [row.motion, row]));
 
   expect(byMotion.load_inputs!.detail).toEqual({
     libraryVersion: 1, roles: 1, qualifications: 0, skillBlocks: 0, descriptionCharacters: 11,
-    mode: "build", reusedRubric: false, reusedContent: false,
+    mode: "build", reusedRubric: false, reusedContent: false, maxAttempts: 3,
   });
-  expect(byMotion.admit_budget!.detail).toMatchObject({ limitUsd: 1000, leftUsd: expect.any(Number) });
-  expect(byMotion.admit_budget!.detail.expectedUsd as number).toBeGreaterThan(0);
-  expect(byMotion.admit_budget!.detail.heldUsd).toBe(byMotion.admit_budget!.detail.expectedUsd);
+  const admits = rows.filter(row => row.motion === "admit_budget");
+  expect(admits.map(row => row.detail.stage)).toEqual(["rubric", "write", "audit"]);
+  for (const admit of admits) {
+    expect(admit.detail).toMatchObject({ limitUsd: 1000, leftUsd: expect.any(Number) });
+    expect(admit.detail.expectedUsd as number).toBeGreaterThan(0);
+    // What the account's other work holds: this stage's own hold is not counted in it.
+    expect(admit.detail.heldUsd).toBe(0);
+  }
+  // Nothing is held once the build is over.
+  expect(await db.select().from(schema.aiReservations)).toHaveLength(0);
 
   expect(byMotion.rubric!.detail).toMatchObject({ requirements: 1, essential: 1, desirable: 0, responsibilities: 0 });
   expect(byMotion.write!.title).toBe("Writing the CV");
@@ -167,13 +177,18 @@ it("narrates every motion of a clean build, with the figures and the cost of eac
   expect(byMotion.write!.detail.budgetCharacters as number).toBeGreaterThan(0);
   expect(byMotion.write!.detail.characters).toBe(plan.summary.length + "Led a team".length);
   expect(byMotion.check_plan!.detail).toEqual({ omitted: [], skillFormatCorrections: 0 });
-  expect(byMotion.measure!.detail).toEqual({ pages: 1, maxPages: 3 });
+  expect(byMotion.measure!.detail).toEqual({ pages: 1, maxPages: 3, renders: 1, outcome: "fits" });
   expect(byMotion.assess_batch!.title).toBe("Checking requirements 1–1 and 2 claims (batch 1 of 1)");
-  expect(byMotion.assess_batch!.detail).toMatchObject({ batch: 1, batches: 1, requirements: 1, claims: 2 });
+  expect(byMotion.assess_batch!.detail).toMatchObject({ batch: 1, batches: 1, requirements: 1, claims: 2, pass: "draft" });
   expect(byMotion.assemble!.detail).toEqual({
     demonstrated: 1, partial: 0, missing: 0, unknown: 0, supported: 2, unsupported: 0, uncertain: 0, pageCount: 1,
   });
-  expect(byMotion.publish!.detail).toEqual({ revision: 1, archivedPrevious: false });
+  expect(byMotion.publish!.detail).toMatchObject({ revision: 1, archivedPrevious: false });
+  // What the stages were admitted at, and what the build recorded: every call, every attempt.
+  const reserved = admits.reduce((sum, admit) => sum + (admit.detail.expectedUsd as number), 0);
+  expect(byMotion.publish!.detail.reservedUsd).toBeCloseTo(reserved, 3);
+  const recorded = await db.execute<{ total: number }>(sql`select coalesce(sum(cost_usd::float8), 0) as total from ai_calls`);
+  expect(byMotion.publish!.detail.spentUsd).toBeCloseTo(Number(recorded.rows[0]!.total), 3);
 
   // Every model call's own cost reaches the step that made it, and nothing else claims one.
   for (const motion of ["rubric", "write", "assess_batch"]) {
@@ -228,7 +243,10 @@ it("resumes from its checkpoint after the provider rate-limits the writer, payin
 
   const rows = await steps(draft.id);
   const second = rows.filter(row => row.attempt === 2);
-  expect(motions(second)).toEqual(["load_inputs", "admit_budget", "rubric", "write", "check_plan", "measure", "assess_batch", "assemble", "publish"]);
+  // The rubric is reused, so nothing is admitted for it: the writing is the first stage paid for.
+  expect(motions(second)).toEqual(["load_inputs", "rubric", "admit_budget", "write", "check_plan", "measure", "admit_budget", "assess_batch", "assemble", "publish"]);
+  // The failed call's cost reached the step that made it.
+  expect(write.detail.usd === undefined || (write.detail.usd as number) >= 0).toBe(true);
   // The rubric was paid for on the first attempt, so the second takes it from the checkpoint.
   const rubric = second.find(row => row.motion === "rubric")!;
   expect(rubric.status).toBe("skipped");
@@ -310,20 +328,21 @@ it("names the second charge when a batch has to be re-run to correct its attribu
 it("refuses a build the account cannot afford before any model call, and asks for the budget", async () => {
   const scripted = scriptedClient();
   deps.aiClient = scripted.client;
-  deps.userSettings = (async () => ({ aiBudgetUsd: 0.05, aiBudgetResetAt: null })) as unknown as WorkerDeps["userSettings"];
+  deps.userSettings = (async () => ({ aiBudgetUsd: 0.01, aiBudgetResetAt: null })) as unknown as WorkerDeps["userSettings"];
   const draft = await makeDraft();
 
   await queueFor().drain();
 
   const refused = await draftAfter(draft.id);
   expect(refused.status).toBe("failed");
-  expect(refused.failure).toMatchObject({ kind: "budget_exhausted", resolvedBy: "user", retryable: false, action: "raise_budget" });
-  expect(refused.error).toContain("your budget of $0.05");
+  expect(refused.failure).toMatchObject({ kind: "budget_exhausted", resolvedBy: "user", retryable: false, action: "raise_budget", motion: "admit_budget" });
+  expect(refused.error).toContain("This build's requirements analysis needs about $");
+  expect(refused.error).toContain("your budget of $0.01");
   const rows = await steps(draft.id);
   expect(motions(rows)).toEqual(["load_inputs", "admit_budget"]);
   const admit = rows[1]!;
   expect(admit.status).toBe("failed");
-  expect(admit.detail).toMatchObject({ limitUsd: 0.05, heldUsd: 0, leftUsd: 0.05 });
+  expect(admit.detail).toMatchObject({ stage: "rubric", limitUsd: 0.01, heldUsd: 0, leftUsd: 0.01 });
   // Nothing was spent, and the attempt that would have spent it is not retried.
   expect(scripted.calls).toEqual([]);
   expect(await db.select().from(schema.aiCalls)).toHaveLength(0);
@@ -405,19 +424,18 @@ it("re-assesses a saved CV after a failed batch without paying for the rubric or
 
   const rows = await steps(draft.id);
   const second = rows.filter(row => row.attempt === 2);
-  expect(motions(second)).toEqual(["load_inputs", "admit_budget", "rubric", "measure", "assess_batch", "assemble", "publish"]);
+  // The saved wording is measured as it is read, and reused; the audit is the only stage paid for.
+  expect(motions(second)).toEqual(["load_inputs", "measure", "rubric", "write", "admit_budget", "assess_batch", "assemble", "publish"]);
+  expect(second.find(row => row.motion === "write")).toMatchObject({ status: "skipped", detail: { reused: "checkpoint", attempt: 1 } });
   expect(second.find(row => row.motion === "load_inputs")!.detail).toMatchObject({ reusedRubric: true, reusedContent: true });
   expect(second.find(row => row.motion === "rubric")!.status).toBe("skipped");
-  expect(second.some(row => row.motion === "write")).toBe(false);
   expect(rows.filter(row => row.motion === "assess_batch").map(row => row.attempt)).toEqual([1, 2]);
 
   expect((await draftAfter(draft.id)).status).toBe("ready");
-  // The retry is admitted at what it can still spend — the audit's share — rather than holding a
-  // whole build's estimate against a month that would then refuse work it can plainly afford.
+  // The retry is admitted at what it can still spend — the audit — and nothing else.
   const admits = rows.filter(row => row.motion === "admit_budget");
-  expect(admits.map(row => row.detail.resumed)).toEqual([false, true]);
-  expect(admits[1]!.detail.expectedUsd as number).toBeGreaterThan(0);
-  expect(admits[1]!.detail.expectedUsd as number).toBeLessThan(admits[0]!.detail.expectedUsd as number);
+  expect(admits.map(row => [row.attempt, row.detail.stage])).toEqual([[1, "rubric"], [1, "write"], [1, "audit"], [2, "audit"]]);
+  expect(admits[3]!.detail.expectedUsd).toBe(admits[2]!.detail.expectedUsd);
   // One rubric, one author, two audits: the retry cost the audit alone.
   expect(await aiCallsByStage()).toEqual({ rubric: 1, author: 1, review: 2 });
   const spentOnRetry = await db.execute<{ total: number }>(sql`select coalesce(sum(cost_usd::float8), 0) as total from ai_calls where stage = 'review'`);
@@ -451,9 +469,10 @@ it("publishes the saved baseline of a build stopped during its improvement, with
   // Nothing was asked of a model, and nothing was held for it.
   expect(scripted.calls).toEqual([]);
   expect(await aiCallsByStage()).toEqual({});
-  const admit = (await steps(draft.id)).find(row => row.motion === "admit_budget")!;
-  expect(admit.detail.expectedUsd).toBe(0);
-  expect((await steps(draft.id)).some(row => row.motion === "assess_batch")).toBe(false);
+  const rows = await steps(draft.id);
+  expect(rows.some(row => row.motion === "admit_budget")).toBe(false);
+  expect(rows.some(row => row.motion === "assess_batch")).toBe(false);
+  expect(rows.find(row => row.motion === "assemble")).toMatchObject({ status: "skipped", detail: { reused: true } });
 });
 
 it("closes the narrative of a build whose worker died, with the taxonomy the page reads", async () => {
@@ -529,11 +548,10 @@ it("admits a build at the figures its own reservation was measured against", asy
   const admit = (await steps(draft.id)).find(row => row.motion === "admit_budget")!;
   const expected = admit.detail.expectedUsd as number;
   expect(expected).toBeGreaterThan(0);
-  // Read inside the lock that took the hold, so the figures explain the decision they came with.
-  expect(admit.detail.limitUsd).toBe(1000);
-  expect(admit.detail.heldUsd).toBe(Number((2.5 + expected).toFixed(4)));
+  // Read inside the lock that took the hold, so the figures explain the decision they came with:
+  // what the account's other work holds, excluding this stage's own hold.
+  expect(admit.detail).toMatchObject({ stage: "rubric", limitUsd: 1000, heldUsd: 2.5 });
   expect(admit.detail.leftUsd).toBe(Number((1000 - 2.5 - expected).toFixed(4)));
-  expect(admit.detail.resumed).toBe(false);
 });
 
 it("never deletes a build in flight when its role is archived, and refuses to delete one outright", async () => {
@@ -682,4 +700,156 @@ it("records an interrupted attempt and stops its model calls when a build outrun
   expect(rows.some(row => row.motion === "write")).toBe(true);
   expect(rows.every(row => row.status !== "running")).toBe(true);
   expect(rows.filter(row => row.status === "failed").every(row => row.attempt === 1)).toBe(true);
+});
+
+it("corrects a writer answer that cannot be materialised inside the build, at the cost of one more writing call", async () => {
+  let first = true;
+  const scripted = scriptedClient({
+    author: () => {
+      if (!first) return answered(plan);
+      first = false;
+      // An evidence reference the Library does not hold: the model's mistake, not the person's.
+      return answered({ ...plan, sections: [...plan.sections, { entryId: "ghost", bullets: ["Invented work"] }] });
+    },
+  });
+  deps.aiClient = scripted.client;
+  const draft = await makeDraft();
+
+  await queueFor().drain();
+
+  const ready = await draftAfter(draft.id);
+  expect(ready.status).toBe("ready");
+  expect(ready.content!.sections.map(section => section.entryId)).toEqual(["one"]);
+  // One task attempt, two writing calls: the second told exactly what was wrong with the first.
+  const rows = await steps(draft.id);
+  expect(rows.every(row => row.attempt === 1)).toBe(true);
+  const writes = rows.filter(row => row.motion === "write" || row.motion === "rewrite");
+  expect(writes.map(row => row.motion)).toEqual(["write", "rewrite"]);
+  expect(writes[1]!.detail).toMatchObject({ attempt: 2, corrections: 1 });
+  expect(writes[1]!.detail).not.toHaveProperty("reason");
+  expect(rows.some(row => row.status === "failed")).toBe(false);
+  expect(scripted.count("author")).toBe(2);
+});
+
+it("replaces its own dead attempt's hold rather than counting it beside the new one", async () => {
+  deps.aiClient = scriptedClient().client;
+  // The writing stage of this fixture is held at about $0.48: with a dead $0.90 hold of this very
+  // build still recorded, a $1 month could not admit it if the dead hold were counted.
+  deps.userSettings = (async () => ({ aiBudgetUsd: 1, aiBudgetResetAt: null })) as unknown as WorkerDeps["userSettings"];
+  const draft = await makeDraft();
+  await db.execute(sql`insert into ai_reservations (user_id, call_site, amount, expires_at, worker_id, ref_id)
+    values (${userId}, 'CV', 0.9, now() + interval '30 minutes', 'dead-pod', ${draft.id})`);
+  // Another build's hold is its own, and stays.
+  await db.execute(sql`insert into ai_reservations (user_id, call_site, amount, expires_at, worker_id, ref_id)
+    values (${userId}, 'CV', 0.01, now() + interval '30 minutes', 'live-pod', gen_random_uuid()::text)`);
+
+  await queueFor().drain();
+
+  expect((await draftAfter(draft.id)).status).toBe("ready");
+  const admits = (await steps(draft.id)).filter(row => row.motion === "admit_budget");
+  expect(admits.map(row => row.status)).toEqual(["done", "done", "done"]);
+  expect(admits.map(row => row.detail.heldUsd)).toEqual([0.01, 0.01, 0.01]);
+  const left = await db.execute<{ refId: string }>(sql`select ref_id as "refId" from ai_reservations`);
+  expect(left.rows.map(row => row.refId)).not.toContain(draft.id);
+  expect(left.rows).toHaveLength(1);
+});
+
+it("resumes a failed audit batch alone, keeping the batches that finished", async () => {
+  const requirementIds = Array.from({ length: 10 }, (_, index) => `r${index + 1}`);
+  const description = requirementIds.map(id => `Requirement ${id}.`).join(" ");
+  const rubric = { caveats: [], requirements: requirementIds.map(id => ({
+    id, label: `Requirement ${id}`, quote: `Requirement ${id}.`, importance: "essential" as const, category: "experience" as const })) };
+  let overloaded = true;
+  const scripted = scriptedClient({
+    rubric: () => answered(rubric),
+    review: (params) => {
+      const blocks = (params.messages as Array<{ content: Array<{ text: string }> }>)[0]!.content;
+      const batch = JSON.parse(blocks[2]!.text) as { requirements: Array<{ id: string }> };
+      if (overloaded && batch.requirements.some(requirement => requirement.id === "r6")) {
+        overloaded = false;
+        throw new InternalServerError(529, { type: "error", error: { type: "overloaded_error", message: "Overloaded" } }, undefined, new Headers());
+      }
+      return reviewAnswer(params);
+    },
+  });
+  deps.aiClient = scripted.client;
+  const draft = await makeDraft({ jobDescription: description });
+
+  await queueFor().drain();
+
+  const waiting = await draftAfter(draft.id);
+  expect(waiting.status).toBe("generating");
+  // The failure names the batch it was, and the batch that finished is saved under its own key.
+  expect(waiting.failure).toMatchObject({ kind: "overloaded", resolvedBy: "system", motion: "assess_batch", batch: 2 });
+  const stages = Object.keys(waiting.buildCheckpoint!.stages ?? {});
+  expect(stages).toEqual(expect.arrayContaining(["rubric", "write", "audit[0]"]));
+  expect(stages).not.toContain("audit[1]");
+  const failedBatch = (await steps(draft.id)).find(row => row.motion === "assess_batch" && row.status === "failed")!;
+  expect(failedBatch.detail).toMatchObject({ batch: 2, batches: 2, pass: "draft" });
+  expect(failedBatch.failure).toMatchObject({ kind: "overloaded", batch: 2 });
+  expect(failedBatch.title).toBe("Checking requirements 6–10 and 1 claim (batch 2 of 2)");
+  expect(scripted.count("review")).toBe(2);
+
+  await runDueNow();
+
+  expect((await draftAfter(draft.id)).status).toBe("ready");
+  const second = (await steps(draft.id)).filter(row => row.attempt === 2);
+  // Only the batch that failed is paid for again.
+  expect(second.filter(row => row.motion === "assess_batch").map(row => row.detail.batch)).toEqual([2]);
+  expect(second.find(row => row.motion === "admit_budget")!.detail).toMatchObject({ stage: "audit" });
+  expect(scripted.count("review")).toBe(3);
+  expect(scripted.count("author")).toBe(1);
+  expect(scripted.count("rubric")).toBe(1);
+});
+
+it("claims an account's first CV build before anyone's second", async () => {
+  const other = (await ensureTestUser(db, "cv-build-other@example.com")).id;
+  const insert = async (owner: string) => (await db.insert(schema.cvDrafts).values({
+    userId: owner, jobTitle: `Role ${Math.random()}`, companyName: "Acme", jobDescription: "Lead a team",
+    libraryVersion: 1, librarySnapshot: library, model: "claude-sonnet-5",
+  }).returning())[0]!;
+  const firstOfA = await insert(userId);
+  const secondOfA = await insert(userId);
+  const firstOfB = await insert(other);
+  // Queued in that order, a moment apart, by a producer that names only the draft: the queue
+  // fills in the account from the draft itself.
+  for (const draft of [firstOfA, secondOfA, firstOfB]) {
+    await enqueueTask(db, "generate_cv", { draftId: draft.id }, { dedupeKey: `generate_cv:${draft.id}`, priority: 2 });
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  const queued = await db.select().from(schema.tasks);
+  expect(queued.every(task => typeof (task.payload as { userId?: string }).userId === "string")).toBe(true);
+
+  const claimed = [];
+  for (let n = 0; n < 3; n++) claimed.push((await claimTask(db, `cv-pod#${n}`, "cv"))!);
+  // A's first starts; then B's first, although A's second has waited longer; then A's second.
+  expect(claimed.map(task => (task.payload as { draftId: string }).draftId)).toEqual([firstOfA.id, firstOfB.id, secondOfA.id]);
+});
+
+it("gives CV builds slots of their own, which the general slots never take", async () => {
+  const ran: Array<{ type: string; lockedBy: string | null }> = [];
+  const record = async (task: Task) => { ran.push({ type: task.type, lockedBy: task.lockedBy }); return {}; };
+  const draft = await makeDraft();
+  await enqueueTask(db, "score_job", { userId, jobId: draft.id }, { priority: 4 });
+  const queue = new TaskQueue(deps, { generate_cv: record, score_job: record },
+    { concurrency: 1, cvConcurrency: 1, workerId: "lanes-pod", pollMs: 20 });
+  queue.start();
+  for (let tick = 0; tick < 200 && ran.length < 2; tick++) await new Promise(resolve => setTimeout(resolve, 20));
+  await queue.stop(1_000, 1_000);
+  expect(ran.find(run => run.type === "generate_cv")!.lockedBy).toBe("lanes-pod#1");
+  expect(ran.find(run => run.type === "score_job")!.lockedBy).toBe("lanes-pod#0");
+});
+
+it("refuses to open a step for an attempt that no longer owns its task", async () => {
+  const draft = await makeDraft({ status: "generating" });
+  const losses: CvJournalLoss[] = [];
+  const zombie = new CvJournal({
+    db, draftId: draft.id, userId, taskId: null, attempt: 1, now: deps.now,
+    assertOwnership: async () => { throw new LeaseLostError("Task lease lost; refusing stale writes"); },
+    onLost: loss => losses.push(loss),
+  });
+  const step = await zombie.open("write", { attempt: 1 });
+  expect(step.id).toBeNull();
+  expect(losses).toEqual(["fenced"]);
+  expect(await steps(draft.id)).toHaveLength(0);
 });

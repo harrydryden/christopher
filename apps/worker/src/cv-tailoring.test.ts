@@ -2,7 +2,7 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import { enqueueTask, listCvBuildSteps, schema, type Db } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
-import { estimateCvBuildUsd, type AiClientLike, type ParseResponse } from "@ava/ai";
+import { type AiClientLike, type ParseResponse } from "@ava/ai";
 import type { CvAssessment, CvReviewPlan, CvRubric } from "@ava/core/cv-assessment";
 import type { CvTailoringPlan } from "@ava/core/cv-tailoring";
 import { dedupeKeyFor } from "@ava/core";
@@ -10,6 +10,7 @@ import { eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { handleGenerateCv } from "./handlers/cv";
+import { estimateStage } from "./handlers/cv-stages";
 import { TaskQueue } from "./queue";
 import { onAbandon } from "./handlers/abandon";
 import { ensureTestUser } from "./test-users";
@@ -118,7 +119,7 @@ async function makeDraft(checkpoint: (typeof schema.cvDrafts.$inferInsert)["buil
   const [draft] = await db.insert(schema.cvDrafts).values({ userId, jobTitle: "Operations Director", companyName: "Acme",
     jobDescription: "Lead a team. Deliver transformation.", libraryVersion: 1, librarySnapshot: library,
     model: "claude-sonnet-5", buildCheckpoint: checkpoint }).returning();
-  const payload = { draftId: draft!.id };
+  const payload = { draftId: draft!.id, userId };
   await enqueueTask(db, "generate_cv", payload, { dedupeKey: dedupeKeyFor("generate_cv", payload) });
   return draft!;
 }
@@ -149,15 +150,45 @@ it("a completed quiz reuses its semantic plan, skips another pause and passes pr
   expect(JSON.stringify((await draftAfter(draft.id)).content)).toContain("summarySources");
 });
 
-it("accepts one verified improvement and publishes the role-specific candidate", async () => {
+it("publishes the baseline first, then adopts one verified improvement as a new revision of the same chain", async () => {
   const scripted = scriptedClient(); deps.aiClient = scripted.client;
   const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric });
   await queue().drain();
-  const saved = await draftAfter(draft.id);
-  expect(saved.status).toBe("ready");
-  expect(saved.content?.sections[0]?.bullets).toEqual(["Led a team", "Delivered transformation"]);
+  // The baseline is the CV that was published first, and it keeps the wording it was published with.
+  const baseline = await draftAfter(draft.id);
+  expect(baseline.status).toBe("ready");
+  expect(baseline.content?.sections[0]?.bullets).toEqual(["Led a team"]);
+  // The plan the wording was written against stays beside the assessment, for each revision.
+  const plans = await db.select().from(schema.cvTailoringPlans);
+  expect(plans.find(row => row.draftId === draft.id)).toMatchObject({ userId, plan: noGapPlan });
+  expect(baseline.buildCheckpoint).toBeNull();
+  // The stronger candidate is a new revision, saved the way a Rebuild saves one: the role's
+  // current CV, with the baseline as its parent and now its archive.
+  const [revision] = await db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, draft.id));
+  expect(revision).toMatchObject({ status: "ready", revision: 2, archivedAt: null });
+  expect(revision!.content?.sections[0]?.bullets).toEqual(["Led a team", "Delivered transformation"]);
+  expect(revision!.assessment).not.toBeNull();
+  expect(plans.find(row => row.draftId === revision!.id)).toMatchObject({ userId, plan: noGapPlan });
+  expect(baseline.archivedAt).not.toBeNull();
   expect(scripted.calls.filter(call => call === "improvement")).toHaveLength(1);
-  expect((await listCvBuildSteps(db, userId, draft.id)).find(step => step.motion === "compare_content")?.detail).toMatchObject({ accepted: true });
+  const steps = await listCvBuildSteps(db, userId, draft.id);
+  const motions = steps.map(step => step.motion);
+  // The narrative goes on past "ready": the improvement, its admission, its re-check, the choice.
+  expect(motions.slice(motions.indexOf("publish"))).toEqual([
+    "publish", "admit_budget", "improve_content", "admit_budget", "assess_batch", "assemble", "compare_content", "adopt_revision",
+  ]);
+  expect(steps.find(step => step.motion === "improve_content")).toMatchObject({ status: "done", detail: { opportunities: 1 } });
+  expect(steps.filter(step => step.motion === "admit_budget").map(step => step.detail.stage)).toEqual(["write", "audit", "improve", "reaudit"]);
+  expect(steps.filter(step => step.motion === "assess_batch").map(step => step.detail.pass)).toEqual(["draft", "revision"]);
+  expect(steps.find(step => step.motion === "compare_content")?.detail).toMatchObject({ accepted: true });
+  const adopt = steps.find(step => step.motion === "adopt_revision")!;
+  expect(adopt.status).toBe("done");
+  expect(adopt.detail).toMatchObject({ revisionId: revision!.id, revision: 2, version: expect.any(Number) });
+  expect(adopt.detail.name).toMatch(/^\d\d-[A-Z][a-z]{2}-V\d+$/);
+  // Once published, nothing the build did moved the baseline's last moment of progress.
+  const publishedAt = steps.find(step => step.motion === "publish")!.finishedAt!;
+  expect(baseline.progressAt!.getTime()).toBeLessThanOrEqual(publishedAt.getTime());
+  expect(await db.select().from(schema.aiReservations)).toHaveLength(0);
 });
 
 it("rejects an unsupported improvement and keeps the checked baseline", async () => {
@@ -167,7 +198,14 @@ it("rejects an unsupported improvement and keeps the checked baseline", async ()
   const saved = await draftAfter(draft.id);
   expect(saved.status).toBe("ready");
   expect(saved.content?.sections[0]?.bullets).toEqual(["Led a team"]);
-  expect((await listCvBuildSteps(db, userId, draft.id)).find(step => step.motion === "compare_content")?.detail).toMatchObject({ accepted: false });
+  const steps = await listCvBuildSteps(db, userId, draft.id);
+  expect(steps.find(step => step.motion === "compare_content")?.detail).toMatchObject({ accepted: false });
+  // Nothing changes: no new revision, and the choice says why the original was kept.
+  expect(await db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, draft.id))).toHaveLength(0);
+  const adopt = steps.find(step => step.motion === "adopt_revision")!;
+  expect(adopt.status).toBe("skipped");
+  expect(adopt.detail.reason).toMatch(/^the rewrite still contains unsupported or uncertain factual claims$/);
+  expect(saved.archivedAt).toBeNull();
 });
 
 it("keeps the checked baseline when the optional improvement call fails", async () => {
@@ -177,7 +215,15 @@ it("keeps the checked baseline when the optional improvement call fails", async 
   const saved = await draftAfter(draft.id);
   expect(saved.status).toBe("ready");
   expect(saved.content?.sections[0]?.bullets).toEqual(["Led a team"]);
-  expect((await listCvBuildSteps(db, userId, draft.id)).find(step => step.motion === "compare_content")?.detail).toMatchObject({ accepted: false });
+  const steps = await listCvBuildSteps(db, userId, draft.id);
+  expect(steps.find(step => step.motion === "compare_content")?.detail).toMatchObject({ accepted: false });
+  // A failed optional call is neutral: the step is skipped, not failed, and says the original stands.
+  const improve = steps.find(step => step.motion === "improve_content")!;
+  expect(improve.status).toBe("skipped");
+  expect(improve.detail).toMatchObject({ kept: true, reason: expect.any(String) });
+  expect(improve.detail.usd === undefined || typeof improve.detail.usd === "number").toBe(true);
+  expect(steps.find(step => step.motion === "adopt_revision")).toMatchObject({ status: "skipped" });
+  expect(steps.some(step => step.status === "failed")).toBe(false);
 });
 
 it("keeps the checked baseline when an improved candidate drops a required education section", async () => {
@@ -207,15 +253,18 @@ it("a content checkpoint reserves the audit plus one improvement, reuses the aut
 
   const saved = await draftAfter(draft.id);
   expect(saved.status).toBe("ready");
-  expect(saved.content?.sections[0]?.bullets).toEqual(["Led a team", "Delivered transformation"]);
+  expect(saved.content?.sections[0]?.bullets).toEqual(["Led a team"]);
+  const [improved] = await db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, draft.id));
+  expect(improved!.content?.sections[0]?.bullets).toEqual(["Led a team", "Delivered transformation"]);
   expect(scripted.calls).not.toContain("author");
   expect(scripted.calls.filter(call => call === "improvement")).toHaveLength(1);
-  const admit = (await listCvBuildSteps(db, userId, draft.id)).find(step => step.motion === "admit_budget")!;
-  const expected = estimateCvBuildUsd("claude-sonnet-5", {
-    libraryBytes: Buffer.byteLength(JSON.stringify(library)),
-    descriptionBytes: Buffer.byteLength("Lead a team. Deliver transformation."),
-  }, "tailored_assessment");
-  expect(admit.detail).toMatchObject({ resumed: true, expectedUsd: Number(expected.toFixed(4)) });
+  // Each stage is admitted at its own price as it runs: the audit, then the improvement and its
+  // re-check after publication. Nothing is admitted for the writing this build already paid for.
+  const admits = (await listCvBuildSteps(db, userId, draft.id)).filter(step => step.motion === "admit_budget");
+  const sizes = { libraryBytes: Buffer.byteLength(JSON.stringify(library)), descriptionBytes: Buffer.byteLength("Lead a team. Deliver transformation.") };
+  expect(admits.map(step => step.detail.stage)).toEqual(["audit", "improve", "reaudit"]);
+  expect(admits[0]!.detail.expectedUsd).toBe(Number(estimateStage("claude-sonnet-5", "audit", { ...sizes, batches: 1 }).toFixed(4)));
+  expect(admits[1]!.detail.expectedUsd).toBe(Number(estimateStage("claude-sonnet-5", "improve", sizes).toFixed(4)));
 });
 
 it("the persisted one-shot fence prevents a retry buying a second improvement", async () => {

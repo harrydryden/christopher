@@ -37,7 +37,7 @@ import { estimateCostUsd, SERVER_TOOL_USD, serverToolCostUsd } from "./pricing";
 import { modelSupportsEffort } from "./model-capabilities";
 import * as P from "./prompts";
 import type * as S from "./schemas";
-import { CV_REVIEW_BATCH_SIZE, PROMPTS, layoutFor, type LayoutParts, type PromptEntry } from "./prompt-registry";
+import { CV_REVIEW_BATCH_SIZE, PROMPTS, layoutFor, resolveRoute, type LayoutParts, type PromptEntry, type StageRoutes } from "./prompt-registry";
 import { canonicalEvidence, evidenceBlockId } from "./evidence";
 
 export type { Effort } from "./prompt-registry";
@@ -194,6 +194,12 @@ export interface AiEngineOptions {
    * awaited, so an administrator's choice is never replaced by a fallback for want of a warm cache.
    */
   getModel: (callSite: string) => string | Promise<string>;
+  /**
+   * The administrator's per-stage routes (the `stageRoutes` system setting), read for every call so
+   * a change reaches the next call without a restart. A stage routed to a model runs on it whatever
+   * the account's CV model or the call site's model is; a stage routed to an effort runs at it.
+   */
+  getStageRoutes?: () => StageRoutes | null | undefined | Promise<StageRoutes | null | undefined>;
   /** Record one finished call. Throw when the record did not land, so its hold is kept. */
   onUsage?: (record: AiUsageRecord) => void | Promise<void>;
   client?: AiClientLike;
@@ -508,6 +514,16 @@ export class AiEngine {
     this.options.logger?.(msg, data);
   }
 
+  /** The stage routes, or none when they cannot be read: a settings fault must not stop the call. */
+  private async stageRoutes(): Promise<StageRoutes | null | undefined> {
+    try {
+      return await this.options.getStageRoutes?.();
+    } catch (err) {
+      this.log("stage routes unreadable; using each entry's own route", err);
+      return undefined;
+    }
+  }
+
   /** Hand one call's record to `onUsage`. False when it threw: the cost did not reach the ledger. */
   private async record(record: AiUsageRecord): Promise<boolean> {
     try {
@@ -579,7 +595,11 @@ export class AiEngine {
     const signal = call.signal ?? anySignal(callerSignal, this.options.signal);
     if (!this.client || signal?.aborted) return null;
     const callSite = entry.callSite;
-    const model = call.model ?? await this.options.getModel(callSite);
+    const route = resolveRoute(entry, await this.stageRoutes());
+    // A route naming a model is the administrator's choice for this stage; otherwise the model is
+    // the account's (handed in by the caller) or the call site's, as it always was.
+    const model = route.model !== "cvModel" && route.model !== "callSite" ? route.model
+      : call.model ?? await this.options.getModel(callSite);
     const started = Date.now();
     const { system, content } = layoutFor(entry, typeof call.user === "string" ? { tail: call.user } : call.user);
     const texts = [...system.map(block => block.text), ...(typeof content === "string" ? [content] : content.map(block => block.text))];
@@ -595,7 +615,7 @@ export class AiEngine {
       system,
       // The cache is a prefix match, so a cached block sits before everything that varies.
       messages: [{ role: "user", content }],
-      output_config: { format, ...(modelSupportsEffort(model) ? { effort: entry.effort } : {}) },
+      output_config: { format, ...(modelSupportsEffort(model) ? { effort: route.effort } : {}) },
     };
     const tools = entry.tools?.map(tool => ({ ...tool }));
     if (tools) request.tools = tools;

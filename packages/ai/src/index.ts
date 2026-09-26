@@ -19,6 +19,7 @@ export {
   APIConnectionError, APIConnectionTimeoutError, APIError, AuthenticationError, BadRequestError,
   InternalServerError, NotFoundError, PermissionDeniedError, RateLimitError,
 } from "@anthropic-ai/sdk";
+export { cvStageModel, estimateStage, type StageModels, type StageSizes } from "./pricing";
 export { CACHE_WRITE_1H_MULTIPLIER, CACHE_WRITE_5M_MULTIPLIER, PRICING, SERVER_TOOL_USD, estimateCostUsd, estimateCvBuildUsd, estimateLibraryImportUsd, estimateLibraryReviewUsd, priceFor, serverToolCostUsd, type LibraryReviewSize, type TokenUsage } from "./pricing";
 export { canonicalEvidence, canonicalEvidenceBlock, canonicalEvidenceItems, evidenceBlockId } from "./evidence";
 export type { CanonicalEvidence, CanonicalEvidenceEntry, CanonicalEvidenceRow } from "./evidence";

@@ -62,6 +62,11 @@ export function SuggestionDeck({ cards, total = cards.length, empty, disabledRea
   // The card underneath slides up into place when it becomes the top one.
   const currentId = current?.id;
   useEffect(() => {
+    // A drag belongs to the card it started on. When another card takes the top while the pointer
+    // is down (a refused decision coming back on top), letting go must not decide that card.
+    start.current = null;
+    setDragging(false);
+    setDx(0);
     if (!currentId) return;
     setEntered(false);
     const frame = requestAnimationFrame(() => requestAnimationFrame(() => setEntered(true)));

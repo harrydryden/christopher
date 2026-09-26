@@ -108,7 +108,17 @@ export async function settleWithin(work: Promise<unknown>, ms: number): Promise<
 }
 
 export interface QueueOptions {
+  /** The general slots: scans, discovery, imports, scoring. A memory budget (`WORKER_CONCURRENCY`). */
   concurrency: number;
+  /**
+   * Slots of their own for CV builds (`CV_CONCURRENCY`), beside the general ones. A build holds its
+   * slot for many minutes while it mostly waits on the model, so sizing CV builds out of the
+   * memory-bound general slots left a deployment of three slots building two CVs at a time. With
+   * this set, CV slots claim CV builds and nothing else, and the general slots never claim one; the
+   * general slots keep their lanes and their fall-through to the whole queue. Unset, CV builds share
+   * the general slots under `maxActiveByType`, as before.
+   */
+  cvConcurrency?: number;
   pollMs?: number;
   workerId: string;
   staleAfterMs?: number;
@@ -135,36 +145,61 @@ export function backoffMs(attempts: number): number {
 
 export const scanTypes: string[] = [...SCAN_TASK_TYPES];
 export const interactiveTypes: string[] = [...INTERACTIVE_TASK_TYPES];
-export type QueueLane = "all" | "scan" | "interactive" | "background";
+/**
+ * Which work a slot asks for first. `cv` is the CV build slots' own lane: CV builds and nothing
+ * else, because those slots are sized by `CV_CONCURRENCY` for work that mostly waits on the model,
+ * not by the memory budget the other slots share.
+ */
+export type QueueLane = "all" | "scan" | "interactive" | "background" | "cv";
 
 export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all", excludedTypes: Task["type"][] = []): Promise<Task | null> {
   const types = lane === "scan" ? scanTypes : interactiveTypes;
-  const laneFilter = lane === "all" ? sql`true` : lane === "background"
+  const laneFilter = lane === "all" ? sql`true` : lane === "cv" ? sql`type = 'generate_cv'` : lane === "background"
     ? sql`type not in (${sql.join([...scanTypes, ...interactiveTypes].map(t => sql`${t}`), sql`, `)})`
     : sql`type in (${sql.join(types.map(t => sql`${t}`), sql`, `)})`;
   const exclusionFilter = excludedTypes.length
     ? sql`type not in (${sql.join(excludedTypes.map(t => sql`${t}`), sql`, `)})`
     : sql`true`;
-  // Ordered by the columns the ready-lane indexes carry, so a claim reads the first matching row
-  // from the index instead of sorting every queued task. Ageing is a periodic sweep that lowers
-  // `priority` itself (see `agePriorities`), which keeps waiting work moving up without putting an
-  // expression no index can serve in the hot path.
+  // One statement, two reads. `head` is the task the queue would claim by the columns the
+  // ready-lane indexes carry, so it is read from the index instead of by sorting every queued task.
+  // Ageing is a periodic sweep that lowers `priority` itself (see `agePriorities`), which keeps
+  // waiting work moving up without putting an expression no index can serve in the hot path.
+  //
+  // When the head is a CV build, `fair` chooses among the CV builds waiting at the same priority
+  // by how many the same account already has running (`tasks_cv_running_user_idx`), so an
+  // account's first build starts before anyone's second: without it, one account that asked for
+  // three CVs a second before everyone else took three slots while the others waited. The set it
+  // orders is the CV builds ready at the head's priority, read from `tasks_lane_idx`, which is the
+  // queue's CV backlog, not its whole backlog.
+  //
+  // `attempts < max_attempts` is what stops a task that kills the process being retried forever:
+  // an out-of-memory is a hard death, so nothing compares the two before the lock goes stale and
+  // the task is claimed again. A task already at its limit is failed by `requeueStale`, never
+  // claimed. The column is read from the same index rows the lane filter walks.
+  //
+  // A key can have a queued follow-up while a task with that key runs; the follow-up waits for
+  // it, so the two never run side by side (served by `tasks_dedupe_active_idx`).
   const rows = await db
     .update(schema.tasks)
     .set({ status: "running", lockedAt: sql`now()`, lockedBy: workerId, attempts: sql`${schema.tasks.attempts} + 1`, startedAt: sql`now()` })
-    // `attempts < max_attempts` is what stops a task that kills the process being retried forever:
-    // an out-of-memory is a hard death, so nothing compares the two before the lock goes stale and
-    // the task is claimed again. A task already at its limit is failed by `requeueStale`, never
-    // claimed. The column is read from the same index rows the lane filter walks.
-    //
-    // A key can have a queued follow-up while a task with that key runs; the follow-up waits for
-    // it, so the two never run side by side (served by `tasks_dedupe_active_idx`).
     .where(sql`${schema.tasks.id} = (
-      select id from tasks where status = 'queued' and run_after <= now() and attempts < max_attempts and ${laneFilter} and ${exclusionFilter}
+    with head as (
+      select id, type, priority from tasks
+      where status = 'queued' and run_after <= now() and attempts < max_attempts and ${laneFilter} and ${exclusionFilter}
         and (dedupe_key is null or not exists (select 1 from tasks r where r.dedupe_key = tasks.dedupe_key and r.status = 'running'))
       order by priority asc, run_after asc, created_at asc
       limit 1 for update skip locked
-    )`)
+    ), fair as (
+      select t.id from tasks t join head h on h.type = 'generate_cv'
+      where t.type = 'generate_cv' and t.status = 'queued' and t.priority = h.priority
+        and t.run_after <= now() and t.attempts < t.max_attempts
+        and (t.dedupe_key is null or not exists (select 1 from tasks r where r.dedupe_key = t.dedupe_key and r.status = 'running'))
+      order by (select count(*) from tasks r where r.type = 'generate_cv' and r.status = 'running'
+                  and r.payload->>'userId' = t.payload->>'userId') asc,
+        t.run_after asc, t.created_at asc
+      limit 1 for update of t skip locked
+    )
+    select coalesce((select id from fair), (select id from head)))`)
     .returning();
   return rows[0] ?? null;
 }
@@ -588,7 +623,8 @@ export class TaskQueue {
   }
 
   start(): void {
-    for (let i = 0; i < this.opts.concurrency; i++) this.loops.push(this.loop(i));
+    const slots = this.opts.concurrency + (this.opts.cvConcurrency ?? 0);
+    for (let i = 0; i < slots; i++) this.loops.push(this.loop(i));
   }
 
   /**
@@ -729,11 +765,18 @@ export class TaskQueue {
     await previous;
     try {
       if (this.stopping) return null;
+      const workerId = `${this.opts.workerId}#${slot}`;
+      // A CV slot claims CV builds only, and has nothing to fall through to.
+      if (this.opts.cvConcurrency && slot >= this.opts.concurrency) {
+        const task = await claimTask(this.deps.db, workerId, "cv");
+        if (task) this.reserveType(task.type);
+        return task;
+      }
       const excluded = (Object.entries(this.maxActiveByType) as Array<[Task["type"], number]>)
         .filter(([type, cap]) => (this.activeByType.get(type) ?? 0) >= cap)
         .map(([type]) => type);
+      if (this.opts.cvConcurrency && !excluded.includes("generate_cv")) excluded.push("generate_cv");
       const lane: QueueLane = this.lanes ? this.lanes[slot % this.lanes.length]! : LANES[this.turn++ % LANES.length]!;
-      const workerId = `${this.opts.workerId}#${slot}`;
       const task = (await claimTask(this.deps.db, workerId, lane, excluded))
         ?? (await claimTask(this.deps.db, workerId, "all", excluded));
       if (task) this.reserveType(task.type);

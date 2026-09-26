@@ -2,7 +2,7 @@
 import { renewTask, completeTask, assertTaskOwnership } from "./queue";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {createDb, enqueueTask, listUserIds, listWorkerEvents, schema, setSubscriptionStatus, subscribeToCompany, type Db} from "@ava/db";
-import { AGEING_PRIORITY_FLOOR, dedupeKeyFor, isUserSettingsKey, priorityFor } from "@ava/core";
+import { AGEING_PRIORITY_FLOOR, cvBuildDeadlineMs, dedupeKeyFor, isUserSettingsKey, priorityFor } from "@ava/core";
 import { ensureTestUser, testDatabaseUrl } from "./test-users";
 import { runMigrations } from "@ava/db/migrate";
 import { desc, eq, sql } from "drizzle-orm";
@@ -567,7 +567,8 @@ describe("execution model", () => {
 
   it("uses the per-type deadline table, and a caller's override before it", () => {
     expect(deadlineMsFor("scan_company")).toBe(3 * 60_000);
-    expect(deadlineMsFor("generate_cv")).toBe(45 * 60_000);
+    expect(deadlineMsFor("generate_cv")).toBe(cvBuildDeadlineMs());
+    expect(deadlineMsFor("generate_cv")).toBeGreaterThanOrEqual(45 * 60_000);
     expect(deadlineMsFor("discover")).toBe(5 * 60_000);
     expect(deadlineMsFor("score_job")).toBe(2 * 60_000);
     expect(deadlineMsFor("scan_company", { scan_company: 5 })).toBe(5);
@@ -953,7 +954,7 @@ describe("crash recovery", () => {
     // The hold names the build it is for, as a live build's does: an account can have two.
     await db.execute(sql`insert into ai_reservations (user_id, call_site, amount, expires_at, worker_id, ref_id)
       values (${user.id}, 'CV', 3.06, now() + interval '30 minutes', ${workerId}, ${draft!.id})`);
-    const payload = { draftId: draft!.id };
+    const payload = { draftId: draft!.id, userId: user.id };
     await enqueueTask(db, "generate_cv", payload, { dedupeKey: dedupeKeyFor("generate_cv", payload) });
     const task = (await claimTask(db, `${workerId}#0`, "interactive"))!;
     await db.update(schema.tasks).set({ attempts, lockedAt: past() }).where(eq(schema.tasks.id, task.id));

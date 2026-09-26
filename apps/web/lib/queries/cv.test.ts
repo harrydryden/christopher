@@ -148,6 +148,36 @@ it("signs the whole ledger in SQL the way a reader signs the rows it holds, and 
   expect(merged.map((step) => step.seq)).toEqual([1, 2, 3, 4]);
 });
 
+it("reads the older way only when the schema is behind, and lets any other failure through", async () => {
+  const draft = await seedDraft();
+  const real = database;
+  let selects = 0;
+  const failing = (code: string) =>
+    new Proxy(real, {
+      get(target, key, receiver) {
+        if (key === "execute") return async () => { throw Object.assign(new Error(`failed with ${code}`), { code }); };
+        if (key === "select") selects += 1;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+  try {
+    // A statement timeout is this reading failing: the poller backs off, and nothing reads again.
+    database = failing("57014");
+    await expect(readCvProgress(user.id, draft.id)).rejects.toThrow("failed with 57014");
+    expect(selects).toBe(0);
+    // A missing column, even wrapped by the driver, is a worker that has not migrated yet.
+    database = new Proxy(real, {
+      get(target, key, receiver) {
+        if (key === "execute") return async () => { throw Object.assign(new Error("query failed"), { cause: Object.assign(new Error("no column"), { code: "42703" }) }); };
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    expect((await readCvProgress(user.id, draft.id))!.draft.status).toBe("generating");
+  } finally {
+    database = real;
+  }
+});
+
 it("reads another account's ledger rows as nobody's, even through its own draft id", async () => {
   const draft = await seedDraft();
   const stranger = await ensureTestUser(database, "cv-queries-stranger@example.com");
@@ -184,6 +214,36 @@ it("includes a quiz continuation task in account CV work status", async () => {
   const status = await getCvWorkStatus(user.id);
   expect(status.active).toBe(true);
   expect(status.version).not.toBe("");
+});
+
+it("follows a ready CV while its improvement runs, and never moves for a budget admission", async () => {
+  const draft = await seedDraft({ status: "ready", buildStage: null });
+  expect((await getCvWorkStatus(user.id)).active).toBe(false);
+  // The improvement pass after publication: its queue row is still running.
+  await database.insert(schema.tasks).values({ type: "generate_cv", payload: { draftId: draft.id }, dedupeKey: `generate_cv:${draft.id}`, status: "running", attempts: 1 });
+  const step = (seq: number, motion: string, status: "running" | "done" = "running") =>
+    database.insert(schema.cvBuildSteps).values({
+      draftId: draft.id, userId: user.id, attempt: 1, seq, stage: "assessing", motion: motion as "improve_content", title: motion, status, detail: {},
+    });
+  await step(1, "improve_content");
+  const improving = await getCvWorkStatus(user.id);
+  expect(improving).toMatchObject({ active: true, improving: [draft.id] });
+  // The re-check's admission opens and closes around the pass: the version does not move for it.
+  await step(2, "admit_budget");
+  expect((await getCvWorkStatus(user.id)).version).toBe(improving.version);
+  await database.update(schema.cvBuildSteps).set({ status: "done" }).where(sql`seq = 2`);
+  expect((await getCvWorkStatus(user.id)).version).toBe(improving.version);
+
+  // The queue row finishes and nothing is open: the pass is over, and the version moves once more.
+  await database.update(schema.tasks).set({ status: "done" });
+  await database.update(schema.cvBuildSteps).set({ status: "done" });
+  const over = await getCvWorkStatus(user.id);
+  expect(over).toMatchObject({ active: false, improving: [] });
+  expect(over.version).not.toBe(improving.version);
+  // A running row left by a process that died long ago is not work.
+  await step(3, "compare_content");
+  await database.update(schema.cvBuildSteps).set({ startedAt: new Date(Date.now() - 60 * 60_000) }).where(sql`seq = 3`);
+  expect((await getCvWorkStatus(user.id)).active).toBe(false);
 });
 
 it("moves the account's CV version once per motion, not once per batch", async () => {

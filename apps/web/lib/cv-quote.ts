@@ -25,7 +25,9 @@ import {
 // The one estimator the worker admits builds with, so the price quoted here and the price held
 // there cannot drift. The interface does not depend on `@ava/ai` by name — the worker it
 // drives does — and this module is the package's pure pricing table, with no imports of its own.
-import { estimateCvBuildUsd, type CvBuildParts, type CvBuildSize } from "../../../packages/ai/src/pricing";
+import { estimateCvBuildUsd, estimateStage, type CvBuildParts, type CvBuildSize } from "../../../packages/ai/src/pricing";
+import { CV_REVIEW_BATCH_SIZE, PROMPTS } from "../../../packages/ai/src/prompt-registry";
+import type { CvBuildStageName } from "@ava/core";
 import { db } from "@/lib/db";
 import { formatUsd } from "@/lib/format";
 import { getSettingsFor } from "@/lib/settings";
@@ -44,9 +46,15 @@ export interface CvBuildQuote {
    * refuse once the queue ahead of it had spent its share.
    */
   queuedUsd: number;
+  /**
+   * What this account's builds already running are still expected to spend beyond what they hold.
+   * The worker admits one stage at a time, so a generating build holds only the stage it is in;
+   * the stages after it will each be admitted in turn, and are as good as spent.
+   */
+  inFlightUsd: number;
   /** The account's monthly budget. */
   limitUsd: number;
-  /** What is left of it: the limit less spend, holds and queued builds, never below zero. */
+  /** What is left of it: the limit less spend, holds, queued builds and running builds' remaining stages, never below zero. */
   leftUsd: number;
   /** The sentence the worker would refuse with, or null when the estimate fits. */
   refusal: string | null;
@@ -137,6 +145,109 @@ async function queuedBuildsUsd(userId: string): Promise<number> {
   );
 }
 
+/** What a running build's checkpoint says it has already paid for, as the quote needs it. */
+export interface GeneratingCvDraft {
+  model: string;
+  libraryBytes: number;
+  descriptionBytes: number;
+  /** The keys of `buildCheckpoint.stages`: `rubric`, `plan`, `write`, `audit[0]`, … */
+  stageKeys: string[];
+  /** The version 1 mirrors the worker writes beside them. */
+  hasRubric: boolean;
+  hasPlan: boolean;
+  hasContent: boolean;
+  /** The rubric's requirement count, which decides how many audit batches there will be. */
+  requirements: number | null;
+  tailoringEnabled: boolean;
+  mode: string | null;
+  improvementAttempted: boolean;
+  /** What this draft's own reservations hold now: the stage it is running. */
+  heldUsd: number;
+}
+
+// The same sizing as the worker's `estimateCvStage` (`apps/worker/src/handlers/cv-stages.ts`), which
+// the interface cannot import: keep the two in step.
+const PRINTED_CV_BYTES = 9_000;
+const WRITER_TAIL_BYTES = 6_000;
+const AUDIT_TAIL_BYTES = 7_500;
+const roleBytes = (size: CvBuildSize) => size.descriptionBytes * 2 + 4_000;
+
+/** One stage's expected cost, as the worker admits it. */
+function stageUsd(stage: CvBuildStageName, size: CvBuildSize, model: string, batches = 1): number {
+  const priced = { cvModel: model };
+  switch (stage) {
+    case "rubric":
+      return estimateStage(PROMPTS["cv.rubric"], { tailBytes: size.descriptionBytes }, priced);
+    case "plan":
+      return estimateStage(PROMPTS["cv.planning"], { tailBytes: size.libraryBytes + roleBytes(size) }, priced);
+    case "write":
+      return estimateStage(PROMPTS["cv.author"], { stableBytes: [size.libraryBytes, roleBytes(size)], tailBytes: WRITER_TAIL_BYTES, calls: 3 }, priced);
+    case "improve":
+      return estimateStage(PROMPTS["cv.improvement"], { stableBytes: [size.libraryBytes, roleBytes(size)], tailBytes: WRITER_TAIL_BYTES }, priced);
+    case "audit":
+    case "reaudit":
+      return estimateStage(PROMPTS[stage === "audit" ? "cv.review" : "cv.review_candidate"], {
+        stableBytes: [size.libraryBytes, PRINTED_CV_BYTES], tailBytes: AUDIT_TAIL_BYTES, calls: Math.max(1, batches),
+      }, priced);
+  }
+}
+
+/**
+ * What a generating build is still expected to spend beyond what it holds: every stage its
+ * checkpoint does not have yet — the rubric, the evidence plan for a tailored build, the writing,
+ * the audit batches not yet saved, and the optional improvement and its re-check after publication
+ * — less the hold of the stage it is running, which the quote already counts as held.
+ */
+export function generatingDraftRemainingUsd(draft: GeneratingCvDraft): number {
+  const size = { libraryBytes: draft.libraryBytes, descriptionBytes: draft.descriptionBytes };
+  const has = (key: string) => draft.stageKeys.includes(key);
+  const stages: Array<[CvBuildStageName, number?]> = [];
+  if (!has("rubric") && !draft.hasRubric) stages.push(["rubric"]);
+  if (draft.tailoringEnabled && !has("plan") && !draft.hasPlan) stages.push(["plan"]);
+  if (draft.mode !== "assess" && !has("write") && !draft.hasContent) stages.push(["write"]);
+  const expected = draft.requirements ? Math.ceil(draft.requirements / CV_REVIEW_BATCH_SIZE) : 1;
+  const held = draft.stageKeys.filter((key) => key.startsWith("audit[")).length;
+  if (expected - held > 0) stages.push(["audit", expected - held]);
+  if (draft.mode !== "assess" && !draft.improvementAttempted) stages.push(["improve"], ["reaudit"]);
+  const remaining = stages.reduce((sum, [stage, batches]) => sum + stageUsd(stage, size, draft.model, batches), 0);
+  return Math.max(0, remaining - draft.heldUsd);
+}
+
+/** The remaining stages of every build this account has running. */
+async function generatingBuildsUsd(userId: string, now: Date): Promise<number> {
+  const checkpoint = sql`(case when jsonb_typeof(${cvDrafts.buildCheckpoint}) = 'object' then ${cvDrafts.buildCheckpoint} else '{}'::jsonb end)`;
+  const rows = await db()
+    .select({
+      model: cvDrafts.model,
+      libraryBytes: sql<number>`octet_length(${cvDrafts.librarySnapshot}::text)::int`,
+      descriptionBytes: sql<number>`octet_length(${cvDrafts.jobDescription})::int`,
+      stageKeys: sql<string[]>`(select coalesce(array_agg(k), '{}') from jsonb_object_keys(case when jsonb_typeof(${checkpoint}->'stages') = 'object' then ${checkpoint}->'stages' else '{}'::jsonb end) k)`,
+      hasRubric: sql<boolean>`${checkpoint} ? 'rubric'`,
+      hasPlan: sql<boolean>`${checkpoint} ? 'tailoringPlan'`,
+      hasContent: sql<boolean>`${checkpoint} ? 'contentAt'`,
+      requirements: sql<number | null>`case when jsonb_typeof(${checkpoint}->'rubric'->'requirements') = 'array' then jsonb_array_length(${checkpoint}->'rubric'->'requirements') end`,
+      tailoringEnabled: sql<boolean>`coalesce((${checkpoint}->>'tailoringEnabled')::boolean, false)`,
+      mode: sql<string | null>`${checkpoint}->>'mode'`,
+      improvementAttempted: sql<boolean>`coalesce((${checkpoint}->>'improvementAttempted')::boolean, false)`,
+      heldUsd: sql<number>`(select coalesce(sum(r.amount), 0)::float8 from ai_reservations r where r.ref_id = cv_drafts.id::text and r.expires_at > ${now})`,
+    })
+    .from(cvDrafts)
+    .where(and(eq(cvDrafts.userId, userId), eq(cvDrafts.status, "generating"), isNull(cvDrafts.archivedAt)))
+    // A database without the checkpoint column: nothing to measure the remaining stages from.
+    .catch(() => []);
+  return rows.reduce(
+    (sum, row) =>
+      sum + generatingDraftRemainingUsd({
+        ...row,
+        libraryBytes: Number(row.libraryBytes ?? 0),
+        descriptionBytes: Number(row.descriptionBytes ?? 0),
+        requirements: row.requirements === null ? null : Number(row.requirements),
+        heldUsd: Number(row.heldUsd ?? 0),
+      }),
+    0,
+  );
+}
+
 /**
  * What building a CV for this role would cost the account, and whether its budget admits it.
  *
@@ -178,7 +289,7 @@ export async function cvBuildQuote(
   };
   const estimateUsd = estimateCvBuildUsd(settings.cvModel, size, "tailored");
   const since = aiBudgetWindowStart(now, settings.aiBudgetResetAt);
-  const [spentUsd, heldUsd, queuedUsd] = await Promise.all([
+  const [spentUsd, heldUsd, queuedUsd, inFlightUsd] = await Promise.all([
     accountAiSpend(database, userId, since),
     // Holds that have expired are capacity nothing can still be spending; the worker deletes them
     // inside the budget lock, and a quote read a moment before that must not count them either.
@@ -188,25 +299,27 @@ export async function cvBuildQuote(
       .where(and(eq(aiReservations.userId, userId), gt(aiReservations.expiresAt, now)))
       .then((rows) => Number(rows[0]?.held ?? 0)),
     queuedBuildsUsd(userId),
+    generatingBuildsUsd(userId, now),
   ]);
   const limitUsd = settings.aiBudgetUsd;
-  const fits = spentUsd + heldUsd + queuedUsd + estimateUsd <= limitUsd;
+  // Builds waiting in the queue will hold their share the moment the worker admits them, and a
+  // running build will admit each of its remaining stages in turn.
+  const committed = heldUsd + queuedUsd + inFlightUsd;
+  const fits = spentUsd + committed + estimateUsd <= limitUsd;
+  const refusal = fits
+    ? null
+    : aiBudgetRefusalMessage("This build", estimateUsd, { limit: "account", limitUsd, spent: spentUsd, held: committed });
   return {
     estimateUsd,
     spentUsd,
     heldUsd,
     queuedUsd,
+    inFlightUsd,
     limitUsd,
-    leftUsd: Math.max(0, limitUsd - spentUsd - heldUsd - queuedUsd),
-    refusal: fits
-      ? null
-      : aiBudgetRefusalMessage("This build", estimateUsd, {
-          limit: "account",
-          limitUsd,
-          spent: spentUsd,
-          // Builds waiting in the queue will hold their share the moment the worker admits them.
-          held: heldUsd + queuedUsd,
-        }),
+    leftUsd: Math.max(0, limitUsd - spentUsd - committed),
+    // The worker's sentence says "held by calls in flight", which is all it counts; this figure
+    // also counts builds still to be admitted, so it says so.
+    refusal: refusal && committed > heldUsd ? refusal.replace(" held by calls in flight", " held by builds queued or in flight") : refusal,
     libraryBytes: size.libraryBytes,
     hasLibrary: !!library,
   };

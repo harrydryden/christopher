@@ -119,7 +119,7 @@ describe("the journal's wording, motion by motion", () => {
     // Without a failure record, the detail's own error is the reason, never nothing.
     expect(narrateStep(step("assess_batch", "failed", { index: 3, of: 5, error: "Stream stalled" }), now).note).toBe("Stream stalled");
 
-    const cancelled = narrateStep(step("assess_batch", "skipped", { pass: "draft", index: 3, of: 5, cancelled: true }), now);
+    const cancelled = narrateStep(step("assess_batch", "skipped", { pass: "draft", index: 3, of: 5, cancelled: true }), now, { batchFailed: true });
     expect(cancelled.text).toBe("Stopped checking batch 3 of 5: another batch failed");
     expect(cancelled.tone).toBe("gray");
     expect(cancelled.glyph).toBe("–");
@@ -152,12 +152,16 @@ describe("the journal's wording, motion by motion", () => {
   });
 
   it("reserves the budget stage by stage, with what other calls hold", () => {
-    expect(text(step("admit_budget", "done", { stage: "writing", expectedUsd: 1.2, leftUsd: 14, limitUsd: 18.4, heldUsd: 0.4 }))).toBe(
+    expect(text(step("admit_budget", "done", { stage: "write", expectedUsd: 1.2, leftUsd: 14, limitUsd: 18.4, heldUsd: 0.4 }))).toBe(
       "Reserved US$1.20 of your AI budget for writing (US$14.00 left of US$18.40 this month, US$0.40 held by other calls in flight)",
     );
     expect(text(step("admit_budget", "done", { stage: "improve", expectedUsd: 0.9, leftUsd: 12 }))).toBe(
       "Reserved US$0.90 of your AI budget for the improvement pass (US$12.00 left this month)",
     );
+    expect(text(step("admit_budget", "done", { stage: "plan", expectedUsd: 0.2 }))).toBe("Reserved US$0.20 of your AI budget for matching your evidence");
+    expect(text(step("admit_budget", "done", { stage: "audit", expectedUsd: 0.2 }))).toBe("Reserved US$0.20 of your AI budget for checking");
+    expect(text(step("admit_budget", "done", { stage: "reaudit", expectedUsd: 0.2 }))).toBe("Reserved US$0.20 of your AI budget for checking the revision");
+    expect(text(step("admit_budget", "done", { stage: "rubric", expectedUsd: 0.2 }))).toBe("Reserved US$0.20 of your AI budget for extracting the requirements");
     expect(text(step("admit_budget", "done", { stage: "tailored_completion", expectedUsd: 0.5 }))).toBe(
       "Reserved US$0.50 of your AI budget for tailored completion",
     );
@@ -330,6 +334,131 @@ describe("the narrative's shape", () => {
   });
 });
 
+describe("a build cut off part-way", () => {
+  it("calls an improvement the worker closed as cancelled interrupted, not unnecessary", () => {
+    // `skipOpenCvBuildSteps` closes every running row `skipped` with `cancelled: true`.
+    const cut = narrateStep(step("improve_content", "skipped", { opportunities: 2, cancelled: true }), now);
+    expect(cut.text).toBe("The optional revision was interrupted; kept the original");
+    expect(cut.tone).toBe("gray");
+    expect(text(step("assemble", "skipped", { pass: "revision", cancelled: true }))).toBe("Stopped scoring: the build was interrupted");
+    expect(text(step("admit_budget", "skipped", { stage: "reaudit", cancelled: true }, { title: "Reserving this build's share of your AI budget" }))).toBe(
+      "Interrupted while reserving this build's share of your AI budget",
+    );
+    // What the worker records when there was nothing to improve still says so.
+    expect(text(step("improve_content", "skipped", { opportunities: 0, skipped: true }))).toBe("No further supported priority evidence needed adding");
+  });
+
+  it("says another batch failed only when one did", () => {
+    nextSeq = 0;
+    const cutOff = [
+      step("publish", "done"),
+      step("improve_content", "done", { opportunities: 2 }),
+      step("assess_batch", "done", { pass: "revision", index: 1, of: 2 }),
+      step("assess_batch", "skipped", { pass: "revision", index: 2, of: 2, cancelled: true }),
+    ];
+    const group = narrateBuild(cutOff, now).find((item) => item.kind === "group");
+    expect(group!.kind === "group" && group!.group.batches.map((batch) => batch.line.text)).toEqual([
+      "Checked the revision: a batch of requirements and claims (batch 1 of 2)",
+      "Stopped checking batch 2 of 2: the build was interrupted",
+    ]);
+    nextSeq = 0;
+    const sibling = [
+      step("assess_batch", "failed", { pass: "draft", index: 1, of: 2 }),
+      step("assess_batch", "skipped", { pass: "draft", index: 2, of: 2, cancelled: true }),
+    ];
+    const failed = narrateBuild(sibling, now)[0]!;
+    expect(failed.kind === "group" && failed.group.batches[1]!.line.text).toBe("Stopped checking batch 2 of 2: another batch failed");
+  });
+});
+
+describe("never red over a CV that is ready", () => {
+  it("greys every failure of the improvement pass that ran after publication", () => {
+    nextSeq = 0;
+    const steps = [
+      step("admit_budget", "done", { stage: "audit", expectedUsd: 0.4 }),
+      step("assess_batch", "done", { pass: "draft", index: 1, of: 1 }),
+      step("assemble", "done", {}),
+      step("publish", "done", { revision: 1 }),
+      step("admit_budget", "failed", { stage: "improve", expectedUsd: 0.9 }, { error: "Not enough budget left this month." }),
+      step("improve_content", "done", { opportunities: 2 }),
+      step("admit_budget", "done", { stage: "reaudit", expectedUsd: 0.3 }),
+      step("assess_batch", "failed", { pass: "revision", index: 1, of: 1 }, { error: "The model returned an incomplete assessment." }),
+      step("assemble", "failed", { pass: "revision" }),
+      step("compare_content", "done", { accepted: false }),
+      step("adopt_revision", "skipped", { reason: "the revision could not be checked" }),
+    ];
+    const items = narrateBuild(steps, now);
+    const tones = items.flatMap((item) =>
+      item.kind === "line" ? [item.line.tone] : item.kind === "group" ? [item.group.line.tone, ...item.group.batches.map((batch) => batch.line.tone)] : [],
+    );
+    expect(tones).not.toContain("red");
+    expect(lines(items).slice(4)).toEqual([
+      "– Could not reserve this build's share of your AI budget; kept the original · 2.0 s",
+      "✓ Rewrote with 2 improvements · 2.0 s",
+      "✓ Reserved US$0.30 of your AI budget for checking the revision · 2.0 s",
+      "– Could not finish checking the revision against your evidence: batch 1 of 1 failed; kept the original · 2.0 s",
+      "– Could not score the CV; kept the original · 2.0 s",
+      "✓ Kept the original CV because the revision did not pass every improvement check · 2.0 s",
+      "– Kept the original: the revision could not be checked",
+    ]);
+    // The failed batch is still in view, for its reason.
+    const revision = items.find((item) => item.kind === "group" && item.group.pass === "revision");
+    expect(revision!.kind === "group" && revision!.group.flagged.map((batch) => batch.line.note)).toEqual(["The model returned an incomplete assessment."]);
+  });
+
+  it("keeps the same failures red before publication", () => {
+    nextSeq = 0;
+    const items = narrateBuild([step("assess_batch", "failed", { pass: "draft", index: 1, of: 1 }), step("assemble", "failed", {})], now);
+    expect(items.map((item) => (item.kind === "group" ? item.group.line.tone : item.kind === "line" ? item.line.tone : null))).toEqual(["red", "red"]);
+  });
+});
+
+describe("an audit resumed from its checkpoint", () => {
+  it("counts the batches the attempt holds from the previous one as done, and says so", () => {
+    nextSeq = 0;
+    const retry = { attempt: 2 };
+    const steps = [
+      step("load_inputs", "done", {}),
+      step("assess_batch", "done", { pass: "draft", index: 1, of: 5 }),
+      step("assess_batch", "done", { pass: "draft", index: 2, of: 5 }),
+      step("assess_batch", "failed", { pass: "draft", index: 3, of: 5 }),
+      step("assess_batch", "skipped", { pass: "draft", index: 4, of: 5, cancelled: true }),
+      step("assess_batch", "skipped", { pass: "draft", index: 5, of: 5, cancelled: true }),
+      // The queue's retry holds batches 1 and 2 and writes rows only for the other three.
+      step("load_inputs", "done", { reusedRubric: true, reusedContent: true }, retry),
+      step("assess_batch", "done", { pass: "draft", index: 3, of: 5 }, retry),
+      step("assess_batch", "running", { pass: "draft", index: 4, of: 5 }, retry),
+      step("assess_batch", "running", { pass: "draft", index: 5, of: 5 }, retry),
+    ];
+    const live = narrateBuild(steps, now);
+    expect(lines(live).at(-1)).toMatch(/^… Checking requirements and claims against your evidence — 3 of 5 batches done \(2 kept from the previous attempt\) · running/);
+    expect(currentMotionLine(steps, now)).toMatch(/— 3 of 5 batches done \(2 kept from the previous attempt\) · running/);
+    expect(cvBuildProgressLine(steps, now)).toBe("Stage 4 of 4 · 3 of 5 batches done (2 kept from the previous attempt)");
+
+    const finished = steps.map((one) => (one.status === "running" ? { ...one, status: "done" as const, finishedAt: new Date(one.startedAt.getTime() + 2_000), ms: 2_000 } : one));
+    expect(lines(narrateBuild(finished, now)).at(-1)).toMatch(
+      /^✓ Checked requirements and claims against your evidence in 5 batches \(2 kept from the previous attempt\) · /,
+    );
+  });
+
+  it("keeps nothing for a first attempt, or for the revision's pass", () => {
+    nextSeq = 0;
+    const steps = [
+      step("load_inputs", "done", {}),
+      step("assess_batch", "done", { pass: "draft", index: 1, of: 3 }),
+      step("assess_batch", "running", { pass: "draft", index: 2, of: 3 }),
+    ];
+    expect(lines(narrateBuild(steps, now)).at(-1)).toMatch(/— 1 of 3 batches done · running/);
+  });
+});
+
+describe("a status this interface has never heard of", () => {
+  it("reads as a skipped motion: grey, no figures, never a blank glyph or a red failure", () => {
+    const odd = narrateStep(step("check_plan", "paused" as CvJournalStep["status"], { usd: 0.4 }, { title: "Checking the writer kept every role" }), now);
+    expect(odd).toMatchObject({ glyph: "–", tone: "gray", status: "skipped", text: "Skipped checking the writer kept every role", meta: "US$0.40" });
+  });
+});
+
 describe("what a build came to", () => {
   it("totals each attempt by its own clock and leaves out the days between them", () => {
     nextSeq = 0;
@@ -345,7 +474,27 @@ describe("what a build came to", () => {
     const totals = cvBuildTotals(steps, s(3 * day));
     // 3 min for the first attempt and 2 min 21 s for the second: not "2 days".
     expect(totals.ms).toBe(180_000 + 141_000);
-    expect(cvBuildTotalsLine(totals)).toBe("5 motions in 5 min 21 s, costing US$2.50 of US$3.10 reserved.");
+    // The publishing attempt's reservation covers only its own stages, not the first attempt's
+    // spend, so it is not set beside a total that includes both.
+    expect(totals.reservedUsd).toBeNull();
+    expect(cvBuildTotalsLine(totals)).toBe("5 motions in 5 min 21 s, costing US$2.50.");
+  });
+
+  it("sets the reservation beside the spend only when both cover the same work", () => {
+    nextSeq = 0;
+    const single = [
+      step("admit_budget", "done", { stage: "rubric", expectedUsd: 0.1 }, { startedAt: s(0), finishedAt: s(1) }),
+      step("rubric", "done", { usd: 0.08 }, { startedAt: s(1), finishedAt: s(20) }),
+      step("publish", "done", { reservedUsd: 0.3, spentUsd: 0.08 }, { startedAt: s(20), finishedAt: s(21) }),
+    ];
+    expect(cvBuildTotalsLine(cvBuildTotals(single, s(30)))).toBe("3 motions in 21 s, costing US$0.08 of US$0.30 reserved.");
+    // The improvement after publication spends outside the publishing reservation.
+    const improved = [
+      ...single,
+      step("admit_budget", "done", { stage: "improve", expectedUsd: 1 }, { startedAt: s(22), finishedAt: s(23) }),
+      step("improve_content", "done", { usd: 2.42 }, { startedAt: s(23), finishedAt: s(60) }),
+    ];
+    expect(cvBuildTotalsLine(cvBuildTotals(improved, s(70)))).toBe("5 motions in 1 min, costing US$2.50.");
   });
 
   it("is provisional only while something is working on it", () => {

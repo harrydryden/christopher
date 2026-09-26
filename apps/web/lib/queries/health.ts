@@ -178,7 +178,7 @@ export interface CvBuildMotionPercentiles extends CvBuildMotionStat {
  * empty card rather than an error over the whole of Operations.
  *
  * The median and the 95th percentile are the database's `percentile_cont` over each motion's own
- * rows, never a mean of means.
+ * finished rows, never a mean of means.
  */
 export async function getCvBuildMotions(days = 30): Promise<CvBuildMotionPercentiles[]> {
   return ifLedger(async () => {
@@ -188,9 +188,12 @@ export async function getCvBuildMotions(days = 30): Promise<CvBuildMotionPercent
         motion: cvBuildSteps.motion,
         runs: sql<number>`count(*)::int`,
         failed: sql<number>`count(*) filter (where ${cvBuildSteps.status} = 'failed')::int`,
-        medianMs: sql<number | null>`percentile_cont(0.5) within group (order by ${cvBuildSteps.ms})`,
-        p95Ms: sql<number | null>`percentile_cont(0.95) within group (order by ${cvBuildSteps.ms})`,
-        medianUsd: sql<number | null>`percentile_cont(0.5) within group (order by (${cvBuildSteps.detail}->>'usd')::float8)`,
+        // The durations and costs of the runs that finished: a skipped row took no time, and a
+        // failed or interrupted one stopped part-way.
+        done: sql<number>`count(*) filter (where ${cvBuildSteps.status} = 'done')::int`,
+        medianMs: sql<number | null>`percentile_cont(0.5) within group (order by ${cvBuildSteps.ms}) filter (where ${cvBuildSteps.status} = 'done')`,
+        p95Ms: sql<number | null>`percentile_cont(0.95) within group (order by ${cvBuildSteps.ms}) filter (where ${cvBuildSteps.status} = 'done')`,
+        medianUsd: sql<number | null>`percentile_cont(0.5) within group (order by (${cvBuildSteps.detail}->>'usd')::float8) filter (where ${cvBuildSteps.status} = 'done')`,
       })
       .from(cvBuildSteps)
       .where(gte(cvBuildSteps.startedAt, since))
@@ -417,20 +420,30 @@ export async function getWorkerHeartbeat(): Promise<WorkerHeartbeat | null> {
 }
 
 /**
- * The model engine's stream governor as the heartbeat reports it: how many streams it allows at
- * once and how many are open. Read defensively, because the engine reports it and the interface
- * deploys separately; absent reads as null.
+ * The model engine's stream governor as the heartbeat reports it: `{ cap, inFlight, queued,
+ * pausedUntil, models }`, where `cap` is per model, the counts are summed across models, and
+ * `pausedUntil` is epoch milliseconds. Read defensively, because the engine reports it and the
+ * interface deploys separately: absent reads as null, and an ISO string for the pause is accepted
+ * as well as the number.
  */
-// TODO(merge P2): the worker publishes `{ cap, inFlight, queued, pausedUntil, models }` under
-// `governor`; read defensively until that lands, and tolerate the older names.
 function readGovernor(stored: unknown): WorkerHeartbeat["governor"] {
   if (!stored || typeof stored !== "object") return null;
   const value = stored as Record<string, unknown>;
   const streamCap = finite(value.cap ?? value.streamCap);
   const inFlight = finite(value.inFlight);
   const queued = finite(value.queued);
-  const pausedUntil = isoDate(value.pausedUntil);
-  return streamCap === null && inFlight === null && queued === null ? null : { streamCap, inFlight, queued, pausedUntil };
+  const pausedMs = finite(value.pausedUntil);
+  const pausedUntil = pausedMs !== null ? new Date(pausedMs) : isoDate(value.pausedUntil);
+  const models =
+    value.models && typeof value.models === "object"
+      ? Object.entries(value.models as Record<string, unknown>).flatMap(([model, entry]) => {
+          const row = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {};
+          const open = finite(row.inFlight);
+          const waiting = finite(row.queued);
+          return open === null && waiting === null ? [] : [{ model, inFlight: open ?? 0, queued: waiting ?? 0 }];
+        })
+      : [];
+  return streamCap === null && inFlight === null && queued === null ? null : { streamCap, inFlight, queued, pausedUntil, models };
 }
 
 export function readHeartbeat(stored: unknown): WorkerHeartbeat | null {

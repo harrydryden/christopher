@@ -274,7 +274,12 @@ export async function readCvProgress(userId: string, draftId: string, window: Cv
       ) rows on true
       where d.id = ${draftId} and d.user_id = ${userId}`);
     row = result.rows[0];
-  } catch {
+  } catch (error) {
+    // Only a schema the worker has not migrated yet is read the older way. Anything else — a
+    // statement timeout, a dropped connection — is this reading failing, and the poller backs off:
+    // answering it with an empty ledger would wipe the narrative the page already shows, and
+    // following the failed query with two more would add load to a database already struggling.
+    if (!isSchemaBehind(error)) throw error;
     return readCvProgressBehind(userId, draftId);
   }
   if (!row) return null;
@@ -305,6 +310,18 @@ export async function readCvProgress(userId: string, draftId: string, window: Cv
     steps,
     signature: `${row.n ?? 0}:${row.running ?? 0}:${row.last ?? ""}`,
   };
+}
+
+/** PostgreSQL's codes for a missing table and a missing column. */
+const SCHEMA_BEHIND = new Set(["42P01", "42703"]);
+
+/** Whether a query failed because the schema lacks a table or column, however the driver wrapped it. */
+export function isSchemaBehind(error: unknown): boolean {
+  for (let cause = error, depth = 0; cause && typeof cause === "object" && depth < 5; cause = (cause as { cause?: unknown }).cause, depth += 1) {
+    const code = (cause as { code?: unknown }).code;
+    if (typeof code === "string" && SCHEMA_BEHIND.has(code)) return true;
+  }
+  return false;
 }
 
 /** The same reading from a database the worker has not migrated: the draft and its task, no ledger. */
@@ -381,7 +398,7 @@ export async function getOwnCvBuildSteps(userId: string, draftId: string): Promi
 
 /**
  * How long each motion usually takes, for the estimate beside a running motion and the time left
- * once writing has closed. Only motions with at least `CV_MEDIAN_MIN_RUNS` runs in thirty days are
+ * once writing has closed. Only motions with at least `CV_MEDIAN_MIN_RUNS` finished runs in thirty days are
  * kept, because a median of three builds is an anecdote.
  *
  * Read across every account, but it carries nothing of anyone's: a motion name and a duration. It
@@ -394,7 +411,7 @@ let medians: { at: number; value: Promise<CvMotionMedians> } | null = null;
 export function getCvMotionMedians(now: number = Date.now()): Promise<CvMotionMedians> {
   if (medians && now - medians.at < MEDIANS_TTL_MS) return medians.value;
   const value = cvBuildMotionStats(db(), 30)
-    .then((stats) => Object.fromEntries(stats.filter((stat) => stat.runs >= CV_MEDIAN_MIN_RUNS && stat.medianMs !== null && stat.medianMs > 0).map((stat) => [stat.motion, stat.medianMs!])))
+    .then((stats) => Object.fromEntries(stats.filter((stat) => stat.done >= CV_MEDIAN_MIN_RUNS && stat.medianMs !== null && stat.medianMs > 0).map((stat) => [stat.motion, stat.medianMs!])))
     .catch(() => {
       medians = null;
       return {} as CvMotionMedians;

@@ -294,6 +294,26 @@ it("prices a build for every role on the page, and refuses the ones the budget w
   expect(await pipelineCvQuotes(user.id, [{ jobId: null }])).toEqual({});
 });
 
+it("labels a building CV by the motion still running, never by a budget admission", async () => {
+  const { job } = await role();
+  await shortlist(job.id);
+  const [draft] = await buildCv(job.id, { status: "generating" });
+  const step = (seq: number, motion: string, status: "running" | "done", detail: Record<string, unknown> = {}) =>
+    database.insert(schema.cvBuildSteps).values({
+      draftId: draft!.id, userId: user.id, attempt: 1, seq, stage: "assessing", motion: motion as "assess_batch", title: motion, status, detail,
+    });
+  // Batch 1 is still running; batch 2 opened after it and has already closed.
+  await step(1, "assess_batch", "running", { pass: "draft", index: 1, of: 2 });
+  await step(2, "assess_batch", "done", { pass: "draft", index: 2, of: 2 });
+  expect((await listPipeline(user.id)).rows[0]!.cv!.progress).toBe("checking batch 1 of 2");
+  // An admission between stages is never the label.
+  await step(3, "admit_budget", "running", { stage: "audit" });
+  expect((await listPipeline(user.id)).rows[0]!.cv!.progress).toBe("checking batch 1 of 2");
+  await database.update(schema.cvBuildSteps).set({ status: "done" });
+  await step(4, "admit_budget", "done", { stage: "improve" });
+  expect((await listPipeline(user.id)).rows[0]!.cv!.progress).toBe("checking batch 2 of 2");
+});
+
 it("hints at a row nobody has touched for a fortnight, and only where silence means something", () => {
   const now = new Date("2026-09-19T12:00:00Z");
   const at = (days: number) => new Date(now.getTime() - days * 86_400_000);

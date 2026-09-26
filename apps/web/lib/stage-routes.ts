@@ -43,15 +43,28 @@ export function stageRouteRows(routes: StageRoutes | null | undefined): StageRou
   }));
 }
 
-/** The stored value a submitted form becomes: `route:<id>:model` and `route:<id>:effort`, blank for default. */
-export function stageRoutesFromForm(form: FormData): StageRoutes {
+/**
+ * The stored value a submitted form becomes: `route:<id>:model` and `route:<id>:effort`, blank for
+ * default. A model or effort the engine's sanitiser would drop is refused with a sentence naming the
+ * stage, rather than silently stored as "default": the administrator asked for something specific,
+ * and saving something else while saying "Saved" is the failure.
+ */
+export function stageRoutesFromForm(form: FormData): { ok: true; routes: StageRoutes } | { ok: false; error: string } {
   const raw: Record<string, { model?: string; effort?: string }> = {};
   for (const id of STAGE_ROUTE_IDS) {
     const model = String(form.get(`route:${id}:model`) ?? "").trim();
     const effort = String(form.get(`route:${id}:effort`) ?? "").trim();
     if (model || effort) raw[id] = { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
   }
-  return sanitiseStageRoutes(raw);
+  const routes = sanitiseStageRoutes(raw);
+  const refused: string[] = [];
+  for (const [id, asked] of Object.entries(raw)) {
+    const kept = (routes as Record<string, { model?: string; effort?: string } | undefined>)[id];
+    const label = STAGE_LABELS[id] ?? id;
+    if (asked.model && kept?.model !== asked.model) refused.push(`${label}: "${asked.model}" is not a model this deployment can route to.`);
+    if (asked.effort && kept?.effort !== asked.effort) refused.push(`${label}: "${asked.effort}" is not an effort that stage accepts.`);
+  }
+  return refused.length ? { ok: false, error: `Nothing was saved. ${refused.join(" ")}` } : { ok: true, routes };
 }
 
 /** A route's model as a person reads it: the account's own CV model, or the model named. */

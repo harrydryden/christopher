@@ -89,6 +89,12 @@ export default async function ApplicationsPage({
     `/applications?${new URLSearchParams({ filter: segment, ...(company ? { company: company.id } : {}) })}`;
   const buildingRows = result.rows.filter((row) => row.cv?.status === "queued" || row.cv?.status === "generating");
   const building = buildingRows.length > 0;
+  // A CV that is ready while its optional improvement still runs: the page keeps following it, so
+  // an adopted revision replaces it in the row without a reload.
+  const improvingRows = result.rows.filter((row) => row.cv?.status === "ready" && cvWork.improving.includes(row.cv.id));
+  const improvingMessage = improvingRows.length === 1
+    ? `The CV for ${improvingRows[0]!.companyName} · ${improvingRows[0]!.jobTitle} is ready; a stronger revision is being tried, and this page updates itself.`
+    : `${improvingRows.length} ready CVs are being improved; this page updates itself.`;
   // What the one build in flight is doing, above the table; several are counted instead.
   const only = buildingRows.length === 1 ? buildingRows[0]! : null;
   const buildingMessage = only
@@ -129,7 +135,9 @@ export default async function ApplicationsPage({
         ))}
       </nav>
       {/* A CV on this page is still being written: the cells follow it without a reload. */}
-      {building && <AutoRefresh scope="cv" initialVersion={cvWork.version} message={buildingMessage} />}
+      {(building || improvingRows.length > 0) && (
+        <AutoRefresh scope="cv" initialVersion={cvWork.version} message={building ? buildingMessage : improvingMessage} />
+      )}
       <ApplicationsTable
         key={`${filter}:${result.page}:${company?.id ?? ""}`}
         rows={result.rows}

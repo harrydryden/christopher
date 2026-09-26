@@ -12,16 +12,21 @@ it("lists every stage, the CV build's first, with default where nothing is route
   expect(stageRouteRows(undefined).every((row) => row.model === null && row.effort === null)).toBe(true);
 });
 
-it("stores only what was chosen, and drops what the provider would refuse", () => {
+it("stores only what was chosen, and refuses what the provider would refuse rather than dropping it", () => {
   const form = new FormData();
   form.set("route:cv.author:model", "claude-opus-5-5");
   form.set("route:cv.author:effort", "");
   form.set("route:cv.review:effort", "max");
+  form.set("route:not-a-stage:model", "claude-opus-5-5");
+  expect(stageRoutesFromForm(form)).toEqual({ ok: true, routes: { "cv.author": { model: "claude-opus-5-5" }, "cv.review": { effort: "max" } } });
+  expect(stageRoutesFromForm(new FormData())).toEqual({ ok: true, routes: {} });
+
   form.set("route:cv.rubric:model", "a-model-nobody-offers");
   form.set("route:cv.planning:effort", "enormous");
-  form.set("route:not-a-stage:model", "claude-opus-5-5");
-  expect(stageRoutesFromForm(form)).toEqual({ "cv.author": { model: "claude-opus-5-5" }, "cv.review": { effort: "max" } });
-  expect(stageRoutesFromForm(new FormData())).toEqual({});
+  expect(stageRoutesFromForm(form)).toEqual({
+    ok: false,
+    error: 'Nothing was saved. CV · extracting the requirements: "a-model-nobody-offers" is not a model this deployment can route to. CV · matching the evidence: "enormous" is not an effort that stage accepts.',
+  });
 });
 
 it("warns about an overridden stage running at a route the committed report did not grade", () => {

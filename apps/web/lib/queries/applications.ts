@@ -579,9 +579,13 @@ export async function pipelineRowForJob(userId: string, jobId: string): Promise<
 }
 
 /**
- * Each building CV's newest motion, in the few words the table's cell has room for, read in one
- * query for the rows on the page. Guarded: a release serving before the ledger's migration shows
- * the plain "Building…" it showed before, rather than an error over the whole table.
+ * Each building CV's current motion, in the few words the table's cell has room for, read in one
+ * query for the rows on the page: the newest motion still running, else the newest that closed.
+ * The newest opened is not the answer — a batch that opened last can close first while the others
+ * run on — and a budget admission is never named: it lasts a moment, and "reserving budget"
+ * between every stage read as the build going backwards. Guarded: a release serving before the
+ * ledger's migration shows the plain "Building…" it showed before, rather than an error over the
+ * whole table.
  */
 async function withBuildProgress(userId: string, rows: PipelineRow[]): Promise<PipelineRow[]> {
   const building = rows.flatMap((row) => (row.cv && row.cv.status === "generating" ? [row.cv.id] : []));
@@ -592,7 +596,8 @@ async function withBuildProgress(userId: string, rows: PipelineRow[]): Promise<P
       select distinct on (s.draft_id) s.draft_id as "draftId", s.motion, s.status, s.detail
       from cv_build_steps s
       where s.user_id = ${userId} and s.draft_id in (${sql.join(building.map((id) => sql`${id}::uuid`), sql`, `)})
-      order by s.draft_id, s.seq desc`);
+        and s.motion <> 'admit_budget'
+      order by s.draft_id, (s.status = 'running') desc, s.seq desc`);
     newest = new Map(result.rows.map((row) => [row.draftId, cvBuildRowLabel({ motion: row.motion, status: row.status, detail: row.detail ?? {} })]));
   } catch {
     return rows;

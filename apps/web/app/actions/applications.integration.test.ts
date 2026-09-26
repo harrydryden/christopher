@@ -395,8 +395,12 @@ it("tells the applications table that one of its CVs is still being written", as
   await database.insert(schema.tasks).values({ type: "generate_cv", payload: { draftId: draft!.id }, dedupeKey: `generate_cv:${draft!.id}`, priority: 2, status: "running" });
   expect((await status()).version).not.toBe(building.version);
 
-  // Published: nothing of this account's is in flight, so the page stops polling itself.
+  // Published while its queue row still runs the optional improvement: still followed, so an
+  // adopted revision reaches the row without a reload.
   await database.update(schema.cvDrafts).set({ status: "ready" }).where(eq(schema.cvDrafts.id, draft!.id));
+  expect((await status()).active).toBe(true);
+  // The task finishes: nothing of this account's is in flight, so the page stops polling itself.
+  await database.update(schema.tasks).set({ status: "done" }).where(eq(schema.tasks.dedupeKey, `generate_cv:${draft!.id}`));
   expect((await status()).active).toBe(false);
   // Another account's build is not this one's business.
   const [other] = await database.insert(schema.users).values({ email: "other-builds@example.com", name: "Other", role: "member", claimedAt: new Date() }).returning();

@@ -38,6 +38,8 @@ export interface WorkerHeartbeat {
   vitals: WorkerVitals | null;
   active: number | null;
   concurrency: number | null;
+  /** The model engine's stream cap and the streams open under it, when the worker reports them. */
+  governor?: { streamCap: number | null; inFlight: number | null; queued: number | null; pausedUntil: Date | null } | null;
 }
 
 export type WorkerState = "healthy" | "restarting" | "stopped";

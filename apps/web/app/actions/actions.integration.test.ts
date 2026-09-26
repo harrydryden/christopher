@@ -1940,20 +1940,21 @@ it("does not let manual assessment bypass a quiz pause or revive an archived dra
 });
 
 
-it("publishes real CV stage changes to the page refresher", async () => {
-  const [draft] = await database.insert(schema.cvDrafts).values({ userId: user.id, jobTitle: "Director", companyName: "Example", jobDescription: "Lead a team", libraryVersion: 1, librarySnapshot: { name: "Example", contact: "", profile: "Leader", entries: [] }, model: "test", status: "generating", buildStage: "writing" }).returning();
+it("gives the page refresher a new version on a transition, and not on every stage or minute", async () => {
+  const [draft] = await database.insert(schema.cvDrafts).values({ userId: user.id, jobTitle: "Director", companyName: "Example", jobDescription: "Lead a team", libraryVersion: 1, librarySnapshot: { name: "Example", contact: "", profile: "Leader", entries: [] }, model: "test", status: "generating", buildStage: "writing", progressAt: new Date() }).returning();
+  await database.insert(schema.tasks).values({ type: "generate_cv", payload: { draftId: draft!.id }, dedupeKey: `generate_cv:${draft!.id}`, status: "running", attempts: 1, startedAt: new Date() });
   const request = () => new Request(`http://localhost/api/work-status?cv=${draft!.id}`);
   const version = async () => ((await (await workStatus(request())).json()) as { active: boolean; version: string }).version;
   const writing = await version();
-  expect(writing).toContain("generating:writing");
+  expect(writing).toBe("generating:::");
+  // A stage change is the progress feed's to show; the page is not rendered again for it.
   await database.update(schema.cvDrafts).set({ buildStage: "fitting" }).where(eq(schema.cvDrafts.id, draft!.id));
-  const fitting = await version();
-  expect(fitting).toContain("generating:fitting");
-  expect(fitting).not.toBe(writing);
-  // The version also carries how long the build has been still, so a page waiting on a build that
-  // has stopped moving still refreshes and its "no progress for N minutes" keeps counting.
+  expect(await version()).toBe(writing);
+  // Ten minutes without progress is a transition the header has to render, once.
   await database.update(schema.cvDrafts).set({ progressAt: new Date(Date.now() - 12 * 60_000) }).where(eq(schema.cvDrafts.id, draft!.id));
-  expect(await version()).not.toBe(fitting);
+  expect(await version()).toBe("generating::stale:");
+  await database.update(schema.cvDrafts).set({ status: "ready" }).where(eq(schema.cvDrafts.id, draft!.id));
+  expect(await version()).toBe("ready:::");
 });
 
 it("saves default appearance independently of library edits and existing CVs", async () => {

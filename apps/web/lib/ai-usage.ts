@@ -27,10 +27,10 @@ export interface AiUsageGroup {
   cacheWriteTokens: number;
   costUsd: number;
   /**
-   * Latency and cache hit rate across the folded lines, weighted by calls. A percentile cannot be
-   * added up, so folding two call sites into one feature takes the calls-weighted mean of their
-   * percentiles: near enough to say "this feature waits twenty seconds", and never presented as a
-   * true percentile of the union.
+   * Latency percentiles over every call in the folded line, from `aiUsagePercentiles` — the
+   * database's `percentile_cont` over the union of the call sites, because a percentile cannot be
+   * added up. Only a line the percentile read did not cover falls back to the calls-weighted mean,
+   * which is labelled as such nowhere because it should not happen.
    */
   p50DurationMs: number | null;
   p95DurationMs: number | null;
@@ -65,14 +65,22 @@ function weightedMean(parts: ReadonlyArray<{ value: number | null; calls: number
   return weight ? total / weight : null;
 }
 
+/** True percentiles per folded line, keyed by `aiUsageKey`. */
+export type AiUsagePercentiles = ReadonlyMap<string, { p50DurationMs: number | null; p95DurationMs: number | null }>;
+
+/** The folded line's key: account, feature and model. \u0000 cannot appear in any of them. */
+export function aiUsageKey(userId: string | null, feature: string, model: string): string {
+  return `${userId ?? ""}\u0000${feature}\u0000${model}`;
+}
+
 /** One line per account, feature and model, dearest first. */
-export function groupAiUsage(rows: readonly AiAccountUsage[]): AiUsageGroup[] {
+export function groupAiUsage(rows: readonly AiAccountUsage[], percentiles?: AiUsagePercentiles): AiUsageGroup[] {
   const groups = new Map<string, AiUsageGroup>();
   const members = new Map<string, AiAccountUsage[]>();
   for (const row of rows) {
     const feature = aiFeatureLabel(row.callSite);
     // \u0000 cannot appear in an id, a label or a model name, so the parts cannot run together.
-    const key = `${row.userId ?? ""}\u0000${feature}\u0000${row.model}`;
+    const key = aiUsageKey(row.userId, feature, row.model);
     let group = groups.get(key);
     if (!group) {
       group = { key, userId: row.userId, feature, model: row.model, ...EMPTY, p50DurationMs: null, p95DurationMs: null, cacheHitRatio: null };
@@ -84,8 +92,9 @@ export function groupAiUsage(rows: readonly AiAccountUsage[]): AiUsageGroup[] {
   }
   for (const [key, group] of groups) {
     const rowsInGroup = members.get(key) ?? [];
-    group.p50DurationMs = weightedMean(rowsInGroup.map((row) => ({ value: row.p50DurationMs, calls: row.calls })));
-    group.p95DurationMs = weightedMean(rowsInGroup.map((row) => ({ value: row.p95DurationMs, calls: row.calls })));
+    const exact = percentiles?.get(key);
+    group.p50DurationMs = exact ? exact.p50DurationMs : weightedMean(rowsInGroup.map((row) => ({ value: row.p50DurationMs, calls: row.calls })));
+    group.p95DurationMs = exact ? exact.p95DurationMs : weightedMean(rowsInGroup.map((row) => ({ value: row.p95DurationMs, calls: row.calls })));
     const promptTokens = group.inputTokens + group.cacheReadTokens + group.cacheWriteTokens;
     group.cacheHitRatio = promptTokens ? group.cacheReadTokens / promptTokens : null;
   }

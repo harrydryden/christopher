@@ -21,7 +21,7 @@ let pool: ReturnType<typeof createDb>["pool"];
 let user: User;
 let other: User;
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { cvBuildQuote, cvEditCosts, cvQuoteButtonLine, cvQuoteLine } from "./cv-quote";
+import { cvBuildQuote, cvEditCosts, cvQuoteButtonLine, cvQuoteLine, queuedDraftParts } from "./cv-quote";
 
 const DESCRIPTION = [
   "Head of Operations at a community health provider.",
@@ -189,4 +189,48 @@ it("prices Save Direct Edits below Rebuild from Library, because the wording is 
   expect(costs.assessmentUsd).toBeCloseTo(estimateCvBuildUsd("claude-fable-5-1", size, "assessment"), 6);
   expect(costs.allUsd).toBeCloseTo(estimateCvBuildUsd("claude-fable-5-1", size, "tailored_completion"), 6);
   expect(costs.assessmentUsd).toBeLessThan(costs.allUsd);
+});
+
+it("prices a pasted description, not the stored one it replaces", async () => {
+  const job = await visibleRole();
+  await saveLibrary();
+  const pasted = `${DESCRIPTION}\n${"Own the finance operating model end to end. ".repeat(80)}`;
+  const quote = await cvBuildQuote(user.id, job.id, new Date(), { description: pasted });
+  expect(quote.estimateUsd).toBeCloseTo(
+    estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: quote.libraryBytes, descriptionBytes: Buffer.byteLength(pasted.trim()) }, "tailored"),
+    6,
+  );
+  expect(quote.estimateUsd).toBeGreaterThan((await cvBuildQuote(user.id, job.id)).estimateUsd);
+  // A blank paste is no paste: the stored description is what the build would use.
+  expect((await cvBuildQuote(user.id, job.id, new Date(), { description: "   " })).estimateUsd).toBe((await cvBuildQuote(user.id, job.id)).estimateUsd);
+});
+
+it("counts the builds this account has waiting in the queue, which hold nothing yet", async () => {
+  const job = await visibleRole();
+  await saveLibrary();
+  const alone = await cvBuildQuote(user.id, job.id);
+  expect(alone.queuedUsd).toBe(0);
+  const snapshot = { name: "Example", contact: "", profile: "Leader", entries: [] };
+  const draft = (status: "queued" | "generating" | "ready") => ({
+    userId: user.id, jobTitle: "Role", companyName: "Co", jobDescription: DESCRIPTION, libraryVersion: 1,
+    librarySnapshot: snapshot, model: "claude-fable-5-1", status, buildCheckpoint: { tailoringEnabled: true },
+  });
+  // Only the queued one: a generating build has been admitted and holds its own share already.
+  await database.insert(schema.cvDrafts).values([draft("queued"), draft("generating"), draft("ready")]);
+  const quote = await cvBuildQuote(user.id, job.id);
+  const expected = estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: Buffer.byteLength(JSON.stringify(snapshot)), descriptionBytes: Buffer.byteLength(DESCRIPTION) }, "tailored");
+  // Measured in the database, as jsonb text, which spaces its separators: within a cent.
+  expect(quote.queuedUsd).toBeCloseTo(expected, 2);
+  expect(quote.leftUsd).toBeCloseTo(alone.leftUsd - quote.queuedUsd, 6);
+});
+
+it("chooses what a queued build will pay for the way the worker does", () => {
+  expect(queuedDraftParts({ hasContent: false, checkpoint: { tailoringEnabled: true } })).toBe("tailored");
+  expect(queuedDraftParts({ hasContent: false, checkpoint: { tailoringEnabled: true, quizCompleted: true } })).toBe("tailored_completion");
+  expect(queuedDraftParts({ hasContent: false, checkpoint: { mode: "improve" } })).toBe("tailored");
+  expect(queuedDraftParts({ hasContent: false, checkpoint: null })).toBe("all");
+  // Typed wording is assessed; the build's own wording still has its optional revision to come.
+  expect(queuedDraftParts({ hasContent: true, checkpoint: {} })).toBe("assessment");
+  expect(queuedDraftParts({ hasContent: true, checkpoint: { tailoringEnabled: true, contentAt: "x" } })).toBe("tailored_assessment");
+  expect(queuedDraftParts({ hasContent: true, checkpoint: { tailoringEnabled: true, contentAt: "x", improvementAttempted: true } })).toBe("assessment");
 });

@@ -241,8 +241,11 @@ it("totals a build by wall clock, not by adding up batches that ran together", (
   expect(cvBuildTotalsLine(totals)).toBe("3 motions in 1 min 40 s, costing US$0.50.");
 
   // A build still running counts up to now, and says the figures are not final.
-  const open = cvBuildTotals([...steps, step("assemble", "running", {}, { seq: 4, startedAt: at("2026-09-18T18:11:50.000Z") })], now);
-  expect(cvBuildTotalsLine(open)).toBe("4 motions in 2 min, costing US$0.50 so far.");
+  const running = [...steps, step("assemble", "running", {}, { seq: 4, startedAt: at("2026-09-18T18:11:50.000Z") })];
+  expect(cvBuildTotalsLine(cvBuildTotals(running, now, { live: true }))).toBe("4 motions in 2 min, costing US$0.50 so far.");
+  // The same row on a draft nothing is working on any more is a leftover, not a build in progress:
+  // the total is what the build came to, and it is never "so far".
+  expect(cvBuildTotalsLine(cvBuildTotals(running, now))).toBe("4 motions in 1 min 50 s, costing US$0.50.");
   expect(cvBuildTotalsLine(cvBuildTotals([], now))).toBe("No motions recorded for this build.");
 });
 

@@ -3,8 +3,13 @@
  *
  * The worker writes a `cv_build_steps` row per motion with a `detail` object of figures; this
  * module turns one row into one line of English — present tense while it runs, past tense once it
- * is done, and "could not …" when it failed. Nothing here reads the database or the clock beyond
- * the `now` it is given, so every line is a unit test rather than a screenshot.
+ * is done, and "could not …" when it failed — and a build's rows into the narrative the page shows:
+ * attempts divided, parallel assessment batches gathered under one milestone row, a motion the
+ * build stopped in the middle of called interrupted rather than left "running" for ever.
+ *
+ * Pure and client-safe: nothing here reads the database or the clock beyond the `now` it is given,
+ * and nothing imports a value from the core package, so the CV page renders the same lines in the
+ * browser from its progress feed as the tests assert here.
  *
  * Rules the lines follow:
  * - Counts are `formatCount` (thousands separators); money is `formatUsdPrecise`, because a single
@@ -14,7 +19,7 @@
  *   be a release ahead of or behind the interface, and a half-written detail must still read.
  * - An unknown `detail` key is ignored, and an unknown motion falls back to the step's own title.
  */
-import type { CvBuildStage, CvBuildStepView } from "@ava/core";
+import type { CvJournalStep } from "./cv-build-journal";
 import { formatClock, formatCount, formatPercent, formatStepDuration, formatUsdPrecise, pluralize } from "./format";
 
 /** A subset of the badge tones; the narrative never needs the other two. */
@@ -25,7 +30,7 @@ export type NarrativeTone = "green" | "blue" | "gray" | "red";
  * can be traced to the card it happened under. `preparing` and `publishing` have no card of their
  * own — they are the moments either side of the four.
  */
-export const CV_STAGE_LABELS: Record<CvBuildStage, string> = {
+export const CV_STAGE_LABELS: Record<string, string> = {
   preparing: "Getting ready",
   analysing: "Understand the role",
   writing: "Write your CV",
@@ -34,14 +39,30 @@ export const CV_STAGE_LABELS: Record<CvBuildStage, string> = {
   publishing: "Save",
 };
 
+/** The four milestones the strip shows, in the order a build reaches them. */
+export const CV_MILESTONES = ["analysing", "writing", "fitting", "assessing"] as const;
+export type CvMilestone = (typeof CV_MILESTONES)[number];
+
 export interface NarrativeContext {
   /** The deployment's timezone, so the clock times match the rest of the interface. */
   timeZone?: string;
   /** "18-Sep-V3": what the page calls the revision this build published. */
   versionLabel?: string;
+  /**
+   * Nothing is working on this build any more — it stopped or failed — so a motion still marked
+   * running was interrupted, and says so, rather than counting up for ever.
+   */
+  interrupted?: boolean;
+  /** When a build that stopped last moved, for "Interrupted after 46 min". */
+  stoppedAt?: Date | null;
+  /** The page's own reading of the queue's allowance, for an attempt that did not record one. */
+  maxAttemptsFallback?: number | null;
 }
 
+export type NarratedStatus = CvJournalStep["status"] | "interrupted";
+
 export interface NarratedStep {
+  key: string;
   /** Clock time the motion started, "18:10:25". */
   time: string;
   glyph: "✓" | "…" | "✗" | "–";
@@ -57,7 +78,7 @@ export interface NarratedStep {
   /** Figures worth keeping but not worth the line: tokens, the content budget. Hover text. */
   hint: string | null;
   /** For a screen reader, which the glyph says nothing to. */
-  status: CvBuildStepView["status"];
+  status: NarratedStatus;
 }
 
 const number = (detail: Record<string, unknown>, key: string): number | null => {
@@ -89,12 +110,24 @@ function lowerFirst(value: string): string {
   return value ? `${value[0]!.toLowerCase()}${value.slice(1)}` : value;
 }
 
+/** Which pass of the assessment a batch belongs to: the draft's, or the improvement's revision. */
+export function assessPass(step: Pick<CvJournalStep, "detail">): "draft" | "revision" {
+  return text(step.detail, "pass") === "revision" ? "revision" : "draft";
+}
+
+/**
+ * A batch's place in its assessment: `index`/`of` as the worker writes them now, `batch`/`batches`
+ * as a worker a release behind wrote them.
+ */
+export function batchPosition(detail: Record<string, unknown>): { index: number | null; of: number | null } {
+  return { index: number(detail, "index") ?? number(detail, "batch"), of: number(detail, "of") ?? number(detail, "batches") };
+}
+
 /** "(batch 1 of 5)", or nothing when the worker did not say which batch this was. */
 function batchSuffix(detail: Record<string, unknown>): string {
-  const batch = number(detail, "batch");
-  const batches = number(detail, "batches");
-  if (batch === null) return "";
-  return batches === null ? ` (batch ${formatCount(batch)})` : ` (batch ${formatCount(batch)} of ${formatCount(batches)})`;
+  const { index, of } = batchPosition(detail);
+  if (index === null) return "";
+  return of === null ? ` (batch ${formatCount(index)})` : ` (batch ${formatCount(index)} of ${formatCount(of)})`;
 }
 
 function assessSubject(detail: Record<string, unknown>): string | null {
@@ -123,8 +156,45 @@ const REUSED_FROM: Record<string, string> = {
   assessment: "from the earlier assessment",
 };
 
+/** What each budget stage is called in the reservation's line. Unknown stages read as their name. */
+const BUDGET_STAGES: Record<string, string> = {
+  preparing: "getting ready",
+  analysing: "understanding the role",
+  analysis: "understanding the role",
+  rubric: "extracting the requirements",
+  planning: "matching your evidence",
+  writing: "writing",
+  fitting: "fitting the page limit",
+  assessing: "checking",
+  assessment: "checking",
+  improving: "the improvement pass",
+  improvement: "the improvement pass",
+  improve: "the improvement pass",
+};
+
+function budgetStage(value: string): string {
+  return BUDGET_STAGES[value] ?? value.replace(/[_-]+/g, " ");
+}
+
+/**
+ * The motions that belong to the optional improvement pass. The CV they improve on is already
+ * published when they run, so a failure among them is not the build failing: it reads as the
+ * original being kept, in grey, never red over a CV that is ready.
+ */
+const OPTIONAL_MOTIONS = new Set(["improve_content", "compare_content", "adopt_revision"]);
+
+/** The adopted revision's name: the worker's label, the page's, or its revision number. */
+function revisionName(detail: Record<string, unknown>): string | null {
+  const label = text(detail, "label");
+  if (label) return label;
+  const revision = detail.revision;
+  if (typeof revision === "string" && revision.trim()) return revision.trim();
+  if (typeof revision === "number" && Number.isFinite(revision)) return `revision ${formatCount(revision)}`;
+  return null;
+}
+
 /** "Could not …", built from the motion's own title so the two can never drift apart. */
-function failedPhrase(step: CvBuildStepView): string {
+function failedPhrase(step: CvJournalStep): string {
   switch (step.motion) {
     case "load_inputs":
       return "Could not read your Library and the role";
@@ -132,6 +202,10 @@ function failedPhrase(step: CvBuildStepView): string {
       return "Could not reserve this build's share of your AI budget";
     case "rubric":
       return "Could not extract the role's requirements";
+    case "plan_evidence":
+      return "Could not match the role to your evidence";
+    case "gap_quiz":
+      return "Could not prepare the optional evidence questions";
     case "write":
       return "Could not write the CV";
     case "check_plan":
@@ -143,45 +217,68 @@ function failedPhrase(step: CvBuildStepView): string {
     case "rewrite":
       return "Could not rewrite the CV to a smaller budget";
     case "assess_batch":
-      return `Could not check requirements and claims against your evidence${batchSuffix(step.detail)}`;
+      return `Could not ${assessPass(step) === "revision" ? "check the revision" : "check requirements and claims"} against your evidence${batchSuffix(step.detail)}`;
     case "assess_retry":
       return `Could not re-check${batchSuffix(step.detail) || " the batch"}`;
     case "assemble":
       return "Could not score the CV";
     case "publish":
       return "Could not save the CV";
+    case "improve_content":
+    case "compare_content":
+      return "Tried one targeted revision; kept the original";
+    case "adopt_revision":
+      return "Kept the original: the revision could not be adopted";
     default:
       return `Could not finish ${lowerFirst(step.title)}`;
   }
 }
 
 /** The line a motion the worker skipped leaves behind: what was reused instead of paid for. */
-function skippedPhrase(step: CvBuildStepView): string {
+function skippedPhrase(step: CvJournalStep): string {
   const detail = step.detail;
   switch (step.motion) {
     case "rubric": {
       const from = text(detail, "reused");
       return `Reused the requirements ${(from && REUSED_FROM[from]) ?? "already extracted"}`;
     }
-    case "write":
-      return "Kept the wording already written";
+    case "plan_evidence":
+      return "Reused the confirmed evidence plan from the previous attempt";
+    case "write": {
+      const attempt = number(detail, "attempt");
+      return attempt === null ? "Kept the wording already written" : `Kept the wording already written in attempt ${formatCount(attempt)}`;
+    }
     case "shorten":
       return "Nothing needed trimming";
     case "measure":
       return "Skipped measuring: the wording has not changed";
+    case "assess_batch": {
+      if (flag(detail, "cancelled")) {
+        const { index, of } = batchPosition(detail);
+        const which = index === null ? "a batch" : `batch ${formatCount(index)}${of === null ? "" : ` of ${formatCount(of)}`}`;
+        return `Stopped checking ${which}: another batch failed`;
+      }
+      return "Skipped checking requirements and claims against your evidence";
+    }
     case "assess_retry":
       return "No batch needed re-checking";
+    case "assemble":
+      return flag(detail, "reused") ? "Kept the assessment already made" : "Skipped scoring the CV";
     case "improve_content":
-      return "No further supported priority evidence needed adding";
+      return flag(detail, "kept") ? "Tried one targeted revision; kept the original" : "No further supported priority evidence needed adding";
     case "gap_quiz":
       return "No extra evidence questions needed";
+    case "adopt_revision": {
+      const reason = text(detail, "reason");
+      return reason ? `Kept the original: ${lowerFirst(reason.replace(/\.$/, ""))}` : "Kept the original";
+    }
     default:
       return `Skipped ${lowerFirst(step.title)}`;
   }
 }
 
 /** The present-tense line, while the motion is open. */
-function runningPhrase(step: CvBuildStepView): string {
+function runningPhrase(step: CvJournalStep): string {
   const detail = step.detail;
   switch (step.motion) {
     case "write": {
@@ -190,15 +287,20 @@ function runningPhrase(step: CvBuildStepView): string {
     }
     case "rewrite": {
       // The second and third writing attempts are their own motion, each against a smaller budget,
-      // so the line says which one is being paid for.
+      // so the line says which one is being paid for and why.
       const attempt = number(detail, "attempt");
-      return attempt === null ? step.title : `${step.title} (attempt ${formatCount(attempt)})`;
+      const pages = number(detail, "pages");
+      const maxPages = number(detail, "maxPages");
+      const reason = pages !== null && maxPages !== null
+        ? `the draft ran to ${count(pages, "page")} against ${formatCount(maxPages)}`
+        : text(detail, "reason");
+      return `${step.title}${attempt === null ? "" : ` (attempt ${formatCount(attempt)})`}${reason ? `: ${reason}` : ""}`;
     }
     case "assess_batch": {
       const subject = assessSubject(detail);
-      return subject
-        ? `Checking ${subject} against your evidence${batchSuffix(detail)}`
-        : `${step.title}${batchSuffix(detail)}`;
+      const revision = assessPass(step) === "revision";
+      if (!subject) return revision ? `Checking the revision against your evidence${batchSuffix(detail)}` : `${step.title}${batchSuffix(detail)}`;
+      return `Checking ${revision ? "the revision: " : ""}${subject} against your evidence${batchSuffix(detail)}`;
     }
     case "assess_retry":
       return `Re-checking${batchSuffix(detail) || " a batch"}, whose evidence was misattributed`;
@@ -210,19 +312,31 @@ function runningPhrase(step: CvBuildStepView): string {
 }
 
 /** The past-tense line, with the figures the motion recorded. */
-function donePhrase(step: CvBuildStepView, context: NarrativeContext): string {
+function donePhrase(step: CvJournalStep, context: NarrativeContext): string {
   const detail = step.detail;
   switch (step.motion) {
     case "plan_evidence": {
       const supported = number(detail, "supported");
       return flag(detail, "reused") ? "Reused the confirmed evidence plan" : `Matched the role to your evidence${supported === null ? "" : `: ${count(supported, "requirement")} ${supported === 1 ? "has" : "have"} supporting evidence`}`;
     }
-    case "gap_quiz":
-      return flag(detail, "skipped") ? "No further evidence questions needed" : `Prepared ${count(number(detail, "questions") ?? 0, "optional question")} for you before writing`;
-    case "improve_content":
-      return "Wrote one targeted revision using confirmed evidence already in your Library";
+    case "gap_quiz": {
+      // No questions is not "0 questions": it is none being needed.
+      const questions = number(detail, "questions");
+      if (flag(detail, "skipped") || questions === 0) return "No further evidence questions needed";
+      return questions === null ? "Prepared optional questions for you before writing" : `Prepared ${count(questions, "optional question")} for you before writing`;
+    }
+    case "improve_content": {
+      const opportunities = number(detail, "opportunities");
+      return opportunities === null || opportunities <= 0
+        ? "Wrote one targeted revision using confirmed evidence already in your Library"
+        : `Rewrote with ${count(opportunities, "improvement")}`;
+    }
     case "compare_content":
       return flag(detail, "accepted") ? "Kept the stronger revision after checking its evidence and coverage" : "Kept the original CV because the revision did not pass every improvement check";
+    case "adopt_revision": {
+      const name = revisionName(detail);
+      return name ? `Adopted the stronger revision as ${name}` : "Adopted the stronger revision";
+    }
     case "load_inputs": {
       const version = number(detail, "libraryVersion");
       const shape = [
@@ -250,11 +364,13 @@ function donePhrase(step: CvBuildStepView, context: NarrativeContext): string {
       const left = number(detail, "leftUsd");
       const limit = number(detail, "limitUsd");
       const held = number(detail, "heldUsd");
+      const stage = text(detail, "stage");
       const inside = [
         left === null ? null : `${formatUsdPrecise(left)} left${limit === null ? "" : ` of ${formatUsdPrecise(limit)}`} this month`,
-        held !== null && held > 0 ? `${formatUsdPrecise(held)} held by calls in flight` : null,
+        // Per stage, what is held excludes this stage's own reservation: other calls in flight.
+        held !== null && held > 0 ? `${formatUsdPrecise(held)} held by ${stage ? "other " : ""}calls in flight` : null,
       ].filter((part): part is string => part !== null);
-      return `Reserved ${expected === null ? "this build's share" : formatUsdPrecise(expected)} of your AI budget${inside.length ? ` (${inside.join(", ")})` : ""}`;
+      return `Reserved ${expected === null ? "this build's share" : formatUsdPrecise(expected)} of your AI budget${stage ? ` for ${budgetStage(stage)}` : ""}${inside.length ? ` (${inside.join(", ")})` : ""}`;
     }
     case "rubric": {
       const requirements = number(detail, "requirements");
@@ -290,8 +406,10 @@ function donePhrase(step: CvBuildStepView, context: NarrativeContext): string {
     case "measure": {
       const pages = number(detail, "pages");
       const maxPages = number(detail, "maxPages");
-      if (pages === null) return "Measured the PDF against your page limit";
-      return `Measured ${count(pages, "page")}${maxPages === null ? "" : ` against a limit of ${formatCount(maxPages)}`}`;
+      const outcome = text(detail, "outcome");
+      const said = outcome ? ` · ${outcome.replace(/_/g, " ")}` : "";
+      if (pages === null) return `Measured the PDF against your page limit${said}`;
+      return `Measured ${count(pages, "page")}${maxPages === null ? "" : ` against a limit of ${formatCount(maxPages)}`}${said}`;
     }
     case "shorten": {
       const removed = number(detail, "removed");
@@ -303,7 +421,8 @@ function donePhrase(step: CvBuildStepView, context: NarrativeContext): string {
     }
     case "assess_batch": {
       const subject = assessSubject(detail);
-      return `Checked ${subject ?? "a batch of requirements and claims"}${batchSuffix(detail)}`;
+      const revision = assessPass(step) === "revision";
+      return `Checked ${revision ? "the revision: " : ""}${subject ?? "a batch of requirements and claims"}${batchSuffix(detail)}`;
     }
     case "assess_retry": {
       const corrections = number(detail, "corrections");
@@ -343,7 +462,7 @@ function donePhrase(step: CvBuildStepView, context: NarrativeContext): string {
 }
 
 /** Figures worth keeping off the line itself: tokens, the content budget, the claim tally. */
-function hintFor(step: CvBuildStepView): string | null {
+function hintFor(step: CvJournalStep): string | null {
   const detail = step.detail;
   const parts: string[] = [];
   const tokens = number(detail, "tokens");
@@ -353,6 +472,10 @@ function hintFor(step: CvBuildStepView): string | null {
     const maxPages = number(detail, "maxPages");
     if (budget !== null) parts.push(`budget ${count(budget, "character")}${scale !== null && scale > 0 && scale <= 1.5 ? ` at ${formatPercent(scale)} of full length` : ""}`);
     if (maxPages !== null) parts.push(`for ${count(maxPages, "page")}`);
+  }
+  if (step.motion === "measure") {
+    const renders = number(detail, "renders");
+    if (renders !== null && renders > 0) parts.push(count(renders, "render"));
   }
   if (step.motion === "assemble") {
     const supported = number(detail, "supported");
@@ -364,26 +487,42 @@ function hintFor(step: CvBuildStepView): string | null {
   return parts.length ? parts.join(" · ") : null;
 }
 
-const GLYPH = { running: "…", done: "✓", failed: "✗", skipped: "–" } as const;
-const TONE: Record<CvBuildStepView["status"], NarrativeTone> = { running: "blue", done: "green", failed: "red", skipped: "gray" };
+const GLYPH = { running: "…", done: "✓", failed: "✗", skipped: "–", interrupted: "–" } as const;
+const TONE: Record<NarratedStatus, NarrativeTone> = { running: "blue", done: "green", failed: "red", skipped: "gray", interrupted: "gray" };
+
+/** "Interrupted after 46 min", or plain "Interrupted" when nothing says how long it had been open. */
+function interruptedMeta(startedAt: Date, stoppedAt: Date | null | undefined): string {
+  const ms = stoppedAt ? stoppedAt.getTime() - startedAt.getTime() : 0;
+  return ms > 0 ? `Interrupted after ${formatStepDuration(ms)}` : "Interrupted";
+}
+
+/** The failure's own sentence for a failed step, whichever of the places the worker put it. */
+function failureNote(step: CvJournalStep): string | null {
+  return step.failure?.message ?? text(step.detail, "error") ?? step.error ?? null;
+}
 
 /**
- * One step, one line. `now` gives a running step its elapsed figure; the page's poll refreshes at
- * least once a minute while anything is open, so the figure keeps moving without a client timer.
+ * One step, one line. `now` gives a running step its elapsed figure; the page keeps it moving with
+ * a clock of its own between readings of the progress feed.
  */
-export function narrateStep(step: CvBuildStepView, now: Date = new Date(), context: NarrativeContext = {}): NarratedStep {
+export function narrateStep(step: CvJournalStep, now: Date = new Date(), context: NarrativeContext = {}): NarratedStep {
   const usd = number(step.detail, "usd");
+  const optional = OPTIONAL_MOTIONS.has(step.motion);
+  const status: NarratedStatus =
+    step.status === "running" && context.interrupted ? "interrupted" : step.status === "failed" && optional ? "skipped" : step.status;
   const elapsedMs = step.status === "running" ? Math.max(0, now.getTime() - step.startedAt.getTime()) : null;
   const meta =
-    step.status === "running"
-      ? `running ${formatStepDuration(elapsedMs ?? 0)}`
-      : [
-          // A skipped motion paid for nothing and took no time worth printing.
-          step.status === "skipped" || step.ms === null ? null : formatStepDuration(step.ms),
-          usd !== null && usd > 0 ? formatUsdPrecise(usd) : null,
-        ]
-          .filter((part): part is string => part !== null)
-          .join(" · ");
+    status === "interrupted"
+      ? interruptedMeta(step.startedAt, context.stoppedAt)
+      : step.status === "running"
+        ? `running ${formatStepDuration(elapsedMs ?? 0)}`
+        : [
+            // A skipped motion paid for nothing and took no time worth printing.
+            step.status === "skipped" || step.ms === null ? null : formatStepDuration(step.ms),
+            usd !== null && usd > 0 ? formatUsdPrecise(usd) : null,
+          ]
+            .filter((part): part is string => part !== null)
+            .join(" · ");
   const body =
     step.status === "running"
       ? runningPhrase(step)
@@ -393,30 +532,235 @@ export function narrateStep(step: CvBuildStepView, now: Date = new Date(), conte
           ? skippedPhrase(step)
           : failedPhrase(step);
   const changes = step.motion === "shorten" ? names(step.detail, "changes") : [];
+  const reason = optional ? text(step.detail, "reason") : null;
   const note =
     step.status === "failed"
-      ? step.failure?.message ?? step.error ?? null
+      ? optional ? reason ?? failureNote(step) : failureNote(step)
       : changes.length
         ? `${changes.slice(0, 3).join("; ")}${changes.length > 3 ? ` (+${formatCount(changes.length - 3)} more)` : ""}`
         : step.motion === "compare_content" && !flag(step.detail, "accepted")
           ? names(step.detail, "reasons").join(" ") || null
-          : null;
+          : step.motion === "improve_content" && step.status === "skipped" && flag(step.detail, "kept")
+            ? reason
+            : null;
   return {
+    key: step.id,
     time: formatClock(step.startedAt, context.timeZone),
-    glyph: GLYPH[step.status],
-    tone: TONE[step.status],
+    glyph: GLYPH[status],
+    tone: TONE[status],
     stage: CV_STAGE_LABELS[step.stage] ?? step.stage,
     text: body,
     meta,
     note,
     hint: hintFor(step),
-    status: step.status,
+    status,
   };
 }
 
-/** "Attempt 2 of 3": the divider before the first step of a later attempt. */
-export function attemptLabel(attempt: number, maxAttempts?: number | null): string {
-  return maxAttempts ? `Attempt ${formatCount(attempt)} of ${formatCount(maxAttempts)}` : `Attempt ${formatCount(attempt)}`;
+/**
+ * The divider before a later attempt. A queue retry is the same task trying again ("Attempt 2 of
+ * 3"); a retry the person asked for is a new task whose attempts start again at one, and saying
+ * "Attempt 1 of 3" after "Attempt 3 of 3" without naming who asked read as the build looping.
+ */
+export function attemptLabel(attempt: number, maxAttempts?: number | null, manual = false): string {
+  const of = maxAttempts ? `${formatCount(attempt)} of ${formatCount(maxAttempts)}` : formatCount(attempt);
+  return manual ? `Retried by you · attempt ${of}` : `Attempt ${of}`;
+}
+
+/** One attempt of a build: the steps one queue row wrote on one of its attempts. */
+export interface CvBuildRun {
+  key: string;
+  taskId: string | null;
+  attempt: number;
+  steps: CvJournalStep[];
+  /** The queue's allowance, from the attempt's own `load_inputs`, when it recorded one. */
+  maxAttempts: number | null;
+}
+
+const runKey = (step: Pick<CvJournalStep, "taskId" | "attempt">) => `${step.taskId ?? "-"}:${step.attempt}`;
+
+/**
+ * A build's steps split into its attempts, each in the order it ran, the attempts in the order
+ * they began. The key is the queue row and its attempt together: a retry the person asked for is a
+ * new row starting again at attempt one, and a zombie from an attempt the queue gave up on keeps
+ * writing under its own attempt after the next has begun — so neither the attempt number alone nor
+ * the order of the rows says which attempt a step belongs to.
+ */
+export function cvBuildRuns(steps: readonly CvJournalStep[]): CvBuildRun[] {
+  const runs = new Map<string, CvBuildRun & { first: number }>();
+  for (const step of [...steps].sort((a, b) => a.seq - b.seq)) {
+    const key = runKey(step);
+    let run = runs.get(key);
+    if (!run) {
+      run = { key, taskId: step.taskId ?? null, attempt: step.attempt, steps: [], maxAttempts: null, first: step.seq };
+      runs.set(key, run);
+    }
+    run.steps.push(step);
+    if (step.motion === "load_inputs" && run.maxAttempts === null) run.maxAttempts = number(step.detail, "maxAttempts");
+  }
+  return [...runs.values()].sort((a, b) => a.first - b.first).map(({ first: _first, ...run }) => run);
+}
+
+/** A batch's line with the re-checks that were made of it underneath. */
+export interface NarratedBatch {
+  line: NarratedStep;
+  retries: NarratedStep[];
+}
+
+/**
+ * One pass of the assessment, gathered: the batches run together, so five interleaved lines said
+ * less than one row that counts them.
+ */
+export interface NarratedGroup {
+  key: string;
+  line: NarratedStep;
+  pass: "draft" | "revision";
+  batches: NarratedBatch[];
+  /** Failed and cancelled batches, which are shown whether or not the batches are. */
+  flagged: NarratedBatch[];
+}
+
+export type NarrativeItem =
+  | { kind: "divider"; key: string; label: string }
+  | { kind: "line"; key: string; line: NarratedStep }
+  | { kind: "group"; key: string; group: NarratedGroup };
+
+const ASSESS_MOTIONS = new Set(["assess_batch", "assess_retry"]);
+
+function usdOf(step: CvJournalStep): number {
+  return number(step.detail, "usd") ?? 0;
+}
+
+/** The milestone row for one pass of the assessment, from the batches and re-checks inside it. */
+function narrateGroup(steps: CvJournalStep[], now: Date, context: NarrativeContext, pass: "draft" | "revision"): NarratedGroup {
+  const batches = steps.filter((step) => step.motion === "assess_batch");
+  const retries = steps.filter((step) => step.motion === "assess_retry");
+  const first = steps.reduce((min, step) => (step.startedAt < min.startedAt ? step : min), steps[0]!);
+  const running = steps.some((step) => step.status === "running");
+  const interrupted = running && !!context.interrupted;
+  const failed = steps.some((step) => step.status === "failed");
+  const of = batches.reduce<number | null>((max, step) => {
+    const value = batchPosition(step.detail).of;
+    return value === null ? max : Math.max(max ?? 0, value);
+  }, null) ?? (batches.length || null);
+  const done = batches.filter((step) => step.status === "done").length;
+  const usd = steps.reduce((sum, step) => sum + usdOf(step), 0);
+  let last = first.startedAt.getTime();
+  for (const step of steps) last = Math.max(last, (step.finishedAt ?? step.startedAt).getTime());
+  const subject = pass === "revision" ? "the revision" : "requirements and claims";
+  // The totals across batches, but only when every batch said what it held.
+  const summed = (key: string) => (batches.length && batches.every((step) => number(step.detail, key) !== null) ? batches.reduce((sum, step) => sum + number(step.detail, key)!, 0) : null);
+  const requirements = summed("requirements");
+  const claims = summed("claims");
+  const held = [requirements === null ? null : count(requirements, "requirement"), claims === null ? null : count(claims, "claim")].filter((part): part is string => part !== null);
+  const failedBatch = batches.find((step) => step.status === "failed");
+  let text: string;
+  let meta: string;
+  let status: NarratedStatus;
+  if (running) {
+    const tally = of === null ? "" : done > 0 ? ` — ${formatCount(done)} of ${count(of, "batch", "batches")} done` : ` — ${count(of, "batch", "batches")}`;
+    text = `Checking ${subject} against your evidence${tally}`;
+    status = interrupted ? "interrupted" : "running";
+    meta = interrupted
+      ? interruptedMeta(first.startedAt, context.stoppedAt)
+      : [`running ${formatStepDuration(Math.max(0, now.getTime() - first.startedAt.getTime()))}`, usd > 0 ? `${formatUsdPrecise(usd)} so far` : null]
+          .filter((part): part is string => part !== null)
+          .join(" · ");
+  } else {
+    const position = failedBatch ? batchPosition(failedBatch.detail) : null;
+    const which = position?.index == null ? "a batch" : `batch ${formatCount(position.index)}${position.of === null ? "" : ` of ${formatCount(position.of)}`}`;
+    if (failed) {
+      text = `Could not finish checking ${subject} against your evidence: ${which} failed`;
+      status = "failed";
+    } else {
+      const heldText = pass === "revision" ? (held.length ? `the revision: ${held.join(" and ")}` : "the revision") : held.length ? held.join(" and ") : "requirements and claims";
+      text = `Checked ${heldText} against your evidence${of === null ? "" : ` in ${count(of, "batch", "batches")}`}`;
+      status = batches.length && batches.every((step) => step.status === "skipped") ? "skipped" : "done";
+    }
+    meta = [formatStepDuration(Math.max(0, last - first.startedAt.getTime())), usd > 0 ? formatUsdPrecise(usd) : null].filter((part): part is string => part !== null).join(" · ");
+  }
+  const narratedBatches: NarratedBatch[] = batches.map((step) => ({ line: narrateStep(step, now, context), retries: [] }));
+  const byIndex = new Map<number, NarratedBatch>();
+  batches.forEach((step, i) => {
+    const index = batchPosition(step.detail).index;
+    if (index !== null && !byIndex.has(index)) byIndex.set(index, narratedBatches[i]!);
+  });
+  for (const retry of retries) {
+    const index = batchPosition(retry.detail).index;
+    const owner = index === null ? undefined : byIndex.get(index);
+    const line = narrateStep(retry, now, context);
+    // A re-check of a batch this pass never showed still says what it did, on a line of its own.
+    if (owner) owner.retries.push(line);
+    else narratedBatches.push({ line, retries: [] });
+  }
+  const flagged = narratedBatches.filter((batch) => batch.line.status === "failed" || (batch.line.status === "skipped" && batch.line.text.startsWith("Stopped checking")));
+  return {
+    key: `group:${first.id}`,
+    pass,
+    batches: narratedBatches,
+    flagged,
+    line: {
+      key: `group:${first.id}`,
+      time: formatClock(first.startedAt, context.timeZone),
+      glyph: GLYPH[status],
+      tone: TONE[status],
+      stage: CV_STAGE_LABELS[first.stage] ?? first.stage,
+      text,
+      meta,
+      note: failedBatch ? failureNote(failedBatch) : null,
+      hint: null,
+      status,
+    },
+  };
+}
+
+/**
+ * A build's steps as the narrative shows them: a divider before every attempt after the first,
+ * each attempt's motions in the order they ran, and each pass of the assessment gathered into one
+ * row with its batches behind it.
+ *
+ * A motion still marked running in an attempt that has been replaced, or under a build that has
+ * stopped (`context.interrupted`), was interrupted; it says so with how long it had been open.
+ */
+export function narrateBuild(steps: readonly CvJournalStep[], now: Date = new Date(), context: NarrativeContext = {}): NarrativeItem[] {
+  const runs = cvBuildRuns(steps);
+  const out: NarrativeItem[] = [];
+  runs.forEach((run, i) => {
+    const latest = i === runs.length - 1;
+    const next = runs[i + 1];
+    // An attempt the queue has moved past stopped no later than the next one began.
+    const runContext: NarrativeContext = latest
+      ? context
+      : { ...context, interrupted: true, stoppedAt: next ? next.steps[0]!.startedAt : context.stoppedAt };
+    if (runs.length > 1 && i > 0) {
+      const previous = runs[i - 1]!;
+      const manual = !!run.taskId && !!previous.taskId && run.taskId !== previous.taskId;
+      out.push({ kind: "divider", key: `divider:${run.key}`, label: attemptLabel(run.attempt, run.maxAttempts ?? context.maxAttemptsFallback ?? null, manual) });
+    }
+    const groups = new Map<string, CvJournalStep[]>();
+    const placed = new Map<string, number>();
+    for (const step of run.steps) {
+      if (!ASSESS_MOTIONS.has(step.motion)) {
+        out.push({ kind: "line", key: step.id, line: narrateStep(step, now, runContext) });
+        continue;
+      }
+      const pass = assessPass(step);
+      let members = groups.get(pass);
+      if (!members) {
+        members = [];
+        groups.set(pass, members);
+        placed.set(pass, out.length);
+        out.push({ kind: "line", key: `pending:${run.key}:${pass}`, line: narrateStep(step, now, runContext) });
+      }
+      members.push(step);
+    }
+    for (const [pass, members] of groups) {
+      const at = placed.get(pass)!;
+      const group = narrateGroup(members, now, runContext, pass as "draft" | "revision");
+      out[at] = { kind: "group", key: group.key, group };
+    }
+  });
+  return out;
 }
 
 export interface CvBuildTotals {
@@ -424,33 +768,198 @@ export interface CvBuildTotals {
   ms: number;
   usd: number;
   running: boolean;
+  /** What the build reserved, from its `publish` step, when the worker recorded it. */
+  reservedUsd: number | null;
 }
 
 /**
- * What the whole build came to. The elapsed figure is wall clock — first motion opening to last
- * one closing — not the sum of the steps, because the assessment's batches run together and
- * adding them up would bill the reader for time that never passed.
+ * What the whole build came to. The elapsed figure is wall clock within each attempt — first
+ * motion opening to last one closing — summed over the attempts, so neither the assessment's
+ * batches that ran together nor the days between a failure and its retry are billed as time.
+ *
+ * `live` says whether anything is still working on the build. Only then is a motion marked running
+ * counted up to `now` and the figures called provisional: a finished draft with a row left open by
+ * a process that died reads as the total it came to, not "so far" for ever.
  */
-export function cvBuildTotals(steps: CvBuildStepView[], now: Date = new Date()): CvBuildTotals {
-  if (!steps.length) return { motions: 0, ms: 0, usd: 0, running: false };
-  let first = steps[0]!.startedAt.getTime();
-  let last = 0;
+export function cvBuildTotals(steps: readonly CvJournalStep[], now: Date = new Date(), options: { live?: boolean } = {}): CvBuildTotals {
+  if (!steps.length) return { motions: 0, ms: 0, usd: 0, running: false, reservedUsd: null };
+  const runs = cvBuildRuns(steps);
+  let ms = 0;
   let usd = 0;
   let running = false;
-  for (const step of steps) {
-    first = Math.min(first, step.startedAt.getTime());
-    last = Math.max(last, (step.finishedAt ?? step.startedAt).getTime());
-    if (step.status === "running") running = true;
-    usd += number(step.detail, "usd") ?? 0;
-  }
-  if (running) last = Math.max(last, now.getTime());
-  return { motions: steps.length, ms: Math.max(0, last - first), usd, running };
+  let reservedUsd: number | null = null;
+  runs.forEach((run, i) => {
+    let first = run.steps[0]!.startedAt.getTime();
+    let last = 0;
+    let open = false;
+    for (const step of run.steps) {
+      first = Math.min(first, step.startedAt.getTime());
+      last = Math.max(last, (step.finishedAt ?? step.startedAt).getTime());
+      if (step.status === "running") open = true;
+      usd += usdOf(step);
+      if (step.motion === "publish") reservedUsd = number(step.detail, "reservedUsd") ?? reservedUsd;
+    }
+    if (open && options.live && i === runs.length - 1) {
+      running = true;
+      last = Math.max(last, now.getTime());
+    }
+    ms += Math.max(0, last - first);
+  });
+  return { motions: steps.length, ms, usd, running, reservedUsd };
 }
 
 /** The disclosure's first line: what the build cost and how long it took. */
 export function cvBuildTotalsLine(totals: CvBuildTotals): string {
   if (!totals.motions) return "No motions recorded for this build.";
+  const reserved = totals.reservedUsd !== null && totals.reservedUsd > 0 && !totals.running ? ` of ${formatUsdPrecise(totals.reservedUsd)} reserved` : "";
   return `${count(totals.motions, "motion")} in ${formatStepDuration(totals.ms)}${
-    totals.usd > 0 ? `, costing ${formatUsdPrecise(totals.usd)}` : ", with no recorded model spend"
+    totals.usd > 0 ? `, costing ${formatUsdPrecise(totals.usd)}${reserved}` : ", with no recorded model spend"
   }${totals.running ? " so far" : ""}.`;
+}
+
+/** Typical durations by motion, in milliseconds, for motions with enough runs to say. */
+export type CvMotionMedians = Readonly<Record<string, number>>;
+
+/** Fewer runs than this and a median is an anecdote, so nothing is estimated from it. */
+export const CV_MEDIAN_MIN_RUNS = 5;
+
+/** The newest attempt, which is the one anything is still happening in. */
+function latestRun(steps: readonly CvJournalStep[]): CvBuildRun | null {
+  const runs = cvBuildRuns(steps);
+  return runs[runs.length - 1] ?? null;
+}
+
+/**
+ * What is happening now, in one line, for the strip above the narrative: the open motion — or the
+ * pass of the assessment it is part of — with how long it has run and, where enough builds have
+ * run it, how long it usually takes. When nothing is open, the last thing that closed.
+ */
+export function currentMotionLine(
+  steps: readonly CvJournalStep[],
+  now: Date = new Date(),
+  context: NarrativeContext = {},
+  medians: CvMotionMedians = {},
+): string | null {
+  const run = latestRun(steps);
+  if (!run) return null;
+  const open = [...run.steps].reverse().find((step) => step.status === "running");
+  if (open && !context.interrupted) {
+    if (ASSESS_MOTIONS.has(open.motion)) {
+      const pass = assessPass(open);
+      const group = narrateGroup(run.steps.filter((step) => ASSESS_MOTIONS.has(step.motion) && assessPass(step) === pass), now, context, pass);
+      return `${group.line.text} · ${group.line.meta}`;
+    }
+    const line = narrateStep(open, now, context);
+    const usual = medians[open.motion];
+    return `${line.text} · ${line.meta}${usual ? ` · usually about ${formatStepDuration(usual)}` : ""}`;
+  }
+  const closed = [...run.steps].reverse().find((step) => step.status !== "running");
+  return closed ? narrateStep(closed, now, context).text : null;
+}
+
+/**
+ * The milestone the strip lights, from what the build is doing rather than from the stage column
+ * the worker writes: measuring the PDF is Optimise, whatever the column said. A build that has
+ * reached `publishing` has passed every milestone. Null when nothing has been recorded.
+ */
+export function cvBuildMilestone(steps: readonly CvJournalStep[]): CvMilestone | "publishing" | null {
+  const run = latestRun(steps);
+  if (!run) return null;
+  for (const step of [...run.steps].reverse()) {
+    if (step.stage === "publishing") return "publishing";
+    if ((CV_MILESTONES as readonly string[]).includes(step.stage)) return step.stage as CvMilestone;
+  }
+  return null;
+}
+
+/** What is left after writing, in the order a build runs it. */
+const AFTER_WRITING = ["check_plan", "measure", "assess_batch", "assemble", "publish"] as const;
+
+/**
+ * The strip's honest progress: which of the four stages this is, the units of the stage where it
+ * has them, and — only once writing has closed, when what remains is predictable — roughly how long
+ * is left from the medians of the motions still to run. Nothing is estimated from a motion with
+ * fewer than `CV_MEDIAN_MIN_RUNS` runs, and no estimate is better than a wrong one.
+ */
+export function cvBuildProgressLine(steps: readonly CvJournalStep[], now: Date = new Date(), medians: CvMotionMedians = {}): string | null {
+  const milestone = cvBuildMilestone(steps);
+  const run = latestRun(steps);
+  if (!milestone || !run || milestone === "publishing") return null;
+  const parts = [`Stage ${CV_MILESTONES.indexOf(milestone) + 1} of ${CV_MILESTONES.length}`];
+  const batches = run.steps.filter((step) => step.motion === "assess_batch");
+  const lastPass = batches.length ? assessPass(batches[batches.length - 1]!) : "draft";
+  const passBatches = batches.filter((step) => assessPass(step) === lastPass);
+  if (milestone === "assessing" && passBatches.length) {
+    const of = passBatches.reduce<number | null>((max, step) => {
+      const value = batchPosition(step.detail).of;
+      return value === null ? max : Math.max(max ?? 0, value);
+    }, null) ?? passBatches.length;
+    const done = passBatches.filter((step) => step.status === "done").length;
+    parts.push(`${formatCount(done)} of ${count(of, "batch", "batches")} done`);
+  }
+  if (milestone === "writing") {
+    const writing = [...run.steps].reverse().find((step) => step.motion === "write" || step.motion === "rewrite");
+    const attempt = writing ? number(writing.detail, "attempt") : null;
+    if (attempt !== null && attempt > 1) parts.push(`writing attempt ${formatCount(attempt)}`);
+  }
+  const wrote = run.steps.some((step) => (step.motion === "write" || step.motion === "rewrite") && (step.status === "done" || step.status === "skipped"));
+  if (wrote) {
+    let remaining = 0;
+    let known = true;
+    for (const motion of AFTER_WRITING) {
+      const own = run.steps.filter((step) => step.motion === motion && (motion !== "assess_batch" || assessPass(step) === lastPass));
+      const closed = own.length > 0 && own.every((step) => step.status !== "running") && (motion !== "assess_batch" || own.every((step) => step.status === "done"));
+      if (closed) continue;
+      const usual = medians[motion];
+      if (!usual) {
+        known = false;
+        break;
+      }
+      const open = own.find((step) => step.status === "running");
+      remaining += open ? Math.max(0, usual - (now.getTime() - open.startedAt.getTime())) : usual;
+    }
+    if (known && remaining > 0) parts.push(`about ${formatStepDuration(remaining)} left`);
+  }
+  return parts.join(" · ");
+}
+
+/** The revision the improvement pass adopted, once it has, for the link above the log. */
+export function adoptedRevision(steps: readonly CvJournalStep[]): { name: string | null; draftId: string | null } | null {
+  const adopted = [...steps].reverse().find((step) => step.motion === "adopt_revision" && step.status === "done");
+  if (!adopted) return null;
+  // TODO(merge P2): the adopted revision's draft id; `revision` is its name or number.
+  const draftId = text(adopted.detail, "draftId") ?? text(adopted.detail, "revisionId");
+  return { name: revisionName(adopted.detail), draftId };
+}
+
+/** The Applications row's few words for what a build is doing: "checking batch 3 of 5". */
+export function cvBuildRowLabel(step: Pick<CvJournalStep, "motion" | "detail" | "status">): string | null {
+  const position = batchPosition(step.detail);
+  const batch = position.index === null ? "" : ` batch ${formatCount(position.index)}${position.of === null ? "" : ` of ${formatCount(position.of)}`}`;
+  switch (step.motion) {
+    case "load_inputs": return "reading your Library";
+    case "admit_budget": return "reserving budget";
+    case "rubric": return "reading the role";
+    case "plan_evidence": return "matching your evidence";
+    case "gap_quiz": return "preparing questions";
+    case "write": return "writing";
+    case "check_plan": return "checking every role is kept";
+    case "measure": return "measuring the PDF";
+    case "shorten": return "trimming to fit";
+    case "rewrite": return "rewriting to fit";
+    case "assess_batch": return assessPass(step) === "revision" ? `checking the revision${batch ? `,${batch}` : ""}` : batch ? `checking${batch}` : "checking against your evidence";
+    case "assess_retry": return "re-checking a batch";
+    case "assemble": return "scoring";
+    case "publish": return "saving";
+    case "improve_content": return "trying a stronger revision";
+    case "compare_content": return "comparing the revision";
+    case "adopt_revision": return "deciding on the revision";
+    default: return null;
+  }
+}
+
+/** A build that has not moved for ten minutes or more, in whole minutes. */
+export function cvStalledMessage(sinceProgressMs: number): string {
+  const minutes = Math.floor(Math.max(0, sinceProgressMs) / 60_000);
+  return `No progress for ${minutes} minutes. The worker may be restarting; an administrator can see why in Operations.`;
 }

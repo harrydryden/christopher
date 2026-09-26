@@ -404,7 +404,9 @@ export async function requestCv(
     // worker's admission is still the authority — it holds the capacity inside the budget lock and
     // knows the operator's caps — but a build this account plainly cannot afford is refused before
     // a draft, a task and an application row exist for it.
-    const quote = await cvBuildQuote(user.id, id);
+    // Priced against the description the build will actually be written from: a pasted one when
+    // there is one, which can be far longer than the stored snippet it replaces.
+    const quote = await cvBuildQuote(user.id, id, new Date(), { description: supplied || undefined });
     if (quote.refusal) return fail(quote.refusal);
     draftId = await db().transaction(async (tx) => {
       // The account's lock comes before the role's, in every transaction that queues a build.
@@ -608,6 +610,11 @@ export async function saveCvDraft(
           archivedAt: null,
           parentId: id,
           revision,
+          // The parent's rubric goes with the revision, where a retry of it can find it: "Retry
+          // generation" queues a task that knows only the draft, and without this a retried direct
+          // edit paid for a new rubric the saved assessment already had. Nothing else of the
+          // parent's attempt comes with it; the revision is born clean.
+          buildCheckpoint: draft.assessment ? { sourceRubric: draft.assessment.rubric } : null,
         })
         .returning();
       await enqueueTask(
@@ -733,12 +740,17 @@ export async function assessCvDraft(
           } : {}),
         })
         .where(eq(cvDrafts.id, id));
-      // Saved wording is assessed as it stands. A revision with none is written again as its task
-      // first asked, which the worker reads from the checkpoint kept above.
+      // Saved wording with no written-content checkpoint behind it — a Direct Edit, or wording
+      // whose checkpoint the refresh above replaced — is assessed as it stands. Wording this build
+      // wrote, with its checkpoint kept, is resumed from that checkpoint instead, so a tailored
+      // retry keeps the optional rewrite it has not tried yet: sent as "assess", the worker read it
+      // as the person's own wording and never offered one. A revision with no wording is written
+      // again as its task first asked, which the worker reads from the checkpoint kept above.
+      const typed = !!draft.content && !(refreshed ? undefined : checkpoint.contentAt);
       const queued = await enqueueTask(
         tx,
         "generate_cv",
-        { draftId: id, ...(draft.content ? { mode: "assess" } : {}) },
+        { draftId: id, ...(typed ? { mode: "assess" } : {}) },
         { dedupeKey: `generate_cv:${id}`, priority: 2 },
       );
       if (!queued)

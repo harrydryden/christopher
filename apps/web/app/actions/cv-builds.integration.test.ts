@@ -77,6 +77,12 @@ const content = {
   gaps: [],
 };
 
+/** Room for several whole builds at once: the quote counts the builds already queued. */
+async function setBudget(usd: number) {
+  await database.insert(schema.userSettings).values({ userId: user.id, key: "aiBudgetUsd", value: usd, updatedAt: new Date() })
+    .onConflictDoUpdate({ target: [schema.userSettings.userId, schema.userSettings.key], set: { value: usd } });
+}
+
 async function setCvModel(model: string) {
   await database.insert(schema.userSettings).values({ userId: user.id, key: "cvModel", value: model, updatedAt: new Date() })
     .onConflictDoUpdate({ target: [schema.userSettings.userId, schema.userSettings.key], set: { value: model } });
@@ -115,7 +121,38 @@ it("retries a failed build with the CV model chosen since, and keeps what it alr
   expect(retried.status).toBe("queued");
   // Only the model changed: the rubric and the wording that already fit are still resumed from.
   expect(retried.buildCheckpoint).toEqual(draft.buildCheckpoint);
-  expect(await buildTasks()).toHaveLength(1);
+  const tasks = await buildTasks();
+  expect(tasks).toHaveLength(1);
+  // The wording is the build's own (its checkpoint says it wrote it), so the retry resumes from the
+  // checkpoint rather than asking for an assessment of typed wording — which is what keeps a
+  // tailored build's one optional rewrite on offer.
+  expect(tasks[0]!.payload).toEqual({ draftId: draft.id });
+});
+
+it("retries a Direct Edit as an assessment of the wording as typed, with the rubric it carried", async () => {
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+  const rubric = rubricFixture("Finance operations");
+  // Save Direct Edits wrote the revision: content the person typed, and only the parent's rubric.
+  const draft = await failedDraft({ buildCheckpoint: { sourceRubric: rubric } });
+  expect(await assessCvDraft(draft.id, { ok: true }, new FormData())).toEqual({ ok: true });
+  const [task] = await buildTasks();
+  expect(task!.payload).toEqual({ draftId: draft.id, mode: "assess" });
+  expect((await draftRow(draft.id)).buildCheckpoint).toEqual({ sourceRubric: rubric });
+});
+
+it("keeps the parent's rubric in a Direct Edit's checkpoint, where a later retry can find it", async () => {
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+  // A finished, assessed revision (the helper is a function declaration, so it is in scope here).
+  const parent = await finalisableDraft();
+  const rubric = parent.assessment!.rubric;
+  const form = new FormData();
+  form.set("summary", "Edited profile");
+  form.set("section-0", "Led a team");
+  await expect(saveCvDraft(parent.id, { ok: true }, form)).rejects.toThrow("redirect:/cv/");
+  const [saved] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, parent.id));
+  expect(saved!.buildCheckpoint).toEqual({ sourceRubric: rubric });
+  const [task] = await buildTasks();
+  expect(task!.payload).toMatchObject({ draftId: saved!.id, mode: "assess", rubric });
 });
 
 it("writes a rebuild and a direct edit with the CV model chosen now, not the parent's", async () => {
@@ -239,6 +276,7 @@ const outcome = async (pending: Promise<unknown>) => {
 
 it("refuses an account's fourth build in flight in a sentence, and writes nothing for it", async () => {
   await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+  await setBudget(200);
   const roles = await visibleRoles(MAX_CV_BUILDS_IN_FLIGHT + 1);
   for (const role of roles.slice(0, MAX_CV_BUILDS_IN_FLIGHT))
     expect(await outcome(requestCv({ ok: true }, generate(role.job.id)))).toMatch(/^redirect:\/cv\//);
@@ -290,8 +328,25 @@ it("holds a retry and a saved edit to the same cap, and counts only this account
   expect((await draftRow(failed.id)).status).toBe("failed");
 });
 
+it("refuses at the button a build the builds already queued leave no room for", async () => {
+  await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+  const roles = await visibleRoles(3);
+  // The default $25 fits two whole builds of this size, not three: the first two hold nothing yet
+  // (the worker has not admitted them), but they will, and the third is refused before it exists.
+  expect(await outcome(requestCv({ ok: true }, generate(roles[0]!.job.id)))).toMatch(/^redirect:\/cv\//);
+  expect(await outcome(requestCv({ ok: true }, generate(roles[1]!.job.id)))).toMatch(/^redirect:\/cv\//);
+  const refused = await requestCv({ ok: true }, generate(roles[2]!.job.id));
+  expect(refused).toMatchObject({ ok: false });
+  expect((refused as { error: string }).error).toMatch(/^This build needs about \$\d+\.\d\d of AI budget; your budget of \$25 has \$\d+\.\d\d left this month after \$\d+\.\d\d held/);
+  expect(await database.select().from(schema.cvDrafts)).toHaveLength(2);
+  // Once one of them is no longer waiting, the room it would have taken is the worker's to account.
+  await database.update(schema.cvDrafts).set({ status: "failed" }).where(eq(schema.cvDrafts.jobId, roles[0]!.job.id));
+  expect(await outcome(requestCv({ ok: true }, generate(roles[2]!.job.id)))).toMatch(/^redirect:\/cv\//);
+});
+
 it("lets exactly one of two simultaneous requests take the last place", async () => {
   await database.insert(schema.cvLibraries).values({ userId: user.id, version: 1, content: library });
+  await setBudget(200);
   const roles = await visibleRoles(MAX_CV_BUILDS_IN_FLIGHT + 1);
   for (const role of roles.slice(0, MAX_CV_BUILDS_IN_FLIGHT - 1))
     expect(await outcome(requestCv({ ok: true }, generate(role.job.id)))).toMatch(/^redirect:\/cv\//);

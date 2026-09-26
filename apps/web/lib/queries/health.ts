@@ -4,7 +4,6 @@ import {
   aiUsageByAccount,
   costPerCvBuild,
   costPerScoredRole,
-  cvBuildMotionStats,
   type CvBuildMotionStat,
   listHttpHostDaily,
   listWorkerEvents,
@@ -29,9 +28,9 @@ import {
 } from "@ava/db/schema";
 // The deadline table lives in packages/core so the interface can say how long a running task has
 // left without importing the worker.
-import { aiBudgetWindowStart, deadlineFor } from "@ava/core";
+import { aiBudgetWindowStart, aiFeatureLabel, deadlineFor } from "@ava/core";
 import { cache } from "react";
-import { groupAiUsage, type AiUsageGroup } from "@/lib/ai-usage";
+import { aiUsageKey, groupAiUsage, type AiUsageGroup, type AiUsagePercentiles } from "@/lib/ai-usage";
 import { accountAiBudget } from "@/lib/queries/accounts";
 import { formatUsd } from "@/lib/format";
 import { foldOutboundTraffic, type HostTraffic } from "@/lib/outbound-traffic";
@@ -120,7 +119,34 @@ export async function getTotalAiSpend(since: Date): Promise<number> {
 
 /** The operations report: one line per account, feature and model since `since`, dearest first. */
 export async function getAiUsage(since: Date): Promise<AiUsageGroup[]> {
-  return groupAiUsage(await aiUsageByAccount(db(), since));
+  const rows = await aiUsageByAccount(db(), since);
+  return groupAiUsage(rows, await aiUsagePercentiles(since, [...new Set(rows.map((row) => row.callSite))]));
+}
+
+/**
+ * Latency percentiles for each line of the report as it is folded — account, feature and model —
+ * computed by the database over every call in the line. Several call sites carry one feature, and
+ * a percentile cannot be added up: the calls-weighted mean of two p95s is not the p95 of their
+ * union, and understated a feature whose slow tail lived in one of its call sites. The call sites
+ * are mapped to their features in the query, so the percentile is taken over the union itself.
+ */
+export async function aiUsagePercentiles(since: Date, callSites: readonly string[]): Promise<AiUsagePercentiles> {
+  if (!callSites.length) return new Map();
+  const labels = sql.join(callSites.map((site) => sql`(${site}::text, ${aiFeatureLabel(site)}::text)`), sql`, `);
+  const result = await db().execute<{ userId: string | null; feature: string; model: string; p50: number | null; p95: number | null }>(sql`
+    with labels(call_site, feature) as (values ${labels})
+    select c.user_id as "userId", l.feature, c.model,
+      percentile_cont(0.5) within group (order by c.duration_ms) filter (where c.duration_ms is not null) as p50,
+      percentile_cont(0.95) within group (order by c.duration_ms) filter (where c.duration_ms is not null) as p95
+    from ai_calls c join labels l on l.call_site = c.call_site
+    where c.at >= ${since}
+    group by c.user_id, l.feature, c.model`);
+  return new Map(
+    result.rows.map((row) => [
+      aiUsageKey(row.userId ?? null, row.feature, row.model),
+      { p50DurationMs: row.p50 === null ? null : Number(row.p50), p95DurationMs: row.p95 === null ? null : Number(row.p95) },
+    ]),
+  );
 }
 
 /**
@@ -140,15 +166,157 @@ export function normaliseCvBuildCosts(costs: CvBuildCosts): CvBuildCosts {
   };
 }
 
+/** One motion's figures over a window, with the slow tail beside the median. */
+export interface CvBuildMotionPercentiles extends CvBuildMotionStat {
+  p95Ms: number | null;
+}
+
 /**
  * Where builds spend their time and where they fail, by motion, over a window. Administrator-only,
  * like the costs above: it reads every account's builds, and the page behind it calls
  * `requireAdmin`. A deployment whose worker has not yet run the ledger's migration reads as an
  * empty card rather than an error over the whole of Operations.
+ *
+ * The median and the 95th percentile are the database's `percentile_cont` over each motion's own
+ * rows, never a mean of means.
  */
-export async function getCvBuildMotions(days = 30): Promise<CvBuildMotionStat[]> {
-  return ifLedger(() => cvBuildMotionStats(db(), days), [] as CvBuildMotionStat[]);
+export async function getCvBuildMotions(days = 30): Promise<CvBuildMotionPercentiles[]> {
+  return ifLedger(async () => {
+    const since = new Date(Date.now() - days * 86_400_000);
+    const rows = await db()
+      .select({
+        motion: cvBuildSteps.motion,
+        runs: sql<number>`count(*)::int`,
+        failed: sql<number>`count(*) filter (where ${cvBuildSteps.status} = 'failed')::int`,
+        medianMs: sql<number | null>`percentile_cont(0.5) within group (order by ${cvBuildSteps.ms})`,
+        p95Ms: sql<number | null>`percentile_cont(0.95) within group (order by ${cvBuildSteps.ms})`,
+        medianUsd: sql<number | null>`percentile_cont(0.5) within group (order by (${cvBuildSteps.detail}->>'usd')::float8)`,
+      })
+      .from(cvBuildSteps)
+      .where(gte(cvBuildSteps.startedAt, since))
+      .groupBy(cvBuildSteps.motion)
+      .orderBy(desc(sql`count(*)`), cvBuildSteps.motion);
+    const num = (value: unknown) => (value === null || value === undefined ? null : Number(value));
+    return rows.map((row) => ({
+      ...row,
+      medianMs: num(row.medianMs) === null ? null : Math.round(num(row.medianMs)!),
+      p95Ms: num(row.p95Ms) === null ? null : Math.round(num(row.p95Ms)!),
+      medianUsd: num(row.medianUsd),
+    }));
+  }, [] as CvBuildMotionPercentiles[]);
 }
+
+/** What CV builds cost, week by week: how many, what they came to, and the median build. */
+export interface CvBuildWeek {
+  week: Date;
+  builds: number;
+  totalUsd: number;
+  medianUsd: number | null;
+}
+
+/**
+ * Cost per build by week, over the last `weeks`. A build is every model call that names one draft,
+ * dated by its first call, so a retry days later adds to the build it retried rather than counting
+ * as a second. Administrator-only.
+ */
+export async function getCvBuildWeeks(weeks = 12): Promise<CvBuildWeek[]> {
+  return ifLedger(async () => {
+    const since = new Date(Date.now() - weeks * 7 * 86_400_000);
+    const result = await db().execute<{ week: Date | string; builds: number; totalUsd: number; medianUsd: number | null }>(sql`
+      with builds as (
+        select ref_id, min(at) as at, sum(cost_usd::float8) as cost from ai_calls
+        where ref_type like 'cv-%' and ref_id is not null and at >= ${since}
+        group by ref_id
+      )
+      select date_trunc('week', at) as week, count(*)::int as builds, sum(cost) as "totalUsd",
+        percentile_cont(0.5) within group (order by cost) as "medianUsd"
+      from builds group by 1 order by 1 desc`);
+    return result.rows.map((row) => ({
+      week: row.week instanceof Date ? row.week : new Date(row.week),
+      builds: Number(row.builds),
+      totalUsd: Number(row.totalUsd),
+      medianUsd: row.medianUsd === null ? null : Number(row.medianUsd),
+    }));
+  }, [] as CvBuildWeek[]);
+}
+
+/** A rate Operations watches for drift, with the threshold that makes it worth a look. */
+export interface CvDriftRate {
+  key: "improvement_acceptance" | "correction_rerun" | "refusal";
+  label: string;
+  numerator: number;
+  denominator: number;
+  rate: number | null;
+  /** The rate on the wrong side of this is flagged. */
+  threshold: number;
+  direction: "below" | "above";
+  flagged: boolean;
+  /** What a flagged rate means, and where to look. */
+  meaning: string;
+}
+
+/** Fewer events than this and a rate is noise, so it is shown but never flagged. */
+export const CV_DRIFT_MIN_EVENTS = 10;
+
+/** The thresholds, in one place: each is a rate at which a person should look, not an alarm. */
+export const CV_DRIFT_THRESHOLDS = { improvement_acceptance: 0.2, correction_rerun: 0.15, refusal: 0.02 } as const;
+
+export function cvDriftRate(key: CvDriftRate["key"], numerator: number, denominator: number): CvDriftRate {
+  const rate = denominator > 0 ? numerator / denominator : null;
+  const threshold = CV_DRIFT_THRESHOLDS[key];
+  const direction = key === "improvement_acceptance" ? "below" : "above";
+  const flagged = rate !== null && denominator >= CV_DRIFT_MIN_EVENTS && (direction === "below" ? rate < threshold : rate > threshold);
+  const copy = {
+    improvement_acceptance: {
+      label: "Improvement acceptance",
+      meaning: "Share of optional revisions kept after the comparison. Low means the pass mostly buys a rewrite that is thrown away.",
+    },
+    correction_rerun: {
+      label: "Correction re-runs",
+      meaning: "Assessment batches re-run to correct misattributed evidence, per batch. High means the reviewer's first answers are drifting.",
+    },
+    refusal: {
+      label: "Refusals",
+      meaning: "CV model calls the model declined. Above the threshold, check the prompts and the model choice in System settings.",
+    },
+  }[key];
+  return { key, numerator, denominator, rate, threshold, direction, flagged, ...copy };
+}
+
+/**
+ * The three rates that drift before anything fails outright, over `days`: how often the optional
+ * revision is kept (`compare_content.accepted`), how often an assessment batch is re-run to correct
+ * itself (`review_retry` calls per `review` call), and how often the CV model refuses (the
+ * `refusal:` prefix the engine writes). Administrator-only; never on a CV page's poll.
+ */
+export async function getCvDriftRates(days = 30): Promise<CvDriftRate[]> {
+  const since = new Date(Date.now() - days * 86_400_000);
+  const calls = sql`
+    select count(*) filter (where stage in ('review', 'review_candidate'))::int as reviews,
+      count(*) filter (where stage in ('review_retry', 'review_candidate_retry'))::int as retries,
+      count(*) filter (where error like 'refusal:%')::int as refusals,
+      count(*)::int as total
+    from ai_calls where ref_type like 'cv-%' and at >= ${since}`;
+  type Row = { accepted: number; compared: number; reviews: number; retries: number; refusals: number; total: number };
+  // One statement for all three, because Operations is held to a budget of statements; the ledger's
+  // half is guarded, so a worker behind the interface still leaves the model's two rates readable.
+  const row = await db()
+    .execute<Row>(sql`
+      select c.*, s.accepted, s.compared from (${calls}) c,
+        (select count(*) filter (where (detail->>'accepted')::boolean)::int as accepted, count(*)::int as compared
+         from cv_build_steps where motion = 'compare_content' and status = 'done' and started_at >= ${since}) s`)
+    .then((result) => result.rows[0])
+    .catch(() =>
+      ifLedger(async () => ({ ...(await db().execute<Row>(calls)).rows[0]!, accepted: 0, compared: 0 }), undefined as Row | undefined),
+    );
+  const n = (value: unknown) => Number(value ?? 0);
+  return [
+    cvDriftRate("improvement_acceptance", n(row?.accepted), n(row?.compared)),
+    cvDriftRate("correction_rerun", n(row?.retries), n(row?.reviews)),
+    cvDriftRate("refusal", n(row?.refusals), n(row?.total)),
+  ];
+}
+
 
 export interface CvBuildFailureCount {
   kind: string;
@@ -248,7 +416,24 @@ export async function getWorkerHeartbeat(): Promise<WorkerHeartbeat | null> {
   return readHeartbeat(row?.value);
 }
 
-function readHeartbeat(stored: unknown): WorkerHeartbeat | null {
+/**
+ * The model engine's stream governor as the heartbeat reports it: how many streams it allows at
+ * once and how many are open. Read defensively, because the engine reports it and the interface
+ * deploys separately; absent reads as null.
+ */
+// TODO(merge P2): the worker publishes `{ cap, inFlight, queued, pausedUntil, models }` under
+// `governor`; read defensively until that lands, and tolerate the older names.
+function readGovernor(stored: unknown): WorkerHeartbeat["governor"] {
+  if (!stored || typeof stored !== "object") return null;
+  const value = stored as Record<string, unknown>;
+  const streamCap = finite(value.cap ?? value.streamCap);
+  const inFlight = finite(value.inFlight);
+  const queued = finite(value.queued);
+  const pausedUntil = isoDate(value.pausedUntil);
+  return streamCap === null && inFlight === null && queued === null ? null : { streamCap, inFlight, queued, pausedUntil };
+}
+
+export function readHeartbeat(stored: unknown): WorkerHeartbeat | null {
   const value = (stored && typeof stored === "object" ? stored : undefined) as Record<string, unknown> | undefined;
   const at = isoDate(value?.at);
   if (!value || !at) return null;
@@ -262,6 +447,7 @@ function readHeartbeat(stored: unknown): WorkerHeartbeat | null {
     vitals: readVitals(value.vitals),
     active: finite(value.active),
     concurrency: finite(value.concurrency),
+    governor: readGovernor(value.governor),
   };
 }
 

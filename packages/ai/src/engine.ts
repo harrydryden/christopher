@@ -445,7 +445,13 @@ export interface CvAssessBatchEvent {
   /** Zero-based, in the order `cvReviewBatches` sliced them. */
   index: number;
   total: number;
-  phase: "start" | "done" | "retry" | "failed";
+  /**
+   * `cancelled` closes a batch this engine stopped because a sibling failed, or because the run
+   * was stopped: not a failure of its own.
+   */
+  phase: "start" | "done" | "retry" | "failed" | "cancelled";
+  /** Which audit this is: of the written draft, or of the revised candidate. */
+  pass: CvAssessPass;
   requirements: number;
   claims: number;
   /** How many attribution corrections the re-run was asked to make; absent when there was none. */
@@ -454,9 +460,78 @@ export interface CvAssessBatchEvent {
   usage?: AiUsageRecord;
 }
 
+/**
+ * Which audit of a build this is. The first audits the written draft; the second audits the
+ * revised candidate, and is recorded under the stage `review_candidate` so the two audits' costs
+ * and failures stay apart.
+ */
+export type CvAssessPass = "draft" | "revision";
+
 export interface CvAssessHooks {
   /** Never throws into the audit: a hook that fails is logged and the batch carries on. */
   onBatch?: (event: CvAssessBatchEvent) => void | Promise<void>;
+  /** Default `draft`. */
+  pass?: CvAssessPass;
+}
+
+/** What an audit reads. */
+export interface CvAssessInput {
+  rubric: CvRubric;
+  cv: CvTextItem[];
+  claims: CvClaimItem[];
+  /** The sources the answer is validated against: `cvEvidenceItems` of the grouped library. */
+  evidence: CvTextItem[];
+  /**
+   * The grouped library itself. Given, the model reads the canonical evidence — the serialisation
+   * the planner and the writer read — instead of `evidence`; citations are still validated
+   * against `evidence`, with a row cited under its own id counted as its block's.
+   */
+  library?: CvLibrary;
+}
+
+export interface CvAssessOptions extends CvAssessHooks {
+  /**
+   * Run only these batches, by index, for a caller re-running the batches a checkpointed audit
+   * lost. The batches are sliced from the input exactly as a full audit slices them, so an index
+   * names the same requirements and claims as long as the input is the same.
+   */
+  only?: readonly number[];
+}
+
+/** One batch of an audit, as it ended. */
+export interface CvAssessBatchResult {
+  index: number;
+  /**
+   * `done` carries its result. `failed` is the batch's own failure, named. `cancelled` is a batch
+   * stopped because a sibling failed — no error of its own — or because the run was stopped, whose
+   * `error` then says so; one never sent because the first batch failed first is cancelled too.
+   */
+  status: "done" | "failed" | "cancelled";
+  result?: CvReviewPlan;
+  error?: string;
+  failure?: AiFailure;
+  /** Every call the batch made — its first and any correction — each as recorded. */
+  usage: AiUsageRecord[];
+}
+
+export interface CvAssessResult {
+  pass: CvAssessPass;
+  /** How many batches the whole audit has, whichever of them this run ran. */
+  total: number;
+  /** The batches this run ran, by index. */
+  batches: CvAssessBatchResult[];
+  /** The whole audit, when this run ran every batch and every one is done; otherwise null. */
+  review: CvReviewPlan | null;
+}
+
+/** The error a batch fails with when its answer did not cover its requirements and claims once each. */
+export const ASSESSMENT_COVERAGE_ERROR = "The assessment did not cover every requested requirement and claim exactly once. The fitted CV is saved; retry its assessment.";
+
+/** The finished batches of one audit as its review, or null when they do not make a valid one. */
+export function mergeCvAssessBatches(results: readonly CvReviewPlan[]): CvReviewPlan | null {
+  const review = { matches: results.flatMap(result => result.matches), claims: results.flatMap(result => result.claims) };
+  const parsed = CvReviewPlanSchema.safeParse(review);
+  return parsed.success ? parsed.data : null;
 }
 
 /**
@@ -760,121 +835,141 @@ export class AiEngine {
     }
   }
 
+  /**
+   * The audit of a CV, returning the whole review or null. A batch that fails discards the audit
+   * here; `assessCvBatches` keeps the batches that finished, for a caller that checkpoints them.
+   */
   async assessCv(
-    input: {
-      rubric: CvRubric;
-      cv: CvTextItem[];
-      claims: CvClaimItem[];
-      /** The sources the answer is validated against: `cvEvidenceItems` of the grouped library. */
-      evidence: CvTextItem[];
-      /**
-       * The grouped library itself. Given, the model reads the canonical evidence — the serialisation
-       * the planner and the writer read — instead of `evidence`; citations are still validated
-       * against `evidence`, with a row cited under its own id counted as its block's.
-       */
-      library?: CvLibrary;
-    },
+    input: CvAssessInput,
     ref: Ref = {},
     hooks: CvAssessHooks = {},
   ): Promise<CvReviewPlan | null> {
-    // A full CV audit can exceed what one call may produce, so it is split into batches that each
-    // see the complete CV and evidence. The batches are independent: they run together, and they
-    // share that context through the cache rather than each paying for it again.
-    const batchSize = CV_REVIEW_BATCH_SIZE;
+    const audit = await this.assessCvBatches(input, ref, hooks);
+    if (audit.review) return audit.review;
+    if (audit.batches.some(batch => batch.error === ASSESSMENT_COVERAGE_ERROR)) throw new Error(ASSESSMENT_COVERAGE_ERROR);
+    return null;
+  }
+
+  /**
+   * The audit of a CV, batch by batch.
+   *
+   * A full CV audit can exceed what one call may produce, so it is split into batches that each
+   * see the complete CV and evidence. The batches are independent: they run together, and they
+   * share that context through the cache rather than each paying for it again. A batch that fails
+   * stops the batches still in flight — the audit cannot be completed by this run, so paying for
+   * the rest would buy nothing now — but every batch that had already finished is returned with
+   * its result, so a caller that checkpoints them re-runs only what was lost (`only`).
+   */
+  async assessCvBatches(
+    input: CvAssessInput,
+    ref: Ref = {},
+    options: CvAssessOptions = {},
+  ): Promise<CvAssessResult> {
+    const pass: CvAssessPass = options.pass ?? "draft";
+    const entry = pass === "revision" ? PROMPTS["cv.review_candidate"] : PROMPTS["cv.review"];
+    // The re-audit of a revised candidate is its own stage, so its cost never merges with the first audit's.
+    const stage = pass === "revision" ? "review_candidate" : ref.stage ?? "review";
     const { requirements: _requirements, ...rubricContext } = input.rubric;
     // The shared context is two cached blocks in the order it changes, least often first: the
     // evidence and rubric outlive a revision, so the re-audit of an edited CV reads them from
     // cache and writes only the CV; within one audit the batches after the first read both. The
     // cache is a prefix match, so nothing that varies may come before either.
     const stable = JSON.stringify({ evidence: input.library ? canonicalEvidence(input.library) : input.evidence, rubric: rubricContext });
-    const entryIds = input.library ? new Set(input.library.entries.map(entry => entry.id)) : undefined;
+    const entryIds = input.library ? new Set(input.library.entries.map(item => item.id)) : undefined;
     const printed = JSON.stringify({ cv: input.cv });
-    const batches = cvReviewBatches(input, batchSize);
+    const batches = cvReviewBatches(input, CV_REVIEW_BATCH_SIZE);
+    const indices = options.only ? [...new Set(options.only)].filter(index => index >= 0 && index < batches.length).sort((a, b) => a - b)
+      : batches.map((_, index) => index);
     // One controller for the audit: a batch that fails cancels its siblings, and so does the run's
     // own signal, so a build whose task has been given up on stops paying for the rest of its audit.
     const controller = batchController([this.options.signal, ref.signal]);
-    const runBatch = (batch: CvReviewBatch, corrections?: string[], onStart?: () => void, onRecord?: (record: AiUsageRecord) => void) => this.run<CvReviewPlan>(PROMPTS["cv.review"], {
+    const runBatch = (batch: CvReviewBatch, corrections?: string[], onStart?: () => void, onRecord?: (record: AiUsageRecord) => void) => this.run<CvReviewPlan>(entry, {
       user: { stable: [stable, printed], tail: JSON.stringify({ ...batch, ...(corrections ? { corrections } : {}) }) },
       signal: controller.signal,
       onStart,
       onRecord,
       // The corrections re-run is a second charge for one batch, and the difference between an
       // audit that cost twice over and one that simply had many batches. Name it separately.
-    }, corrections ? { ...ref, stage: `${ref.stage ?? "review"}_retry` } : ref);
-    const assess = async (batch: CvReviewBatch, index: number, onStart?: () => void): Promise<CvReviewPlan> => {
+    }, { ...ref, stage: corrections ? `${stage}_retry` : stage });
+    const assess = async (index: number, onStart?: () => void): Promise<CvAssessBatchResult> => {
+      const batch = batches[index]!;
       const context = { cv: input.cv, claims: batch.claims, evidence: input.evidence };
+      const usage: AiUsageRecord[] = [];
+      const onRecord = (record: AiUsageRecord) => { usage.push(record); };
       // The batches run together, so a watcher that only saw the audit begin and end could not say
       // which of five was slow or which paid twice. Each says so for itself, carrying the usage of
       // its own call rather than leaving the caller to guess from the engine-wide record.
       const say = async (phase: CvAssessBatchEvent["phase"], extra: Partial<CvAssessBatchEvent> = {}) => {
         try {
-          await hooks.onBatch?.({ index, total: batches.length, phase,
-            requirements: batch.requirements.length, claims: batch.claims.length, ...extra });
+          await options.onBatch?.({ index, total: batches.length, phase, pass,
+            requirements: batch.requirements.length, claims: batch.claims.length, usage: usage.at(-1), ...extra });
         } catch (err) {
           this.log("assessment batch hook failed", err);
         }
       };
+      // A batch that produced nothing: stopped by this engine, or failed on its own.
+      const ended = async (corrections?: number): Promise<CvAssessBatchResult> => {
+        const last = usage.at(-1);
+        const stopped = !last || last.error === CANCELLED_ERROR || last.error?.startsWith(DEADLINE_ERROR_PREFIX) || last.error?.startsWith(INTERRUPTED_ERROR_PREFIX);
+        const extra = corrections ? { corrections } : {};
+        if (stopped) {
+          await say("cancelled", extra);
+          return { index, status: "cancelled", usage, ...(last?.error && last.error !== CANCELLED_ERROR ? { error: last.error } : {}) };
+        }
+        await say("failed", extra);
+        controller.siblingFailed();
+        return { index, status: "failed", usage, ...(last!.error ? { error: last!.error } : {}), ...(last!.failure ? { failure: last!.failure } : {}) };
+      };
       await say("start");
-      let usage: AiUsageRecord | undefined;
-      let result = sourcedByBlock(await runBatch(batch, undefined, onStart, record => { usage = record; }), entryIds);
-      if (!result) {
-        await say("failed", { usage });
-        throw new BatchFailed();
-      }
+      let result = sourcedByBlock(await runBatch(batch, undefined, onStart, onRecord), entryIds);
+      if (!result) return ended();
       const corrections = reviewBatchIssues(result, context).map(issue => issue.correction);
       if (corrections.length) {
         // The first call is finished and paid for; what follows is a second charge for this batch.
-        await say("retry", { usage, corrections: corrections.length });
-        result = sourcedByBlock(await runBatch(batch, corrections, undefined, record => { usage = record; }), entryIds);
-        if (!result) {
-          await say("failed", { usage, corrections: corrections.length });
-          throw new BatchFailed();
-        }
+        await say("retry", { corrections: corrections.length });
+        result = sourcedByBlock(await runBatch(batch, corrections, undefined, onRecord), entryIds);
+        if (!result) return ended(corrections.length);
         // A repeated attribution mistake earns no credit and remains visible for review.
         // The final strict source validator still checks all accepted evidence quotes.
         result = markUnverifiedFindings(result, reviewBatchIssues(result, context));
       }
+      const extra = corrections.length ? { corrections: corrections.length } : {};
       const complete = (expected: string[], actual: string[]) =>
         expected.length === actual.length && new Set(actual).size === actual.length &&
         expected.every(id => actual.includes(id));
       if (!complete(batch.requirements.map(item => item.id), result.matches.map(item => item.requirementId)) ||
           !complete(batch.claims.map(item => item.id), result.claims.map(item => item.claimId))) {
-        await say("failed", { usage, ...(corrections.length ? { corrections: corrections.length } : {}) });
-        throw new Error("The assessment did not cover every requested requirement and claim exactly once. The fitted CV is saved; retry its assessment.");
+        await say("failed", extra);
+        controller.siblingFailed();
+        return { index, status: "failed", usage, error: ASSESSMENT_COVERAGE_ERROR, failure: { kind: "output_invalid" } };
       }
-      await say("done", { usage, ...(corrections.length ? { corrections: corrections.length } : {}) });
-      return result;
+      await say("done", extra);
+      return { index, status: "done", result, usage };
     };
-    const results: CvReviewPlan[] = [];
-    const pending: Promise<void>[] = [];
+    const outcomes = new Map<number, CvAssessBatchResult>();
     try {
-      if (batches.length) {
+      if (indices.length) {
         // The cache entry is readable only once the first response has begun; batches sent before
         // then would each write their own copy. So the first goes alone until then, the rest together.
         let begun!: () => void;
         const firstBegun = new Promise<void>(resolve => { begun = resolve; });
-        let firstFailed = false;
-        const first = assess(batches[0]!, 0, () => begun()).then(result => { results[0] = result; });
-        pending.push(first);
-        await Promise.race([firstBegun, first.then(() => undefined, () => { firstFailed = true; })]);
-        if (firstFailed) await first;
-        batches.slice(1).forEach((batch, index) => {
-          pending.push(assess(batch, index + 1).then(result => { results[index + 1] = result; }));
-        });
-        await Promise.all(pending);
+        const [head, ...rest] = indices;
+        const first = assess(head!, () => begun()).then(result => { outcomes.set(head!, result); return result; });
+        const settledFirst = await Promise.race([firstBegun.then(() => null), first]);
+        if (settledFirst && settledFirst.status !== "done") {
+          // It ended before its response began, so nothing else was sent: the rest were never paid for.
+          for (const index of rest) outcomes.set(index, { index, status: "cancelled", usage: [] });
+        } else {
+          await Promise.all([first, ...rest.map(index => assess(index).then(result => { outcomes.set(index, result); }))]);
+        }
       }
-    } catch (err) {
-      // Without every batch the audit is worthless: stop paying for the rest, then let them record.
-      controller.siblingFailed();
-      await Promise.allSettled(pending);
-      if (err instanceof BatchFailed) return null;
-      throw err;
     } finally {
       controller.release();
     }
-    const review = { matches: results.flatMap(result => result.matches), claims: results.flatMap(result => result.claims) };
-    const result = CvReviewPlanSchema.safeParse(review);
-    return result.success ? result.data : null;
+    const ran = indices.map(index => outcomes.get(index)!);
+    const whole = !options.only || indices.length === batches.length;
+    const review = whole && ran.every(batch => batch.status === "done") ? mergeCvAssessBatches(ran.map(batch => batch.result!)) : null;
+    return { pass, total: batches.length, batches: ran, review };
   }
 
   async buildCv(

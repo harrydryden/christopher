@@ -462,3 +462,14 @@ it("admits the revision's re-check at the price of the batches it sends, not the
   expect(reaudit.detail.expectedUsd).toBe(Number(estimateCvStage("reaudit", { ...sizes, batches: 1 }, models).toFixed(4)));
   expect(reaudit.detail.expectedUsd).not.toBe(Number(estimateCvStage("reaudit", { ...sizes, batches: 2 }, models).toFixed(4)));
 });
+
+it("charges the audit's calls to a step, as every other stage's are", async () => {
+  const scripted = scriptedClient(); deps.aiClient = scripted.client;
+  const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric });
+  await queue().drain();
+  const calls = await db.select().from(schema.aiCalls).where(eq(schema.aiCalls.refId, draft.id));
+  const audit = calls.filter(call => call.stage === "review" || call.stage === "review_candidate");
+  expect(audit.length).toBeGreaterThan(0);
+  const steps = new Set((await listCvBuildSteps(db, userId, draft.id)).filter(step => step.motion === "assess_batch").map(step => step.id));
+  expect(audit.every(call => call.stepId && steps.has(call.stepId))).toBe(true);
+});

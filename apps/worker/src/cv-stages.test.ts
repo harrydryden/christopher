@@ -147,3 +147,20 @@ describe("the stage runner's keys and routes", () => {
     expect(calls.n).toBe(3);
   });
 });
+
+describe("the stage runner's hold", () => {
+  it("lets the stage's own error through when releasing its hold also fails", async () => {
+    let checkpoint: CvBuildCheckpoint = { v: 2, promptSetVersion: "p1", stages: {} };
+    const runner = new CvStageRunner({
+      checkpoint: () => checkpoint,
+      persist: async next => { checkpoint = next; },
+      admit: async () => ({ release: async () => { throw new Error("release failed"); } }),
+      signal: new AbortController().signal,
+      model: "cv-model",
+      promptSetVersion: "p1",
+      now: () => new Date("2026-09-26T09:00:00Z"),
+    });
+    const stop = new CvBuildStop("output_invalid", "the stage's own failure");
+    await expect(runner.paid("rubric", "rubric", 0.1, async () => { throw stop; })).rejects.toBe(stop);
+  });
+});

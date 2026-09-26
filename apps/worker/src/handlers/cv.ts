@@ -766,11 +766,14 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
           const audit = await runner.paid(admission, "assess_batch",
             estimateCvStage(admission, { ...sizes, batches: sending }, models), stageCtx => {
               stageSignal = stageCtx.signal;
+              // The audit's calls are charged to the first batch step it opens: the engine reads the
+              // reference as each call is made, and every batch's first call follows its step opening.
+              const auditRef: ReturnType<typeof ref> & { stepId?: string } = ref("review", "cv-review", stageCtx.signal);
               return ai.assessCvBatches(items,
               // The engine re-runs a batch whose attribution it had to correct, and names that
               // second charge `review_retry` (`review_candidate_retry` for the revision's re-check),
               // so a build that paid twice for one batch says so.
-              ref("review", "cv-review", stageCtx.signal),
+              auditRef,
               {
                 pass,
                 // Only the batches this build does not already hold: a retry pays for what it lost.
@@ -788,11 +791,13 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
                     ].filter(Boolean);
                     const title = `Checking ${parts.join(" and ") || "the CV"} ${position}`;
                     // A count that would be zero is left out, so the page never says "0 claims".
-                    batchSteps.set(event.index, await journal.open("assess_batch", {
+                    const opened = await journal.open("assess_batch", {
                       batch: event.index + 1, batches: event.total, index: event.index + 1, of: event.total, pass,
                       ...(event.requirements ? { requirements: event.requirements } : {}),
                       ...(event.claims ? { claims: event.claims } : {}),
-                    }, title));
+                    }, title);
+                    batchSteps.set(event.index, opened);
+                    if (!auditRef.stepId && opened.id) auditRef.stepId = opened.id;
                     return;
                   }
                   if (event.phase === "retry") {

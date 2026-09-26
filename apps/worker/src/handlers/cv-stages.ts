@@ -37,6 +37,7 @@ import {
 } from "@ava/core";
 import { CvBuildStop } from "@ava/core/cv-build-failure";
 import type { CvClaimItem, CvRubric } from "@ava/core/cv-assessment";
+import { log } from "../log";
 
 /** The version of the prompts every checkpoint entry is pinned to: the model package's registry hash. */
 export function promptSetVersion(): string {
@@ -299,11 +300,18 @@ export class CvStageRunner {
   /** Admit, run under the allowance, and release whatever the stage did not spend. */
   async paid<T>(admission: CvBuildStageName, motion: CvBuildMotion, expectedUsd: number, work: (ctx: CvStageContext) => Promise<T>): Promise<T> {
     const hold = await this.options.admit(admission, expectedUsd);
+    let result: T;
     try {
-      return await this.within(admission, motion, work);
-    } finally {
-      await hold.release();
+      result = await this.within(admission, motion, work);
+    } catch (error) {
+      // The stage's own error is what the build must classify: a release that also fails is
+      // logged, never allowed to replace it.
+      await hold.release().catch((releaseError: unknown) =>
+        log.warn("CV stage hold could not be released", { stage: admission, error: (releaseError as Error)?.message }));
+      throw error;
     }
+    await hold.release();
+    return result;
   }
 
   /**

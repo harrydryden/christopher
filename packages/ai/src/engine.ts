@@ -1,20 +1,15 @@
-import { CvRubricSchema, CvReviewPlanSchema, type CvRubric, type CvReviewPlan, type CvTextItem, type CvClaimItem } from "@ava/core/cv-assessment";
+import { CvReviewPlanSchema, type CvRubric, type CvReviewPlan, type CvTextItem, type CvClaimItem } from "@ava/core/cv-assessment";
 import { CvBuildStop } from "@ava/core/cv-build-failure";
 import { mentionsDemographicAttribute } from "@ava/core/cv-review";
-import { CV_RUBRIC_PROMPT, CV_REVIEW_PROMPT, CV_AUTHOR_PROMPT, CV_TAILORING_PROMPT } from "./cv-prompts";
 import { cvReviewBatches, reviewBatchIssues, markUnverifiedFindings, type CvReviewBatch } from "./cv-review-batch";
 import {
-  CvPlanSchema,
   CV_PAGE_LIMITS,
   LIBRARY_REVIEW_BATCH,
-  LibraryProposalSchema,
-  LibraryReviewPlanSchema,
   employmentHeading,
   responsibilityRows,
   cvTailoringEvidence,
   validateCvTailoringPlan,
   validateCvPlanProvenance,
-  CvTailoringPlanSchema,
   reviewableRows,
   rowFacets,
   validateLibraryReview,
@@ -41,9 +36,10 @@ import { z } from "zod";
 import { estimateCostUsd, SERVER_TOOL_USD, serverToolCostUsd } from "./pricing";
 import { modelSupportsEffort } from "./model-capabilities";
 import * as P from "./prompts";
-import * as S from "./schemas";
+import type * as S from "./schemas";
+import { CV_REVIEW_BATCH_SIZE, PROMPTS, layoutFor, type LayoutParts, type PromptEntry } from "./prompt-registry";
 
-export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+export type { Effort } from "./prompt-registry";
 
 /**
  * Why a call failed, named rather than described.
@@ -93,6 +89,9 @@ export interface AiUsageRecord {
   stage?: string;
   /** The account the call was made for; shared work such as extraction carries none. */
   userId?: string;
+  /** The registry entry that produced the call, and the version of its prompt. */
+  promptId?: string;
+  promptVersion?: string;
 }
 
 export interface Ref {
@@ -129,14 +128,26 @@ export interface Ref {
  */
 export interface AiClientLike {
   messages: {
-    create(params: Record<string, unknown>, options?: Record<string, unknown>): Promise<ParseResponse>;
+    create(params: Record<string, unknown>, options?: Record<string, unknown>, call?: AiCallMeta): Promise<ParseResponse>;
     /**
      * The SDK's streaming helper. When present every call streams: the connection stays busy while
      * the answer is written, so the request timeout bounds only the wait for it to begin and a long
      * answer can no longer time out part-way through. A fake without it is called with create.
      */
-    stream?(params: Record<string, unknown>, options?: Record<string, unknown>): AiStreamLike;
+    stream?(params: Record<string, unknown>, options?: Record<string, unknown>, call?: AiCallMeta): AiStreamLike;
   };
+}
+
+/**
+ * Which registry entry a request is, handed to the client beside the request and never sent to
+ * the provider: the SDK takes two arguments and ignores a third. A scripted client dispatches on
+ * `promptId` rather than on the wording of a prompt, so a prompt can be edited without breaking
+ * every fake that recognised it by its first sentence.
+ */
+export interface AiCallMeta {
+  promptId: string;
+  promptVersion: string;
+  stage?: string;
 }
 
 export interface AiStreamLike {
@@ -207,27 +218,18 @@ export interface ReserveHint {
 /** The SDK's own retries of a request that failed before its response began. */
 export const SDK_MAX_RETRIES = 2;
 
-/** One block of the user turn. `cache: true` closes a prefix that other calls send byte for byte. */
-export interface UserBlock {
-  text: string;
-  cache?: boolean;
-}
-
-interface RunParams {
-  system: string;
-  user: string | UserBlock[];
-  schema: z.ZodType;
-  effort: Effort;
+/** What one call adds to its registry entry. */
+interface CallInput {
+  /** A plain user turn, or the stable blocks and volatile tail the entry's layout declares. */
+  user: string | LayoutParts;
   /**
    * The model for this one call, when the caller has already chosen it. Used where the choice
    * belongs to the account rather than to the deployment — a library review runs on the same
    * `cvModel` the CV builder does — so the engine does not have to be rebuilt to say so.
    */
   model?: string;
+  /** A ceiling sized to this call's input, below the entry's own (A3 sizes it to the page). */
   maxTokens?: number;
-  /** How long to wait for the response to begin. A streamed answer is then bounded by STREAM_CEILING_MS. */
-  timeoutMs?: number;
-  tools?: Array<Record<string, unknown>>;
   /** Fires once the response has begun, which is when a prefix this call caches becomes readable by others. */
   onStart?: () => void;
   /**
@@ -242,6 +244,14 @@ interface RunParams {
    * this hands each call its own, which is how an assessment batch reports its cost as its own.
    */
   onRecord?: (record: AiUsageRecord) => void;
+}
+
+/** One request as `complete` sends it: the entry's timeout, the call's hooks, and which entry it is. */
+interface Sending {
+  timeoutMs: number;
+  onStart?: () => void;
+  signal?: AbortSignal;
+  meta: AiCallMeta;
 }
 
 export const OUTPUT_LIMIT_ERROR = "Model output limit reached before the response was complete.";
@@ -494,11 +504,11 @@ export class AiEngine {
    * One request. A streaming client keeps the connection busy while the answer is written, so the
    * request timeout bounds only the wait for it to begin; the ceiling cuts off a stalled stream.
    */
-  private async complete(request: Record<string, unknown>, params: RunParams): Promise<ParseResponse> {
+  private async complete(request: Record<string, unknown>, params: Sending): Promise<ParseResponse> {
     const { messages } = this.client!;
     const signal = params.signal;
     // The signal goes to the SDK, which stops the request and sends no retry once it sees it.
-    const options = { timeout: params.timeoutMs ?? 30_000, ...(signal ? { signal } : {}) };
+    const options = { timeout: params.timeoutMs, ...(signal ? { signal } : {}) };
     // The SDK notices an abort only between attempts, after sleeping out the back-off it is in,
     // and a provider's retry-after can ask for a minute. The caller stops waiting at once instead.
     let stopWaiting: (() => void) | undefined;
@@ -514,11 +524,11 @@ export class AiEngine {
     let ceiling: ReturnType<typeof setTimeout> | undefined;
     try {
       if (!messages.stream) {
-        const response = await settled(messages.create(request, options));
+        const response = await settled(messages.create(request, options, params.meta));
         params.onStart?.();
         return response;
       }
-      const open = messages.stream(request, options);
+      const open = messages.stream(request, options, params.meta);
       stream = open;
       let started = false;
       open.on("streamEvent", () => {
@@ -542,31 +552,38 @@ export class AiEngine {
     }
   }
 
-  private async run<T>(callSite: string, params: RunParams, ref: Ref = {}): Promise<T | null> {
+  private async run<T>(entry: PromptEntry, call: CallInput, ref: Ref = {}): Promise<T | null> {
     // The signal stops the call, and is not part of what is recorded about it.
     const { signal: callerSignal, ...recorded } = ref;
     // A call's own signal when it has one (an assessment batch's, which already listens to the
     // run's and the caller's), otherwise the caller's and the run's together.
-    const signal = params.signal ?? anySignal(callerSignal, this.options.signal);
+    const signal = call.signal ?? anySignal(callerSignal, this.options.signal);
     if (!this.client || signal?.aborted) return null;
-    const model = params.model ?? await this.options.getModel(callSite);
+    const callSite = entry.callSite;
+    const model = call.model ?? await this.options.getModel(callSite);
     const started = Date.now();
-    const blocks = typeof params.user === "string" ? [{ text: params.user }] : params.user;
+    const { system, content } = layoutFor(entry, typeof call.user === "string" ? { tail: call.user } : call.user);
+    const texts = [...system.map(block => block.text), ...(typeof content === "string" ? [content] : content.map(block => block.text))];
+    const maxTokens = call.maxTokens ?? entry.maxTokens;
     // The format goes without its parser. Given one, the SDK parses inside the stream and rejects
     // the whole answer when the text is not valid JSON — which a truncated answer and a prose
     // refusal always are — so it arrived here as an unnamed error instead of as a refusal, an
     // output limit or a schema failure. Validation is `validate` below, on both paths.
-    const { parse: _parse, ...format } = zodOutputFormat(params.schema);
+    const { parse: _parse, ...format } = zodOutputFormat(entry.schema);
     const request: Record<string, unknown> = {
       model,
-      max_tokens: params.maxTokens ?? 4096,
-      system: [{ type: "text", text: params.system, cache_control: { type: "ephemeral" } }],
+      max_tokens: maxTokens,
+      system,
       // The cache is a prefix match, so a cached block sits before everything that varies.
-      messages: [{ role: "user", content: typeof params.user === "string" ? params.user
-        : blocks.map(block => ({ type: "text", text: block.text, ...(block.cache ? { cache_control: { type: "ephemeral" } } : {}) })) }],
-      output_config: { format, ...(modelSupportsEffort(model) ? { effort: params.effort } : {}) },
+      messages: [{ role: "user", content }],
+      output_config: { format, ...(modelSupportsEffort(model) ? { effort: entry.effort } : {}) },
     };
-    if (params.tools) request.tools = params.tools;
+    const tools = entry.tools?.map(tool => ({ ...tool }));
+    if (tools) request.tools = tools;
+    // The caller names the step when it knows better (a re-run, a revision); otherwise the entry does.
+    const stage = recorded.stage ?? entry.stage;
+    const identity = { ...recorded, ...(stage ? { stage } : {}), promptId: entry.id, promptVersion: entry.version };
+    const meta: AiCallMeta = { promptId: entry.id, promptVersion: entry.version, ...(stage ? { stage } : {}) };
 
     // Estimated only for an engine that holds capacity per call. The CV engine holds one
     // reservation for the whole build instead, so measuring every prompt for it was work thrown
@@ -576,17 +593,17 @@ export class AiEngine {
     if (this.options.reserve) {
       // A generous reading of the prompt: English runs about four bytes per token, so a third of
       // the byte count leaves roughly 30% of headroom. Output is reserved at the cap it may reach.
-      const promptBytes = Buffer.byteLength(params.system + blocks.map(block => block.text).join(""));
+      const promptBytes = Buffer.byteLength(texts.join(""));
       // A call with a server tool may be resumed after a pause, each time sending its growing turn
       // again and searching again, so it holds for every request it may make and every search each
       // may run, rather than a flat dollar that three long rounds could pass.
-      const requests = params.tools?.length ? 1 + MAX_PAUSE_CONTINUATIONS : 1;
-      const searches = (params.tools ?? []).reduce((sum, tool) => sum + (typeof tool.max_uses === "number" ? tool.max_uses : 10), 0);
+      const requests = tools?.length ? 1 + MAX_PAUSE_CONTINUATIONS : 1;
+      const searches = (tools ?? []).reduce((sum, tool) => sum + (typeof tool.max_uses === "number" ? tool.max_uses : 10), 0);
       const estimate = requests * estimateCostUsd(model, { inputTokens: promptBytes / 3,
-        outputTokens: params.maxTokens ?? 4096, cacheReadTokens: 0, cacheWriteTokens: 0 })
+        outputTokens: maxTokens, cacheReadTokens: 0, cacheWriteTokens: 0 })
         + requests * searches * (SERVER_TOOL_USD.web_search_requests ?? 0);
       // Held for as long as the call can possibly run, with a minute's slack for the SDK's back-off.
-      const maxDurationMs = requests * ((SDK_MAX_RETRIES + 1) * (params.timeoutMs ?? 30_000) + STREAM_CEILING_MS + 60_000);
+      const maxDurationMs = requests * ((SDK_MAX_RETRIES + 1) * entry.timeoutMs + STREAM_CEILING_MS + 60_000);
       settle = await this.options.reserve(callSite, estimate, recorded, { maxDurationMs });
       if (settle === null) throw new Error("AI budget reserved or exhausted; retry later");
     }
@@ -594,14 +611,14 @@ export class AiEngine {
     // every one of them is billed, so the one record this call leaves carries them all.
     let prior: Usage = {};
     try {
-      const call = { ...params, ...(signal ? { signal } : {}) };
-      let response = await this.complete(request, call);
+      const sending: Sending = { timeoutMs: entry.timeoutMs, meta, ...(call.onStart ? { onStart: call.onStart } : {}), ...(signal ? { signal } : {}) };
+      let response = await this.complete(request, sending);
       // A server tool that reached its iteration limit pauses the turn; sending the turn back, as
       // it stands, lets it carry on from there. No extra user turn: the assistant's is resumed.
       for (let resumed = 0; response.stop_reason === "pause_turn" && resumed < MAX_PAUSE_CONTINUATIONS && !signal?.aborted; resumed++) {
         prior = addUsage(prior, response.usage ?? {});
         request.messages = [...(request.messages as unknown[]), { role: "assistant", content: response.content ?? [] }];
-        response = await this.complete(request, call);
+        response = await this.complete(request, sending);
       }
       const usage = addUsage(prior, response.usage ?? {});
       const tokens = {
@@ -622,7 +639,7 @@ export class AiEngine {
           ? { error: PAUSED_ERROR }
         : parsed === null || parsed === undefined
           ? { error: NO_OUTPUT_ERROR }
-          : validate<T>(params.schema, parsed);
+          : validate<T>(entry.schema, parsed);
       const validated = "data" in outcome ? outcome.data : null;
       const served = response.model ?? model;
       // An answered call that cannot be used still has a name: the model declined, it ran out of
@@ -642,10 +659,10 @@ export class AiEngine {
         ok: validated !== null,
         error: "error" in outcome ? outcome.error : undefined,
         ...(failure ? { failure } : {}),
-        ...recorded,
+        ...identity,
       };
       landed = await this.record(record);
-      params.onRecord?.(record);
+      call.onRecord?.(record);
       if (refused) this.log(`${callSite} refused`, response.stop_details);
       return validated;
     } catch (err) {
@@ -672,10 +689,10 @@ export class AiEngine {
         ok: false,
         error: (err as Error).message.slice(0, 500),
         ...(failure ? { failure } : {}),
-        ...recorded,
+        ...identity,
       };
       landed = await this.record(record);
-      params.onRecord?.(record);
+      call.onRecord?.(record);
       this.log(`${callSite} failed`, err);
       return null;
     } finally {
@@ -688,19 +705,7 @@ export class AiEngine {
     description: string,
     ref: Ref = {},
   ): Promise<CvRubric | null> {
-    return this.run<CvRubric>(
-      "CV",
-      {
-        system: CV_RUBRIC_PROMPT,
-        user: JSON.stringify({ description }),
-        schema: CvRubricSchema,
-        effort: "high",
-        // Thinking counts towards the ceiling; recorded rubrics reach 5.2k of the old 8k.
-        maxTokens: 12000,
-        timeoutMs: 120_000,
-      },
-      ref,
-    );
+    return this.run<CvRubric>(PROMPTS["cv.rubric"], { user: JSON.stringify({ description }) }, ref);
   }
 
   /** One bounded pre-writing call. The returned index is validated against exact trusted rows. */
@@ -713,14 +718,9 @@ export class AiEngine {
       employment: (input.library.employment ?? []).map(job => ({ employmentId: job.id, label: employmentHeading(job) })),
       evidence: input.library.entries.map(entry => ({ entryId: entry.id, label: entry.heading, kind: entry.kind })),
     };
-    const result = await this.run<CvTailoringPlan>("CV", {
-      system: CV_TAILORING_PROMPT,
+    const result = await this.run<CvTailoringPlan>(PROMPTS["cv.planning"], {
       user: JSON.stringify({ rubric: input.rubric, evidence, destinations }),
-      schema: CvTailoringPlanSchema,
-      effort: "high",
-      maxTokens: 16000,
-      timeoutMs: 240_000,
-    }, { ...ref, stage: ref.stage ?? "planning" });
+    }, ref);
     if (!result) return null;
     try {
       return validateCvTailoringPlan(result, input.rubric, evidence, input.library);
@@ -742,11 +742,7 @@ export class AiEngine {
     // A full CV audit can exceed what one call may produce, so it is split into batches that each
     // see the complete CV and evidence. The batches are independent: they run together, and they
     // share that context through the cache rather than each paying for it again.
-    const batchSize = 8;
-    const schema = CvReviewPlanSchema.extend({
-      matches: z.array(CvReviewPlanSchema.shape.matches.element).max(batchSize),
-      claims: z.array(CvReviewPlanSchema.shape.claims.element).max(batchSize),
-    });
+    const batchSize = CV_REVIEW_BATCH_SIZE;
     const { requirements: _requirements, ...rubricContext } = input.rubric;
     // The shared context is two cached blocks in the order it changes, least often first: the
     // evidence and rubric outlive a revision, so the re-audit of an edited CV reads them from
@@ -758,14 +754,8 @@ export class AiEngine {
     // One controller for the audit: a batch that fails cancels its siblings, and so does the run's
     // own signal, so a build whose task has been given up on stops paying for the rest of its audit.
     const controller = batchController([this.options.signal, ref.signal]);
-    const runBatch = (batch: CvReviewBatch, corrections?: string[], onStart?: () => void, onRecord?: (record: AiUsageRecord) => void) => this.run<CvReviewPlan>("CV", {
-      system: CV_REVIEW_PROMPT + "\nThis is one batch of a larger audit. The user turn has three parts: the complete evidence library with the rubric's caveats, then the complete cv, then this batch: the rubric requirements and claims to assess now, with claimSources supplying each claim's required source explicitly. Assess only the batch's requirements and claims, using the complete CV and evidence as context. Return an empty array when the batch has no requirements or no claims. Use the shortest sufficient verbatim quotes; usually one or two sources per finding suffice. Keep reasons and improvements concise. Every claim with requiredEvidenceId must cite a verbatim quote from that exact source to be supported, including skills. Evidence from a different role, profile or skill block cannot substitute for it. If that source does not support the complete claim, mark it uncertain or unsupported; never copy in unrelated evidence merely to satisfy this rule.",
-      user: [{ text: stable, cache: true }, { text: printed, cache: true }, { text: JSON.stringify({ ...batch, ...(corrections ? { corrections } : {}) }) }],
-      schema,
-      effort: "high",
-      // Recorded batches reach 11.8k of the old 16k ceiling; a truncated batch fails the audit.
-      maxTokens: 24000,
-      timeoutMs: 240_000,
+    const runBatch = (batch: CvReviewBatch, corrections?: string[], onStart?: () => void, onRecord?: (record: AiUsageRecord) => void) => this.run<CvReviewPlan>(PROMPTS["cv.review"], {
+      user: { stable: [stable, printed], tail: JSON.stringify({ ...batch, ...(corrections ? { corrections } : {}) }) },
       signal: controller.signal,
       onStart,
       onRecord,
@@ -877,22 +867,13 @@ export class AiEngine {
       websiteUrl: _website,
       ...evidenceLibrary
     } = input.library;
-    const plan = await this.run<CvPlan>(
-      "CV",
-      {
-        system: CV_AUTHOR_PROMPT,
-        user: JSON.stringify({ ...input, maxPages: input.maxPages ?? CV_PAGE_LIMITS.default, library: evidenceLibrary,
-          ...(input.tailoringPlan ? { tailoringEvidence: cvTailoringEvidence(input.library) } : {}) }),
-        schema: CvPlanSchema,
-        effort: "high",
-        // Thinking counts towards the output ceiling, and recorded two-page builds have reached
-        // 15.6k of the old 16k. The answer streams, so the ceiling no longer has to fit a request
-        // timeout; it only has to stay above what a three-page plan can take.
-        maxTokens: 32000,
-        timeoutMs: 300_000,
-      },
-      ref,
-    );
+    // The optional improvement is the same prompt asked a second time with the audit's findings;
+    // it is its own entry so its cost and its prompt version are recorded as its own.
+    const entry = ref.stage === "improvement" || input.improvements?.length ? PROMPTS["cv.improvement"] : PROMPTS["cv.author"];
+    const plan = await this.run<CvPlan>(entry, {
+      user: JSON.stringify({ ...input, maxPages: input.maxPages ?? CV_PAGE_LIMITS.default, library: evidenceLibrary,
+        ...(input.tailoringPlan ? { tailoringEvidence: cvTailoringEvidence(input.library) } : {}) }),
+    }, ref);
     if (!plan || !input.tailoringPlan) return plan;
     try {
       return validateCvPlanProvenance(plan, input.library);
@@ -909,16 +890,9 @@ export class AiEngine {
     const links = input.links.slice(0, 300);
     const known = new Set(links.map((l) => l.href));
     const listing = links.map((l, i) => `[${i}] ${l.text || "(no text)"} | ${l.href}${l.context ? ` | ${l.context}` : ""}`).join("\n");
-    const result = await this.run<S.CareersLinksOutput>(
-      "A1",
-      {
-        system: P.A1_CHOOSE_CAREERS_LINKS,
-        user: `Company: ${input.companyName}\nHomepage: ${input.homepageUrl}\n\n${P.wrap("page_content", P.truncate(listing, 40_000))}`,
-        schema: S.CareersLinksSchema,
-        effort: "low",
-      },
-      ref,
-    );
+    const result = await this.run<S.CareersLinksOutput>(PROMPTS.A1, {
+      user: `Company: ${input.companyName}\nHomepage: ${input.homepageUrl}\n\n${P.wrap("page_content", P.truncate(listing, 40_000))}`,
+    }, ref);
     if (!result) return null;
     return result.candidates
       .filter((c) => known.has(c.url))
@@ -934,11 +908,7 @@ export class AiEngine {
     const links = input.links.slice(0, 120);
     const known = new Set(links.map((l) => l.href));
     const body = `${P.wrap("page_content", P.truncate(input.text, 24_000))}\n\nLinks on the page:\n${P.wrap("page_links", links.map((l) => `${l.text || "(no text)"} | ${l.href}`).join("\n"))}`;
-    const result = await this.run<S.PageClassificationOutput>(
-      "A2",
-      { system: P.A2_CLASSIFY_PAGE, user: `URL: ${input.url}\n\n${body}`, schema: S.PageClassificationSchema, effort: "low" },
-      ref,
-    );
+    const result = await this.run<S.PageClassificationOutput>(PROMPTS.A2, { user: `URL: ${input.url}\n\n${body}` }, ref);
     if (!result) return null;
     const nextHopUrl = result.nextHopUrl && known.has(result.nextHopUrl) ? result.nextHopUrl : undefined;
     return { kind: result.kind, nextHopUrl, confidence: clamp01(result.confidence) };
@@ -954,20 +924,12 @@ export class AiEngine {
     confidence: number;
     dropped: number;
   } | null> {
-    const result = await this.run<S.ExtractPostingsOutput>(
-      "A3",
-      {
-        system: P.A3_EXTRACT_POSTINGS,
-        user: `Page URL: ${input.pageUrl}\n\n${P.wrap("page_content", P.truncate(input.compactDom, 80_000))}`,
-        schema: S.ExtractPostingsSchema,
-        effort: "low",
-        // Sized to the page: a flat 8,000 cut off every board past about 150 postings, and the
-        // hold is taken at this ceiling, so a small page now holds less than it did.
-        maxTokens: a3OutputCeiling((input.compactDom.match(/^\[\d+\] /gm) ?? []).length),
-        timeoutMs: 60_000,
-      },
-      ref,
-    );
+    const result = await this.run<S.ExtractPostingsOutput>(PROMPTS.A3, {
+      user: `Page URL: ${input.pageUrl}\n\n${P.wrap("page_content", P.truncate(input.compactDom, 80_000))}`,
+      // Sized to the page: a flat 8,000 cut off every board past about 150 postings, and the
+      // hold is taken at this ceiling, so a small page now holds less than it did.
+      maxTokens: a3OutputCeiling((input.compactDom.match(/^\[\d+\] /gm) ?? []).length),
+    }, ref);
     if (!result) return null;
     const allowed = new Map(input.knownUrls.map((u) => [canonical(u), u]));
     const postings: Array<{ title: string; url: string; location?: string; department?: string }> = [];
@@ -1003,16 +965,9 @@ export class AiEngine {
     input: { title: string; rawText: string },
     ref: Ref = {},
   ): Promise<{ descriptionText: string; salaryText?: string; employmentType?: string; remote?: boolean } | null> {
-    const result = await this.run<S.DescriptionOutput>(
-      "A4",
-      {
-        system: P.A4_CLEAN_DESCRIPTION,
-        user: `Role: ${input.title}\n\n${P.wrap("page_content", P.truncate(input.rawText, 40_000))}`,
-        schema: S.DescriptionSchema,
-        effort: "low",
-      },
-      ref,
-    );
+    const result = await this.run<S.DescriptionOutput>(PROMPTS.A4, {
+      user: `Role: ${input.title}\n\n${P.wrap("page_content", P.truncate(input.rawText, 40_000))}`,
+    }, ref);
     if (!result) return null;
     return {
       descriptionText: result.descriptionText.trim().slice(0, 30_000),
@@ -1056,17 +1011,7 @@ export class AiEngine {
       P.wrap("evidence_library", P.truncate(input.evidence || "(no confirmed evidence yet)", 10_000)),
       P.wrap("job", jobText),
     ].join("\n\n");
-    const result = await this.run<S.FitScoreOutput>(
-      "A5",
-      {
-        system: P.A5_SCORE_JOB,
-        user: [{ text: account, cache: true }, { text: role }],
-        schema: S.FitScoreSchema,
-        effort: "low",
-        maxTokens: 1024,
-      },
-      ref,
-    );
+    const result = await this.run<S.FitScoreOutput>(PROMPTS.A5, { user: { stable: [account], tail: role } }, ref);
     if (!result) return null;
     const score = Math.round(Math.max(0, Math.min(100, result.score)));
     const verdict = score >= 70 ? "strong" : score >= 30 ? "possible" : "unlikely";
@@ -1084,9 +1029,8 @@ export class AiEngine {
     ref: Ref = {},
   ): Promise<{ tags: string[]; proposedNewTags: Array<{ tag: string; description: string }> } | null> {
     const result = await this.run<S.ReasonTagsOutput>(
-      "A6",
+      PROMPTS.A6,
       {
-        system: P.A6_TAG_REASON,
         user: [
           `Decision: ${input.decision}`,
           `Role: ${input.job.title} at ${input.job.company}${input.job.location ? ` (${input.job.location})` : ""}`,
@@ -1096,9 +1040,6 @@ export class AiEngine {
         ]
           .filter(Boolean)
           .join("\n"),
-        schema: S.ReasonTagsSchema,
-        effort: "low",
-        maxTokens: 1024,
       },
       ref,
     );
@@ -1163,11 +1104,7 @@ export class AiEngine {
       .filter(Boolean)
       .join("\n\n");
 
-    const result = await this.run<S.ProfileOutput>(
-      "A7",
-      { system: P.A7_SYNTHESIZE_PROFILE, user, schema: S.ProfileSchema, effort: "high", maxTokens: 6000, timeoutMs: 60_000 },
-      ref,
-    );
+    const result = await this.run<S.ProfileOutput>(PROMPTS.A7, { user }, ref);
     if (!result) return null;
     let markdown = result.markdown.trim();
     const missing = input.pinnedStatements.filter((s) => s.trim() && !markdown.includes(s.trim()));
@@ -1199,11 +1136,7 @@ export class AiEngine {
       P.wrap("decisions", decisionDigest(input.decisions, { maxItems: 200, maxChars: 20_000 })),
       `Previously rejected suggestions: ${JSON.stringify(input.previouslyRejected).slice(0, 4000)}`,
     ].join("\n\n");
-    const result = await this.run<S.FilterSuggestionsOutput>(
-      "A8",
-      { system: P.A8_SUGGEST_FILTERS, user, schema: S.FilterSuggestionsSchema, effort: "high", maxTokens: 4000 },
-      ref,
-    );
+    const result = await this.run<S.FilterSuggestionsOutput>(PROMPTS.A8, { user }, ref);
     if (!result) return null;
     const existing = new Set(
       [...input.includeKeywords, ...input.excludeKeywords, ...input.locationTerms].map((t) => t.trim().toLowerCase()),
@@ -1238,17 +1171,9 @@ export class AiEngine {
     ref: Ref = {},
   ): Promise<S.CompanyProfileOutput | null> {
     const body = [input.homepageText, input.aboutText].filter(Boolean).join("\n\n---\n\n");
-    const result = await this.run<S.CompanyProfileOutput>(
-      "A9",
-      {
-        system: P.A9_PROFILE_COMPANY,
-        user: `Company: ${input.name}\nDomain: ${input.domain}\n\n${P.wrap("page_content", P.truncate(body, 24_000))}`,
-        schema: S.CompanyProfileSchema,
-        effort: "low",
-        maxTokens: 2000,
-      },
-      ref,
-    );
+    const result = await this.run<S.CompanyProfileOutput>(PROMPTS.A9, {
+      user: `Company: ${input.name}\nDomain: ${input.domain}\n\n${P.wrap("page_content", P.truncate(body, 24_000))}`,
+    }, ref);
     if (!result) return null;
     return {
       ...result,
@@ -1265,11 +1190,7 @@ export class AiEngine {
       P.wrap("tracked_companies", input.portfolio.join("\n") || "(none)"),
       P.wrap("preference_profile", P.truncate(input.preferences || "(none written yet)", 14_000)),
     ].join("\n\n");
-    return this.run<z.infer<typeof S.SourceCompaniesSchema>>("A10", {
-      system: P.A10_EXTRACT_SOURCE_COMPANIES,
-      user, schema: S.SourceCompaniesSchema, effort: "high", maxTokens: 8000,
-      timeoutMs: 60000, tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 5 }],
-    }, ref);
+    return this.run<z.infer<typeof S.SourceCompaniesSchema>>(PROMPTS["A10.sources"], { user }, ref);
   }
 
   // A10 --------------------------------------------------------------------
@@ -1297,19 +1218,7 @@ export class AiEngine {
       .filter(Boolean)
       .join("\n\n");
 
-    const result = await this.run<S.CompanySuggestionsOutput>(
-      "A10",
-      {
-        system: P.A10_SUGGEST_COMPANIES,
-        user,
-        schema: S.CompanySuggestionsSchema,
-        effort: "high",
-        maxTokens: 8000,
-        timeoutMs: 60_000,
-        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 15 }],
-      },
-      ref,
-    );
+    const result = await this.run<S.CompanySuggestionsOutput>(PROMPTS.A10, { user }, ref);
     if (!result) return null;
     const excluded = new Set(input.excludeDomains.map((d) => d.toLowerCase()));
     const out: Array<{ name: string; homepageUrl: string; similarTo: string[]; rationale: string; confidence: number }> = [];
@@ -1355,23 +1264,12 @@ export class AiEngine {
   ): Promise<LibraryProposalPlan | null> {
     const document = input.document.trim();
     if (!document) return null;
-    return this.run<LibraryProposalPlan>(
-      "A11",
-      {
-        system: P.A11_EXTRACT_LIBRARY,
-        // The most an import row stores (`LIBRARY_IMPORT_MAX_CHARS`); the text arrives capped,
-        // and this is the backstop for a row written before that cap existed.
-        user: P.wrap("document", P.truncate(document, 40_000)),
-        schema: LibraryProposalSchema,
-        effort: "low",
-        ...(input.model ? { model: input.model } : {}),
-        // A long career is twenty jobs of twenty rows, each row copied twice (the row and its
-        // quote); an answer cut off at the cap is recorded as an output limit, not as a proposal.
-        maxTokens: 16000,
-        timeoutMs: 120_000,
-      },
-      ref,
-    );
+    return this.run<LibraryProposalPlan>(PROMPTS.A11, {
+      // The most an import row stores (`LIBRARY_IMPORT_MAX_CHARS`); the text arrives capped,
+      // and this is the backstop for a row written before that cap existed.
+      user: P.wrap("document", P.truncate(document, 40_000)),
+      ...(input.model ? { model: input.model } : {}),
+    }, ref);
   }
 
   // A12 --------------------------------------------------------------------
@@ -1411,20 +1309,14 @@ export class AiEngine {
     const controller = batchController([this.options.signal, hooks.signal, ref.signal]);
 
     const ask = (entries: CvEntry[], missing: string[] | undefined, onStart: (() => void) | undefined,
-      onRecord: (record: AiUsageRecord) => void) => this.run<LibraryReviewPlan>("A12", {
-      system: P.A12_REVIEW_LIBRARY,
-      user: [
-        { text: evidence, cache: true },
-        { text: P.wrap("entries_under_review", entriesUnderReview(input.library, entries)) + (missing?.length
+      onRecord: (record: AiUsageRecord) => void) => this.run<LibraryReviewPlan>(PROMPTS.A12, {
+      user: {
+        stable: [evidence],
+        tail: P.wrap("entries_under_review", entriesUnderReview(input.library, entries)) + (missing?.length
           ? `\n\nYour previous answer left these entries out. Return each of them exactly once, with every row classified: ${missing.join(", ")}.`
-          : "") },
-      ],
-      schema: LibraryReviewPlanSchema,
-      effort: "low",
+          : ""),
+      },
       ...(input.model ? { model: input.model } : {}),
-      // Twenty rows an entry, eight entries a batch, and a classification is a short object.
-      maxTokens: 16000,
-      timeoutMs: 120_000,
       signal: controller.signal,
       onStart,
       onRecord,

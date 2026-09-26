@@ -13,7 +13,7 @@ export { appendProfile, latestProfileFor } from "./profiles";
 export { workloadMetrics } from "./scaling";
 export { addHttpHostDaily, listHttpHostDaily, pruneHttpHostDaily, emptyHttpCounters, latencyBucketIndex, LATENCY_BUCKET_UPPER_MS, type HttpHostCounters, type HttpHostDailyDelta, type HttpHostDailyRow } from "./http-rollup";
 export { recordWorkerEvent, listWorkerEvents, countWorkerEvents, pruneWorkerEvents, type WorkerEventInput } from "./worker-events";
-export { accountAiSpend, totalAiSpend, aiUsageByAccount, recordAiCall, releaseAiHolds, releaseOrphanedCvHolds, aiOutcome, aiOutcomeSql, AI_OUTCOMES, costPerCvBuild, costPerScoredRole, type AiAccountUsage, type AiCallRecord, type AiOutcome, type CvBuildCost, type CvBuildCosts, type ReleasedHolds, type ScoredRoleCost } from "./ai-budget";
+export { accountAiSpend, totalAiSpend, aiUsageByAccount, recordAiCall, resetAiCallColumnsProbe, releaseAiHolds, releaseOrphanedCvHolds, aiOutcome, aiOutcomeSql, AI_OUTCOMES, costPerCvBuild, costPerScoredRole, type AiAccountUsage, type AiCallRecord, type AiOutcome, type CvBuildCost, type CvBuildCosts, type ReleasedHolds, type ScoredRoleCost } from "./ai-budget";
 
 export { roleStatusSql, roleStageSql, latestApplicationFor, hasCvSql, type LatestApplication } from "./role-workflow";
 

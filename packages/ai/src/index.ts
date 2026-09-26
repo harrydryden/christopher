@@ -2,7 +2,14 @@ export {
   AiEngine, a3OutputCeiling, createAiEngine, classifyAiFailure, decisionDigest, extractJsonBlock, filterSuggestionKey, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX,
   INTERRUPTED_ERROR_PREFIX, MAX_PAUSE_CONTINUATIONS, NO_OUTPUT_ERROR, OUTPUT_LIMIT_ERROR, PAUSED_ERROR, REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, SDK_MAX_RETRIES, STREAM_CEILING_MS,
 } from "./engine";
-export type { AiEngineOptions, AiFailure, AiFailureKind, AiUsageRecord, AiClientLike, AiStreamLike, CvAssessBatchEvent, CvAssessHooks, DecisionForDigest, Effort, LibraryReviewBatchEvent, LibraryReviewHooks, ParseResponse, Ref, ReserveHint, UserBlock } from "./engine";
+export type { AiCallMeta, AiEngineOptions, AiFailure, AiFailureKind, AiUsageRecord, AiClientLike, AiStreamLike, CvAssessBatchEvent, CvAssessHooks, DecisionForDigest, LibraryReviewBatchEvent, LibraryReviewHooks, ParseResponse, Ref, ReserveHint } from "./engine";
+export {
+  CV_PROMPT_IDS, CV_REVIEW_BATCH_SIZE, EFFORTS, PROMPTS, PROMPT_IDS, assertCacheLayout, cvCallSiteTable, isPromptId, layoutFor, promptEntry,
+  promptSetVersion, promptVersion, resolveRoute, routedModel,
+} from "./prompt-registry";
+export type {
+  CacheLayout, CacheTtl, Effort, LayoutParts, PromptEntry, PromptId, PromptPriority, PromptRoute, RouteModel, StageRouteOverride, StageRoutes,
+} from "./prompt-registry";
 /**
  * The provider's own error classes, re-exported from the one module that talks to it. The engine
  * classifies a failed call by these, so anything that needs to recognise one — or raise one, as a

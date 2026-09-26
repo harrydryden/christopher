@@ -28,7 +28,7 @@ import type {
   CvTextItem,
 } from "@ava/core/cv-assessment";
 // The interface does not depend on @ava/ai by name; the worker it drives does.
-import type { AiClientLike, AiStreamLike } from "../../../packages/ai/src/index";
+import type { AiCallMeta, AiClientLike, AiStreamLike } from "../../../packages/ai/src/index";
 import { reviewFixture } from "../../../packages/core/test/cv-review-fixture";
 
 type ParseResponse = Awaited<ReturnType<AiStreamLike["finalMessage"]>>;
@@ -83,6 +83,11 @@ interface ScriptedBase {
   index: number;
   params: Record<string, unknown>;
   options: Record<string, unknown> | undefined;
+  /** The registry entry the engine named for this request, which is what the fake dispatches on. */
+  promptId: string;
+  promptVersion: string;
+  /** The ledger stage the engine named, when there was one. */
+  stage?: string;
   system: string;
   blocks: TextBlock[];
 }
@@ -371,12 +376,23 @@ export function scriptedReview(payload: ReviewPayload, unmet: RegExp): CvReviewP
 
 // -- the client -------------------------------------------------------------
 
-function kindOf(system: string): ScriptedCallKind {
-  if (system.startsWith("Analyse the company")) return "rubric";
-  if (system.startsWith("Map every supplied fixed rubric")) return "planning";
-  if (system.includes("Write a tailored UK-English CV")) return "author";
-  if (system.includes("Independently assess the exact final CV")) return "review";
-  throw new Error(`Scripted client saw an unknown call site: ${system.slice(0, 80)}`);
+/**
+ * The call site, from the registry entry the engine names beside every request — never from the
+ * wording of a prompt, which can change without the call site changing.
+ */
+const KINDS: Record<string, ScriptedCallKind> = {
+  "cv.rubric": "rubric",
+  "cv.planning": "planning",
+  "cv.author": "author",
+  "cv.improvement": "author",
+  "cv.review": "review",
+  "cv.review_candidate": "review",
+};
+
+function kindOf(call: AiCallMeta | undefined): ScriptedCallKind {
+  const kind = call ? KINDS[call.promptId] : undefined;
+  if (!kind) throw new Error(`Scripted client saw an unknown call site: ${call?.promptId ?? "(no prompt id)"}`);
+  return kind;
 }
 
 function blocksOf(params: Record<string, unknown>): TextBlock[] {
@@ -421,13 +437,14 @@ export function createScriptedAiClient(options: ScriptedAiOptions = {}): Scripte
         events.push("create-attempted");
         throw new Error("The engine must stream: a scripted client is never asked to create.");
       },
-      stream(params: Record<string, unknown>, requestOptions?: Record<string, unknown>) {
+      stream(params: Record<string, unknown>, requestOptions?: Record<string, unknown>, call?: AiCallMeta) {
         const index = calls.length;
         const system = (params.system as Array<{ text: string }>)[0]!.text;
-        const kind = kindOf(system);
+        const kind = kindOf(call);
         const blocks = blocksOf(params);
         const payload = Object.assign({}, ...blocks.map((block) => JSON.parse(block.text)));
-        calls.push({ index, kind, params, options: requestOptions, system, blocks, payload });
+        calls.push({ index, kind, params, options: requestOptions, promptId: call!.promptId, promptVersion: call!.promptVersion,
+          ...(call!.stage ? { stage: call!.stage } : {}), system, blocks, payload });
         events.push(`issue:${kind}:${index}`);
 
         let leader = false;

@@ -422,6 +422,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         admit,
         signal: stop.signal,
         model: draft.model,
+        routes: stageRoutes,
         promptSetVersion: prompts,
         now: deps.now,
         ...(ctx?.stageAllowanceMs ? { allowanceMs: ctx.stageAllowanceMs } : {}),

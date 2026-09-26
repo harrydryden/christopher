@@ -25,6 +25,8 @@ import {
   PROMPTS,
   estimateStage,
   promptSetVersion as registryPromptSetVersion,
+  resolveRoute,
+  type PromptId,
   type StageRoutes,
 } from "@ava/ai";
 import {
@@ -174,11 +176,27 @@ export interface CvStageRunnerOptions {
   /** The build's own stop: a deadline, a lost lease, a released hold, a deleted draft. */
   signal: AbortSignal;
   model: string;
+  /**
+   * The administrator's per-stage routes this attempt runs under. A stage routed away from its
+   * registry default is keyed by the route it resolved to, so a result made under one route is not
+   * reused under another.
+   */
+  routes?: StageRoutes | null;
   promptSetVersion: string;
   now: () => Date;
   /** Per-stage allowances; the calibration constants unless a test shortens them. */
   allowanceMs?: Partial<Record<CvBuildStageName, number>>;
 }
+
+/** The prompts each admission's calls are made with, whose routes decide what its result was made under. */
+const ADMISSION_PROMPTS: Record<CvBuildStageName, PromptId[]> = {
+  rubric: ["cv.rubric"],
+  plan: ["cv.planning"],
+  write: ["cv.author"],
+  audit: ["cv.review"],
+  improve: ["cv.improvement"],
+  reaudit: ["cv.review_candidate"],
+};
 
 function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 32);
@@ -192,7 +210,26 @@ export class CvStageRunner {
 
   /** The key a stage's result is saved under: its inputs, the prompt set and the model. */
   keyFor<I, O>(stage: CvStage<I, O>, inputs: I): string {
-    return digest({ stage: stage.name, inputs: stage.key(inputs), prompts: this.options.promptSetVersion, model: this.options.model });
+    const route = this.routeFor(stage.admission);
+    return digest({ stage: stage.name, inputs: stage.key(inputs), prompts: this.options.promptSetVersion, model: this.options.model,
+      ...(route ? { route } : {}) });
+  }
+
+  /**
+   * The resolved model and effort of each of the stage's prompts that a stage route moves off its
+   * registry default, or undefined when none does: a build under the default routes keeps the keys
+   * it always had, so a checkpoint made before routes were keyed is still reused.
+   */
+  private routeFor(admission: CvBuildStageName): Record<string, { model: string; effort: string }> | undefined {
+    const routes = this.options.routes;
+    if (!routes) return undefined;
+    const moved = ADMISSION_PROMPTS[admission].flatMap(id => {
+      const entry = PROMPTS[id];
+      const route = resolveRoute(entry, routes);
+      if (route.model === entry.route.model && route.effort === entry.route.effort) return [];
+      return [[id, { model: route.model === "cvModel" ? this.options.model : route.model, effort: route.effort }] as const];
+    });
+    return moved.length ? Object.fromEntries(moved) : undefined;
   }
 
   /** A saved result made from the same inputs, prompts and model, if it still validates. */

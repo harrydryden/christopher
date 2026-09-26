@@ -71,3 +71,26 @@ it("counts how the requirements landed and how the claims held up", () => {
     demonstrated: 2, partial: 1, missing: 1, unknown: 1, supported: 2, unsupported: 1, uncertain: 1,
   });
 });
+
+it("reads a version 1 checkpoint as it always was, and pins it to the prompt set reading it", async () => {
+  const { readCvBuildCheckpoint } = await import("./cv-build");
+  const legacy = { tailoringEnabled: true, rubricAt: "2026-09-01T00:00:00.000Z", contentAt: "2026-09-01T00:01:00.000Z", improvementAttempted: true };
+  const { checkpoint, discarded } = readCvBuildCheckpoint(legacy, "p1");
+  expect(discarded).toBe(false);
+  expect(checkpoint).toEqual({ ...legacy, v: 2, promptSetVersion: "p1", stages: {} });
+  expect(readCvBuildCheckpoint(null, "p1").checkpoint).toEqual({ v: 2, promptSetVersion: "p1", stages: {} });
+});
+
+it("keeps only what the task asked for when the checkpoint was made by another prompt set", async () => {
+  const { readCvBuildCheckpoint } = await import("./cv-build");
+  const stored = {
+    v: 2 as const, promptSetVersion: "old", stages: { rubric: { key: "k", at: "t", value: {} } },
+    rubricAt: "t", contentAt: "t", tailoringEnabled: true, quizCompleted: true, mode: "assess" as const, improvements: ["x"],
+  };
+  const same = readCvBuildCheckpoint(stored, "old");
+  expect(same.discarded).toBe(false);
+  expect(same.checkpoint.stages).toEqual(stored.stages);
+  const other = readCvBuildCheckpoint(stored, "new");
+  expect(other.discarded).toBe(true);
+  expect(other.checkpoint).toEqual({ v: 2, promptSetVersion: "new", stages: {}, tailoringEnabled: true, quizCompleted: true, mode: "assess", improvements: ["x"] });
+});

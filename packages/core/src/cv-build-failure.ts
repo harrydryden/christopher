@@ -101,6 +101,14 @@ export function cvPageLimitMessage(pages: number, maxPages: number): string {
 }
 
 /**
+ * A page limit that could be met only by removing the only evidence for an essential requirement.
+ * It is the person's to resolve like any page limit: shorter Library wording or a higher limit.
+ */
+export function cvEssentialPageLimitMessage(pages: number, maxPages: number): string {
+  return `The CV is ${pages} ${pages === 1 ? "page" : "pages"} after three attempts; the limit is ${maxPages}, and shortening it further would remove the only evidence for an essential requirement. Shorten that evidence in your Library or raise the page limit in Settings.`;
+}
+
+/**
  * What stopped the build, by the class it was thrown as.
  *
  * Everything that carries its own kind is taken at its word: a `CvBuildStop` raised where the
@@ -116,7 +124,7 @@ export function classifyCvBuildFailure(error: unknown): { kind: CvFailureKind; m
     if (error.kind === "page_limit_unfittable")
       return {
         kind: error.kind,
-        message: cvPageLimitMessage(error.detail.pages ?? 0, error.detail.maxPages ?? 0),
+        message: (error.detail.essential ? cvEssentialPageLimitMessage : cvPageLimitMessage)(error.detail.pages ?? 0, error.detail.maxPages ?? 0),
         extra: { ...error.policy },
       };
     return { kind: error.kind, message: error.message, extra: { ...error.policy } };
@@ -138,10 +146,20 @@ export function classifyCvBuildFailure(error: unknown): { kind: CvFailureKind; m
  * meet the same model with the same prompt and cost the same money. The kind stays what it was,
  * so Operations still counts them together.
  */
-export function cvBuildFailureFor(error: unknown, attempts: { attempt: number; maxAttempts: number }): CvBuildFailure {
+export function cvBuildFailureFor(
+  error: unknown,
+  attempts: { attempt: number; maxAttempts: number; motion?: CvBuildFailure["motion"]; batch?: number },
+): CvBuildFailure {
   const base = classifyCvBuildFailure(error);
   let message = base.message;
-  let extra: Partial<CvBuildFailure> = { ...base.extra, ...attempts };
+  const { motion, batch, ...counts } = attempts;
+  // Where it happened: what the failure says for itself first (a batch knows its number, a refused
+  // admission its motion), then the motion the build had open when it stopped.
+  const where = {
+    ...(base.extra.motion ?? motion ? { motion: base.extra.motion ?? motion } : {}),
+    ...(base.extra.batch ?? batch ? { batch: base.extra.batch ?? batch } : {}),
+  };
+  let extra: Partial<CvBuildFailure> = { ...base.extra, ...counts, ...where };
   if (base.kind === "output_limit" || base.kind === "refused") {
     const ask = attempts.attempt >= 2;
     extra = ask

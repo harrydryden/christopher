@@ -39,7 +39,7 @@ export class CvFitFailure extends Error {
   constructor(
     readonly kind: CvFailureKind,
     message: string,
-    readonly detail: { omitted?: string[]; corrections?: number; pages?: number; maxPages?: number; attempts?: number } = {},
+    readonly detail: { omitted?: string[]; corrections?: number; pages?: number; maxPages?: number; attempts?: number; essential?: boolean } = {},
     readonly policy: Partial<Pick<CvBuildFailure, "resolvedBy" | "retryable" | "action">> = {},
   ) {
     super(message);
@@ -55,10 +55,25 @@ export class CvFitFailure extends Error {
  * budget had shrunk to, or what the trimming removed. Each motion says so for itself.
  */
 export type CvFitEvent =
-  | { motion: "write"; phase: "start"; attempt: number; budgetCharacters: number; budgetScale: number; maxPages: number }
+  | {
+      motion: "write"; phase: "start"; attempt: number; budgetCharacters: number; budgetScale: number; maxPages: number;
+      /** A rewrite after a measurement: why the last attempt did not stand, and what it measured. */
+      reason?: "overflow" | "layout_error"; pages?: number;
+      /** A rewrite after an unusable answer: how many corrections the writer is given. */
+      corrections?: number;
+    }
   | { motion: "write"; phase: "done"; attempt: number; roles: number; bullets: number; characters: number }
   | { motion: "check_plan"; attempt: number; omitted: string[]; skillFormatCorrections: number }
-  | { motion: "measure"; attempt: number; pages: number; maxPages: number }
+  /** Opened before anything is rendered, so a watcher sees fitting begin rather than end. */
+  | { motion: "measure"; phase: "start"; attempt: number; maxPages: number }
+  | {
+      motion: "measure"; phase: "done"; attempt: number; maxPages: number;
+      /** Absent when the layout could not be placed at all. */
+      pages?: number;
+      /** PDFs rendered to reach the answer; absent when the renderer gave up part-way. */
+      renders?: number;
+      outcome: "fits" | "overflow" | "layout_error";
+    }
   | { motion: "shorten"; attempt: number; removed: number; pages: number; changes: string[] };
 
 /**
@@ -301,7 +316,7 @@ export async function selectCvToFit(
     const notes = pageCount <= maxPages && semanticOverflows.length
       ? [...chosen.changes, "Retained distinct essential evidence because the measured PDF still fits the page limit."]
       : chosen.changes;
-    return { plan: chosen.plan, content, pageCount, changes: notes, semanticOverflows };
+    return { plan: chosen.plan, content, pageCount, changes: notes, semanticOverflows, renders: measured.size };
   };
   if ((await measure(0)).pageCount <= maxPages) return selected(0);
   // Removing content never lengthens the document, so the plans that fit are a run at the end.
@@ -334,8 +349,16 @@ function planSize(plan: CvPlan, budget: CvWritingBudget) {
  * Bounded writing and measured selection, shared by fresh generation and draft fitting.
  *
  * `onEvent` receives one event per motion — each writing attempt with the budget it was given,
- * the reading of what the writer returned, each measurement and each trim — and nothing else. The
- * milestone a motion belongs to is the motion catalogue's to say, so the caller reads it there.
+ * the reading of what the writer returned, each measurement (as it opens and as it closes) and
+ * each trim — and nothing else. The milestone a motion belongs to is the motion catalogue's to
+ * say, so the caller reads it there.
+ *
+ * Three things send the writer round again inside the one build, each at the cost of one more
+ * writing call: a measured PDF over the limit (or a layout nothing could place), a skill block in
+ * the wrong shape, and an answer that cannot be materialised at all — an evidence reference that
+ * does not exist, a rewritten skill label, a repeated section. The last used to escape as an
+ * unclassified error and was handed to the person; it is the model's mistake, so the writer is
+ * told exactly what was wrong and asked again, the way a wrong skill format always was.
  */
 export async function buildFittedCv(
   library: CvLibrary,
@@ -348,8 +371,11 @@ export async function buildFittedCv(
   const maxPages = cvMaxPages(library.theme);
   const say = async (event: CvFitSignal) => { await onEvent?.(event); };
   let feedback: CvFitFeedback | undefined;
-  let invalidSkillFormat = false;
-  let semanticOverflow = false;
+  /** Why the last attempt did not stand, which decides what the build says if it was the third. */
+  let problem: "skill_format" | "unusable" | "essential_overflow" | "overflow" = "overflow";
+  let unusable = "";
+  /** What the next rewrite is told about the attempt before it, for the narrative. */
+  let previous: { reason: "overflow" | "layout_error"; pages: number } | { corrections: number } | undefined;
   if (initial) {
     const content = materialiseCv(library, initial);
     const report = await renderCvPdfWithReport(content).catch((error) => {
@@ -378,7 +404,7 @@ export async function buildFittedCv(
     // ones that did quoted figures a quarter larger than the writer's next allocation.
     const next = () => createCvWritingBudget(library, target, Math.pow(0.76, attempt + 1), semantic);
     await say({ motion: "write", phase: "start", attempt: attempt + 1, budgetCharacters: budget.totalCharacters,
-      budgetScale: Number(Math.pow(0.76, attempt).toFixed(4)), maxPages });
+      budgetScale: Number(Math.pow(0.76, attempt).toFixed(4)), maxPages, ...(attempt && previous ? previous : {}) });
     const plan = await write({
       writingBudget: budget,
       maxPages,
@@ -401,7 +427,6 @@ export async function buildFittedCv(
         return [`${entry.id}: select exact labels from the source skillItems array. Do not replace them with prose bullets.`];
       return [];
     });
-    invalidSkillFormat = skillCorrections.length > 0;
     // One reading of the writer's answer, reported whatever it found: the blocks it dropped, which
     // ends the build, and the blocks it wrote in the wrong shape, which the next attempt corrects.
     await say({ motion: "check_plan", attempt: attempt + 1, omitted: missing.map(block => block.entryId),
@@ -412,31 +437,52 @@ export async function buildFittedCv(
         "The writer omitted employment or education. No incomplete CV was saved.",
         { omitted: missing.map(block => block.entryId) },
       );
-    if (invalidSkillFormat) {
+    if (skillCorrections.length) {
+      problem = "skill_format";
       feedback = { pageCount: feedback?.pageCount ?? maxPages + 1, maxPages,
         previousPlan: plan, corrections: skillCorrections };
+      previous = { corrections: skillCorrections.length };
       continue;
     }
-    // Validate evidence before making any selection.
-    materialiseCv(library, plan);
+    // Validate evidence before making any selection. What fails here is the writer's answer, not
+    // the Library: the Library was validated before the first attempt, so the answer referenced
+    // something the Library does not hold, or held twice. The exact problem goes back as a
+    // correction and costs one more writing call, rather than a fresh task or the person's time.
+    try {
+      materialiseCv(library, plan);
+    } catch (error) {
+      if (!(error instanceof Error) || error instanceof CvLayoutError) throw error;
+      problem = "unusable";
+      unusable = error.message;
+      feedback = { pageCount: feedback?.pageCount ?? maxPages + 1, maxPages, previousPlan: plan,
+        corrections: [`The previous answer was rejected: ${error.message}. Use each supplied entryId at most once, cite only confirmed evidence of that entry, and copy skill labels exactly from its skillItems.`] };
+      previous = { corrections: 1 };
+      continue;
+    }
+    await say({ motion: "measure", phase: "start", attempt: attempt + 1, maxPages });
     let selected;
     try {
       selected = await selectCvToFit(library, plan, target, budget, semantic);
     } catch (error) {
       if (!(error instanceof CvLayoutError)) throw error;
+      await say({ motion: "measure", phase: "done", attempt: attempt + 1, maxPages, outcome: "layout_error" });
+      problem = "overflow";
       feedback = {
         pageCount: maxPages + 1,
         maxPages,
         previousPlan: plan,
         corrections: [error.message, ...cvBudgetViolations(plan, next())],
       };
+      previous = { reason: "layout_error", pages: maxPages + 1 };
       continue;
     }
-    await say({ motion: "measure", attempt: attempt + 1, pages: selected.pageCount, maxPages });
+    await say({ motion: "measure", phase: "done", attempt: attempt + 1, pages: selected.pageCount, maxPages,
+      renders: selected.renders, outcome: selected.pageCount <= maxPages ? "fits" : "overflow" });
     if (selected.semanticOverflows.length && selected.pageCount > maxPages) {
-      semanticOverflow = true;
+      problem = "essential_overflow";
       feedback = { pageCount: selected.pageCount, maxPages, previousPlan: selected.plan,
         corrections: [...selected.semanticOverflows, ...cvBudgetViolations(selected.plan, next())] };
+      previous = { reason: "overflow", pages: selected.pageCount };
       continue;
     }
     // Trimming is how the measured page count was reached, so it is reported with it, and only
@@ -456,14 +502,16 @@ export async function buildFittedCv(
         );
       return { ...selected.content, fitNotes: notes.slice(0, 50) };
     }
+    problem = "overflow";
     feedback = {
       pageCount: selected.pageCount,
       maxPages,
       previousPlan: selected.plan,
       corrections: cvBudgetViolations(selected.plan, next()),
     };
+    previous = { reason: "overflow", pages: selected.pageCount };
   }
-  if (invalidSkillFormat)
+  if (problem === "skill_format")
     // Three attempts have already been spent on this inside one build, so the person chooses the
     // model rather than the system spending a fresh task's attempts on the same answer.
     throw new CvFitFailure(
@@ -472,11 +520,23 @@ export async function buildFittedCv(
       { attempts: 3 },
       { resolvedBy: "user", retryable: false, action: "choose_model" },
     );
-  if (semanticOverflow)
+  if (problem === "unusable")
+    // Corrected twice already inside this build, with the exact problem each time: a fresh task
+    // would meet the same model with the same evidence.
     throw new CvFitFailure(
       "output_invalid",
-      "The writer could not consolidate essential evidence within the CV's content budget without removing its only support. No weakened CV was saved.",
+      `The model's CV could not be used after three corrected attempts (${unusable}). Your evidence is unchanged. Retry the build or choose another CV model.`,
       { attempts: 3 },
+      { resolvedBy: "user", retryable: false, action: "choose_model" },
+    );
+  if (problem === "essential_overflow")
+    // Three rewrites have already tried to consolidate within the budget. Another task would buy
+    // three more against the same page limit, so it is the person's page limit to change, or
+    // their evidence to shorten.
+    throw new CvFitFailure(
+      "page_limit_unfittable",
+      "The writer could not consolidate essential evidence within the CV's page limit without removing its only support. No weakened CV was saved.",
+      { pages: feedback?.pageCount ?? maxPages + 1, maxPages, attempts: 3, essential: true },
     );
   throw new CvFitFailure(
     "page_limit_unfittable",

@@ -768,7 +768,12 @@ export interface CvBuildTotals {
   ms: number;
   usd: number;
   running: boolean;
-  /** What the build reserved, from its `publish` step, when the worker recorded it. */
+  /**
+   * What the build reserved, from its `publish` step, when the worker recorded it — and only when
+   * that figure covers everything summed in `usd`. The worker's `reservedUsd` is what the publishing
+   * attempt's stages were admitted at before publication, so beside a total that includes an
+   * earlier attempt or the improvement pass after publication it would read as a wild overspend.
+   */
   reservedUsd: number | null;
 }
 
@@ -797,7 +802,6 @@ export function cvBuildTotals(steps: readonly CvJournalStep[], now: Date = new D
       last = Math.max(last, (step.finishedAt ?? step.startedAt).getTime());
       if (step.status === "running") open = true;
       usd += usdOf(step);
-      if (step.motion === "publish") reservedUsd = number(step.detail, "reservedUsd") ?? reservedUsd;
     }
     if (open && options.live && i === runs.length - 1) {
       running = true;
@@ -805,6 +809,10 @@ export function cvBuildTotals(steps: readonly CvJournalStep[], now: Date = new D
     }
     ms += Math.max(0, last - first);
   });
+  // One attempt, and publication its last motion: the reservation and the spend cover the same work.
+  const only = runs.length === 1 ? runs[0]!.steps : null;
+  const publish = only?.[only.length - 1];
+  if (publish && publish.motion === "publish") reservedUsd = number(publish.detail, "reservedUsd");
   return { motions: steps.length, ms, usd, running, reservedUsd };
 }
 

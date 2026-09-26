@@ -345,7 +345,27 @@ describe("what a build came to", () => {
     const totals = cvBuildTotals(steps, s(3 * day));
     // 3 min for the first attempt and 2 min 21 s for the second: not "2 days".
     expect(totals.ms).toBe(180_000 + 141_000);
-    expect(cvBuildTotalsLine(totals)).toBe("5 motions in 5 min 21 s, costing US$2.50 of US$3.10 reserved.");
+    // The publishing attempt's reservation covers only its own stages, not the first attempt's
+    // spend, so it is not set beside a total that includes both.
+    expect(totals.reservedUsd).toBeNull();
+    expect(cvBuildTotalsLine(totals)).toBe("5 motions in 5 min 21 s, costing US$2.50.");
+  });
+
+  it("sets the reservation beside the spend only when both cover the same work", () => {
+    nextSeq = 0;
+    const single = [
+      step("admit_budget", "done", { stage: "rubric", expectedUsd: 0.1 }, { startedAt: s(0), finishedAt: s(1) }),
+      step("rubric", "done", { usd: 0.08 }, { startedAt: s(1), finishedAt: s(20) }),
+      step("publish", "done", { reservedUsd: 0.3, spentUsd: 0.08 }, { startedAt: s(20), finishedAt: s(21) }),
+    ];
+    expect(cvBuildTotalsLine(cvBuildTotals(single, s(30)))).toBe("3 motions in 21 s, costing US$0.08 of US$0.30 reserved.");
+    // The improvement after publication spends outside the publishing reservation.
+    const improved = [
+      ...single,
+      step("admit_budget", "done", { stage: "improve", expectedUsd: 1 }, { startedAt: s(22), finishedAt: s(23) }),
+      step("improve_content", "done", { usd: 2.42 }, { startedAt: s(23), finishedAt: s(60) }),
+    ];
+    expect(cvBuildTotalsLine(cvBuildTotals(improved, s(70)))).toBe("5 motions in 1 min, costing US$2.50.");
   });
 
   it("is provisional only while something is working on it", () => {

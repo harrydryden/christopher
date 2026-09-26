@@ -110,6 +110,13 @@ export function CvBuildLive({
           cache: "no-store",
           signal: controller.signal,
         });
+        if (response.status === 404 || response.status === 401) {
+          // The draft is gone (deleted, or never this account's) or the session has ended: no later
+          // reading can answer. The server renders what is true now — the not-found page, or the
+          // sign-in — and this stops asking rather than backing off for ever over a silent page.
+          startTransition(() => router.refresh());
+          return;
+        }
         if (!response.ok) throw new Error("Progress unavailable");
         const next_ = (await response.json()) as CvProgressReading;
         if (cancelled) return;

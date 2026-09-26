@@ -52,6 +52,8 @@ export interface LibraryDiff {
   blocksRemoved: string[];
   employmentAdded: string[];
   employmentRemoved: string[];
+  /** The intro fields that changed, named as the editor labels them: "Email", "Bio". */
+  intro: string[];
   /** Nothing differs between the two versions. */
   unchanged: boolean;
 }
@@ -61,6 +63,24 @@ function labelFor(library: CvLibrary, entry: CvEntry): string {
   if (job) return employmentHeading(job) || job.company.trim() || "New job";
   return entry.heading.trim() || "Untitled block";
 }
+
+/**
+ * The intro fields in the order the editor shows them, with the editor's own labels. Each contact
+ * detail is its own field, so a changed phone number reads as that rather than as "contact".
+ */
+export const LIBRARY_INTRO_FIELDS = [
+  ["name", "Name"],
+  ["email", "Email"],
+  ["phone", "Phone"],
+  ["location", "Location"],
+  ["contact", "Other contact details"],
+  ["linkedinUrl", "LinkedIn"],
+  ["websiteUrl", "Website"],
+  ["profile", "Bio"],
+] as const satisfies ReadonlyArray<readonly [keyof CvLibrary, string]>;
+
+/** A blank field and a missing one are the same thing to the person reading the diff. */
+const introValue = (library: CvLibrary, key: (typeof LIBRARY_INTRO_FIELDS)[number][0]) => (library[key] ?? "").trim();
 
 function jobLabel(job: Employment): string {
   return employmentHeading(job) || job.company.trim() || "New job";
@@ -114,6 +134,7 @@ export function diffCvLibraries(from: CvLibrary, to: CvLibrary, fromVersion: num
   const jobsAfter = new Map((to.employment ?? []).map(job => [job.id, job]));
   const employmentAdded = [...jobsAfter.values()].filter(job => !jobsBefore.has(job.id)).map(jobLabel);
   const employmentRemoved = [...jobsBefore.values()].filter(job => !jobsAfter.has(job.id)).map(jobLabel);
+  const intro = LIBRARY_INTRO_FIELDS.filter(([key]) => introValue(from, key) !== introValue(to, key)).map(([, label]) => label);
   return {
     from: fromVersion,
     to: toVersion,
@@ -122,7 +143,8 @@ export function diffCvLibraries(from: CvLibrary, to: CvLibrary, fromVersion: num
     blocksRemoved,
     employmentAdded,
     employmentRemoved,
-    unchanged: !blocks.length && !blocksAdded.length && !blocksRemoved.length && !employmentAdded.length && !employmentRemoved.length,
+    intro,
+    unchanged: !blocks.length && !blocksAdded.length && !blocksRemoved.length && !employmentAdded.length && !employmentRemoved.length && !intro.length,
   };
 }
 
@@ -141,24 +163,6 @@ export function libraryDiffSummary(diff: LibraryDiff): string {
     const [subject, ...rest] = noun.split(" ");
     return `${n} ${subject}${n === 1 ? "" : "s"} ${rest.join(" ")}`;
   });
+  if (diff.intro.length) said.push(`${diff.intro.join(", ")} changed`);
   return said.length ? said.join(", ") : "No changes between these versions";
-}
-
-/**
- * Which two versions a request is asking to compare: `?diff=7,9`, or `?a=7&b=9`.
- *
- * Out of order is read in order, because "compare 9 with 7" and "compare 7 with 9" are the same
- * question and only one of the two answers reads as a history. Anything that is not two distinct
- * versions is no request at all.
- */
-export function requestedDiff(
-  params: { diff?: string; a?: string; b?: string },
-  available: number[],
-): { from: number; to: number } | null {
-  const raw = params.diff ? params.diff.split(",") : [params.a ?? "", params.b ?? ""];
-  const [first, second] = raw.map(value => Number(String(value).trim()));
-  if (![first, second].every(value => Number.isInteger(value))) return null;
-  const known = new Set(available);
-  if (!known.has(first!) || !known.has(second!) || first === second) return null;
-  return { from: Math.min(first!, second!), to: Math.max(first!, second!) };
 }

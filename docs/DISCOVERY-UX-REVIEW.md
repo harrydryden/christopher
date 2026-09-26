@@ -13,7 +13,7 @@ separate view; advanced settings and evidence expand only when needed.
 |---|---|
 | Source setup pushed recommendations below lengthy configuration forms. | Separate Review, Sources and History views, with consistent naming and counts. |
 | “Find more” could be mistaken for checking newsletters. | “Find similar companies” explicitly describes the portfolio-based search; external sources have their own Check now action. |
-| Source checks lacked visible progress and useful failure states. | Queued, Checking, Paused, Content ready, Waiting for content, Up to date and Needs attention states; refresh controls; last-check result where retained task history is available. Disabled discovery links to Settings. |
+| Source checks lacked visible progress and useful failure states. | Queued, Checking, Paused, Content ready, Waiting for content, Import only, Up to date and Not working states, with a banner naming every source whose automation has stopped; refresh controls; last-check result where retained task history is available. Disabled discovery links to Settings. |
 | Email setup showed an irrelevant URL field and implied inbox integration. | Conditional fields and explicit import guidance. Email delivery configuration is in a separate advanced disclosure. Empty email sources wait for content without an AI error. |
 | Missing, invalid or duplicate input produced generic failures. | Friendly action feedback, retained form entries, duplicate-source prevention (including concurrent additions and URL normalisation), and duplicate-import acknowledgement. |
 | Long imports silently lost content. | Manual and inbound-email imports reject content above 40,000 characters and ask for separate imports. Webpage fetching remains bounded. |

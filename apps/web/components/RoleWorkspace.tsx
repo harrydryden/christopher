@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { ROLE_STAGES, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS, ROLE_STATUS_LABELS, ROLE_TABS, type RoleStatus } from "@ava/core";
+import { ROLE_STATUS_LABELS, ROLE_TABS, type RoleStatus } from "@ava/core";
 import { Card } from "./Card";
 import { EmptyState } from "./EmptyState";
+import { buttonLinkClass } from "./Button";
 import { RolesTable } from "./RolesTable";
 import { RolesFilterBar } from "./RolesFilterBar";
 import { appliedRoleCount, attachEvents, buildRoleRowVM, DEFAULT_SORT_DIR, fetchRecentEventsFor, fetchRolePage, fetchRoleCounts, filtersToQueryString, parseRolesFilters, resolveRoleView, roleTabFor, type RawSearchParams, type RolesFilters, type SortKey } from "@/lib/queries/jobs";
@@ -61,41 +62,29 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
   return <section id="roles">
     <nav aria-label="Role status" className="mb-4 flex flex-wrap gap-2">
       {ROLE_TABS.map(status => <Link prefetch={false} key={status} href={viewHref(status)} aria-current={status === view ? "page" : undefined}
-        className={`ds-pixel border-2 px-3 py-2 text-11 no-underline ${status === view ? "border-fg bg-fg text-bg" : "border-transparent text-muted hover:bg-sunken hover:text-fg"}`}>
+        className={`ds-pixel border-2 px-3 py-2 text-11 no-underline ${status === view ? "border-accent bg-accent text-accent-fg" : "border-transparent text-muted hover:bg-sunken hover:text-fg"}`}>
         {ROLE_STATUS_LABELS[status]}{" "}<span className="ml-1 tabular-nums">{counts[status]}</span>
         {status === "user-shortlisted" && counts[status] > 0 && applied > 0 && <span className="ml-1 tabular-nums">· {applied} applied</span>}
       </Link>)}
     </nav>
     <RolesFilterBar key={query} filters={filters} companyOptions={options}
       exportHref={`/api/export.csv?${query}`} path={path} view={view} companyScoped={!!companyId} />
-    <p className="mb-3 text-12 text-muted">Showing {result.total} of {counts[view]} {ROLE_STATUS_LABELS[view].toLowerCase()} {counts[view] === 1 ? "role" : "roles"}</p>
+    {result.total !== counts[view] && <p className="mb-3 text-12 text-muted">Showing {result.total} of {counts[view]}</p>}
     <RolesTable key={`${query}:${result.page}`} rows={rows} keyboard hideCompany={!!companyId}
       sortLinks={sortLinksFor(path, view, filters)} sort={filters.sort} dir={filters.dir}
       emptyState={<EmptyState title={counts[view] ? "No roles match these filters" : view === "auto-matched" ? "No roles awaiting review" : `No ${ROLE_STATUS_LABELS[view].toLowerCase()} roles`}
-        description={counts[view] ? "Clear the filters to see the other roles in this view." : undefined} />} />
+        action={counts[view] ? <Link prefetch={false} href={`${path}?view=${view}#roles`} className={buttonLinkClass("secondary")}>Clear filters</Link> : undefined} />} />
     {result.pageCount > 1 && <nav aria-label="Role pages" className="my-4 flex items-center gap-4 text-13">
       {result.page > 1 && <Link prefetch={false} className="underline" href={href(result.page - 1)}>Previous</Link>}
       <span>Page {result.page} of {result.pageCount}</span>
       {result.page < result.pageCount && <Link prefetch={false} className="underline" href={href(result.page + 1)}>Next</Link>}
     </nav>}
-    {/* The same legend the Applications page carries, so a stage badge on a row is explained where
-        the badge is, not one page away. */}
-    <details className="mt-4 text-13 text-muted">
-      <summary className="cursor-pointer">What the stages mean</summary>
-      <dl className="mt-2 space-y-1">
-        {ROLE_STAGES.map(stage => (
-          <div key={stage} className="flex flex-wrap gap-2">
-            <dt className="ds-pixel text-10 text-fg">{ROLE_STAGE_LABELS[stage]}</dt>
-            <dd>{ROLE_STAGE_DESCRIPTIONS[stage]}</dd>
-          </div>
-        ))}
-      </dl>
-    </details>
+    {/* The stage legend lives on Applications, where stages are moved; a row's stage badge carries its meaning as a tooltip. */}
     {archivedResult && <div id="archived" className="mt-6">
       <Card title="Archived" actions={<span className="text-12 text-muted tabular-nums">{counts.archived}</span>}>
-        <p className="mb-3 text-12 text-muted">Showing {archivedResult.total} of {counts.archived} archived {counts.archived === 1 ? "role" : "roles"}</p>
+        {archivedResult.total !== counts.archived && <p className="mb-3 text-12 text-muted">Showing {archivedResult.total} of {counts.archived}</p>}
         <RolesTable key={`${query}:archived:${archivedResult.page}`} rows={archivedRows} archived hideCompany={!!companyId}
-          emptyState={<EmptyState title="No archived roles" description="Archived roles are ones you put away or that stopped matching your filters." />} />
+          emptyState={<EmptyState title="No archived roles" description="Roles you archived or that stopped matching." />} />
         {archivedResult.pageCount > 1 && <nav aria-label="Archived role pages" className="mt-4 flex items-center gap-4 text-13">
           {archivedResult.page > 1 && <Link prefetch={false} className="underline" href={archivedHref(archivedResult.page - 1)}>Previous</Link>}
           <span>Page {archivedResult.page} of {archivedResult.pageCount}</span>

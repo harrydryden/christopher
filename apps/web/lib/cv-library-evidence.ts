@@ -18,7 +18,7 @@ import {
   type EvidenceFacet,
 } from "@ava/core/cv";
 // Types only: the scorer they belong to reaches `node:crypto` and never reaches the browser.
-import type { EvidenceRating, LibraryReviewSource } from "@ava/core/library-review";
+import type { EvidenceRating, LibraryReviewSource, LibraryRowSignal } from "@ava/core/library-review";
 
 type CvEntry = CvLibrary["entries"][number];
 
@@ -34,6 +34,14 @@ export const EVIDENCE_RATING_LABELS: Readonly<Record<EvidenceRating, string>> = 
 export interface EvidencePrompt {
   question: string;
   facet: EvidenceFacet | null;
+}
+
+/** One reviewed row's own score, as `libraryRowScore` computed it on the server. */
+export interface EvidenceRowView {
+  row: string;
+  /** 0–100 in steps of 25: a quarter each for the four signals. */
+  score: number;
+  signals: Record<LibraryRowSignal, boolean>;
 }
 
 export interface EvidenceEntryView {
@@ -55,6 +63,8 @@ export interface EvidenceEntryView {
   prompts: EvidencePrompt[];
   /** The rows the score was computed over, so the editor can say when the text has moved on. */
   reviewedRows: string[];
+  /** Each of those rows scored on its own, in the same order. */
+  rows: EvidenceRowView[];
 }
 
 export interface LibraryEvidence {
@@ -122,6 +132,32 @@ export function libraryEvidenceLine(jobs: EvidenceEntryView[], ratingFor: (score
 /** The views by entry id, which is how the editor reaches for one while rendering a job. */
 export function evidenceByEntry(evidence: LibraryEvidence): Map<string, EvidenceEntryView> {
   return new Map(evidence.entries.map(entry => [entry.entryId, entry]));
+}
+
+/** What each of a row's four signals is called in the score cell's explanation. */
+const SIGNAL_LABELS: Readonly<Record<LibraryRowSignal, string>> = {
+  typed: "has a type",
+  specific: "specific",
+  quantified: "has a number",
+  outcomeLinked: "tied to an outcome",
+};
+
+/**
+ * The score cell's explanation: what the number measures, which of the four signals this row has
+ * and which it lacks, and whose judgement it is. Read by a pointer's hover and a screen reader.
+ */
+export function rowScoreTitle(view: EvidenceRowView | undefined, source: LibraryReviewSource, evaluating = false): string {
+  if (!view) return "Not scored yet. Rows are scored from the saved library: save it, then Re-score for the full review.";
+  const signals = (Object.keys(SIGNAL_LABELS) as LibraryRowSignal[]);
+  const has = signals.filter(signal => view.signals[signal]).map(signal => SIGNAL_LABELS[signal]);
+  const lacks = signals.filter(signal => !view.signals[signal]).map(signal => SIGNAL_LABELS[signal]);
+  const by = source === "model" ? "From the full review." : evaluating ? "From your own tags while the full review runs." : "From your own tags and wording; Re-score for the full review.";
+  return [
+    `Row evidence ${view.score}/100: 25 each for having a type, being specific, having a number and being tied to an outcome.`,
+    has.length ? `Has: ${has.join(", ")}.` : "",
+    lacks.length ? `Missing: ${lacks.join(", ")}.` : "",
+    by,
+  ].filter(Boolean).join(" ");
 }
 
 /** Whether the rows on screen are the rows a score was computed over. */

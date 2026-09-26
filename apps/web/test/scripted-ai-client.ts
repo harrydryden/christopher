@@ -53,7 +53,7 @@ interface PlanningPayload {
 }
 
 export interface AuthorPayload {
-  library: Omit<CvLibrary, "theme" | "name" | "contact" | "linkedinUrl" | "websiteUrl">;
+  library: Omit<CvLibrary, "theme" | "name" | "contact" | "email" | "phone" | "location" | "linkedinUrl" | "websiteUrl">;
   jobTitle: string;
   company: string;
   description: string;

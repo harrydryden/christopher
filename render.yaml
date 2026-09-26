@@ -43,6 +43,7 @@ services:
         - pnpm-workspace.yaml
         - .npmrc
         - tsconfig.base.json
+        - patches/**
     envVars:
       - key: DATABASE_URL
         fromDatabase:

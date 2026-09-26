@@ -124,14 +124,13 @@ function StatusPanel({ row }: { row: PipelineRow }) {
                 Applying has nothing to date yet, so neither is asked twice. */}
             {datesTheEntry && (
               <label className="grid gap-1.5">
-                <span className={labelClass}>On</span>
+                <span className={labelClass}>On (optional)</span>
                 <input type="date" name="on" defaultValue="" className={inputClass} />
-                <span className="text-12 text-muted">Optional. The day it happened.</span>
               </label>
             )}
           </div>
           {/* Outside the label on purpose: inside it, the sentence becomes part of the select's accessible name. */}
-          <p className="text-12 text-muted">Withdrawn dismisses the role, as passing on it from Roles does.</p>
+          <p className="text-12 text-muted">Withdrawn also dismisses the role.</p>
           {/* Nothing has been submitted while a CV is still being written, so there is no date to
               record until the status says there is. */}
           {status !== "applying" && (
@@ -154,7 +153,7 @@ function StatusPanel({ row }: { row: PipelineRow }) {
                 name="nextAction"
                 maxLength={200}
                 defaultValue={row.application?.nextAction ?? ""}
-                placeholder="Optional. Send references, chase the recruiter…"
+                placeholder="Optional, e.g. chase the recruiter"
                 className={inputClass}
               />
             </label>
@@ -163,9 +162,7 @@ function StatusPanel({ row }: { row: PipelineRow }) {
               <input type="date" name="nextActionOn" defaultValue={row.application?.nextActionOn ?? ""} className={inputClass} />
             </label>
           </div>
-          <p className="text-12 text-muted">
-            Nothing is sent. The row reads it back to you under the stage, and clearing the text clears the date.
-          </p>
+          <p className="text-12 text-muted">Nothing is sent; it shows under the stage as a reminder.</p>
           <label className="grid gap-1.5">
             <span className={labelClass}>Notes</span>
             <textarea name="notes" defaultValue={row.application?.notes ?? ""} maxLength={4000} rows={3} className={`resize-y ${inputClass}`} />
@@ -173,7 +170,7 @@ function StatusPanel({ row }: { row: PipelineRow }) {
         </SettingsForm>
       ) : (
         <p className="text-14 text-muted">
-          This role is no longer in your table, so its status cannot be changed here.
+          This role is no longer in your table, so its status is fixed.
         </p>
       )}
       {history.length > 0 && (
@@ -238,7 +235,7 @@ function CvPanel({
         else if (result.row) onPatched(result.row);
         router.refresh();
       } catch {
-        setManageError("Could not update this CV. Reload to check the current state before retrying.");
+        setManageError("Could not update this CV. Reload and retry.");
       } finally {
         setManaging(false);
       }
@@ -274,17 +271,16 @@ function CvPanel({
                 name="description"
                 rows={3}
                 maxLength={60000}
-                placeholder="Optional. Leave empty to use the description we stored for this role."
+                placeholder="Optional. Leave empty to use the stored description."
                 className={`resize-y ${inputClass}`}
               />
             </label>
             {quote && <p className="text-12 text-muted">{quote.line}</p>}
-            <p className="text-12 text-muted">Match evidence → optional questions → write and check. The estimate includes one improvement pass if useful.</p>
           </SettingsForm>
         )
       ) : (
         <p className="text-13 text-muted">
-          This row has no live posting behind it, so a new CV cannot be built from it.
+          No live posting behind this row, so no new CV can be built.
         </p>
       )}
       {/* Archive and delete act on the current CV, restore on the predecessor it replaced. */}

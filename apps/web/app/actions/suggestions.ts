@@ -21,7 +21,7 @@ export async function acceptSuggestion(suggestionId: string): Promise<DiscoveryA
   const id = zUuid().parse(suggestionId);
   const result = await db().transaction(async tx => {
     const [suggestion] = await tx.select().from(companySuggestions).where(and(eq(companySuggestions.id, id), eq(companySuggestions.userId, user.id))).for("update");
-    if (!suggestion || suggestion.status !== "pending") return { ok: false as const, error: "This recommendation has already been reviewed. Refresh the page to see its status." };
+    if (!suggestion || suggestion.status !== "pending") return { ok: false as const, error: "This suggestion has already been reviewed. Refresh to see its status." };
     await assertFollowCapacity(tx, user, { domains: [suggestion.domain] });
     const [created] = await tx.insert(companies).values({ name: suggestion.name, homepageUrl: suggestion.homepageUrl, domain: suggestion.domain }).onConflictDoNothing().returning({ id: companies.id });
     const [company] = created ? [created] : await tx.select({ id: companies.id }).from(companies).where(eq(companies.domain, suggestion.domain)).limit(1);
@@ -45,7 +45,7 @@ export async function acceptSuggestion(suggestionId: string): Promise<DiscoveryA
       ? `${suggestion.name} added to tracked companies. Careers setup is queued.`
       : subscription.created || subscription.reactivated
         ? `${suggestion.name} is already in the shared catalogue; you now follow it and its matching roles are in your table.`
-        : `${suggestion.name} is already in your companies. Recommendation marked as added.` };
+        : `${suggestion.name} is already in your companies. Suggestion marked as added.` };
   }).catch((error: unknown) => {
     if (isUserFacingError(error)) return { ok: false as const, error: error.message };
     throw error;
@@ -59,13 +59,15 @@ export async function rejectSuggestion(suggestionId: string, formData: FormData)
   const user = await requireVerifiedUser();
   const id = zUuid().parse(suggestionId);
   const reason = String(formData.get("reason") ?? "").trim();
-  if (!reason || reason.length > 1000) return { ok: false, error: "Give a brief reason (up to 1,000 characters) so future recommendations can improve." };
+  // A swipe may dismiss without a reason. It still excludes the company; it just teaches nothing.
+  const quick = formData.get("quick") === "1";
+  if ((!reason && !quick) || reason.length > 1000) return { ok: false, error: "Give a brief reason (up to 1,000 characters) so future suggestions can improve." };
   const result = await db().transaction(async tx => {
     const [suggestion] = await tx.select().from(companySuggestions).where(and(eq(companySuggestions.id, id), eq(companySuggestions.userId, user.id))).for("update");
-    if (!suggestion || suggestion.status !== "pending") return { ok: false as const, error: "This recommendation has already been reviewed. Refresh the page to see its status." };
-    await tx.update(companySuggestions).set({ status: "rejected", rejectionReason: reason, resolvedAt: new Date() }).where(eq(companySuggestions.id, id));
-    await enqueue("synthesize_profile", { userId: user.id, force: false }, tx);
-    return { ok: true as const, message: `${suggestion.name} dismissed. Your reason has been saved.` };
+    if (!suggestion || suggestion.status !== "pending") return { ok: false as const, error: "This suggestion has already been reviewed. Refresh to see its status." };
+    await tx.update(companySuggestions).set({ status: "rejected", rejectionReason: reason || null, resolvedAt: new Date() }).where(eq(companySuggestions.id, id));
+    if (reason) await enqueue("synthesize_profile", { userId: user.id, force: false }, tx);
+    return { ok: true as const, message: reason ? `${suggestion.name} dismissed. Your reason has been saved.` : `${suggestion.name} dismissed.` };
   });
   revalidatePath("/suggestions");
   return result;

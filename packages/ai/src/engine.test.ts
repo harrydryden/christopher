@@ -598,6 +598,15 @@ it("routes CV generation separately, validates industry selections and records u
   expect(usage[0]).toMatchObject({ callSite: "CV", refId: "draft", ok: true });
 });
 
+it("never sends the contact details to the CV author", async () => {
+  const { client, calls } = fakeClient({ summary: "Operations leader", sections: [{ entryId: "one", bullets: ["Led a team"] }], gaps: [] });
+  const engine = createAiEngine({ client, getModel: () => "claude-sonnet-5" });
+  await engine.buildCv({ library: { name: "Candidate", contact: "Portfolio on request", email: "candidate@example.test", phone: "+44 7700 900123", location: "Leeds", profile: "Leader",
+    entries: [{ id: "one", kind: "experience", heading: "Director", details: "Led a team" }] }, jobTitle: "Director", company: "Acme", description: "Lead operations" });
+  const sent = (calls[0]!.params.messages as Array<{ content: string }>)[0]!.content;
+  for (const detail of ["Candidate", "Portfolio on request", "candidate@example.test", "+44 7700 900123", "Leeds"]) expect(sent).not.toContain(detail);
+});
+
 it("plans CV evidence in one bounded call and validates exact row references", async () => {
   const rubric = { requirements: [{ id: "r1", label: "Lead operations", quote: "Lead operations", importance: "essential" as const, category: "delivery" as const }], caveats: [] };
   const library: CvLibrary = { name: "Candidate", contact: "", profile: "Operations leader", entries: [{ id: "role", kind: "experience", heading: "Director", details: "Led operations across Europe", confirmedResponsibilities: ["Led operations across Europe"] }] };

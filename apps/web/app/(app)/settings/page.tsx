@@ -33,10 +33,9 @@ export default async function SettingsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Settings"
-        description="Keywords, locations, CV preferences and your monthly AI budget are yours to set. The scan schedule and models are shared and live in Admin."
         actions={
           <form action={rescoreAllRoles}>
-            <Button type="submit">Re-score all</Button>
+            <Button type="submit" variant="ghost" size="sm">Re-score all</Button>
           </form>
         }
       />
@@ -50,12 +49,12 @@ export default async function SettingsPage() {
           <label className={labelClass}>
             <span className={fieldLabelClass}>Seniority keywords (title only)</span>
             <textarea name="seniorityKeywords" rows={2} defaultValue={(settings.gate.seniorityKeywords ?? []).join("\n")} placeholder="Head, Director, VP, Chief" className={inputClass} />
-            <span className="text-12 text-muted">One per line or comma-separated. A trailing * matches the start of a word: <code>strateg*</code> matches Strategy and Strategic; <code>*ops</code> matches DevOps. Quote a phrase to match it exactly.</span>
+            <span className="text-12 text-muted">One per line or comma-separated. <code>strateg*</code> matches Strategy and Strategic; <code>*ops</code> matches DevOps; quote a phrase to match it exactly.</span>
           </label>
           <label className={labelClass}>
             <span className={fieldLabelClass}>Include keywords</span>
             <textarea name="includeKeywords" rows={2} defaultValue={gateChosen ? settings.gate.includeKeywords.join("\n") : ""} placeholder={gateChosen ? 'Operations, Strateg*, "Chief of Staff"' : GATE_EXAMPLE} className={inputClass} />
-            <span className="text-12 text-muted">Whole words, any field you choose below. <code>strateg*</code> also matches Strategic; Learning suggests such wildcards from recent scans.</span>
+            <span className="text-12 text-muted">Whole words, in the fields chosen under Match fields.</span>
           </label>
           <label className={labelClass}>
             <span className={fieldLabelClass}>Exclude keywords</span>
@@ -95,10 +94,7 @@ export default async function SettingsPage() {
 
       <div id="seed-profile">
       <Card title="Seed profile">
-        <p className="mb-2 text-14 text-muted">
-          A few sentences about what you are looking for: seniority, sectors, locations, compensation floor, deal-breakers. It is the starting point for
-          your preference profile and the model never overwrites it. You can edit it here or on <a href="/learning" className="text-fg underline">Learning</a>.
-        </p>
+        <p className="mb-2 text-14 text-muted">The starting point for your preference profile; it is never overwritten.</p>
         <SettingsForm action={saveSeedProfileSetting}>
           <label className={labelClass}>
             <span className={fieldLabelClass}>What you are looking for</span>
@@ -114,17 +110,16 @@ export default async function SettingsPage() {
             <label className={labelClass}>
               <span className={fieldLabelClass}>Show closed roles for (days)</span>
               <input name="showClosedDays" type="number" min={0} max={365} defaultValue={settings.showClosedDays} className={fieldClass} />
-              <span className="text-12 text-muted">Fit is a filter on Roles, not a second workflow: nothing is hidden from you by score.</span>
             </label>
           </div>
         </SettingsForm>
       </Card>
 
-      <Card title="Recommendations">
+      <Card title="Company suggestions">
         <SettingsForm action={saveSuggestionSettings}>
           <label className={checkboxClass}>
             <input type="checkbox" name="suggestionsEnabled" value="1" defaultChecked={settings.suggestionsEnabled} className="h-4 w-4" />
-            Enable weekly company suggestions and source checks for my account
+            Weekly company suggestions and source checks
           </label>
         </SettingsForm>
       </Card>
@@ -133,7 +128,7 @@ export default async function SettingsPage() {
         <CvAppearance key={JSON.stringify(appearance)} name="theme" value={appearance} />
       </SettingsForm>
 
-      <p className="text-14 text-muted">Writing preferences and version history are on the <a href="/library" className="text-fg underline">Library</a> page.</p>
+      <p className="text-14 text-muted">Writing preferences are on the <a href="/library" className="text-fg underline">Library</a> page.</p>
 
       <Card title="CV model">
         <SettingsForm action={saveCvModel}>
@@ -148,18 +143,18 @@ export default async function SettingsPage() {
       <Card title="AI budget">
         <p className="text-14">
           You have used {formatUsd(budget.spentUsd)} of your {formatUsd(budget.limitUsd)} this month; it resets on the 1st.
-          {budget.countingSince && <> Counting since {shortDate(budget.countingSince)}, when an administrator last reset it.</>}
+          {budget.countingSince && <> Counting since {shortDate(budget.countingSince)}.</>}
         </p>
         <SettingsForm action={saveAiBudget}>
           <label className={labelClass}>
             <span className={fieldLabelClass}>Monthly AI budget (USD)</span>
             <input name="aiBudgetUsd" type="number" min={0} max={admin ? MAX_ACCOUNT_AI_BUDGET_USD : Math.max(MAX_MEMBER_AI_BUDGET_USD, budget.limitUsd)} step={1} defaultValue={budget.limitUsd} className={fieldClass} />
-            <span className="text-12 text-muted">Scoring, suggestions and CV builds stop for this account once the month&apos;s budget is spent.</span>
+            <span className="text-12 text-muted">Scoring, suggestions and CV builds stop once it is spent.</span>
           </label>
         </SettingsForm>
         <p className="mt-2 text-14 text-muted">
           Scoring and extraction use the shared default model <code>{settings.defaultModel}</code>.
-          {admin && <> Set any account&apos;s budget in <a href="/admin" className="text-fg underline">Admin › Accounts</a>, and change the model in <a href="/admin/settings" className="text-fg underline">System settings</a>.</>}
+          {admin && <> Change it in <a href="/admin/settings" className="text-fg underline">System settings</a>.</>}
         </p>
       </Card>
       </div>

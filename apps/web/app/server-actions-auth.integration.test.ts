@@ -107,13 +107,13 @@ const GATES: Record<string, Record<string, Gate>> = {
     refreshCompany: "verified", rescanCompany: "verified", rediscoverCompany: "verified", saveCompanyNotes: "user",
     importPosting: "verified", suggestCompanyName: "user", refreshCompanyLogo: "verified", disableSource: "admin",
     enableSource: "admin", markSourceConfirmed: "verified", useDiscoveryCandidate: "verified", pasteDiscoveryUrl: "verified",
-    refreshCompanyProfile: "verified", unfollowCompany: "user",
+    refreshCompanyProfile: "verified", unfollowCompany: "user", followCompany: "verified",
   },
   "actions/cv-share.ts": { createCvShareLink: "user", revokeCvShareLink: "user", resolveCvShareComment: "user" },
   "actions/cv.ts": {
     saveCvLibrary: "user", answerCvGapQuiz: "verified", saveCvWritingPreferences: "user", saveCvAppearance: "user",
     saveCvModel: "user", manageCvs: "user", requestCv: "verified", saveCvDraft: "verified", assessCvDraft: "verified",
-    finaliseCvDraft: "user",
+    finaliseCvDraft: "user", rescoreLibrary: "verified",
   },
   "actions/decisions.ts": { roleDetails: "user", decide: "user", saveDecisionTags: "verified", archiveRoles: "user", decideRoles: "user" },
   "actions/discovery-sources.ts": {

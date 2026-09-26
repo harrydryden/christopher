@@ -7,7 +7,7 @@ import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb, schema, type Db } from "@ava/db";
 import { createTestDb } from "@/test/db";
 import { runMigrations } from "@ava/db/migrate";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { signInTestUser } from "@/test/auth";
 import type { User } from "@ava/db/schema";
 
@@ -24,8 +24,9 @@ vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (session ? {
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
-import { addCompanies, archiveCompany, importPosting, pasteDiscoveryUrl, refreshCompanyLogo, rescanCompany, resumeCompany, saveCompanyNotes, suggestCompanyName, unfollowCompany } from "./companies";
-import { companyApplicationCount, companyScanTiming, listCompanies } from "@/lib/queries/companies";
+import { addCompanies, archiveCompany, followCompany, importPosting, pasteDiscoveryUrl, refreshCompanyLogo, rescanCompany, resumeCompany, saveCompanyNotes, suggestCompanyName, unfollowCompany } from "./companies";
+import { companyApplicationCount, companyScanTiming, listCompanies, searchCatalogue } from "@/lib/queries/companies";
+import { parseCompanySort } from "@/lib/company-sort";
 import { scanTimingLine } from "@/app/(app)/companies/scan-line";
 
 beforeAll(async () => {
@@ -448,4 +449,105 @@ it("refuses addresses the worker will never fetch, in a sentence, before anythin
   await expect(pasteDiscoveryUrl(company!.id, urlForm("http://metadata.google.internal/careers"))).rejects.toThrow("metadata.google.internal is a local network name.");
   expect(await tasksOfType("import_posting")).toHaveLength(0);
   expect((await tasksOfType("discover")).filter(task => (task.payload as { reason?: string }).reason === "pasted")).toHaveLength(0);
+});
+
+it("finds catalogue companies by name or domain, says which this account follows, and leaves out archived ones", async () => {
+  const [acme, acmeLabs, beta, gone] = await database.insert(schema.companies).values([
+    { name: "Acme", domain: "acme.example", homepageUrl: "https://acme.example" },
+    { name: "Labs of Acme", domain: "acmelabs.example", homepageUrl: "https://acmelabs.example" },
+    { name: "Beta", domain: "beta.example", homepageUrl: "https://beta.example" },
+    { name: "Acme Archive", domain: "acme-archive.example", homepageUrl: "https://acme-archive.example", status: "archived" },
+  ]).returning();
+  await database.insert(schema.companySubscriptions).values({ userId: second.id, companyId: acme!.id });
+  await database.insert(schema.companySubscriptions).values({ userId: first.id, companyId: acmeLabs!.id, status: "paused" });
+
+  const found = await searchCatalogue(first.id, "acme");
+  // Names starting with the query first; the archived company is not offered.
+  expect(found.map(row => [row.name, row.followStatus])).toEqual([["Acme", null], ["Labs of Acme", "paused"]]);
+  expect(found.some(row => row.id === gone!.id)).toBe(false);
+  expect((await searchCatalogue(first.id, "beta.example")).map(row => row.id)).toEqual([beta!.id]);
+  expect(await searchCatalogue(first.id, "   ")).toEqual([]);
+  // A LIKE wildcard is searched for as itself.
+  expect(await searchCatalogue(first.id, "%")).toEqual([]);
+
+  await database.insert(schema.companies).values(Array.from({ length: 12 }, (_, n) => ({ name: `Many ${n}`, domain: `many${n}.example`, homepageUrl: `https://many${n}.example` })));
+  expect(await searchCatalogue(first.id, "many")).toHaveLength(10);
+});
+
+it("follows a catalogue company once, admits its stored roles, and holds a member to the follow allowance", async () => {
+  const company = await followedCompany();
+  const { job } = await scannedCompany();
+  session = secondCookie;
+
+  const followed = await followCompany(company.id);
+  expect(followed).toEqual({ ok: true, message: expect.stringContaining("You now follow Acme") });
+  expect((await database.select().from(schema.userJobs).where(eq(schema.userJobs.userId, second.id))).map(view => view.jobId)).toEqual([job.id]);
+  // It has a working source, so following it queues no second discovery.
+  expect(await tasksOfType("discover")).toHaveLength(1);
+
+  // Following it again changes nothing.
+  expect(await followCompany(company.id)).toEqual({ ok: true, message: "You already follow Acme." });
+  expect(await database.select().from(schema.companySubscriptions).where(eq(schema.companySubscriptions.userId, second.id))).toHaveLength(1);
+
+  // A member at the allowance is refused in a sentence, and nothing is written.
+  await database.delete(schema.companySubscriptions).where(eq(schema.companySubscriptions.userId, second.id));
+  await alreadyFollowing(second.id, 200);
+  expect(await followCompany(company.id)).toEqual({ ok: false, error: expect.stringContaining("up to 200 companies, and you follow 200") });
+  expect(await database.select().from(schema.companySubscriptions)
+    .where(and(eq(schema.companySubscriptions.userId, second.id), eq(schema.companySubscriptions.companyId, company.id)))).toHaveLength(0);
+});
+
+it("will not follow a company before the gate is chosen, nor one that does not exist", async () => {
+  const company = await followedCompany();
+  session = secondCookie;
+  await database.delete(schema.userSettings).where(eq(schema.userSettings.userId, second.id));
+  expect(await followCompany(company.id)).toEqual({ ok: false, error: "Choose your keywords and locations first, so the first scan runs against your filters." });
+  await chooseGate(second.id);
+  expect(await followCompany("00000000-0000-4000-8000-00000000abcd")).toEqual({ ok: false, error: "This company is no longer in the catalogue." });
+  expect(await database.select().from(schema.companySubscriptions).where(eq(schema.companySubscriptions.userId, second.id))).toHaveLength(0);
+});
+
+it("brings an add from the Discover tab back to it, with the notice or the refusal", async () => {
+  const form = urls("https://acme.example");
+  form.set("returnTo", "/suggestions");
+  await expect(addCompanies(form)).rejects.toThrow("redirect:/suggestions?added=1");
+  // Anything but the two tabs is the Tracked tab: the return path is never a URL from the form.
+  const elsewhere = urls("https://beta.example");
+  elsewhere.set("returnTo", "https://evil.example/");
+  await expect(addCompanies(elsewhere)).rejects.toThrow("redirect:/companies?added=1");
+  const many = urls(Array.from({ length: 26 }, (_, n) => `https://many${n}.example`).join("\n"));
+  many.set("returnTo", "/suggestions");
+  await expect(addCompanies(many)).rejects.toThrow("redirect:/suggestions?error=");
+});
+
+it("sorts the companies list in SQL by each whitelisted column, both ways", async () => {
+  const [a, b, c] = (await alreadyFollowing(first.id, 3, "sorted")) as [string, string, string];
+  const [bSource] = await database.insert(schema.careerSources).values({ companyId: b, type: "greenhouse", url: "https://boards.greenhouse.io/b", status: "active" }).returning();
+  const [cSource] = await database.insert(schema.careerSources).values({ companyId: c, type: "ashby", url: "https://jobs.ashbyhq.com/c", status: "active" }).returning();
+  await posting(b, bSource!.id, "b1");
+  await posting(b, bSource!.id, "b2");
+  const shortlisted = await posting(c, cSource!.id, "c1");
+  await decideOn(shortlisted.id, "apply");
+  await database.insert(schema.scans).values({ sourceId: bSource!.id, status: "ok", startedAt: new Date("2026-09-01T00:00:00Z") });
+  await database.insert(schema.scans).values({ sourceId: cSource!.id, status: "ok", startedAt: new Date("2026-09-20T00:00:00Z") });
+
+  const order = async (sort: string, dir?: string) =>
+    (await listCompanies(first.id, 1, "", parseCompanySort(sort, dir))).map(row => row.company.id);
+  expect(await order("company")).toEqual([a, b, c]);
+  expect(await order("company", "desc")).toEqual([c, b, a]);
+  expect(await order("open", "desc")).toEqual([b, c, a]);
+  expect(await order("open", "asc")).toEqual([a, c, b]);
+  expect(await order("review", "desc")).toEqual([b, a, c]);
+  expect(await order("shortlisted", "desc")).toEqual([c, a, b]);
+  // No source and no scan go last whichever way the column runs.
+  expect(await order("source", "asc")).toEqual([c, b, a]);
+  expect(await order("source", "desc")).toEqual([b, c, a]);
+  expect(await order("status", "desc")).toEqual([c, b, a]);
+  expect(await order("status", "asc")).toEqual([b, c, a]);
+  // An unknown key is the default order, never SQL.
+  expect(await order("drop table companies")).toEqual([a, b, c]);
+
+  // The counts filled in are the ones the page sorted by.
+  const [top] = await listCompanies(first.id, 1, "", parseCompanySort("open"));
+  expect([top!.openRoles, top!.reviewRoles, top!.shortlistedRoles]).toEqual([2, 2, 0]);
 });

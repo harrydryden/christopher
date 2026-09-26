@@ -14,11 +14,11 @@ const BASE =
   "transition-colors duration-[120ms] ease-step-2 disabled:opacity-40 disabled:pointer-events-none";
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
-  // Inverted ink on the page ground, carrying the 4px shadow.
+  // Brand green with light-green ink, carrying the 4px shadow.
   primary: "bg-accent text-accent-fg border-accent shadow-hard-2 hover:bg-bg hover:text-fg hover:border-fg",
   secondary: "bg-raised text-fg border-line hover:bg-fg hover:text-bg",
-  // `text-bg` rather than black: on the light theme the danger hue is dark
-  // enough that black text would fail contrast against it.
+  // `text-bg` rather than black: the danger hue is dark enough that black
+  // text would fail contrast against it.
   danger: "bg-danger text-bg border-danger shadow-hard-2 hover:bg-fg hover:text-bg hover:border-fg",
   ghost: "bg-transparent text-muted border-transparent hover:text-fg hover:underline",
 };

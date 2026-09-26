@@ -21,7 +21,7 @@ export function DiscoverySourceForm({ action, children, className, returnTo = "/
       url.searchParams.set("notice", result.message ?? "Saved.");
       window.location.assign(url.pathname + url.search);
     } catch {
-      setError("This change could not be completed. Your entries are still here; please try again.");
+      setError("Could not save. Your entries are still here; try again.");
       busy.current = false; setPending(false);
     }
   }}>

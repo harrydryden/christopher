@@ -70,7 +70,7 @@ export function CvBuildProgress({
       className="space-y-6 border-2 border-line bg-raised p-5 sm:p-6"
     >
       <div className="flex items-center gap-5">
-        <Mark size={48} searching={!stopped} className="shrink-0" />
+        <Mark size={48} searching={!stopped} className="shrink-0 text-brand" />
         <div role="status" aria-live="polite" aria-atomic="true" className="min-w-0 space-y-1">
           <h2 className="ds-pixel text-16 text-fg">
             {stopped

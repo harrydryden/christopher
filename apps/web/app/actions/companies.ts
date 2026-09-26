@@ -57,11 +57,22 @@ async function admitExistingRoles(userId: string, companyId: string, writer: Ret
 const INLINE_ADMISSIONS = 5;
 
 /** Back to the Companies page with a refusal the page reads out. */
-function refuseOnCompanies(sentence: string): never {
-  redirect(`/companies?${new URLSearchParams({ error: sentence }).toString()}`);
+function refuseOnCompanies(sentence: string, returnTo: AddReturnPath = "/companies"): never {
+  redirect(`${returnTo}?${new URLSearchParams({ error: sentence }).toString()}`);
+}
+
+/**
+ * Where the add form sends its answer. A fixed list, never a URL from the form: the Discover tab's
+ * search box adds a company too, and comes back to itself with the same notice.
+ */
+const ADD_RETURN_PATHS = ["/companies", "/suggestions"] as const;
+type AddReturnPath = (typeof ADD_RETURN_PATHS)[number];
+function addReturnPath(value: FormDataEntryValue | null): AddReturnPath {
+  return ADD_RETURN_PATHS.find(path => path === value) ?? "/companies";
 }
 
 export async function addCompanies(formData: FormData): Promise<void> {
+  const returnTo = addReturnPath(formData.get("returnTo"));
   const user = await requireVerifiedUser();
   // Filters first: a company's first scan is never run against a gate nobody chose. The form says
   // so too, but the form is a courtesy and this is the rule.
@@ -71,7 +82,7 @@ export async function addCompanies(formData: FormData): Promise<void> {
   // Every new company is discovered and then scanned daily for everyone who follows it, so one
   // paste adds a bounded amount of shared work (design: a paste is not a bulk import).
   if (lines.length > MAX_COMPANIES_PER_SUBMISSION) {
-    refuseOnCompanies(`Add at most ${MAX_COMPANIES_PER_SUBMISSION} companies at a time. This list has ${lines.length}.`);
+    refuseOnCompanies(`Add at most ${MAX_COMPANIES_PER_SUBMISSION} companies at a time. This list has ${lines.length}.`, returnTo);
   }
 
   const candidates: Array<{ name: string; homepageUrl: string; domain: string }> = [];
@@ -136,14 +147,48 @@ export async function addCompanies(formData: FormData): Promise<void> {
     if (!isUserFacingError(error)) throw error;
     refusal = error.message;
   });
-  if (refusal) refuseOnCompanies(refusal);
+  if (refusal) refuseOnCompanies(refusal, returnTo);
 
   revalidatePath("/companies");
+  revalidatePath("/suggestions");
   revalidatePath("/");
   const params = new URLSearchParams({ added: String(added) });
   if (followed) params.set("followed", String(followed));
   if (skipped.length) params.set("skipped", skipped.slice(0, 8).map(s => s.slice(0, 100)).join(", ") + (skipped.length > 8 ? `; and ${skipped.length - 8} more` : ""));
-  redirect(`/companies?${params.toString()}`);
+  redirect(`${returnTo}?${params.toString()}`);
+}
+
+/**
+ * Follow one company already in the shared catalogue — the Discover tab's search. The same rules
+ * as adding it by URL: the account's gate is chosen first, the follow counts against the account's
+ * allowance under its lock, and a follower who arrives after everyone left gets a discovery when
+ * no usable source remains. Following a company already followed changes nothing.
+ */
+export async function followCompany(companyId: string): Promise<ActionResult> {
+  try {
+    const user = await requireVerifiedUser();
+    await requireChosenGate(user.id);
+    const id = zUuid().parse(companyId);
+    const message = await db().transaction(async tx => {
+      const [company] = await tx.select({ id: companies.id, name: companies.name }).from(companies).where(eq(companies.id, id)).limit(1);
+      if (!company) throw new UserFacingError("This company is no longer in the catalogue.");
+      await assertFollowCapacity(tx, user, { companyIds: [id] });
+      const outcome = await subscribeToCompany(tx, user.id, id);
+      if (!outcome.created && !outcome.reactivated) return `You already follow ${company.name}.`;
+      const sources = await tx.select({ status: careerSources.status }).from(careerSources).where(eq(careerSources.companyId, id));
+      if (!sources.some(s => s.status === "active" || s.status === "failing" || s.status === "needs_confirmation")) {
+        await enqueue("discover", { companyId: id, reason: "added" }, tx);
+      }
+      await admitExistingRoles(user.id, id, tx as unknown as ReturnType<typeof db>);
+      return `You now follow ${company.name}; its matching roles are in your table.`;
+    });
+    revalidatePath("/companies");
+    revalidatePath("/suggestions");
+    revalidatePath("/");
+    return { ok: true, message };
+  } catch (error) {
+    return actionError(error, "Could not follow this company.", "follow_company_failed");
+  }
 }
 
 /** Not exported: a "use server" export is a public endpoint, and nothing calls this one directly. */

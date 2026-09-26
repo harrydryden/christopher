@@ -24,6 +24,17 @@ const WebsiteSchema = z.string().trim().max(500).refine(value => {
   } catch { return false; }
 }, "Enter a valid https:// or http:// website URL.").optional();
 
+/**
+ * The three contact details a CV header carries, each its own field. `contact` stays alongside them
+ * as the free-text line every library saved before these fields existed wrote everything into: it
+ * is never dropped, only read as "Other contact details" after them. See `contactLine`.
+ */
+const singleLine = (max: number) => z.string().trim().max(max).refine(value => !/[\r\n]/.test(value), "Keep this on one line.");
+const EMAIL = /^[^\s@·|;,]+@[^\s@·|;,]+\.[^\s@·|;,]+$/u;
+const EmailSchema = singleLine(254).refine(value => !value || EMAIL.test(value), "Enter an email address like name@example.com.").optional();
+const PhoneSchema = singleLine(40).optional();
+const LocationSchema = singleLine(120).optional();
+
 const CareerDateSchema = z.string().regex(/^(?:|\d{4}(?:-(?:0[1-9]|1[0-2]))?)$/, "Use YYYY-MM, YYYY, or leave unknown dates blank.");
 export function industryDescriptions(value = ""): string[] {
   const seen = new Set<string>();
@@ -160,9 +171,14 @@ export const CvEntrySchema = z.object({
 });
 export const CvLibrarySchema = z.object({
   name: z.string().trim().min(1).max(120),
+  /** Other contact details: the one free-text line every library had before the fields below. */
   contact: z.string().trim().max(500),
+  email: EmailSchema,
+  phone: PhoneSchema,
+  location: LocationSchema,
   linkedinUrl: LinkedInSchema,
   websiteUrl: WebsiteSchema,
+  /** The bio. Stored under its original key, so every saved library and draft snapshot still parses. */
   profile: z.string().trim().max(5000),
   stylePreferences: z.string().max(4000).optional(),
   preferredWording: z.string().max(12000).optional(),
@@ -178,6 +194,7 @@ export const CvLibrarySchema = z.object({
   employment: z.array(EmploymentSchema).max(100).optional(),
   entries: z.array(CvEntrySchema).min(1).max(100),
 }).superRefine((library, ctx) => {
+  if (contactLine(library).length > CONTACT_LINE_LIMIT) ctx.addIssue({ code: "custom", path: ["contact"], message: `Shorten the contact details so they fit on one line of ${CONTACT_LINE_LIMIT} characters.` });
   if (library.employment) {
     if (new Set(library.employment.map(job => job.id)).size !== library.employment.length) ctx.addIssue({ code: "custom", message: "Employment IDs must be unique." });
     if (new Set(library.employment.map(employmentKey)).size !== library.employment.length) ctx.addIssue({ code: "custom", message: "This company, job title and date range already exist in employment history." });
@@ -251,8 +268,56 @@ export function materialiseCv(library: CvLibrary, plan: CvPlan): CvContent {
     }))];
     return [entry.id, { ...section, ...(selectedSkills ? { skillItems: selectedSkills } : {}), ...(selectedIndustries.length ? { industryDescriptions: selectedIndustries } : {}), kind: entry.kind, heading: evidenceHeading(library, entry) }];
   }));
-  return CvContentSchema.parse({ theme: library.theme ?? DEFAULT_CV_THEME, name: library.name, contact: library.contact, linkedinUrl: library.linkedinUrl, websiteUrl: library.websiteUrl, summary: plan.summary, summarySources: plan.summarySources,
+  return CvContentSchema.parse({ theme: library.theme ?? DEFAULT_CV_THEME, name: library.name, contact: contactLine(library), linkedinUrl: library.linkedinUrl, websiteUrl: library.websiteUrl, summary: plan.summary, summarySources: plan.summarySources,
     sections: library.entries.flatMap(e => selected.has(e.id) ? [selected.get(e.id)!] : []), gaps: plan.gaps });
+}
+
+/** The most a CV's contact line holds: `CvContentSchema.contact`'s limit. */
+export const CONTACT_LINE_LIMIT = 500;
+
+/** Structural rather than `Pick<CvLibrary, …>`: the library schema's own refinement calls these. */
+interface ContactFields { contact?: string; email?: string; phone?: string; location?: string }
+
+/**
+ * The contact line a CV header prints: email · phone · location, then whatever else the person
+ * keeps in the free-text line. Blank parts are skipped, so a library saved before the three fields
+ * existed prints exactly what it always did.
+ */
+export function contactLine(library: ContactFields): string {
+  return [library.email, library.phone, library.location, library.contact]
+    .map(part => (part ?? "").replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join(" · ");
+}
+
+const CONTACT_SEPARATOR = /\s*(?:[·•|;\n]|\s-\s)\s*/u;
+const PHONE = /^\+?[\d\s().-]+$/u;
+
+/**
+ * A library written before contact details had fields of their own, opened with them: an email
+ * address or a phone number the old line carried as a part of its own moves to its field, and
+ * everything else stays in `contact` — which the editor shows as "Other contact details".
+ *
+ * Nothing is guessed. A part moves only when it is the one part of its kind and is nothing but an
+ * address or a number; a location cannot be told from any other phrase, so it is never moved. A
+ * library that already has any of the three fields has been through this, or through the editor,
+ * and is returned as it is — which also makes this safe to run twice.
+ */
+export function splitLegacyContact<T extends ContactFields>(library: T): T {
+  if (library.email !== undefined || library.phone !== undefined || library.location !== undefined) return library;
+  const raw = typeof library.contact === "string" ? library.contact : "";
+  if (!raw.trim()) return library;
+  const parts = raw.split(CONTACT_SEPARATOR).map(part => part.trim()).filter(Boolean);
+  const emails = parts.filter(part => EMAIL.test(part));
+  const phones = parts.filter(part => PHONE.test(part) && (part.match(/\d/g) ?? []).length >= 7);
+  const email = emails.length === 1 ? emails[0] : undefined;
+  const phone = phones.length === 1 ? phones[0] : undefined;
+  if (!email && !phone) return library;
+  const rest = parts.filter(part => part !== email && part !== phone).join(" · ");
+  const upgraded = { ...library, ...(email ? { email } : {}), ...(phone ? { phone } : {}), contact: rest };
+  // Rejoining with " · " can lengthen a tightly punctuated line. An upgrade must never leave a
+  // library that was savable unsavable, so a line the cap would then refuse is left as it was.
+  return contactLine(upgraded).length > CONTACT_LINE_LIMIT ? library : upgraded;
 }
 
 /** Legacy headings can supply a company, but never imply that two jobs are the same. */

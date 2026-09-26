@@ -13,6 +13,7 @@ import {
   EVIDENCE_RATING_LABELS,
   libraryEvidenceLine,
   missingFacetLine,
+  rowScoreTitle,
   rowsMovedOn,
   untaggedFacets,
   type EvidenceEntryView,
@@ -39,7 +40,7 @@ function library(rows: Record<string, string[]>, facets: Record<string, Record<s
 const view = (over: Partial<EvidenceEntryView> = {}): EvidenceEntryView => ({
   entryId: "acme", employmentId: "acme", label: "Operations Director · Acme · Jan 2023 – Present", score: 60, rating: "good",
   source: "model", provisional: false, evaluating: false, missing: [], missingLine: "All six types are covered",
-  prompts: [], reviewedRows: [], ...over,
+  prompts: [], reviewedRows: [], rows: [], ...over,
 });
 
 it("names the two types worth the most and counts the rest, in the words the control uses", () => {
@@ -175,4 +176,21 @@ it("knows when the rows on screen are no longer the rows that were scored", () =
   expect(rowsMovedOn(value.entries[0]!, ["Led a team", "Cut handovers"])).toBe(false);
   expect(rowsMovedOn(value.entries[0]!, ["Led a team"])).toBe(true);
   expect(rowsMovedOn(value.entries[0]!, ["Led a team of nine", "Cut handovers"])).toBe(true);
+});
+
+it("scores each row on its own and says what the number measures", () => {
+  const value = library({ acme: ["Led a team", "Cut handover time from 3 days to 4 hours across the UK network"] },
+    { acme: { "Cut handover time from 3 days to 4 hours across the UK network": ["outcome"] } });
+  const rows = libraryEvidence(value, new Map()).entries[0]!.rows;
+  expect(rows.map(row => [row.row, row.score])).toEqual([
+    ["Led a team", 0],
+    ["Cut handover time from 3 days to 4 hours across the UK network", 100],
+  ]);
+  const title = rowScoreTitle(rows[0], "rules");
+  expect(title).toContain("Row evidence 0/100");
+  expect(title).toContain("Missing: has a type, specific, has a number, tied to an outcome.");
+  expect(title).toContain("Re-score for the full review");
+  expect(rowScoreTitle(rows[1], "model")).toContain("Has: has a type, specific, has a number, tied to an outcome. From the full review.");
+  // A row the saved library does not have yet is not scored, and the cell says how it will be.
+  expect(rowScoreTitle(undefined, "rules")).toMatch(/^Not scored yet/);
 });

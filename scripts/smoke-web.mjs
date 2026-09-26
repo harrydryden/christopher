@@ -84,7 +84,7 @@ const PAGES = [
   ["/learning", ["Learning"]],
   // Health's attention list and the resolution on the item the smoke company raises: no source yet.
   ["/health", ["Health", "Needs you", "No careers page to scan", "Re-discover"]],
-  ["/settings", ["Settings", "Seed profile", "Writing preferences and version history are on the"]],
+  ["/settings", ["Settings", "Seed profile", "Writing preferences are on the"]],
   ["/account", ["Account", "Sign-in methods"]],
   ["/admin", ["Admin", "Registration", "Accounts"]],
   ["/admin/settings", ["System settings", "Schedule"]],
@@ -92,10 +92,10 @@ const PAGES = [
   ["/admin/health", ["Operations"]],
   // The CV list has gone: `/cv` is a redirect into the applications table, which holds the CVs.
   ["/cv", { redirectsTo: "/applications" }],
-  ["/library", ["Library", "Intro", "Website", "Experience", "Education, skills and interests",
+  ["/library", ["Library", "Intro", "Email", "Phone", "Location", "Other contact details", "Bio", "Website",
+    "Experience", "Education, skills and interests",
     "Import a document", "Upload a CV", "Paste text", "Read your website",
     "AVA does not read LinkedIn itself.",
-    "Versions", "Nothing saved yet. Your first save becomes version 1.",
     "Writing preferences", "Writing style", "Saved phrasing", "No library saved yet"]],
   ["/applications", ["Applications", "Active", "Closed", "Roles by stage", "What the stages mean"]],
   ["/?archive=1", ["Roles", "Archived"], "Dismissed"],
@@ -105,7 +105,8 @@ const PAGES = [
   ["/?view=user-shortlisted&since=7d", ["Roles", "This week"], "Shortlisted"],
   ["/?view=user-dismissed", ["Roles", "Archived"], "Dismissed"],
   ["/?view=archived", ["Roles", "Archived"], "Dismissed"],
-  ["/api/scan-status", ['"text"']],
+  // The status strip reads four facts; the payload carries them as fields, not as a sentence.
+  ["/api/scan-status", ['"following"', '"newRoleMatches"']],
   ["/api/export.csv", ["company"]],
 ];
 

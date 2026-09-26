@@ -37,30 +37,30 @@ export default async function AdminAccountsPage({ searchParams }: { searchParams
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Admin" description="Shared configuration for this deployment. Only administrators see this section; everything here affects every account." />
+      <PageHeader title="Admin" description="Everything here affects every account." />
 
       <Card title="Registration">
         <SettingsForm action={saveRegistrationSettings}>
           <p className="text-12 text-muted">
-            Administrator addresses come from <code>ADMIN_EMAILS</code>: {adminEmails().join(", ")}. They can always create an account and become administrators once their address is confirmed. Everyone else can only sign up while registration is open, and joins as a member.
+            Administrator addresses come from <code>ADMIN_EMAILS</code>: {adminEmails().join(", ")}; they can always sign up. Everyone else needs registration open, and joins as a member.
           </p>
           <label className="flex items-center gap-2 text-14">
             <input type="checkbox" name="registrationOpen" value="1" defaultChecked={system.registrationOpen} className="h-4 w-4" />
-            Open registration to anyone who has this deployment&apos;s address
+            Open registration
           </label>
         </SettingsForm>
       </Card>
 
       <Card title="Scheduled work">
         <p className="mb-3 text-14 text-muted">
-          The daily run and the weekly jobs start on schedule. Run the scheduler now to queue anything that is due. On a deployment without a worker service (<code>AVA_SERVERLESS_FALLBACK=1</code>) it also works through the queue for up to a minute; beside a worker that is running, it does nothing.
+          Queues anything due now. Without a worker service (<code>AVA_SERVERLESS_FALLBACK=1</code>) it also works the queue for up to a minute.
         </p>
         <RunScheduledWork />
       </Card>
 
       <Card title="Accounts">
         <p className="mb-3 text-14 text-muted">
-          Everyone with an account. Each has its own monthly AI budget, the only budget there is: it resets on the 1st, its holder sets it on Settings and you can set it for anyone here. <Link prefetch={false} href="/admin/health" className="text-fg underline">Operations</Link> shows what the spend bought. Deleting an account removes everything it owns; shared companies and postings stay. A reset link lets you onboard or unblock someone when email delivery is not set up: it works once, for an hour, and confirms their address.
+          Each budget resets on the 1st; <Link prefetch={false} href="/admin/health" className="text-fg underline">Operations</Link> shows what it bought. Deleting an account removes everything it owns but shared companies. A reset link works once, for an hour, and confirms the address.
         </p>
         {pages > 1 && <Pagination page={page} total={total} size={ACCOUNTS_PER_PAGE} path="/admin" label="Account pages" />}
         <Table>

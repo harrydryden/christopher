@@ -1,14 +1,28 @@
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
-import { sha1, stripHtml } from "@ava/core";
+import { isImportOnlyKind, sha1, stripHtml } from "@ava/core";
 import { discoveryDocuments, discoverySources } from "@ava/db/schema";
 import { db } from "@/lib/db";
 import { consumeRateLimit, LIMITS } from "@/lib/rate-limit";
 import { zUuid } from "@/lib/validation";
+import { sourceIdForAddress } from "@/lib/newsletter-address";
 
 export const runtime = "nodejs";
-const payloadSchema = z.object({ sourceId: zUuid(), title: z.string().trim().min(1).max(300), content: z.string().min(100).max(40000) });
+/**
+ * Two ways in. A forwarding rule that knows the source posts `sourceId`. A mail provider that
+ * simply delivers whatever arrived posts the recipient as `to`, and the source is resolved from
+ * the address. Common provider field names are accepted for the subject and body.
+ */
+const payloadSchema = z.object({
+  sourceId: zUuid().optional(),
+  to: z.string().trim().min(3).max(320).optional(),
+  title: z.string().trim().min(1).max(300).optional(),
+  subject: z.string().trim().min(1).max(300).optional(),
+  content: z.string().max(200000).optional(),
+  text: z.string().max(200000).optional(),
+  html: z.string().max(200000).optional(),
+}).refine((p) => p.sourceId || p.to, { message: "sourceId or to is required" });
 
 /**
  * Provider-neutral inbound email adapter. Does not grant access to a mailbox.
@@ -37,16 +51,30 @@ export async function POST(request: Request): Promise<Response> {
     chunks.push(value);
   }
   let payload: z.infer<typeof payloadSchema>;
-  try { payload = payloadSchema.parse(JSON.parse(Buffer.concat(chunks).toString("utf8"))); }
-  catch { return Response.json({ ok: false, error: "Expected sourceId, title and content (100–40,000 characters)" }, { status: 400 }); }
-  const [source] = await db().select().from(discoverySources).where(eq(discoverySources.id, payload.sourceId));
-  if (!source || source.kind !== "email") return Response.json({ ok: false, error: "Email source not found" }, { status: 404 });
+  let body: string;
+  let title: string;
+  try {
+    payload = payloadSchema.parse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+    body = payload.content ?? payload.text ?? payload.html ?? "";
+    title = (payload.title ?? payload.subject ?? "").trim();
+    if (!title || body.length < 100) throw new Error();
+  } catch { return Response.json({ ok: false, error: "Expected sourceId or to, a title or subject, and content of at least 100 characters" }, { status: 400 }); }
+
+  let sourceId = payload.sourceId ?? null;
+  if (!sourceId && payload.to) {
+    const rows = await db().select({ id: discoverySources.id }).from(discoverySources);
+    sourceId = sourceIdForAddress(payload.to, rows.map((r) => r.id), secret);
+  }
+  if (!sourceId) return Response.json({ ok: false, error: "No source is subscribed at that address" }, { status: 404 });
+  const [source] = await db().select().from(discoverySources).where(eq(discoverySources.id, sourceId));
+  // Website sources are read by fetching them; only a hand-fed source accepts delivered editions.
+  if (!source || !isImportOnlyKind(source.kind)) return Response.json({ ok: false, error: "Email source not found" }, { status: 404 });
   if (!(await consumeRateLimit([`newsletter:source:${source.id}`], LIMITS.newsletterSource))) {
     return Response.json({ ok: false, error: "Too many newsletters for this source today" }, { status: 429 });
   }
-  const content = stripHtml(payload.content);
+  const content = stripHtml(body).slice(0, 40000);
   if (content.length < 100) return Response.json({ ok: false, error: "No readable newsletter content" }, { status: 400 });
-  const rows = await db().insert(discoveryDocuments).values({ sourceId: source.id, title: payload.title, content,
+  const rows = await db().insert(discoveryDocuments).values({ sourceId: source.id, title: title.slice(0, 300), content,
     fingerprint: sha1(content),
   }).onConflictDoNothing().returning({ id: discoveryDocuments.id });
   return Response.json({ received: true, duplicate: rows.length === 0 }, { status: 202 });

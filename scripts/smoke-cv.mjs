@@ -159,12 +159,14 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     const educationTab = page.getByRole("tab", { name: "Education, skills and interests", exact: true });
     const introTab = page.getByRole("tab", { name: "Intro", exact: true });
     assert.equal(await introTab.getAttribute("aria-selected"), "true");
-    // Writing preferences live on the Library, beside the wording they shape (SPEC: version history and writing preferences on the Library page).
+    // Writing preferences live on the Library, beside the wording they shape (SPEC: writing preferences on the Library page).
     assert.equal(await page.getByRole("textbox", { name: "Writing style", exact: true }).count(), 1);
-    // The save bar says what is at stake before anything has been typed, and the moment it has.
-    assert.equal(await page.getByText("Not saved yet", { exact: true }).count(), 1);
+    // Saving is the person's own act: there is no save control until there is something to save,
+    // and then it is pinned above the fold with a way to discard.
+    assert.equal(await page.getByRole("button", { name: "Save library", exact: true }).count(), 0);
     await page.getByRole("textbox", { name: "Website", exact: true }).fill("https://example.com/portfolio");
     await page.getByText("Unsaved changes", { exact: true }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "Discard", exact: true }).count(), 1);
     await experienceTab.click();
     await educationTab.click();
     assert.equal(await page.getByRole("heading", { name: "Employment history", exact: true }).isVisible(), false);
@@ -200,7 +202,16 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
     assert.match(await smokeJob.innerText(), /0 of 1 row confirmed/);
     assert.equal(await readyLine.innerText(), "Ready to build: no — confirm Smoke Co’s rows");
     // The row's Type is one dropdown that takes several types at once.
-    assert.equal(await smokeJob.getByRole("group", { name: "Type of row 1", exact: true }).count(), 1);
+    const typeMenu = smokeJob.getByRole("button", { name: "Type of row 1", exact: true });
+    assert.equal(await typeMenu.count(), 1);
+    // A menu of the six types, each toggled on its own, left with Escape back on the trigger.
+    await typeMenu.click();
+    await page.getByRole("menuitemcheckbox", { name: "Outcomes", exact: true }).click();
+    await page.getByRole("menuitemcheckbox", { name: "Metrics moved", exact: true }).click();
+    assert.equal(await page.getByRole("menuitemcheckbox", { name: "Outcomes", exact: true }).getAttribute("aria-checked"), "true");
+    await page.keyboard.press("Escape");
+    assert.equal(await page.getByRole("menu").count(), 0);
+    assert.match(await typeMenu.innerText(), /OUTCOMES[\s\S]*METRICS MOVED/i);
     assert.equal(await smokeJob.getByRole("combobox", { name: /^Status:/ }).count(), 0);
     // Removing a job archives its rows and says so, and the way back is at the foot of the tab.
     page.once("dialog", (dialog) => { assert.match(dialog.message(), /You can restore it from Archived jobs below\./); return dialog.accept(); });

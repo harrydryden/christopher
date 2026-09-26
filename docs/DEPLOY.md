@@ -666,22 +666,35 @@ homepage/careers verification are required before a pending recommendation is sh
 is always manual. Already tracked or previously suggested domains are suppressed.
 
 Website checks read the supplied page and up to ten linked articles (one level, common article
-paths; LinkedIn pulse/posts links). Use individual article URLs for sites with other URL structures.
-Pages that require sign-in or block fetching are reported on the source. Paste their readable text
-using Import newsletter or post text. No LinkedIn credentials or private mailbox access are used.
+paths on the same site). Use individual article URLs for sites with other URL structures. A page
+that serves a JavaScript shell over plain HTTP is rendered with the headless browser, at most five
+renders per check, and only after a fetch robots.txt already allowed.
+
+LinkedIn sources are never fetched: LinkedIn disallows automated reading on every path, so each
+edition must be pasted in using Import newsletter or post text. Where a newsletter also publishes
+on Substack, beehiiv or its own site, add that address as a Website source instead and it is
+collected automatically. A website whose site refuses every automated reader is reported as import
+only and keeps its normal cadence rather than retrying daily. No LinkedIn credentials or private
+mailbox access are used.
 Up to twelve unread documents are evaluated per check; a remaining backlog or a fetch error is
 checked again the next day. Duplicate content is not reprocessed. Each document is limited to the
 first 40,000 readable characters for fetched pages. Manual and inbound email imports accept up to 40,000 characters and reject longer editions; split them into separate imports.
 
 For automatic email delivery:
 
-1. Create an Emailed newsletter source in Suggestions and copy its displayed source ID.
-2. Set a long random `NEWSLETTER_INGEST_SECRET` on the web deployment.
-3. Configure your email provider or forwarding automation to POST JSON to `/api/newsletters`,
-   with `Authorization: Bearer <NEWSLETTER_INGEST_SECRET>` and the fields `sourceId`, `title`
-   (email subject) and `content` (plain text or HTML body). This is a provider-neutral endpoint;
-   configure a provider adapter if its webhook uses a different payload or authentication format.
+1. Set a long random `NEWSLETTER_INGEST_SECRET` on the web deployment.
+2. Optionally set `NEWSLETTER_INBOUND_DOMAIN` to a domain whose mail you route to this app (for
+   example `inbox.example.com`). Every LinkedIn and email source then displays its own delivery
+   address in Discover companies → Sources, derived from the source id and the ingest secret. Use
+   that address to subscribe to the newsletter and each edition arrives on its own. This is the
+   only automatic route into a LinkedIn newsletter, whose pages disallow automated reading.
+3. Configure your email provider or forwarding automation to POST JSON to `/api/newsletters` with
+   `Authorization: Bearer <NEWSLETTER_INGEST_SECRET>`. Either identify the source directly with
+   `sourceId`, or pass the recipient as `to` and let the address resolve it. The subject may be
+   `title` or `subject`, and the body `content`, `text` or `html`. This is a provider-neutral
+   endpoint; configure a provider adapter if its webhook uses a different payload or
+   authentication format.
 4. The endpoint returns 202 for both a saved edition and a duplicate. Content waits for the next
    scheduled check, or select Check now. Paused sources can receive editions but do not process them.
 
-The app does not create a receiving email address or automatically subscribe to newsletters.
+The app does not run a mail server or subscribe to anything on your behalf: it derives the address, and your mail provider delivers to it.

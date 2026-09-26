@@ -7,18 +7,10 @@ import { LibraryEvidencePoller } from "@/components/LibraryEvidencePoller";
 import { LibraryImportCard } from "@/components/LibraryImportCard";
 import { LibraryImportPoller } from "@/components/LibraryImportPoller";
 import { LibraryImportProposals } from "@/components/LibraryImportProposals";
-import { LibraryVersions } from "@/components/LibraryVersions";
 import { saveCvWritingPreferences } from "@/app/actions/cv";
 import { getCvWritingPreferences } from "@/lib/cv-writing-preferences";
-import { diffCvLibraries, requestedDiff } from "@/lib/cv-library-diff";
 import { openStoredLibrary } from "@/lib/cv-library-rows";
-import {
-  getLibraryEvidence,
-  getLibraryVersionContents,
-  getOwnCvLibrary,
-  libraryReviewSignature,
-  listLibraryVersions,
-} from "@/lib/queries/cv";
+import { getLibraryEvidence, getOwnCvLibrary, libraryReviewSignature } from "@/lib/queries/cv";
 import { listLibraryImports } from "@/lib/queries/library-imports";
 import { requireUser } from "@/lib/auth";
 
@@ -28,14 +20,13 @@ export const dynamic = "force-dynamic";
 const NEED_LIMIT = 300;
 
 export default async function LibraryPage({ searchParams }: {
-  searchParams: Promise<{ need?: string; job?: string; diff?: string; a?: string; b?: string }>;
+  searchParams: Promise<{ need?: string; job?: string }>;
 }) {
   const user = await requireUser();
   const params = await searchParams;
   const library = await getOwnCvLibrary(user.id);
-  const [evidence, versions, writing, signature, imports] = await Promise.all([
+  const [evidence, writing, signature, imports] = await Promise.all([
     getLibraryEvidence(user.id, library),
-    listLibraryVersions(user.id),
     getCvWritingPreferences(user.id),
     library ? libraryReviewSignature(user.id, library.version) : Promise.resolve(""),
     listLibraryImports(user.id),
@@ -44,20 +35,9 @@ export default async function LibraryPage({ searchParams }: {
   // refresh that lands the last proposal re-renders this without any.
   const reading = imports.filter(item => item.state === "reading").length;
 
-  // Two of this account's own versions, compared. Anything else in the URL is not a request.
-  const wanted = requestedDiff(params, versions.map(row => row.version));
-  const contents = wanted ? await getLibraryVersionContents(user.id, [wanted.from, wanted.to]) : new Map();
-  const from = wanted ? contents.get(wanted.from) : undefined;
-  const to = wanted ? contents.get(wanted.to) : undefined;
-  // Two stored versions, each upgraded to today's shape before they are compared, so a change
-  // of release does not read as a change the person made.
-  const diff = wanted && from && to
-    ? diffCvLibraries(openStoredLibrary(from), openStoredLibrary(to), wanted.from, wanted.to)
-    : null;
-
   // What the editor opens: the stored content, upgraded from whatever release wrote it. A library
-  // saved before a row could carry several types, or with a block stored as a draft, opens in
-  // today's shape rather than in the one it was written in.
+  // saved before a row could carry several types, with a block stored as a draft, or with its
+  // contact details on one line, opens in today's shape rather than in the one it was written in.
   const content = library ? openStoredLibrary(library.content) : null;
 
   // The employment record a CV's evidence gap was about, if the link named one this account has.
@@ -69,10 +49,7 @@ export default async function LibraryPage({ searchParams }: {
   // nothing on the screen to lose.
   return (
     <div className="max-w-6xl space-y-5">
-      <PageHeader
-        title="Library"
-        description="The evidence every CV is written from. A job’s rows are used once they are confirmed."
-      />
+      <PageHeader title="Library" />
       <LibraryImportProposals imports={imports} version={library?.version ?? 0} />
       {reading > 0 && <LibraryImportPoller pending={reading} />}
       <CvLibraryEditor
@@ -87,7 +64,6 @@ export default async function LibraryPage({ searchParams }: {
       {evidence.evaluating && library && (
         <LibraryEvidencePoller version={library.version} signature={signature} />
       )}
-      <LibraryVersions versions={versions} current={library?.version ?? 0} diff={diff} />
       <LibraryImportCard />
       <Card title="Writing preferences">
         <SettingsForm

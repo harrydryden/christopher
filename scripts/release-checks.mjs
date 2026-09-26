@@ -12,6 +12,8 @@ export const SHA_PATTERN = /^[a-f0-9]{40}$/;
 export const WORKER_INPUT_PATHS = Object.freeze([
   "apps/worker", "packages", "Dockerfile", ".dockerignore", "package.json", "pnpm-lock.yaml",
   "pnpm-workspace.yaml", ".npmrc", "tsconfig.base.json",
+  // Dependency patches are applied at install, so a changed patch is a changed image.
+  "patches",
 ]);
 
 export const OPERATIONAL_THRESHOLDS = Object.freeze({

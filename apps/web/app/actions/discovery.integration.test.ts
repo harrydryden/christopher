@@ -117,6 +117,15 @@ it("requires a reason and retains a dismissal once reviewed", async () => {
   const row = await recommendation();
   expect((await rejectSuggestion(row.id, form({ reason: " " }))).ok).toBe(false);
   expect((await rejectSuggestion(row.id, form({ reason: "Wrong industry" }))).ok).toBe(true);
+});
+it("lets a swipe dismiss without a reason, filing none and teaching nothing", async () => {
+  const row = await recommendation();
+  const result = await rejectSuggestion(row.id, form({ reason: "", quick: "1" }));
+  expect(result.ok).toBe(true);
+  const [stored] = await database.select().from(schema.companySuggestions).where(eq(schema.companySuggestions.id, row.id));
+  expect(stored!.status).toBe("rejected");
+  expect(stored!.rejectionReason).toBeNull();
+  expect(await database.select().from(schema.tasks).where(eq(schema.tasks.type, "synthesize_profile"))).toHaveLength(0);
   expect((await acceptSuggestion(row.id)).ok).toBe(false);
 });
 it("authenticates before attempting a mutation", async () => {
@@ -131,6 +140,37 @@ it("distinguishes paused, disabled, active and empty-email states", () => {
   expect(discoverySourceState({ ...base, activeStatus: "queued" })).toBe("Queued");
   expect(discoverySourceState({ ...base, enabled: false, activeStatus: "queued" })).toBe("Paused");
   expect(discoverySourceState({ ...base, suggestionsEnabled: false })).toBe("Discovery disabled");
+});
+it("flags a source whose automation has stopped, and says why", async () => {
+  const { discoverySourceHealth, notWorkingSources } = await import("@/lib/discovery-ux");
+  const now = new Date("2026-09-16T12:00:00Z");
+  const base = { name: "Scaling Europe Daily", enabled: true, suggestionsEnabled: true, lastError: null as string | null,
+    waiting: 0, lastCheckedAt: now, kind: "website", nextRunAt: now, now };
+
+  expect(discoverySourceHealth(base).working).toBe(true);
+  const failed = discoverySourceHealth({ ...base, lastError: "HTTP 502: https://example.com/" });
+  expect(failed).toMatchObject({ state: "Not working", tone: "amber", working: false });
+  expect(failed.detail).toMatch(/last check failed/i);
+
+  // Nothing is draining the queue: the check is long past due but never ran.
+  const stalled = discoverySourceHealth({ ...base, nextRunAt: new Date("2026-09-14T12:00:00Z") });
+  expect(stalled).toMatchObject({ state: "Not working", working: false });
+  expect(stalled.detail).toMatch(/worker may not be running/i);
+  expect(discoverySourceHealth({ ...base, nextRunAt: new Date("2026-09-14T12:00:00Z"), activeStatus: "queued" }).working).toBe(true);
+  expect(discoverySourceHealth({ ...base, nextRunAt: new Date("2026-09-14T12:00:00Z"), enabled: false }).working).toBe(true);
+
+  // Import-only sources are never counted as broken; they are working as designed.
+  expect(discoverySourceHealth({ ...base, kind: "linkedin", nextRunAt: new Date("2026-09-01T12:00:00Z") })).toMatchObject({ state: "Import only", working: true });
+  expect(notWorkingSources([base, { ...base, name: "Broken", lastError: "HTTP 502: x" }]).map(s => s.name)).toEqual(["Broken"]);
+});
+it("calls a source import only when its site refuses automated reading, not broken", () => {
+  const base = { enabled: true, suggestionsEnabled: true, lastError: null as string | null, waiting: 0, lastCheckedAt: new Date(), kind: "linkedin" };
+  const robots = { ...base, lastError: "robots.txt disallows https://www.linkedin.com/newsletters/scaling-europe-daily" };
+  expect(discoverySourceState(robots)).toBe("Import only");
+  expect(discoverySourceState({ ...robots, waiting: 2 })).toBe("Content ready");
+  // A LinkedIn source is import only by kind, before any check has ever run.
+  expect(discoverySourceState({ ...base, lastCheckedAt: null })).toBe("Import only");
+  expect(discoverySourceState({ ...base, kind: "website", lastError: "HTTP 502: https://example.com" })).toBe("Not working");
 });
 it("rolls back acceptance if queuing careers setup fails", async () => {
   const row = await recommendation();

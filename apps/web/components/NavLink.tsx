@@ -18,6 +18,8 @@ export function NavLink({
   countTitle?: string;
 }) {
   const pathname = usePathname();
+  // The sidebar is brand green: the lit entry is a light-green block with green text, the others
+  // light-green text that darkens the green under them on hover.
   // A sidebar entry owns every page its section reaches, so the CV workspace keeps Applications
   // lit and Health, Learning and Account keep Settings lit.
   const active = href === "/" ? pathname === "/" : pathname.startsWith(href) || (href === "/companies" && pathname === "/suggestions") || (href === "/applications" && pathname.startsWith("/cv")) || (href === "/settings" && ["/learning", "/account", "/health"].includes(pathname));
@@ -32,7 +34,7 @@ export function NavLink({
       aria-current={active ? "page" : undefined}
       aria-describedby={descriptionId}
       className={`ds-pixel flex items-center justify-between gap-2 border-2 px-3 py-1.5 text-11 no-underline ${
-        active ? "border-fg bg-fg text-bg" : "border-transparent text-fg hover:bg-sunken"
+        active ? "border-brand-ink bg-brand-ink text-brand" : "border-transparent text-brand-ink hover:bg-brand-hover"
       }`}
     >
       <span>{children}</span>

@@ -1,5 +1,6 @@
 "use client";
-import { isActiveEvidence, responsibilityRows, updateEmploymentIndustries, type CvLibrary, type Employment } from "@ava/core/cv";
+import { isActiveEvidence, responsibilityRows, updateEmploymentIndustries } from "@ava/core/cv-helpers";
+import type { CvLibrary, Employment } from "@ava/core/cv";
 import { inputClass, labelClass } from "@/components/Field";
 import { Table, TBody, TH, THead, TR } from "@/components/table";
 

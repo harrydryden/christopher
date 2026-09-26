@@ -6,7 +6,7 @@ import { cvProgressReading } from "@/lib/cv-progress";
 import { cvDraftSize, cvEditCosts } from "@/lib/cv-quote";
 import { CvDisclosure } from "@/components/CvDisclosure";
 import { CvWorkspace, CvWorkspacePanel } from "@/components/CvWorkspace";
-import { CvGapQuiz } from "@/components/CvGapQuiz";
+import { CvGapQuiz } from "@/components/CvLazyWidgets";
 import { answerCvGapQuiz } from "@/app/actions/cv";
 import { CvBuildLive } from "@/components/CvBuildLive";
 import { cvBuildTotals, cvBuildTotalsLine } from "@/lib/cv-build-narrative";
@@ -19,7 +19,7 @@ import { CvShareComments } from "@/components/CvShareComments";
 import { getOwnCvSharing } from "@/lib/queries/cv-shares";
 import { openCommentCounts } from "@/lib/cv-share";
 import { assertCvFinalisable, cvAssessmentCurrent } from "@ava/core/cv-review";
-import type { CvContent, CvLibrary } from "@ava/core/cv";
+import { resolveCvTheme, type CvContent, type CvLibrary } from "@ava/core/cv";
 import type { CvAssessment } from "@ava/core/cv-assessment";
 import { CvDraftEditor } from "@/components/CvDraftEditor";
 import { cvEditFormId } from "@/lib/cv-content-links";
@@ -262,7 +262,8 @@ export default async function CvDraftPage({
             <div className="mt-4 space-y-3">
               <fieldset disabled>
                 <CvAppearance
-                  value={content?.theme ?? draft.librarySnapshot.theme}
+                  // Resolved here so the client component needs no validator.
+                  value={resolveCvTheme(content?.theme ?? draft.librarySnapshot.theme)}
                 />
               </fieldset>
 
@@ -330,6 +331,7 @@ export default async function CvDraftPage({
             key={id}
             id={id}
             content={content}
+            theme={resolveCvTheme(content.theme)}
             // What each of the two saves is expected to cost, measured on this revision's own
             // evidence and advert with the estimator the worker admits builds against.
             costs={cvEditCosts(draft.model, cvDraftSize(draft))}

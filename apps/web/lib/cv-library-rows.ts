@@ -13,44 +13,16 @@
  * `removeJobRow` below settles it before handing the rows over.
  */
 import {
-  consolidateExperience,
   employmentHeading,
   isActiveEvidence,
-  normaliseCvLibrary,
   responsibilityRows,
   setRowFacets,
-  splitLegacyContact,
   updateResponsibilityRows,
-  type CvLibrary,
-  type Employment,
   type EvidenceFacet,
-} from "@ava/core/cv";
+} from "@ava/core/cv-helpers";
+import type { CvLibrary, Employment } from "@ava/core/cv";
 
 type CvEntry = CvLibrary["entries"][number];
-
-/**
- * A stored library, opened: upgraded from whatever release wrote it, and never an error page.
- *
- * `normaliseCvLibrary` is the one entry point that reads a legacy library — a row's single type as
- * a bare string, a block stored as a draft, one block per job — in today's shape. It parses first,
- * so a library stored under an older schema could throw; the Library is the page that exists to
- * fix such a library, so it is consolidated unparsed rather than taken down, exactly as the editor
- * has always done with the content handed to it.
- *
- * Contact details are upgraded here too. A library saved when they were one free-text line opens
- * with an email address and a phone number that line held unambiguously in their own fields, and
- * everything else still in `contact`, shown as "Other contact details" (`splitLegacyContact`).
- * Nothing is dropped, and nothing is written until the person saves.
- */
-export function openStoredLibrary(raw: unknown): CvLibrary {
-  let opened: CvLibrary;
-  try {
-    opened = normaliseCvLibrary(raw);
-  } catch {
-    opened = consolidateExperience(raw as CvLibrary);
-  }
-  return splitLegacyContact(opened);
-}
 
 /** The evidence block written for one job, if there is one yet. */
 export function jobEntry(library: CvLibrary, employmentId: string): CvEntry | undefined {

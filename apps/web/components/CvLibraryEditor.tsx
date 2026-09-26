@@ -1,11 +1,12 @@
 "use client";
 import { startTransition, useActionState, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { flushSync } from "react-dom";
-import { EVIDENCE_FACET_PROMPTS, employmentCompanyGroups, employmentHeading, isActiveEvidence, responsibilityRows, rowFacets, updateResponsibilityRows, type CvLibrary, type Employment, type EvidenceFacet } from "@ava/core/cv";
+import { EVIDENCE_FACET_PROMPTS, employmentCompanyGroups, employmentHeading, isActiveEvidence, responsibilityRows, rowFacets, updateResponsibilityRows, type EvidenceFacet } from "@ava/core/cv-helpers";
+import type { CvLibrary, Employment } from "@ava/core/cv";
 import { rescoreLibrary, saveCvLibrary } from "@/app/actions/cv";
 import { cvJobReadiness, cvLibraryReadiness } from "@/lib/cv-ready";
-import { mergeCvLibrary } from "@/lib/cv-library-merge";
-import { addJobRow, archivedBlocks, editableEmployment, jobEntry, jobRows, openStoredLibrary, pendingRowKey, removeJob, removeJobRow, restoreBlock, restoreJob, setJobRows, tagRow, withArchivedEmployment } from "@/lib/cv-library-rows";
+import type { OpenedCvLibrary } from "@/lib/cv-library-open";
+import { addJobRow, archivedBlocks, editableEmployment, jobEntry, jobRows, pendingRowKey, removeJob, removeJobRow, restoreBlock, restoreJob, setJobRows, tagRow, withArchivedEmployment } from "@/lib/cv-library-rows";
 import { NO_EVIDENCE, evidenceByEntry, missingFacetLine, rowScoreTitle, rowsMovedOn, untaggedFacets, type EvidencePrompt, type LibraryEvidence } from "@/lib/cv-library-evidence";
 import { EmploymentHistoryTable } from "./EmploymentHistoryTable";
 import { EvidenceSummary } from "./EvidenceScore";
@@ -28,7 +29,8 @@ const clockOf = (at: Date) => at.toLocaleTimeString("en-GB", { hour: "2-digit", 
 const rowKey = (text: string) => responsibilityRows(text)[0] ?? "";
 
 export function CvLibraryEditor({ library, version: storedVersion, evidence = NO_EVIDENCE, need = null, job = null }: {
-  library: CvLibrary | null;
+  /** Opened on the server (`openStoredLibrary`); the type is how that is required. */
+  library: OpenedCvLibrary | null;
   version: number;
   /** What the stored library's evidence reviews say, as they stood when this page was rendered. */
   evidence?: LibraryEvidence;
@@ -38,7 +40,10 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
   job?: string | null;
 }) {
   const [tab, setTab] = useState<LibraryTab>(need || job ? "experience" : "intro");
-  const [value, setValue] = useState(() => library ? openStoredLibrary(library) : empty);
+  // `library` arrives opened: the page ran `openStoredLibrary` on it in the same request (see
+  // app/(app)/library/page.tsx), and opening is idempotent, so it is held as sent rather than
+  // parsed again here — which would put the CV schema and zod in this page's first load.
+  const [value, setValue] = useState<CvLibrary>(() => library ?? empty);
   /**
    * The version this editor is writing over, and the value it was opened on.
    *
@@ -47,7 +52,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
    * own save triggers instead of being rebuilt from the server with everything else reset.
    */
   const [version, setVersion] = useState(storedVersion);
-  const [baseline, setBaseline] = useState(() => library ? openStoredLibrary(library) : empty);
+  const [baseline, setBaseline] = useState<CvLibrary>(() => library ?? empty);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [notice, setNotice] = useState("");
   const [focusRow, setFocusRow] = useState<{ job: string; index: number } | null>(null);
@@ -115,7 +120,7 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
   // which is the one path that keeps both.
   useEffect(() => {
     if (dirty) return;
-    const stored = library ? openStoredLibrary(library) : empty;
+    const stored = library ?? empty;
     if (JSON.stringify(stored) === baselineJson) return;
     setValue(stored);
     setBaseline(stored);
@@ -189,8 +194,12 @@ export function CvLibraryEditor({ library, version: storedVersion, evidence = NO
     try {
       const response = await fetch("/api/cv/library", { headers: { accept: "application/json" } });
       if (!response.ok) throw new Error("unreadable");
-      const stored = await response.json() as { version: number; content: unknown };
-      const latest = stored.content ? openStoredLibrary(stored.content) : empty;
+      // Opened by the route before it was sent, exactly as the page opens what it renders.
+      const stored = await response.json() as { version: number; content: OpenedCvLibrary | null };
+      const latest = stored.content ?? empty;
+      // The merge validates its result with the CV schema, so it is loaded only when a reload
+      // actually runs rather than with the page.
+      const { mergeCvLibrary } = await import("@/lib/cv-library-merge");
       const merged = mergeCvLibrary(baseline, value, latest, stored.version);
       setValue(merged.library);
       setBaseline(latest);

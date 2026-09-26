@@ -9,7 +9,7 @@ import { LibraryImportPoller } from "@/components/LibraryImportPoller";
 import { LibraryImportProposals } from "@/components/LibraryImportProposals";
 import { saveCvWritingPreferences } from "@/app/actions/cv";
 import { getCvWritingPreferences } from "@/lib/cv-writing-preferences";
-import { openStoredLibrary } from "@/lib/cv-library-rows";
+import { openStoredLibrary } from "@/lib/cv-library-open";
 import { getLibraryEvidence, getOwnCvLibrary, libraryReviewSignature } from "@/lib/queries/cv";
 import { libraryImportProgress, listLibraryImports } from "@/lib/queries/library-imports";
 import { requireUser } from "@/lib/auth";

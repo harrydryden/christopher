@@ -14,6 +14,8 @@ export interface DeckCard {
 
 /** How far a card has to travel before letting go decides it. */
 const THRESHOLD = 120;
+/** One stepped beat for a decided card to leave, plus a frame's grace to start it. */
+const LEAVE_MS = 280;
 type Direction = "left" | "right";
 
 /**
@@ -43,6 +45,13 @@ export function SuggestionDeck({ cards, total = cards.length, empty, disabledRea
   const [notice, setNotice] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const start = useRef<{ x: number; pointerId: number } | null>(null);
+  // The decided card's picture flying off the edge, drawn over the deck for one stepped beat while
+  // the next card is already live underneath. It is only a picture: it takes no pointer or focus.
+  const [leaving, setLeaving] = useState<{ card: DeckCard; from: number; to: number; flying: boolean } | null>(null);
+  const dxRef = useRef(dx);
+  dxRef.current = dx;
+  const reducedMotionRef = useRef(reducedMotion);
+  reducedMotionRef.current = reducedMotion;
 
   const visible = cards.filter((card) => !gone.has(card.id));
   const current = visible[0];
@@ -61,6 +70,16 @@ export function SuggestionDeck({ cards, total = cards.length, empty, disabledRea
 
   // The card underneath slides up into place when it becomes the top one.
   const currentId = current?.id;
+  const leavingId = leaving?.card.id;
+  useEffect(() => {
+    if (!leavingId) return;
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => setLeaving((now) => (now?.card.id === leavingId ? { ...now, flying: true } : now)));
+    });
+    const done = setTimeout(() => setLeaving((now) => (now?.card.id === leavingId ? null : now)), LEAVE_MS);
+    return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); clearTimeout(done); };
+  }, [leavingId]);
   useEffect(() => {
     // A drag belongs to the card it started on. When another card takes the top while the pointer
     // is down (a refused decision coming back on top), letting go must not decide that card.
@@ -82,11 +101,15 @@ export function SuggestionDeck({ cards, total = cards.length, empty, disabledRea
     setNotice(null);
     // Gone now: the next card is on top and can be decided while this one is saved.
     setGone((previous) => new Set(previous).add(card.id));
+    if (!reducedMotionRef.current) {
+      setLeaving({ card, from: dxRef.current, to: direction === "right" ? window.innerWidth : -window.innerWidth, flying: false });
+    }
     setDx(0);
     const typed = reason.trim();
     setReason("");
     const refused = (sentence: string) => {
       setGone((previous) => { const kept = new Set(previous); kept.delete(card.id); return kept; });
+      setLeaving((now) => (now?.card.id === card.id ? null : now));
       setError(sentence);
       if (typed) setReason((now) => now || typed);
     };
@@ -216,6 +239,20 @@ export function SuggestionDeck({ cards, total = cards.length, empty, disabledRea
             </span>
             {current.body}
           </article>
+          {leaving && (
+            <div
+              aria-hidden="true"
+              inert
+              data-leaving={leaving.card.id}
+              style={{
+                transform: `translateX(${leaving.flying ? leaving.to : leaving.from}px) rotate(${Math.max(-6, Math.min(6, (leaving.flying ? leaving.to : leaving.from) / 40))}deg)`,
+                transition: leaving.flying ? "transform 240ms var(--ease-step-4)" : "none",
+              }}
+              className="pointer-events-none absolute inset-0 overflow-hidden border-2 border-line bg-raised p-4 shadow-hard-2"
+            >
+              {leaving.card.body}
+            </div>
+          )}
         </div>
       </div>
 

@@ -99,3 +99,34 @@ describe("migration 0036's indexes", () => {
     else expect(text).toMatch(new RegExp(`(using|on) ${index} [^\\n]*\\n\\s+Index Cond:`));
   });
 });
+
+/**
+ * Not only servable but chosen: with every index of `scans` in place, the companies list's newest
+ * scan per source (`latestScanByCompany` in apps/web/lib/queries/companies.ts, the same statement)
+ * must read `scans_source_started_idx` by source. A bare `max(started_at)` lets the planner walk
+ * `scans_started_idx` backwards filtering on the source instead, which on an empty or small table it
+ * does, and which for a source with no scans reads the whole index.
+ */
+describe("the newest scan of each source", () => {
+  async function explain(query: SQL): Promise<string> {
+    let text = "";
+    await db.transaction(async tx => {
+      await tx.execute(sql`set local enable_seqscan = off`);
+      const rows = await tx.execute(sql`explain ${query}`);
+      text = rows.rows.map(row => Object.values(row).join(" ")).join("\n");
+      tx.rollback();
+    }).catch(error => { if (!text) throw error; });
+    return text;
+  }
+
+  it("is read from scans_source_started_idx by source, even with every other index of scans present", async () => {
+    const text = await explain(sql`select distinct on (src.company_id) src.company_id, s.status, s.started_at
+      from career_sources src
+      cross join lateral (select max(newest.started_at + interval '0 seconds') as at from scans newest where newest.source_id = src.id) latest
+      join scans s on s.source_id = src.id and s.started_at = latest.at
+      where src.company_id in (${id}, ${other})
+      order by src.company_id, s.started_at desc`);
+    expect(text).toMatch(/using scans_source_started_idx on scans newest[^\n]*\n\s+Index Cond: \(source_id = src\.id\)/);
+    expect(text).not.toMatch(/scans_started_idx on scans newest/);
+  });
+});

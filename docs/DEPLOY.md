@@ -77,7 +77,7 @@ the same learning loop.
 
    | Client | Endpoint | Why |
    |---|---|---|
-   | The interface on Vercel, `/api/cron` included | pooled, 6432 | Every warm function instance keeps a pool of up to 3 connections. It uses only transaction-scoped locks, so transaction pooling is safe for it. |
+   | The interface on Vercel, `/api/cron` included | pooled, 6432 | Every warm function instance keeps a pool of up to 6 connections on this endpoint (3 on the direct one; `WEB_DB_POOL_MAX`, 1–20, overrides both). It uses only transaction-scoped locks, so transaction pooling is safe for it. |
    | The worker | direct, 5432 (Internal) | It migrates at boot under a session advisory lock, which transaction pooling cannot hold; the migration runner refuses a pooled URL. |
    | `pnpm db:migrate`, `seed:demo`, the drills | direct, 5432 (External) | The same lock, from your machine. |
 
@@ -91,6 +91,15 @@ the same learning loop.
    default of `max_connections − 10` = 93. Keep PostgreSQL's active backends under about 70 in
    steady state (`select count(*) from pg_stat_activity where state = 'active'`), leaving room for
    the worker, migrations and your own `psql`.
+
+   That is why the interface's pool is 6 wide on the pooled endpoint and 3 on the direct one
+   (`apps/web/lib/db.ts`). A full render of the Roles page issues about 14 statements, most of them
+   at once, and at 3 connections they queue in waves of one round trip each: replaying them at 5 ms
+   per round trip, time to the main content was 70 ms with 3 connections and 54 ms with 6. Idle,
+   the wider pool costs no backends. What it does use is PgBouncer client slots, one per open
+   connection: warm instances × 6 (plus the cron fallback's 6) must stay under the pooler's
+   client-connection limit, so check that figure in Render's dashboard, or ask Render's support,
+   before instances grow into the hundreds, and lower `WEB_DB_POOL_MAX` if it is close.
 
    **Time limits.** The worker and the scripts start every connection with a `statement_timeout` of
    five minutes and an `idle_in_transaction_session_timeout` of one (`DATABASE_STATEMENT_TIMEOUT_MS`

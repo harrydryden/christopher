@@ -6,7 +6,7 @@ import { cvProgressReading } from "@/lib/cv-progress";
 import { cvDraftSize, cvEditCosts } from "@/lib/cv-quote";
 import { CvDisclosure } from "@/components/CvDisclosure";
 import { CvWorkspace, CvWorkspacePanel } from "@/components/CvWorkspace";
-import { CvGapQuiz } from "@/components/CvGapQuiz";
+import { CvGapQuiz } from "@/components/CvLazyWidgets";
 import { answerCvGapQuiz } from "@/app/actions/cv";
 import { CvBuildLive } from "@/components/CvBuildLive";
 import { cvBuildTotals, cvBuildTotalsLine } from "@/lib/cv-build-narrative";

@@ -105,3 +105,27 @@ it("sees zod where it is statically imported", () => {
   expect(zodPath("../../packages/core/src/cv.ts")?.at(-1)).toBe("zod");
   expect(zodPath("../../packages/core/src/cv-theme.ts")).toEqual(["../../packages/core/src/cv-theme.ts", "zod"]);
 });
+
+it("keeps the CV page's occasional widgets out of its first load", () => {
+  // Each is reached only through `next/dynamic` in CvLazyWidgets; a static import anywhere else
+  // would put it back in the page's entry chunk. Tests may import them directly.
+  const split = ["CvGapQuiz", "CvShareCreateForm", "CvEvaluationTable"].map((name) => path.join(WEB, "components", `${name}.tsx`));
+  const importers: string[] = [];
+  const visit = (dir: string) => {
+    for (const name of readdirSync(path.join(WEB, dir))) {
+      const relative = path.join(dir, name);
+      if (statSync(path.join(WEB, relative)).isDirectory()) { visit(relative); continue; }
+      if (!/\.tsx?$/.test(name) || /\.test\.tsx?$/.test(name)) continue;
+      const file = path.join(WEB, relative);
+      for (const specifier of valueImports(readFileSync(file, "utf8"))) {
+        if (split.includes(resolve(specifier, file) ?? "")) importers.push(`${relative} -> ${specifier}`);
+      }
+    }
+  };
+  visit("app");
+  visit("components");
+  visit("lib");
+  expect(importers).toEqual([]);
+  expect(readFileSync(path.join(WEB, "components/CvLazyWidgets.tsx"), "utf8"))
+    .toMatch(/import\("\.\/CvGapQuiz"\)[\s\S]*import\("\.\/CvShareCreateForm"\)[\s\S]*import\("\.\/CvEvaluationTable"\)/);
+});

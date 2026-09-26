@@ -3,7 +3,7 @@ import type { CvAssessment } from "@ava/core/cv-assessment";
 import { diagnoseCvQuality } from "@ava/core/cv-quality";
 import { assessCvDraft, finaliseCvDraft } from "@/app/actions/cv";
 import { cvEvaluationRows, type CvCommentInput } from "@/lib/cv-evaluation";
-import { CvEvaluationTable } from "./CvEvaluationTable";
+import { CvEvaluationTable } from "./CvLazyWidgets";
 import { RebuildButton } from "./CvDraftEditor";
 import { SettingsForm } from "./SettingsForm";
 

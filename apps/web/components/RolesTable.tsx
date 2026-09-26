@@ -142,6 +142,8 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
   const [removedIds, setRemovedIds] = useState<ReadonlySet<string>>(() => new Set());
   const [returning, setReturning] = useState<ReadonlySet<string>>(() => new Set());
   const departed = useRef(new Map<string, { row: RoleRowVM; index: number }>());
+  const returningRef = useRef(returning);
+  returningRef.current = returning;
   const rows = useMemo(() => {
     const list = inputRows.filter(row => !removedIds.has(row.id));
     for (const id of returning) {
@@ -153,6 +155,22 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
   }, [inputRows, removedIds, returning]);
   /** One write per row at a time; each entry settles true when that write was saved. */
   const inFlight = useRef(new Map<string, Promise<boolean>>());
+  // A returned row is held in place only until the page its undo re-renders has arrived. The first
+  // new page after the undo settled carries the server's answer, so from then on the row shows only
+  // if the server lists it: held longer, a row the server later drops (decided in another tab,
+  // closed by a scan) would be put back on the page from memory.
+  useEffect(() => {
+    // Rows kept only for an undo nobody can press any more (the notice has moved on) are let go too.
+    for (const id of departed.current.keys()) {
+      if (id !== noticeRef.current?.jobId && !inFlight.current.has(id) && !returningRef.current.has(id)) departed.current.delete(id);
+    }
+    setReturning(ids => {
+      const settled = [...ids].filter(id => !inFlight.current.has(id));
+      if (settled.length === 0) return ids;
+      for (const id of settled) departed.current.delete(id);
+      return new Set([...ids].filter(id => inFlight.current.has(id)));
+    });
+  }, [inputRows]);
   const [archivingId, setArchivingId] = useState<string | null>(null);
   function archiveRow(id: string) {
     if (inFlight.current.has(id)) return;
@@ -373,7 +391,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
       let saved = false;
       try {
         // A refused decision has already put the row back: there is nothing to undo.
-        if (prior && !(await prior)) return;
+        if (prior && !(await prior)) { setReturning(ids => withoutId(ids, jobId)); return; }
         const result = await decide(jobId, null, "");
         if (!result.ok) { refused(result.error); return; }
         saved = true;

@@ -219,3 +219,37 @@ it("scrolls to the cursor only when j or k moves it, never while a reason is typ
   expect(scrolled).toHaveBeenCalledTimes(1);
   expect((scrolled.mock.contexts[0] as HTMLElement).id).toBe(`role-row-${THIRD.id}`);
 });
+
+it("holds a returned row only until its undo's page arrives, so a row the server drops later stays gone", async () => {
+  actions.decide.mockResolvedValueOnce({ ok: true });
+  render([FIRST, SECOND]);
+  press("a");
+  press("Enter", reasonBox()!);
+  await act(async () => {});
+  render([SECOND]);
+
+  actions.decide.mockResolvedValueOnce({ ok: true });
+  await act(async () => { button("Undo").click(); });
+  render([FIRST, SECOND]);
+  expect(titles()).toEqual([FIRST.title, SECOND.title]);
+
+  // Later the server stops listing it (decided in another tab, say): the table follows the server.
+  render([SECOND]);
+  expect(titles()).toEqual([SECOND.title]);
+});
+
+it("forgets an undo that had nothing to undo because its decision was refused", async () => {
+  const saving = deferred();
+  actions.decide.mockReturnValueOnce(saving.promise);
+  render([FIRST, SECOND]);
+  press("a");
+  press("Enter", reasonBox()!);
+  act(() => button("Undo").click());
+
+  await answer(saving, { ok: false, error: "Could not save your decision. Please try again." });
+  expect(actions.decide).toHaveBeenCalledTimes(1);
+  expect(titles()).toEqual([FIRST.title, SECOND.title]);
+
+  render([SECOND]);
+  expect(titles()).toEqual([SECOND.title]);
+});

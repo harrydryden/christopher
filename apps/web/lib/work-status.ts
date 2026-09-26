@@ -7,9 +7,15 @@ import { db } from './db';
  * Only work that can change this account's view counts: the daily run's fan-out task is not itself
  * news (each company it queues is), and a logo capture changes nothing a page lists, however long
  * the sweep takes. Exported apart from the memoised reader so a test can read its plan.
+ *
+ * `token` says what the version is taken over. The companies pages show whether discovery is
+ * queued or running, so theirs moves with each task's status; the Roles page shows nothing of a
+ * task's state, only what a finished one changed, so its version moves only when a task joins or
+ * leaves the set. A task going from queued to running then costs the Roles page no refresh.
  */
-export function companyWorkQuery(userId: string) {
-  return db().select({ n: sql<number>`count(*)::int`, version: sql<string>`md5(coalesce(string_agg(${tasks.id}::text || ${tasks.status}, ',' order by ${tasks.id}), ''))` })
+export function companyWorkQuery(userId: string, token: "status" | "ids" = "status") {
+  const entry = token === "status" ? sql`${tasks.id}::text || ${tasks.status}` : sql`${tasks.id}::text`;
+  return db().select({ n: sql<number>`count(*)::int`, version: sql<string>`md5(coalesce(string_agg(${entry}, ',' order by ${tasks.id}), ''))` })
     .from(tasks).where(and(
       inArray(tasks.type, ['discover', 'scan_company', 'reevaluate_gate', 'import_posting']),
       inArray(tasks.status, ['queued', 'running']),
@@ -27,6 +33,15 @@ export function companyWorkQuery(userId: string) {
 /** Once per request, however many components ask. */
 export const getCompanyWorkStatus = cache(async function getCompanyWorkStatus(userId: string) {
   const [row] = await companyWorkQuery(userId);
+  return { active: (row?.n ?? 0) > 0, version: row?.version ?? "" };
+});
+
+/**
+ * The same work as the Roles page watches it: pending exactly when `getCompanyWorkStatus` is, with a
+ * version that moves only when a task is added or finishes (`companyWorkQuery`'s `ids` token).
+ */
+export const getRolesWorkStatus = cache(async function getRolesWorkStatus(userId: string) {
+  const [row] = await companyWorkQuery(userId, "ids");
   return { active: (row?.n ?? 0) > 0, version: row?.version ?? "" };
 });
 

@@ -18,7 +18,7 @@ let b: User;
 let mine: string;
 let theirs: string;
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { companyWorkQuery, getCompanyWorkStatus } from "./work-status";
+import { companyWorkQuery, getCompanyWorkStatus, getRolesWorkStatus } from "./work-status";
 
 beforeAll(async () => {
   const client = createTestDb();
@@ -91,6 +91,29 @@ describe("getCompanyWorkStatus", () => {
     expect((await status(a)).version).not.toBe(before);
     await database.update(schema.tasks).set({ status: "done" }).where(sql`id = ${scan.id}`);
     expect(await status(a)).toMatchObject({ active: false });
+  });
+
+  it("gives the Roles page a version that moves when a task arrives or finishes, not when it starts", async () => {
+    const scan = await task("scan_company", { companyId: mine });
+    const roles = (await getRolesWorkStatus(a.id));
+    const companies = (await status(a)).version;
+    expect(roles.active).toBe(true);
+    // Queued to running: the companies pages show it ("Discovering…"), the Roles page does not.
+    await database.update(schema.tasks).set({ status: "running" }).where(sql`id = ${scan.id}`);
+    expect((await getRolesWorkStatus(a.id)).version).toBe(roles.version);
+    expect((await status(a)).version).not.toBe(companies);
+    // Another account's task never moves it.
+    await task("scan_company", { companyId: theirs });
+    await task("import_posting", { companyId: mine, userId: b.id, url: "https://mine.example/jobs/1" });
+    expect((await getRolesWorkStatus(a.id)).version).toBe(roles.version);
+    // A second task of its own arriving does, and so does the first finishing.
+    const discover = await task("discover", { companyId: mine, homepageUrl: "https://mine.example" });
+    const withBoth = (await getRolesWorkStatus(a.id)).version;
+    expect(withBoth).not.toBe(roles.version);
+    await database.update(schema.tasks).set({ status: "done" }).where(sql`id = ${scan.id}`);
+    expect((await getRolesWorkStatus(a.id)).version).not.toBe(withBoth);
+    await database.update(schema.tasks).set({ status: "done" }).where(sql`id = ${discover.id}`);
+    expect(await getRolesWorkStatus(a.id)).toEqual({ active: false, version: (await status(a)).version });
   });
 
   it("reads the account's followed companies once per query, not once per queued task", async () => {

@@ -17,7 +17,9 @@ export const CvThemeSchema = z.object({
   maxPages: z.number().int().min(CV_PAGE_LIMITS.min).max(CV_PAGE_LIMITS.max).default(CV_PAGE_LIMITS.default),
 });
 // The zod-free `CvTheme` must stay exactly what the schema produces; either drifting fails typecheck.
-type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+// Identity, not mutual assignability: two object types that differ only by an optional property
+// are each assignable to the other, so a field added as optional on one side would slip through.
+type Same<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 const themeTypesAgree: Same<z.infer<typeof CvThemeSchema>, CvTheme> = true;
 void themeTypesAgree;
 /** Stored themes predate the font and page limit; unreadable ones fall back to the default. */

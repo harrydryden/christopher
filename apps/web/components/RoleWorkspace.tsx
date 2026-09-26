@@ -4,6 +4,7 @@ import { Card } from "./Card";
 import { EmptyState } from "./EmptyState";
 import { buttonLinkClass } from "./Button";
 import { RolesTable } from "./RolesTable";
+import { RoleRefusalNotices } from "./RoleRefusalNotices";
 import { RolesFilterBar } from "./RolesFilterBar";
 import { appliedRoleCount, attachEvents, buildRoleRowVM, DEFAULT_SORT_DIR, fetchRecentEventsFor, fetchRolePage, fetchRoleCounts, filtersToQueryString, parseRolesFilters, resolveRoleView, roleTabFor, type RawSearchParams, type RolesFilters, type SortKey } from "@/lib/queries/jobs";
 import { listCompanyOptions } from "@/lib/queries/companies";
@@ -76,6 +77,8 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
     <RolesFilterBar key={query} filters={filters} companyOptions={options}
       exportHref={`/api/export.csv?${query}`} path={path} view={view} companyScoped={!!companyId} />
     {result.total !== counts[view] && <p className="mb-3 text-12 text-muted">Showing {result.total} of {counts[view]}</p>}
+    {/* Outside the keyed tables, so a refusal that lands after paging or filtering still shows. */}
+    <RoleRefusalNotices />
     <RolesTable key={`${query}:${result.page}`} rows={rows} keyboard hideCompany={!!companyId}
       sortLinks={sortLinksFor(path, view, filters)} sort={filters.sort} dir={filters.dir}
       emptyState={<EmptyState title={counts[view] ? "No roles match these filters" : view === "auto-matched" ? "No roles awaiting review" : `No ${ROLE_STATUS_LABELS[view].toLowerCase()} roles`}

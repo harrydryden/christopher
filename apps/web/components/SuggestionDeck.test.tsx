@@ -78,6 +78,46 @@ it("takes each swiped card off at once, lets the next be decided while the first
   expect(text()).toContain("Globex added to tracked companies.");
 });
 
+it("sends a decided card off the edge as a picture while the next card is already live", async () => {
+  vi.useFakeTimers();
+  try {
+    actions.acceptSuggestion.mockReturnValue(new Promise(() => {}));
+    act(() => root.render(<SuggestionDeck cards={CARDS} total={3} empty={<p>No companies to review</p>} />));
+    act(() => button("Follow ⟶").click());
+    expect(top()).toBe("Globex");
+    const ghost = () => container.querySelector<HTMLElement>("[data-leaving]");
+    expect(ghost()?.getAttribute("data-leaving")).toBe("s-1");
+    expect(ghost()?.getAttribute("aria-hidden")).toBe("true");
+    await act(async () => { vi.advanceTimersByTime(50); });
+    expect(ghost()?.style.transform).toContain(`translateX(${window.innerWidth}px)`);
+    await act(async () => { vi.advanceTimersByTime(400); });
+    expect(ghost()).toBeNull();
+    expect(top()).toBe("Globex");
+  } finally { vi.useRealTimers(); }
+});
+
+it("drops a drag in progress when a refused card comes back on top, so letting go decides nothing", async () => {
+  const dismissing = deferred();
+  actions.rejectSuggestion.mockReturnValue(dismissing.promise);
+  act(() => root.render(<SuggestionDeck cards={CARDS} total={3} empty={<p>No companies to review</p>} />));
+  act(() => button("⟵ Dismiss").click());
+  expect(top()).toBe("Globex");
+
+  const article = () => container.querySelector("article")!;
+  article().setPointerCapture = () => {};
+  const pointer = (type: string, clientX: number) => {
+    const event = new MouseEvent(type, { bubbles: true, clientX, button: 0 });
+    Object.defineProperty(event, "pointerId", { value: 1 });
+    act(() => { article().dispatchEvent(event); });
+  };
+  pointer("pointerdown", 0);
+  pointer("pointermove", 200);
+  await act(async () => { dismissing.resolve({ ok: false, error: "Could not save. Try again." }); await dismissing.promise; });
+  expect(top()).toBe("Acme");
+  pointer("pointerup", 200);
+  expect(actions.acceptSuggestion).not.toHaveBeenCalled();
+});
+
 it("waits for the next cards instead of claiming the deck is empty when every card on hand is in flight", async () => {
   const dismissing = deferred();
   actions.rejectSuggestion.mockReturnValue(dismissing.promise);

@@ -164,16 +164,25 @@ export async function listCompanies(userId: string, page = 1, q = "", order: Com
 
 /**
  * The newest scan of any source of each company, for a page of companies. Each source's newest
- * start is one probe of `scans_source_started_idx` (an index-only `max`), and only that row is read
- * back, so the cost follows the page's sources, not the scans the catalogue has retained: sorting
- * every retained scan of the page's companies cost 6.5 ms at 7,560 rows and grew daily.
+ * start is read from that source's entries in `scans_source_started_idx` (index-only), and only that
+ * row is read back, so the cost follows the page's sources, not the scans the catalogue has
+ * retained: sorting every retained scan of the page's companies cost 6.5 ms at 7,560 rows and grew
+ * daily.
+ *
+ * The `+ interval '0'` is load-bearing. A bare `max(started_at)` (or `order by started_at desc
+ * limit 1`, and even `order by source_id desc, started_at desc`, whose first key the planner drops
+ * as fixed by the source) can be answered by walking `scans_started_idx` backwards and filtering on
+ * the source, which the planner picks on small or stale statistics: for a source with no scans that
+ * reads the whole index, once per such source. An aggregate over an expression cannot use that
+ * shortcut, so the only index that helps is the one keyed on the source: one bounded range per
+ * source (its retained scans), whatever the statistics say. `indexes.test.ts` holds the plan to it.
  */
 export async function latestScanByCompany(ids: string[]): Promise<Array<{ companyId: string; status: Scan["status"]; startedAt: Date }>> {
   if (!ids.length) return [];
   const result = await db().execute<{ company_id: string; status: Scan["status"]; started_at: Date | string }>(sql`
     select distinct on (src.company_id) src.company_id, s.status, s.started_at
     from ${careerSources} src
-    cross join lateral (select max(newest.started_at) as at from ${scans} newest where newest.source_id = src.id) latest
+    cross join lateral (select max(newest.started_at + interval '0 seconds') as at from ${scans} newest where newest.source_id = src.id) latest
     join ${scans} s on s.source_id = src.id and s.started_at = latest.at
     where src.company_id in (${sql.join(ids.map(id => sql`${id}`), sql`, `)})
     order by src.company_id, s.started_at desc`);

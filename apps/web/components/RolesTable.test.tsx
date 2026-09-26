@@ -23,6 +23,8 @@ vi.mock("next/link", () => ({ default: ({ children, href }: { children: ReactNod
 
 import { RolesTable } from "./RolesTable";
 import { SKIP_REASON_REQUIRED } from "@/lib/decision-reason";
+import { RoleRefusalNotices } from "./RoleRefusalNotices";
+import { dismissRoleRefusal, roleRefusals } from "@/lib/role-refusals";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -218,4 +220,94 @@ it("scrolls to the cursor only when j or k moves it, never while a reason is typ
   press("j");
   expect(scrolled).toHaveBeenCalledTimes(1);
   expect((scrolled.mock.contexts[0] as HTMLElement).id).toBe(`role-row-${THIRD.id}`);
+});
+
+it("holds a returned row only until its undo's page arrives, so a row the server drops later stays gone", async () => {
+  actions.decide.mockResolvedValueOnce({ ok: true });
+  render([FIRST, SECOND]);
+  press("a");
+  press("Enter", reasonBox()!);
+  await act(async () => {});
+  render([SECOND]);
+
+  actions.decide.mockResolvedValueOnce({ ok: true });
+  await act(async () => { button("Undo").click(); });
+  render([FIRST, SECOND]);
+  expect(titles()).toEqual([FIRST.title, SECOND.title]);
+
+  // Later the server stops listing it (decided in another tab, say): the table follows the server.
+  render([SECOND]);
+  expect(titles()).toEqual([SECOND.title]);
+});
+
+it("holds a returned row's actions while its undo is being saved, then lets it be decided again", async () => {
+  actions.decide.mockResolvedValueOnce({ ok: true });
+  render([FIRST, SECOND]);
+  press("a");
+  press("Enter", reasonBox()!);
+  await act(async () => {});
+  render([SECOND]);
+
+  const undoing = deferred();
+  actions.decide.mockReturnValueOnce(undoing.promise);
+  act(() => button("Undo").click());
+  expect(titles()).toEqual([FIRST.title, SECOND.title]);
+
+  // The cursor is on the returned row: its shortcut does nothing, and its buttons say it is saving.
+  press("a");
+  expect(reasonBox()).toBeNull();
+  // Its review is still open from the decision; the buttons in it are the ones pressed.
+  expect(container.querySelector(`#role-review-${FIRST.id}`)).not.toBeNull();
+  const saving = button("Saving…");
+  expect(saving.disabled).toBe(true);
+  act(() => saving.click());
+  expect(actions.decide).toHaveBeenCalledTimes(2);
+
+  await answer(undoing, { ok: true });
+  render([FIRST, SECOND]);
+  const shortlist = button("Shortlist");
+  expect(shortlist.disabled).toBe(false);
+  actions.decide.mockResolvedValueOnce({ ok: true });
+  await act(async () => { shortlist.click(); });
+  expect(actions.decide).toHaveBeenCalledTimes(3);
+  expect(actions.decide).toHaveBeenLastCalledWith(FIRST.id, "apply", "");
+});
+
+it("forgets an undo that had nothing to undo because its decision was refused", async () => {
+  const saving = deferred();
+  actions.decide.mockReturnValueOnce(saving.promise);
+  render([FIRST, SECOND]);
+  press("a");
+  press("Enter", reasonBox()!);
+  act(() => button("Undo").click());
+
+  await answer(saving, { ok: false, error: "Could not save your decision. Please try again." });
+  expect(actions.decide).toHaveBeenCalledTimes(1);
+  expect(titles()).toEqual([FIRST.title, SECOND.title]);
+
+  render([SECOND]);
+  expect(titles()).toEqual([SECOND.title]);
+});
+
+it("shows a refusal that lands after the table was replaced beside the new one, which lists the row again", async () => {
+  for (const refusal of roleRefusals()) dismissRoleRefusal(refusal.id);
+  const workspace = (key: string, rows: RoleRowVM[]) => act(() => root.render(<>
+    <RoleRefusalNotices />
+    <RolesTable key={key} rows={rows} keyboard emptyState={<p>Nothing to review</p>} />
+  </>));
+  const saving = deferred();
+  actions.decide.mockReturnValue(saving.promise);
+  workspace("page-1", [FIRST, SECOND]);
+  press("a");
+  press("Enter", reasonBox()!);
+  expect(titles()).toEqual([SECOND.title]);
+
+  // The person pages on while it is saved: a new table, from a render that still lists the role.
+  workspace("page-1:sorted", [FIRST, SECOND]);
+  await answer(saving, { ok: false, error: "Could not save your decision. Please try again." });
+  expect(text()).toContain("Could not save Head of Operations: Could not save your decision. Please try again.");
+  expect(titles()).toEqual([FIRST.title, SECOND.title]);
+
+  act(() => button("Dismiss").click());
+  expect(text()).not.toContain("Could not save Head of Operations");
 });

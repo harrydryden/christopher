@@ -137,7 +137,15 @@ export function CvDraftEditor({
   async function updatePreview() {
     // The same check as before, loaded on first use: the schema and zod are not in the page's
     // first load, and `/api/cv/preview` validates again on the server regardless.
-    const { CvContentSchema } = await import("@ava/core/cv");
+    // A chunk that cannot be fetched (offline, or a deployment that replaced it) must say so rather
+    // than leave the button doing nothing.
+    let CvContentSchema: typeof import("@ava/core/cv").CvContentSchema;
+    try {
+      ({ CvContentSchema } = await import("@ava/core/cv"));
+    } catch {
+      setError("Could not load the preview. Check your connection and try again.");
+      return;
+    }
     const parsed = CvContentSchema.safeParse(candidate);
     if (!parsed.success) {
       setError(parsed.error.issues.map((issue) => issue.message).join(" "));

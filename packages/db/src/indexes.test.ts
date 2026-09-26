@@ -74,6 +74,8 @@ const cases: Case[] = [
   ["roles first seen in one scan", sql`select 1 from jobs where source_id = ${id} and first_seen_at >= now() - interval '1 hour' and first_seen_at <= now()`, "jobs_source_first_seen_idx"],
   // The status strip's last completed scan, one source at a time (0042).
   ["a source's last completed scan", sql`select max(finished_at) from scans where source_id = ${id} and finished_at is not null and status <> 'failed'`, "scans_source_completed_idx"],
+  // The companies list's newest scan per source (see "the newest scan of each source" below).
+  ["a source's newest scan", sql`select max(started_at + interval '0 seconds') from scans where source_id = ${id}`, "scans_source_started_idx"],
   ["recent problem scans", sql`select 1 from scans where status <> 'ok' and started_at >= now() - interval '7 days'`, "scans_started_idx"],
   ["the suggestion expiry", sql`update company_suggestions set status = 'expired' where status = 'pending' and created_at < now() - interval '30 days'`, "company_suggestions_pending_created_idx"],
   ["the failed-task list", sql`select * from tasks where status = 'failed' order by finished_at desc limit 50`, "tasks_status_finished_idx"],
@@ -97,5 +99,38 @@ describe("migration 0036's indexes", () => {
     // Used with conditions, not read end to end: the node names the index and carries an Index Cond.
     if (joined) expect(text).toMatch(new RegExp(`using ${index} `));
     else expect(text).toMatch(new RegExp(`(using|on) ${index} [^\\n]*\\n\\s+Index Cond:`));
+  });
+});
+
+/**
+ * The companies list's newest scan per source (`latestScanByCompany` in
+ * apps/web/lib/queries/companies.ts) aggregates `started_at + interval '0 seconds'` rather than
+ * `started_at`. A bare `max(started_at)` can be answered by PostgreSQL's min/max shortcut: walk
+ * `scans_started_idx` backwards and stop at the first row of the source, which the planner picks on
+ * small or stale statistics and which, for a source with no scans, reads the whole index. Over an
+ * expression the shortcut does not exist, whatever the statistics, which is what this shows: with the
+ * source-keyed indexes out of the way the bare form takes the backward walk and the written form
+ * cannot. (That the source-keyed index serves the written form is a case in the table above.)
+ */
+describe("the newest scan of each source", () => {
+  async function explainWithout(indexes: string[], query: SQL): Promise<string> {
+    let text = "";
+    await db.transaction(async tx => {
+      for (const index of indexes) await tx.execute(sql`drop index ${sql.identifier(index)}`);
+      await tx.execute(sql`set local enable_seqscan = off`);
+      const rows = await tx.execute(sql`explain ${query}`);
+      text = rows.rows.map(row => Object.values(row).join(" ")).join("\n");
+      tx.rollback();
+    }).catch(error => { if (!text) throw error; });
+    return text;
+  }
+  const newest = (at: SQL) => sql`select src.id, latest.at from career_sources src
+    cross join lateral (select max(${at}) as at from scans newest where newest.source_id = src.id) latest
+    where src.company_id = ${id}`;
+  const sourceKeyed = ["scans_source_started_idx", "scans_source_completed_idx"];
+
+  it("cannot walk scans_started_idx backwards, as a bare max(started_at) does", async () => {
+    expect(await explainWithout(sourceKeyed, newest(sql`newest.started_at`))).toMatch(/Index (Only )?Scan Backward using scans_started_idx/);
+    expect(await explainWithout(sourceKeyed, newest(sql`newest.started_at + interval '0 seconds'`))).not.toMatch(/Backward/);
   });
 });

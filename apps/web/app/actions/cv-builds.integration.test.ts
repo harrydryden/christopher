@@ -126,7 +126,7 @@ it("retries a failed build with the CV model chosen since, and keeps what it alr
   // The wording is the build's own (its checkpoint says it wrote it), so the retry resumes from the
   // checkpoint rather than asking for an assessment of typed wording — which is what keeps a
   // tailored build's one optional rewrite on offer.
-  expect(tasks[0]!.payload).toEqual({ draftId: draft.id });
+  expect(tasks[0]!.payload).toMatchObject({ draftId: draft.id, userId: expect.any(String) });
 });
 
 it("retries a Direct Edit as an assessment of the wording as typed, with the rubric it carried", async () => {
@@ -136,7 +136,7 @@ it("retries a Direct Edit as an assessment of the wording as typed, with the rub
   const draft = await failedDraft({ buildCheckpoint: { sourceRubric: rubric } });
   expect(await assessCvDraft(draft.id, { ok: true }, new FormData())).toEqual({ ok: true });
   const [task] = await buildTasks();
-  expect(task!.payload).toEqual({ draftId: draft.id, mode: "assess" });
+  expect(task!.payload).toMatchObject({ draftId: draft.id, mode: "assess", userId: expect.any(String) });
   expect((await draftRow(draft.id)).buildCheckpoint).toEqual({ sourceRubric: rubric });
 });
 
@@ -199,7 +199,7 @@ it("retries a rebuild that stopped before writing with its rubric and improvemen
     mode: "improve", improvements: ["Name the budget"], sourceRubric: rubric,
   });
   const [task] = await buildTasks();
-  expect(task!.payload).toEqual({ draftId: draft.id });
+  expect(task!.payload).toMatchObject({ draftId: draft.id, userId: expect.any(String) });
 });
 
 it("retries a page-limit failure against the page limit set since, keeping the CV's own appearance", async () => {

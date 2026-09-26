@@ -160,6 +160,28 @@ async function follow(companyId: string, ...jobIds: string[]) {
     await database.insert(schema.userJobs).values(jobIds.map((jobId) => ({ userId: user.id, jobId, inTable: true, keywordMatched: true, keywordTerms: ["operations"] }))).onConflictDoNothing();
 }
 
+
+/**
+ * The build audits batch by batch through `assessCvBatches`. Tests mock the whole-audit method,
+ * so this spy slices the audit as the engine does and answers each slice with that mock.
+ */
+async function mockAuditBatches() {
+  const { AiEngine } = await import("../../../../packages/ai/src/index");
+  const { cvAuditBatches } = await import("../../../worker/src/handlers/cv-stages");
+  type Engine = InstanceType<typeof AiEngine>;
+  type BatchArgs = Parameters<Engine["assessCvBatches"]>;
+  return vi.spyOn(AiEngine.prototype, "assessCvBatches").mockImplementation(async function (this: Engine, input: BatchArgs[0], ref: BatchArgs[1], options: BatchArgs[2]) {
+    const slices = cvAuditBatches(input);
+    const batches = [];
+    for (const index of options?.only ?? slices.map((_, i) => i)) {
+      const slice = slices[index]!;
+      const result = await this.assessCv({ ...input, rubric: { ...input.rubric, requirements: slice.requirements }, claims: slice.claims }, ref, options);
+      batches.push(result ? { index, status: "done" as const, result, usage: [] } : { index, status: "failed" as const, usage: [] });
+    }
+    return { pass: options?.pass ?? "draft", total: slices.length, batches, review: null };
+  });
+}
+
 describe("authenticated mutations", () => {
   it("refreshes known sources once and brings scheduled scans forward", async () => {
     const { company } = await fixture();
@@ -1192,6 +1214,7 @@ it("carries library styling through generation, revision, matching preview/downl
   const reviewer = vi.spyOn(AiEngine.prototype, "assessCv").mockImplementation(async (input) =>
     reviewFixture(input),
   );
+  await mockAuditBatches();
   const { handleGenerateCv } = await import("../../../worker/src/handlers/cv");
   const { GET: downloadCv } = await import("@/app/api/cv/[id]/pdf/route");
   const { POST: previewCv } = await import("@/app/api/cv/preview/route");
@@ -1514,6 +1537,7 @@ it("assesses, improves with current evidence, finalises and exports through the 
       gaps: [],
     });
     });
+  await mockAuditBatches();
   const reviewer = vi
     .spyOn(AiEngine.prototype, "assessCv")
     .mockImplementation(async (input) => {
@@ -1548,11 +1572,17 @@ it("assesses, improves with current evidence, finalises and exports through the 
       .update(schema.tasks)
       .set({ status: "done" })
       .where(eq(schema.tasks.id, task!.id));
+    // The baseline publishes first; a verified improvement is adopted afterwards as a revision
+    // of it, which is the CV the person is taken to. Follow it when there is one.
+    const [adopted] = await database
+      .select()
+      .from(schema.cvDrafts)
+      .where(eq(schema.cvDrafts.parentId, id));
     return (
       await database
         .select()
         .from(schema.cvDrafts)
-        .where(eq(schema.cvDrafts.id, id))
+        .where(eq(schema.cvDrafts.id, adopted?.id ?? id))
     )[0]!;
   }
   try {
@@ -1565,8 +1595,8 @@ it("assesses, improves with current evidence, finalises and exports through the 
     const first = (await database.select().from(schema.cvDrafts))[0]!;
     const ready = await run(first.id);
     expect(ready.status).toBe("ready");
-    // The new tailoring pass spots the evidenced SQL omission and applies its one verified
-    // automatic improvement before publishing the first revision.
+    // The tailoring pass spots the evidenced SQL omission and adopts its one verified automatic
+    // improvement as a revision of the published baseline.
     expect(ready.assessment!.score).toBe(100);
     expect(ready.jobSource!.kind).toBe("user_supplied");
     expect(ready.finalisedAt).toBeNull();

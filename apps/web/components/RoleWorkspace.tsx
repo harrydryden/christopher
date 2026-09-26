@@ -28,18 +28,24 @@ function sortLinksFor(path: string, view: RoleStatus, filters: RolesFilters): Pa
 export async function RoleWorkspace({ userId, searchParams, companyId }: { userId: string; searchParams: RawSearchParams; companyId?: string }) {
   const sp = searchParams;
   const scoped = companyId ? { company: companyId } : {};
-  // A link that names no view opens on Matched unless this scope has no matched roles, so only such
-  // a link waits for the counts; one that names its view (every tab, sort and page link does) reads
-  // the counts beside the page.
   const countsPending = fetchRoleCounts(userId, parseRolesFilters({ ...sp, ...scoped }).company || undefined);
-  const view = roleTabFor(sp) ?? resolveRoleView(sp, await countsPending);
+  const pageFor = (view: RoleStatus) => fetchRolePage(userId, parseRolesFilters({ ...sp, view, ...scoped }), false, null, Number(sp.page));
+  // A link that names no view (the landing URL) opens on Matched unless this scope has no matched
+  // roles. Matched is what it nearly always is, so its page is read beside the counts rather than
+  // after them, and read again as Shortlisted only when the counts say Matched is empty. A link that
+  // names its view (every tab, sort and page link does) reads the counts beside that view's page.
+  const named = roleTabFor(sp);
+  const likely = named ? null : pageFor("auto-matched");
+  // Discarded when the guess was wrong; its failure then belongs to nobody.
+  likely?.catch(() => undefined);
+  const view = named ?? resolveRoleView(sp, await countsPending);
   const dismissed = view === "user-dismissed";
   const filters = parseRolesFilters({ ...sp, view, ...scoped });
   const archivedFilters = parseRolesFilters({ ...sp, view: "archived", ...scoped });
   const path = companyId ? `/companies/${companyId}` : "/";
   const [counts, result, archivedResult, options, stageCounts] = await Promise.all([
     countsPending,
-    fetchRolePage(userId, filters, false, null, Number(sp.page)),
+    likely && view === "auto-matched" ? likely : pageFor(view),
     // The archived section is only rendered under Dismissed, so nothing else pays for the read.
     dismissed ? fetchRolePage(userId, archivedFilters, true, null, Number(sp.archivedPage)) : null,
     companyId ? Promise.resolve([]) : listCompanyOptions(userId),

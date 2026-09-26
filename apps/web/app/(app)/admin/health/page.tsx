@@ -21,6 +21,8 @@ import {
   getCvBuildCosts,
   getCvBuildFailureKinds,
   getCvBuildMotions,
+  getCvBuildWeeks,
+  getCvDriftRates,
   getQueueCounts,
   getScoredRoleCost,
   listCompaniesWithNoSource,
@@ -83,6 +85,8 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
     getCvBuildMotions(30),
     getCvBuildFailureKinds(30),
   ]);
+  // Then how the builds are trending: the week-by-week bill and the rates that drift first.
+  const [cvWeeks, cvDrift] = await Promise.all([getCvBuildWeeks(12), getCvDriftRates(30)]);
   const { status, crash, running, retrying, events } = activity;
   const totals = totalAiUsage(usage);
   // Every call since the month began, whoever it was for: the usage table's own total.
@@ -127,6 +131,14 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
           {heartbeat.commit && <>Release <code>{heartbeat.commit.slice(0, 7)}</code>. </>}
           {heartbeat.concurrency !== null && <>{heartbeat.concurrency} slots. </>}
           {heartbeat.active !== null && <>{heartbeat.active} tasks active at the last report. </>}
+          {heartbeat.governor && (
+            <>
+              Model streams: {heartbeat.governor.inFlight ?? "unknown"} open
+              {heartbeat.governor.streamCap !== null && <> of a cap of {heartbeat.governor.streamCap}</>}
+              {heartbeat.governor.queued !== null && heartbeat.governor.queued > 0 && <>, {heartbeat.governor.queued} waiting for a slot</>}
+              {heartbeat.governor.pausedUntil && heartbeat.governor.pausedUntil > now && <>, paused by the provider until {heartbeat.governor.pausedUntil.toISOString().slice(11, 16)} UTC</>}.{" "}
+            </>
+          )}
           Anthropic key {heartbeat.aiConfigured ? "configured" : "missing"}; browser {heartbeat.browserAvailable ? "available" : "unavailable"}. A configured key still needs a successful model call to confirm access.
         </p>}
         <p className="mt-2 text-14">{metrics.ready} tasks ready · {metrics.running} running · oldest ready task waiting {Math.round(metrics.oldest_seconds / 60)} minutes.</p>
@@ -523,6 +535,7 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
                 <TH className="text-right">Failed</TH>
                 <TH className="text-right">Failure rate</TH>
                 <TH className="text-right">Median time</TH>
+                <TH className="text-right">p95 time</TH>
                 <TH className="text-right">Median cost</TH>
               </tr>
             </THead>
@@ -537,12 +550,78 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
                     {formatPercent(motion.runs ? motion.failed / motion.runs : 0)}
                   </TD>
                   <TD className="text-right">{motion.medianMs === null ? "—" : formatStepDuration(motion.medianMs)}</TD>
+                  <TD className="text-right">{motion.p95Ms === null ? "—" : formatStepDuration(motion.p95Ms)}</TD>
                   <TD className="text-right">{motion.medianUsd === null ? "—" : formatUsdPrecise(motion.medianUsd)}</TD>
                 </TR>
               ))}
             </TBody>
           </Table>
         )}
+      </Card>
+
+      <Card title="Cost per build by week">
+        <p className="mb-3 text-14 text-muted">
+          Every build dated by its first model call, so a retry days later adds to the build it retried. The median says what a typical build costs this week; the total says what the week cost.
+        </p>
+        {cvWeeks.length === 0 ? (
+          <EmptyState title="No CV builds in the last 12 weeks" description="Each build's model calls name its draft; the first build fills this." />
+        ) : (
+          <Table>
+            <THead>
+              <tr>
+                <TH>Week of</TH>
+                <TH className="text-right">Builds</TH>
+                <TH className="text-right">Median build</TH>
+                <TH className="text-right">Total</TH>
+              </tr>
+            </THead>
+            <TBody>
+              {cvWeeks.map((week) => (
+                <TR key={week.week.toISOString()}>
+                  <TD className="whitespace-nowrap">{shortDate(week.week)}</TD>
+                  <TD className="text-right">{formatCount(week.builds)}</TD>
+                  <TD className="text-right">{week.medianUsd === null ? "—" : formatUsd(week.medianUsd)}</TD>
+                  <TD className="text-right">{formatUsd(week.totalUsd)}</TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+        )}
+      </Card>
+
+      <Card title="CV build drift (30 days)">
+        <p className="mb-3 text-14 text-muted">
+          Three rates that move before anything fails outright. Each is flagged on the wrong side of its threshold once it rests on at least ten events.
+        </p>
+        <Table>
+          <THead>
+            <tr>
+              <TH>Rate</TH>
+              <TH className="text-right">Events</TH>
+              <TH className="text-right">Rate</TH>
+              <TH className="text-right">Threshold</TH>
+              <TH>What it means</TH>
+            </tr>
+          </THead>
+          <TBody>
+            {cvDrift.map((rate) => (
+              <TR key={rate.key}>
+                <TD className="whitespace-nowrap">{rate.label}</TD>
+                <TD className="text-right">
+                  {formatCount(rate.numerator)} of {formatCount(rate.denominator)}
+                </TD>
+                <TD className={`text-right ${rate.flagged ? "text-warn" : ""}`}>{rate.rate === null ? "—" : formatPercent(rate.rate, 1)}</TD>
+                <TD className="whitespace-nowrap text-right text-muted">
+                  {rate.direction === "below" ? "at least" : "at most"} {formatPercent(rate.threshold)}
+                </TD>
+                <TD className="text-muted">
+                  {rate.flagged && <Badge tone="amber" className="mr-2">look</Badge>}
+                  {rate.meaning}
+                </TD>
+              </TR>
+            ))}
+          </TBody>
+        </Table>
       </Card>
 
       <Card title="Build failures by kind (30 days)">

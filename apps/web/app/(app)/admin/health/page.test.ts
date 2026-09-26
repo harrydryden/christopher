@@ -27,7 +27,7 @@ beforeEach(async () => {
   await database.execute(sql`truncate companies, tasks, worker_events, settings, scan_runs, ai_calls, users restart identity cascade`);
 });
 
-it("renders every card in fewer than twenty statements, at most eight at a time", async () => {
+it("renders every card in fewer than twenty-two statements, at most eight at a time", async () => {
   // Every list has a row that names a subject, so each would once have looked its names up itself.
   const spender = await ensureTestUser(database, "spender@example.com", "member");
   const [company] = await database.insert(schema.companies).values({ name: "Acme", homepageUrl: "https://acme.example", domain: "acme.example" }).returning();
@@ -60,7 +60,9 @@ it("renders every card in fewer than twenty statements, at most eight at a time"
   try {
     const page = await AdminOperationsPage({ searchParams: Promise.resolve({}) });
     expect(page).toBeTruthy();
-    expect(spy.mock.calls.length).toBeLessThan(20);
+    // Three statements more than before the CV build cards gained true percentiles (one), the
+    // week-by-week bill (one) and the three drift rates (one, together).
+    expect(spy.mock.calls.length).toBeLessThan(22);
     expect(widest).toBeLessThanOrEqual(8);
   } finally {
     spy.mockRestore();

@@ -8,6 +8,7 @@ import { isKnownModel, isValidScanTime, isValidTimezone, MAX_ACCOUNT_AI_BUDGET_U
 import { enqueue } from "@/lib/enqueue";
 import { GATE_NEEDS_KEYWORD_SENTENCE } from "@/lib/setup";
 import { getSettings, setSystemSetting, setUserSetting, saveSettingsAndGate } from "@/lib/settings";
+import { stageRoutesFromForm } from "@/lib/stage-routes";
 import { fail, ok, type ActionResult } from "@/lib/validation";
 
 const MATCH_FIELDS: MatchField[] = ["title", "department", "description"];
@@ -138,6 +139,18 @@ export async function saveAiSettings(_prev: ActionResult, formData: FormData): P
   await setSystemSetting("defaultModel", defaultModel);
   revalidatePath("/admin/settings");
   revalidatePath("/settings");
+  return ok();
+}
+
+/**
+ * The per-stage model and effort routes, for every account. Administrator-only: a route overrides
+ * each account's own CV model for its stage. What the form sends is sanitised by the engine's own
+ * rules, so a model or effort the provider would refuse is dropped rather than stored.
+ */
+export async function saveStageRoutes(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
+  await requireAdmin();
+  await setSystemSetting("stageRoutes", stageRoutesFromForm(formData));
+  revalidatePath("/admin/settings");
   return ok();
 }
 

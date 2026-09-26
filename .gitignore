@@ -12,3 +12,6 @@ coverage/
 /tmp/
 tsconfig.tsbuildinfo
 .next/
+# Model-call recordings (pnpm cli record): kept locally, never committed.
+/docs/evaluations/recordings/*
+!/docs/evaluations/recordings/README.md

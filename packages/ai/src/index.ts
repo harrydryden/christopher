@@ -1,6 +1,6 @@
 export {
   ASSESSMENT_COVERAGE_ERROR, mergeCvAssessBatches, SERVER_FALLBACK_BETA, STREAM_IDLE_MS, stallMessage, streamIdleMsFromEnv,
-  AiEngine, a3OutputCeiling, createAiEngine, classifyAiFailure, decisionDigest, extractJsonBlock, filterSuggestionKey, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX,
+  AiEngine, a3OutputCeiling, createAiEngine, createProviderClient, classifyAiFailure, decisionDigest, extractJsonBlock, filterSuggestionKey, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX,
   INTERRUPTED_ERROR_PREFIX, MAX_PAUSE_CONTINUATIONS, NO_OUTPUT_ERROR, OUTPUT_LIMIT_ERROR, PAUSED_ERROR, REFUSAL_ERROR_PREFIX, SCHEMA_ERROR_PREFIX, SDK_MAX_RETRIES, STREAM_CEILING_MS,
 } from "./engine";
 export type { CvAssessBatchResult, CvAssessInput, CvAssessOptions, CvAssessPass, CvAssessResult } from "./engine";
@@ -30,3 +30,5 @@ export type { GovernorOptions, GovernorStats } from "./governor";
 export { modelSupportsEffort, modelSupportsServerFallback } from "./model-capabilities";
 export * as schemas from "./schemas";
 export * as prompts from "./prompts";
+export { RecordingClient, ReplayClient, ReplayMissError, readRecording, recordedRequest, recordingKey, requestInputHash } from "./record-client";
+export type { RecordedCall, RecordingClientOptions, RecordingKey } from "./record-client";

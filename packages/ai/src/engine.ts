@@ -1983,3 +1983,12 @@ function validate<T>(schema: z.ZodType, value: unknown): { data: T } | { error: 
 export function createAiEngine(options: AiEngineOptions): AiEngine {
   return new AiEngine(options);
 }
+
+/**
+ * A provider client for a caller that wraps it — a recording, say — before handing it to an
+ * engine. An engine given a client leaves retrying to that client, so this one keeps the SDK's own
+ * retries of a request that failed before its response began.
+ */
+export function createProviderClient(apiKey: string): AiClientLike {
+  return new Anthropic({ apiKey, maxRetries: SDK_MAX_RETRIES }) as unknown as AiClientLike;
+}

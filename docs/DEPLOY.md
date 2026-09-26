@@ -280,6 +280,11 @@ checkout on a laptop against the production database, so it is careful in two wa
   company, found by id, domain (or a URL on it) or exact name, and refuses a needle that matches
   none or several. The whole active catalogue is `cli discover --all`, which refuses a careers URL.
 
+- **`record` and `replay` never publish.** They rebuild a draft to grade it, inside a rolled-back
+  transaction, and never touch the draft, the budget or the queue (see "Evaluation reports and the
+  prompt set"). `record` and a `replay` without `--recordings` call the provider and are paid; both
+  refuse without `ANTHROPIC_API_KEY`.
+
 Inside the worker's container (Render's Shell), run it without pnpm, from `/app/apps/worker`:
 `node --import tsx src/cli.ts users`.
 
@@ -330,6 +335,57 @@ build filter skips the deploy, so the worker correctly stays on the last commit 
 and neither this check nor the scheduled operational check calls that stale. Both check out full
 history to make the comparison. The list of worker inputs is `WORKER_INPUT_PATHS` in
 `scripts/release-checks.mjs`, the same list as `render.yaml`'s build filter.
+
+## Evaluation reports and the prompt set
+
+Every prompt the engine sends is an entry in `packages/ai/src/prompt-registry.ts`, and
+`promptSetVersion()` is one hash of all of them. The committed reports under
+`docs/evaluations/<name>/report.json` say which prompt set they were graded at, and CI's `check`
+job holds them to the registry (`scripts/check-evaluation-reports.ts`):
+
+- a report graded at another prompt set fails the job unless it is marked `"unverified": true` — a
+  report kept for the record that no longer vouches for the shipped prompts;
+- at least one report must be at the shipped prompt set, so a prompt change cannot merge without a
+  report written at its version.
+
+`docs/evaluations/cv-replay/report.json` is that report. It is written by the replay command:
+
+```bash
+cd apps/worker
+pnpm cli record <draft-id>                        # live and paid: refuses without ANTHROPIC_API_KEY
+pnpm cli replay <draft-id> --recordings ../../docs/evaluations/recordings/<file>.jsonl \
+  --out ../../docs/evaluations/cv-replay/report.json
+```
+
+`record` rebuilds the draft through the real handler against the provider and writes every model
+call to a JSONL recording in `docs/evaluations/recordings/` (gitignored: it holds CV text). `replay`
+rebuilds the same draft from that recording with no key and no cost, grades it — every claim
+supported, weighted coverage not lower than the recorded run's, the page limit met, no essential
+requirement losing points, plus the structural diagnostics the build itself uses — and writes the
+report with the prompt set, the route every CV stage ran at, the cost and the wall time. Neither
+command changes anything: the rebuild runs inside a database transaction that is always rolled
+back, on a copy of the draft under a scratch account, with a budget sink that holds nothing and
+records nothing, so the draft, the account's budget, `ai_calls` and the task queue are untouched. A
+recording answers only the requests it holds: an edited prompt, a different input or another
+model or effort fails the replay, naming the prompt and version, and never reaches the provider.
+
+The expected workflow for a pull request that edits a prompt:
+
+1. Run the edited build live on a representative draft: `pnpm cli record <draft-id>` against a
+   database that has one (a development copy, or production from a checkout: both commands only
+   read). This spends that one build's cost.
+2. Replay it into the report: `pnpm cli replay <draft-id> --recordings <file> --out
+   docs/evaluations/cv-replay/report.json`. The report is at the new prompt set and, because the
+   recording came from the provider, is not marked unverified.
+3. Commit the report with the prompt change. Its grade is what a reviewer reads.
+
+Where no key is available (CI, a contributor without one), the mechanism still runs end to end on
+the scripted client: `DATABASE_URL=<scratch database> pnpm exec tsx scripts/cv-replay-fixture.mts
+docs/evaluations/recordings/cv-replay-fixture.jsonl` publishes a synthetic draft and records its
+rebuild through the scripted client, and replaying that recording writes a report marked
+`"unverified": true` — the recording says its answers were scripted. That satisfies the gate while
+saying plainly that no model graded the new prompts; replace it with a live report before relying
+on the change. The report committed today is of this kind.
 
 ## Costs
 

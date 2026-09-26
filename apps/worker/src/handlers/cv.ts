@@ -22,7 +22,7 @@ import { cvTailoringEvidence, validateCvTailoringPlan, type CvTailoringPlan } fr
 import { buildCvGapQuiz } from "@ava/core/cv-gap-quiz";
 import { compareCvQuality, diagnoseCvQuality } from "@ava/core/cv-quality";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
-import { completeCv, cvRoleKey, releaseAiHolds, saveCvTailoringPlan, saveImprovedCvRevision, schema, skipOpenCvBuildSteps, type Task, type Db } from "@ava/db";
+import { completeCv, cvRoleKey, type AiCallRecord, releaseAiHolds, saveCvTailoringPlan, saveImprovedCvRevision, schema, skipOpenCvBuildSteps, type Task, type Db } from "@ava/db";
 import { ASSESSMENT_COVERAGE_ERROR, createAiEngine, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, type AiFailure, type CvAssessBatchResult } from "@ava/ai";
 import {
   CvContentSchema,
@@ -58,7 +58,7 @@ import {
   type CvCallDoing,
 } from "@ava/core/cv-build-failure";
 import { withResourceLease } from "../lease";
-import { recordAiUsage, tryReserveAi, type AiHold } from "../budget";
+import { recordAiUsage, tryReserveAi, type AiBudgetLimits, type AiBudgetRefusal, type AiHold } from "../budget";
 import { backoffMs, type TaskRunContext } from "../queue";
 import { CvJournal, type CvJournalLoss, type CvOpenStep } from "./cv-journal";
 import {
@@ -130,11 +130,24 @@ function keptBecause(sentence: string): string {
   return trimmed.charAt(0).toLowerCase() + trimmed.slice(1);
 }
 
+/**
+ * Where a build's budget holds and cost records go. A queued build uses the database's budget
+ * (`tryReserveAi`, `recordAiUsage`); a replay (`cv-replay.ts`) holds nothing and keeps its records
+ * in memory, so rebuilding a draft to grade it never reserves or charges an account's budget.
+ */
+export interface CvBuildSink {
+  reserve(expectedUsd: number, limits: AiBudgetLimits): Promise<AiHold | { refused: AiBudgetRefusal }>;
+  record(usage: AiCallRecord, hold: AiHold | undefined): Promise<void>;
+}
+
+/** A run of the handler: the queue's context, and optionally a sink other than the database's. */
+export type CvRunContext = TaskRunContext & { sink?: CvBuildSink };
+
 /** What the saved writing recorded: which attempt produced it and the budget scale it fitted at. */
 type WriteCheckpoint = { writeAttempt: number; scale: number };
 
 /** All generation and review modes use the same immutable input snapshot and lease. */
-export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskRunContext) {
+export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRunContext) {
   const payload = task.payload;
   if (!payload || typeof payload !== "object" || typeof payload.draftId !== "string" || !UUID.test(payload.draftId) ||
       (payload.userId !== undefined && (typeof payload.userId !== "string" || !UUID.test(payload.userId))) ||
@@ -207,6 +220,10 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
       return { skipped: true, reason: "account" };
     }
 
+    const sink: CvBuildSink = ctx?.sink ?? {
+      reserve: (expected, limits) => tryReserveAi(deps.db, "CV", expected, limits, deps.now(), 30),
+      record: (usage, hold) => recordAiUsage(deps.db, draft.userId, usage, { hold }),
+    };
     // A queued row always carries both; a hand-made task in a test may not, and an attempt that
     // is not a number would reach the ledger as a broken row.
     const attempt = Number.isFinite(task.attempts) ? Math.max(1, task.attempts) : 1;
@@ -359,7 +376,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
        */
       const admit = async (stageName: CvBuildStageName, expected: number): Promise<CvStageHold> =>
         journal.run("admit_budget", { stage: stageName, expectedUsd: usd(expected) }, async step => {
-          const admitted = await tryReserveAi(deps.db, "CV", expected, {
+          const admitted = await sink.reserve(expected, {
             account: { userId: draft.userId, budgetUsd: account.aiBudgetUsd, since },
             daily: deps.env.dailyAiBudgetUsd ?? 1000000,
             discovery: deps.env.discoveryAiBudgetUsd ?? 1000000,
@@ -367,7 +384,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
             // Which build this hold is for, so giving up on one build never releases another's.
             refId: draft.id,
             replaceRef: true,
-          }, deps.now(), 30);
+          });
           if ("refused" in admitted) {
             step.add({ limitUsd: admitted.refused.limitUsd, heldUsd: usd(admitted.refused.held),
               leftUsd: usd(Math.max(0, admitted.refused.limitUsd - admitted.refused.spent - admitted.refused.held)) });
@@ -440,7 +457,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
           // `failure` is the same event named; `ai_calls` keeps the text it always kept. With the
           // stage's hold, the record and the hold's reduction land in one transaction, and a record
           // that cannot be written keeps the hold rather than letting the spend go unaccounted.
-          await recordAiUsage(deps.db, draft.userId, usage, { hold });
+          await sink.record(usage, hold);
         },
       });
       /**

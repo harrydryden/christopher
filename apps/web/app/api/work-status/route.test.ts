@@ -7,7 +7,7 @@ vi.mock('@/lib/work-status', () => ({
   getCompanyWorkStatus: vi.fn(async () => ({ active: true, version: 'companies' })),
   getCvWorkStatus: vi.fn(async () => ({ active: true, version: 'cvs' })),
 }));
-vi.mock('@/lib/queries/cv', () => ({ getOwnCvWorkRow: vi.fn(), cvWorkVersionFor: vi.fn() }));
+vi.mock('@/lib/queries/cv', () => ({ readCvProgress: vi.fn() }));
 
 import { GET } from './route';
 

@@ -1,7 +1,8 @@
 import { getAccountWorkStatus, getCompanyWorkStatus, getCvWorkStatus } from "@/lib/work-status";
 import { routeUser } from '@/lib/route-auth';
 import { zUuid } from '@/lib/validation';
-import { cvWorkVersionFor, getOwnCvWorkRow } from '@/lib/queries/cv';
+import { readCvProgress } from '@/lib/queries/cv';
+import { cvProgressReading } from '@/lib/cv-progress';
 export const dynamic = 'force-dynamic';
 export async function GET(request: Request) {
   // A correctly signed cookie can still name an expired or revoked database session. Middleware
@@ -14,11 +15,11 @@ export async function GET(request: Request) {
   const id = params.get('cv');
   if (id) {
     if (!zUuid().safeParse(id).success) return Response.json({ ok: false, error: 'Invalid ID' }, { status: 400 });
-    const row = await getOwnCvWorkRow(user.id, id);
-    // The version carries how long the build has been still, which motion of it is open and what
-    // it last failed at, as well as what it is doing — so the page's "last progress N minutes ago",
-    // its narrative and its "running 46 s" all keep counting without a second timer on the client.
-    return Response.json({ active: row?.status === 'queued' || row?.status === 'generating', version: row ? await cvWorkVersionFor(row) : 'missing' }, { headers: { 'cache-control': 'no-store' } });
+    // A CV page from before the progress feed still polls here; it gets the same token the feed
+    // does, from the same single read, and no rows. New pages poll `/api/cv/[id]/progress`.
+    const rows = await readCvProgress(user.id, id, { after: Number.MAX_SAFE_INTEGER, last: new Date("9999-12-31T00:00:00.000Z") });
+    const reading = rows ? cvProgressReading(rows) : null;
+    return Response.json({ active: reading?.active ?? false, version: reading?.version ?? 'missing' }, { headers: { 'cache-control': 'no-store' } });
   }
   // A page that renders one half's version asks for that half, so the version it compares is the
   // one it rendered: the roles and companies pages watch their companies' work, and a page listing

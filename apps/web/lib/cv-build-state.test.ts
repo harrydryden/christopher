@@ -8,6 +8,7 @@ import {
   CV_WORKER_STOPPED_MESSAGE,
   cvBuildState,
   cvStepsSignature,
+  cvWorkFlags,
   cvWorkVersion,
   failureWayForward,
   normaliseCvStepsSignature,
@@ -90,12 +91,45 @@ it("calls an unclaimed queued build waiting, and measures from creation when not
   expect(requeued.phase).toBe("stalled");
 });
 
-it("changes the poll's version on progress and once a minute while there is none", () => {
+it("keeps the poll's version still while a build merely advances or time passes", () => {
+  // The token no longer carries a minute tick or the moment of the last progress: those made every
+  // open CV page render itself on the server at least once a minute. The progress feed moves the
+  // narrative, and the elapsed figures count on the client.
   const still = draft({ progressAt: ago(5 * 60_000) });
-  expect(cvWorkVersion(still, now)).not.toBe(cvWorkVersion(still, new Date(now.getTime() + 60_000)));
-  expect(cvWorkVersion(still, now)).toBe(cvWorkVersion(still, new Date(now.getTime() + 5_000)));
-  expect(cvWorkVersion(still, now)).not.toBe(cvWorkVersion(draft({ progressAt: ago(1_000) }), now));
-  expect(cvWorkVersion(still, now)).not.toBe(cvWorkVersion({ ...still, buildStage: "writing" }, now));
+  const flags = cvWorkFlags(still, task(), now);
+  expect(flags).toEqual({ stale: false, stopped: false });
+  const later = new Date(now.getTime() + 3 * 60_000);
+  expect(cvWorkVersion(still, cvWorkFlags(still, task(), later))).toBe(cvWorkVersion(still, flags));
+  expect(cvWorkVersion(draft({ progressAt: ago(1_000) }), cvWorkFlags(draft({ progressAt: ago(1_000) }), task(), now))).toBe(cvWorkVersion(still, flags));
+  // A stage change is the narrative's news, not a reason to render the page again.
+  expect(cvWorkVersion(draft({ progressAt: ago(5 * 60_000), buildStage: "writing" }), flags)).toBe(cvWorkVersion(still, flags));
+  expect(cvWorkVersion(still, flags)).toBe("generating:::");
+});
+
+it("changes the poll's version when the build goes stale, stops, or changes status", () => {
+  const still = draft({ progressAt: ago(5 * 60_000) });
+  const fresh = cvWorkVersion(still, cvWorkFlags(still, task(), now));
+  // Ten minutes without progress while the task still runs: the header has to say so.
+  const stale = draft({ progressAt: ago(11 * 60_000) });
+  expect(cvWorkFlags(stale, task(), now)).toEqual({ stale: true, stopped: false });
+  expect(cvWorkVersion(stale, cvWorkFlags(stale, task(), now))).toBe("generating::stale:");
+  // The same minutes cross the line on the clock alone, once, not every minute after.
+  const at = (minutes: number) => new Date(now.getTime() + minutes * 60_000);
+  expect(cvWorkVersion(still, cvWorkFlags(still, task(), at(4)))).toBe(fresh);
+  expect(cvWorkVersion(still, cvWorkFlags(still, task(), at(6)))).toBe("generating::stale:");
+  expect(cvWorkVersion(still, cvWorkFlags(still, task(), at(9)))).toBe(cvWorkVersion(still, cvWorkFlags(still, task(), at(6))));
+  // Nothing working on it.
+  expect(cvWorkFlags(still, task({ status: "failed" }), now)).toEqual({ stale: false, stopped: true });
+  expect(cvWorkFlags(still, null, now)).toEqual({ stale: false, stopped: true });
+  expect(cvWorkVersion(still, cvWorkFlags(still, null, now))).toBe("generating:::stopped");
+  // A finished draft carries neither flag, whatever its task says.
+  expect(cvWorkFlags(draft({ status: "ready" }), null, now)).toEqual({ stale: false, stopped: false });
+  expect(cvWorkVersion(draft({ status: "ready" }))).toBe("ready:::");
+  // The worker's heartbeat changes what a waiting build says, never the token: the poll does not
+  // read it the way the page does, and the two must agree.
+  const queued = draft({ status: "queued", progressAt: null });
+  expect(cvWorkFlags(queued, task({ status: "queued", startedAt: ago(20 * 60_000), workerStopped: true }), now))
+    .toEqual(cvWorkFlags(queued, task({ status: "queued", startedAt: ago(20 * 60_000) }), now));
 });
 
 const failure = (overrides: Partial<CvBuildFailure> = {}): CvBuildFailure => ({
@@ -283,13 +317,12 @@ it("signs the ledger from the rows the page already has, in the poll's own terms
   expect(normaliseCvStepsSignature("0:0:nonsense")).toBe("0:0:nonsense");
 });
 
-it("carries the ledger and the failure into the poll's version", () => {
+it("carries the failure into the poll's version", () => {
   const still = draft({ progressAt: ago(5 * 60_000) });
-  expect(cvWorkVersion(still, now, "4:1:2026-09-18 11:58:00+00")).not.toBe(cvWorkVersion(still, now, "5:1:2026-09-18 11:59:00+00"));
-  expect(cvWorkVersion(still, now, "4:1:x")).toBe(cvWorkVersion(still, now, "4:1:x"));
   // A recorded failure changes it, and so does the same kind failing on the next attempt.
-  expect(cvWorkVersion({ ...still, failure: failure() }, now)).not.toBe(cvWorkVersion(still, now));
-  expect(cvWorkVersion({ ...still, failure: failure({ attempt: 2 }) }, now)).not.toBe(cvWorkVersion({ ...still, failure: failure() }, now));
+  expect(cvWorkVersion({ ...still, failure: failure() })).not.toBe(cvWorkVersion(still));
+  expect(cvWorkVersion({ ...still, failure: failure({ attempt: 2 }) })).not.toBe(cvWorkVersion({ ...still, failure: failure() }));
+  expect(cvWorkVersion({ ...still, failure: failure() })).toBe("generating:overloaded:1::");
 });
 
 it("says a queued build is waiting for a worker that is not running, rather than simply waiting", () => {

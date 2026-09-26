@@ -1,14 +1,14 @@
 import { cvVersionLabel } from "@/lib/cv-version";
 import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
-import { dailyCvVersions, getOwnCvBuildSteps, getOwnCvBuildTask, getOwnCvDraft } from "@/lib/queries/cv";
-import { cvBuildState, cvStepsSignature, cvWorkVersion } from "@/lib/cv-build-state";
+import { dailyCvVersions, getCvMotionMedians, getOwnCvDraft, readCvProgress } from "@/lib/queries/cv";
+import { cvBuildState } from "@/lib/cv-build-state";
+import { cvProgressReading } from "@/lib/cv-progress";
 import { cvDraftSize, cvEditCosts } from "@/lib/cv-quote";
 import { CvDisclosure } from "@/components/CvDisclosure";
 import { CvWorkspace, CvWorkspacePanel } from "@/components/CvWorkspace";
-import { CvBuildProgress } from "@/components/CvBuildProgress";
 import { CvGapQuiz } from "@/components/CvGapQuiz";
 import { answerCvGapQuiz } from "@/app/actions/cv";
-import { CvBuildLog, CvBuildNarrative } from "@/components/CvBuildNarrative";
+import { CvBuildLive } from "@/components/CvBuildLive";
 import { cvBuildTotals, cvBuildTotalsLine } from "@/lib/cv-build-narrative";
 import { CvBuildFailureNotice } from "@/components/CvBuildFailureNotice";
 import { getSystemSettings } from "@/lib/settings";
@@ -35,7 +35,6 @@ import { buttonClass } from "@/components/Button";
 import { inputClass } from "@/components/Field";
 import { PageHeader } from "@/components/PageHeader";
 import { SettingsForm } from "@/components/SettingsForm";
-import { AutoRefresh } from "@/components/AutoRefresh";
 import { isAdmin, needsEmailConfirmation, requireUser } from "@/lib/auth";
 
 /**
@@ -83,10 +82,10 @@ export default async function CvDraftPage({
   // A build that has stopped moving is indistinguishable from a slow one without the queue row
   // behind it: which attempt this is, whether anything still holds it, and what the last one left.
   const now = new Date();
-  const [buildTask, steps, system, admin, latestLibrary, sharing] = await Promise.all([
-    busy || failed ? getOwnCvBuildTask(user.id, id) : null,
-    // The ledger of motions: the narrative while it builds, the build log afterwards.
-    getOwnCvBuildSteps(user.id, id),
+  const [progress, system, admin, latestLibrary, sharing] = await Promise.all([
+    // The build's state, the queue row behind it and every motion of its ledger, in one read: the
+    // same read the progress feed makes, so the page and the feed assemble the same token.
+    readCvProgress(user.id, id),
     getSystemSettings(),
     isAdmin(),
     // This account's newest Library version, so the panel can say when the evidence behind this
@@ -101,9 +100,20 @@ export default async function CvDraftPage({
     // Both are scoped by the account and the draft, as every per-account read is.
     getOwnCvSharing(user.id, id),
   ]);
+  const buildTask = progress?.task ?? null;
+  const steps = progress?.steps ?? [];
   const build = busy || failed ? cvBuildState(draft, buildTask, now, system.timezone) : null;
-  const narrativeContext = { timeZone: system.timezone, versionLabel: version };
-  const maxAttempts = build?.maxAttempts ?? null;
+  // The first reading of the progress feed, from the rows just read: the full draft is newer than
+  // the progress read's copy of it by nothing but microseconds, and it is the one the page renders.
+  const reading = cvProgressReading(
+    { draft, task: buildTask, anyTaskActive: progress?.anyTaskActive ?? false, steps, signature: progress?.signature ?? "0:0:" },
+    now,
+    system.timezone,
+  );
+  const maxAttempts = build?.maxAttempts ?? buildTask?.maxAttempts ?? null;
+  // Typical durations, for "usually about 50 s" and the time left; held per process, and only read
+  // while there is a build to estimate.
+  const medians = reading.live ? await getCvMotionMedians() : {};
   const current =
     !!content &&
     cvAssessmentCurrent(
@@ -117,7 +127,7 @@ export default async function CvDraftPage({
   const blocked = needsEmailConfirmation(user) ? VERIFY_SENTENCE : null;
   const finaliseReason = finaliseObstacle(draft);
   // What the whole build came to, once there is nothing left running to change it.
-  const totals = !busy && steps.length ? cvBuildTotalsLine(cvBuildTotals(steps, now)) : null;
+  const totals = !busy && steps.length ? cvBuildTotalsLine(cvBuildTotals(steps, now, { live: reading.live })) : null;
   // The Library this revision was written from, and what has been saved over it since: the
   // sentence is only offered where there is an editor to rebuild from.
   const drift = libraryDriftSentence(draft.libraryVersion, latestLibrary[0]?.version);
@@ -246,15 +256,6 @@ export default async function CvDraftPage({
             footnote={`Retry or edit this attempt now. Only the newest failed attempt for a company and role is kept, so the next revision you start for ${draft.jobTitle} replaces it, and a revision that builds successfully removes it.`}
           />
         )}
-        {busy && (
-          // The ledger is already read above; its signature is derived from those rows rather than
-          // asked of the database a second time.
-          <AutoRefresh
-            cvId={id}
-            initialVersion={cvWorkVersion(draft, now, cvStepsSignature(steps))}
-            message={null}
-          />
-        )}
         {(!content || busy) && (
           <CvWorkspacePanel tab="appearance">
             <h2 className="ds-pixel text-12">Appearance and CV settings</h2>
@@ -288,33 +289,39 @@ export default async function CvDraftPage({
               </p>
             )}
             {busy && build && (
-              <CvBuildProgress
-                stage={draft.buildStage}
-                queued={draft.status === "queued"}
-                build={build}
-                startedAt={draft.createdAt}
-                now={now}
-                narrative={
-                  <CvBuildNarrative
-                    steps={steps}
-                    now={now}
-                    maxAttempts={maxAttempts}
-                    context={narrativeContext}
-                  />
-                }
+              // The build as it happens: rendered here once, then kept current in the browser by
+              // the progress feed, which re-renders this page only when the build changes state.
+              <CvBuildLive
+                key={`build:${reading.version}`}
+                id={id}
+                mode="build"
+                initial={reading}
+                nowMs={now.getTime()}
+                timeZone={system.timezone}
+                versionLabel={version}
+                maxAttempts={maxAttempts}
+                medians={medians}
                 action={
-                  build.phase === "stopped" ? (
-                    <p className="text-14 text-muted">
-                      Nothing is working on this build. It is retried automatically while attempts
-                      remain; once the worker gives up, this page offers Retry generation and your
-                      saved wording, if any, stays editable.
-                    </p>
-                  ) : undefined
+                  <p className="text-14 text-muted">
+                    Nothing is working on this build. It is retried automatically while attempts
+                    remain; once the worker gives up, this page offers Retry generation and your
+                    saved wording, if any, stays editable.
+                  </p>
                 }
               />
             )}
             {!busy && (
-              <CvBuildLog steps={steps} now={now} maxAttempts={maxAttempts} context={narrativeContext} />
+              <CvBuildLive
+                key={`log:${reading.version}`}
+                id={id}
+                mode="log"
+                initial={reading}
+                nowMs={now.getTime()}
+                timeZone={system.timezone}
+                versionLabel={version}
+                maxAttempts={maxAttempts}
+                medians={medians}
+              />
             )}
           </CvWorkspacePanel>
         )}
@@ -332,7 +339,19 @@ export default async function CvDraftPage({
             // card is offered only then — or kept where links already exist, so they can be ended.
             share={(draft.status === "ready" && draft.assessment) || sharing.shares.length > 0 ? <CvShareCard draftId={id} shares={sharing.shares} now={now} /> : undefined}
             buildLog={
-              <CvBuildLog steps={steps} now={now} maxAttempts={maxAttempts} context={narrativeContext} />
+              // A ready CV's log keeps growing while the improvement pass that runs after it was
+              // published is still at work, and links to the revision that pass adopts.
+              <CvBuildLive
+                key={`log:${reading.version}`}
+                id={id}
+                mode="log"
+                initial={reading}
+                nowMs={now.getTime()}
+                timeZone={system.timezone}
+                versionLabel={version}
+                maxAttempts={maxAttempts}
+                medians={medians}
+              />
             }
             tracking={
               <>

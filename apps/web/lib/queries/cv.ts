@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, isNull, isNotNull, sql } from "drizzle-orm";
 import {
-  cvBuildStepsSignature,
+  cvBuildMotionStats,
   cvDrafts,
   cvLibraries,
   cvVersions,
@@ -9,10 +9,13 @@ import {
   listCvBuildSteps,
   tasks,
 } from "@ava/db";
-import type { CvBuildFailure, CvBuildStepView, CvLibrary } from "@ava/core";
+import type { CvBuildCheckpoint, CvBuildFailure, CvBuildStepView, CvLibrary } from "@ava/core";
 import { libraryEntryInputHash, normaliseLibraryReview } from "@ava/core/library-review";
-import { cvWorkVersion, normaliseCvStepsSignature } from "@/lib/cv-build-state";
-import { getWorkerHeartbeat } from "@/lib/queries/health";
+import type { CvBuildTask } from "@/lib/cv-build-state";
+import type { CvJournalStep } from "@/lib/cv-build-journal";
+import { CV_MEDIAN_MIN_RUNS, type CvMotionMedians } from "@/lib/cv-build-narrative";
+import type { CvProgressRows } from "@/lib/cv-progress";
+import { getWorkerHeartbeat, readHeartbeat } from "@/lib/queries/health";
 import { deriveWorkerStatus } from "@/lib/worker-status";
 import type { LibraryEvidence } from "@/lib/cv-library-evidence";
 import {
@@ -165,29 +168,162 @@ export async function getOwnCvDraft(userId: string, id: string): Promise<typeof 
   return draft ? { ...draft, progressAt: null, buildCheckpoint: null, failure: null, gapQuiz: null } : null;
 }
 
-/**
- * What one account's poll needs of its draft: its state, its staleness and its last failure. The
- * same migration guard as `getOwnCvDraft`, because `/api/work-status` is asked for this every ten
- * seconds by every open CV page.
- */
-export async function getOwnCvWorkRow(userId: string, id: string) {
-  const owned = and(eq(cvDrafts.id, id), eq(cvDrafts.userId, userId));
-  const settled = {
-    id: cvDrafts.id,
-    status: cvDrafts.status,
-    buildStage: cvDrafts.buildStage,
-    createdAt: cvDrafts.createdAt,
+/** The raw row `readCvProgress` reads, before it is shaped. */
+interface CvProgressRow extends Record<string, unknown> {
+  status: CvProgressRows["draft"]["status"];
+  buildStage: string | null;
+  error: string | null;
+  createdAt: Date | string;
+  progressAt: Date | string | null;
+  failure: CvBuildFailure | null;
+  buildCheckpoint: CvBuildCheckpoint | null;
+  taskStatus: CvBuildTask["status"] | null;
+  attempts: number | null;
+  maxAttempts: number | null;
+  taskError: string | null;
+  taskStartedAt: Date | string | null;
+  anyTaskActive: boolean;
+  heartbeat: unknown;
+  n: number | null;
+  running: number | null;
+  last: string | null;
+  steps: Array<Record<string, unknown>> | null;
+}
+
+const asDate = (value: Date | string | null | undefined): Date | null => (value === null || value === undefined ? null : value instanceof Date ? value : new Date(value));
+
+/** One step as `json_build_object` wrote it, back into the shape the narrative reads. */
+function journalStep(row: Record<string, unknown>): CvJournalStep {
+  return {
+    id: String(row.id),
+    seq: Number(row.seq),
+    attempt: Number(row.attempt ?? 1),
+    taskId: typeof row.taskId === "string" ? row.taskId : null,
+    stage: String(row.stage),
+    motion: String(row.motion),
+    title: String(row.title),
+    status: row.status as CvJournalStep["status"],
+    startedAt: new Date(String(row.startedAt)),
+    finishedAt: row.finishedAt ? new Date(String(row.finishedAt)) : null,
+    ms: row.ms === null || row.ms === undefined ? null : Number(row.ms),
+    detail: row.detail && typeof row.detail === "object" ? (row.detail as Record<string, unknown>) : {},
+    error: typeof row.error === "string" ? row.error : null,
+    failure: (row.failure as CvJournalStep["failure"]) ?? null,
   };
-  if (await cvBuildColumnsPresent()) {
-    const [row] = await db()
-      .select({ ...settled, progressAt: cvDrafts.progressAt, failure: cvDrafts.failure })
-      .from(cvDrafts)
-      .where(owned)
-      .limit(1);
-    return row ?? null;
+}
+
+export interface CvProgressWindow {
+  /** Only steps after this `seq` — plus any still open, and any closed since `last`. 0 for all. */
+  after?: number;
+  /** The newest moment the reader already has: steps that closed later come back with the delta. */
+  last?: Date | null;
+}
+
+/**
+ * Everything one reading of a build needs, in one query: the draft's own state, the newest queue
+ * row behind it, whether any row for it is still at work, the worker's heartbeat, the ledger's
+ * signature over every row, and the rows the reader has not seen — those after the last `seq` it
+ * has, those still open, and those that closed after the newest moment it has.
+ *
+ * This is the progress feed's whole cost per poll, beside the session lookup: the page polls it
+ * every ten to thirty seconds per open tab, so it is one round trip, not the three sequential reads
+ * and the separate ledger aggregate the version token used to take. Read through the owner: the
+ * draft, its steps and its tasks are reached only by an id this account owns.
+ *
+ * Guarded for a release serving ahead of the worker's migration: a database without the build
+ * columns or the ledger reads as a build that has recorded nothing, never an error.
+ */
+export async function readCvProgress(userId: string, draftId: string, window: CvProgressWindow = {}): Promise<CvProgressRows | null> {
+  // `seq` is an int4: a larger bound would be a type error in the database, not an empty delta.
+  const after = Math.min(2_147_483_647, Math.max(0, Math.floor(window.after ?? 0)));
+  const last = window.last ? window.last.toISOString() : null;
+  let row: CvProgressRow | undefined;
+  try {
+    const result = await db().execute<CvProgressRow>(sql`
+      select d.status, d.build_stage as "buildStage", d.error, d.created_at as "createdAt",
+        d.progress_at as "progressAt", d.failure, d.build_checkpoint as "buildCheckpoint",
+        t.status as "taskStatus", t.attempts, t.max_attempts as "maxAttempts", t.error as "taskError",
+        t.started_at as "taskStartedAt",
+        exists (select 1 from tasks a where a.payload->>'draftId' = d.id::text and a.status in ('queued', 'running')) as "anyTaskActive",
+        (select h.value from settings h where h.key = 'internal:workerHeartbeat') as heartbeat,
+        agg.n, agg.running,
+        to_char(date_trunc('milliseconds', agg.last) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as last,
+        rows.steps
+      from cv_drafts d
+      left join lateral (
+        select q.status, q.attempts, q.max_attempts, q.error, q.started_at from tasks q
+        where q.type = 'generate_cv' and q.payload->>'draftId' = d.id::text
+        order by case when q.status in ('queued', 'running') then 0 else 1 end, q.created_at desc, q.id desc
+        limit 1
+      ) t on true
+      left join lateral (
+        select count(*)::int as n, count(*) filter (where s.status = 'running')::int as running,
+          max(coalesce(s.finished_at, s.started_at)) as last
+        from cv_build_steps s where s.draft_id = d.id and s.user_id = d.user_id
+      ) agg on true
+      left join lateral (
+        select json_agg(json_build_object(
+          'id', s.id, 'seq', s.seq, 'attempt', s.attempt, 'taskId', s.task_id, 'stage', s.stage,
+          'motion', s.motion, 'title', s.title, 'status', s.status, 'startedAt', s.started_at,
+          'finishedAt', s.finished_at, 'ms', s.ms, 'detail', s.detail, 'error', s.error, 'failure', s.failure
+        ) order by s.seq) as steps
+        from cv_build_steps s
+        where s.draft_id = d.id and s.user_id = d.user_id
+          and (s.seq > ${after} or s.status = 'running'
+            or date_trunc('milliseconds', s.finished_at) > coalesce(${last}::timestamptz, '-infinity'::timestamptz))
+      ) rows on true
+      where d.id = ${draftId} and d.user_id = ${userId}`);
+    row = result.rows[0];
+  } catch {
+    return readCvProgressBehind(userId, draftId);
   }
-  const [row] = await db().select(settled).from(cvDrafts).where(owned).limit(1);
-  return row ? { ...row, progressAt: null, failure: null as CvBuildFailure | null } : null;
+  if (!row) return null;
+  const heartbeat = readHeartbeat(row.heartbeat);
+  const worker = deriveWorkerStatus({ heartbeat, restartsLastHour: 0, restartsLastDay: 0 });
+  const steps = (row.steps ?? []).map(journalStep);
+  return {
+    draft: {
+      status: row.status,
+      buildStage: row.buildStage,
+      error: row.error,
+      createdAt: asDate(row.createdAt)!,
+      progressAt: asDate(row.progressAt),
+      failure: row.failure ?? null,
+      buildCheckpoint: row.buildCheckpoint ?? null,
+    },
+    task: row.taskStatus
+      ? {
+          status: row.taskStatus,
+          attempts: Number(row.attempts ?? 0),
+          maxAttempts: Number(row.maxAttempts ?? 0),
+          error: row.taskError,
+          startedAt: asDate(row.taskStartedAt),
+          workerStopped: worker.state === "stopped",
+        }
+      : null,
+    anyTaskActive: !!row.anyTaskActive,
+    steps,
+    signature: `${row.n ?? 0}:${row.running ?? 0}:${row.last ?? ""}`,
+  };
+}
+
+/** The same reading from a database the worker has not migrated: the draft and its task, no ledger. */
+async function readCvProgressBehind(userId: string, draftId: string): Promise<CvProgressRows | null> {
+  const owned = and(eq(cvDrafts.id, draftId), eq(cvDrafts.userId, userId));
+  const [draft] = await db()
+    .select({ status: cvDrafts.status, buildStage: cvDrafts.buildStage, error: cvDrafts.error, createdAt: cvDrafts.createdAt })
+    .from(cvDrafts)
+    .where(owned)
+    .limit(1);
+  if (!draft) return null;
+  const task = await getOwnCvBuildTask(userId, draftId);
+  return {
+    draft: { ...draft, progressAt: null, failure: null, buildCheckpoint: null },
+    task,
+    anyTaskActive: task?.status === "queued" || task?.status === "running",
+    steps: [],
+    signature: "0:0:",
+  };
 }
 
 /**
@@ -244,25 +380,32 @@ export async function getOwnCvBuildSteps(userId: string, draftId: string): Promi
 }
 
 /**
- * The token the poll compares: the draft's own state and staleness, the failure it recorded, and
- * the signature of its ledger — so a motion opening or closing refreshes the page as surely as a
- * stage change does.
+ * How long each motion usually takes, for the estimate beside a running motion and the time left
+ * once writing has closed. Only motions with at least `CV_MEDIAN_MIN_RUNS` runs in thirty days are
+ * kept, because a median of three builds is an anecdote.
  *
- * This is the poll's route to it, which has only an id and so asks the database for the ledger's
- * signature. The page has the rows themselves and passes `cvStepsSignature` of them to
- * `cvWorkVersion`; both are reduced to the same canonical moment, so the two agree.
+ * Read across every account, but it carries nothing of anyone's: a motion name and a duration. It
+ * is held for ten minutes per process, so the CV page's renders cost one aggregate every ten
+ * minutes rather than one each; the progress feed never reads it.
  */
-export async function cvWorkVersionFor(
-  draft: { id: string; status: string; buildStage: string | null; progressAt: Date | null; createdAt: Date; failure?: CvBuildFailure | null },
-  now: Date = new Date(),
-): Promise<string> {
-  let signature = "";
-  try {
-    signature = normaliseCvStepsSignature(await cvBuildStepsSignature(db(), draft.id));
-  } catch {
-    // No ledger yet: the version still moves on the draft's own state and the minute tick.
-  }
-  return cvWorkVersion(draft, now, signature);
+const MEDIANS_TTL_MS = 10 * 60_000;
+let medians: { at: number; value: Promise<CvMotionMedians> } | null = null;
+
+export function getCvMotionMedians(now: number = Date.now()): Promise<CvMotionMedians> {
+  if (medians && now - medians.at < MEDIANS_TTL_MS) return medians.value;
+  const value = cvBuildMotionStats(db(), 30)
+    .then((stats) => Object.fromEntries(stats.filter((stat) => stat.runs >= CV_MEDIAN_MIN_RUNS && stat.medianMs !== null && stat.medianMs > 0).map((stat) => [stat.motion, stat.medianMs!])))
+    .catch(() => {
+      medians = null;
+      return {} as CvMotionMedians;
+    });
+  medians = { at: now, value };
+  return value;
+}
+
+/** For tests: forget the cached medians. */
+export function resetCvMotionMedians(): void {
+  medians = null;
 }
 
 /**

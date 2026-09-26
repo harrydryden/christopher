@@ -650,18 +650,20 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
         .getAttribute("aria-selected"),
       "true",
     );
-    let statusAttempts = 0;
-    await page.route(`**/api/work-status?cv=${busyId}`, (route) => {
-      if (statusAttempts++ === 0)
+    // The page follows the build through its progress feed. Lose the first reading of it: the next
+    // one must still bring the motions in, and nothing about the page may depend on that one.
+    let progressAttempts = 0;
+    await page.route(`**/api/cv/${busyId}/progress*`, (route) => {
+      if (progressAttempts++ === 0)
         return route.fulfill({ status: 503, body: "Temporary status failure" });
       return route.continue();
     });
-    // Lose the first stage refresh response as well as the first status request.
-    // The next poll must retry an unchanged-but-not-yet-rendered stage version.
-    let droppedStageRefresh = false;
+    // Lose the first server render the finished build asks for, as a dropped RSC response would:
+    // the poller must render the finished page anyway, by a second refresh or a document reload.
+    let droppedRefresh = false;
     await page.route(`**/cv/${busyId}?*`, (route) => {
-      if (!droppedStageRefresh && route.request().headers()["rsc"] === "1") {
-        droppedStageRefresh = true;
+      if (!droppedRefresh && route.request().headers()["rsc"] === "1") {
+        droppedRefresh = true;
         return route.abort("failed");
       }
       return route.continue();
@@ -727,14 +729,28 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       await mark.locator(".ds-mark-letter").first().evaluate((el) => getComputedStyle(el).animationName),
       "none",
     );
+    // The build moves on without the page being rendered again: the writing closes, the PDF is
+    // measured (which lights Optimise) and the assessment's batches open — all from the feed.
     await pool.query(
-      "update cv_drafts set build_stage = 'assessing' where id = $1",
-      [busyId],
+      "update cv_build_steps set status = 'done', finished_at = now(), ms = 21000, detail = detail || $2::jsonb where draft_id = $1 and seq = 4",
+      [busyId, JSON.stringify({ roles: 2, bullets: 6, characters: 900 })],
     );
+    await motion(busyId, 5, "fitting", "measure", "Measuring the PDF against your page limit", "running", 1, null, { maxPages: 2 });
+    await page
+      .getByRole("heading", { name: "Optimise", exact: true })
+      .waitFor({ timeout: 25_000 });
+    await pool.query(
+      "update cv_build_steps set status = 'done', finished_at = now(), ms = 800, detail = detail || $2::jsonb where draft_id = $1 and seq = 5",
+      [busyId, JSON.stringify({ pages: 2, outcome: "fits" })],
+    );
+    await motion(busyId, 6, "assessing", "assess_batch", "Checking requirements and claims against your evidence", "done", 1, 500, { pass: "draft", index: 1, of: 2, requirements: 6, claims: 3 });
+    await motion(busyId, 7, "assessing", "assess_batch", "Checking requirements and claims against your evidence", "running", 1, null, { pass: "draft", index: 2, of: 2, requirements: 6, claims: 2 });
     await page
       .getByRole("heading", { name: "Check and score", exact: true })
       .waitFor({ timeout: 25_000 });
-    assert.equal(droppedStageRefresh, true);
+    // The pass is one row that counts its batches, and the page never re-rendered to show it.
+    await narrative.getByText(/Checking requirements and claims against your evidence — 1 of 2 batches done/).waitFor({ timeout: 25_000 });
+    assert.equal(droppedRefresh, false, "a motion opening must not ask the server to render the page again");
     await pool.query(
       "update cv_drafts set status = 'ready', build_stage = null, content = $2 where id = $1",
       [busyId, JSON.stringify(content)],
@@ -744,25 +760,26 @@ export async function verifyCvWorkspace(baseUrl, cookie, databaseUrl, userId) {
       "update cv_build_steps set status = 'done', finished_at = now(), ms = 30000 where draft_id = $1 and status = 'running'",
       [busyId],
     );
-    await motion(busyId, 5, "publishing", "publish", "Saving the CV", "done", 1, 400, { revision: 1, archivedPrevious: false });
-    // The page notices the finished build on its ten-second refresh loop, and the test has just
-    // made it drop one status poll and one refresh on purpose, so allow four cycles, not two.
+    await motion(busyId, 8, "publishing", "publish", "Saving the CV", "done", 1, 400, { revision: 1, archivedPrevious: false });
+    // The page notices the finished build on its next reading of the feed, and the test drops the
+    // first render it asks for on purpose, so allow the second refresh or the reload to land.
     await page
       .getByRole("textbox", { name: "Profile", exact: true })
-      .waitFor({ timeout: 45_000 });
+      .waitFor({ timeout: 60_000 });
+    assert.equal(droppedRefresh, true);
     // The narrative outlives the build: collapsed on the Content tab, with what it cost.
     await page.getByRole("button", { name: "Show build log", exact: true }).click();
     const log = await page.getByRole("list", { name: "Build narrative", exact: true }).innerText();
     assert.match(log, /Saved as version \d{2}-[A-Z][a-z]{2}-V\d+/);
     assert.match(log, /Extracted 12 requirements/);
     assert.match(
-      await page.getByText(/5 motions in /).last().innerText(),
-      /5 motions in .+costing .{0,3}\$0\.28\./,
+      await page.getByText(/8 motions in /).last().innerText(),
+      /8 motions in .+costing .{0,3}\$0\.28\./,
     );
     // What the build cost is beside the revision's name, not only inside the collapsed log.
     assert.match(
       await page.locator("p").filter({ hasText: /^Version \d{2}-[A-Z][a-z]{2}-V\d+ · / }).first().innerText(),
-      /^Version \d{2}-[A-Z][a-z]{2}-V\d+ · 5 motions in .+costing .{0,3}\$0\.28\.$/,
+      /^Version \d{2}-[A-Z][a-z]{2}-V\d+ · 8 motions in .+costing .{0,3}\$0\.28\.$/,
     );
 
     // A build that stopped on something only the person can fix: what it was, and the way forward.

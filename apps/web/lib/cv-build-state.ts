@@ -23,59 +23,52 @@ import {
   type CvFailureKind,
 } from "@ava/core";
 import { formatClock } from "./format";
+import { cvStalledMessage } from "./cv-build-narrative";
 
 /** No progress for this long, while a task is still running, is worth saying out loud. */
 export const CV_PROGRESS_STALE_MS = 10 * 60_000;
 
 /**
- * The token the CV page's existing poll compares. It changes when the build changes state, when it
- * advances, when a motion of it opens or closes, when a failure is recorded — and once a minute
- * while none of that happens, so "last progress 12 minutes ago" and "running 46 s" keep counting on
- * a page that is otherwise waiting for something that will never come. One mechanism, not two:
- * `/api/work-status` and the page must produce the same string for the same rows, so both assemble
- * it here — the poll through `cvWorkVersionFor` in lib/queries/cv.ts, which has only the draft's
- * id, and the page from the steps it has already read.
+ * The two facts about a build's health the version token carries: it has not moved for ten minutes
+ * while something still holds it (`stale`), or nothing is working on it any more (`stopped`).
+ *
+ * Both are read from `cvBuildState` with the worker's heartbeat left out, because the poll and the
+ * page must produce the same token for the same rows; the heartbeat changes what a waiting build
+ * says, never whether it is stale or stopped.
  */
-export function cvWorkVersion(
-  draft: { status: string; buildStage: string | null; progressAt: Date | null; createdAt: Date; failure?: CvBuildFailure | null },
-  now: Date = new Date(),
-  /** `cvBuildStepsSignature`: the count, the open steps and the last moment any of them moved. */
-  stepsSignature = "",
-): string {
-  const since = (draft.progressAt ?? draft.createdAt).getTime();
-  const minutes = Math.max(0, Math.floor((now.getTime() - since) / 60_000));
-  // The kind and the attempt together: a second attempt failing the same way is still a change.
-  const failure = draft.failure ? `${draft.failure.kind}:${draft.failure.attempt ?? ""}` : "";
-  return `${draft.status}:${draft.buildStage ?? ""}:${since}:${minutes}:${failure}:${stepsSignature}`;
+export interface CvWorkFlags {
+  stale: boolean;
+  stopped: boolean;
 }
 
-/** The part of a step the version token is made of: whether it is open, and when it last moved. */
-export interface CvStepMoment {
-  status: CvBuildStepStatus;
-  startedAt: Date;
-  finishedAt: Date | null;
+export function cvWorkFlags(draft: CvBuildDraft, task: CvBuildTask | null, now: Date = new Date()): CvWorkFlags {
+  if (draft.status !== "queued" && draft.status !== "generating") return { stale: false, stopped: false };
+  const phase = cvBuildState(draft, task ? { ...task, workerStopped: undefined } : null, now).phase;
+  return { stale: phase === "stalled", stopped: phase === "stopped" };
 }
 
 /**
- * The ledger's part of the version token, from rows the page already has: how many motions there
- * are, how many are open, and the last moment any of them moved.
+ * The token the CV page's poll compares, which decides when the page is rendered again on the
+ * server. It changes only on a transition the server has to render: the draft's status, a failure
+ * being recorded (its kind and attempt, because a second attempt failing the same way is still a
+ * change), and the build going stale or stopping.
  *
- * The page renders the steps, so it must not query for a signature of the rows in front of it; the
- * poll has only the draft's id, so `/api/work-status` keeps the aggregate query in
- * `cvBuildStepsSignature`. Both go through this canonical form — UTC, to the millisecond —
- * because the two strings are compared against each other: the SQL one renders
- * `timestamptz::text`, which carries microseconds in the database's own timezone, and a page whose
- * version never matched the poll's would refresh itself every ten seconds for ever.
+ * It deliberately no longer carries the moment of the last progress, a minute tick or the ledger's
+ * signature. Those made every open CV page render itself again at least once a minute — the layout
+ * and the page, some twenty queries and a full payload each time — to move figures the page now
+ * moves on its own: the progress feed brings each motion as it opens and closes, and the elapsed
+ * figures count on the client.
+ *
+ * `/api/cv/[id]/progress` and the page both assemble it here, from the same rows, so the page's
+ * rendered token and the poll's agree.
  */
-export function cvStepsSignature(steps: readonly CvStepMoment[]): string {
-  let running = 0;
-  let last = 0;
-  for (const step of steps) {
-    if (step.status === "running") running++;
-    last = Math.max(last, (step.finishedAt ?? step.startedAt).getTime());
-  }
-  return `${steps.length}:${running}:${last ? new Date(last).toISOString() : ""}`;
+export function cvWorkVersion(draft: { status: string; failure?: CvBuildFailure | null }, flags: CvWorkFlags = { stale: false, stopped: false }): string {
+  const failure = draft.failure ? `${draft.failure.kind}:${draft.failure.attempt ?? ""}` : "";
+  return `${draft.status}:${failure}:${flags.stale ? "stale" : ""}:${flags.stopped ? "stopped" : ""}`;
 }
+
+// The ledger's signature lives with the journal's types, where the browser can read it too.
+export { cvStepsSignature, type CvStepMoment } from "./cv-build-journal";
 
 /** `cvBuildStepsSignature`'s string reduced to what `cvStepsSignature` produces for the same rows. */
 export function normaliseCvStepsSignature(signature: string): string {
@@ -281,13 +274,7 @@ export function cvBuildState(draft: CvBuildDraft, task: CvBuildTask | null, now:
   }
 
   if (sinceProgressMs >= CV_PROGRESS_STALE_MS) {
-    const minutes = Math.floor(sinceProgressMs / 60_000);
-    return {
-      ...base,
-      phase: "stalled",
-      tone: "amber",
-      message: `No progress for ${minutes} minutes. The worker may be restarting; an administrator can see why in Operations.`,
-    };
+    return { ...base, phase: "stalled", tone: "amber", message: cvStalledMessage(sinceProgressMs) };
   }
 
   // Handed back to the queue after a failed attempt, and waiting to be picked up again.

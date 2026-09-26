@@ -117,6 +117,39 @@ export function stepWorkPoll(previous: WorkPollState, reading: WorkReading): { s
   return { state: { ...state, seen: reading.version, requested: undefined, retries: 0, wait, settled: 0 }, refresh: false, reload: false, next: wait };
 }
 
+/**
+ * The CV page's progress feed backs off no further than this. A reading of it is one query that
+ * returns only what moved, so it can afford to ask more often than a page re-render could, and a
+ * build's motions open and close every few seconds to a few minutes.
+ */
+export const PROGRESS_LONGEST_MS = 30_000;
+
+/**
+ * One reading of the CV page's progress feed. The version decides server renders exactly as
+ * `stepWorkPoll` does — including the finished build's soft refreshes and the document reload that
+ * recovers a refresh that never landed — and `stepsChanged` (the feed brought rows the page did not
+ * have) only brings the next reading forward, because the page renders those rows itself.
+ */
+export function stepProgressPoll(
+  previous: WorkPollState,
+  reading: WorkReading,
+  stepsChanged: boolean,
+): { state: WorkPollState; refresh: boolean; reload: boolean; next: number | null } {
+  const step = stepWorkPoll(previous, reading);
+  if (step.next === null || step.reload || !reading.active) return step;
+  const wait = step.refresh || stepsChanged ? FIRST_POLL_MS : Math.min(step.next, PROGRESS_LONGEST_MS);
+  return { ...step, state: { ...step.state, wait }, next: wait };
+}
+
+/**
+ * The ready page's build log, which keeps reading while the improvement pass runs after the CV
+ * was published: sooner when rows arrived, backing off while none do, and stopping once nothing is
+ * writing to the ledger. There is no render to ask for — the log renders the rows itself.
+ */
+export function nextLogPoll(wait: number, live: boolean, changed: boolean): number | null {
+  return live ? nextPollDelay(wait, changed, FIRST_POLL_MS, PROGRESS_LONGEST_MS) : null;
+}
+
 /** The banner's cadence while a run is in progress or about to start, and what it backs off to. */
 export const BANNER_FIRST_MS = 30_000;
 

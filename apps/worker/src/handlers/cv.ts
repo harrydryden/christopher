@@ -388,8 +388,12 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
           if ("refused" in admitted) {
             step.add({ limitUsd: admitted.refused.limitUsd, heldUsd: usd(admitted.refused.held),
               leftUsd: usd(Math.max(0, admitted.refused.limitUsd - admitted.refused.spent - admitted.refused.held)) });
-            throw new CvBuildStop("budget_exhausted",
+            const refusal = new CvBuildStop("budget_exhausted",
               aiBudgetRefusalMessage(`This build's ${CV_STAGE_LABELS[stageName]}`, expected, admitted.refused), { motion: "admit_budget" });
+            // After publication a refusal only means the optional work is not done: the step
+            // closes as skipped here, because nothing downstream fails it or ever will.
+            if (published) await journal.close(step, "skipped", { reason: keptBecause(refusal.message) });
+            throw refusal;
           }
           hold = admitted;
           reservedUsd += expected;
@@ -973,9 +977,13 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
           candidateAssessment = await assessContent(fitted.content, "revision", fitted.pageCount);
         } catch (error) {
           if (interrupted || error instanceof CvDeletedError) throw interrupted ?? error;
-          await journal.failOpen(`Kept the original CV: ${(error as Error).message}`);
+          // The re-check did not finish — refused by the budget, stopped at its allowance, or a
+          // batch failed. The CV is ready and stays so: what this pass left open is skipped, never
+          // failed, and the narrative ends on the original being kept, with why.
+          const reason = keptBecause((error as Error).message);
+          await journal.skipOpen(reason);
           await journal.record("compare_content", { accepted: false, reasons: ["The optional revision could not be verified; the checked original was retained."] });
-          await keep("the revision could not be checked");
+          await keep(reason);
           return;
         }
         const comparison = compareCvQuality(args.baselineAssessment, args.baselineContent, candidateAssessment, fitted.content);

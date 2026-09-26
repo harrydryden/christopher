@@ -94,6 +94,8 @@ export type CvBuildStepDetails = {
    */
   admit_budget: {
     stage?: CvBuildStageName; expectedUsd?: number; limitUsd?: number; heldUsd?: number; leftUsd?: number;
+    /** Closed `skipped` with this when an optional stage after publication was refused: the original stands. */
+    reason?: string;
   };
   rubric: CvStepCost & {
     reused?: "checkpoint" | "parent" | "assessment";

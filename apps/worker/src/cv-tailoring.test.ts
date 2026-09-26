@@ -9,7 +9,8 @@ import { dedupeKeyFor } from "@ava/core";
 import { eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
-import { handleGenerateCv } from "./handlers/cv";
+import { handleGenerateCv, type CvBuildSink } from "./handlers/cv";
+import { recordAiUsage, tryReserveAi } from "./budget";
 import { estimateCvStage } from "./handlers/cv-stages";
 import { TaskQueue } from "./queue";
 import { onAbandon } from "./handlers/abandon";
@@ -334,3 +335,32 @@ it("corrects a writer answer citing a source the Library does not hold inside th
   expect(steps.find(step => step.motion === "rewrite")?.detail).toMatchObject({ attempt: 2, corrections: 1 });
   expect(scripted.authorInputs[1]!.layoutFeedback).toMatchObject({ corrections: [expect.stringContaining("<rejected_answer_problem>Unknown CV source: entry:one:row:99</rejected_answer_problem>")] });
 });
+
+for (const [refused, stage] of [[3, "improve"], [4, "reaudit"]] as const) {
+  it(`keeps the published baseline neutrally when the ${stage} stage's admission is refused after publication`, async () => {
+    const scripted = scriptedClient(); deps.aiClient = scripted.client;
+    const draft = await makeDraft({ tailoringEnabled: true, tailoringPlan: noGapPlan, quizCompleted: true, rubric });
+    let admissions = 0;
+    const sink: CvBuildSink = {
+      reserve: async (expected, limits) => ++admissions === refused
+        ? { refused: { limit: "account", limitUsd: 10, spent: 9.99, held: 0 } }
+        : tryReserveAi(db, "CV", expected, limits, new Date(), 30),
+      record: (usage, hold) => recordAiUsage(db, userId, usage, { hold }),
+    };
+    const [task] = await db.select().from(schema.tasks);
+    await handleGenerateCv({ ...task!, attempts: 1, maxAttempts: 3 }, deps, { signal: new AbortController().signal, sink });
+    const saved = await draftAfter(draft.id);
+    expect(saved.status).toBe("ready");
+    expect(saved.content?.sections[0]?.bullets).toEqual(["Led a team"]);
+    expect(await db.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.parentId, draft.id))).toHaveLength(0);
+    const steps = await listCvBuildSteps(db, userId, draft.id);
+    // Nothing is left running and nothing reads as failed over a ready CV.
+    expect(steps.filter(step => step.status === "running" || step.status === "failed").map(step => step.motion)).toEqual([]);
+    const admit = steps.filter(step => step.motion === "admit_budget").at(-1)!;
+    expect(admit).toMatchObject({ status: "skipped", detail: { stage, reason: expect.stringMatching(/^this build's /) } });
+    const adopt = steps.find(step => step.motion === "adopt_revision")!;
+    expect(adopt).toMatchObject({ status: "skipped", detail: { reason: expect.stringMatching(/^this build's /) } });
+    expect(steps.at(-1)!.motion).toBe("adopt_revision");
+    expect(scripted.calls.filter(call => call === "improvement")).toHaveLength(stage === "improve" ? 0 : 1);
+  });
+}

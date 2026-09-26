@@ -83,6 +83,23 @@ export interface PromptEntry {
   expectedOutputTokens: number;
 }
 
+/**
+ * What a call writes at each effort, relative to `high`. Effort does not change the price of a
+ * token; it changes how many the model spends thinking and writing, which are billed as output.
+ * Each entry's `expectedOutputTokens` is calibrated at its own default effort, and an estimate for
+ * a stage routed to another effort scales it by the ratio of these (`expectedOutputTokens`).
+ *
+ * These ratios are an assumption, not a measurement: no live run at a lower effort has been
+ * recorded yet. Replace them from the output tokens a replay at that effort reports (docs/DEPLOY.md,
+ * "Changing a stage's effort or model") once one has been run.
+ */
+export const EFFORT_OUTPUT_SCALE: Readonly<Record<Effort, number>> = { low: 0.45, medium: 0.7, high: 1, xhigh: 1.35, max: 1.75 };
+
+/** What one call of `entry` is expected to write at `effort`: its calibration, scaled, within its ceiling. */
+export function expectedOutputTokens(entry: PromptEntry, effort: Effort = entry.effort): number {
+  return Math.min(entry.maxTokens, Math.round(entry.expectedOutputTokens * EFFORT_OUTPUT_SCALE[effort] / EFFORT_OUTPUT_SCALE[entry.effort]));
+}
+
 /** Assessment batches hold at most this many requirements and this many claims. */
 export const CV_REVIEW_BATCH_SIZE = 8;
 

@@ -1,4 +1,4 @@
-import { PROMPTS, resolveRoute, routedModel, type CacheTtl, type PromptEntry, type PromptId, type StageRoutes } from "./prompt-registry";
+import { EFFORT_OUTPUT_SCALE, PROMPTS, expectedOutputTokens, resolveRoute, routedModel, type CacheTtl, type PromptEntry, type PromptId, type StageRoutes } from "./prompt-registry";
 
 /**
  * USD per million tokens. Check against Anthropic's pricing page before relying on the numbers.
@@ -135,9 +135,12 @@ function cvBuildUsage(size: CvBuildSize, parts: CvBuildParts): TokenUsage {
 export function estimateCvBuildUsd(model: string, size: CvBuildSize, parts: CvBuildParts = "all", routes?: StageRoutes | null): number {
   // A stage the administrator has routed to another model is priced at that model. With none
   // routed away, the whole build is priced at the one model, exactly as it always was.
+  // A stage routed to another effort writes more or less (`EFFORT_OUTPUT_SCALE`); its input is unchanged.
   const stages = cvBuildStages(size, parts);
-  if (stages.some(([id]) => cvStageModel(id, model, routes) !== model))
-    return Number(stages.reduce((sum, [id, usage]) => sum + estimateCostUsd(cvStageModel(id, model, routes), usage), 0).toFixed(6));
+  const scale = (id: PromptId) => EFFORT_OUTPUT_SCALE[resolveRoute(PROMPTS[id], routes).effort] / EFFORT_OUTPUT_SCALE[PROMPTS[id].effort];
+  if (stages.some(([id]) => cvStageModel(id, model, routes) !== model || scale(id) !== 1))
+    return Number(stages.reduce((sum, [id, usage]) =>
+      sum + estimateCostUsd(cvStageModel(id, model, routes), { ...usage, outputTokens: usage.outputTokens * scale(id) }), 0).toFixed(6));
   if (parts === "tailored" || parts === "tailored_completion" || parts === "tailored_assessment") {
     const library = size.libraryBytes / 3;
     const description = size.descriptionBytes / 3;
@@ -190,7 +193,7 @@ export interface StageSizes {
   tailBytes: number;
   /** How many calls of this entry the stage makes: an audit's batches, the fitter's attempts. Default 1. */
   calls?: number;
-  /** What each call writes; defaults to the entry's calibrated `expectedOutputTokens`. */
+  /** What each call writes; defaults to the entry's calibrated `expectedOutputTokens` at its routed effort. */
   outputTokens?: number;
 }
 
@@ -212,7 +215,8 @@ export interface StageModels {
  * each time. English runs about four bytes a token, so a third of the byte count leaves headroom.
  */
 export function estimateStage(entry: PromptEntry, sizes: StageSizes, models: StageModels = {}): number {
-  const model = routedModel(resolveRoute(entry, models.routes), { cvModel: models.cvModel, callSite: models.callSiteModel }, FALLBACK_MODEL);
+  const route = resolveRoute(entry, models.routes);
+  const model = routedModel(route, { cvModel: models.cvModel, callSite: models.callSiteModel }, FALLBACK_MODEL);
   const calls = Math.max(1, Math.round(sizes.calls ?? 1));
   const tokens = (bytes: number) => Math.max(0, bytes) / 3;
   const segments: Array<{ tokens: number; ttl: CacheTtl | null }> = [
@@ -235,7 +239,8 @@ export function estimateStage(entry: PromptEntry, sizes: StageSizes, models: Sta
     cacheWriteTokens: cached,
     cacheWrite1hTokens: written1h,
     cacheReadTokens: (calls - 1) * cached,
-    outputTokens: calls * (sizes.outputTokens ?? entry.expectedOutputTokens),
+    // At the effort the stage is routed to: a lower effort writes less, and output is the dear part.
+    outputTokens: calls * (sizes.outputTokens ?? expectedOutputTokens(entry, route.effort)),
   });
 }
 

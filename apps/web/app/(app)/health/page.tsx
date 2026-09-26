@@ -9,6 +9,8 @@ import { relativeTime } from "@/lib/format";
 import { workerStatusSentence } from "@/lib/worker-status";
 import { countHealthItems, getWorkerStatus, healthItems, listRecentProblemScans, listRecentScanRuns } from "@/lib/queries/health";
 import { needsEmailConfirmation, requireUser } from "@/lib/auth";
+import { getSystemSettings } from "@/lib/settings";
+import { stageRouteWarnings } from "@/lib/stage-routes";
 
 export const dynamic = "force-dynamic";
 
@@ -16,13 +18,17 @@ export const dynamic = "force-dynamic";
 export default async function HealthPage() {
   const user = await requireUser();
   const now = new Date();
-  const [items, itemCount, problemScans, scanRuns, status] = await Promise.all([
+  const [items, itemCount, problemScans, scanRuns, status, system] = await Promise.all([
     healthItems(user.id, now),
     countHealthItems(user.id, now),
     listRecentProblemScans(user.id, 7),
     listRecentScanRuns(10, user.id),
     getWorkerStatus(now),
+    user.role === "admin" ? getSystemSettings() : Promise.resolve(null),
   ]);
+  // A stage the administrator routed to a model or effort no committed evaluation graded: the
+  // switch is theirs, but it should follow a passing replay rather than stand in for one.
+  const routeWarnings = system ? stageRouteWarnings(system.stageRoutes) : [];
   // A heartbeat is rewritten on every boot, so "reported a minute ago" is true of a worker that
   // has crashed a hundred times today. When it has, say so instead.
   const trouble = workerStatusSentence(status);
@@ -52,6 +58,19 @@ export default async function HealthPage() {
           </div>
         )}
       </Card>
+
+      {routeWarnings.length > 0 && (
+        <Card title={`Stage routes not evaluated (${routeWarnings.length})`}>
+          <div className="space-y-2">
+            {routeWarnings.map((warning) => (
+              <p key={warning} className="text-14 text-warn">{warning}</p>
+            ))}
+            <p className="text-12 text-muted">
+              Change them on <Link prefetch={false} href="/admin/settings" className="text-fg underline">System settings</Link>; the procedure is in docs/DEPLOY.md, &ldquo;Changing a stage&rsquo;s effort or model&rdquo;.
+            </p>
+          </div>
+        </Card>
+      )}
 
       <Card title="Background worker">
         <p className="text-14">

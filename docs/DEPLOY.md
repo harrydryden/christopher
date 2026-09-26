@@ -377,7 +377,10 @@ The expected workflow for a pull request that edits a prompt:
 2. Replay it into the report: `pnpm cli replay <draft-id> --recordings <file> --out
    docs/evaluations/cv-replay/report.json`. The report is at the new prompt set and, because the
    recording came from the provider, is not marked unverified.
-3. Commit the report with the prompt change. Its grade is what a reviewer reads.
+3. Run `pnpm exec tsx scripts/check-evaluation-reports.ts --write`, which copies the report's graded
+   routes into `packages/core/src/evaluated-routes.ts` (what Health compares the `stageRoutes`
+   setting against; CI fails while the two disagree), and commit both with the prompt change. The
+   report's grade is what a reviewer reads.
 
 Where no key is available (CI, a contributor without one), the mechanism still runs end to end on
 the scripted client: `DATABASE_URL=<scratch database> pnpm exec tsx scripts/cv-replay-fixture.mts
@@ -386,6 +389,40 @@ rebuild through the scripted client, and replaying that recording writes a repor
 `"unverified": true` — the recording says its answers were scripted. That satisfies the gate while
 saying plainly that no model graded the new prompts; replace it with a live report before relying
 on the change. The report committed today is of this kind.
+
+## Changing a stage's effort or model
+
+Every CV stage runs at its registry route (the account's CV model, at `high` effort) unless the
+`stageRoutes` system setting overrides it (Admin › System settings, "Stage routes"). The default
+is not changed in code: moving a stage — the audit to `medium` effort, say — is the
+administrator's decision, made through the setting once a replay on real drafts has passed. Effort
+changes no token's price, only how many the stage writes, and the estimator scales each stage's
+expected output by effort (`EFFORT_OUTPUT_SCALE` in `packages/ai/src/prompt-registry.ts`); those
+ratios are an assumption until a run at the new effort has been measured.
+
+1. **Record the current route on your own drafts.** For two or three representative published CVs,
+   `pnpm cli record <draft-id>` (paid, one build each; it publishes nothing and charges no account's
+   budget). Each recording, in `docs/evaluations/recordings/`, ends with the recorded run's grade,
+   which the candidate is held to.
+2. **Replay each draft live at the candidate route, against that recording.**
+   `pnpm cli replay <draft-id> --routes '{"cv.review":{"effort":"medium"},"cv.review_candidate":{"effort":"medium"}}' --baseline <recording.jsonl> --out <candidate.json>`
+   (paid, publishes nothing). A replay from `--recordings` cannot do this: a recording answers only
+   the route it was made at, and a different effort is a miss that fails the replay by design.
+3. **Read the reports.** Every draft must grade `PASSED`: every claim supported, weighted coverage
+   not below the recording's, the page limit met, no essential requirement losing points. Compare
+   `costUsd`, `wallMs` and `byStage` with the recording's own report (its last line), and compare
+   the output tokens each audit call recorded with `EFFORT_OUTPUT_SCALE`, correcting the ratio in
+   the registry if it is far off. If any draft fails, stop here: the route stays as it is.
+4. **Commit the evidence.** Record one draft at the candidate route (`pnpm cli record <draft-id>
+   --routes '<json>'`), replay that recording into the report (`pnpm cli replay <draft-id>
+   --recordings <file> --routes '<json>' --out docs/evaluations/cv-replay/report.json`), run
+   `pnpm exec tsx scripts/check-evaluation-reports.ts --write` to update the graded routes
+   (`packages/core/src/evaluated-routes.ts`), and merge that through CI.
+5. **Flip the setting, and watch it.** Set the override on System settings. Health shows
+   administrators "Stage routes not evaluated" whenever an override differs from the route the last
+   committed report graded, so after step 4 it stays empty; before it, it names the stage. Watch
+   Operations' cost per build, retry rates and build failures over the next day's builds, and clear
+   the override to go back.
 
 ## Costs
 

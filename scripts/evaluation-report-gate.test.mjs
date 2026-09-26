@@ -1,8 +1,27 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkEvaluationReports, reportPromptSet } from "./evaluation-report-gate.mjs";
+import { checkEvaluationReports, evaluatedReport, renderEvaluatedRoutes, reportPromptSet } from "./evaluation-report-gate.mjs";
 
 const at = (path, report) => ({ path, report });
+
+test("names the newest replay report at the shipped prompt set, and renders its routes beside the registry's defaults", () => {
+  const route = (effort) => ({ model: "cvModel", resolvedModel: "m1", effort });
+  const reports = [
+    at("old/report.json", { kind: "cv-replay", at: "2026-09-01T00:00:00Z", promptSetVersion: "old", routes: { "cv.review": route("high") } }),
+    at("new/report.json", { kind: "cv-replay", at: "2026-09-20T00:00:00Z", promptSetVersion: "new", routes: { "cv.review": route("medium") } }),
+    at("later/report.json", { kind: "cv-replay", at: "2026-09-25T00:00:00Z", promptSetVersion: "old", routes: { "cv.review": route("low") } }),
+    at("other/report.json", { at: "2026-09-26T00:00:00Z", promptSetVersion: "new" }),
+  ];
+  assert.equal(evaluatedReport(reports, "new").path, "new/report.json");
+  assert.equal(evaluatedReport(reports, "none").path, "later/report.json");
+  const defaults = { "cv.review": { model: "cvModel", effort: "high" }, "cv.rubric": { model: "cvModel", effort: "high" } };
+  const text = renderEvaluatedRoutes(evaluatedReport(reports, "new"), defaults);
+  assert.match(text, /"report": "new\/report.json"/);
+  assert.match(text, /"cv.review": \{\n\s+"model": "cvModel",\n\s+"resolvedModel": "m1",\n\s+"effort": "medium",\n\s+"defaultModel": "cvModel",\n\s+"defaultEffort": "high"/);
+  assert.doesNotMatch(text, /cv\.rubric/);
+  // Deterministic, so CI can compare it with the committed file byte for byte.
+  assert.equal(text, renderEvaluatedRoutes(evaluatedReport(reports, "new"), defaults));
+});
 
 test("passes when a report is graded at the shipped prompt set", () => {
   const result = checkEvaluationReports([at("a/report.json", { promptSetVersion: "abc" })], "abc");

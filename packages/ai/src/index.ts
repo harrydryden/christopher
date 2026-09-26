@@ -9,7 +9,7 @@ export type { CvClaimMemo, CvClaimMemoRoute, CvClaimVerdict } from "./claim-memo
 export { UNVERIFIED_CLAIM_REASON } from "./cv-review-batch";
 export type { AiCallMeta, AiEngineOptions, AiFailure, AiFailureKind, AiUsageRecord, AiClientLike, AiStreamLike, CvAssessBatchEvent, CvAssessHooks, DecisionForDigest, LibraryReviewBatchEvent, LibraryReviewHooks, ParseResponse, Ref, ReserveHint } from "./engine";
 export {
-  CV_PROMPT_IDS, CV_REVIEW_BATCH_SIZE, EFFORTS, PROMPTS, PROMPT_IDS, assertCacheLayout, cvCallSiteTable, isPromptId, layoutFor, promptEntry,
+  CV_PROMPT_IDS, CV_REVIEW_BATCH_SIZE, EFFORT_OUTPUT_SCALE, EFFORTS, PROMPTS, PROMPT_IDS, assertCacheLayout, cvCallSiteTable, expectedOutputTokens, isPromptId, layoutFor, promptEntry,
   promptSetVersion, promptVersion, resolveRoute, routedModel,
 } from "./prompt-registry";
 export type {

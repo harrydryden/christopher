@@ -18,7 +18,7 @@ import { handleGenerateCv } from "./handlers/cv";
 import { onAbandon } from "./handlers/abandon";
 import { ensureTestUser } from "./test-users";
 import { seedReplayFixtureDraft } from "./cv-replay-fixture";
-import { mergeStageRoutes, recordCvDraft, replayFromRecording } from "./cv-replay";
+import { mergeStageRoutes, readRecordingHeader, recordCvDraft, replayCvDraft, replayFromRecording } from "./cv-replay";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
 
@@ -113,6 +113,28 @@ it("fails a replay asked for another route, naming the prompt and version the re
   expect(replay.report.routeOverrides).toEqual(routes);
   expect(replay.report.misses.map(miss => miss.promptId)).toContain("cv.review");
   expect(replay.report.grade).toBeNull();
+}, 120_000);
+
+it("replays live at a candidate route, sending the audit at that effort, graded against a recording's baseline", async () => {
+  const draft = await publishedDraft();
+  const path = join(mkdtempSync(join(tmpdir(), "ava-replay-")), "recording.jsonl");
+  deps.aiClient = createScriptedAiClient({ barrierMs: 200 }).client;
+  await recordCvDraft(deps, draft.id, { path });
+  deps.aiClient = undefined;
+
+  const candidate = createScriptedAiClient({ barrierMs: 200 });
+  const routes = { "cv.review": { effort: "medium" as const }, "cv.review_candidate": { effort: "medium" as const } };
+  const { report } = await replayCvDraft(deps, draft.id, {
+    client: candidate.client, routes, source: "live", baseline: readRecordingHeader(path).baseline,
+  });
+  const audits = candidate.calls.filter(call => call.kind === "review");
+  expect(audits.length).toBeGreaterThan(0);
+  expect(audits.every(call => (call.params.output_config as { effort: string }).effort === "medium")).toBe(true);
+  expect(candidate.calls.filter(call => call.kind === "author").every(call => (call.params.output_config as { effort: string }).effort === "high")).toBe(true);
+  expect(report).toMatchObject({ outcome: "published", source: "live", routeOverrides: routes });
+  expect(report.routes["cv.review_candidate"]!.effort).toBe("medium");
+  expect(report.baseline?.source).toBe("recording");
+  expect(report.grade?.invariants.coverageNotLower).toBe(true);
 }, 120_000);
 
 it("lays the command's routes over the deployment's, field by field", () => {

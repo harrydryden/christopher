@@ -16,10 +16,9 @@ A recording's lines:
 `pnpm --filter @ava/worker cli replay <draft-id> --recordings <file>` rebuilds the draft from these
 answers with no key and no cost. A request the recording does not hold — an edited prompt, a changed
 input, another model or effort — fails the replay, naming the prompt and version, and the provider is
-never called. To compare a different route, replay live (no `--recordings`, with a key) and pass
-`--routes`; the report holds the result against the recording's baseline only when `--recordings`
-names it, so keep the baseline's figures from the recorded run's report. See docs/DEPLOY.md,
-"Changing a stage's effort or model".
+never called. To compare a different route, replay live instead (a key, no `--recordings`) with
+`--routes '<json>' --baseline <file>`: the candidate is graded against this recording's baseline.
+See docs/DEPLOY.md, "Changing a stage's effort or model".
 
 No recording contains an API key: request options are never written, fields that name a credential
 are dropped, and the key's value is redacted from every line.

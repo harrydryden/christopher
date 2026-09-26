@@ -3,8 +3,8 @@ import { MODEL_CHOICES, MODEL_IDS, isKnownModel, modelLabel } from "./models";
 import { DEFAULT_SETTINGS } from "./settings";
 
 describe("model choices", () => {
-  it("offers one current model per family", () => {
-    expect(MODEL_IDS).toEqual(["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"]);
+  it("offers the current model of each family, with Opus 5 kept beside its successor for now", () => {
+    expect(MODEL_IDS).toEqual(["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"]);
     expect(new Set(MODEL_IDS).size).toBe(MODEL_IDS.length);
   });
 
@@ -27,7 +27,7 @@ describe("model choices", () => {
   });
 
   it("labels a supported model and falls back to the raw ID", () => {
-    expect(modelLabel("claude-sonnet-5")).toBe(MODEL_CHOICES[2]!.label);
+    expect(modelLabel("claude-sonnet-5")).toBe(MODEL_CHOICES.find(m => m.id === "claude-sonnet-5")!.label);
     expect(modelLabel("claude-opus-4-8")).toBe("claude-opus-4-8");
   });
 });

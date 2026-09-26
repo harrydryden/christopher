@@ -17,6 +17,8 @@ export interface ModelChoice {
 
 export const MODEL_CHOICES: readonly ModelChoice[] = [
   { id: "claude-fable-5-1", label: "Fable 5.1 — most capable, highest cost" },
+  { id: "claude-opus-5-5", label: "Opus 5.5 — strong reasoning, below Opus 5's cost" },
+  // Kept beside its successor until stored choices and tests that pin it have moved across.
   { id: "claude-opus-5", label: "Opus 5 — strong reasoning, mid cost" },
   { id: "claude-sonnet-5", label: "Sonnet 5 — balanced, good for bulk scanning" },
   { id: "claude-haiku-4-5", label: "Haiku 4.5 — fastest and cheapest" },

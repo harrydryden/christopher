@@ -38,6 +38,7 @@ import { modelSupportsEffort } from "./model-capabilities";
 import * as P from "./prompts";
 import type * as S from "./schemas";
 import { CV_REVIEW_BATCH_SIZE, PROMPTS, layoutFor, type LayoutParts, type PromptEntry } from "./prompt-registry";
+import { canonicalEvidence, evidenceBlockId } from "./evidence";
 
 export type { Effort } from "./prompt-registry";
 
@@ -73,6 +74,8 @@ export interface AiUsageRecord {
   outputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  /** The part of `cacheWriteTokens` written to an hour-long entry, which is billed at twice input. */
+  cacheWrite1hTokens?: number;
   costUsd: number;
   durationMs: number;
   ok: boolean;
@@ -162,6 +165,8 @@ export interface ParseResponse {
   parsed_output?: unknown;
   content?: Array<{ type: string; text?: string }>;
   usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number;
+    /** The cache writes split by lifetime: an hour-long entry is billed at twice input, a five-minute one at 1.25 times. */
+    cache_creation?: { ephemeral_1h_input_tokens?: number | null; ephemeral_5m_input_tokens?: number | null } | null;
     /** Per-request charges for server-side tools, such as `web_search_requests`. */
     server_tool_use?: Record<string, unknown> };
   stop_reason?: string;
@@ -286,12 +291,26 @@ function addUsage(a: Usage, b: Usage): Usage {
   const tools: Record<string, unknown> = { ...(a.server_tool_use ?? {}) };
   for (const [field, value] of Object.entries(b.server_tool_use ?? {}))
     tools[field] = typeof value === "number" ? (typeof tools[field] === "number" ? (tools[field] as number) : 0) + value : value;
+  const hour = (a.cache_creation?.ephemeral_1h_input_tokens ?? 0) + (b.cache_creation?.ephemeral_1h_input_tokens ?? 0);
   return {
     input_tokens: (a.input_tokens ?? 0) + (b.input_tokens ?? 0),
     output_tokens: (a.output_tokens ?? 0) + (b.output_tokens ?? 0),
     cache_read_input_tokens: (a.cache_read_input_tokens ?? 0) + (b.cache_read_input_tokens ?? 0),
     cache_creation_input_tokens: (a.cache_creation_input_tokens ?? 0) + (b.cache_creation_input_tokens ?? 0),
+    ...(hour ? { cache_creation: { ephemeral_1h_input_tokens: hour } } : {}),
     ...(Object.keys(tools).length ? { server_tool_use: tools } : {}),
+  };
+}
+
+/** A request's usage as the four token counts a record carries, with the hour-long writes named. */
+function tokensOf(usage: Usage) {
+  const hour = usage.cache_creation?.ephemeral_1h_input_tokens ?? 0;
+  return {
+    inputTokens: usage.input_tokens ?? 0,
+    outputTokens: usage.output_tokens ?? 0,
+    cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+    cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
+    ...(hour ? { cacheWrite1hTokens: hour } : {}),
   };
 }
 
@@ -621,12 +640,7 @@ export class AiEngine {
         response = await this.complete(request, sending);
       }
       const usage = addUsage(prior, response.usage ?? {});
-      const tokens = {
-        inputTokens: usage.input_tokens ?? 0,
-        outputTokens: usage.output_tokens ?? 0,
-        cacheReadTokens: usage.cache_read_input_tokens ?? 0,
-        cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
-      };
+      const tokens = tokensOf(usage);
       const refused = response.stop_reason === "refusal";
       const truncated = response.stop_reason === "max_tokens";
       const paused = response.stop_reason === "pause_turn";
@@ -670,12 +684,7 @@ export class AiEngine {
       // prompt it had processed, which is in the snapshot the cut-off carries.
       const snapshot = err instanceof CallCutOff ? err.snapshot : undefined;
       const partial: Usage = addUsage(prior, snapshot?.usage ?? {});
-      const tokens = {
-        inputTokens: partial.input_tokens ?? 0,
-        outputTokens: partial.output_tokens ?? 0,
-        cacheReadTokens: partial.cache_read_input_tokens ?? 0,
-        cacheWriteTokens: partial.cache_creation_input_tokens ?? 0,
-      };
+      const tokens = tokensOf(partial);
       // Price at the model that served the call when the snapshot names one, as the success path
       // does: a server-side fallback bills at the model that answered, not the one that was asked.
       const served = snapshot?.model ?? model;
@@ -714,12 +723,14 @@ export class AiEngine {
     ref: Ref = {},
   ): Promise<CvTailoringPlan | null> {
     const evidence = cvTailoringEvidence(input.library);
+    // The planner reads the canonical evidence, the same serialisation the writer and the auditor
+    // read; the flat rows remain what its answer is validated against, and carry the same ids.
     const destinations = {
       employment: (input.library.employment ?? []).map(job => ({ employmentId: job.id, label: employmentHeading(job) })),
       evidence: input.library.entries.map(entry => ({ entryId: entry.id, label: entry.heading, kind: entry.kind })),
     };
     const result = await this.run<CvTailoringPlan>(PROMPTS["cv.planning"], {
-      user: JSON.stringify({ rubric: input.rubric, evidence, destinations }),
+      user: JSON.stringify({ rubric: input.rubric, evidence: canonicalEvidence(input.library), destinations }),
     }, ref);
     if (!result) return null;
     try {
@@ -734,7 +745,14 @@ export class AiEngine {
       rubric: CvRubric;
       cv: CvTextItem[];
       claims: CvClaimItem[];
+      /** The sources the answer is validated against: `cvEvidenceItems` of the grouped library. */
       evidence: CvTextItem[];
+      /**
+       * The grouped library itself. Given, the model reads the canonical evidence — the serialisation
+       * the planner and the writer read — instead of `evidence`; citations are still validated
+       * against `evidence`, with a row cited under its own id counted as its block's.
+       */
+      library?: CvLibrary;
     },
     ref: Ref = {},
     hooks: CvAssessHooks = {},
@@ -748,7 +766,8 @@ export class AiEngine {
     // evidence and rubric outlive a revision, so the re-audit of an edited CV reads them from
     // cache and writes only the CV; within one audit the batches after the first read both. The
     // cache is a prefix match, so nothing that varies may come before either.
-    const stable = JSON.stringify({ evidence: input.evidence, rubric: rubricContext });
+    const stable = JSON.stringify({ evidence: input.library ? canonicalEvidence(input.library) : input.evidence, rubric: rubricContext });
+    const entryIds = input.library ? new Set(input.library.entries.map(entry => entry.id)) : undefined;
     const printed = JSON.stringify({ cv: input.cv });
     const batches = cvReviewBatches(input, batchSize);
     // One controller for the audit: a batch that fails cancels its siblings, and so does the run's
@@ -777,7 +796,7 @@ export class AiEngine {
       };
       await say("start");
       let usage: AiUsageRecord | undefined;
-      let result = await runBatch(batch, undefined, onStart, record => { usage = record; });
+      let result = sourcedByBlock(await runBatch(batch, undefined, onStart, record => { usage = record; }), entryIds);
       if (!result) {
         await say("failed", { usage });
         throw new BatchFailed();
@@ -786,7 +805,7 @@ export class AiEngine {
       if (corrections.length) {
         // The first call is finished and paid for; what follows is a second charge for this batch.
         await say("retry", { usage, corrections: corrections.length });
-        result = await runBatch(batch, corrections, undefined, record => { usage = record; });
+        result = sourcedByBlock(await runBatch(batch, corrections, undefined, record => { usage = record; }), entryIds);
         if (!result) {
           await say("failed", { usage, corrections: corrections.length });
           throw new BatchFailed();
@@ -870,9 +889,25 @@ export class AiEngine {
     // The optional improvement is the same prompt asked a second time with the audit's findings;
     // it is its own entry so its cost and its prompt version are recorded as its own.
     const entry = ref.stage === "improvement" || input.improvements?.length ? PROMPTS["cv.improvement"] : PROMPTS["cv.author"];
+    // Three parts in the order they change, least often first. The library — the canonical
+    // evidence, every row once and citable by its id, with the person's writing preferences — is
+    // the same for every build from this library. The role is the same for every call of one
+    // build: the fitter's rewrites and the improvement. Both are cached for an hour, because a
+    // rewrite or the improvement comes more than five minutes after the call before it. Only the
+    // allocation, the layout feedback and the improvements vary, and they come last.
+    const { stylePreferences, preferredWording } = evidenceLibrary;
+    const library = JSON.stringify({ library: { ...canonicalEvidence(input.library),
+      ...(stylePreferences ? { stylePreferences } : {}), ...(preferredWording ? { preferredWording } : {}) } });
+    const role = JSON.stringify({ jobTitle: input.jobTitle, company: input.company, description: input.description,
+      maxPages: input.maxPages ?? CV_PAGE_LIMITS.default,
+      ...(input.rubric ? { rubric: input.rubric } : {}), ...(input.tailoringPlan ? { tailoringPlan: input.tailoringPlan } : {}) });
+    const volatile = {
+      ...(input.writingBudget ? { writingBudget: input.writingBudget } : {}),
+      ...(input.improvements?.length ? { improvements: input.improvements } : {}),
+      ...(input.layoutFeedback ? { layoutFeedback: input.layoutFeedback } : {}),
+    };
     const plan = await this.run<CvPlan>(entry, {
-      user: JSON.stringify({ ...input, maxPages: input.maxPages ?? CV_PAGE_LIMITS.default, library: evidenceLibrary,
-        ...(input.tailoringPlan ? { tailoringEvidence: cvTailoringEvidence(input.library) } : {}) }),
+      user: { stable: [library, role], ...(Object.keys(volatile).length ? { tail: JSON.stringify(volatile) } : {}) },
     }, ref);
     if (!plan || !input.tailoringPlan) return plan;
     try {
@@ -1556,6 +1591,21 @@ export function extractJsonBlock(text: string): unknown {
     }
   }
   return null;
+}
+
+/**
+ * An audit answer with every library citation named by its block. The auditor may cite a row of
+ * the canonical evidence under the row's own id; the validators know the block, and the row is in
+ * it, so the citation stands or falls on its quote exactly as it would under the block's id.
+ */
+function sourcedByBlock(review: CvReviewPlan | null, entryIds?: ReadonlySet<string>): CvReviewPlan | null {
+  if (!review) return review;
+  const byBlock = <T extends { id: string }>(refs: T[]) => refs.map(ref => ({ ...ref, id: evidenceBlockId(ref.id, entryIds) }));
+  return {
+    ...review,
+    matches: review.matches.map(match => ({ ...match, libraryEvidence: byBlock(match.libraryEvidence) })),
+    claims: review.claims.map(claim => ({ ...claim, evidence: byBlock(claim.evidence) })),
+  };
 }
 
 /**

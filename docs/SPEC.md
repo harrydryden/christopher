@@ -365,7 +365,7 @@ Listed in 3.7. All settings live in one `settings` table as key/value JSON and a
 
 ## 4. AI engine: call sites, models, guardrails
 
-All calls go through the Anthropic Messages API using the official TypeScript SDK (`@anthropic-ai/sdk`). Default model for every call site is `claude-sonnet-5`. Structured outputs (`output_config.format` with a Zod schema via `zodOutputFormat`) are used everywhere a schema is listed, so responses are validated before use. Adaptive thinking is left on; `output_config.effort` is set per call site. Prompt caching is applied to the stable prefix (instructions, profile, decision digest) so the per-role suffix is the only uncached input. The server-side refusal fallback is enabled so a safety-classifier refusal on scraped content degrades to another model rather than failing the scan.
+All calls go through the Anthropic Messages API using the official TypeScript SDK (`@anthropic-ai/sdk`). Default model for every call site is `claude-sonnet-5`. Structured outputs (`output_config.format` with a Zod schema via `zodOutputFormat`) are used everywhere a schema is listed, so responses are validated before use. Adaptive thinking is left on; `output_config.effort` is set per call site. Prompt caching is applied to the stable prefix (instructions, profile, decision digest, and for the CV builder the evidence and the role) so the per-call suffix is the only uncached input; see "Cache layout" below. The server-side refusal fallback is enabled so a safety-classifier refusal on scraped content degrades to another model rather than failing the scan.
 
 | ID | Call site | Trigger | Input | Output (schema) | Effort | Typical tokens (in / out) |
 |---|---|---|---|---|---|---|
@@ -384,6 +384,13 @@ All calls go through the Anthropic Messages API using the official TypeScript SD
 
 **The prompt registry.** Every call site above, and each step of the CV builder, is one entry in `packages/ai/src/prompt-registry.ts`: its id, its instructions, its output schema, its effort, its output ceiling, its cache layout and its route (which model it runs on). The engine is handed an entry, never loose parameters, and hands the entry's id to the client beside the request (never to the provider), so a scripted client in a test dispatches on the id rather than on the wording of a prompt. Each entry's `version` is a short hash of its prompt text and schema, computed when the module loads; `promptSetVersion()` hashes every version, for a build checkpoint to pin. Every `ai_calls` row records `prompt_id` and `prompt_version`.
 
+**Cache layout, one rule.** Every request is built by `layoutFor(entry, parts)` as `[system][stable blocks…][volatile tail]`, with a cache breakpoint wherever the entry's `cacheLayout` declares one and never on the tail. An hour-long breakpoint may not follow a five-minute one (the provider refuses it), so an entry whose first stable block lives for an hour carries no marker on its system prompt; that block's breakpoint covers the system prompt anyway. The layout is checked when the registry loads.
+
+- **One serialisation of the evidence.** The planner, the writer and — when the caller hands it the library — the auditor read the same `canonicalEvidence(library)`: the profile, then each active entry once with its heading, its job (dates and industry descriptions), and every citable row once with the source id a plan or a bullet cites it by (`entry:<id>:row:<n>`, `entry:<id>:skill:<n>`) and the facets the person tagged it with. The writer used to receive the stored library, in which each row appears three times (`details`, `confirmedResponsibilities`, a `rowFacets` key), plus a fourth copy as the planner's rows; on the audit's synthetic library (six jobs of fifteen rows) its user turn falls from 98k characters, none cached, to 53k, of which 52k is cached. An auditor may cite a row under its own id or its entry's; either is judged against the entry's whole text.
+- **The writer** sends the canonical library with the writing preferences (cached for an hour: the same for every build from that library), then the role — title, company, description, rubric, evidence plan, page limit (cached for an hour: the same for every call of one build, and each rewrite or the improvement starts more than five minutes after the call before it) — then the volatile tail: the writing allocation, the layout feedback and the improvements.
+- **The audit** sends the evidence and the rubric's caveats (cached for an hour, so the re-audit of an improved CV, which comes after the writer, reads it back), then the printed CV (five minutes: it changes with each revision and serves the batches of one audit), then the batch. The first batch goes alone until its response has begun, which is when the entry becomes readable; the rest follow together.
+- **Pricing.** An hour-long cache write costs twice input and a five-minute one 1.25 times; the engine prices each call from `usage.cache_creation.ephemeral_1h_input_tokens`, and a row without the split is priced as five-minute writes.
+
 The CV builder's entries, generated from the registry (a test fails when this table and the registry disagree):
 
 <!-- cv-call-sites:start (generated by packages/ai/src/prompt-registry.test.ts; UPDATE_SPEC=1 to rewrite) -->
@@ -391,10 +398,10 @@ The CV builder's entries, generated from the registry (a test fails when this ta
 |---|---|---|---|---|---|---|
 | `cv.rubric` | `rubric` | `cb79eb9da5` | account's CV model | high | 12,000 | system 5m · tail uncached |
 | `cv.planning` | `planning` | `1c720b868a` | account's CV model | high | 16,000 | system 5m · tail uncached |
-| `cv.author` | `author` | `b838b3ec9a` | account's CV model | high | 32,000 | system 5m · tail uncached |
-| `cv.improvement` | `improvement` | `b838b3ec9a` | account's CV model | high | 32,000 | system 5m · tail uncached |
-| `cv.review` | `review` | `bc87badd1b` | account's CV model | high | 24,000 | system 5m · stable 1 5m · stable 2 5m · tail uncached |
-| `cv.review_candidate` | `review_candidate` | `bc87badd1b` | account's CV model | high | 24,000 | system 5m · stable 1 5m · stable 2 5m · tail uncached |
+| `cv.author` | `author` | `fdb543b246` | account's CV model | high | 32,000 | system uncached · stable 1 1h · stable 2 1h · tail uncached |
+| `cv.improvement` | `improvement` | `fdb543b246` | account's CV model | high | 32,000 | system uncached · stable 1 1h · stable 2 1h · tail uncached |
+| `cv.review` | `review` | `bc87badd1b` | account's CV model | high | 24,000 | system uncached · stable 1 1h · stable 2 5m · tail uncached |
+| `cv.review_candidate` | `review_candidate` | `bc87badd1b` | account's CV model | high | 24,000 | system uncached · stable 1 1h · stable 2 5m · tail uncached |
 <!-- cv-call-sites:end -->
 
 Guardrails common to all call sites:

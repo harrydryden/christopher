@@ -532,10 +532,11 @@ describe("helpers", () => {
     expect(estimateCostUsd("who-knows", { inputTokens: 1_000_000, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 })).toBeCloseTo(5, 6);
     // A build is held for the fitter's worst case — three author calls at the calibrated most one
     // writes — which is still well below the sum of its calls' ceilings.
-    expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 })).toBeCloseTo(5.31, 3);
+    // The audit's evidence is an hour-long cache entry, written at twice input rather than 1.25x.
+    expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 })).toBeCloseTo(5.4225, 3);
     // An attempt resuming with its wording already written pays for the audit alone, derived from
     // the same figures.
-    expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 }, "assessment")).toBeCloseTo(2.115, 3);
+    expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 }, "assessment")).toBeCloseTo(2.2275, 3);
     expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 }, "assessment")).toBeLessThan(
       estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 }));
     expect(estimateCvBuildUsd("claude-fable-5-1", { libraryBytes: 45_000, descriptionBytes: 9_000 })).toBeLessThan(
@@ -543,6 +544,11 @@ describe("helpers", () => {
     // Fable 5.1 prices cache reads at $0.25/MTok, a quarter of the tenth-of-input rule.
     expect(estimateCostUsd("claude-fable-5-1", { inputTokens: 0, outputTokens: 0, cacheReadTokens: 1_000_000, cacheWriteTokens: 0 })).toBeCloseTo(0.25, 6);
     expect(estimateCostUsd("claude-fable-5-1", { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 1_000_000 })).toBeCloseTo(12.5, 6);
+    // Hour-long writes cost twice input; the rest of the writes stay at 1.25x.
+    expect(estimateCostUsd("claude-fable-5-1", { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 1_000_000, cacheWrite1hTokens: 1_000_000 })).toBeCloseTo(20, 6);
+    expect(estimateCostUsd("claude-fable-5-1", { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 1_000_000, cacheWrite1hTokens: 400_000 })).toBeCloseTo(0.6 * 12.5 + 0.4 * 20, 6);
+    // Opus 5.5: $4 in, $20 out, $0.20 a cached read.
+    expect(estimateCostUsd("claude-opus-5-5", { inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 1_000_000, cacheWriteTokens: 0 })).toBeCloseTo(24.2, 6);
   });
 
   it("prices a library evidence review below a CV build, per pass rather than per entry", () => {
@@ -594,7 +600,7 @@ it("routes CV generation separately, validates industry selections and records u
   // Thinking counts towards the ceiling; recorded builds reached 10.9k tokens under the old 12k/120s limits.
   expect(calls[0]!.params.max_tokens).toBe(32000);
   expect(calls[0]!.options?.timeout).toBe(300_000);
-  expect(JSON.parse((calls[0]!.params.messages as Array<{ content: string }>)[0]!.content).maxPages).toBe(3);
+  expect(userPayload(calls[0]!.params).maxPages).toBe(3);
   expect(usage[0]).toMatchObject({ callSite: "CV", refId: "draft", ok: true });
 });
 
@@ -640,15 +646,15 @@ it('passes structured skills and wording guidance to generation without palette 
   const { DEFAULT_CV_THEME } = await import('@ava/core/cv');
   const { engine, calls } = engineWith({ summary: 'Analyst', sections: [{ entryId: 's', bullets: ['Reporting'], skillItems: ['SQL'] }], gaps: [] });
   await engine.buildCv({ library: { name: 'Example', contact: '', profile: '', theme: DEFAULT_CV_THEME, stylePreferences: 'Concise', entries: [{ id: 's', kind: 'skill', heading: 'Tools', details: 'Reporting', skillItems: ['SQL'] }] }, jobTitle: 'Analyst', company: 'Example', description: 'Analyse data' });
-  const messages = calls[0]!.params.messages as Array<{ content: string }>;
-  expect(messages[0]!.content).toContain('SQL');
-  expect(messages[0]!.content).toContain('Concise');
-  expect(messages[0]!.content).not.toContain(DEFAULT_CV_THEME.primary);
-  expect(messages[0]!.content).not.toContain(DEFAULT_CV_THEME.font);
+  const text = userBlocks(calls[0]!.params).map(block => block.text).join("");
+  expect(text).toContain('SQL');
+  expect(text).toContain('Concise');
+  expect(text).not.toContain(DEFAULT_CV_THEME.primary);
+  expect(text).not.toContain(DEFAULT_CV_THEME.font);
   // The page limit reaches the writer as an explicit number, never via the palette object.
   const explicit = engineWith({ summary: 'Analyst', sections: [{ entryId: 's', bullets: ['Reporting'], skillItems: ['SQL'] }], gaps: [] });
   await explicit.engine.buildCv({ library: { name: 'Example', contact: '', profile: '', theme: { ...DEFAULT_CV_THEME, maxPages: 2 }, entries: [{ id: 's', kind: 'skill', heading: 'Tools', details: 'Reporting', skillItems: ['SQL'] }] }, jobTitle: 'Analyst', company: 'Example', description: 'Analyse data', maxPages: 2 });
-  expect(JSON.parse((explicit.calls[0]!.params.messages as Array<{ content: string }>)[0]!.content).maxPages).toBe(2);
+  expect(userPayload(explicit.calls[0]!.params).maxPages).toBe(2);
 });
 
 it("uses isolated, metered CV calls for rubric extraction and factual assessment", async () => {

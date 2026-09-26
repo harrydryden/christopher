@@ -94,6 +94,25 @@ export const CvReviewBatchSchema = CvReviewPlanSchema.extend({
 });
 
 const SINGLE: CacheLayout = { system: "5m", stable: [] };
+/**
+ * The writer: the canonical library, then the role, then the volatile tail (the allocation, the
+ * layout feedback, the improvements). The library and the role outlive every call of one build —
+ * each of the fitter's rewrites starts after the previous answer has finished, and the improvement
+ * after a whole audit, both well past five minutes — so both are cached for an hour. The library
+ * block is also the same for the next build from the same library. The system prompt has no
+ * marker of its own: the library's breakpoint already covers it, and a five-minute marker may not
+ * precede an hour-long one.
+ */
+const WRITER_LAYOUT: CacheLayout = { system: null, stable: ["1h", "1h"] };
+/**
+ * The audit: the evidence and the rubric's caveats, then the printed CV, then the batch. The
+ * evidence outlives a revision, and the re-audit of an improved CV comes after the writer, more
+ * than five minutes after the first audit, so it is cached for an hour. The CV changes with each
+ * revision and is cached for five minutes, which covers the batches of one audit: the first batch
+ * alone writes it, and the rest go out once its response has begun. No system marker, for the
+ * same reason as the writer's.
+ */
+const AUDIT_LAYOUT: CacheLayout = { system: null, stable: ["1h", "5m"] };
 const WEB_SEARCH = (maxUses: number) => [{ type: "web_search_20260209", name: "web_search", max_uses: maxUses }];
 
 type Draft = Omit<PromptEntry, "version" | "effort" | "route" | "priority" | "timeoutMs" | "maxTokens" | "cacheLayout" | "expectedOutputTokens"> & {
@@ -182,19 +201,17 @@ export const PROMPTS: Readonly<Record<PromptId, PromptEntry>> = {
     // Thinking counts towards the output ceiling, and recorded two-page builds have reached 15.6k
     // of the old 16k; it only has to stay above what a three-page plan can take.
     route: { model: "cvModel", effort: "high" }, maxTokens: 32_000, timeoutMs: 300_000, priority: "interactive",
-    expectedOutputTokens: 16_000 }),
+    cacheLayout: WRITER_LAYOUT, expectedOutputTokens: 16_000 }),
   "cv.improvement": define({ id: "cv.improvement", callSite: "CV", stage: "improvement", system: CV_AUTHOR_PROMPT, schema: CvPlanSchema,
     route: { model: "cvModel", effort: "high" }, maxTokens: 32_000, timeoutMs: 300_000, priority: "interactive",
-    expectedOutputTokens: 16_000 }),
-  // The evidence and rubric outlive a revision, so they are cached ahead of the CV, which is
-  // cached ahead of the batch.
+    cacheLayout: WRITER_LAYOUT, expectedOutputTokens: 16_000 }),
   "cv.review": define({ id: "cv.review", callSite: "CV", stage: "review", system: CV_REVIEW_BATCH_PROMPT, schema: CvReviewBatchSchema,
     // Recorded batches reach 11.8k of the old 16k ceiling; a truncated batch fails the audit.
     route: { model: "cvModel", effort: "high" }, maxTokens: 24_000, timeoutMs: 240_000, priority: "interactive",
-    cacheLayout: { system: "5m", stable: ["5m", "5m"] }, expectedOutputTokens: 7_000 }),
+    cacheLayout: AUDIT_LAYOUT, expectedOutputTokens: 7_000 }),
   "cv.review_candidate": define({ id: "cv.review_candidate", callSite: "CV", stage: "review_candidate", system: CV_REVIEW_BATCH_PROMPT, schema: CvReviewBatchSchema,
     route: { model: "cvModel", effort: "high" }, maxTokens: 24_000, timeoutMs: 240_000, priority: "interactive",
-    cacheLayout: { system: "5m", stable: ["5m", "5m"] }, expectedOutputTokens: 7_000 }),
+    cacheLayout: AUDIT_LAYOUT, expectedOutputTokens: 7_000 }),
 };
 
 export const PROMPT_IDS = Object.keys(PROMPTS) as PromptId[];

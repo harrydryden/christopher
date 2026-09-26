@@ -36,6 +36,11 @@ it("says what a model call that produced nothing usable was doing, in the reader
     .toBe("The connection to the model provider dropped while checking the CV against your evidence.");
   expect(callFailureMessage("stalled", AUTHOR_CALL))
     .toBe("The model stopped responding while writing the CV: nothing arrived for fifteen minutes.");
+  // The engine says which stall it was: silence, or an answer still unfinished at the ceiling.
+  expect(callFailureMessage("stalled", AUTHOR_CALL, undefined, undefined, { reason: "idle", afterMs: 300_000 }))
+    .toBe("The model stopped responding while writing the CV: nothing arrived for 5 minutes.");
+  expect(callFailureMessage("stalled", REVIEW_CALL, undefined, undefined, { reason: "ceiling", afterMs: 900_000 }))
+    .toBe("The model stopped responding while checking the CV against your evidence: the answer was still unfinished after 15 minutes.");
   expect(callFailureMessage("model_access", RUBRIC_CALL, 403))
     .toBe("The CV model could not be reached while extracting the role's requirements (HTTP 403). Check model access and usage in Health, then retry.");
   expect(callFailureMessage("output_limit", AUTHOR_CALL, undefined, "(attempt 2 of 3)"))

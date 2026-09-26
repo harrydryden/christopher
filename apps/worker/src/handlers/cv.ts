@@ -23,7 +23,7 @@ import { buildCvGapQuiz } from "@ava/core/cv-gap-quiz";
 import { compareCvQuality, diagnoseCvQuality } from "@ava/core/cv-quality";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { completeCv, cvRoleKey, releaseAiHolds, saveCvTailoringPlan, saveImprovedCvRevision, schema, type Task, type Db } from "@ava/db";
-import { createAiEngine, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, type AiFailure, type AiUsageRecord } from "@ava/ai";
+import { ASSESSMENT_COVERAGE_ERROR, createAiEngine, CANCELLED_ERROR, DEADLINE_ERROR_PREFIX, INTERRUPTED_ERROR_PREFIX, type AiFailure, type CvAssessBatchResult } from "@ava/ai";
 import {
   CvContentSchema,
   CvPlanSchema,
@@ -65,10 +65,8 @@ import {
   CV_STAGE_LABELS,
   CvStageRunner,
   cvAuditBatches,
-  estimateStage,
+  estimateCvStage,
   promptSetVersion,
-  runAuditBatches,
-  type CvAuditBatchResult,
   type CvStage,
   type CvStageHold,
 } from "./cv-stages";
@@ -330,6 +328,10 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
         libraryBytes: Buffer.byteLength(JSON.stringify(library)),
         descriptionBytes: Buffer.byteLength(draft.jobDescription),
       };
+      // The administrator's per-stage routes: each stage is priced, and called, at its own model.
+      // Read once for the attempt; a settings fault prices every stage at its entry's own route.
+      const stageRoutes = await Promise.resolve(deps.settings?.()).then(settings => settings?.stageRoutes ?? null).catch(() => null);
+      const models = { cvModel: draft.model, routes: stageRoutes };
       // A version 1 build stopped during its optional improvement had already written, assessed
       // and saved its baseline, and its fence says the improvement is not tried twice. Its saved
       // assessment still describes the saved wording, so it is published as it stands.
@@ -413,6 +415,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
         apiKey: deps.env.anthropicApiKey,
         client: deps.aiClient,
         getModel: () => draft.model,
+        getStageRoutes: async () => stageRoutes,
         // Every call this build makes is made under its signal, so a deadline, a lost lease or a
         // released hold stops the calls as well as the bookkeeping.
         signal: stop.signal,
@@ -442,24 +445,25 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
         // A call that returned nothing because this build was told to stop is that interruption,
         // not a model failure: it never got an answer to be disappointed by.
         if (interrupted) throw interrupted;
-        const failure = callFailures.get(stageName);
+        const failure = callFailures.get(stageName) ?? callFailures.get(`${stageName}_retry`);
         const kind: CvFailureKind = failure?.kind ?? "output_invalid";
-        throw new CvBuildStop(kind, callFailureMessage(kind, doing, failure?.status, note), {
+        throw new CvBuildStop(kind, callFailureMessage(kind, doing, failure?.status, note, failure?.stall), {
           ...(generationError ? { cause: generationError.slice(0, 500) } : {}),
         });
       };
-      const ref = (stageName: string, refType: string, signal: AbortSignal) =>
-        ({ refType, refId: draft.id, stage: stageName, userId: draft.userId, signal });
+      /** A call's reference: the draft, the stage, the stop, and the journal step it is charged to. */
+      const ref = (stageName: string, refType: string, signal: AbortSignal, stepId?: string | null) =>
+        ({ refType, refId: draft.id, stage: stageName, userId: draft.userId, signal, ...(stepId ? { stepId } : {}) });
 
       // ---- The rubric ------------------------------------------------------------------------
       await stage("analysing");
       const rubricStage: CvStage<{ description: string }, CvRubric> = {
         name: "rubric", admission: "rubric", motion: "rubric",
         key: input => input,
-        estimate: () => estimateStage(draft.model, "rubric", sizes),
+        estimate: () => estimateCvStage("rubric", sizes, models),
         run: (input, stageCtx) => journal.run("rubric", {}, async step => {
           callSteps.set("rubric", step);
-          const result = requireResult(await ai.analyseCvJob(input.description, ref("rubric", "cv-rubric", stageCtx.signal)), "rubric", RUBRIC_CALL);
+          const result = requireResult(await ai.analyseCvJob(input.description, ref("rubric", "cv-rubric", stageCtx.signal, step.id)), "rubric", RUBRIC_CALL);
           let validated: CvRubric;
           try {
             validated = validateCvRubric(input.description, result);
@@ -493,13 +497,13 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
         const planStage: CvStage<{ rubric: CvRubric; library: typeof library }, CvTailoringPlan> = {
           name: "plan", admission: "plan", motion: "plan_evidence",
           key: input => input,
-          estimate: () => estimateStage(draft.model, "plan", sizes),
+          estimate: () => estimateCvStage("plan", sizes, models),
           run: (input, stageCtx) => journal.run("plan_evidence", {}, async step => {
             callSteps.set("planning", step);
             const result = requireResult(await ai.planCvTailoring({ library: input.library, rubric: input.rubric },
-              ref("planning", "cv-plan", stageCtx.signal)), "planning", { gerund: "matching the role to your evidence", step: "evidence planning" });
+              ref("planning", "cv-plan", stageCtx.signal, step.id)), "planning", { gerund: "matching the role to your evidence", step: "evidence planning" });
             const validated = validatePlan(result, input);
-            step.add(planFigures(validated));
+            step.add({ reused: false, ...planFigures(validated) });
             return validated;
           }),
           validate: (value, input) => validatePlan(value, input),
@@ -543,7 +547,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
         const writeStage: CvStage<{ draftId: string; libraryVersion: number }, WriteCheckpoint> = {
           name: "write", admission: "write", motion: "write",
           key: input => input,
-          estimate: () => estimateStage(draft.model, "write", sizes),
+          estimate: () => estimateCvStage("write", sizes, models),
           run: async () => ({ writeAttempt, scale: writeScale }),
           validate: value => value,
           mirror: () => ({ contentAt: deps.now().toISOString() }),
@@ -580,7 +584,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
                       tailoringPlan,
                       ...input,
                     },
-                    ref("author", "cv-author", stageCtx.signal),
+                    ref("author", "cv-author", stageCtx.signal, (writeStep as CvOpenStep | null)?.id),
                   ),
                   "author", AUTHOR_CALL, `(attempt ${writeAttempt} of 3)`,
                 ),
@@ -675,7 +679,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
         const auditStage = (index: number): CvStage<AuditInputs, CvReviewPlan> => ({
           name: `audit[${index}]`, admission: pass === "draft" ? "audit" : "reaudit", motion: "assess_batch",
           key: input => input,
-          estimate: () => estimateStage(draft.model, pass === "draft" ? "audit" : "reaudit", { ...sizes, batches: 1 }),
+          estimate: () => estimateCvStage(pass === "draft" ? "audit" : "reaudit", { ...sizes, batches: 1 }, models),
           run: async () => { throw new Error("An audit batch runs with its siblings."); },
           validate: value => value,
         });
@@ -694,64 +698,83 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
         batches.forEach((batch, index) => firsts.push(index ? firsts[index - 1]! + batches[index - 1]!.requirements.length : 1));
         const batchSteps = new Map<number, CvOpenStep<"assess_batch">>();
         const retrySteps = new Map<number, CvOpenStep<"assess_retry">>();
-        let failed: CvAuditBatchResult | undefined;
+        const ran: CvAssessBatchResult[] = [];
         if (pending.length) {
-          const results = await runner.paid(admission, "assess_batch",
-            estimateStage(draft.model, admission, { ...sizes, batches: pending.length }), stageCtx => runAuditBatches({
-              ai, input: items, batches, pending, pass,
+          const audit = await runner.paid(admission, "assess_batch",
+            estimateCvStage(admission, { ...sizes, batches: pending.length }, models), stageCtx => ai.assessCvBatches(items,
               // The engine re-runs a batch whose attribution it had to correct, and names that
-              // second charge `review_retry`, so a build that paid twice for one batch says so.
-              ref: ref("review", "cv-review", stageCtx.signal),
-              signal: stageCtx.signal,
-              onResult: async result => {
-                if (pass === "draft" && result.review) await runner.save(auditStage(result.index), inputsFor(result.index), result.review);
-              },
-              onBatch: async event => {
-                const position = `(batch ${event.index + 1} of ${event.total})`;
-                if (event.phase === "start") {
-                  const first = firsts[event.index]!;
-                  const parts = [
-                    event.requirements ? `requirements ${first}–${first + event.requirements - 1}` : "",
-                    event.claims ? `${event.claims} ${event.claims === 1 ? "claim" : "claims"}` : "",
-                  ].filter(Boolean);
-                  const title = `Checking ${parts.join(" and ") || "the CV"} ${position}`;
-                  // A count that would be zero is left out, so the page never says "0 claims".
-                  batchSteps.set(event.index, await journal.open("assess_batch", {
-                    batch: event.index + 1, batches: event.total, pass,
-                    ...(event.requirements ? { requirements: event.requirements } : {}),
-                    ...(event.claims ? { claims: event.claims } : {}),
-                  }, title));
-                  return;
-                }
-                if (event.phase === "retry") {
-                  // The batch's own call is finished and paid for; the correction is a second charge.
-                  const step = batchSteps.get(event.index);
+              // second charge `review_retry` (`review_candidate_retry` for the revision's re-check),
+              // so a build that paid twice for one batch says so.
+              ref("review", "cv-review", stageCtx.signal),
+              {
+                pass,
+                // Only the batches this build does not already hold: a retry pays for what it lost.
+                only: pending,
+                onBatch: async event => {
+                  const position = `(batch ${event.index + 1} of ${event.total})`;
+                  if (event.phase === "start") {
+                    const first = firsts[event.index]!;
+                    const parts = [
+                      event.requirements ? `requirements ${first}–${first + event.requirements - 1}` : "",
+                      event.claims ? `${event.claims} ${event.claims === 1 ? "claim" : "claims"}` : "",
+                    ].filter(Boolean);
+                    const title = `Checking ${parts.join(" and ") || "the CV"} ${position}`;
+                    // A count that would be zero is left out, so the page never says "0 claims".
+                    batchSteps.set(event.index, await journal.open("assess_batch", {
+                      batch: event.index + 1, batches: event.total, index: event.index + 1, of: event.total, pass,
+                      ...(event.requirements ? { requirements: event.requirements } : {}),
+                      ...(event.claims ? { claims: event.claims } : {}),
+                    }, title));
+                    return;
+                  }
+                  if (event.phase === "retry") {
+                    // The batch's own call is finished and paid for; the correction is a second charge.
+                    const step = batchSteps.get(event.index);
+                    if (event.usage) step?.addCost(event.usage);
+                    await journal.close(step, "done");
+                    batchSteps.delete(event.index);
+                    retrySteps.set(event.index, await journal.open("assess_retry",
+                      { batch: event.index + 1, index: event.index + 1, pass, ...(event.corrections ? { corrections: event.corrections } : {}) }));
+                    return;
+                  }
+                  // The call is charged what it cost however it ended: done, failed or cancelled.
+                  const step = retrySteps.get(event.index) ?? batchSteps.get(event.index);
                   if (event.usage) step?.addCost(event.usage);
-                  await journal.close(step, "done");
+                  if (event.phase !== "done") return;
+                  retrySteps.delete(event.index);
                   batchSteps.delete(event.index);
-                  retrySteps.set(event.index, await journal.open("assess_retry",
-                    { batch: event.index + 1, pass, ...(event.corrections ? { corrections: event.corrections } : {}) }));
-                  return;
-                }
-                const step = retrySteps.get(event.index) ?? batchSteps.get(event.index);
-                retrySteps.delete(event.index);
-                batchSteps.delete(event.index);
-                // The call is charged what it cost however it ended: done, failed or cancelled.
-                if (event.result.usage) step?.addCost(event.result.usage);
-                if (event.phase === "done") return journal.close(step, "done");
-                if (event.phase === "cancelled") return journal.close(step, "skipped", { cancelled: true });
-                failed ??= event.result;
-                const stopped = batchStop(event.result);
-                await journal.close(step, "failed", undefined, {
-                  error: stopped.message.slice(0, 1000), failure: cvBuildFailureFor(stopped, { attempt, maxAttempts }),
-                });
-              },
-            }));
-          for (const result of results) if (result?.review) held.set(result.index, result.review);
+                  await journal.close(step, "done");
+                },
+              }));
+          ran.push(...audit.batches);
+          for (const result of audit.batches) {
+            if (result.status === "done" && result.result) {
+              held.set(result.index, result.result);
+              // Saved as soon as the audit returns, finished batches only, so a retry re-runs only
+              // the batches this attempt lost.
+              if (pass === "draft") await runner.save(auditStage(result.index), inputsFor(result.index), result.result);
+              continue;
+            }
+            // A batch that did not finish closes with what ended it: its own failure, or a
+            // cancellation because a sibling failed or the run was stopped, which is not a failure.
+            const step = retrySteps.get(result.index) ?? batchSteps.get(result.index);
+            retrySteps.delete(result.index);
+            batchSteps.delete(result.index);
+            if (!step) continue;
+            if (result.status === "cancelled") {
+              await journal.close(step, "skipped", { cancelled: true });
+              continue;
+            }
+            const stopped = batchStop(result, batches.length);
+            await journal.close(step, "failed", undefined, {
+              error: stopped.message.slice(0, 1000), failure: cvBuildFailureFor(stopped, { attempt, maxAttempts }),
+            });
+          }
         }
+        const failed = ran.find(result => result.status === "failed");
         if (failed || held.size < batches.length) {
           if (interrupted) throw interrupted;
-          throw failed ? batchStop(failed) : new CvBuildStop("assessment_incomplete", "The assessment did not finish every batch.", { motion: "assess_batch" });
+          throw failed ? batchStop(failed, batches.length) : new CvBuildStop("assessment_incomplete", "The assessment did not finish every batch.", { motion: "assess_batch" });
         }
         const review: CvReviewPlan = {
           matches: batches.flatMap((_, index) => held.get(index)!.matches),
@@ -780,13 +803,15 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
         });
       };
       /** The failure one batch's result names, as the build throws it. */
-      function batchStop(result: CvAuditBatchResult): CvBuildStop {
+      function batchStop(result: CvAssessBatchResult, total: number): CvBuildStop {
         const where = { motion: "assess_batch" as CvBuildMotion, batch: result.index + 1 };
-        const note = `(batch ${result.index + 1} of ${result.total})`;
-        if (result.error) return new CvBuildStop("assessment_incomplete", result.error, where);
+        const note = `(batch ${result.index + 1} of ${total})`;
+        // A batch that came back without every requirement or claim it was asked for: the CV is
+        // saved, so another assessment of that batch is all that is needed.
+        if (result.error === ASSESSMENT_COVERAGE_ERROR) return new CvBuildStop("assessment_incomplete", result.error, where);
         const kind: CvFailureKind = result.failure?.kind ?? "output_invalid";
-        return new CvBuildStop(kind, callFailureMessage(kind, REVIEW_CALL, result.failure?.status, note), {
-          ...where, ...(generationError ? { cause: generationError.slice(0, 500) } : {}),
+        return new CvBuildStop(kind, callFailureMessage(kind, REVIEW_CALL, result.failure?.status, note, result.failure?.stall), {
+          ...where, ...(result.error ? { cause: result.error.slice(0, 500) } : generationError ? { cause: generationError.slice(0, 500) } : {}),
         });
       }
 
@@ -843,7 +868,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
         // Opened once the stage is admitted, so its row follows its admission in the narrative.
         const opened: { step?: CvOpenStep<"improve_content"> } = {};
         try {
-          fitted = await runner.paid("improve", "improve_content", estimateStage(draft.model, "improve", sizes), async stageCtx => {
+          fitted = await runner.paid("improve", "improve_content", estimateCvStage("improve", sizes, models), async stageCtx => {
             opened.step = await journal.open("improve_content", { opportunities });
             callSteps.set("improvement", opened.step);
             // The same scale the baseline actually fitted at: a baseline that had to rewrite twice
@@ -853,7 +878,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
               description: draft.jobDescription, jobTitle: draft.jobTitle, company: draft.companyName,
               improvements: args.opportunities.map(item => item.improvement).filter(Boolean),
               writingBudget: budget, maxPages: cvMaxPages(library.theme),
-            }, ref("improvement", "cv-author", stageCtx.signal)), "improvement", AUTHOR_CALL);
+            }, ref("improvement", "cv-author", stageCtx.signal, opened.step?.id)), "improvement", AUTHOR_CALL);
             const omitted = library.entries.filter(entry =>
               (entry.kind === "experience" || entry.kind === "education") &&
               !plan.sections.some(section => section.entryId === entry.id));
@@ -907,7 +932,10 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: TaskR
           await keep(adopted.reason);
           return;
         }
-        await journal.record("adopt_revision", { revisionId: adopted.id, revision: adopted.revision, version: adopted.version, name: adopted.name });
+        await journal.record("adopt_revision", {
+          draftId: adopted.id, revisionId: adopted.id, revision: adopted.revision, version: adopted.version,
+          label: adopted.name, name: adopted.name,
+        });
       };
       const opportunityIds = new Set(diagnoseCvQuality(assessment, content!).evidencedOpportunityGap.requirementIds);
       const opportunities = assessment.review.matches.filter(match => opportunityIds.has(match.requirementId));

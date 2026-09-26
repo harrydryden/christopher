@@ -3,11 +3,10 @@
  * per-stage allowance, and an audit whose batches finish, fail and are cancelled independently.
  */
 import { describe, expect, it } from "vitest";
-import type { AiEngine } from "@ava/ai";
 import type { CvBuildCheckpoint } from "@ava/core";
-import type { CvReviewPlan, CvRubric } from "@ava/core/cv-assessment";
+import type { CvRubric } from "@ava/core/cv-assessment";
 import { CvBuildStop } from "@ava/core/cv-build-failure";
-import { CvStageRunner, cvAuditBatches, estimateStage, runAuditBatches, type CvAuditBatchEvent, type CvStage } from "./handlers/cv-stages";
+import { CvStageRunner, cvAuditBatches, estimateCvStage, type CvStage } from "./handlers/cv-stages";
 
 function runnerWith(options: { prompts?: string; allowanceMs?: number; signal?: AbortSignal; checkpoint?: CvBuildCheckpoint } = {}) {
   let checkpoint: CvBuildCheckpoint = options.checkpoint ?? { v: 2, promptSetVersion: options.prompts ?? "p1", stages: {} };
@@ -103,41 +102,14 @@ describe("an audit's batches", () => {
     expect(batches.map(batch => batch.claims.length)).toEqual([1, 1, 1]);
   });
 
-  it("runs the first alone, cancels the siblings of a batch that fails, and hands each finished batch over at once", async () => {
-    const order: string[] = [];
-    const ai = {
-      async assessCv(input: { rubric: CvRubric }, ref: { signal?: AbortSignal }): Promise<CvReviewPlan | null> {
-        const first = input.rubric.requirements[0]!.id;
-        order.push(`start ${first}`);
-        if (first === "r7") { await new Promise(resolve => setTimeout(resolve, 10)); return null; }
-        if (first === "r14") {
-          await new Promise<void>(resolve => ref.signal?.addEventListener("abort", () => resolve(), { once: true }));
-          return null;
-        }
-        return { matches: [], claims: [] };
-      },
-    } as unknown as AiEngine;
-    const batches = cvAuditBatches({ rubric, claims });
-    const events: CvAuditBatchEvent[] = [];
-    const handed: number[] = [];
-    const results = await runAuditBatches({
-      ai, input: { rubric, cv: [], claims, evidence: [] }, batches, pending: [0, 1, 2], pass: "draft",
-      ref: {}, signal: new AbortController().signal,
-      onBatch: async event => { events.push(event); },
-      onResult: async result => { handed.push(result.index); },
-    });
-    // The first ran alone before the other two started.
-    expect(order[0]).toBe("start r0");
-    expect(results.map(result => result.status)).toEqual(["done", "failed", "cancelled"]);
-    expect(handed).toEqual([0]);
-    expect(events.filter(event => event.phase !== "start").map(event => [event.index, event.phase]))
-      .toEqual(expect.arrayContaining([[0, "done"], [1, "failed"], [2, "cancelled"]]));
-  });
-
   it("sizes an audit's admission by the batches still to run", () => {
     const sizes = { libraryBytes: 30_000, descriptionBytes: 6_000 };
-    expect(estimateStage("claude-sonnet-5", "audit", { ...sizes, batches: 1 }))
-      .toBeLessThan(estimateStage("claude-sonnet-5", "audit", { ...sizes, batches: 4 }));
-    expect(estimateStage("claude-sonnet-5", "rubric", sizes)).toBeLessThan(estimateStage("claude-sonnet-5", "write", sizes));
+    const models = { cvModel: "claude-sonnet-5" };
+    expect(estimateCvStage("audit", { ...sizes, batches: 1 }, models))
+      .toBeLessThan(estimateCvStage("audit", { ...sizes, batches: 4 }, models));
+    expect(estimateCvStage("rubric", sizes, models)).toBeLessThan(estimateCvStage("write", sizes, models));
+    // Each stage is priced at the model the administrator routed it to.
+    expect(estimateCvStage("rubric", sizes, { ...models, routes: { "cv.rubric": { model: "claude-haiku-4-5" } } }))
+      .toBeLessThan(estimateCvStage("rubric", sizes, models));
   });
 });

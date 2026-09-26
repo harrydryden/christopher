@@ -9,7 +9,7 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import { actionCvs, enqueueTask, failOpenCvBuildSteps, listCvBuildSteps, schema, startCvBuildStep, type Db, type Task } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
-import { InternalServerError, RateLimitError, type AiClientLike, type ParseResponse } from "@ava/ai";
+import { InternalServerError, RateLimitError, type AiCallMeta, type AiClientLike, type ParseResponse } from "@ava/ai";
 import { DEFAULT_CV_THEME, materialiseCv } from "@ava/core/cv";
 import { createCvAssessment } from "@ava/core/cv-review";
 import { cvClaimItems, cvEvidenceItems, cvTextItems } from "@ava/core/cv-assessment";
@@ -67,11 +67,12 @@ const USAGE = { input_tokens: 1000, output_tokens: 200, cache_read_input_tokens:
 type Answer = (params: Record<string, unknown>) => ParseResponse | Promise<ParseResponse>;
 type CallKind = "rubric" | "author" | "review";
 
-/** The three prompts a build sends, told apart by the shape of the user turn the engine built. */
-function callKindOf(params: Record<string, unknown>): CallKind {
-  const content = (params.messages as Array<{ content: unknown }>)[0]!.content;
-  if (Array.isArray(content)) return "review";
-  return (JSON.parse(content as string) as { jobTitle?: string }).jobTitle ? "author" : "rubric";
+/** The three prompts a build sends, told apart by the registry entry the engine names beside each request. */
+function callKindOf(call: AiCallMeta | undefined): CallKind {
+  if (call?.promptId === "cv.rubric") return "rubric";
+  if (call?.promptId === "cv.review" || call?.promptId === "cv.review_candidate") return "review";
+  if (call?.promptId === "cv.author" || call?.promptId === "cv.improvement") return "author";
+  throw new Error(`unexpected prompt ${call?.promptId}`);
 }
 
 function answered(parsed: unknown, over: Partial<ParseResponse> = {}): ParseResponse {
@@ -95,8 +96,8 @@ function scriptedClient(script: Partial<Record<CallKind, Answer>> = {}) {
   const calls: CallKind[] = [];
   const client: AiClientLike = {
     messages: {
-      async create(params) {
-        const kind = callKindOf(params);
+      async create(params, _options, call) {
+        const kind = callKindOf(call);
         calls.push(kind);
         const answer = script[kind];
         if (answer) return await answer(params);
@@ -179,7 +180,7 @@ it("narrates every motion of a clean build, with the figures and the cost of eac
   expect(byMotion.check_plan!.detail).toEqual({ omitted: [], skillFormatCorrections: 0 });
   expect(byMotion.measure!.detail).toEqual({ pages: 1, maxPages: 3, renders: 1, outcome: "fits" });
   expect(byMotion.assess_batch!.title).toBe("Checking requirements 1–1 and 2 claims (batch 1 of 1)");
-  expect(byMotion.assess_batch!.detail).toMatchObject({ batch: 1, batches: 1, requirements: 1, claims: 2, pass: "draft" });
+  expect(byMotion.assess_batch!.detail).toMatchObject({ batch: 1, batches: 1, index: 1, of: 1, requirements: 1, claims: 2, pass: "draft" });
   expect(byMotion.assemble!.detail).toEqual({
     demonstrated: 1, partial: 0, missing: 0, unknown: 0, supported: 2, unsupported: 0, uncertain: 0, pageCount: 1,
   });
@@ -663,10 +664,9 @@ it("records an interrupted attempt and stops its model calls when a build outrun
   let authorSignal: AbortSignal | undefined;
   const client: AiClientLike = {
     messages: {
-      async create(params, options) {
+      async create(params, options, call) {
         const content = (params.messages as Array<{ content: string }>)[0]!.content;
-        const payload = JSON.parse(content as string) as { jobTitle?: string; description?: string };
-        if (!payload.jobTitle) return answered(rubricFixture(payload.description!));
+        if (call?.promptId === "cv.rubric") return answered(rubricFixture((JSON.parse(content as string) as { description: string }).description));
         // The writer never answers. This is the build that outruns its deadline.
         authorSignal = options?.signal as AbortSignal | undefined;
         return new Promise<ParseResponse>((_, reject) =>

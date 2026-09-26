@@ -3,6 +3,7 @@
  * outbound fetch and model call. See docs/SPEC.md section 6.
  */
 import { recordWorkerEvent, type Db } from "@ava/db";
+import { aiGovernorStats } from "@ava/ai";
 import { runMigrations } from "@ava/db/migrate";
 import { sql } from "drizzle-orm";
 import { enqueueBootGateReevaluation, seedTagVocabularies } from "./boot";
@@ -58,6 +59,8 @@ async function main() {
         bootedAt: bootedAt.toISOString(),
         vitals: vitals(),
         active: queue.activeCount,
+        // The model streams this process has open and waiting, per model, for Health.
+        governor: aiGovernorStats(),
       });
     } catch (err) { log.error("worker heartbeat failed", err); }
   };

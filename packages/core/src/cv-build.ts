@@ -114,7 +114,12 @@ export type CvBuildStepDetails = {
    * number, daily version and the name the page shows it by ("26-Sep-V3"). Skipped: the original
    * was kept, and `reason` says why in a sentence ("Kept the original: <reason>").
    */
-  adopt_revision: { revisionId?: string; revision?: number; version?: number; name?: string; reason?: string };
+  adopt_revision: {
+    /** The adopted revision's own draft: the page links to `/cv/<draftId>`. `revisionId` is the same id. */
+    draftId?: string; revisionId?: string; revision?: number; version?: number;
+    /** The name the page shows the revision by; `name` is the same text. */
+    label?: string; name?: string; reason?: string;
+  };
   write: CvWritingDetail;
   /** A second or third writing attempt against a smaller budget; the same figures as `write`. */
   rewrite: CvWritingDetail;
@@ -133,9 +138,12 @@ export type CvBuildStepDetails = {
    */
   assess_batch: CvStepCost & {
     batch?: number; batches?: number; requirements?: number; claims?: number;
+    /** The same position as `batch` of `batches`, one-based, under the names the page reads. */
+    index?: number; of?: number;
     pass?: CvAuditPass; cancelled?: boolean;
   };
-  assess_retry: CvStepCost & { batch?: number; corrections?: number; pass?: CvAuditPass };
+  /** `index` is `batch` again, one-based, under the name the page reads. */
+  assess_retry: CvStepCost & { batch?: number; index?: number; corrections?: number; pass?: CvAuditPass };
   /** `reused: true` (status `skipped`) when a published baseline's assessment was taken as it stood. */
   assemble: {
     pageCount?: number;

@@ -10,7 +10,7 @@ import { eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { handleGenerateCv } from "./handlers/cv";
-import { estimateStage } from "./handlers/cv-stages";
+import { estimateCvStage } from "./handlers/cv-stages";
 import { TaskQueue } from "./queue";
 import { onAbandon } from "./handlers/abandon";
 import { ensureTestUser } from "./test-users";
@@ -64,9 +64,9 @@ function scriptedClient(options: ScriptOptions = {}) {
   const calls: string[] = [];
   const authorInputs: Array<Record<string, unknown>> = [];
   let authors = 0;
-  const client: AiClientLike = { messages: { async create(params) {
+  const client: AiClientLike = { messages: { async create(params, _options, call) {
     const content = (params.messages as Array<{ content: unknown }>)[0]!.content;
-    if (Array.isArray(content)) {
+    if (call?.promptId === "cv.review" || call?.promptId === "cv.review_candidate") {
       calls.push("review");
       const stable = JSON.parse((content as Array<{ text: string }>)[0]!.text) as { evidence: Array<{ id: string; text: string }> };
       const printed = JSON.parse((content as Array<{ text: string }>)[1]!.text) as { cv: Array<{ id: string; text: string }> };
@@ -93,7 +93,8 @@ function scriptedClient(options: ScriptOptions = {}) {
       };
       return answered(review);
     }
-    const input = JSON.parse(content as string) as Record<string, unknown>;
+    const input = (typeof content === "string" ? JSON.parse(content)
+      : Object.assign({}, ...(content as Array<{ text: string }>).map(block => JSON.parse(block.text)))) as Record<string, unknown>;
     if (input.destinations) { calls.push("planner"); return answered(options.plan ?? noGapPlan); }
     if (!input.jobTitle) { calls.push("rubric"); return answered(rubric); }
     const improving = Array.isArray(input.improvements) && input.improvements.length > 0;
@@ -183,7 +184,8 @@ it("publishes the baseline first, then adopts one verified improvement as a new 
   expect(steps.find(step => step.motion === "compare_content")?.detail).toMatchObject({ accepted: true });
   const adopt = steps.find(step => step.motion === "adopt_revision")!;
   expect(adopt.status).toBe("done");
-  expect(adopt.detail).toMatchObject({ revisionId: revision!.id, revision: 2, version: expect.any(Number) });
+  expect(adopt.detail).toMatchObject({ draftId: revision!.id, revisionId: revision!.id, revision: 2, version: expect.any(Number) });
+  expect(adopt.detail.label).toBe(adopt.detail.name);
   expect(adopt.detail.name).toMatch(/^\d\d-[A-Z][a-z]{2}-V\d+$/);
   // Once published, nothing the build did moved the baseline's last moment of progress.
   const publishedAt = steps.find(step => step.motion === "publish")!.finishedAt!;
@@ -263,8 +265,9 @@ it("a content checkpoint reserves the audit plus one improvement, reuses the aut
   const admits = (await listCvBuildSteps(db, userId, draft.id)).filter(step => step.motion === "admit_budget");
   const sizes = { libraryBytes: Buffer.byteLength(JSON.stringify(library)), descriptionBytes: Buffer.byteLength("Lead a team. Deliver transformation.") };
   expect(admits.map(step => step.detail.stage)).toEqual(["audit", "improve", "reaudit"]);
-  expect(admits[0]!.detail.expectedUsd).toBe(Number(estimateStage("claude-sonnet-5", "audit", { ...sizes, batches: 1 }).toFixed(4)));
-  expect(admits[1]!.detail.expectedUsd).toBe(Number(estimateStage("claude-sonnet-5", "improve", sizes).toFixed(4)));
+  const models = { cvModel: "claude-sonnet-5", routes: {} };
+  expect(admits[0]!.detail.expectedUsd).toBe(Number(estimateCvStage("audit", { ...sizes, batches: 1 }, models).toFixed(4)));
+  expect(admits[1]!.detail.expectedUsd).toBe(Number(estimateCvStage("improve", sizes, models).toFixed(4)));
 });
 
 it("the persisted one-shot fence prevents a retry buying a second improvement", async () => {

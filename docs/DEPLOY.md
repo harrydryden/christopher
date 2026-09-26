@@ -345,8 +345,18 @@ job holds them to the registry (`scripts/check-evaluation-reports.ts`):
 
 - a report graded at another prompt set fails the job unless it is marked `"unverified": true` — a
   report kept for the record that no longer vouches for the shipped prompts;
+- a replay report (`"kind": "cv-replay"`) at the shipped prompt set must record a rebuild that was
+  published (`"outcome": "published"`) and a grade that passed (`"grade": { "passed": true }`); a
+  report of a failed or ungraded run fails the job, whatever prompt set it names;
 - at least one report must be at the shipped prompt set, so a prompt change cannot merge without a
-  report written at its version.
+  report written at its version;
+- and at least one report at the shipped prompt set should not be marked unverified, meaning a live
+  run graded the shipped prompts. No live run can happen in CI, so by default this is a warning
+  (the job still passes, and its log says `warning: Every committed report at the shipped prompt
+  set … is marked unverified`). With `AVA_EVAL_GATE_REQUIRE_VERIFIED` set to anything but empty,
+  `0` or `false`, it is a failure: set it where a release must be vouched for by a live run, for
+  example `AVA_EVAL_GATE_REQUIRE_VERIFIED=1 pnpm exec tsx scripts/check-evaluation-reports.ts`
+  before promoting a prompt change. The pull-request CI job does not set it.
 
 `docs/evaluations/cv-replay/report.json` is that report. It is written by the replay command:
 
@@ -387,8 +397,8 @@ the scripted client: `DATABASE_URL=<scratch database> pnpm exec tsx scripts/cv-r
 docs/evaluations/recordings/cv-replay-fixture.jsonl` publishes a synthetic draft and records its
 rebuild through the scripted client, and replaying that recording writes a report marked
 `"unverified": true` — the recording says its answers were scripted. That satisfies the gate while
-saying plainly that no model graded the new prompts; replace it with a live report before relying
-on the change. The report committed today is of this kind.
+saying plainly that no model graded the new prompts (the job logs the warning above); replace it
+with a live report before relying on the change. The report committed today is of this kind.
 
 ## Changing a stage's effort or model
 

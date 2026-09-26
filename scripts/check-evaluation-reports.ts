@@ -12,7 +12,7 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { CV_PROMPT_IDS, PROMPTS, promptSetVersion } from "../packages/ai/src/prompt-registry";
-import { checkEvaluationReports, evaluatedReport, renderEvaluatedRoutes } from "./evaluation-report-gate.mjs";
+import { checkEvaluationReports, evaluatedReport, renderEvaluatedRoutes, requireVerifiedFromEnv } from "./evaluation-report-gate.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const dir = join(root, "docs/evaluations");
@@ -23,9 +23,11 @@ const reports = readdirSync(dir, { withFileTypes: true })
     return { path: relative(root, path), report: JSON.parse(readFileSync(path, "utf8")) as unknown };
   });
 const current = promptSetVersion();
-const result = checkEvaluationReports(reports, current);
-console.log(`shipped prompt set: ${current}; ${reports.length} committed report(s)`);
+const requireVerified = requireVerifiedFromEnv();
+const result = checkEvaluationReports(reports, current, { requireVerified });
+console.log(`shipped prompt set: ${current}; ${reports.length} committed report(s)${requireVerified ? "; a verified report is required (AVA_EVAL_GATE_REQUIRE_VERIFIED)" : ""}`);
 for (const note of result.notes) console.log(`note: ${note}`);
+for (const warning of result.warnings) console.warn(`warning: ${warning} (Set AVA_EVAL_GATE_REQUIRE_VERIFIED to make this a failure.)`);
 
 const defaults = Object.fromEntries(CV_PROMPT_IDS.map(id => [id, { model: PROMPTS[id].route.model, effort: PROMPTS[id].route.effort }]));
 const routesPath = join(root, "packages/core/src/evaluated-routes.ts");

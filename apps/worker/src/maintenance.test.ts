@@ -44,7 +44,9 @@ describe("finished tasks", () => {
     // Old and unfinished: a stuck task is the stale sweep's to deal with, never retention's.
     await db.execute(sql`insert into tasks (type, status, created_at) select 'discover', status, now() - interval '60 days' from unnest(array['queued', 'running']) status`);
 
-    const report = await maintainHistory(deps, { batch: 5000 });
+    // This case is about completeness, not the time budget (the next case is): a slow CI runner has
+    // taken over twenty seconds for two batches, so give the run all the time it needs here.
+    const report = await maintainHistory(deps, { batch: 5000, tableBudgetMs: 600_000 });
 
     // The old cap was a thousand an hour; twelve thousand go in one run, in three statements.
     expect(report?.tasks).toEqual({ rows: 12000, backlog: false });

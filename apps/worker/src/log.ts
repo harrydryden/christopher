@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { trace } from "@opentelemetry/api";
 
 type Level = "debug" | "info" | "warn" | "error";
 const LEVELS: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40 };
@@ -38,6 +39,10 @@ function emit(level: Level, msg: string, data?: unknown) {
     line.taskId = active.taskId;
     line.taskType = active.taskType;
   }
+  // The sampled trace this line belongs to, when tracing is on (src/otel.ts): the API's no-op
+  // tracer never records, so this adds nothing while it is off.
+  const span = trace.getActiveSpan();
+  if (span?.isRecording()) line.traceId = span.spanContext().traceId;
   if (data !== undefined) line.data = data instanceof Error ? { name: data.name, message: data.message, stack: data.stack } : data;
   const out = JSON.stringify(line);
   if (level === "error" || level === "warn") process.stderr.write(out + "\n");

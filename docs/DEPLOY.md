@@ -559,6 +559,27 @@ megabytes fresh every day, is the one to add an adapter for.
 events for what it has actually been doing. `/healthz` on the worker serves the same vitals for an
 uptime check. The runbook below covers a worker that is restarting.
 
+### Tracing (off until a collector exists)
+
+Both halves carry OpenTelemetry tracing that ships switched off. It starts only where
+`OTEL_SDK_DISABLED=false` **and** `OTEL_EXPORTER_OTLP_ENDPOINT` names an OTLP/HTTP collector
+(Grafana Cloud, Honeycomb, or Vercel's OTel integration on the interface); with either missing the
+code loads only the OpenTelemetry API, whose tracer does nothing.
+
+- **Interface** (`apps/web/instrumentation.ts`): `@vercel/otel` with service name `ava-web` and a
+  trace-id ratio sampler, `OTEL_TRACES_SAMPLER_ARG` defaulting to `0.1`. Next.js contributes its
+  route, render and fetch spans. Set the variables in Vercel › Settings › Environment Variables.
+- **Worker** (`apps/worker/src/otel.ts`, preloaded by the image's `node --import tsx --import
+  ./src/otel.ts src/index.ts`): the Node SDK with the pg instrumentation
+  (`enhancedDatabaseReporting` off, so statements appear without their values) and the undici
+  instrumentation, parent-based 10 % sampling, a batch processor holding at most 512 spans, and three
+  spans of its own: `task.run` (type, attempt, ready wait), `model.call` (model, call site, stage,
+  token and cache-read counts, outcome) and `scan.fetch` (source type). Log lines written inside a
+  sampled trace carry its `traceId`. Set the variables on the Render service.
+- **Never an attribute:** an account id, email, CV text, prompt, answer or statement parameter.
+- After enabling it on the worker, watch Operations › Alert signals' heap line for a week: the
+  instance is 512 MB and the span queue is bounded, but the SDK is not free.
+
 ### Why it is shaped this way
 
 The unit of observation is the external dependency, because that is where this system fails:
@@ -572,7 +593,7 @@ is the length of the question "how did this vendor behave last spring".
 
 ### What is deliberately not here
 
-No metrics stack — no Prometheus, no time-series database, no alerting rules. For one worker and
+No metrics stack — no Prometheus, no time-series database. Alert thresholds live in the operational check (see Alert ownership), and tracing is present but off (above). For one worker and
 one interface, a table queried by a page is less to run and easier to reason about than a scrape
 target. Product analytics (PostHog or similar) and an error tracker (Sentry or similar) are
 separate, later additions: they answer what people do and which exceptions are thrown, which

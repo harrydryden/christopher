@@ -7,6 +7,7 @@ import type { WorkerEnv } from "./env";
 import { HttpTrafficLedger, PoliteFetcher, userAgentFor } from "./fetcher";
 import { accountAiStanding, BudgetRefusedError, recordAiUsage, tryReserveAi } from "./budget";
 import { log } from "./log";
+import { recordModelCall } from "./otel";
 import { loadSettings, loadUserSettings } from "./settings";
 
 export interface WorkerDeps {
@@ -120,6 +121,7 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
   // that still fails after its retries throws, so the engine keeps the call's hold instead of
   // releasing it and letting the spend vanish from the budget.
   const onUsage = async (r: AiUsageRecord) => {
+    recordModelCall(r);
     await recordAiUsage(db, r.userId ?? null, r);
   };
   /**

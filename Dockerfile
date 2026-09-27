@@ -44,4 +44,4 @@ USER pwuser
 EXPOSE 8080
 WORKDIR /app/apps/worker
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["node", "--import", "tsx", "src/index.ts"]
+CMD ["node", "--import", "tsx", "--import", "./src/otel.ts", "src/index.ts"]

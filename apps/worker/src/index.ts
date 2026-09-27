@@ -16,6 +16,7 @@ import { setInternal } from "./settings";
 import { recoverFromCrash, settleWithin, TaskQueue } from "./queue";
 import { startScheduler } from "./scheduler";
 import { vitals } from "./vitals";
+import { stopOtel, traceHandlers } from "./otel";
 
 async function main() {
   const env = readEnv();
@@ -42,7 +43,8 @@ async function main() {
   // CV builds hold a slot for many minutes while they mostly wait on the model, so they have slots
   // of their own (CV_CONCURRENCY) beside the memory-bound general ones (WORKER_CONCURRENCY): a run
   // of builds never holds up the discoveries, imports and scans, and a scan never holds up a build.
-  const queue = new TaskQueue(deps, handlers, {
+  // Each handler runs in a `task.run` span; a no-op unless tracing is enabled (src/otel.ts).
+  const queue = new TaskQueue(deps, traceHandlers(handlers), {
     concurrency: env.concurrency, cvConcurrency: env.cvConcurrency, workerId: env.workerId, onAbandon, onInterrupted,
   });
   queue.start();
@@ -100,6 +102,7 @@ async function main() {
     await queueStopped;
     await settleWithin(schedulerStopped, SHUTDOWN_WRITE_MS);
     await settleWithin(deps.close(), SHUTDOWN_WRITE_MS);
+    await settleWithin(stopOtel(), SHUTDOWN_WRITE_MS);
     clearTimeout(timeout);
     process.exit(0);
   };

@@ -1,6 +1,16 @@
-/** The interface pool's width: 3 on the direct endpoint, 6 through PgBouncer, and an override. */
-import { describe, expect, it } from "vitest";
-import { DIRECT_POOL_MAX, POOLED_POOL_MAX, webPoolMax } from "./db";
+/**
+ * The interface pool: 3 wide on the direct endpoint and 6 through PgBouncer, with an override; idle
+ * connections kept two minutes through PgBouncer and 30 seconds direct; and the pool handed to
+ * Vercel so its idle connections are closed before the instance is suspended.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const createDb = vi.hoisted(() => vi.fn());
+const attachDatabasePool = vi.hoisted(() => vi.fn());
+vi.mock("@ava/db/client", async (original) => ({ ...(await original<typeof import("@ava/db/client")>()), createDb }));
+vi.mock("@vercel/functions/db-connections", () => ({ attachDatabasePool }));
+
+import { DIRECT_IDLE_TIMEOUT_MS, DIRECT_POOL_MAX, POOLED_IDLE_TIMEOUT_MS, POOLED_POOL_MAX, webPoolIdleTimeoutMs, webPoolMax } from "./db";
 
 const direct = "postgres://ava:secret@dpg-abc123-a.frankfurt-postgres.render.com:5432/ava";
 const pooled = "postgres://ava:secret@dpg-abc123-a.frankfurt-postgres.render.com:6432/ava";
@@ -32,5 +42,53 @@ describe("webPoolMax", () => {
       expect(webPoolMax(pooled, ignored), ignored).toBe(6);
       expect(webPoolMax(direct, ignored), ignored).toBe(3);
     }
+  });
+});
+
+describe("webPoolIdleTimeoutMs", () => {
+  it("keeps an idle connection two minutes through PgBouncer, where it holds no backend", () => {
+    expect(POOLED_IDLE_TIMEOUT_MS).toBe(120_000);
+    expect(webPoolIdleTimeoutMs(pooled)).toBe(120_000);
+    expect(webPoolIdleTimeoutMs("postgres://ava:secret@dpg-abc123-a/ava?port=6432")).toBe(120_000);
+    expect(webPoolIdleTimeoutMs("postgres://ava:secret@ep-quiet-sun-123-pooler.eu-central-1.example.com/ava")).toBe(120_000);
+  });
+
+  it("keeps thirty seconds on the direct endpoint, where every idle connection is a backend", () => {
+    expect(DIRECT_IDLE_TIMEOUT_MS).toBe(30_000);
+    expect(webPoolIdleTimeoutMs(direct)).toBe(30_000);
+    expect(webPoolIdleTimeoutMs("postgres://postgres:postgres@127.0.0.1:5432/ava")).toBe(30_000);
+    expect(webPoolIdleTimeoutMs("not a url")).toBe(30_000);
+  });
+});
+
+describe("db()", () => {
+  const pool = { options: {}, on: vi.fn() };
+  beforeEach(() => {
+    vi.resetModules();
+    createDb.mockReset().mockReturnValue({ db: { marker: "db" }, pool });
+    attachDatabasePool.mockReset();
+    vi.stubEnv("WEB_DB_POOL_MAX", "");
+  });
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it("opens one pool per instance through PgBouncer, two minutes idle, and hands it to Vercel", async () => {
+    vi.stubEnv("DATABASE_URL", pooled);
+    const { db } = await import("./db");
+    expect(db()).toEqual({ marker: "db" });
+    expect(db()).toBe(db());
+    expect(createDb).toHaveBeenCalledTimes(1);
+    expect(createDb).toHaveBeenCalledWith(pooled, {
+      max: 6, idleTimeoutMillis: 120_000, statementTimeoutMs: 30_000, idleInTransactionTimeoutMs: 30_000, reportRoundTrip: true,
+    });
+    expect(attachDatabasePool).toHaveBeenCalledTimes(1);
+    expect(attachDatabasePool).toHaveBeenCalledWith(pool);
+  });
+
+  it("keeps the direct endpoint's pool at three connections and thirty seconds idle", async () => {
+    vi.stubEnv("DATABASE_URL", direct);
+    const { db } = await import("./db");
+    db();
+    expect(createDb).toHaveBeenCalledWith(direct, expect.objectContaining({ max: 3, idleTimeoutMillis: 30_000 }));
+    expect(attachDatabasePool).toHaveBeenCalledWith(pool);
   });
 });

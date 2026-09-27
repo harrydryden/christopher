@@ -104,6 +104,17 @@ the same learning loop.
    client-connection limit, so check that figure in Render's dashboard, or ask Render's support,
    before instances grow into the hundreds, and lower `WEB_DB_POOL_MAX` if it is close.
 
+   On the pooled endpoint an interface instance keeps an idle connection for two minutes (30
+   seconds on the direct one, where idle connections are backends). A new connection costs about
+   five round trips (TCP, the SSL request, TLS 1.3, PgBouncer's SCRAM exchange), and at 30 seconds
+   the first navigation after anyone paused to read paid them again for each connection. Render's
+   PgBouncer keeps idle clients for a day, so the longer time costs only client slots. The pool is
+   registered with `attachDatabasePool` from `@vercel/functions`: after each query, Fluid compute
+   keeps the instance alive until its idle connections have closed, instead of freezing them open
+   to be found dead on the next thaw. That keeps an instance provisioned up to two minutes after
+   its last query; lower the figure in `apps/web/lib/db.ts` if that memory time ever matters more
+   than the reconnects.
+
    **Time limits.** The worker and the scripts start every connection with a `statement_timeout` of
    five minutes and an `idle_in_transaction_session_timeout` of one (`DATABASE_STATEMENT_TIMEOUT_MS`
    overrides the first). PgBouncer refuses such startup parameters, so a pooled connection sends

@@ -18,6 +18,8 @@ export interface CreateDbOptions {
   statementTimeoutMs?: number;
   /** How long a session may sit idle inside an open transaction before the server ends it; 0 for never. Defaults to a minute. */
   idleInTransactionTimeoutMs?: number;
+  /** How long an idle connection stays in the pool before it is closed. Defaults to 30 seconds. */
+  idleTimeoutMillis?: number;
   /** Where a slow query is reported. Defaults to an `info` line on stdout; the worker can route it through its own log, which knows the task. */
   onSlowQuery?: (query: SlowQuery) => void;
   /**
@@ -232,7 +234,7 @@ export function createDb(connectionString: string, options: CreateDbOptions = {}
     connectionString,
     max: options.max ?? 5,
     ssl: sslFor(connectionString, options.ssl),
-    idleTimeoutMillis: 30_000,
+    idleTimeoutMillis: options.idleTimeoutMillis ?? 30_000,
     connectionTimeoutMillis: 10_000,
     // A serverless instance reuses its pool between requests; without keepalive
     // an idle TLS connection is silently dropped and the next query pays the

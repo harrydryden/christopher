@@ -168,6 +168,33 @@ describe("the endpoint a serverless deployment connects to", () => {
   });
 });
 
+describe("idle connections", () => {
+  it("are closed after 30 seconds unless the caller keeps them longer, and are kept alive at the socket", async () => {
+    const plain = createDb("postgres://u:p@127.0.0.1:5432/ava");
+    const kept = createDb("postgres://u:p@dpg-example-a.frankfurt-postgres.render.com:6432/ava", { idleTimeoutMillis: 120_000 });
+    try {
+      expect(plain.pool.options).toMatchObject({ idleTimeoutMillis: 30_000, keepAlive: true, connectionTimeoutMillis: 10_000 });
+      expect(kept.pool.options).toMatchObject({ idleTimeoutMillis: 120_000, keepAlive: true, connectionTimeoutMillis: 10_000 });
+      // A longer idle time is not a startup parameter: PgBouncer on 6432 still receives none of the timeouts.
+      expect(kept.pool.options).not.toHaveProperty("statement_timeout");
+      expect(kept.pool.options).not.toHaveProperty("idle_in_transaction_session_timeout");
+    } finally {
+      await Promise.all([plain.pool.end(), kept.pool.end()]);
+    }
+  });
+
+  it("really are closed once the idle time has passed", async () => {
+    const { db, pool } = createDb(DATABASE_URL, { max: 1, idleTimeoutMillis: 200 });
+    try {
+      await db.execute(sql`select 1`);
+      expect(pool.totalCount).toBe(1);
+      await vi.waitFor(() => expect(pool.totalCount).toBe(0), { timeout: 3_000 });
+    } finally {
+      await pool.end();
+    }
+  });
+});
+
 describe("the round trip to the database", () => {
   afterEach(() => { vi.restoreAllMocks(); });
 

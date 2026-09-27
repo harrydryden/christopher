@@ -206,7 +206,7 @@ Timings are local database time, `jit=off`, warm, on `ava_perf_bench` (1,000 `us
   - First step: exponential idle backoff 3 → 15 s, reset on a successful claim.
   - Then `LISTEN ava_tasks` on one dedicated `pg.Client` (direct URL, outside the pool); `enqueueTask`/`enqueueTasks` (`packages/db/src/tasks.ts:87-122`) issue `select pg_notify('ava_tasks', '')` in the insert's transaction, or a statement-level `after insert on tasks` trigger does; raise the fallback poll to 15–30 s.
   - NOTIFY is delivered on commit and works through transaction pooling; only LISTEN needs a session.
-- Status: not done [V]: `pollMs ?? 3000` (`apps/worker/src/queue.ts:729`); 3 general plus 8 CV slots, each general slot tries its lane then `all` (`:782-783`); no `pg_notify` anywhere. Claims already use `for update skip locked` (`:185-203`).
+- Status: done [V] (commit 14189ec): backoff 3 → 15 s reset on a claim; `pg_notify('ava_tasks', '')` in `enqueueTask`/`enqueueTasks`' transaction; one LISTEN client outside the pool (`apps/worker/src/task-wakeup.ts`), fallback poll up to 30 s while listening, reconnect 1 → 30 s with a poll on reconnect. Idle statements per minute (3 general + 8 CV slots, empty queue) 280 → 28 after a 70-statement first minute [M]; a task enqueued during a 10 s wait starts in under 1 s (test).
 - Impact: idle load about 14 claims per 3 s, 280/min, 400,000 statements/day, planning-dominated [I, from code]; pickup latency for refresh, CV start and tag reason from 1.5 s average / 3 s worst to about 0 with NOTIFY [I].
 - Effort: S (backoff), M (NOTIFY). Risk → guard: notifications lost while reconnecting; keep the fallback poll, reconnect with backoff, poll once on reconnect, payload-free notifications.
 
@@ -214,13 +214,13 @@ Timings are local database time, `jit=off`, warm, on `ava_perf_bench` (1,000 `us
 - Mechanism:
   - Worker (direct 5432): rewrite the claim's lane filters as array parameters (`type = any($1::text[])`, `type <> all($2::text[])`) so it is one text, then Drizzle `.prepare("claim_task")` or `pg` `{name, text, values}`; the same for `renewTask`. `pg` sends a named Parse once per connection.
   - Web (PgBouncer 6432), probe first: with a pool of 2, run `pool.query({ name: 'probe', text: 'select 1' })` 20 times in separate transactions. `prepared statement "probe" does not exist` means PgBouncer is older than 1.21 or `max_prepared_statements = 0`. If supported, name the statements whose planning exceeds execution.
-- Status: not done [V]: no `.prepare(` or named `QueryConfig` in `apps/`, `packages/db`, `packages/core`. PgBouncer version unverified [I; the probe above is the check].
+- Status: done for the worker [V] (commit 7e2cf36): lanes as `text[]` parameters, claim as two named statements (`claim_task_lane`, `claim_task_open`; one text folding both would lose `tasks_lane_idx`), `renew_task` named. ava_perf_infra, planning from the 6th execution: CV lane 0.52 → 0.025 ms, background 0.60 → 0.026 ms; the scan lane keeps custom plans under `plan_cache_mode = auto` (0.55–0.64 ms) [M]. Web: `scripts/pgbouncer-prepared-probe.mjs` (exit 0 supported, 2 not, 1 could not run); no web statement is named until it passes on Render.
 - Impact: planning vs execution [M]: claim 0.8–2.7 vs 0.6–1.8 ms; pipeline keys #820 3.0 vs 1.9; stage counts #264 2.1 vs 0.6; roles page 1.9–5 vs 20 ms. About 12 s of planner CPU per idle minute on the worker (estimate; shrinks after 3.6).
 - Effort: S (worker), M (web). Risk → guard: a generic plan after 5 executions could suit skewed lanes or large accounts badly; keep `plan_cache_mode = auto`, compare the 6th execution's EXPLAIN and `pg_stat_statements` (5.3), drop `name:` from any regression. Never name statements on 6432 without the probe.
 
 **3.8 `/companies`: one client Manage menu instead of per-row bound server forms.**
 - Mechanism: replace `CompanyControls` (3–4 `<form action={x.bind(null, companyId)}>` per row, `app/(app)/companies/CompanyControls.tsx:28-53`, `companies/page.tsx:164`) with a client `CompanyManageMenu({companyId, companyName, status, running, blockedReason})` that calls the imported actions and renders buttons only when open. A bound action serialises a 66 B reference, a 43 B bound-args chunk and about 250 B of `Button` classes per row; an unbound reference is serialised once per page.
-- Status: not done [V].
+- Status: done [V] (commit cd0efd8): `components/CompanyManageMenu.tsx`, used on `/companies` and `/companies/[id]`. `/companies` with 20 rows: RSC 101,286 → 68,044 B (−33 %), HTML 232,525 → 133,173 B (−43 %) [M].
 - Impact: a row is 3,691 B and its `<details>` block 1,496 B (about 40 %) [M A-baseline, RSC capture]; −30 KB of the 99 KB RSC for 20 rows, the same again in inline flight data (estimate).
 - Effort: S. Risk → guard: a client-supplied `companyId`; the actions already scope by `requireUser()` and `company_subscriptions.user_id` (`app/actions/companies.ts:195-204`); keep `zUuid().parse`.
 
@@ -230,7 +230,7 @@ Timings are local database time, `jit=off`, warm, on `ava_perf_bench` (1,000 `us
   - the finalise and record-application pre-reads (`actions/cv.ts:790-793`, `actions/applications.ts:277`); the locked re-read in the transaction can stay full;
   - worker sweeps `requeueStale`, `failSpentTasks`, `recoverFromCrash` (`queue.ts:402,444,492`) and admin task lists (`lib/queries/health.ts:830,868`), which read `payload` and `result`;
   - `refreshCompany`'s pending check (`actions/companies.ts:244`), which needs `id` and `status`.
-- Status: not done for these paths [V]; `getCompanyScans` already drops `raw_snapshot`, `listLibraryImports` drops `source_bytes`.
+- Status: done [V] (commit 6e6c65a): `getOwnCvDraftForPdf` (keeps `library_snapshot` and `job_description`, which `assertCvFinalisable` hashes), finalise and record pre-reads, `requeueStale`/`failSpentTasks` (all but `result`), `recoverFromCrash`, the admin running/retrying lists, `refreshCompany`'s pending check.
 - Impact: fixture `library_snapshot` averages 4.3 KB [M]; real libraries 10–60 KB per PDF request, finalise or record (estimate).
 - Effort: S. Risk → guard: a later-needed field not selected fails `pnpm -r typecheck`.
 
@@ -247,18 +247,18 @@ Timings are local database time, `jit=off`, warm, on `ava_perf_bench` (1,000 `us
   - `/admin/catalogue`: three waves to one plus one (`admin/catalogue/page.tsx:24-27`);
   - `/applications`: stream CV quotes via a `<Suspense>` child fed by `pipelineCvQuotes(user.id, keys)`, and fold `pipelineStageCounts` with the page keys into one `with idx as (…)` (`applications/page.tsx:66`);
   - layout Health count: fold `accountAiBudget` into the count if it can be a CTE (`lib/queries/health.ts:1223-1246`).
-- Status: partial [V]; #81 cut `/cv/[id]` 9.3 → 4.9 RT, `/applications` 12.8 → 8.1, `/companies/[id]` 14.8 → 10.9 [M A-after].
+- Status: done [V] (commit e88ab87): statements per full render on an ava_perf_bench clone /companies 14 → 13, /suggestions 11 → 10, /admin/catalogue 12 → 11, /applications 18 → 16; sequential RT at +100 ms per packet /companies 6.0 → 5.2, /suggestions 4.9 → 3.8, /admin/catalogue 5.9 → 4.3, /applications 7.9 → 6.5 total and 8.0 → 3.6 to the table (quotes stream behind it) [M].
 - Impact: one RT per page (estimate), about 3–4 RT on `/applications` [M B #7].
 - Effort: S each, M for `/applications`. Risk → guard: low; the re-read pattern is tested in `fetchRolePage`.
 
 **3.12 Worker memory: compile ahead of time and close an idle browser.**
 - Mechanism: bundle the worker with esbuild at image build and run `node dist/…` instead of `tsx`; close the Chromium instance (never closed once launched, `browser.ts:117-140`) after about 5 idle minutes and relaunch on demand.
-- Status: not done [V]. Impact: about 60 MB of `tsx` plus esbuild child ("the first lever", DEPLOY.md) and Chromium's roughly 100 MiB outside V8 between bursts [M `docs/CAPACITY-AND-RECOVERY-DRILLS.md`]. Container sizing: see 4.2.
+- Status: done [V] (commits 3da41ce, 72a2316): `apps/worker/build.mjs` (esbuild) in a Dockerfile build stage, `node --enable-source-maps dist/index.mjs`; tsx kept for tests and the CLI; Chromium closed after 5 idle minutes and relaunched on demand. Local idle RSS 161–236 MB from source → 117–118 MB compiled (one reading 205 MB); boot to /healthz 1.8–2.6 → 1.0 s [M]. Image not built locally (no Docker daemon); the worker-image CI job builds and boots it.
 - Effort: M. Risk → guard: relaunch latency on the first browser task after idle (seconds); keep `BROWSER_CONCURRENCY=1` and the worker image CI job.
 
 **3.13 CV PDF: keep the bytes that finalising already renders.**
 - Mechanism: store the output of `finaliseCvDraft` (`app/actions/cv.ts:797`, rendered and discarded today) in `cv_pdfs(draft_id, content_hash, bytes)` or a `bytea` column; serve downloads from it and have "record application" copy it (`app/actions/applications.ts:279`); render on request only for previews. Finalised revisions are immutable (SPEC), so the key never goes stale. Lazy pdfkit import: see 4.5.
-- Status: not done [V]: `app/api/cv/[id]/pdf/route.ts:38-41` re-renders on every GET.
+- Status: done [V] (commit 15a0a11): migration 0044 `cv_pdfs(draft_id, user_id, content_hash, bytes, created_at)` (a table, not a `cv_drafts` column, so `select *` on drafts stays small); finalise stores, the download serves on a matching sha256(commit + content) and renders-and-stores otherwise, record-application copies. Stored read 0.40 ms against a 15 ms warm / 49 ms first render and +27 MB RSS [M].
 - Impact: short CV render 117 ms first, 11–34 ms warm, +26 MB RSS per render [M G3-backend]; long CVs take "seconds" per code comments.
 - Effort: M. Risk → guard: stored bytes out of step with content; store the content hash and re-render on mismatch.
 
@@ -276,11 +276,11 @@ Timings are local database time, `jit=off`, warm, on `ava_perf_bench` (1,000 `us
 
 **3.16 Skip the claim's `fair` CTE on non-CV lanes.**
 - Mechanism: build the fairness CTE only when the lane is `cv`; it scans the CV backlog on every scan-lane claim.
-- Status: not done [V]. Impact: 184 buffers and 0.3 ms per scan-lane claim [M G4], multiplied by the idle poll rate until 3.6. Effort: S. Risk → guard: the CV-lane fairness tests stay green.
+- Status: done [V] (commit 6fd7eb0): the `fair` CTE only where a CV build can be claimed. Prepared scan-lane claim on ava_perf_infra planning 0.644 → 0.258 ms, execution 0.275 → 0.172 ms; buffers 124 either way on that fixture (no builds waiting) [M].
 
 **3.17 Batch the remaining per-row worker writes.**
 - Mechanism: `enqueueTasks()` and multi-row `insert into tasks … values (…),(…) on conflict do nothing` in `handlers/companies.ts:154-166` and `:266-272`, `external-sources.ts:116,165`, `daily.ts:88-90`.
-- Status: partial [V]; the scan hot path is batched (new jobs in 100s, views and events in 250s, seen updates in 5,000s, `jsonb_to_recordset` updates, `handlers/scan.ts:678-973`).
+- Status: done [V] (commit d108f7a): suggestions, profile queueing, source monitoring, document extraction and the logo sweep insert and enqueue per batch (`enqueueTasks`, multi-row inserts); six profiles one insert instead of six (test).
 - Impact: tens of statements per discovery or suggestion run, not user-visible (estimate). Effort: S. Risk → guard: `enqueueTasks` already dedupes within a batch; keep the queue tests.
 
 #### Already in place
@@ -336,13 +336,13 @@ Production (read-only, 2026-09-27) [V]: Postgres 16 on `basic-256mb`, `shared_bu
 
 **4.4 Run `ANALYZE` after bulk loads, restores and plan-test fixtures.**
 - Mechanism: `ANALYZE companies, career_sources, company_subscriptions, user_jobs` from the worker after a bulk company import and after a `reevaluate_gate` touching over 500 jobs; `vacuumdb --analyze-in-stages` after every `pg_restore` in `scripts/recovery-drill.mjs` and the managed-restore runbook (PG16's `pg_restore` restores no statistics); `ANALYZE <tables>` in any plan-asserting test after its fixture load.
-- Status: partial [V]: only `scripts/benchmark-users.mjs:149` analyses; commit `ec0b195` records the flaky plan test (`packages/db/src/indexes.test.ts:24-40`).
+- Status: done [V] (commit d3a050c): `apps/worker/src/analyze.ts`; `reevaluate_gate` analyses `user_jobs` after writing over 500 views, `cli add` of over 50 companies analyses the four named tables; `vacuumdb --analyze-in-stages` after both restores in `scripts/recovery-drill.mjs` and in the restore runbook; `indexes.test.ts`'s plan helper and the dedupe plan test analyse after load.
 - Impact: avoids hours of misplanned queries after an import or restore [I]; removes the flaky plan-test class [V].
 - Effort: S. Risk → guard: never inside a request or server action transaction; run from the worker after the import task.
 
 **4.5 Load pdfkit only inside the actions that render a PDF.**
 - Mechanism: replace module-scope `import { renderCvPdf } from "@/lib/cv-pdf"` in `app/actions/cv.ts:5` and `app/actions/applications.ts:10` with `const { renderCvPdf } = await import("@/lib/cv-pdf")` inside the two actions.
-- Status: not done [V]: pdfkit, fontkit and `@noble/*` are traced into pages that never render a PDF (the `/applications` `.nft.json` lists them). `serverExternalPackages` (pdfkit, pg, playwright, `@anthropic-ai/sdk`) and `outputFileTracingIncludes` for fonts on `/api/cv/[id]/pdf`, `/api/cv/preview`, `/cv/[id]` are correct.
+- Status: done [V] (commit 15a0a11): `await import("@/lib/cv-pdf")` inside `finaliseCvDraft` and `recordApplication`. A fresh `next start` per page (entry preloading off) no longer loads pdfkit or fontkit rendering /settings, /library or /cv/[id] (it did before) [M]. The `.nft.json` files still list pdfkit for those pages, because the dynamic import's chunk is traced; dropping it from their packages needs those two actions in modules only the CV client components import.
 - Impact: module load measured 808 ms and +57 MB under `tsx` [M G3-backend, an upper bound including transpilation]; local cold first request 1.9–2.3 s [M A-baseline §6]; the pdfkit share on Vercel is unmeasured [I: profile a cold `/applications` before claiming it]. Smaller function packages regardless.
 - Effort: S. Risk → guard: `pnpm smoke:web` exercises the PDF download and record-application path.
 

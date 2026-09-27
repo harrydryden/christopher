@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { histogramP75, readVitalReport, readVitalsBeacon, vitalBucket, vitalBucketValue, vitalRating, vitalRoute, formatVital } from './web-vitals';
+import { readdirSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { histogramP75, readVitalReport, readVitalsBeacon, VITAL_ROUTES, vitalBucket, vitalBucketValue, vitalRating, vitalRoute, formatVital } from './web-vitals';
 
 const report = (overrides: Record<string, unknown> = {}) => ({ route: '/', metric: 'LCP', value: 1_200, rating: 'good', navType: 'navigate', deviceClass: 'low', effectiveType: '4g', ...overrides });
 
@@ -11,6 +14,20 @@ describe('vitalRoute', () => {
     expect(vitalRoute('/?view=auto-matched')).toBe('/');
     expect(vitalRoute('/forgot-password')).toBe('/forgot-password');
     expect(vitalRoute('')).toBe('/');
+  });
+});
+
+describe('VITAL_ROUTES', () => {
+  it('is every page under app/(app), plus /login and /share/[token], each as the beacon names it', () => {
+    const root = fileURLToPath(new URL('../app/', import.meta.url));
+    const pages = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+      entry.isDirectory() ? pages(join(dir, entry.name)) : entry.name === 'page.tsx' ? [dir] : []);
+    const asRoute = (dir: string) => '/' + relative(root, dir).split(sep).filter((part) => part && !/^\(.*\)$/.test(part))
+      .map((part) => (/^\[.*\]$/.test(part) ? ':id' : part)).join('/');
+    const expected = [...pages(join(root, '(app)')).map(asRoute), '/login', '/share/:id'].sort();
+    expect([...VITAL_ROUTES].sort()).toEqual(expected);
+    expect(readVitalReport(report({ route: '/wp-admin' }))).toBeNull();
+    expect(readVitalReport(report({ route: '/companies/:id' }))).not.toBeNull();
   });
 });
 

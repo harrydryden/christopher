@@ -51,7 +51,17 @@ export function vitalRoute(pathname: string): string {
     .slice(0, 100) || "/";
 }
 
-const ROUTE = /^\/[a-z0-9/:_-]{0,99}$/i;
+/**
+ * The only routes a beacon may name: every page under `app/(app)`, plus `/login` and a share link,
+ * each as `vitalRoute` names it (a dynamic segment is `:id`). A route outside the list is refused
+ * rather than stored, so a signed-in client cannot grow the table with routes of its own making; a
+ * test holds the list equal to the page files, so a new page is added here or the test fails.
+ */
+export const VITAL_ROUTES: ReadonlySet<string> = new Set([
+  "/", "/account", "/admin", "/admin/catalogue", "/admin/health", "/admin/settings", "/applications",
+  "/companies", "/companies/:id", "/cv/:id", "/cv/library", "/health", "/learning", "/library",
+  "/settings", "/suggestions", "/login", "/share/:id",
+]);
 
 /** The ceiling each metric's value may take: ten minutes of milliseconds, or a layout shift of 100. */
 function maxValue(metric: VitalMetric): number {
@@ -67,7 +77,7 @@ export function readVitalReport(value: unknown): VitalReport | null {
   const keys = Object.keys(record);
   if (keys.length !== REPORT_KEYS.length || !REPORT_KEYS.every((key) => Object.hasOwn(record, key))) return null;
   const { route, metric, value: reading, rating, navType, deviceClass, effectiveType } = record;
-  if (typeof route !== "string" || !ROUTE.test(route) || route !== vitalRoute(route)) return null;
+  if (typeof route !== "string" || !VITAL_ROUTES.has(route)) return null;
   if (!oneOf(VITAL_METRICS, metric)) return null;
   if (typeof reading !== "number" || !Number.isFinite(reading) || reading < 0 || reading > maxValue(metric)) return null;
   if (!oneOf(VITAL_RATINGS, rating) || !oneOf(VITAL_NAV_TYPES, navType) || !oneOf(VITAL_DEVICE_CLASSES, deviceClass) || !oneOf(VITAL_EFFECTIVE_TYPES, effectiveType)) return null;

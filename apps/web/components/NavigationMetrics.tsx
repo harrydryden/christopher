@@ -1,7 +1,7 @@
 "use client";
 import { useEffect } from 'react';
 import type { Metric } from 'web-vitals';
-import { vitalRoute, VITALS_SAMPLE_RATE, type VitalReport } from '@/lib/web-vitals';
+import { VITAL_ROUTES, vitalRoute, VITALS_SAMPLE_RATE, type VitalReport } from '@/lib/web-vitals';
 
 /**
  * Real-user Core Web Vitals for one page load in four, sent once. The load is sampled when this
@@ -37,8 +37,10 @@ export async function startVitals(random: () => number = Math.random): Promise<b
   // Lab browsers are not users: Lighthouse and the headless smoke runs would put their numbers in
   // the field data, and a sampled lab run would download the library and move the lab's own totals.
   if (LAB_BROWSER.test(navigator.userAgent)) return false;
-  if (random() >= VITALS_SAMPLE_RATE) return false;
+  // A page the route would refuse (sign-up, a 404) is not watched: its beacon could only be a 400.
   const route = vitalRoute(location.pathname);
+  if (!VITAL_ROUTES.has(route)) return false;
+  if (random() >= VITALS_SAMPLE_RATE) return false;
   let library: typeof import('web-vitals');
   try { library = await import('web-vitals'); } catch { return false; }
   const { onCLS, onFCP, onINP, onLCP, onTTFB } = library;

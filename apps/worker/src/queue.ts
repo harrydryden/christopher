@@ -1,4 +1,4 @@
-import { recordWorkerEvent, releaseAiHolds, schema, type Db, type ReleasedHolds, type Task } from "@ava/db";
+import { notifyTaskWorkers, recordWorkerEvent, releaseAiHolds, schema, type Db, type ReleasedHolds, type Task } from "@ava/db";
 import { AGEING_PRIORITY_FLOOR, deadlineMsFor, INTERACTIVE_TASK_TYPES, SCAN_TASK_TYPES, TASK_DEADLINES_MS, taskSubject, taskUserId, type TaskDeadlines } from "@ava/core";
 import { and, eq, getTableColumns, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
@@ -731,6 +731,7 @@ export class TaskQueue {
   async stop(graceMs = STOP_GRACE_MS, handBackMs = HAND_BACK_TIMEOUT_MS): Promise<void> {
     this.stopping = true;
     this.idleStop.abort();
+    this.clearDueTimers();
     for (const controller of this.controllers.values())
       if (!controller.signal.aborted) controller.abort(new ShutdownError());
     await settleWithin(this.handBackAll(), handBackMs);
@@ -748,6 +749,7 @@ export class TaskQueue {
   async releaseAfterCrash(timeoutMs = HAND_BACK_TIMEOUT_MS): Promise<void> {
     this.stopping = true;
     this.idleStop.abort();
+    this.clearDueTimers();
     const ids = [...this.running.keys()];
     const recovered = ids.length
       ? requeueStale(this.deps.db, 0, this.opts.workerId, { ids, deps: this.deps, onAbandon: this.opts.onAbandon })
@@ -810,6 +812,30 @@ export class TaskQueue {
       n++;
     }
     return n;
+  }
+
+  /** Timers that announce a deferred task as it comes due; cleared when the queue stops. */
+  private readonly dueTimers = new Set<NodeJS.Timeout>();
+
+  /**
+   * Announce on the tasks channel when a deferred task comes due, so a waiting slot (in this worker
+   * or another) claims it then, rather than on its next idle poll up to 30 s later. Nothing
+   * commits at that moment for a notification to ride on, so it is sent on its own; a worker that
+   * restarts before then loses the timer, and the idle poll still finds the task.
+   */
+  private notifyWhenDue(until: Date): void {
+    if (this.stopping || !this.opts.wakeup) return;
+    const timer = setTimeout(() => {
+      this.dueTimers.delete(timer);
+      if (!this.stopping) void notifyTaskWorkers(this.deps.db).catch(err => log.warn("due-task notification failed", { error: (err as Error)?.message }));
+    }, Math.max(0, until.getTime() - Date.now()));
+    timer.unref?.();
+    this.dueTimers.add(timer);
+  }
+
+  private clearDueTimers(): void {
+    for (const timer of this.dueTimers) clearTimeout(timer);
+    this.dueTimers.clear();
   }
 
   /** Ends every idle wait when the queue stops, so a stop never waits out a long poll. */
@@ -1031,7 +1057,10 @@ export class TaskQueue {
       if (handedBack()) { await this.handBackOne(task); return; }
       if (result instanceof TaskDeferred) {
         if (!await deferTask(this.deps.db, task, result.until, result.result)) log.warn("task deferral discarded: lease lost", { id: task.id });
-        else log.info("task deferred", { id: task.id, type: task.type, until: result.until.toISOString(), ms: Date.now() - started });
+        else {
+          log.info("task deferred", { id: task.id, type: task.type, until: result.until.toISOString(), ms: Date.now() - started });
+          this.notifyWhenDue(result.until);
+        }
         return;
       }
       if (!await completeTask(this.deps.db, task, result)) { log.warn("task completion discarded: lease lost", { id: task.id }); return; }

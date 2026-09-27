@@ -92,6 +92,15 @@ it("leaves Lighthouse and headless browsers out of the field data", async () => 
   expect(callbacks.size).toBe(0);
 });
 
+it("watches nothing on a page the route would refuse: sign-up, a 404, anything off the list", async () => {
+  for (const path of ["/signup", "/no-such-page", "/share"]) {
+    resetVitalsForTests();
+    window.history.replaceState(null, "", path);
+    expect(await startVitals(() => 0), path).toBe(false);
+  }
+  expect(callbacks.size).toBe(0);
+});
+
 it("decides once per load: a second start does nothing", async () => {
   expect(await startVitals(() => 0)).toBe(true);
   expect(await startVitals(() => 0)).toBe(false);

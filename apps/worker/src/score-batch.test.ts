@@ -17,7 +17,9 @@ import {
 import { and, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
-import { claimTask, TaskDeferred, TaskQueue } from "./queue";
+import { claimTask, sleep, TaskDeferred, TaskQueue } from "./queue";
+import { TaskWakeup } from "./task-wakeup";
+import { requeueScoresLive } from "./handlers/score-batch-recovery";
 import { handleCollectScoreBatch, handlePollScoreBatch } from "./handlers/score-batch";
 import { handleScoreJob } from "./handlers/learning";
 import { onAbandon } from "./handlers/abandon";
@@ -257,6 +259,53 @@ describe("the mode switch", () => {
     await schedulerTick(deps);
     await schedulerTick(deps);
     expect(await tasksOf("collect_score_batch")).toHaveLength(1);
+  });
+});
+
+describe("a hand-back to live scoring", () => {
+  /** A listener that has connected, and a wait on it that says when it ended. */
+  async function listening() {
+    const wakeup = new TaskWakeup(TEST_DATABASE_URL);
+    wakeup.start();
+    while (!wakeup.listening) await sleep(20);
+    let woken = false;
+    const started = performance.now();
+    let after = 0;
+    void wakeup.wait(5_000).then(() => { woken = true; after = performance.now() - started; });
+    return { wakeup, woken: () => woken, after: () => after };
+  }
+
+  it("wakes a waiting slot at once when the collector hands roles back", async () => {
+    const role = await seedRole(alice);
+    await queueScore(alice, role.id);
+    provider.refuseBatches = true;
+    const collector = await collectorTask();
+    const watch = await listening();
+    try {
+      await handleCollectScoreBatch(collector, deps);
+      const deadline = Date.now() + 1_000;
+      while (!watch.woken() && Date.now() < deadline) await sleep(10);
+      expect(watch.woken()).toBe(true);
+      expect(watch.after()).toBeLessThan(1_000);
+    } finally {
+      await watch.wakeup.stop();
+    }
+  });
+
+  it("wakes a waiting slot when a role already queued is marked live", async () => {
+    const role = await seedRole(alice);
+    await queueScore(alice, role.id);
+    const watch = await listening();
+    try {
+      // The queued task takes the mark; nothing new is inserted.
+      expect(await requeueScoresLive(db, [{ userId: alice, jobId: role.id }])).toBe(1);
+      expect(await tasksOf("score_job")).toHaveLength(1);
+      const deadline = Date.now() + 1_000;
+      while (!watch.woken() && Date.now() < deadline) await sleep(10);
+      expect(watch.woken()).toBe(true);
+    } finally {
+      await watch.wakeup.stop();
+    }
   });
 });
 

@@ -2,7 +2,7 @@
  * What batch scoring does to hand roles back to live scoring and let go of a batch's holds. Kept
  * apart from the handlers so the abandonment hooks can use it without importing every handler.
  */
-import { enqueueTasks } from "@ava/db/tasks";
+import { enqueueTasks, notifyTaskWorkers } from "@ava/db/tasks";
 import type { Db } from "@ava/db";
 import { dedupeKeyFor, priorityFor, type ScoreBatchItem, type ScoreBatchRecord } from "@ava/core";
 import { sql } from "drizzle-orm";
@@ -19,10 +19,15 @@ export async function requeueScoresLive(db: Db, items: ReadonlyArray<Pick<ScoreB
     const payload = { userId: item.userId, jobId: item.jobId, live: true };
     return { type: "score_job" as const, payload, dedupeKey: dedupeKeyFor("score_job", payload), priority };
   });
-  await db.execute(sql`update tasks set payload = payload || '{"live": true}'::jsonb, priority = least(priority, ${priority}::int), run_after = least(run_after, now())
-    where type = 'score_job' and status = 'queued' and started_at is null
-      and dedupe_key in (${sql.join(rows.map(row => sql`${row.dedupeKey}`), sql`, `)})`);
-  await enqueueTasks(db, rows);
+  // One transaction: a task marked live here wakes a listening worker as it commits, as a new
+  // one does through `enqueueTasks`, so the queue claims it at once rather than on its next poll.
+  await db.transaction(async tx => {
+    const marked = await tx.execute(sql`update tasks set payload = payload || '{"live": true}'::jsonb, priority = least(priority, ${priority}::int), run_after = least(run_after, now())
+      where type = 'score_job' and status = 'queued' and started_at is null
+        and dedupe_key in (${sql.join(rows.map(row => sql`${row.dedupeKey}`), sql`, `)})`);
+    if (marked.rowCount) await notifyTaskWorkers(tx);
+    await enqueueTasks(tx, rows);
+  });
   return rows.length;
 }
 

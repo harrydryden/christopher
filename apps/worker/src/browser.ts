@@ -28,6 +28,13 @@ interface RenderJob {
   abandoned: boolean;
 }
 
+/**
+ * How long Chromium is kept after its last render. It costs about 100 MiB outside V8 while it sits
+ * there, and renders come in bursts (a discovery, a scan of a JavaScript board) hours apart; a
+ * relaunch costs a second or two on the first render after a quiet spell.
+ */
+export const BROWSER_IDLE_CLOSE_MS = 5 * 60_000;
+
 /** The longest one render may take, navigation to last snapshot, before its page is closed. */
 export const RENDER_TIMEOUT_MS = 60_000;
 /** The most page HTML one render may hold, all snapshots together. */
@@ -82,6 +89,8 @@ export interface BrowserOptions {
    * it is incomplete, so a scan of it is partial and closes nothing.
    */
   maxRenderBytes?: number;
+  /** How long an unused browser is kept before it is closed (default five minutes); relaunched on the next render. */
+  idleCloseMs?: number;
 }
 
 /** Schemes whose content never leaves the browser, so there is no destination to guard. */
@@ -97,6 +106,7 @@ export class BrowserRenderer {
   private active = 0;
   private waiters: Array<{ resolve: () => void }> = [];
   private launching: Promise<Browser> | null = null;
+  private idleTimer: NodeJS.Timeout | null = null;
   private readonly guard: AddressGuard;
 
   constructor(private readonly opts: BrowserOptions) {
@@ -188,6 +198,7 @@ export class BrowserRenderer {
   /** Take a render slot, or wait for one; a signal that aborts while waiting leaves the queue. */
   private acquire(signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
+    this.cancelIdleClose();
     if (this.active < (this.opts.concurrency ?? 1)) {
       this.active++;
       return Promise.resolve();
@@ -208,6 +219,32 @@ export class BrowserRenderer {
     const next = this.waiters.shift();
     if (next) next.resolve();
     else this.active--;
+    if (this.active === 0) this.scheduleIdleClose();
+  }
+
+  /** Whether a Chromium process is running now. */
+  get running(): boolean {
+    return !!this.browser;
+  }
+
+  private cancelIdleClose(): void {
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = null;
+  }
+
+  /** Close the browser once nothing has rendered for `idleCloseMs`; the next render launches another. */
+  private scheduleIdleClose(): void {
+    this.cancelIdleClose();
+    if (!this.browser) return;
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = null;
+      if (this.active > 0 || this.launching || !this.browser) return;
+      const browser = this.browser;
+      this.browser = null;
+      log.info("closing the idle browser", { idleMs: this.opts.idleCloseMs ?? BROWSER_IDLE_CLOSE_MS });
+      void within(browser.close(), 10_000, undefined);
+    }, this.opts.idleCloseMs ?? BROWSER_IDLE_CLOSE_MS);
+    this.idleTimer.unref?.();
   }
 
   /**
@@ -492,6 +529,7 @@ export class BrowserRenderer {
   }
 
   async close(): Promise<void> {
+    this.cancelIdleClose();
     await this.browser?.close().catch(() => undefined);
     this.browser = null;
   }

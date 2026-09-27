@@ -17,3 +17,5 @@ tsconfig.tsbuildinfo
 !/docs/evaluations/recordings/README.md
 # Lighthouse CI reports (scripts/perf/lighthouse.mjs).
 .lighthouseci/
+# Weekly audit measurements (scripts/perf/run.mjs).
+perf-out/

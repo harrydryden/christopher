@@ -44,7 +44,7 @@ importers:
         specifier: workspace:*
         version: link:../worker
       '@opentelemetry/api':
-        specifier: ^1.9.1
+        specifier: 1.9.1
         version: 1.9.1
       '@vercel/functions':
         specifier: ^3.9.9
@@ -126,7 +126,7 @@ importers:
         specifier: workspace:*
         version: link:../../packages/db
       '@opentelemetry/api':
-        specifier: ^1.9.1
+        specifier: 1.9.1
         version: 1.9.1
       '@opentelemetry/exporter-trace-otlp-http':
         specifier: ^0.222.0

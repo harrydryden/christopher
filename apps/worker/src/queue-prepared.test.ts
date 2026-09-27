@@ -68,3 +68,13 @@ it("renews a lease through one named statement", async () => {
   const renewals = sent.filter(q => /update "tasks"/.test(q.text));
   expect(renewals.map(q => q.name)).toEqual(["renew_task", "renew_task"]);
 });
+
+it("gates batch-mode scoring in a named statement of its own, leaving queued scores for the batch", async () => {
+  await enqueueTask(db, "score_job", { userId: "u", jobId: "j1" });
+  await enqueueTask(db, "score_job", { userId: "u", jobId: "j2", live: true });
+  sent.length = 0;
+  const first = await claimTask(db, "w#batch", "all", [], { batchScoring: true });
+  expect(first?.payload).toMatchObject({ jobId: "j2", live: true });
+  expect(await claimTask(db, "w#batch", "all", [], { batchScoring: true })).toBeNull();
+  expect(sent.filter(q => /update "tasks"/.test(q.text)).map(q => q.name)).toEqual(["claim_task_open_fair_batch", "claim_task_open_fair_batch"]);
+});

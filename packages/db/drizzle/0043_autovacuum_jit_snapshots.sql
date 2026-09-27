@@ -1,4 +1,5 @@
--- Per-table autovacuum for the tables that churn, and no JIT compilation for this database.
+-- Per-table autovacuum for the tables that churn, an index for snapshot retention, and no JIT
+-- compilation for this database.
 --
 -- `tasks` is a queue: every claim and every finish rewrites its indexed `status`, so until vacuum
 -- runs the old versions stay in the index range the claim reads. At the default scale factor of 0.2
@@ -18,6 +19,14 @@ ALTER TABLE "scans" SET (autovacuum_vacuum_scale_factor = 0.05, autovacuum_analy
                          autovacuum_vacuum_insert_scale_factor = 0.05);--> statement-breakpoint
 ALTER TABLE "ai_calls" SET (autovacuum_vacuum_insert_scale_factor = 0.05, autovacuum_analyze_scale_factor = 0.05);--> statement-breakpoint
 ALTER TABLE "user_jobs" SET (autovacuum_vacuum_scale_factor = 0.05, autovacuum_analyze_scale_factor = 0.02);--> statement-breakpoint
+-- The scans that still hold a compressed snapshot: a handful per source, since each scan clears all
+-- but its source's last few. The hourly snapshot retention (apps/worker/src/maintenance.ts) finds its
+-- candidates and each source's newest kept snapshot here, instead of walking every retained scan.
+-- At 125,000 scans on 1,000 sources (median of five): 109 ms instead of 622 ms to clear 2,380
+-- snapshots, and 0.6 ms instead of 35-340 ms for an hour with nothing to clear. Not CONCURRENTLY,
+-- for the reason 0036 gives; on a large table build it by hand first with CONCURRENTLY and the same
+-- name.
+CREATE INDEX IF NOT EXISTS "scans_snapshot_idx" ON "scans" USING btree ("source_id", "started_at") WHERE "raw_snapshot" IS NOT NULL;--> statement-breakpoint
 -- JIT off for every new session on this database. No captured plan crosses `jit_above_cost` today
 -- (the largest is about a tenth of it), but a catalogue-wide admin or export query at scale would,
 -- and would then spend 50-200 ms compiling a query that runs in a fraction of that. It changes only

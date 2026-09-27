@@ -62,6 +62,20 @@ const RULES: Array<[table: string, statement: (limit: number) => SQL]> = [
   ["scans", n => sql`delete from scans where id in (select s.id from scans s where s.started_at < now() - interval '90 days'
       and not exists (select 1 from (select id from scans recent where recent.source_id=s.source_id order by started_at desc limit 3) keep where keep.id=s.id)
       and not exists (select 1 from (select id from scans recent where recent.source_id=s.source_id and status='ok' order by started_at desc limit 1) keep where keep.id=s.id) limit ${n})`],
+  // The compressed listing a scan keeps is its largest column. A scan clears all but its source's
+  // last three and last successful (`handlers/scan.ts`), but a source that stops being scanned
+  // keeps those for ever. After a week only what is still read survives: the newest successful or
+  // partial snapshot per source (name suggestions read it) and the newest successful scan's
+  // (closure reuse reads that one whatever it holds). The rows themselves stay, for their history.
+  // Candidates and the first keep come from `scans_snapshot_idx` (only rows holding a snapshot, a
+  // few per source), and `= any(array(...))` makes the update itself a primary-key lookup rather
+  // than a scan of every retained scan each hour.
+  ["scans.raw_snapshot", n => sql`update scans set raw_snapshot = null where id = any(array(select s.id from scans s
+      where s.raw_snapshot is not null and s.started_at < now() - interval '7 days'
+      and not exists (select 1 from (select id from scans r where r.source_id = s.source_id and r.status in ('ok','partial') and r.raw_snapshot is not null
+        order by r.started_at desc, r.id desc limit 1) keep where keep.id = s.id)
+      and not exists (select 1 from (select id from scans r where r.source_id = s.source_id and r.status = 'ok'
+        order by r.started_at desc, r.id desc limit 1) keep where keep.id = s.id) limit ${n}))`],
   ["discovery_documents", n => sql`update discovery_documents set content='' where id in (select d.id from discovery_documents d
       where d.processed_at < now() - interval '90 days' and d.content <> '' and not exists
       (select 1 from discovery_candidates c where c.document_id=d.id and c.processed_at is null) limit ${n})`],

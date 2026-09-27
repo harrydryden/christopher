@@ -119,6 +119,33 @@ describe("scans", () => {
     const kept = await db.execute<{ status: string; age: number }>(sql`select status, extract(day from now() - started_at)::int as age from scans order by started_at desc`);
     expect(kept.rows).toEqual([{ status: "failed", age: 101 }, { status: "failed", age: 102 }, { status: "failed", age: 103 }, { status: "ok", age: 106 }]);
   });
+
+  it("lose their snapshots after a week, except the newest one each reader takes, and keep their rows", async () => {
+    const { company, source } = await postingFixture();
+    const [idle] = await db.insert(schema.careerSources).values({ companyId: company.id, type: "html", url: "https://acme.example/old-careers" }).returning();
+    const [quiet] = await db.insert(schema.careerSources).values({ companyId: company.id, type: "html", url: "https://acme.example/quiet" }).returning();
+    const scan = (sourceId: string, status: string, days: number, snapshot: string | null) =>
+      db.execute(sql`insert into scans (source_id, status, started_at, raw_snapshot) values (${sourceId}, ${status}, now() - make_interval(days => ${days}), ${snapshot})`);
+    // Scanned daily until a while ago: an older success, the newest success, a newer partial, a failure, and last week's.
+    await scan(source.id, "ok", 40, "ok-40");
+    await scan(source.id, "ok", 20, "ok-20");
+    await scan(source.id, "partial", 10, "partial-10");
+    await scan(source.id, "failed", 9, "failed-9");
+    await scan(source.id, "failed", 2, "failed-2");
+    // Never succeeded: nothing any reader takes, so nothing past a week is kept.
+    await scan(idle!.id, "failed", 30, "idle-30");
+    await scan(idle!.id, "failed", 8, "idle-8");
+    // Its newest success kept no snapshot; the newest successful one that did is what suggestions read.
+    await scan(quiet!.id, "ok", 30, "quiet-30");
+    await scan(quiet!.id, "ok", 15, null);
+
+    const report = await maintainHistory(deps, { batch: 2 });
+
+    expect(report?.["scans.raw_snapshot"]).toEqual({ rows: 4, backlog: false });
+    const left = await db.execute<{ snapshot: string }>(sql`select raw_snapshot as snapshot from scans where raw_snapshot is not null order by raw_snapshot`);
+    expect(left.rows.map(row => row.snapshot)).toEqual(["failed-2", "ok-20", "partial-10", "quiet-30"]);
+    expect(await count(sql`select 1 from scans`)).toBe(9);
+  });
 });
 
 describe("discovery runs", () => {

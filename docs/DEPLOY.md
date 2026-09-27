@@ -539,11 +539,19 @@ every Library save and CV keeps its own copy of the Library. A reasonable estima
 well over 1 GB, and **a full disk stops every write**: sign-ins (a session is a row), task claims and
 scans all fail at once, until someone changes the plan by hand.
 
-- Before onboarding beyond a handful of accounts, set the database's storage to at least **15 GB**
-  (the flexible plans size storage separately from RAM and CPU; `render.yaml` writes 15) and turn
-  on **storage autoscaling** in the dashboard, which the blueprint cannot. Storage can grow later but
+- Set the **live** database's storage to **15 GB** and turn on **storage autoscaling** in its
+  dashboard, before onboarding beyond a handful of accounts. `render.yaml` writes `diskSizeGB: 15`,
+  but that applies only to services created from the blueprint, and the live ones are not linked to
+  it, so the dashboard is the only place this takes effect (the flexible plans size storage
+  separately from RAM and CPU; autoscaling is dashboard-only either way). Storage can grow later but
   never shrink. At that scale also move off `basic-256mb`: 256 MB of RAM cannot keep `user_jobs`'
   indexes in memory.
+- Scan snapshots (`scans.raw_snapshot`, the compressed listing a scan keeps) are the column that
+  grows fastest per source. Each scan keeps only its source's last three and last successful one,
+  and the hourly retention clears any older than a week except the newest successful or partial one
+  per source and the newest successful scan's, which are all anything reads; the scan rows stay.
+  Measure what they hold with
+  `select count(raw_snapshot), pg_size_pretty(sum(pg_column_size(raw_snapshot))) from scans;`.
 - Watch the disk figure on the database's Metrics page, and treat 70% as the point to add storage.
   Nothing in the product alerts on it yet; add it to the alert list below.
 - Connections are a separate budget from disk: the worker opens up to `2 × (WORKER_CONCURRENCY + CV_CONCURRENCY) + 4` direct

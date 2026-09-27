@@ -183,15 +183,30 @@ export interface ClaimOptions {
   batchScoring?: boolean;
 }
 
+/**
+ * The claim's lane as two arrays: the types a lane is limited to (empty for none) and the types it
+ * leaves out. Parameters rather than spelled-out lists, so every claim of a kind is the same text
+ * and a named statement can be planned once per connection instead of on every poll.
+ */
+function laneArrays(lane: QueueLane, excludedTypes: Task["type"][]): { include: string[]; exclude: string[] } {
+  if (lane === "cv") return { include: ["generate_cv"], exclude: excludedTypes };
+  if (lane === "scan") return { include: scanTypes, exclude: excludedTypes };
+  if (lane === "interactive") return { include: interactiveTypes, exclude: excludedTypes };
+  if (lane === "background") return { include: [], exclude: [...scanTypes, ...interactiveTypes, ...excludedTypes] };
+  return { include: [], exclude: excludedTypes };
+}
+
 export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all", excludedTypes: Task["type"][] = [], options: ClaimOptions = {}): Promise<Task | null> {
-  const types = lane === "scan" ? scanTypes : interactiveTypes;
-  const laneFilter = lane === "all" ? sql`true` : lane === "cv" ? sql`type = 'generate_cv'` : lane === "background"
-    ? sql`type not in (${sql.join([...scanTypes, ...interactiveTypes].map(t => sql`${t}`), sql`, `)})`
-    : sql`type in (${sql.join(types.map(t => sql`${t}`), sql`, `)})`;
-  const excluded = excludedTypes.length
-    ? sql`type not in (${sql.join(excludedTypes.map(t => sql`${t}`), sql`, `)})`
-    : sql`true`;
-  const exclusionFilter = options.batchScoring ? sql`${excluded} and (type <> 'score_job' or payload->>'live' = 'true')` : excluded;
+  const { include, exclude } = laneArrays(lane, excludedTypes);
+  // Two texts, not one: `type = any($1)` lets `tasks_lane_idx` serve a limited lane, and an
+  // unlimited one (`all`, `background`) reads `tasks_status_run_after_idx`. Folding both into one
+  // text with `cardinality($1) = 0 or …` would give the generic plan neither index. Batch-mode
+  // scoring adds a fixed condition, so it is a statement of its own too.
+  const kind = `${include.length ? "claim_task_lane" : "claim_task_open"}${options.batchScoring ? "_batch" : ""}`;
+  const typeFilter = include.length
+    ? sql`type = any(${sql.placeholder("include")}::text[]) and type <> all(${sql.placeholder("exclude")}::text[])`
+    : sql`type <> all(${sql.placeholder("exclude")}::text[])`;
+  const laneFilter = options.batchScoring ? sql`${typeFilter} and (type <> 'score_job' or payload->>'live' = 'true')` : typeFilter;
   // One statement, two reads. `head` is the task the queue would claim by the columns the
   // ready-lane indexes carry, so it is read from the index instead of by sorting every queued task.
   // Ageing is a periodic sweep that lowers `priority` itself (see `agePriorities`), which keeps
@@ -211,13 +226,16 @@ export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all
   //
   // A key can have a queued follow-up while a task with that key runs; the follow-up waits for
   // it, so the two never run side by side (served by `tasks_dedupe_active_idx`).
+  //
+  // A named statement: `pg` parses it once per pooled connection, and after five executions the
+  // server may keep a generic plan (`plan_cache_mode = auto` compares it with the custom ones).
   const rows = await db
     .update(schema.tasks)
-    .set({ status: "running", lockedAt: sql`now()`, lockedBy: workerId, attempts: sql`${schema.tasks.attempts} + 1`, startedAt: sql`now()` })
+    .set({ status: "running", lockedAt: sql`now()`, lockedBy: sql`${sql.placeholder("workerId")}`, attempts: sql`${schema.tasks.attempts} + 1`, startedAt: sql`now()` })
     .where(sql`${schema.tasks.id} = (
     with head as (
       select id, type, priority from tasks
-      where status = 'queued' and run_after <= now() and attempts < max_attempts and ${laneFilter} and ${exclusionFilter}
+      where status = 'queued' and run_after <= now() and attempts < max_attempts and ${laneFilter}
         and (dedupe_key is null or not exists (select 1 from tasks r where r.dedupe_key = tasks.dedupe_key and r.status = 'running'))
       order by priority asc, run_after asc, created_at asc
       limit 1 for update skip locked
@@ -232,7 +250,9 @@ export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all
       limit 1 for update of t skip locked
     )
     select coalesce((select id from fair), (select id from head)))`)
-    .returning();
+    .returning()
+    .prepare(kind)
+    .execute(include.length ? { workerId, include, exclude } : { workerId, exclude });
   return rows[0] ?? null;
 }
 
@@ -292,7 +312,13 @@ export async function renewTask(db: Db, task: Task): Promise<boolean | null> {
     return await db.transaction(async tx => {
       await tx.execute(sql`set local lock_timeout = '2s'`);
       await tx.execute(sql`set local statement_timeout = '5s'`);
-      const rows = await tx.update(schema.tasks).set({ lockedAt: new Date() }).where(ownedTask(task)).returning({ id: schema.tasks.id });
+      // Named, as the claim is: one Parse per connection for a statement every run sends each beat.
+      const rows = await tx.update(schema.tasks).set({ lockedAt: sql`${sql.placeholder("lockedAt")}` })
+        .where(and(eq(schema.tasks.id, sql.placeholder("id")), eq(schema.tasks.status, "running"),
+          eq(schema.tasks.attempts, sql.placeholder("attempts")), eq(schema.tasks.lockedBy, sql.placeholder("lockedBy"))))
+        .returning({ id: schema.tasks.id })
+        .prepare("renew_task")
+        .execute({ id: task.id, attempts: task.attempts, lockedBy: task.lockedBy ?? "", lockedAt: new Date() });
       return rows.length === 1;
     });
   } catch (err) {

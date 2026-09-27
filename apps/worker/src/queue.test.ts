@@ -1425,8 +1425,8 @@ describe("keeping a run alive, and stopping one that is over", () => {
         where: () => ({
           returning: () => {
             if ("status" in values) return Promise.resolve([{ id: task.id }]);
-            renewals++;
-            return new Promise(() => {});
+            // The renewal is a named statement: it hangs when executed.
+            return { prepare: () => ({ execute: () => { renewals++; return new Promise(() => {}); } }) };
           },
         }),
       }),

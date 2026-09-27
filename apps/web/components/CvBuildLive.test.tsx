@@ -126,3 +126,47 @@ it("counts every elapsed figure on the server's clock, whatever the browser's sa
   expect(container.textContent).toContain("Writing the CV · running 35 s");
   expect(container.textContent).toContain("Started 1m ago");
 });
+
+/** Make the tab hidden or shown, as the browser does, and tell the page. */
+function setVisibility(state: DocumentVisibilityState) {
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+  document.dispatchEvent(new Event("visibilitychange"));
+}
+
+it("stops the clock while the tab is hidden and puts every figure right the moment it is shown", async () => {
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+  const running = { ...wire(1, "write", "running"), startedAt: iso(30), title: "Writing the CV" };
+  try {
+    act(() => {
+      root.render(<CvBuildLive id="draft-1" mode="build" initial={reading([running])} nowMs={T0 + 60_000} timeZone="UTC" versionLabel="18-Sep-V1" />);
+    });
+    await advance(2_000);
+    expect(container.textContent).toContain("Writing the CV · running 32 s");
+    act(() => setVisibility("hidden"));
+    await advance(20_000);
+    // Nothing re-rendered for a tab nobody can see.
+    expect(container.textContent).toContain("Writing the CV · running 32 s");
+    act(() => setVisibility("visible"));
+    // At once, not at the next tick: the 20 s away are counted.
+    expect(container.textContent).toContain("Writing the CV · running 52 s");
+  } finally {
+    act(() => setVisibility("visible"));
+  }
+});
+
+it("tells a build log only while it is open", async () => {
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+  const steps = [wire(1, "load_inputs", "done"), { ...wire(2, "write", "running"), title: "Writing the CV" }];
+  act(() => {
+    root.render(<CvBuildLive id="draft-1" mode="log" initial={reading(steps)} nowMs={T0 + 60_000} timeZone="UTC" versionLabel="18-Sep-V1" />);
+  });
+  await advance(1_000);
+  // Closed, the log is not narrated at all, however often the clock ticks.
+  expect(container.querySelector('[aria-label="Build narrative"]')).toBeNull();
+  const toggle = [...container.querySelectorAll("button")].find((button) => button.textContent === "Show build log")!;
+  await act(async () => toggle.click());
+  await advance(1_000);
+  expect(container.querySelector('[aria-label="Build narrative"]')).not.toBeNull();
+  await act(async () => toggle.click());
+  expect(container.querySelector('[aria-label="Build narrative"]')).toBeNull();
+});

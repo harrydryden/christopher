@@ -81,13 +81,21 @@ export function CvBuildLive({
   stepsRef.current = steps;
   const live = mode === "build" ? reading.active || reading.live : reading.live;
 
-  // One clock for every elapsed figure on the narrative, running only while something can move.
+  // One clock for every elapsed figure on the narrative, running only while something can move and
+  // someone can see it. A hidden tab re-renders nothing; the figures catch up the moment it is
+  // looked at again, since each is worked out from the moment rather than counted up.
   useEffect(() => {
     if (!live) return;
-    const tick = () => setNow(Date.now() + skewRef.current);
+    const tick = () => {
+      if (document.visibilityState === "visible") setNow(Date.now() + skewRef.current);
+    };
     tick();
     const timer = setInterval(tick, 1_000);
-    return () => clearInterval(timer);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", tick);
+    };
   }, [live]);
 
   useEffect(() => {
@@ -200,10 +208,9 @@ export function CvBuildLive({
     stoppedAt: build?.lastProgressAt ? new Date(build.lastProgressAt) : lastMoment(steps),
     maxAttemptsFallback: maxAttempts,
   };
-  const items = narrateBuild(steps, at, context);
-
   if (mode === "build") {
     if (!build) return null;
+    const items = narrateBuild(steps, at, context);
     const fallback = (CV_MILESTONES as readonly string[]).includes(reading.stage ?? "") ? (reading.stage as CvMilestone) : null;
     return (
       <CvBuildProgress
@@ -242,10 +249,20 @@ export function CvBuildLive({
           )}
         </p>
       )}
-      <CvDisclosure label="build log">
-        <p className="text-14 text-muted">{cvBuildTotalsLine(cvBuildTotals(steps, at, { live: reading.live }))}</p>
-        <CvBuildNarrative items={items} />
+      {/* Told only while open: closed, the log is not re-narrated on every tick of the clock. */}
+      <CvDisclosure label="build log" mountWhenOpen>
+        <CvBuildLogBody steps={steps} at={at} context={context} live={reading.live} />
       </CvDisclosure>
     </section>
+  );
+}
+
+/** What the build log shows once opened: the run's totals, then its motions in order. */
+function CvBuildLogBody({ steps, at, context, live }: { steps: CvJournalStep[]; at: Date; context: NarrativeContext; live: boolean }) {
+  return (
+    <>
+      <p className="text-14 text-muted">{cvBuildTotalsLine(cvBuildTotals(steps, at, { live }))}</p>
+      <CvBuildNarrative items={narrateBuild(steps, at, context)} />
+    </>
   );
 }

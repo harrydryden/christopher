@@ -63,6 +63,8 @@ function finaliseObstacle(draft: {
   }
 }
 export const dynamic = "force-dynamic";
+// Server actions inherit their page's limit, and this page's `recordApplication` renders a PDF: 30 s, not the platform default of 300.
+export const maxDuration = 30;
 export default async function CvDraftPage({
   params,
 }: {

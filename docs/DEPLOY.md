@@ -92,14 +92,47 @@ the same learning loop.
    steady state (`select count(*) from pg_stat_activity where state = 'active'`), leaving room for
    the worker, migrations and your own `psql`.
 
+   **Backends, not client slots, are the budget.** PgBouncer may open up to 93 backends for the
+   interface while the worker holds up to 26 directly: 119 against 100 usable. After a burst of
+   interface traffic PgBouncer keeps its server connections for its `server_idle_timeout` (600 s by
+   default; Render does not expose it), so for up to ten minutes a worker reconnect, a migration or
+   your `psql` can fail with "sorry, too many clients already". A scan that cannot connect is a
+   failed scan, never a closure, but CV builds and task claims stall. So keep
+   `WEB_DB_POOL_MAX` × peak concurrent interface instances **at or under 60**, and alert at **80**
+   client backends. Every connection names itself (`ava-web`, `ava-worker`, or `ava-web-cron` for
+   the interface's cron fallback, sent as the `application_name` startup parameter, which PgBouncer
+   accepts; an `application_name` in `DATABASE_URL` takes precedence), so the count says who holds
+   them:
+
+   ```sql
+   select application_name, count(*) as backends, count(*) filter (where state <> 'idle') as active
+   from pg_stat_activity where backend_type = 'client backend' group by 1 order by 2 desc;
+   ```
+
+   `databaseBackends()` in `@ava/db` reads the same figures, with the usable ceiling, for monitoring.
+
    That is why the interface's pool is 6 wide on the pooled endpoint and 3 on the direct one
    (`apps/web/lib/db.ts`). A full render of the Roles page issues about 14 statements, most of them
    at once, and at 3 connections they queue in waves of one round trip each: replaying them at 5 ms
-   per round trip, time to the main content was 70 ms with 3 connections and 54 ms with 6. Idle,
+   per round trip, time to the main content was 70 ms with 3 connections and 54 ms with 6. The
+   5 ms is an assumption: the first connection each interface instance opens times one `select 1`
+   and logs the real figure as a `database_round_trip` line (`ms`, `endpoint`, `region`) in
+   Vercel's function logs, and every statement a page waits on in sequence costs about that. Idle,
    the wider pool costs no backends. What it does use is PgBouncer client slots, one per open
    connection: warm instances × 6 (plus the cron fallback's 6) must stay under the pooler's
    client-connection limit, so check that figure in Render's dashboard, or ask Render's support,
    before instances grow into the hundreds, and lower `WEB_DB_POOL_MAX` if it is close.
+
+   On the pooled endpoint an interface instance keeps an idle connection for two minutes (30
+   seconds on the direct one, where idle connections are backends). A new connection costs about
+   five round trips (TCP, the SSL request, TLS 1.3, PgBouncer's SCRAM exchange), and at 30 seconds
+   the first navigation after anyone paused to read paid them again for each connection. Render's
+   PgBouncer keeps idle clients for a day, so the longer time costs only client slots. The pool is
+   registered with `attachDatabasePool` from `@vercel/functions`: after each query, Fluid compute
+   keeps the instance alive until its idle connections have closed, instead of freezing them open
+   to be found dead on the next thaw. That keeps an instance provisioned up to two minutes after
+   its last query; lower the figure in `apps/web/lib/db.ts` if that memory time ever matters more
+   than the reconnects.
 
    **Time limits.** The worker and the scripts start every connection with a `statement_timeout` of
    five minutes and an `idle_in_transaction_session_timeout` of one (`DATABASE_STATEMENT_TIMEOUT_MS`
@@ -184,7 +217,16 @@ the rollout and recovery checklist below. Check `/healthz` returns `{"ok":true,�
 
 In Vercel, **Add New → Project**, import the repository, then set **Root Directory** to `apps/web`.
 Leave the build and install commands alone: Vercel detects the pnpm workspace and installs from the
-repository root.
+repository root. Set the project's **Node.js Version** (Settings → Build and Deployment) to
+**22.x**, the version the worker runs and `apps/web/package.json` declares in `engines`: the
+`engines` field applies only while the project setting does not override it, and new projects
+default to a later major (the live project showed 24.x on 27 September 2026).
+
+The routes that render or read a PDF (`/api/cv/[id]/pdf`, `/api/cv/preview`,
+`/api/applications/[id]/pdf`) and the CV page, whose server action freezes a PDF onto an
+application, declare `maxDuration = 30`; the Library import poll, the CSV export and the cron route
+declare 60. Everything else takes Fluid compute's default of 300 s. A render takes about a second,
+so 30 s only ever cuts off a pathological document, at a tenth of the cost.
 
 | Variable | Value |
 |---|---|
@@ -201,6 +243,22 @@ the worker. The worker is last because it is the component that can first write 
 state such as `awaiting_evidence`; the corresponding interface must be live before a person can be
 left at that checkpoint. A database missing migrations altogether is a different thing — the
 "every page 500s right after deploy" row below.
+
+**Caching and response headers.** Every signed-in page and RSC payload is `private, no-store`, and
+nothing per account may ever say `public`, `s-maxage` or `CDN-Cache-Control`: Next's `Vary` leaves
+out `Cookie`, so a cacheable page would be served to the next account. The one response the CDN
+holds is a company logo whose URL names its capture (`?v=`), for a year; a re-capture changes the
+URL, and a takedown is a CDN purge. `next.config.ts` adds the same static headers to every
+response: `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`
+(`no-referrer` under `/share/`, whose URL is the credential), `Content-Security-Policy:
+frame-ancestors 'none'`, a minimal `Permissions-Policy`, and a `Content-Security-Policy-Report-Only`
+policy of `'self'` plus the hash of Next's bootstrap script. That last one reports Next's
+per-response flight-data scripts, which no hash can cover; enforcing a full policy needs nonces or
+`'unsafe-inline'`, so it stays report-only until that is decided. A header set in `next.config.ts`
+replaces the one a route sets, so the policies skip the logo route, which keeps its own sandboxing
+policy. Never add `Vary` beside these. On a custom domain outside `.app`, also send
+`Strict-Transport-Security: max-age=63072000; includeSubDomains; preload` and submit the domain to
+the preload list (`*.vercel.app` is preloaded already). `pnpm smoke:web` asserts all of this.
 
 Vercel's egress addresses vary, so the database is protected by TLS and a strong password rather
 than an IP allowlist. Leave `CRON_SECRET` unset and the daily cron in `apps/web/vercel.json` is
@@ -504,11 +562,19 @@ every Library save and CV keeps its own copy of the Library. A reasonable estima
 well over 1 GB, and **a full disk stops every write**: sign-ins (a session is a row), task claims and
 scans all fail at once, until someone changes the plan by hand.
 
-- Before onboarding beyond a handful of accounts, set the database's storage to at least **15 GB**
-  (the flexible plans size storage separately from RAM and CPU; `render.yaml` writes 15) and turn
-  on **storage autoscaling** in the dashboard, which the blueprint cannot. Storage can grow later but
+- Set the **live** database's storage to **15 GB** and turn on **storage autoscaling** in its
+  dashboard, before onboarding beyond a handful of accounts. `render.yaml` writes `diskSizeGB: 15`,
+  but that applies only to services created from the blueprint, and the live ones are not linked to
+  it, so the dashboard is the only place this takes effect (the flexible plans size storage
+  separately from RAM and CPU; autoscaling is dashboard-only either way). Storage can grow later but
   never shrink. At that scale also move off `basic-256mb`: 256 MB of RAM cannot keep `user_jobs`'
   indexes in memory.
+- Scan snapshots (`scans.raw_snapshot`, the compressed listing a scan keeps) are the column that
+  grows fastest per source. Each scan keeps only its source's last three and last successful one,
+  and the hourly retention clears any older than a week except the newest successful or partial one
+  per source and the newest successful scan's, which are all anything reads; the scan rows stay.
+  Measure what they hold with
+  `select count(raw_snapshot), pg_size_pretty(sum(pg_column_size(raw_snapshot))) from scans;`.
 - Watch the disk figure on the database's Metrics page, and treat 70% as the point to add storage.
   Nothing in the product alerts on it yet; add it to the alert list below.
 - Connections are a separate budget from disk: the worker opens up to `2 × (WORKER_CONCURRENCY + CV_CONCURRENCY) + 4` direct

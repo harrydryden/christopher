@@ -1,3 +1,4 @@
+import { attachDatabasePool } from "@vercel/functions/db-connections";
 import { createDb, renderEndpoint } from "@ava/db/client";
 export type Db = ReturnType<typeof createDb>["db"];
 let cached: Db | null = null;
@@ -38,6 +39,32 @@ export function webPoolMax(url: string, override: string | undefined = process.e
   return isPooledUrl(url) ? POOLED_POOL_MAX : DIRECT_POOL_MAX;
 }
 
+/** How long an idle connection through PgBouncer stays open: two minutes of reading without a reconnect. */
+export const POOLED_IDLE_TIMEOUT_MS = 120_000;
+/** How long an idle connection on the direct endpoint stays open, where it holds a backend all the while. */
+export const DIRECT_IDLE_TIMEOUT_MS = 30_000;
+
+/**
+ * How long an instance keeps an idle connection before closing it.
+ *
+ * A new connection costs TCP, the SSL request, TLS 1.3 and PgBouncer's SCRAM exchange: about five
+ * round trips before the first statement, for each of the pool's connections. At 30 seconds idle,
+ * the first navigation after anyone paused to read paid that again, up to six times in parallel.
+ * Through PgBouncer an idle connection is a client slot and no backend, and Render's pooler keeps
+ * idle clients for a day (`client_idle_timeout` 86,400 s), so two minutes costs nothing there. On
+ * the direct endpoint an idle connection is a backend the worker may need, so it stays 30 seconds.
+ */
+export function webPoolIdleTimeoutMs(url: string): number {
+  return isPooledUrl(url) ? POOLED_IDLE_TIMEOUT_MS : DIRECT_IDLE_TIMEOUT_MS;
+}
+
+/**
+ * What the interface's connections call themselves in `pg_stat_activity`, so the database's
+ * backends can be budgeted by client: `WEB_DB_POOL_MAX` × peak instances stays at or under 60
+ * (docs/DEPLOY.md). A DATABASE_URL naming its own `application_name` takes precedence.
+ */
+export const WEB_APPLICATION_NAME = "ava-web";
+
 /** Shared connection policy, with a small serverless pool. Direct subpath avoids migrations. */
 export function db(): Db {
   if (!cached) {
@@ -45,8 +72,23 @@ export function db(): Db {
     if (!url) throw new Error("DATABASE_URL is not set");
     // Statements bounded at 30 s: a request-serving process must never hold a connection open
     // across a hung query, and Render's database is shared with the worker. A transaction left
-    // idle for 30 s is closed for the same reason. The pool's width is `webPoolMax`'s.
-    cached = createDb(url, { max: webPoolMax(url), statementTimeoutMs: 30_000, idleInTransactionTimeoutMs: 30_000 }).db;
+    // idle for 30 s is closed for the same reason. The pool's width is `webPoolMax`'s and its idle
+    // time `webPoolIdleTimeoutMs`'s. The first connection of each instance logs its round trip to
+    // the database (`database_round_trip`).
+    const { db: created, pool } = createDb(url, {
+      max: webPoolMax(url),
+      idleTimeoutMillis: webPoolIdleTimeoutMs(url),
+      statementTimeoutMs: 30_000,
+      idleInTransactionTimeoutMs: 30_000,
+      reportRoundTrip: true,
+      applicationName: WEB_APPLICATION_NAME,
+    });
+    // Fluid compute suspends an instance once its responses are done. Without this, a pool's idle
+    // connections are frozen open and found dead on the next thaw; with it, each release keeps the
+    // instance alive (through `waitUntil`) until the idle timeout has closed them cleanly. Outside
+    // Vercel it does nothing.
+    attachDatabasePool(pool);
+    cached = created;
   }
   return cached;
 }

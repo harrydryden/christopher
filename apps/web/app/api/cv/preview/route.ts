@@ -4,6 +4,8 @@ import { renderCvPdfWithReport, CvLayoutError } from "@/lib/cv-pdf";
 import { refuseCvRender } from "@/lib/cv-render-limit";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// A preview renders in about a second, bounded by `cv-render-limit.ts`; a pathological document is cut off at 30 s of function time instead of the platform default of 300.
+export const maxDuration = 30;
 
 /** A bounded, authenticated, throttled render: no AI calls, and no writes but the throttle's count. */
 export async function POST(request: Request) {

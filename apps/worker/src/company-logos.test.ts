@@ -5,7 +5,7 @@
  */
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import {
-  companiesDueLogoCapture, createDb, noteLogoFailure, readCompanyLogo, schema, storeCompanyLogo, type Db,
+  companiesDueLogoCapture, companyLogoVersion, createDb, noteLogoFailure, readCompanyLogo, schema, storeCompanyLogo, type Db,
 } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { eq, sql } from "drizzle-orm";
@@ -68,6 +68,16 @@ it("stores the bytes and clears the retry state the failures left", async () => 
   await storeCompanyLogo(db, subject.id, { bytes: png(64), contentType: "image/x-icon", source: "icon_service", sourceUrl: "https://icons.duckduckgo.com/ip3/acme.test.ico" }, now);
   expect((await readCompanyLogo(db, subject.id))?.bytes.length).toBe(64);
   expect(await readCompanyLogo(db, "00000000-0000-0000-0000-000000000000")).toBeNull();
+});
+
+it("says which capture is stored without reading its bytes, so a conditional request costs no blob", async () => {
+  const subject = await company();
+  expect(await companyLogoVersion(db, subject.id)).toBeNull();
+  await storeCompanyLogo(db, subject.id, { bytes: png(), contentType: "image/png", source: "site_icon", sourceUrl: "https://acme.test/touch.png" }, now);
+  expect((await companyLogoVersion(db, subject.id))?.toISOString()).toBe(now.toISOString());
+  const later = new Date(now.getTime() + DAY);
+  await storeCompanyLogo(db, subject.id, { bytes: png(64), contentType: "image/png", source: "site_icon", sourceUrl: "https://acme.test/touch.png" }, later);
+  expect((await companyLogoVersion(db, subject.id))?.toISOString()).toBe(later.toISOString());
 });
 
 it("counts each failure, widens the backoff, and leaves a stored logo alone", async () => {

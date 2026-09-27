@@ -38,6 +38,13 @@ describe("SCRAPER_CONTACT_EMAIL", () => {
   });
 });
 
+describe("the database application name", () => {
+  it("is ava-worker on the worker and ava-web-cron when the interface's cron fallback runs the handlers", () => {
+    expect(readEnv(BASE).databaseApplicationName).toBe("ava-worker");
+    expect(readEnv({ ...BASE, VERCEL: "1" }).databaseApplicationName).toBe("ava-web-cron");
+  });
+});
+
 describe("the production boot line", () => {
   it("records concurrency, the pool ceiling and the heap limit", () => {
     const lines = captured();

@@ -91,6 +91,9 @@ const cases: Case[] = [
   ["spent links", sql`select id from auth_tokens where used_at < now() - interval '1 day' limit 5000`, "auth_tokens_used_idx"],
   ["expired AI holds", sql`select id from ai_reservations where expires_at < now() - interval '1 hour' limit 5000`, "ai_reservations_expires_idx"],
   ["old discovery runs", sql`select id from discovery_runs where started_at < now() - interval '90 days' limit 5000`, "discovery_runs_started_idx"],
+  // Migration 0043: snapshot retention reads only the scans that still hold a snapshot.
+  ["scans holding a snapshot past a week", sql`select id from scans where raw_snapshot is not null and started_at < now() - interval '7 days' limit 5000`, "scans_snapshot_idx"],
+  ["a source's newest snapshot", sql`select id from scans where source_id = ${id} and status in ('ok', 'partial') and raw_snapshot is not null order by started_at desc limit 1`, "scans_snapshot_idx"],
 ];
 
 describe("migration 0036's indexes", () => {

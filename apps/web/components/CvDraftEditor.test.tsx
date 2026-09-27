@@ -34,6 +34,28 @@ afterEach(() => {
   container.remove();
 });
 
+it("stringifies the saved revision once, not on every keystroke, and still knows when it is edited", () => {
+  act(() => root.render(<CvDraftEditor id="cv-1" content={content} theme={DEFAULT_CV_THEME} />));
+  const profile = container.querySelector<HTMLTextAreaElement>('textarea[name="summary"]')!;
+  const type = (value: string) => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(profile, value);
+    profile.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const stringify = vi.spyOn(JSON, "stringify");
+  try {
+    for (const value of ["Analyst!", "Analyst!!", "Analyst!!!"]) act(() => type(value));
+    // Only the edited candidate is stringified per keystroke; the saved revision (whose profile is
+    // still "Analyst.") is not stringified again.
+    const saved = stringify.mock.calls.filter(([value]) => (value as { summary?: string } | null)?.summary === "Analyst.");
+    expect(saved).toHaveLength(0);
+    expect(container.textContent).toContain("Unsaved changes");
+    act(() => type("Analyst."));
+    expect(container.textContent).not.toContain("Unsaved changes");
+  } finally {
+    stringify.mockRestore();
+  }
+});
+
 it("says the preview could not load when its check cannot be fetched", async () => {
   const fetchSpy = vi.fn();
   vi.stubGlobal("fetch", fetchSpy);

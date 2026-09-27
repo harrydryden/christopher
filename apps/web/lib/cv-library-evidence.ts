@@ -11,6 +11,7 @@
  */
 import { EVIDENCE_FACETS_BY_NEED, EVIDENCE_FACET_LABELS, evidenceRows, rowFacets, type EvidenceFacet } from "@ava/core/cv-helpers";
 import type { CvLibrary } from "@ava/core/cv";
+import type { EvidenceMark } from "@ava/core/evidence-rubric";
 // Types only: the scorer they belong to reaches `node:crypto` and never reaches the browser.
 import type { EvidenceRating, LibraryReviewSource, LibraryRowSignal } from "@ava/core/library-review";
 
@@ -30,12 +31,19 @@ export interface EvidencePrompt {
   facet: EvidenceFacet | null;
 }
 
-/** One reviewed row's own score, as `libraryRowScore` computed it on the server. */
+/**
+ * One reviewed row, as the inputs to its score rather than the number: the browser scores it live
+ * (`scoreRowAgainst`) against the tags on screen, so re-tagging re-scores without a round trip.
+ */
 export interface EvidenceRowView {
   row: string;
-  /** 0–100 in steps of 25: a quarter each for the four signals. */
-  score: number;
-  signals: Record<LibraryRowSignal, boolean>;
+  /** The person's own tags for the row, as saved. */
+  tagged: EvidenceFacet[];
+  /** The rubric marks the review found in the row's wording; empty when the row was not verified. */
+  marks: EvidenceMark[];
+  /** What the review read the row as serving: the tags for the baseline, the model's reading otherwise. */
+  reviewFacets: EvidenceFacet[];
+  verified: boolean;
 }
 
 export interface EvidenceEntryView {

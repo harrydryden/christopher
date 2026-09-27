@@ -1,11 +1,15 @@
 /**
  * Turning the reviews stored against a Library into what the page shows.
  *
- * The score is never computed here. `scoreLibraryRows` in `packages/core` is the only place a
- * number is produced, so this either reads back the stored review of an entry's exact wording or,
+ * The score is never computed here. `scoreLibraryRows` in `packages/core` is the only place an
+ * entry's number is produced, so this either reads back the stored review of an entry's exact wording or,
  * when none describes it yet, falls back to `rulesLibraryReview` — the no-model baseline computed
  * from the types the person tagged the rows with. A baseline standing in for a review that has not run is marked
  * provisional, so the page can say so rather than pass it off as the whole answer.
+ *
+ * A row's own score is not sent either: each row carries its marks and the person's tags, and the
+ * editor reads one against the other with the rubric's `scoreRowAgainst`, so a row re-tagged on
+ * screen re-scores at once.
  *
  * This is the server half of the Library's evidence display; the words and the shapes are in
  * `cv-library-evidence.ts`, which the editor loads in the browser.
@@ -14,12 +18,13 @@ import {
   employmentHeading,
   evidenceRows,
   isActiveStoredEvidence,
+  rowFacets,
   type CvLibrary,
 } from "@ava/core/cv";
+import type { EvidenceMark } from "@ava/core/evidence-rubric";
 import {
   evidenceRatingFor,
   facetForPrompt,
-  libraryRowScore,
   rulesLibraryReview,
   type LibraryEntryReview,
   type LibraryReviewSource,
@@ -30,6 +35,7 @@ import {
   missingFacetLine,
   type EvidenceEntryView,
   type EvidencePrompt,
+  type EvidenceRowView,
   type LibraryEvidence,
 } from "./cv-library-evidence";
 
@@ -101,7 +107,15 @@ export function libraryEvidence(
         missingLine: missingFacetLine(review.missing),
         prompts: promptsOf(review),
         reviewedRows: review.rows.map(row => row.row),
-        rows: review.rows.map(row => ({ row: row.row, ...libraryRowScore(row) })),
+        rows: review.rows.map<EvidenceRowView>(row => ({
+          row: row.row,
+          // The tags as saved now. A stored review is only read under the entry's current hash,
+          // which covers the tags, so these are the tags it was reviewed against too.
+          tagged: rowFacets(entry, row.row),
+          marks: row.verified ? row.marks : ([] as EvidenceMark[]),
+          reviewFacets: row.facets,
+          verified: row.verified,
+        })),
       };
     });
   return {

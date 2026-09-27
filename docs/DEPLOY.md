@@ -92,6 +92,25 @@ the same learning loop.
    steady state (`select count(*) from pg_stat_activity where state = 'active'`), leaving room for
    the worker, migrations and your own `psql`.
 
+   **Backends, not client slots, are the budget.** PgBouncer may open up to 93 backends for the
+   interface while the worker holds up to 26 directly: 119 against 100 usable. After a burst of
+   interface traffic PgBouncer keeps its server connections for its `server_idle_timeout` (600 s by
+   default; Render does not expose it), so for up to ten minutes a worker reconnect, a migration or
+   your `psql` can fail with "sorry, too many clients already". A scan that cannot connect is a
+   failed scan, never a closure, but CV builds and task claims stall. So keep
+   `WEB_DB_POOL_MAX` × peak concurrent interface instances **at or under 60**, and alert at **80**
+   client backends. Every connection names itself (`ava-web`, `ava-worker`, or `ava-web-cron` for
+   the interface's cron fallback, sent as the `application_name` startup parameter, which PgBouncer
+   accepts; an `application_name` in `DATABASE_URL` takes precedence), so the count says who holds
+   them:
+
+   ```sql
+   select application_name, count(*) as backends, count(*) filter (where state <> 'idle') as active
+   from pg_stat_activity where backend_type = 'client backend' group by 1 order by 2 desc;
+   ```
+
+   `databaseBackends()` in `@ava/db` reads the same figures, with the usable ceiling, for monitoring.
+
    That is why the interface's pool is 6 wide on the pooled endpoint and 3 on the direct one
    (`apps/web/lib/db.ts`). A full render of the Roles page issues about 14 statements, most of them
    at once, and at 3 connections they queue in waves of one round trip each: replaying them at 5 ms

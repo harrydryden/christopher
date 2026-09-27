@@ -20,6 +20,13 @@ export interface CreateDbOptions {
   idleInTransactionTimeoutMs?: number;
   /** How long an idle connection stays in the pool before it is closed. Defaults to 30 seconds. */
   idleTimeoutMillis?: number;
+  /**
+   * The `application_name` every connection reports, so `pg_stat_activity` can say which client
+   * holds the database's backends (`ava-web`, `ava-worker`). It is the one startup parameter
+   * PgBouncer accepts and tracks in transaction mode, so it is sent on 6432 too. One named in the
+   * connection string takes precedence.
+   */
+  applicationName?: string;
   /** Where a slow query is reported. Defaults to an `info` line on stdout; the worker can route it through its own log, which knows the task. */
   onSlowQuery?: (query: SlowQuery) => void;
   /**
@@ -240,6 +247,7 @@ export function createDb(connectionString: string, options: CreateDbOptions = {}
     // an idle TLS connection is silently dropped and the next query pays the
     // handshake again.
     keepAlive: true,
+    ...(options.applicationName ? { application_name: options.applicationName } : {}),
     ...serverTimeouts(connectionString, options),
   });
   const reportSlow = options.onSlowQuery ?? ((query: SlowQuery) => logLine("info", "slow_database_query", { ...query }));

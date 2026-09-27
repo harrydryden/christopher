@@ -78,7 +78,7 @@ describe("db()", () => {
     expect(db()).toBe(db());
     expect(createDb).toHaveBeenCalledTimes(1);
     expect(createDb).toHaveBeenCalledWith(pooled, {
-      max: 6, idleTimeoutMillis: 120_000, statementTimeoutMs: 30_000, idleInTransactionTimeoutMs: 30_000, reportRoundTrip: true,
+      max: 6, idleTimeoutMillis: 120_000, statementTimeoutMs: 30_000, idleInTransactionTimeoutMs: 30_000, reportRoundTrip: true, applicationName: "ava-web",
     });
     expect(attachDatabasePool).toHaveBeenCalledTimes(1);
     expect(attachDatabasePool).toHaveBeenCalledWith(pool);

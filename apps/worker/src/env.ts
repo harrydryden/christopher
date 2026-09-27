@@ -16,6 +16,12 @@ export interface WorkerEnv {
    * alike, plus a margin (see createDeps).
    */
   databasePoolMax: number;
+  /**
+   * What the pool's connections report as `application_name`, so `pg_stat_activity` tells the
+   * worker's backends from the interface's: `ava-worker`, or `ava-web-cron` when the interface's
+   * cron fallback runs these handlers on Vercel.
+   */
+  databaseApplicationName: string;
   scanSpreadMinutes?: number;
   browserConcurrency?: number;
   dailyAiBudgetUsd?: number;
@@ -58,6 +64,7 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env): WorkerEnv {
     concurrency,
     cvConcurrency,
     databasePoolMax: (concurrency + cvConcurrency) * 2 + 4,
+    databaseApplicationName: env.VERCEL ? "ava-web-cron" : "ava-worker",
     scanSpreadMinutes: bounded(env.SCAN_SPREAD_MINUTES, 60, 0, 720),
     browserConcurrency: bounded(env.BROWSER_CONCURRENCY, 1, 1, 8),
     dailyAiBudgetUsd: bounded(env.DAILY_AI_BUDGET_USD, 1000000, 0, 1000000),
@@ -75,6 +82,7 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env): WorkerEnv {
       cvConcurrency: read.cvConcurrency,
       browserConcurrency: read.browserConcurrency,
       databasePoolMax: read.databasePoolMax,
+      databaseApplicationName: read.databaseApplicationName,
       heapLimitMb: Math.round(v8.getHeapStatistics().heap_size_limit / 1_048_576),
       browser: !read.disableBrowser,
       ai: !!read.anthropicApiKey,

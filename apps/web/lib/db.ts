@@ -58,6 +58,13 @@ export function webPoolIdleTimeoutMs(url: string): number {
   return isPooledUrl(url) ? POOLED_IDLE_TIMEOUT_MS : DIRECT_IDLE_TIMEOUT_MS;
 }
 
+/**
+ * What the interface's connections call themselves in `pg_stat_activity`, so the database's
+ * backends can be budgeted by client: `WEB_DB_POOL_MAX` × peak instances stays at or under 60
+ * (docs/DEPLOY.md). A DATABASE_URL naming its own `application_name` takes precedence.
+ */
+export const WEB_APPLICATION_NAME = "ava-web";
+
 /** Shared connection policy, with a small serverless pool. Direct subpath avoids migrations. */
 export function db(): Db {
   if (!cached) {
@@ -74,6 +81,7 @@ export function db(): Db {
       statementTimeoutMs: 30_000,
       idleInTransactionTimeoutMs: 30_000,
       reportRoundTrip: true,
+      applicationName: WEB_APPLICATION_NAME,
     });
     // Fluid compute suspends an instance once its responses are done. Without this, a pool's idle
     // connections are frozen open and found dead on the next thaw; with it, each release keeps the

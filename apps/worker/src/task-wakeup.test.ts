@@ -56,12 +56,15 @@ it("waits longer after each empty claim, up to its ceiling, and starts again fro
   queue.start();
   await within((async () => { while (waits.length < 6) await sleep(10); })(), 5_000, "the queue stopped polling");
   expect(waits.slice(0, 6)).toEqual([20, 40, 80, 160, 160, 160]);
+  const beforeEnqueue = waits.length;
   await enqueueTask(db, "discover", { companyId: "a" });
   await within((async () => { while (!handled) await sleep(10); })(), 2_000, "the task was never claimed");
-  const after = waits.length;
   await sleep(100);
-  // The claim reset the wait to the first one.
-  expect(waits[after]).toBe(20);
+  // The claim reset the wait to the first one. The slot may have logged a ceiling wait or two
+  // before the notification reached it, and may already have moved past the first wait again by
+  // the time this looks, so the assertion is on the first wait after the ceiling, not on an index.
+  const afterClaim = waits.slice(beforeEnqueue).filter(ms => ms !== 160);
+  expect(afterClaim[0]).toBe(20);
 }, 20_000);
 
 it("does not sleep through a notification that arrived while the slot was claiming", async () => {

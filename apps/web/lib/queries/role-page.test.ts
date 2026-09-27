@@ -28,7 +28,7 @@ vi.mock("react", async (importOriginal) => {
   };
   return { ...actual, cache };
 });
-import { fetchRoleCounts, fetchRolePage, fetchRoleRows, parseRolesFilters, type RoleCursor } from "./jobs";
+import { countRoles, fetchRoleCounts, fetchRolePage, fetchRoleRows, parseRolesFilters, tabCountedBy, type RoleCursor } from "./jobs";
 import { RoleWorkspace } from "@/components/RoleWorkspace";
 
 let user: User;
@@ -89,16 +89,62 @@ it("reads a page's count and rows together, and the last page for a link past th
   expect(second.value.visible.map((row) => row.job.title)).toEqual(Array.from({ length: 10 }, (_, i) => `Role ${50 + i}`));
 
   const past = await measured(() => fetchRolePage(user.id, filters, false, null, 9));
-  expect(past.count).toBe(3);
+  // The tab counts are already in hand for the request: the rows asked for, then the last page.
+  expect(past.count).toBe(2);
   expect(past.value.page).toBe(2);
   expect(past.value.visible.map((row) => row.job.id)).toEqual(second.value.visible.map((row) => row.job.id));
 });
 
+it("takes a whole tab's total from the tab counts, and counts a narrower view itself", async () => {
+  const rows = await database.select({ id: schema.jobs.id, title: schema.jobs.title }).from(schema.jobs).orderBy(schema.jobs.externalKey);
+  await database.insert(schema.decisions).values(rows.slice(0, 7).map((job, i) => ({ userId: user.id, jobId: job.id, decision: i < 4 ? "apply" as const : "skip" as const, jobTitle: job.title, companyName: "Acme" })));
+  await database.update(schema.userJobs).set({ archivedAt: new Date() }).where(inArray(schema.userJobs.jobId, rows.slice(50, 53).map((job) => job.id)));
+  await database.update(schema.userJobs).set({ inTable: false }).where(eq(schema.userJobs.jobId, rows[55]!.id));
+  await database.update(schema.userJobs).set({ fitScore: 70 }).where(inArray(schema.userJobs.jobId, rows.slice(10, 20).map((job) => job.id)));
+  const plain: Array<[Record<string, string | string[]>, boolean]> = [
+    [{ view: "auto-matched" }, false],
+    [{ view: "user-shortlisted", sort: "decided" }, false],
+    [{ view: "user-dismissed", sort: "title", dir: "desc" }, false],
+    [{ view: "archived" }, true],
+    [{ view: "auto-matched", company: companyId }, false],
+    [{ view: "auto-matched", status: ["new", "active", "closed"] }, false],
+  ];
+  for (const [params, archived] of plain) {
+    const filters = parseRolesFilters(params);
+    expect(tabCountedBy(filters, archived), JSON.stringify(params)).not.toBeNull();
+    await fetchRoleCounts(user.id, filters.company || undefined);
+    // The counts are in hand for the request, so the page is one statement: its rows.
+    const { value, count } = await measured(() => fetchRolePage(user.id, filters, archived, null, 1));
+    expect(count, JSON.stringify(params)).toBe(1);
+    // And the tab's number is the one the view's own count would have given.
+    expect(value.total, JSON.stringify(params)).toBe(await countRoles(user.id, filters, archived));
+  }
+  const narrower: Array<[Record<string, string | string[]>, boolean]> = [
+    [{ view: "auto-matched", q: "role 1" }, false],
+    [{ view: "auto-matched", minFit: "50" }, false],
+    [{ view: "auto-matched", status: "new" }, false],
+    [{ view: "auto-matched", location: "london" }, false],
+    [{ view: "user-shortlisted", since: "7d" }, false],
+    [{ decision: "all" }, false],
+    [{ view: "auto-matched", showHidden: "1" }, false],
+  ];
+  for (const [params, archived] of narrower) {
+    const filters = parseRolesFilters(params);
+    expect(tabCountedBy(filters, archived), JSON.stringify(params)).toBeNull();
+    const { value, count } = await measured(() => fetchRolePage(user.id, filters, archived, null, 1));
+    expect(count, JSON.stringify(params)).toBe(2);
+    expect(value.total, JSON.stringify(params)).toBe(await countRoles(user.id, filters, archived));
+  }
+  expect((await fetchRoleCounts(user.id))["auto-matched"]).toBe(60 - 7 - 3 - 1);
+});
+
 it("reads the counts beside the page when the link names its view", async () => {
-  const { value, widest } = await measured(() => RoleWorkspace({ userId: user.id, searchParams: { view: "auto-matched", sort: "title" } }));
+  const { value, widest, count } = await measured(() => RoleWorkspace({ userId: user.id, searchParams: { view: "auto-matched", sort: "title" } }));
   expect(value).toBeTruthy();
-  // The counts, the page's count and rows, the company list and the stage counts, all at once.
-  expect(widest).toBeGreaterThanOrEqual(5);
+  // The counts (which are also the page's count), the rows, the company list and the stage counts, all at once.
+  expect(widest).toBeGreaterThanOrEqual(4);
+  // A whole tab is not counted twice: those four, then the page's events.
+  expect(count).toBe(5);
 });
 
 /** The first element under `node` whose props match, depth first. */

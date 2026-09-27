@@ -574,6 +574,33 @@ export function buildRoleRowVM(row: RoleRow, now: Date = new Date(), viewerId?: 
 }
 
 /**
+ * The freshness states a view narrows to, or null when it does not narrow at all: every role is new,
+ * active or closed, so asking for all three (or, from a hand-written link, for none) filters nothing,
+ * and would only cost a per-row expression the planner cannot estimate.
+ */
+function statusFilterOf(filters: Pick<RolesFilters, "status" | "closed">): string[] | null {
+  const statuses = filters.closed ? [...new Set([...filters.status, "closed"])] : filters.status;
+  return statuses.length === 0 || STATUS_VALUES.every((s) => statuses.includes(s)) ? null : statuses;
+}
+
+/**
+ * The tab whose count is exactly this view's, or null when the view narrows below its tab.
+ *
+ * Only the tab itself, the company scope the counts are read for and the order may be set: once
+ * those are taken out of the view's query string it must be empty, or the view is a subset and is
+ * counted on its own. A filter added later reaches `filtersToQueryString`, and so falls back to its
+ * own count unless someone decides otherwise here.
+ */
+export function tabCountedBy(filters: RolesFilters, archived: boolean): RoleStatus | null {
+  const params = new URLSearchParams(filtersToQueryString(filters));
+  for (const key of ["sort", "dir", "company", "decision"]) params.delete(key);
+  if (statusFilterOf(filters) === null) { params.delete("status"); params.delete("closed"); }
+  if (params.size > 0) return null;
+  if (archived) return filters.decision === "all" ? "archived" : null;
+  return filters.decision === "inbox" ? "auto-matched" : filters.decision === "apply" ? "user-shortlisted" : filters.decision === "skip" ? "user-dismissed" : null;
+}
+
+/**
  * Which tab's roles a view reads, as plain predicates on the columns `roleStatusSql` decides by, so
  * the planner can estimate them and `user_jobs_table_idx (user_id, in_table, archived_at, …)` can
  * serve them. Written through the `case` expression instead, the planner guessed 1–150 rows where
@@ -598,15 +625,12 @@ function viewCondition(archived: boolean, decision: DecisionFilter): SQL | undef
 function rolesQuery(userId: string, filters: RolesFilters, archived: boolean, now: Date) {
   const liveStart = sql`case when ${jobs.postedAt} <= ${jobs.firstSeenAt} + interval '1 day' then ${jobs.postedAt} else ${jobs.firstSeenAt} end`;
   const status = sql`case when ${jobs.status} = 'closed' then 'closed' when ${liveStart} >= ${new Date(now.getTime() - 7 * 86400000)} then 'new' else 'active' end`;
-  const statuses = filters.closed ? [...new Set([...filters.status, 'closed'])] : filters.status;
-  // Every role is new, active or closed, so asking for all three filters nothing and costs a
-  // per-row expression the planner cannot estimate.
-  const everyStatus = STATUS_VALUES.every((s) => statuses.includes(s));
+  const statuses = statusFilterOf(filters);
   const cutoff = sinceCutoff(filters, now);
   const conditions = and(
     eq(userJobs.userId, userId),
     viewCondition(archived, filters.decision),
-    statuses.length && !everyStatus ? inArray(status, statuses) : undefined,
+    statuses ? inArray(status, statuses) : undefined,
     // On the posting's own column, so the count needs no join to `companies` for it.
     filters.company ? eq(jobs.companyId, filters.company) : undefined,
     // "No active decision" on the column the join matches by, which PostgreSQL reads as an anti-join
@@ -772,27 +796,32 @@ export function locationReasonText(evaluated: { ok: boolean; terms: string[]; re
  * active decision and one latest application exist per posting), but PostgreSQL cannot remove inner
  * joins, and counting through them cost 7.5 ms against 2.1 ms at 1,000 roles.
  */
-function countRoles(userId: string, conditions: SQL | undefined) {
-  return db().select({ n: sql<number>`count(*)::int` }).from(userJobs)
+export async function countRoles(userId: string, filters: RolesFilters, archived: boolean, now = new Date()): Promise<number> {
+  const { conditions } = rolesQuery(userId, filters, archived, now);
+  const [row] = await db().select({ n: sql<number>`count(*)::int` }).from(userJobs)
     .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
     .leftJoin(decisions, and(eq(decisions.userId, userId), eq(decisions.jobId, jobs.id), eq(decisions.superseded, false)))
     .where(conditions);
+  return row?.n ?? 0;
 }
 
 /**
  * SQL filters and pagination for one 50-row page; descriptions are left in the database. The count
  * and the page asked for are read side by side; only a page past the end of the view (a link
  * written before the view shrank) waits for the count and reads the last page instead.
+ *
+ * A view that is a whole tab (no filter but the tab, the company scope and the order) takes its
+ * count from the tab counts, which the tab strip reads anyway and the request memoises, so the page
+ * costs one statement rather than two; any narrower view is counted on its own.
  */
 export async function fetchRolePage(userId: string, filters: RolesFilters, archived: boolean, threshold: number | null, requestedPage: number, now = new Date()) {
   const started = Date.now();
-  const { conditions } = rolesQuery(userId, filters, archived, now);
   const asked = Math.max(1, Number.isSafeInteger(requestedPage) ? requestedPage : 1);
-  const [[counted], rows] = await Promise.all([
-    countRoles(userId, conditions),
+  const tab = tabCountedBy(filters, archived);
+  const [total, rows] = await Promise.all([
+    tab ? fetchRoleCounts(userId, filters.company || undefined).then(counts => counts[tab]) : countRoles(userId, filters, archived, now),
     fetchRoleRows(userId, filters, archived, { offset: (asked - 1) * 50, limit: 50, now }),
   ]);
-  const total = counted?.n ?? 0;
   // Fit is an explicit filter, never a second hidden workflow: nothing is ever held back.
   const hiddenTotal = 0;
   const pageCount = Math.max(1, Math.ceil(total / 50));

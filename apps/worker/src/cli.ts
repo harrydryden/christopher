@@ -15,6 +15,7 @@
  *   pnpm --filter @ava/worker cli replay <draft-id> [--recordings <file> | --baseline <file>] [--routes <json>] [--out <report.json>]
  *                                                (rebuild and grade a draft without publishing; from a
  *                                                recording without a key, or live with one)
+ *   pnpm --filter @ava/worker cli reencode-logos (one-off: store every captured logo as a 64 px WebP)
  *
  * Per-account commands act for AVA_CLI_USER (an email) or, when unset, the earliest
  * administrator.
@@ -109,12 +110,12 @@ async function cliUser(deps: WorkerDeps) {
   return user;
 }
 
-const COMMANDS = new Set(["migrate", "probe", "add", "discover", "scan", "tick", "drain", "users", "list", "table", "record", "replay"]);
+const COMMANDS = new Set(["migrate", "probe", "add", "discover", "scan", "tick", "drain", "users", "list", "table", "record", "replay", "reencode-logos"]);
 
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (!command || !COMMANDS.has(command)) {
-    console.log("commands: migrate | probe <url> | add <url...> | discover <company> [url] | discover --all | scan [company] | tick | drain [n] | list | table | users | record <draft> [--out file] [--routes json] | replay <draft> [--recordings file | --baseline file] [--routes json] [--out report.json]");
+    console.log("commands: migrate | probe <url> | add <url...> | discover <company> [url] | discover --all | scan [company] | tick | drain [n] | list | table | users | record <draft> [--out file] [--routes json] | replay <draft> [--recordings file | --baseline file] [--routes json] [--out report.json] | reencode-logos");
     return;
   }
   const env = readEnv();
@@ -200,6 +201,12 @@ async function main() {
           await enqueueTask(deps.db, "run_daily", { trigger: "manual" }, { dedupeKey: null, priority: priorityFor("run_daily") });
           console.log("queued a full run");
         }
+        break;
+      }
+      case "reencode-logos": {
+        // The one-off backfill: the worker walks the stored logos in bounded passes.
+        const id = await enqueueTask(deps.db, "reencode_logos", {}, { dedupeKey: dedupeKeyFor("reencode_logos", {}), priority: priorityFor("reencode_logos") });
+        console.log(id ? "queued the logo re-encode; the worker walks the catalogue in passes of 25" : "a logo re-encode is already queued");
         break;
       }
       case "tick": {

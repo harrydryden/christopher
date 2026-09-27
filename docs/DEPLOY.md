@@ -95,7 +95,10 @@ the same learning loop.
    That is why the interface's pool is 6 wide on the pooled endpoint and 3 on the direct one
    (`apps/web/lib/db.ts`). A full render of the Roles page issues about 14 statements, most of them
    at once, and at 3 connections they queue in waves of one round trip each: replaying them at 5 ms
-   per round trip, time to the main content was 70 ms with 3 connections and 54 ms with 6. Idle,
+   per round trip, time to the main content was 70 ms with 3 connections and 54 ms with 6. The
+   5 ms is an assumption: the first connection each interface instance opens times one `select 1`
+   and logs the real figure as a `database_round_trip` line (`ms`, `endpoint`, `region`) in
+   Vercel's function logs, and every statement a page waits on in sequence costs about that. Idle,
    the wider pool costs no backends. What it does use is PgBouncer client slots, one per open
    connection: warm instances × 6 (plus the cron fallback's 6) must stay under the pooler's
    client-connection limit, so check that figure in Render's dashboard, or ask Render's support,

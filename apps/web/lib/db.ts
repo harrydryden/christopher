@@ -45,8 +45,9 @@ export function db(): Db {
     if (!url) throw new Error("DATABASE_URL is not set");
     // Statements bounded at 30 s: a request-serving process must never hold a connection open
     // across a hung query, and Render's database is shared with the worker. A transaction left
-    // idle for 30 s is closed for the same reason. The pool's width is `webPoolMax`'s.
-    cached = createDb(url, { max: webPoolMax(url), statementTimeoutMs: 30_000, idleInTransactionTimeoutMs: 30_000 }).db;
+    // idle for 30 s is closed for the same reason. The pool's width is `webPoolMax`'s. The first
+    // connection of each instance logs its round trip to the database (`database_round_trip`).
+    cached = createDb(url, { max: webPoolMax(url), statementTimeoutMs: 30_000, idleInTransactionTimeoutMs: 30_000, reportRoundTrip: true }).db;
   }
   return cached;
 }

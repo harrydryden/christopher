@@ -5,7 +5,7 @@
  */
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
-import { createDb, poolErrorCount, poolStats, serverTimeouts, type SlowQuery } from "./client";
+import { createDb, poolErrorCount, poolStats, serverTimeouts, timeRoundTrip, type SlowQuery } from "./client";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
 // A second pool plays the operator (or the failover) that ends the first pool's connections.
@@ -165,5 +165,46 @@ describe("the endpoint a serverless deployment connects to", () => {
     const line = writes.mock.calls.map(([text]) => String(text)).find(text => text.includes("database_direct_endpoint"))!;
     expect(line).toContain("6432");
     expect(line).not.toContain("u:p@");
+  });
+});
+
+describe("the round trip to the database", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it("is one select 1 on an open connection, timed to a tenth of a millisecond", async () => {
+    const ticks = [1_000, 1_004.26];
+    const queries: string[] = [];
+    const ms = await timeRoundTrip({ query: async (text: string) => { queries.push(text); } }, () => ticks.shift()!);
+    expect(ms).toBe(4.3);
+    expect(queries).toEqual(["select 1"]);
+  });
+
+  it("is logged once per process, after the first query of a pool that asks, and never carries the address", async () => {
+    const writes = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const lines = () => writes.mock.calls.map(([line]) => String(line)).filter(line => line.includes("database_round_trip"));
+    const quiet = createDb(DATABASE_URL, { max: 1 });
+    const first = createDb(DATABASE_URL, { max: 2, reportRoundTrip: true });
+    const second = createDb(DATABASE_URL, { max: 1, reportRoundTrip: true });
+    try {
+      await quiet.db.execute(sql`select 1`);
+      expect(lines()).toHaveLength(0);
+      // Measured once the first query has handed its connection back, never in front of it.
+      await first.db.execute(sql`select 1`);
+      await vi.waitFor(() => expect(lines()).toHaveLength(1));
+      const logged = JSON.parse(lines()[0]!);
+      expect(logged).toMatchObject({ level: "info", event: "database_round_trip", endpoint: "other", ms: expect.any(Number) });
+      expect(logged.samplesMs).toHaveLength(3);
+      expect(logged.ms).toBe(Math.min(...logged.samplesMs));
+      expect(logged.ms).toBeGreaterThanOrEqual(0);
+      expect(lines()[0]).not.toContain("postgres:postgres@");
+      // A second connection, or a second pool, in the same process adds nothing.
+      await Promise.all([first.db.execute(sql`select pg_sleep(0.05)`), first.db.execute(sql`select pg_sleep(0.05)`)]);
+      await second.db.execute(sql`select 1`);
+      expect(first.pool.totalCount).toBe(2);
+      expect(lines()).toHaveLength(1);
+    } finally {
+      writes.mockRestore();
+      await Promise.all([quiet.pool.end(), first.pool.end(), second.pool.end()]);
+    }
   });
 });

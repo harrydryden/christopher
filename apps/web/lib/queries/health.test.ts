@@ -196,6 +196,17 @@ it("reads the governor's pause as the epoch milliseconds the engine reports, and
   expect(readHeartbeat({ at: "2026-09-18T12:00:00.000Z", governor: { cap: 4, pausedUntil: "2026-09-18T12:05:00.000Z" } })!.governor!.pausedUntil).toEqual(new Date(pausedUntil));
 });
 
+it("reads the event-loop lag, slow queries and pool the worker writes, and leaves them null when it does not", () => {
+  const base = { heapUsedMb: 100, heapLimitMb: 258, heapFraction: 0.39, rssMb: 300, externalMb: 20, uptimeSeconds: 60 };
+  const reported = readHeartbeat({ at: "2026-09-18T12:00:00.000Z", vitals: { ...base, eventLoopLagP99Ms: 240, slowQueries: 7, db: { total: 5, idle: 2, waiting: 1 } } });
+  expect(reported!.vitals).toMatchObject({ eventLoopLagP99Ms: 240, slowQueries: 7, db: { total: 5, idle: 2, waiting: 1 } });
+  // An older worker reports none of them: null, never a zero that would read as "no lag".
+  const older = readHeartbeat({ at: "2026-09-18T12:00:00.000Z", vitals: base });
+  expect(older!.vitals).toMatchObject({ eventLoopLagP99Ms: null, slowQueries: null, db: null });
+  // A pool reading missing a count is no reading.
+  expect(readHeartbeat({ at: "2026-09-18T12:00:00.000Z", vitals: { ...base, db: { total: 5, idle: 2 } } })!.vitals!.db).toBeNull();
+});
+
 it("reads both heartbeat shapes, and calls a crash-looping worker restarting however fresh its report", async () => {
   await resetWorkerFixtures();
   // The shape an older release wrote: no worker id, no boot time, no memory reading.

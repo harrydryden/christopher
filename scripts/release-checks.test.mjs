@@ -15,6 +15,7 @@ import {
   requiredOperationalConfig,
   requiredReleaseConfig,
   sameWorkerInputs,
+  slowQueryDelta,
   workerIdentity,
 } from "./release-checks.mjs";
 
@@ -240,6 +241,55 @@ test("new telemetry cannot disappear or become invalid and silently pass", () =>
   response.metrics.providerOutageGroups1h = 0;
   response.metrics.spendMonthUsd = Number.NaN;
   assert.throws(() => readOperationalSample(response), /spendMonthUsd/);
+});
+
+const statusBody = (vitals = {}) => ({
+  ok: true, workerId: "worker-a",
+  metrics: {
+    ready: 0, running: 0, oldest_seconds: 0, overdueCompanies: 0, overdueDiscovery: 0,
+    crashRecoveries1h: 0, crashRecoveries24h: 0, providerCalls1h: 0, providerSuccesses1h: 0, providerFailures1h: 0,
+    providerOutageGroups1h: 0, spend24hUsd: 0, spendMonthUsd: 0, accountsAtOrOverBudget: 0,
+  },
+  vitals: { heapFraction: 0.4, uptimeSeconds: 100, ...vitals, db: { waiting: 0, ...vitals.db } },
+});
+
+test("a worker that does not report event-loop lag, slow queries or pool totals still passes", () => {
+  const sample = readOperationalSample(statusBody());
+  for (const key of ["eventLoopLagP99Ms", "slowQueries", "dbTotal", "dbIdle"]) assert.equal(key in sample, false, key);
+  assert.deepEqual(operationalFailures([sample, sample, sample]), []);
+  assert.deepEqual(operationalWarnings([sample, sample, sample]), []);
+  assert.equal(slowQueryDelta([sample, sample]), null);
+});
+
+test("event-loop lag, slow queries and pool totals are read when reported, and refused when malformed", () => {
+  const sample = readOperationalSample(statusBody({ eventLoopLagP99Ms: 12, slowQueries: 3, db: { total: 4, idle: 3, waiting: 0 } }));
+  assert.deepEqual({ lag: sample.eventLoopLagP99Ms, slow: sample.slowQueries, total: sample.dbTotal, idle: sample.dbIdle }, { lag: 12, slow: 3, total: 4, idle: 3 });
+  assert.throws(() => readOperationalSample(statusBody({ eventLoopLagP99Ms: -1 })), /eventLoopLagP99Ms/);
+  assert.throws(() => readOperationalSample(statusBody({ slowQueries: 1.5 })), /slowQueries/);
+  assert.throws(() => readOperationalSample(statusBody({ db: { total: "4" } })), /dbTotal/);
+});
+
+test("event-loop lag is attention at 200 ms and fails at a second in two samples", () => {
+  const lag = ms => healthy({ eventLoopLagP99Ms: ms });
+  assert.deepEqual(operationalFailures([lag(20), lag(30), lag(40)]), []);
+  assert.deepEqual(operationalWarnings([lag(20), lag(30), lag(40)]), []);
+  assert.deepEqual(operationalFailures([lag(20), lag(250), lag(250)]), []);
+  assert.match(operationalWarnings([lag(20), lag(250), lag(250)])[0], /event-loop delay p99 since boot is 250 ms/);
+  assert.deepEqual(operationalFailures([lag(1_200), lag(300), lag(300)]), [], "one stalled sample is not sustained");
+  assert.match(operationalFailures([lag(1_200), lag(1_000), lag(300)])[0], /event-loop delay p99 is 1200 ms, at or above 1000 ms in 2 samples/);
+});
+
+test("slow queries are compared within one process: attention at 20, a failure at 100, a restart resets the count", () => {
+  const at = (slowQueries, extra = {}) => healthy({ slowQueries, ...extra });
+  assert.equal(slowQueryDelta([at(5), at(9), at(12)]), 7);
+  assert.deepEqual(operationalWarnings([at(5), at(9), at(12)]), []);
+  assert.match(operationalWarnings([at(5), at(15), at(25)])[0], /^20 queries took 250 ms or longer during the check/);
+  assert.deepEqual(operationalFailures([at(5), at(15), at(25)]), [], "attention never fails the run");
+  assert.match(operationalFailures([at(0), at(60), at(100)])[0], /^100 queries took 250 ms or longer/);
+  assert.deepEqual(operationalWarnings([at(0), at(60), at(100)]).filter(w => /queries took/.test(w)), [], "a failure is not also attention");
+  // A replacement process starts its counter from nought: the old one's total is not a burst.
+  assert.equal(slowQueryDelta([at(500, { workerId: "old", uptimeSeconds: 900 }), at(3, { workerId: "new", uptimeSeconds: 5 }), at(4, { workerId: "new", uptimeSeconds: 20 })]), 1);
+  assert.equal(slowQueryDelta([at(500, { uptimeSeconds: 900 }), at(3, { uptimeSeconds: 5 })]), null, "the same id with a younger uptime restarted");
 });
 
 /** A throwaway repository whose history is main, then a branch merged with a merge commit. */

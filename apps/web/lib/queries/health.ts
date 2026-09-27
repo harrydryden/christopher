@@ -403,7 +403,19 @@ function readVitals(value: unknown): WorkerVitals | null {
     rssMb: finite(v.rssMb) ?? 0,
     externalMb: finite(v.externalMb) ?? 0,
     uptimeSeconds: finite(v.uptimeSeconds) ?? 0,
+    // Optional: an older worker does not report them, and each is null rather than a guessed zero.
+    eventLoopLagP99Ms: finite(v.eventLoopLagP99Ms),
+    slowQueries: finite(v.slowQueries),
+    db: readPool(v.db),
   };
+}
+
+/** The worker's pool reading, or null when it reported none or a malformed one. */
+function readPool(value: unknown): WorkerVitals["db"] {
+  if (!value || typeof value !== "object") return null;
+  const pool = value as Record<string, unknown>;
+  const total = finite(pool.total), idle = finite(pool.idle), waiting = finite(pool.waiting);
+  return total === null || idle === null || waiting === null ? null : { total, idle, waiting };
 }
 
 /**

@@ -28,6 +28,16 @@ export const OPERATIONAL_THRESHOLDS = Object.freeze({
   queueGrowth: 10,
   uptimeRegressions: 2,
   crashRecoveries1h: 2,
+  /** Event-loop delay p99 since boot: attention at the first, a failure when two samples reach the second. */
+  eventLoopLagWarnMs: 200,
+  eventLoopLagFailMs: 1_000,
+  /**
+   * Queries of 250 ms or longer, per fifteen minutes. The gate's own samples span seconds, so the
+   * delta between its first and last reading is a lower bound on the fifteen-minute figure: a
+   * burst that crosses either line inside the check has certainly crossed it over the quarter hour.
+   */
+  slowQueriesWarnPer15m: 20,
+  slowQueriesFailPer15m: 100,
 });
 
 export const RELEASE_VERIFY_DEADLINE_MS = 8 * 60 * 1000;
@@ -158,6 +168,18 @@ export function readOperationalSample(value) {
     accountsAtOrOverBudget: count(metrics?.accountsAtOrOverBudget),
   };
   const missing = Object.entries(sample).filter(([, value]) => value === null).map(([key]) => key);
+  // Optional: a worker that predates them does not report these vitals, and still passes. Present
+  // and malformed is a reading gone wrong, and fails like any other.
+  for (const [key, raw, read] of [
+    ["eventLoopLagP99Ms", vitals?.eventLoopLagP99Ms, nonNegative],
+    ["slowQueries", vitals?.slowQueries, count],
+    ["dbTotal", db?.total, count],
+    ["dbIdle", db?.idle, count],
+  ]) {
+    if (raw === undefined) continue;
+    sample[key] = read(raw);
+    if (sample[key] === null) missing.push(key);
+  }
   if (metrics?.unscannableCompanies !== undefined) {
     // Optional: a worker that splits companies it cannot scan out of the overdue count reports them.
     sample.unscannableCompanies = count(metrics.unscannableCompanies);
@@ -193,6 +215,14 @@ export function operationalFailures(samples, thresholds = OPERATIONAL_THRESHOLDS
   if (samples.filter(sample => sample.dbWaiting > 0).length >= thresholds.sustainedSamples) {
     failures.push("database connection waits are sustained");
   }
+  const lagging = samples.filter(sample => sample.eventLoopLagP99Ms >= thresholds.eventLoopLagFailMs);
+  if (lagging.length >= thresholds.sustainedSamples) {
+    failures.push(`the worker's event-loop delay p99 is ${Math.max(...lagging.map(sample => sample.eventLoopLagP99Ms))} ms, at or above ${thresholds.eventLoopLagFailMs} ms in ${lagging.length} samples`);
+  }
+  const slow = slowQueryDelta(samples);
+  if (slow !== null && slow >= thresholds.slowQueriesFailPer15m) {
+    failures.push(`${slow} queries took 250 ms or longer during the check (the gate fails at ${thresholds.slowQueriesFailPer15m} in fifteen minutes)`);
+  }
   let workerChanges = 0;
   let reusedIdUptimeRegressions = 0;
   for (let index = 1; index < samples.length; index++) {
@@ -216,6 +246,19 @@ export function operationalFailures(samples, thresholds = OPERATIONAL_THRESHOLDS
   return failures;
 }
 
+/**
+ * Slow queries the worker counted between the first and last sample of one process, or null when
+ * the check saw no such pair. The counter is cumulative since boot, so a restart resets it: only
+ * samples from the same worker id with a growing uptime are compared.
+ */
+export function slowQueryDelta(samples) {
+  const latest = samples.at(-1);
+  if (typeof latest?.slowQueries !== "number") return null;
+  const first = samples.find(sample => typeof sample.slowQueries === "number" && sample.workerId === latest.workerId && sample.uptimeSeconds <= latest.uptimeSeconds);
+  if (!first || first === latest) return null;
+  return Math.max(0, latest.slowQueries - first.slowQueries);
+}
+
 /** Attention telemetry that should be surfaced but does not mean the deployment is unhealthy. */
 export function operationalWarnings(samples, thresholds = OPERATIONAL_THRESHOLDS) {
   if (!Array.isArray(samples) || samples.length === 0) throw new Error("At least one operational sample is required.");
@@ -229,6 +272,13 @@ export function operationalWarnings(samples, thresholds = OPERATIONAL_THRESHOLDS
   }
   if (latest.accountsAtOrOverBudget > 0) {
     warnings.push(`${latest.accountsAtOrOverBudget} accounts are at or over their configured AI budget`);
+  }
+  if (latest.eventLoopLagP99Ms >= thresholds.eventLoopLagWarnMs) {
+    warnings.push(`the worker's event-loop delay p99 since boot is ${latest.eventLoopLagP99Ms} ms (attention at ${thresholds.eventLoopLagWarnMs} ms, the gate fails at ${thresholds.eventLoopLagFailMs} ms in ${thresholds.sustainedSamples} samples)`);
+  }
+  const slow = slowQueryDelta(samples);
+  if (slow !== null && slow >= thresholds.slowQueriesWarnPer15m && slow < thresholds.slowQueriesFailPer15m) {
+    warnings.push(`${slow} queries took 250 ms or longer during the check (attention at ${thresholds.slowQueriesWarnPer15m} in fifteen minutes)`);
   }
   return warnings;
 }

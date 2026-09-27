@@ -15,7 +15,7 @@ import { db } from "@/lib/db";
 import { totalAiUsage } from "@/lib/ai-usage";
 import { formatBytes, formatCount, formatDelta, formatDuration, formatLatency, formatPercent, formatStepDuration, formatUsd, formatUsdPrecise, relativeTime, shortDate } from "@/lib/format";
 import { hostNeedsAttention } from "@/lib/outbound-traffic";
-import { governorSummary, heapSummary, workerStateTone, HEAP_WARN_FRACTION } from "@/lib/worker-status";
+import { governorSummary, heapSummary, waitSummary, workerStateTone, HEAP_WARN_FRACTION } from "@/lib/worker-status";
 import {
   getAiUsage,
   getCvBuildCosts,
@@ -126,6 +126,17 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
         ) : (
           <p className="mt-2 text-14 text-muted">This worker has not reported a memory reading; deploy a release that sends vitals with its heartbeat.</p>
         )}
+        {(() => {
+          const waits = heartbeat?.vitals ? waitSummary(heartbeat.vitals) : null;
+          return waits && (
+            <p className={`mt-2 text-14 ${waits.warn ? "text-warn" : ""}`}>
+              {waits.text}
+              {waits.warn
+                ? " A loop delay of 200 ms or a query waiting for a connection is attention; the operational check fails at a second of delay, or waits, in two samples."
+                : " A long synchronous step shows here as loop delay before it shows anywhere else."}
+            </p>
+          );
+        })()}
         {heartbeat && <p className="mt-2 text-14 text-muted">
           {heartbeat.workerId && <>Worker <code>{heartbeat.workerId}</code>. </>}
           {heartbeat.commit && <>Release <code>{heartbeat.commit.slice(0, 7)}</code>. </>}

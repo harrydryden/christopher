@@ -412,25 +412,25 @@ Today [V]: four CI jobs, wall clock 8m17s (`check` 8m14s, of which `pnpm -r test
   - Budgets (bytes, A-after + about 3 %): `/cv/[id]` 138,000; `/companies/[id]` 130,000; `/library` 129,000; `/` 128,000; `/applications` 123,000; `/suggestions` 120,000; `/settings` and `/companies` 117,000; `"*"` 115,000; shared root 104,000.
   - Also fail when a chunk over 20 KB gzip newly enters a first load (the 23.8 KB zod chunk).
   - Write the table to `$GITHUB_STEP_SUMMARY`; add `bundle-budget.test.mjs` with a synthetic manifest.
-- Status: not done [V]. Current sizes pass with 2–3 % headroom (section 2 header).
+- Status: done [V] (commit 0d2baec). Every route passes on this branch's build: `/cv/[id]` 133,180 B gzip (budget 138,000), `/companies/[id]` 126,812, `/` 124,603, shared root 102,301 (104,000); 0.15 s of CI.
 - Impact: stops silent first-load growth (the roles table already grew 2 KB gzip since A-after); under 2 s of CI (estimate).
 - Effort: S. Risk → guard: raise the budget in the same PR so the diff records the decision; compare by route, never by chunk name.
 
 **5.2 Show the vitals the worker already writes, and gate on them.**
 - Mechanism: read `eventLoopLagP99Ms`, `slowQueries` and `db.{total,idle,waiting}` in `readVitals` (`apps/web/lib/queries/health.ts:393-407`) and `readOperationalSample` (`release-checks.mjs:130-165`), optional in both; compare first and last `slowQueries` samples for the delta.
-- Status: not done [V]: written every 30 s (`apps/worker/src/vitals.ts:13-18`, `index.ts:60`), read nowhere.
+- Status: done [V] (commit a425e53). Read in `readVitals` and `readOperationalSample` as optional fields, shown on Operations › Background worker; the gate warns at 200 ms loop lag and 20 slow queries, fails at 1,000 ms in 2 samples and 100; a sample without the fields passes.
 - Impact: event-loop stalls and pool waits visible without a metrics stack. Effort: S. Risk → guard: a `release-checks.test.mjs` sample without the fields still passes.
 
 **5.3 Install `pg_stat_statements` and read it from the CLI and Health.**
 - Mechanism: a migration `do $$ begin create extension if not exists pg_stat_statements; exception when insufficient_privilege then raise notice 'skipped'; end $$;`; `pnpm cli pgstat [--reset]` and an admin-only card selecting `calls`, `total_exec_time`, `mean_exec_time`, `stddev_exec_time`, `shared_blks_hit/read`, hit %, and `left(query,160)` for the current `dbid`, ordered by total time, top 20; weekly `pg_stat_statements_reset()` after 5.8 snapshots it.
-- Status: not done: available on production but not installed [V, production check 2026-09-27]; whether `shared_preload_libraries` includes it cannot be read by the role [I: the `create extension` either succeeds or the first query errors "must be loaded via shared_preload_libraries"].
+- Status: done [V] (commit fb79bfb). Migration 0045 installs it where the role may and skips with a notice where it may not; `pnpm cli pgstat [--reset]` and the admin-only Costliest statements card say "installed but not loaded" or "not installed" instead of failing. The weekly reset stays manual: the weekly audit (5.8) runs against a scratch database, not production.
 - Impact: production cost by total time for the shell statement (0.8–4.7 ms) and roles query (12.5 ms) [M A-after]; the before/after check for 3.5, 3.7 and 4.3. Overhead about 1–2 % CPU (estimate).
 - Effort: S. Risk → guard: literals in text; Drizzle and `pg` parameterise, the card is `requireAdmin`, truncated and never logged.
 
 **5.4 Collect real-user Core Web Vitals through the existing beacon, sampled and identifier-free.**
 - Mechanism: `NavigationMetrics.tsx` uses `web-vitals@5` `onLCP/onINP/onCLS/onTTFB/onFCP` (or `next/web-vitals` `useReportWebVitals`), samples `Math.random() < 0.25` per load, batches one `navigator.sendBeacon('/api/performance', …)` on `visibilitychange === 'hidden'` with `{route, metric, value, rating, navType, deviceClass, effectiveType}` and no user id, session, email, IP, query string or full URL.
   - `/api/performance` keeps its signature check and upserts `web_vitals(day, route, metric, bucket, count)` log-bucketed histograms; 90-day retention; Health shows p75.
-- Status: partial [V]: `{path, durationMs}` goes to a log line only, unsampled.
+- Status: done [V] (commit cf0145c). 25 % of loads, lab browsers excluded, the library loaded only on sampled loads (+266 B first-load gzip instead of +3,070 B), one beacon on hide; extra keys refused with 400; histograms in `web_vitals`, 90-day prune in the monitor task; p75 per route on Operations.
 - Impact: the only field INP/LCP source; beacon invocations −75 % (from the sample rate). Effort: S–M. Risk → guard: route returns 204 even if the insert fails; the route test rejects any extra key with 400.
 
 **5.5 Concrete alert thresholds with a delivery channel.**
@@ -449,33 +449,33 @@ Today [V]: four CI jobs, wall clock 8m17s (`check` 8m14s, of which `pnpm -r test
   | Disk | 70 % | 85 % | Render Postgres metrics |
   | Buffer hit ratio | below 0.99 over a day | none | 4.9 query |
   | Unclean exit | any | last heap reading below 85 % (cgroup OOM, 4.2) | worker events |
-- Status: partial [V]: seven thresholds exist; lag, backends, scan failures, 429s, disk and PgBouncer clients have none (PgBouncer metric name on Render [I: check the dashboard]).
+- Status: done [V] (commit 8ea4cdc) for every row the worker can read: heap, lag, pool waits, backends, oldest task, scan failures, 429/529 share and slow queries sampled every 5 min into `settings['internal:monitor']`, served on `/status`, gated (warnings never fail) and shown on Operations › Alert signals. Disk, buffer hit ratio, unclean exit and PgBouncer clients stay Render notifications, documented in DEPLOY.md › Alert ownership with the GitHub delivery settings.
 - Impact: detection within 15 minutes. Effort: M. Risk → guard: alert fatigue on deploys; keep the 2-sample rule and `deployGraceSeconds`; warnings do not fail the run.
 
 **5.6 Lighthouse CI on pull requests.**
 - Mechanism: `@lhci/cli@0.14` job against a seeded `next start` on port 3124 (cookie via `extraHeaders`), URLs `/`, `/companies`, `/library`, `/cv/${DRAFT_ID}`, 3 runs, desktop, `median-run`: LCP ≤ 2,500 ms, CLS ≤ 0.1, TBT ≤ 200 ms (error), interactive ≤ 3,800 ms and server response ≤ 600 ms (warn), `resource-summary:script:size` ≤ 140,000 with an `assertMatrix` holding `/` to 130 KB.
   - A mobile preset at `warn` until two weeks of history.
   - A second pass on the Vercel preview (`deployment_status`, `x-vercel-protection-bypass`) only if Preview has its own `DATABASE_URL` and `SESSION_SECRET`, never production; otherwise `/login` signed out.
-- Status: not done [V]. Impact: catches LCP/CLS/TBT regressions before merge; about 3 min of CI (estimate). Effort: M. Risk → guard: runner noise; 3 runs, error only on desktop, delete the seeded account in a `finally`.
+- Status: done [V] (commit 3d7abd5). Local desktop medians: LCP 612–702 ms, TBT ≤ 25 ms, CLS ≤ 0.008; script transfer is Next's compression, not gzip-9, so the assertions are 134,000 B on `/` (measured 133,772) and 145,000 elsewhere (`/cv/<id>` 138,320). Mobile warns (LCP 2.6–2.8 s, `/library` TBT 320 ms). Preview pass behind `LHCI_PREVIEW_ENABLED`. Impact: catches LCP/CLS/TBT regressions before merge; about 3 min of CI (estimate). Effort: M. Risk → guard: runner noise; 3 runs, error only on desktop, delete the seeded account in a `finally`.
 
 **5.7 Correct the capacity probe's poll model and run it weekly.**
 - Mechanism: import `nextPollDelay`, `FIRST_POLL_MS`, `LONGEST_POLL_MS`, `BANNER_FIRST_MS` from `apps/web/lib/polling.ts`; split the window into `idle` (assert 0 requests), `pre-scan` (banner to 60 s) and `run` (backoff polls plus an `RSC: 1` refresh of `/`, 23 KB, with 10 % of tabs on Matched, 80 KB); stand-in worker finishes a company every 12 s with a calibration check of 2.3–3.3 refreshes per tab per minute; assert the sequence `[10000, 15000, 22500, 33750, 50625, 60000]`; weekly `cron "17 3 * * 1"`; add `refreshP95Ms: 2000` to `TARGETS`.
-- Status: partial [V]: `POLL_CADENCE` is fixed (`scripts/benchmark-users.mjs:15,23`), overstating idle traffic (truth 0) and under-pricing refreshes, which are three quarters of database work [M D].
+- Status: done [V] (commit 8542c67), with an open finding: idle 0 requests, pre-scan as modelled, run 5.2 status polls, 1.5–1.8 banner polls and 3.52 refreshes per tab-minute (about 1,050 requests and 6,600 transactions per minute per 100 tabs) at 60 s and 150 s windows, so the calibration check (2.3–3.3, D's single browser tab) fails until the difference is explained; the weekly run will open an issue for it.
 - Impact: the busy projection becomes about 880 requests/min and 7,400 queries/min per 100 tabs [M D], the figure 4.1 sizes against. Effort: M. Risk → guard: the weekly job opens an issue instead of blocking merges.
 
 **5.8 Weekly re-run of the audit measurements from `scripts/perf/`.**
 - Mechanism: commit `fixture.mjs`, `pages.mjs` (p50/p95, HTML, gzip and RSC bytes, statements per request from the `pg_stat_statements` `calls` delta), `roundtrips.mjs` (effective sequential RTs at +20 ms per packet), `decide.mjs` and 5.1's script, each with `node --test` units; a weekly `cron "23 4 * * 1"` compares with `scripts/perf/baseline.json` (`/` 14 statements and 4.4 RT at pool 6; `/companies/<id>` 26 and 7.6) and fails on +1 statement, +1 RT or +10 % bytes.
-- Status: not done [V]: the scripts live only in the audit runs' working directory, outside the repository, with hard-coded paths.
+- Status: done [V] (commit d61b7fd). Statements are counted on the wire (no log setting, no preloaded extension) and match A-after on all 15 paths; round trips `/` 4.5 (4.4), `/companies/<id>` 7.6 (7.6); one decision 1 request, 93,085 B, 28 statements. Round trips are the lower of two passes because host load inflated one pass by up to 1.6.
 - Impact: counts are deterministic where ms on shared runners is not. Effort: M. Risk → guard: update `baseline.json` in the PR with the reason.
 
 **5.9 Distributed tracing on three spans, sampled at 10 %.**
 - Mechanism: `apps/web/instrumentation.ts` with `registerOTel({ serviceName: 'ava-web', traceSampler: 'traceidratio' })`, `OTEL_TRACES_SAMPLER_ARG=0.1`, `@opentelemetry/instrumentation-pg` with `enhancedDatabaseReporting: false`.
   - Worker: `@opentelemetry/sdk-node` plus pg and undici instrumentation, manual spans `task.run`, `model.call` (model, call site, token and cache-read counts), `scan.fetch`; trace id in log lines via AsyncLocalStorage; no user id, email or CV text as attributes.
-- Status: not done [V]. Impact: splits a slow page into DB wait and render (A-after §3 did it by hand: 45–57 ms render against about 18 ms SQL wall). Effort: M. Risk → guard: memory on the 512 MB worker; `maxQueueSize: 512`, ship with `OTEL_SDK_DISABLED=true` until an endpoint exists, watch heap for a week.
+- Status: done [V] (commit 721b651), off by default (needs `OTEL_SDK_DISABLED=false` and an OTLP endpoint). The interface has Next's spans only: the web package has no pg instrumentation dependency. Impact: splits a slow page into DB wait and render (A-after §3 did it by hand: 45–57 ms render against about 18 ms SQL wall). Effort: M. Risk → guard: memory on the 512 MB worker; `maxQueueSize: 512`, ship with `OTEL_SDK_DISABLED=true` until an endpoint exists, watch heap for a week.
 
 **5.10 Keep PR wall clock at or under 10 minutes as gates land.**
 - Mechanism: 5.1 inside `browser-and-smoke` (about 4.5 min of slack against `check`); 5.6 as a parallel job reusing `.next/cache` with `timeout-minutes: 12`; 5.7 and 5.8 scheduled, not per PR.
-- Status: not applicable yet [V]. Impact: no added PR latency (estimate). Effort: S. Risk → guard: none.
+- Status: done [V] (this PR). Bundle gate inside `browser-and-smoke` (0.15 s), `lighthouse` parallel with `timeout-minutes: 12`, the probe and the audit scheduled only; the budget is written down in DEPLOY.md › Continuous integration. PR wall clock not re-measured on a runner. Impact: no added PR latency (estimate). Effort: S. Risk → guard: none.
 
 #### Evaluated and not recommended
 

@@ -1,6 +1,6 @@
 /**
  * Admin › Operations sends its queries into a web pool of three connections, where a query still
- * waiting for one after ten seconds fails the whole page. A render must stay under twenty
+ * waiting for one after ten seconds fails the whole page. A render must stay under twenty-four
  * statements with every card populated, and never more than eight of them at once.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
@@ -27,7 +27,7 @@ beforeEach(async () => {
   await database.execute(sql`truncate companies, tasks, worker_events, settings, scan_runs, ai_calls, users restart identity cascade`);
 });
 
-it("renders every card in fewer than twenty-two statements, at most eight at a time", async () => {
+it("renders every card in fewer than twenty-four statements, at most eight at a time", async () => {
   // Every list has a row that names a subject, so each would once have looked its names up itself.
   const spender = await ensureTestUser(database, "spender@example.com", "member");
   const [company] = await database.insert(schema.companies).values({ name: "Acme", homepageUrl: "https://acme.example", domain: "acme.example" }).returning();
@@ -61,8 +61,10 @@ it("renders every card in fewer than twenty-two statements, at most eight at a t
     const page = await AdminOperationsPage({ searchParams: Promise.resolve({}) });
     expect(page).toBeTruthy();
     // Three statements more than before the CV build cards gained true percentiles (one), the
-    // week-by-week bill (one) and the three drift rates (one, together).
-    expect(spy.mock.calls.length).toBeLessThan(22);
+    // week-by-week bill (one) and the three drift rates (one, together); two more for the
+    // costliest statements and the real-user vitals cards (the alert-signals card rides on the
+    // worker-state statement).
+    expect(spy.mock.calls.length).toBeLessThan(24);
     expect(widest).toBeLessThanOrEqual(8);
   } finally {
     spy.mockRestore();

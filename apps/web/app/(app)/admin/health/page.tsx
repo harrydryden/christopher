@@ -24,7 +24,6 @@ import {
   getCvBuildMotions,
   getCvBuildWeeks,
   getCvDriftRates,
-  getMonitorSample,
   getQueueCounts,
   getScoredRoleCost,
   getTopStatements,
@@ -64,18 +63,17 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
   // Budgets belong to accounts and each has its own window; this page is the deployment's report,
   // so it counts the calendar month that everybody's budget resets on.
   const since = aiBudgetWindowStart(now, null);
-  // Twenty statements in groups of at most eight, rather than every card's queries at once
+  // Twenty-three statements in groups of at most eight, rather than every card's queries at once
   // into a pool of three connections, where the ones still waiting after ten seconds fail the page.
   // The worker and the queue first; the activity names its subjects and the spend table's accounts
   // in one statement once the usage has been read.
   const usagePending = getAiUsage(since);
-  const [metrics, activity, failedTasks, queueCounts, usage, monitor] = await Promise.all([
+  const [metrics, activity, failedTasks, queueCounts, usage] = await Promise.all([
     workloadMetrics(db()),
     operationsActivity(now, usagePending.then((groups) => groups.map((group) => group.userId))),
     listFailedTasks(50),
     getQueueCounts(),
     usagePending,
-    getMonitorSample(),
   ]);
   // Then the catalogue and its scans.
   const [largestInputs, attentionSources, noSourceCompanies, problemScans, scanRuns] = await Promise.all([
@@ -159,7 +157,7 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
         <p className="mt-2 text-14">{formatUsd(metrics.reservedUsd)} is held by calls in flight, against the budgets of the accounts that asked for them.</p>
       </Card>
 
-      <MonitorCard sample={monitor} now={now} />
+      <MonitorCard sample={activity.monitor} now={now} />
 
       <Card title="Last crash recovery">
         {!crash ? (

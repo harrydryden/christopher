@@ -313,7 +313,7 @@ Two workflows. **CI** (`.github/workflows/ci.yml`) runs on every pull request an
 every push to `main`; **Release** (`.github/workflows/release.yml`) runs only after CI has
 passed on `main`.
 
-CI is four jobs side by side, each on its own runner with its own throwaway PostgreSQL 16:
+CI's jobs run side by side, each on its own runner with its own throwaway PostgreSQL 16 (the worker suite's shuffled `order-independence` rerun is the one not listed here):
 
 | Job | What it runs | Typical |
 |---|---|---|
@@ -323,6 +323,17 @@ CI is four jobs side by side, each on its own runner with its own throwaway Post
 | `worker-image` | `docker build` of the image Render deploys, then boots it against the job's database and waits for `/healthz`, and checks it runs as a non-root user under `tini` | ~4 min cold (estimated, not yet measured on a runner), less with the dependency layer cached |
 
 So a pull request is green in about four minutes of wall clock for about nine billed minutes.
+
+**The wall-clock budget is ten minutes**, and the performance gates are placed to stay inside it: the
+critical path is `check` (8m14s on run 36269891342, 6m49s of it `pnpm -r test`). The bundle budget
+runs inside `browser-and-smoke` after the build it reuses (under a second; that job had about 4.5
+minutes of slack against `check`), and `lighthouse` is a job of its own beside `check`, reusing the
+Next.js cache, capped at 12 minutes so a hung browser cannot hold a pull request longer than `check`
+would. The slow measurements are scheduled, never on a pull request: **Capacity probe**
+(`capacity-probe.yml`, Mondays 03:17 UTC, `scripts/benchmark-users.mjs`) and **Performance audit**
+(`perf-audit.yml`, Mondays 04:23 UTC, `scripts/perf/run.mjs` against `scripts/perf/baseline.json`).
+Both can be run by hand from the Actions tab, upload their reports as artifacts, and open (or comment
+on) an issue labelled `performance` when a scheduled run fails instead of blocking anything.
 `worker-image` is what catches a Dockerfile that no longer builds, a workspace manifest the image
 does not copy, a Playwright bump without the matching base image, or an import that fails only
 when the worker starts — all of which would otherwise surface first as a failed Render deploy

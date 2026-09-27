@@ -633,6 +633,7 @@ interface WorkerState {
   boot: WorkerEvent | null;
   lastCrash: WorkerEvent | null;
   events: WorkerEvent[];
+  monitor: MonitorReading | null;
 }
 
 /** A ledger row as `to_jsonb` spells it, read back into the row the table would have returned. */
@@ -665,13 +666,14 @@ async function readWorkerState(now: Date, eventLimit: number): Promise<WorkerSta
   try {
     const result = await db().execute(sql`select
       (select value from settings where key = 'internal:workerHeartbeat') as heartbeat,
+      (select value from settings where key = 'internal:monitor') as monitor,
       (select count(*)::int from worker_events where kind = 'crash_recovery' and at >= ${hour}) as restarts_hour,
       (select count(*)::int from worker_events where kind = 'crash_recovery' and at >= ${day}) as restarts_day,
       (select to_jsonb(e) from (select * from worker_events where kind = 'boot' order by at desc limit 1) e) as boot,
       (select to_jsonb(e) from (select * from worker_events where kind = 'crash_recovery' order by at desc limit 1) e) as crash,
       (select coalesce(jsonb_agg(to_jsonb(e) order by e.at desc), '[]'::jsonb)
         from (select * from worker_events order by at desc limit ${eventLimit}) e) as events`);
-    const row = result.rows[0] as { heartbeat: unknown; restarts_hour: number; restarts_day: number; boot: unknown; crash: unknown; events: unknown } | undefined;
+    const row = result.rows[0] as { heartbeat: unknown; monitor: unknown; restarts_hour: number; restarts_day: number; boot: unknown; crash: unknown; events: unknown } | undefined;
     return {
       heartbeat: readHeartbeat(row?.heartbeat),
       restartsLastHour: Number(row?.restarts_hour ?? 0),
@@ -679,11 +681,12 @@ async function readWorkerState(now: Date, eventLimit: number): Promise<WorkerSta
       boot: ledgerEvent(row?.boot),
       lastCrash: ledgerEvent(row?.crash),
       events: (Array.isArray(row?.events) ? row.events : []).flatMap((raw) => ledgerEvent(raw) ?? []),
+      monitor: readMonitorSample(row?.monitor),
     };
   } catch {
     // The interface can be serving before the worker has run the migration that creates the
     // ledger. The heartbeat is still read; the ledger is "nothing recorded".
-    return { heartbeat: await getWorkerHeartbeat(), restartsLastHour: 0, restartsLastDay: 0, boot: null, lastCrash: null, events: [] };
+    return { heartbeat: await getWorkerHeartbeat(), restartsLastHour: 0, restartsLastDay: 0, boot: null, lastCrash: null, events: [], monitor: await getMonitorSample() };
   }
 }
 
@@ -1022,6 +1025,8 @@ export interface OperationsActivity {
   running: RunningTaskRow[];
   retrying: RetryingTaskRow[];
   events: WorkerEventRow[];
+  /** The worker's last monitor sample, read in the same statement as its heartbeat. */
+  monitor: MonitorReading | null;
   /** The address of an account the page names elsewhere (the spend table), or null. */
   accountEmail: (userId: string) => string | null;
 }
@@ -1056,6 +1061,7 @@ export async function operationsActivity(
     running: runningTaskRows(running, names),
     retrying: retryingTaskRows(retrying, names),
     events: workerEventRows(state.events, names),
+    monitor: state.monitor,
     accountEmail: (userId) => names.get(subjectKey({ kind: "user", id: userId })) ?? null,
   };
 }

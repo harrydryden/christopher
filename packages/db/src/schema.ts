@@ -1111,6 +1111,20 @@ export type CvBuildStep = typeof cvBuildSteps.$inferSelect;
 /** Postgres `bytea`, which drizzle has no column builder for. The pg driver reads and writes it as a Buffer. */
 const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => "bytea" });
 
+/**
+ * The PDF a CV revision was rendered to, under the hash of what was rendered (content and
+ * renderer), so a download serves it instead of rendering again. One row per draft. No foreign key,
+ * for the reason `cv_tailoring_plans` gives: a delete trigger on `cv_drafts` removes it instead.
+ */
+export const cvPdfs = pgTable("cv_pdfs", {
+  draftId: uuid("draft_id").primaryKey(),
+  userId: uuid("user_id").notNull(),
+  contentHash: text("content_hash").notNull(),
+  bytes: bytea("bytes").notNull(),
+  createdAt: tsNow("created_at"),
+}, (t) => [index("cv_pdfs_user_idx").on(t.userId)]);
+export type CvPdf = typeof cvPdfs.$inferSelect;
+
 export const LIBRARY_IMPORT_KINDS = ["cv", "linkedin", "website", "paste"] as const;
 export type LibraryImportKind = (typeof LIBRARY_IMPORT_KINDS)[number];
 

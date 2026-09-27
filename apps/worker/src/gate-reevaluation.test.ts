@@ -117,3 +117,26 @@ it("runs every page and the closing archive through the caller's eachPage, each 
   expect(narrowed.archived).toBe(300);
   expect((await db.select().from(schema.userJobs)).every(v => v.archivedAt !== null && v.jobId !== job.id)).toBe(true);
 });
+
+it("analyses user_jobs after a re-evaluation that writes over five hundred views, and not after a small one", async () => {
+  const user = await ensureTestUser(db, "gate-analyse@example.com", "member");
+  await setGate(user.id, {});
+  const { company } = await seedFollowedPosting(user.id);
+  const [source] = await db.select().from(schema.careerSources).where(sql`${schema.careerSources.companyId} = ${company.id}`);
+  const lastAnalyse = async () => (await db.execute<{ at: string | null }>(sql`select last_analyze::text as at from pg_stat_user_tables where relname = 'user_jobs'`)).rows[0]!.at;
+
+  const small = await handleReevaluateGate(task({ userId: user.id }), deps) as { analysed?: boolean };
+  expect(small.analysed).toBeUndefined();
+
+  await db.insert(schema.jobs).values(Array.from({ length: 510 }, (_, i) => ({
+    companyId: company.id, sourceId: source!.id, externalKey: `id:bulk-${i}`, title: `Operations Manager ${i}`,
+    normalizedTitle: `operations manager ${i}`, url: `https://acme.test/jobs/bulk-${i}`, location: "London", locations: ["London"],
+  })));
+  const before = await lastAnalyse();
+  const bulk = await handleReevaluateGate(task({ userId: user.id }), deps) as { analysed?: boolean; outcomes: Record<string, { created: number }> };
+  expect(bulk.outcomes[user.id]!.created).toBeGreaterThan(500);
+  expect(bulk.analysed).toBe(true);
+  // The statistics view is updated asynchronously; the manual analyse is what it records.
+  for (let i = 0; i < 30 && (await lastAnalyse()) === before; i++) await new Promise(r => setTimeout(r, 100));
+  expect(await lastAnalyse()).not.toBe(before);
+});

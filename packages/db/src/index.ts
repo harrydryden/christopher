@@ -7,7 +7,7 @@ export * from "./schema";
 export * as schema from "./schema";
 export { createDb, getDb, poolErrorCount, poolStats, slowQueryCount, type Db, type CreateDbOptions, type SlowQuery } from "./client";
 export { databaseBackends, BACKENDS_ALERT_AT, WEB_BACKENDS_CAP, type DatabaseBackends } from "./backends";
-export { enqueueTask, pendingTaskCounts, taskById, activeTaskFor, type EnqueueOptions } from "./tasks";
+export { enqueueTask, enqueueTasks, pendingTaskCounts, taskById, activeTaskFor, notifyTaskWorkers, TASKS_CHANNEL, type EnqueueOptions, type TaskWriter } from "./tasks";
 
 export { reevaluateGate, archiveNonMatches, isGateArchive, restoreGateArchive, GATE_RESTORE_EVENT, REEVALUATE_CLOSED_DAYS, type GateScope, type ArchiveScope, type ReevaluateOptions } from "./gate";
 export { appendProfile, latestProfileFor } from "./profiles";

@@ -116,10 +116,10 @@ export default async function SuggestionsPage({ searchParams }: { searchParams: 
   const view = params.view === "sources" || params.view === "history" ? params.view : "review";
   const q = (params.q ?? "").slice(0, 200);
   const domain = view === "review" ? domainFromQuery(q) : null;
-  const [reviewCount, historyTotal, gateChosen] = await Promise.all([suggestionCount(user.id), view === "history" ? suggestionCount(user.id, true, q) : Promise.resolve(0), hasChosenGate(user.id)]);
-  const page = Math.min(pageNumber(params.page), Math.max(1, Math.ceil(historyTotal / 50)));
-  const [pending, resolved, matches, sourceCount, settings, active] = await Promise.all([
-    view === "review" ? listPendingSuggestions(user.id, 1, "", DECK_CARDS) : Promise.resolve([]), view === "history" ? listResolvedSuggestions(user.id, 50, page, q) : Promise.resolve([]),
+  // One wave for everything but the history page, which waits only for the count that clamps it.
+  const [reviewCount, historyTotal, gateChosen, pending, matches, sourceCount, settings, active] = await Promise.all([
+    suggestionCount(user.id), view === "history" ? suggestionCount(user.id, true, q) : Promise.resolve(0), hasChosenGate(user.id),
+    view === "review" ? listPendingSuggestions(user.id, 1, "", DECK_CARDS) : Promise.resolve([]),
     view === "review" && q.trim() ? searchCatalogue(user.id, domain ?? q) : Promise.resolve([]),
     db().select().from(discoverySources).where(eq(discoverySources.userId, user.id)), getSettings(),
     db().select({ id: tasks.id, type: tasks.type, status: tasks.status }).from(tasks).where(and(
@@ -129,6 +129,8 @@ export default async function SuggestionsPage({ searchParams }: { searchParams: 
         or exists (select 1 from discovery_candidates c where c.user_id = ${user.id} and c.id::text = ${tasks.payload}->>'candidateId'))`,
     )),
   ]);
+  const page = Math.min(pageNumber(params.page), Math.max(1, Math.ceil(historyTotal / 50)));
+  const resolved = view === "history" ? await listResolvedSuggestions(user.id, 50, page, q) : [];
   const now = new Date();
   const similarActive = active.some(t => t.type === "suggest_companies");
   // Surfaced on every view: a source that has stopped working is invisible otherwise, and silence

@@ -1,4 +1,4 @@
-import { companiesDueLogoCapture, retireSourceRoles, scanRunSummary, schema, enqueueTask, type Task } from "@ava/db";
+import { companiesDueLogoCapture, retireSourceRoles, scanRunSummary, schema, enqueueTasks, type Task } from "@ava/db";
 import { dedupeKeyFor, localDateParts, priorityFor, type SystemSettings } from "@ava/core";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
@@ -84,11 +84,10 @@ async function runDaily(task: Task, deps: WorkerDeps, settings: SystemSettings):
   // dedupe key means a sweep that runs twice, or one that runs while yesterday's task is still
   // queued, adds nothing.
   const dueLogos = await companiesDueLogoCapture(deps.db, deps.now(), LOGO_CAPTURES_PER_DAY);
-  let logosQueued = 0;
-  for (const company of dueLogos) {
+  const logosQueued = await enqueueTasks(deps.db, dueLogos.map(company => {
     const payload = { companyId: company.id, logoOnly: true, homepageUrl: company.homepageUrl };
-    if (await enqueueTask(deps.db, "discover", payload, { dedupeKey: dedupeKeyFor("discover", payload), priority: 6 })) logosQueued++;
-  }
+    return { type: "discover" as const, payload, dedupeKey: dedupeKeyFor("discover", payload), priority: 6 };
+  }));
 
   if (task.id) await deps.db.update(schema.tasks).set({ result: { scanRunId: run.id, companies: companies.length } }).where(eq(schema.tasks.id, task.id));
   log.info("daily run started", { runId: run.id, runDate, companies: companies.length, logosQueued, retired });

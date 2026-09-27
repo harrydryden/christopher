@@ -175,6 +175,22 @@ describe.skipIf(skip)("headless rendering", () => {
     } finally { await polite.close(); }
   }, 120_000);
 
+  it("closes an idle browser after its quiet period and launches another for the next render", async () => {
+    const idle = new BrowserRenderer({ userAgent: "AVAJobMonitor/0.1 (test)", hostMap: server.hostMap, executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined, idleCloseMs: 500 });
+    try {
+      expect((await idle.render("https://www.acmeind.example/fine")).html).toContain("fine");
+      expect(idle.running).toBe(true);
+      // A render inside the quiet period keeps the same browser.
+      await new Promise(resolve => setTimeout(resolve, 200));
+      expect((await idle.render("https://www.acmeind.example/fine")).html).toContain("fine");
+      expect(idle.running).toBe(true);
+      await new Promise(resolve => setTimeout(resolve, 1_500));
+      expect(idle.running).toBe(false);
+      expect((await idle.render("https://www.acmeind.example/fine")).html).toContain("fine");
+      expect(idle.running).toBe(true);
+    } finally { await idle.close(); }
+  }, 60_000);
+
   it("gives up a page that hangs its main thread, and the renders queued behind it still run", async () => {
     const ledger = new HttpTrafficLedger(null);
     const bounded = new BrowserRenderer({ userAgent: "AVAJobMonitor/0.1 (test)", hostMap: server.hostMap, executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined, renderTimeoutMs: 5_000, concurrency: 1, traffic: ledger });

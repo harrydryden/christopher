@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "start": "tsx --import ./src/otel.ts src/index.ts",
+    "start": "node --enable-source-maps --import ./dist/otel.mjs dist/index.mjs",
+    "start:source": "tsx --import ./src/otel.ts src/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "build": "echo 'worker runs from source with tsx'",
+    "build": "node build.mjs",
     "lint": "echo 'no lint configured'",
     "cli": "tsx src/cli.ts"
   },

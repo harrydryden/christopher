@@ -18,6 +18,24 @@ export interface EnqueueOptions {
   promote?: boolean;
 }
 
+/**
+ * The channel a worker listens on for new work. A notification carries no payload: it only says
+ * "claim now", and the claim decides what, so a lost or duplicated one costs nothing but a poll.
+ */
+export const TASKS_CHANNEL = "ava_tasks";
+
+/** What an enqueue writes with: an insert, and the statement that wakes a listening worker. */
+export type TaskWriter = Pick<Db, "insert" | "execute">;
+
+/**
+ * Wake a listening worker. Inside a transaction the notification is delivered when it commits,
+ * and not at all when it rolls back, so a worker is never woken for a task it cannot see; it goes
+ * through a transaction-pooling PgBouncer as well, because only LISTEN needs a session.
+ */
+export async function notifyTaskWorkers(db: Pick<Db, "execute">): Promise<void> {
+  await db.execute(sql`select pg_notify(${TASKS_CHANNEL}, '')`);
+}
+
 /** One row for `enqueueTasks`: a task with the same options `enqueueTask` takes. */
 export interface EnqueueRow extends EnqueueOptions {
   type: (typeof tasks.$inferInsert)["type"];
@@ -51,19 +69,24 @@ function valuesFor(row: EnqueueRow) {
   };
 }
 
-/** The ids of the rows actually inserted: a deduplicated or promoted row is not one. */
-async function insertTasks(db: Pick<Db, "insert">, rows: EnqueueRow[], promote: boolean): Promise<string[]> {
+/**
+ * The ids of the rows actually inserted: a deduplicated or promoted row is not one. When anything
+ * was inserted or brought forward, a listening worker is woken in the same transaction.
+ */
+async function insertTasks(db: TaskWriter, rows: EnqueueRow[], promote: boolean): Promise<string[]> {
   if (!rows.length) return [];
   // A CV build's key lives in an index of its own, and one statement can promote against one index.
   const promoted = promote ? rows.filter(row => row.type !== "generate_cv") : [];
   const dropped = promote ? rows.filter(row => row.type === "generate_cv") : rows;
   const ids: string[] = [];
+  let written = false;
   if (dropped.length) {
-    const written = await db.insert(tasks).values(dropped.map(valuesFor)).onConflictDoNothing().returning({ id: tasks.id });
-    ids.push(...written.map(row => row.id));
+    const inserted = await db.insert(tasks).values(dropped.map(valuesFor)).onConflictDoNothing().returning({ id: tasks.id });
+    ids.push(...inserted.map(row => row.id));
+    written ||= inserted.length > 0;
   }
   if (promoted.length) {
-    const written = await db.insert(tasks).values(promoted.map(valuesFor))
+    const upserted = await db.insert(tasks).values(promoted.map(valuesFor))
       .onConflictDoUpdate({
         // `tasks_dedupe_queued_uidx`: the one task per key that is queued and has never started.
         target: tasks.dedupeKey,
@@ -72,8 +95,11 @@ async function insertTasks(db: Pick<Db, "insert">, rows: EnqueueRow[], promote: 
         setWhere: sql`${tasks.priority} > excluded.priority or ${tasks.runAfter} > excluded.run_after`,
       })
       .returning({ id: tasks.id, inserted: sql<boolean>`(xmax = 0)` });
-    ids.push(...written.filter(row => row.inserted).map(row => row.id));
+    ids.push(...upserted.filter(row => row.inserted).map(row => row.id));
+    // A promoted row is work that can start sooner, which is worth a wake as much as a new one.
+    written ||= upserted.length > 0;
   }
+  if (written) await notifyTaskWorkers(db);
   return ids;
 }
 
@@ -85,7 +111,7 @@ async function insertTasks(db: Pick<Db, "insert">, rows: EnqueueRow[], promote: 
  * Returns the task id, or null when deduplicated (or, with `promote`, promoted).
  */
 export async function enqueueTask(
-  db: Pick<Db, "insert">,
+  db: TaskWriter,
   type: (typeof tasks.$inferInsert)["type"],
   payload: Record<string, unknown>,
   options: EnqueueOptions = {},
@@ -103,7 +129,7 @@ export async function enqueueTask(
  * With `promote`, a batch that names one key twice keeps its most urgent row, because one
  * statement may not update the same row twice.
  */
-export async function enqueueTasks(db: Pick<Db, "insert">, rows: EnqueueRow[], chunkSize = 250, promote = false): Promise<number> {
+export async function enqueueTasks(db: TaskWriter, rows: EnqueueRow[], chunkSize = 250, promote = false): Promise<number> {
   let batch = rows;
   if (promote) {
     const byKey = new Map<string, EnqueueRow>();

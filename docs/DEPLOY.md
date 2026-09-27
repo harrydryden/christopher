@@ -669,8 +669,9 @@ code loads only the OpenTelemetry API, whose tracer does nothing.
 - **Interface** (`apps/web/instrumentation.ts`): `@vercel/otel` with service name `ava-web` and a
   trace-id ratio sampler, `OTEL_TRACES_SAMPLER_ARG` defaulting to `0.1`. Next.js contributes its
   route, render and fetch spans. Set the variables in Vercel › Settings › Environment Variables.
-- **Worker** (`apps/worker/src/otel.ts`, preloaded by the image's `node --import tsx --import
-  ./src/otel.ts src/index.ts`): the Node SDK with the pg instrumentation
+- **Worker** (`apps/worker/src/otel.ts`, built to `dist/otel.mjs` and preloaded by the image's
+  `node --enable-source-maps --import ./dist/otel.mjs dist/index.mjs`; from source,
+  `tsx --import ./src/otel.ts src/index.ts`): the Node SDK with the pg instrumentation
   (`enhancedDatabaseReporting` off, so statements appear without their values) and the undici
   instrumentation, parent-based 10 % sampling, a batch processor holding at most 512 spans, and three
   spans of its own: `task.run` (type, attempt, ready wait), `model.call` (model, call site, stage,
@@ -789,6 +790,11 @@ the `@ava/*` packages, so frozen installs are unaffected.
 ### Backup restoration drill
 
 - [ ] Restore a provider backup into an isolated database; never test restoration over production.
+- [ ] Run `vacuumdb --analyze-in-stages --dbname <restored database URL>` straight after the restore,
+  before pointing anything at it. PostgreSQL 16's `pg_restore` restores no planner statistics, so
+  until autovacuum reaches each table every query is planned as if the tables were empty; the
+  in-stages form makes the database usable after its first, coarse pass.
+  `scripts/recovery-drill.mjs` does this after its own restore.
 - [ ] Record the backup timestamp, achieved RPO, restore start/end time and achieved RTO.
 - [ ] Point an isolated web/worker pair at the restored database, apply only the migration plan being
   tested, and run authenticated reads plus one reversible queue journey.
@@ -910,19 +916,20 @@ only moves the failure from a V8 abort to the kernel's OOM killer, which is less
 lowering it makes the process die sooner. The size of the input and the number of slots are the
 two levers.
 
-**The worker runs its TypeScript through `tsx`, and that costs memory.** Measured with Node 22, the
-loader roughly doubles a trivial module's resident size (about 89 MB against 43 MB for the same file
-as plain JavaScript) and keeps an `esbuild` service process of about 14 MB alive beside it: some 60 MB
-of the 512 MB instance before any worker code runs, all of it outside the V8 heap the Operations
-reading shows. Compiling ahead of time (an `esbuild --bundle --packages=external` step in the
-Dockerfile, including the lazily imported browser and document-text modules, and `node dist/index.mjs`
-as the command) would return most of it and skip the transpile on every boot and crash restart. It
-has not been done because it is a second build of the worker to keep correct: the tests, the CLI
-and the drills run from source through `tsx`, so the compiled image would be the one artefact they
-never exercise, and a dynamic import the bundler misses fails only in production. It is the first
-lever to reach for, before a larger instance, if the unclean exits recorded in
-`docs/HOSTED-CAPACITY-2026-09-20.md` recur with the heap well under its ceiling. The `worker-image`
-CI job would then boot the compiled entry point on every pull request.
+**The worker image runs compiled JavaScript, not TypeScript through `tsx`.** Under `tsx` the loader
+roughly doubled a trivial module's resident size (about 89 MB against 43 MB for the same file as plain
+JavaScript) and kept an `esbuild` service process of about 14 MB alive beside it, all outside the V8
+heap the Operations reading shows. The Dockerfile's build stage now bundles the worker with
+`apps/worker/build.mjs` (esbuild; the workspace packages and what only they depend on are bundled, the
+worker's own dependencies stay in node_modules, the migrations are copied to `dist/drizzle`), and the
+image runs `node --enable-source-maps --import ./dist/otel.mjs dist/index.mjs` (tracing is built as
+`dist/otel.mjs` and preloaded, as the source entry preloads `src/otel.ts`). Booted locally against an empty queue with the
+deployed slot counts, the idle process measured 161–236 MB from source and 117–118 MB compiled (one
+outlier at 205 MB). The tests, the CLI and the drills still run from source through `tsx`, so the
+compiled entry point is exercised by the `worker-image` CI job, which boots the image on every pull
+request; `pnpm --filter @ava/worker build` then `node dist/index.mjs` reproduces it locally. The
+browser is closed after five idle minutes and launched again on the next render (about 100 MiB
+outside V8 between bursts, a second or two on the first render after a quiet spell).
 
 A CV build has its own view of the same thing: while it is building, its page shows when it
 started, the stage it reached, how long since it last advanced and which attempt it is on, and

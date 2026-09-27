@@ -45,7 +45,8 @@ test("a dependency declared by several workspaces is declared the same way in ea
 test("every file the image copies is a worker input, so changing it redeploys the worker", async () => {
   const { WORKER_INPUT_PATHS } = await import("./release-checks.mjs");
   const covered = path => WORKER_INPUT_PATHS.some(input => path === input || path.startsWith(`${input}/`));
-  const sources = [...read("Dockerfile").matchAll(/^COPY (?:--\S+ )*(.+) \S+$/gm)].flatMap(match => match[1].split(/\s+/));
+  // A `COPY --from=<stage>` copies what an earlier stage built, not a file from the repository.
+  const sources = [...read("Dockerfile").matchAll(/^COPY (?:--\S+ )*(.+) \S+$/gm)].filter(match => !/--from=/.test(match[0])).flatMap(match => match[1].split(/\s+/));
   assert.ok(sources.length > 5);
   // Copied only so pnpm can check the frozen lockfile; a change to it that matters changes the lockfile.
   assert.deepEqual(sources.filter(path => !covered(path) && path !== "apps/web/package.json"), []);
@@ -67,7 +68,10 @@ test("the worker image runs under an init process as the image's unprivileged us
   const dockerfile = read("Dockerfile");
   assert.match(dockerfile, /apt-get install -y --no-install-recommends tini/);
   assert.match(dockerfile, /^ENTRYPOINT \["\/usr\/bin\/tini", "--"\]$/m);
-  assert.match(dockerfile, /^CMD \["node", "--import", "tsx", "--import", "\.\/src\/otel\.ts", "src\/index\.ts"\]$/m);
+  // The worker compiled ahead of time by the build stage (apps/worker/build.mjs), not TypeScript
+  // through tsx, with the tracing module preloaded before it as the source entry preloads src/otel.ts.
+  assert.match(dockerfile, /^RUN pnpm --filter @ava\/worker build$/m);
+  assert.match(dockerfile, /^CMD \["node", "--enable-source-maps", "--import", "\.\/dist\/otel\.mjs", "dist\/index\.mjs"\]$/m);
   const user = dockerfile.search(/^USER pwuser$/m);
   assert.ok(user > 0, "USER pwuser is set");
   assert.ok(user < dockerfile.search(/^CMD /m), "before the command runs");

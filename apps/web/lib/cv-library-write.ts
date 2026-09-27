@@ -16,7 +16,7 @@ import { UserFacingError } from "@/lib/validation";
 export type Tx = Parameters<Parameters<ReturnType<typeof db>["transaction"]>[0]>[0];
 
 /** Queue the evidence review (A12) of an account's newest Library. */
-export async function enqueueLibraryReview(tx: Pick<Tx, "insert">, userId: string, version: number) {
+export async function enqueueLibraryReview(tx: Pick<Tx, "insert" | "execute">, userId: string, version: number) {
   await enqueue("review_library", { userId, libraryVersion: version }, tx);
 }
 

@@ -4,7 +4,7 @@
  * the companies that account follows. Every suggestion is verified deterministically before the
  * user ever sees it (SPEC R-8.3).
  */
-import { schema, enqueueTask, type Task } from "@ava/db";
+import { schema, enqueueTasks, type Task } from "@ava/db";
 import { dedupeKeyFor, discovery, ensureHttpUrl, evaluateGate, extractDomain, priorityFor, SourceFetchError, stripHtml, type DiscoveryResult, type TaskPayloads } from "@ava/core";
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { aiBudgetStop, makeDiscoveryContext, makeFetchContext, type WorkerDeps } from "../context";
@@ -97,7 +97,9 @@ export async function handleSuggestCompanies(task: Task, deps: WorkerDeps): Prom
   if (task.id) {
     const checkpoint = await deps.db.select({ id: schema.discoveryCandidates.id, processedAt: schema.discoveryCandidates.processedAt }).from(schema.discoveryCandidates).where(eq(schema.discoveryCandidates.batchKey, task.id));
     if (checkpoint.length) {
-      for (const candidate of checkpoint) if (!candidate.processedAt) await enqueueTask(deps.db, "verify_company", { candidateId: candidate.id }, { dedupeKey: `verify_company:${candidate.id}`, priority: 7 });
+      await enqueueTasks(deps.db, checkpoint.filter(candidate => !candidate.processedAt).map(candidate => ({
+        type: "verify_company" as const, payload: { candidateId: candidate.id }, dedupeKey: `verify_company:${candidate.id}`, priority: 7,
+      })));
       return { resumed: checkpoint.length };
     }
   }
@@ -150,20 +152,20 @@ export async function handleSuggestCompanies(task: Task, deps: WorkerDeps): Prom
   const nameToId = new Map(companies.map((c) => [c.name.toLowerCase(), c.id]));
   return deps.db.transaction(async tx => {
     await deps.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
-    let queued = 0;
-    for (const [rank, candidate] of candidates.entries()) {
+    // One insert for the batch and one enqueue for what it stored, rather than two statements per
+    // candidate. A domain the batch names twice is stored once: the conflict skips the repeat.
+    const values = [...candidates.entries()].flatMap(([rank, candidate]) => {
       const domain = extractDomain(candidate.homepageUrl);
-      if (excludeDomains.includes(domain)) continue;
+      if (excludeDomains.includes(domain)) return [];
       const similarTo = candidate.similarTo.map(name => nameToId.get(name.toLowerCase())).filter((id): id is string => !!id);
-      const rows = await tx.insert(schema.discoveryCandidates).values({ userId, name: candidate.name, domain, homepageUrl: candidate.homepageUrl,
-        rationale: candidate.rationale, quote: "", similarTo, rank, batchKey: task.id ?? "manual",
-      }).onConflictDoNothing().returning({ id: schema.discoveryCandidates.id });
-      for (const row of rows) {
-        await enqueueTask(tx, "verify_company", { candidateId: row.id }, { dedupeKey: `verify_company:${row.id}`, priority: 7 });
-        queued++;
-      }
-    }
-    return { proposed: candidates.length, queued };
+      return [{ userId, name: candidate.name, domain, homepageUrl: candidate.homepageUrl,
+        rationale: candidate.rationale, quote: "", similarTo, rank, batchKey: task.id ?? "manual" }];
+    });
+    const rows = values.length
+      ? await tx.insert(schema.discoveryCandidates).values(values).onConflictDoNothing().returning({ id: schema.discoveryCandidates.id })
+      : [];
+    await enqueueTasks(tx, rows.map(row => ({ type: "verify_company" as const, payload: { candidateId: row.id }, dedupeKey: `verify_company:${row.id}`, priority: 7 })));
+    return { proposed: candidates.length, queued: rows.length };
   });
 }
 
@@ -262,15 +264,12 @@ export async function queueMissingCompanyProfiles(deps: WorkerDeps): Promise<num
     .leftJoin(schema.companyProfiles, eq(schema.companyProfiles.companyId, schema.companies.id))
     .where(and(eq(schema.companies.status, "active"), or(isNull(schema.companyProfiles.id), sql`${schema.companyProfiles.generatedAt} < ${stale}`)))
     .limit(20);
-  let queued = 0;
-  for (const row of rows) {
-    const id = await enqueueTask(deps.db, "profile_company", { companyId: row.id }, {
-      dedupeKey: dedupeKeyFor("profile_company", { companyId: row.id }),
-      priority: priorityFor("profile_company"),
-    });
-    if (id) queued++;
-  }
-  return queued;
+  return enqueueTasks(deps.db, rows.map(row => ({
+    type: "profile_company" as const,
+    payload: { companyId: row.id },
+    dedupeKey: dedupeKeyFor("profile_company", { companyId: row.id }),
+    priority: priorityFor("profile_company"),
+  })));
 }
 
 export { serialiseCandidate, gatherCompanyText as _gatherCompanyTextForTests, latestProfile as _latestProfile };

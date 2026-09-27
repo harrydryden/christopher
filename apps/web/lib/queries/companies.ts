@@ -163,6 +163,19 @@ export async function listCompanies(userId: string, page = 1, q = "", order: Com
 }
 
 /**
+ * One page of the Tracked companies table and the count that pages it, read side by side rather
+ * than count first: the page asked for is read beside the count, and read again at the last page
+ * only when it turns out to be past the end (the `fetchRolePage` pattern). One round trip on every
+ * ordinary render instead of two.
+ */
+export async function listCompanyPage(userId: string, requestedPage: number, q = "", order: CompanySort = DEFAULT_COMPANY_SORT): Promise<{ rows: CompanyListRow[]; total: number; page: number }> {
+  const asked = Math.max(1, Number.isSafeInteger(requestedPage) ? requestedPage : 1);
+  const [total, rows] = await Promise.all([companyCount(userId, q), listCompanies(userId, asked, q, order)]);
+  const page = Math.min(asked, Math.max(1, Math.ceil(total / 50)));
+  return { rows: page === asked ? rows : await listCompanies(userId, page, q, order), total, page };
+}
+
+/**
  * The newest scan of any source of each company, for a page of companies. Each source's newest
  * start is read from that source's entries in `scans_source_started_idx` (index-only), and only that
  * row is read back, so the cost follows the page's sources, not the scans the catalogue has
@@ -628,8 +641,29 @@ export async function catalogueCount(q = ""): Promise<number> {
   return row?.n ?? 0;
 }
 
+/**
+ * One page of the catalogue for the administrator: the count and the page's companies side by side
+ * (the page read again at the last one only when the asked one is past the end), then everything
+ * keyed by the page's ids — followers, the viewer's own follows, sources, the newest scan and the
+ * pending name proposals — in one wave. Two round trips where there were four.
+ */
+export async function listCataloguePage(viewerId: string, requestedPage: number, q = ""): Promise<{ rows: CatalogueRow[]; total: number; page: number; suggestions: NameSuggestionRow[] }> {
+  const asked = Math.max(1, Number.isSafeInteger(requestedPage) ? requestedPage : 1);
+  const pageOf = (page: number) => db().select().from(companies).where(companySearch(q)).orderBy(asc(companies.name), companies.id).limit(50).offset((page - 1) * 50);
+  const [total, first] = await Promise.all([catalogueCount(q), pageOf(asked)]);
+  const page = Math.min(asked, Math.max(1, Math.ceil(total / 50)));
+  const rows = page === asked ? first : await pageOf(page);
+  if (!rows.length) return { rows: [], total, page, suggestions: [] };
+  const [catalogue, suggestions] = await Promise.all([catalogueRows(viewerId, rows), pendingNameSuggestionsFor(rows.map((c) => c.id))]);
+  return { rows: catalogue, total, page, suggestions };
+}
+
 export async function listCatalogue(viewerId: string, page = 1, q = ""): Promise<CatalogueRow[]> {
   const rows = await db().select().from(companies).where(companySearch(q)).orderBy(asc(companies.name), companies.id).limit(50).offset((page - 1) * 50);
+  return catalogueRows(viewerId, rows);
+}
+
+async function catalogueRows(viewerId: string, rows: Company[]): Promise<CatalogueRow[]> {
   if (!rows.length) return [];
   const ids = rows.map((c) => c.id);
   const [followerRows, viewerRows, sourceRows, lastScans] = await Promise.all([

@@ -102,6 +102,8 @@ describe("the dedupe key", () => {
     await claim(first!);
     expect((await activeTaskFor(db, key))?.id).toBe(first);
     const plan = await db.transaction(async tx => {
+      // Statistics after the fixture load, not whatever an earlier suite left behind.
+      await tx.execute(sql`analyze tasks`);
       await tx.execute(sql`set local enable_seqscan = off`);
       return (await tx.execute(sql`explain select * from tasks where dedupe_key = ${key} and status in ('queued', 'running') limit 1`)).rows;
     });

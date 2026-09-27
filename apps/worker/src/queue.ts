@@ -1,6 +1,6 @@
 import { recordWorkerEvent, releaseAiHolds, schema, type Db, type ReleasedHolds, type Task } from "@ava/db";
 import { AGEING_PRIORITY_FLOOR, deadlineMsFor, INTERACTIVE_TASK_TYPES, SCAN_TASK_TYPES, TASK_DEADLINES_MS, taskSubject, taskUserId, type TaskDeadlines } from "@ava/core";
-import { and, eq, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, getTableColumns, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 import { finaliseScanRuns } from "./handlers/daily";
 import { LeaseBusyError, LeaseLostError, type RunDeps } from "./lease";
@@ -41,7 +41,7 @@ export type InterruptedHookMap = Partial<Record<Task["type"], InterruptedHook>>;
  * close that off, and it runs on every path that fails a task for good — the last attempt of a
  * handler that threw, and a task whose worker died with it claimed.
  */
-export type AbandonHook = (task: Task, deps: WorkerDeps, reason: string) => Promise<void>;
+export type AbandonHook = (task: SweptTask, deps: WorkerDeps, reason: string) => Promise<void>;
 export type AbandonHookMap = Partial<Record<Task["type"], AbandonHook>>;
 
 /** What a recovery needs to close off the work behind the tasks it gives up on. */
@@ -49,6 +49,15 @@ export interface AbandonContext {
   deps?: WorkerDeps;
   onAbandon?: AbandonHookMap;
 }
+
+/**
+ * A task as the recovery sweeps read it: every column but `result`, which nothing that requeues,
+ * fails or closes off a task reads, and which a task that wrote a large result before it was
+ * requeued would otherwise carry through every sweep. `payload` stays: the ledger names the
+ * task's subject and account from it, and the abandonment hooks find their draft through it.
+ */
+export type SweptTask = Omit<Task, "result">;
+const { result: _result, ...SWEPT_TASK_COLUMNS } = getTableColumns(schema.tasks);
 
 /** Past this many spent tasks, one sweep leaves the rest for the next. */
 const SPENT_SWEEP_LIMIT = 200;
@@ -119,7 +128,15 @@ export interface QueueOptions {
    * the general slots under `maxActiveByType`, as before.
    */
   cvConcurrency?: number;
+  /** The first wait on an empty queue (3 s); each empty claim doubles it up to `idlePollMaxMs`, and a claim resets it. */
   pollMs?: number;
+  /**
+   * The longest wait on an empty queue: 15 s, or 30 s while `wakeup` is listening and an enqueue
+   * wakes the slots itself. A caller that sets `pollMs` alone polls at that rate throughout.
+   */
+  idlePollMaxMs?: number;
+  /** Notifications from `ava_tasks`, which end an idle wait at once (see task-wakeup.ts). */
+  wakeup?: { wait(ms: number): Promise<void>; readonly listening: boolean };
   workerId: string;
   staleAfterMs?: number;
   heartbeatMs?: number;
@@ -135,6 +152,11 @@ export interface QueueOptions {
    */
   maxActiveByType?: Partial<Record<Task["type"], number>>;
 }
+
+/** The idle poll: 3 s after a claim, doubling to 15 s, or to 30 s while notifications arrive. */
+export const IDLE_POLL_MS = 3_000;
+export const IDLE_POLL_MAX_MS = 15_000;
+export const IDLE_POLL_LISTENING_MAX_MS = 30_000;
 
 /** The per-type caps every queue has, whatever it is given. */
 const DEFAULT_MAX_ACTIVE_BY_TYPE: Partial<Record<Task["type"], number>> = { verify_company: 1 };
@@ -161,15 +183,34 @@ export interface ClaimOptions {
   batchScoring?: boolean;
 }
 
+/**
+ * The claim's lane as two arrays: the types a lane is limited to (empty for none) and the types it
+ * leaves out. Parameters rather than spelled-out lists, so every claim of a kind is the same text
+ * and a named statement can be planned once per connection instead of on every poll.
+ */
+function laneArrays(lane: QueueLane, excludedTypes: Task["type"][]): { include: string[]; exclude: string[] } {
+  if (lane === "cv") return { include: ["generate_cv"], exclude: excludedTypes };
+  if (lane === "scan") return { include: scanTypes, exclude: excludedTypes };
+  if (lane === "interactive") return { include: interactiveTypes, exclude: excludedTypes };
+  if (lane === "background") return { include: [], exclude: [...scanTypes, ...interactiveTypes, ...excludedTypes] };
+  return { include: [], exclude: excludedTypes };
+}
+
 export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all", excludedTypes: Task["type"][] = [], options: ClaimOptions = {}): Promise<Task | null> {
-  const types = lane === "scan" ? scanTypes : interactiveTypes;
-  const laneFilter = lane === "all" ? sql`true` : lane === "cv" ? sql`type = 'generate_cv'` : lane === "background"
-    ? sql`type not in (${sql.join([...scanTypes, ...interactiveTypes].map(t => sql`${t}`), sql`, `)})`
-    : sql`type in (${sql.join(types.map(t => sql`${t}`), sql`, `)})`;
-  const excluded = excludedTypes.length
-    ? sql`type not in (${sql.join(excludedTypes.map(t => sql`${t}`), sql`, `)})`
-    : sql`true`;
-  const exclusionFilter = options.batchScoring ? sql`${excluded} and (type <> 'score_job' or payload->>'live' = 'true')` : excluded;
+  const { include, exclude } = laneArrays(lane, excludedTypes);
+  // Two texts, not one: `type = any($1)` lets `tasks_lane_idx` serve a limited lane, and an
+  // unlimited one (`all`, `background`) reads `tasks_status_run_after_idx`. Folding both into one
+  // text with `cardinality($1) = 0 or …` would give the generic plan neither index. Batch-mode
+  // scoring adds a fixed condition, so it is a statement of its own too.
+  // The fairness step orders the waiting CV builds, so it is built only where a CV build can be
+  // claimed: the CV slots, or a general slot of a deployment without them. A scan-lane claim used
+  // to scan the CV backlog on every poll for a head that could never be a build.
+  const fairness = (include.length === 0 || include.includes("generate_cv")) && !exclude.includes("generate_cv");
+  const kind = `${include.length ? "claim_task_lane" : "claim_task_open"}${fairness ? "_fair" : ""}${options.batchScoring ? "_batch" : ""}`;
+  const typeFilter = include.length
+    ? sql`type = any(${sql.placeholder("include")}::text[]) and type <> all(${sql.placeholder("exclude")}::text[])`
+    : sql`type <> all(${sql.placeholder("exclude")}::text[])`;
+  const laneFilter = options.batchScoring ? sql`${typeFilter} and (type <> 'score_job' or payload->>'live' = 'true')` : typeFilter;
   // One statement, two reads. `head` is the task the queue would claim by the columns the
   // ready-lane indexes carry, so it is read from the index instead of by sorting every queued task.
   // Ageing is a periodic sweep that lowers `priority` itself (see `agePriorities`), which keeps
@@ -189,17 +230,20 @@ export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all
   //
   // A key can have a queued follow-up while a task with that key runs; the follow-up waits for
   // it, so the two never run side by side (served by `tasks_dedupe_active_idx`).
+  //
+  // A named statement: `pg` parses it once per pooled connection, and after five executions the
+  // server may keep a generic plan (`plan_cache_mode = auto` compares it with the custom ones).
   const rows = await db
     .update(schema.tasks)
-    .set({ status: "running", lockedAt: sql`now()`, lockedBy: workerId, attempts: sql`${schema.tasks.attempts} + 1`, startedAt: sql`now()` })
+    .set({ status: "running", lockedAt: sql`now()`, lockedBy: sql`${sql.placeholder("workerId")}`, attempts: sql`${schema.tasks.attempts} + 1`, startedAt: sql`now()` })
     .where(sql`${schema.tasks.id} = (
     with head as (
       select id, type, priority from tasks
-      where status = 'queued' and run_after <= now() and attempts < max_attempts and ${laneFilter} and ${exclusionFilter}
+      where status = 'queued' and run_after <= now() and attempts < max_attempts and ${laneFilter}
         and (dedupe_key is null or not exists (select 1 from tasks r where r.dedupe_key = tasks.dedupe_key and r.status = 'running'))
       order by priority asc, run_after asc, created_at asc
       limit 1 for update skip locked
-    ), fair as (
+    )${fairness ? sql`, fair as (
       select t.id from tasks t join head h on h.type = 'generate_cv'
       where t.type = 'generate_cv' and t.status = 'queued' and t.priority = h.priority
         and t.run_after <= now() and t.attempts < t.max_attempts
@@ -209,8 +253,11 @@ export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all
         t.run_after asc, t.created_at asc
       limit 1 for update of t skip locked
     )
-    select coalesce((select id from fair), (select id from head)))`)
-    .returning();
+    select coalesce((select id from fair), (select id from head))` : sql`
+    select id from head`})`)
+    .returning()
+    .prepare(kind)
+    .execute(include.length ? { workerId, include, exclude } : { workerId, exclude });
   return rows[0] ?? null;
 }
 
@@ -270,7 +317,13 @@ export async function renewTask(db: Db, task: Task): Promise<boolean | null> {
     return await db.transaction(async tx => {
       await tx.execute(sql`set local lock_timeout = '2s'`);
       await tx.execute(sql`set local statement_timeout = '5s'`);
-      const rows = await tx.update(schema.tasks).set({ lockedAt: new Date() }).where(ownedTask(task)).returning({ id: schema.tasks.id });
+      // Named, as the claim is: one Parse per connection for a statement every run sends each beat.
+      const rows = await tx.update(schema.tasks).set({ lockedAt: sql`${sql.placeholder("lockedAt")}` })
+        .where(and(eq(schema.tasks.id, sql.placeholder("id")), eq(schema.tasks.status, "running"),
+          eq(schema.tasks.attempts, sql.placeholder("attempts")), eq(schema.tasks.lockedBy, sql.placeholder("lockedBy"))))
+        .returning({ id: schema.tasks.id })
+        .prepare("renew_task")
+        .execute({ id: task.id, attempts: task.attempts, lockedBy: task.lockedBy ?? "", lockedAt: new Date() });
       return rows.length === 1;
     });
   } catch (err) {
@@ -348,7 +401,7 @@ export async function failTask(db: Db, task: Task, err: unknown): Promise<"retry
 }
 
 /** Run the type's abandonment hook, if it has one. A hook that throws never fails the recovery. */
-export async function runAbandonHook(task: Task, reason: string, context: AbandonContext): Promise<void> {
+export async function runAbandonHook(task: SweptTask, reason: string, context: AbandonContext): Promise<void> {
   const hook = context.onAbandon?.[task.type];
   if (!hook || !context.deps) return;
   try {
@@ -377,7 +430,7 @@ async function runInterruptedHook(task: Task, deps: WorkerDeps, hooks: Interrupt
  * lands — for a lost task, that its lock is still stale — because the row can change between the
  * read that chose it and this write.
  */
-export async function abandonTask(db: Db, task: Task, error: string, workerId: string, context: AbandonContext & { fence?: SQL } = {}): Promise<boolean> {
+export async function abandonTask(db: Db, task: SweptTask, error: string, workerId: string, context: AbandonContext & { fence?: SQL } = {}): Promise<boolean> {
   const rows = await db
     .update(schema.tasks)
     .set({ status: "failed", error: error.slice(0, 2000), finishedAt: new Date(), lockedAt: null })
@@ -428,14 +481,14 @@ export async function requeueStale(
   options: AbandonContext & { ids?: string[] } = {},
 ): Promise<RequeueOutcome> {
   const cutoff = new Date(Date.now() - staleAfterMs);
-  const lost = await db.select().from(schema.tasks).where(
+  const lost = await db.select(SWEPT_TASK_COLUMNS).from(schema.tasks).where(
     options.ids?.length
       ? and(eq(schema.tasks.status, "running"), inArray(schema.tasks.id, options.ids))
       : and(eq(schema.tasks.status, "running"), lt(schema.tasks.lockedAt, cutoff)),
   );
-  const earlierIncarnation = (task: Task) => !!options.ids?.length
+  const earlierIncarnation = (task: SweptTask) => !!options.ids?.length
     && (task.lockedBy === workerId || !!task.lockedBy?.startsWith(`${workerId}#`));
-  const stillLost = (task: Task) => and(
+  const stillLost = (task: SweptTask) => and(
     eq(schema.tasks.id, task.id), eq(schema.tasks.status, "running"), eq(schema.tasks.attempts, task.attempts),
     task.lockedBy === null ? isNull(schema.tasks.lockedBy) : eq(schema.tasks.lockedBy, task.lockedBy),
     earlierIncarnation(task) ? undefined : or(isNull(schema.tasks.lockedAt), lt(schema.tasks.lockedAt, cutoff)),
@@ -470,7 +523,7 @@ export async function requeueStale(
  * runs at boot and then hourly rather than on every tick, and is bounded per run.
  */
 export async function failSpentTasks(db: Db, workerId = "worker", context: AbandonContext = {}): Promise<number> {
-  const spent = await db.select().from(schema.tasks)
+  const spent = await db.select(SWEPT_TASK_COLUMNS).from(schema.tasks)
     .where(and(eq(schema.tasks.status, "queued"), sql`${schema.tasks.attempts} >= ${schema.tasks.maxAttempts}`))
     .limit(SPENT_SWEEP_LIMIT);
   let failed = 0;
@@ -518,7 +571,10 @@ export async function recoverFromCrash(
 ): Promise<CrashRecovery> {
   const staleAfterMs = opts.staleAfterMs ?? TASK_STALE_AFTER_MS;
   const cutoff = Date.now() - staleAfterMs;
-  const all = await deps.db.select().from(schema.tasks).where(eq(schema.tasks.status, "running"));
+  // Only what choosing and reporting the suspects reads; `requeueStale` reads the rest for the ones it takes.
+  const all = await deps.db
+    .select({ id: schema.tasks.id, type: schema.tasks.type, attempts: schema.tasks.attempts, lockedBy: schema.tasks.lockedBy, lockedAt: schema.tasks.lockedAt, payload: schema.tasks.payload })
+    .from(schema.tasks).where(eq(schema.tasks.status, "running"));
   // Ours, or nobody's. A slot locks a task as `<workerId>#<slot>`, and the worker id is the pod
   // name, so a running task locked by this id belonged to the incarnation before this one and can
   // be taken back at once. Anything else is left to age out through the ordinary stale sweep,
@@ -674,6 +730,7 @@ export class TaskQueue {
    */
   async stop(graceMs = STOP_GRACE_MS, handBackMs = HAND_BACK_TIMEOUT_MS): Promise<void> {
     this.stopping = true;
+    this.idleStop.abort();
     for (const controller of this.controllers.values())
       if (!controller.signal.aborted) controller.abort(new ShutdownError());
     await settleWithin(this.handBackAll(), handBackMs);
@@ -690,6 +747,7 @@ export class TaskQueue {
    */
   async releaseAfterCrash(timeoutMs = HAND_BACK_TIMEOUT_MS): Promise<void> {
     this.stopping = true;
+    this.idleStop.abort();
     const ids = [...this.running.keys()];
     const recovered = ids.length
       ? requeueStale(this.deps.db, 0, this.opts.workerId, { ids, deps: this.deps, onAbandon: this.opts.onAbandon })
@@ -754,8 +812,27 @@ export class TaskQueue {
     return n;
   }
 
+  /** Ends every idle wait when the queue stops, so a stop never waits out a long poll. */
+  private readonly idleStop = new AbortController();
+
+  private idleFor(ms: number): Promise<void> {
+    if (this.idleStop.signal.aborted) return Promise.resolve();
+    const stopped = new Promise<void>(resolve => this.idleStop.signal.addEventListener("abort", () => resolve(), { once: true }));
+    return Promise.race([this.opts.wakeup ? this.opts.wakeup.wait(ms) : sleep(ms), stopped]);
+  }
+
+  /** How long an idle slot waits before it claims again: doubled after each empty claim, up to the ceiling. */
+  private idleWait(current: number): number {
+    const poll = this.opts.pollMs ?? IDLE_POLL_MS;
+    const ceiling = this.opts.idlePollMaxMs
+      ?? (this.opts.pollMs !== undefined && !this.opts.wakeup ? poll : this.opts.wakeup?.listening ? IDLE_POLL_LISTENING_MAX_MS : IDLE_POLL_MAX_MS);
+    return Math.max(poll, Math.min(current * 2, ceiling));
+  }
+
   private async loop(slot: number): Promise<void> {
-    const poll = this.opts.pollMs ?? 3000;
+    const poll = this.opts.pollMs ?? IDLE_POLL_MS;
+    // An empty queue used to be polled every 3 s by every slot, all day: about 280 claims a minute.
+    let idle = poll;
     while (!this.stopping) {
       let task: Task | null = null;
       try {
@@ -771,9 +848,11 @@ export class TaskQueue {
         continue;
       }
       if (!task) {
-        await sleep(poll);
+        await this.idleFor(idle);
+        idle = this.idleWait(idle);
         continue;
       }
+      idle = poll;
       try { await this.runTaskReserved(task); }
       finally { this.releaseTypeWhenSettled(task); }
     }

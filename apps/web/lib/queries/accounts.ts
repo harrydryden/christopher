@@ -7,7 +7,7 @@
  * statement rather than one round trip each, so Admin › Accounts costs the same query for fifty
  * accounts as for one.
  */
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import { cache } from "react";
 import { aiBudgetWindowStart, DEFAULT_ACCOUNT_AI_BUDGET_USD, resolveUserSettings } from "@ava/core";
 import { accountAiSpend } from "@ava/db";
@@ -33,13 +33,23 @@ export async function accountAiBudgets(userIds: string[], now: Date = new Date()
   return budgetsForMonth(userIds, aiBudgetWindowStart(now, null));
 }
 
-async function budgetsForMonth(userIds: string[], monthStart: Date): Promise<Map<string, AccountAiBudget>> {
-  const budgets = new Map<string, AccountAiBudget>();
-  const ids = [...new Set(userIds)];
-  if (ids.length === 0) return budgets;
+/** One row of `budgetSelect`: an account's two budget keys, the window SQL read from them, and its spend in it. */
+export interface BudgetRow {
+  user_id: string;
+  budget: unknown;
+  reset: unknown;
+  since: string | Date;
+  spent: number | string;
+}
+
+/**
+ * The statement behind every budget read, for the accounts in `ids`: one row each. Exported so a
+ * caller that needs one account's budget beside another figure can read both in one statement.
+ */
+export function budgetSelect(ids: string[], monthStart: Date): SQL {
   // Drizzle renders one placeholder per element, so the array is spelled out rather than passed whole.
   const idArray = sql`array[${sql.join(ids.map((id) => sql`${id}`), sql`, `)}]::uuid[]`;
-  const result = await db().execute(sql`
+  return sql`
     select u.id as user_id, budget.value as budget, reset.value as reset, w.since, coalesce(spend.total, 0) as spent
     from unnest(${idArray}) as u(id)
     left join user_settings budget on budget.user_id = u.id and budget.key = 'aiBudgetUsd'
@@ -47,25 +57,35 @@ async function budgetsForMonth(userIds: string[], monthStart: Date): Promise<Map
     cross join lateral (select greatest(${monthStart}::timestamptz,
       case when jsonb_typeof(reset.value) = 'string' and pg_input_is_valid(reset.value #>> '{}', 'timestamp with time zone')
         then date_trunc('milliseconds', (reset.value #>> '{}')::timestamptz) end) as since) w
-    cross join lateral (select sum(c.cost_usd::float8) as total from ai_calls c where c.user_id = u.id and c.at >= w.since) spend`);
-  for (const row of result.rows as Array<{ user_id: string; budget: unknown; reset: unknown; since: string | Date; spent: number | string }>) {
-    const stored = [
-      ...(row.budget === null ? [] : [{ key: "aiBudgetUsd", value: row.budget }]),
-      ...(row.reset === null ? [] : [{ key: "aiBudgetResetAt", value: row.reset }]),
-    ];
-    const settings = resolveUserSettings(stored);
-    // An account counts from its own marker, or from the month when it has none: the same window the
-    // worker admits its work in, and nobody else's reset can move it. The rule is core's; the SQL
-    // window only saves a round trip, so a marker the two would read differently is summed again.
-    const since = aiBudgetWindowStart(monthStart, settings.aiBudgetResetAt);
-    const spentUsd = since.getTime() === new Date(row.since).getTime() ? Number(row.spent) : await accountAiSpend(db(), row.user_id, since);
-    budgets.set(row.user_id, {
-      limitUsd: settings.aiBudgetUsd,
-      since,
-      countingSince: since.getTime() > monthStart.getTime() ? since : null,
-      spentUsd,
-    });
-  }
+    cross join lateral (select sum(c.cost_usd::float8) as total from ai_calls c where c.user_id = u.id and c.at >= w.since) spend`;
+}
+
+/** The budget one `budgetSelect` row describes. */
+export async function budgetFromRow(row: BudgetRow, monthStart: Date): Promise<AccountAiBudget> {
+  const stored = [
+    ...(row.budget === null ? [] : [{ key: "aiBudgetUsd", value: row.budget }]),
+    ...(row.reset === null ? [] : [{ key: "aiBudgetResetAt", value: row.reset }]),
+  ];
+  const settings = resolveUserSettings(stored);
+  // An account counts from its own marker, or from the month when it has none: the same window the
+  // worker admits its work in, and nobody else's reset can move it. The rule is core's; the SQL
+  // window only saves a round trip, so a marker the two would read differently is summed again.
+  const since = aiBudgetWindowStart(monthStart, settings.aiBudgetResetAt);
+  const spentUsd = since.getTime() === new Date(row.since).getTime() ? Number(row.spent) : await accountAiSpend(db(), row.user_id, since);
+  return {
+    limitUsd: settings.aiBudgetUsd,
+    since,
+    countingSince: since.getTime() > monthStart.getTime() ? since : null,
+    spentUsd,
+  };
+}
+
+async function budgetsForMonth(userIds: string[], monthStart: Date): Promise<Map<string, AccountAiBudget>> {
+  const budgets = new Map<string, AccountAiBudget>();
+  const ids = [...new Set(userIds)];
+  if (ids.length === 0) return budgets;
+  const result = await db().execute(budgetSelect(ids, monthStart));
+  for (const row of result.rows as unknown as BudgetRow[]) budgets.set(row.user_id, await budgetFromRow(row, monthStart));
   return budgets;
 }
 

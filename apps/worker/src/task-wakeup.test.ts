@@ -64,6 +64,39 @@ it("waits longer after each empty claim, up to its ceiling, and starts again fro
   expect(waits[after]).toBe(20);
 }, 20_000);
 
+it("does not sleep through a notification that arrived while the slot was claiming", async () => {
+  // Unit: a wait told the generation read before the claim ends at once if a wake came since.
+  const unit = new TaskWakeup("postgres://unused@127.0.0.1:1/none");
+  const before = unit.generation;
+  unit.wake();
+  await within(unit.wait(10_000, before), 500, "a wait slept through a wake that came during the claim");
+  // And one told the current generation waits as before.
+  let ended = false;
+  void unit.wait(300, unit.generation).then(() => { ended = true; });
+  await sleep(100);
+  expect(ended).toBe(false);
+  await unit.stop();
+
+  // The queue reads the generation before it claims and hands it to the wait: a notification
+  // delivered between the claim's snapshot and the wait (the enqueue it announces invisible to
+  // that claim) would otherwise cost up to the 30 s ceiling.
+  const generation = 0;
+  const seen: Array<{ since: number | undefined; now: number }> = [];
+  const stub = {
+    listening: true,
+    get generation() { return generation; },
+    wait: async (ms: number, since?: number) => {
+      seen.push({ since, now: generation });
+      if (since !== undefined && since !== generation) return;
+      await sleep(ms);
+    },
+  };
+  queue = new TaskQueue(deps, { discover: async () => ({}) }, { concurrency: 1, workerId: "claiming", pollMs: 5_000, wakeup: stub });
+  queue.start();
+  await within((async () => { while (seen.length < 1) await sleep(5); })(), 2_000, "the queue never waited");
+  expect(seen[0]!.since).toBe(0);
+}, 20_000);
+
 it("starts a task within a second of its enqueue while the queue is polling only every ten seconds", async () => {
   wakeup = new TaskWakeup(testDatabaseUrl(`${SUITE}-listener`));
   wakeup.start();

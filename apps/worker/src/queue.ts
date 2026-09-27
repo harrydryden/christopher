@@ -136,7 +136,7 @@ export interface QueueOptions {
    */
   idlePollMaxMs?: number;
   /** Notifications from `ava_tasks`, which end an idle wait at once (see task-wakeup.ts). */
-  wakeup?: { wait(ms: number): Promise<void>; readonly listening: boolean };
+  wakeup?: { wait(ms: number, since?: number): Promise<void>; readonly listening: boolean; readonly generation?: number };
   workerId: string;
   staleAfterMs?: number;
   heartbeatMs?: number;
@@ -815,10 +815,11 @@ export class TaskQueue {
   /** Ends every idle wait when the queue stops, so a stop never waits out a long poll. */
   private readonly idleStop = new AbortController();
 
-  private idleFor(ms: number): Promise<void> {
+  /** `since`: the wake-up generation read before the claim that came back empty (see TaskWakeup.generation). */
+  private idleFor(ms: number, since?: number): Promise<void> {
     if (this.idleStop.signal.aborted) return Promise.resolve();
     const stopped = new Promise<void>(resolve => this.idleStop.signal.addEventListener("abort", () => resolve(), { once: true }));
-    return Promise.race([this.opts.wakeup ? this.opts.wakeup.wait(ms) : sleep(ms), stopped]);
+    return Promise.race([this.opts.wakeup ? this.opts.wakeup.wait(ms, since) : sleep(ms), stopped]);
   }
 
   /** How long an idle slot waits before it claims again: doubled after each empty claim, up to the ceiling. */
@@ -835,6 +836,8 @@ export class TaskQueue {
     let idle = poll;
     while (!this.stopping) {
       let task: Task | null = null;
+      // Read before the claim: a notification that lands while it runs is answered by claiming again.
+      const since = this.opts.wakeup?.generation;
       try {
         // Each slot serves one class first, so the shared daily scan, the work someone is waiting
         // for and background jobs all keep capacity of their own; a worker too small to divide
@@ -848,7 +851,7 @@ export class TaskQueue {
         continue;
       }
       if (!task) {
-        await this.idleFor(idle);
+        await this.idleFor(idle, since);
         idle = this.idleWait(idle);
         continue;
       }

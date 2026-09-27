@@ -19,6 +19,8 @@ import {
 
 import { handleMonitorSource, handleExtractDocument, handleVerifyCompany } from "./external-sources";
 import { handleSuggestFromScans } from "./suggest-from-scans";
+import { handleCollectScoreBatch, handlePollScoreBatch } from "./score-batch";
+import { handleReencodeLogos } from "./reencode-logos";
 
 export const handlers: HandlerMap = {
   extract_document: handleExtractDocument,
@@ -41,6 +43,9 @@ export const handlers: HandlerMap = {
   reevaluate_gate: handleReevaluateGate,
   review_library: handleReviewLibrary,
   import_library_document: handleImportLibraryDocument,
+  collect_score_batch: handleCollectScoreBatch,
+  poll_score_batch: handlePollScoreBatch,
+  reencode_logos: handleReencodeLogos,
 };
 
 export { handleDiscover, handleRunDaily, handleScanCompany, handleFetchDescription, handleImportPosting };

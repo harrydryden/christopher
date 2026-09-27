@@ -554,6 +554,35 @@ it("queues filter suggestions when decisions cross a fifth, and not on a re-deci
   expect((await suggestFilterTasks()).filter((task) => task.status === "queued")).toHaveLength(1);
 }, 120_000);
 
+it("records the PDF finalising kept, rendering it no second time", async () => {
+  const { job } = await fixture();
+  await saveLibrary();
+  await expect(requestCv({ ok: true }, form({ jobId: job.id, description: DESCRIPTION }))).rejects.toThrow("redirect:/cv/");
+  const [draft] = await database.select().from(schema.cvDrafts);
+  const content = { name: "Test Candidate", contact: "London", summary: "Operations leader", sections: [{ entryId: "one", kind: "experience" as const, heading: "Director · Acme", bullets: ["Led an operations team"] }], gaps: [] };
+  await database.update(schema.cvDrafts).set({ status: "ready", content }).where(eq(schema.cvDrafts.id, draft!.id));
+  let renders = 0;
+  rendering.during = async () => { renders++; };
+  await completeAssessment(draft!.id);
+  // Finalising rendered once, and kept the bytes for this account's draft.
+  expect(renders).toBe(1);
+  // `truncate cv_drafts` fires no delete trigger, so earlier tests' rows can still be here.
+  const keptFor = () => database.select().from(schema.cvPdfs).where(eq(schema.cvPdfs.draftId, draft!.id));
+  const [kept] = await keptFor();
+  expect(kept).toMatchObject({ draftId: draft!.id, userId: user.id });
+  expect(kept!.bytes.subarray(0, 5).toString()).toBe("%PDF-");
+
+  expect(await recordApplication(draft!.id, { ok: true }, form({ appliedOn: "2026-09-06" }))).toEqual({ ok: true });
+  expect(renders).toBe(1);
+  const [recorded] = await applicationsOf();
+  expect(Buffer.compare(Buffer.from(recorded!.pdfBase64!, "base64"), kept!.bytes)).toBe(0);
+
+  // Deleting the CV takes its kept PDF with it; the application keeps its own copy.
+  await database.delete(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft!.id));
+  expect(await keptFor()).toEqual([]);
+  expect((await applicationsOf())[0]!.pdfBase64).toBe(recorded!.pdfBase64);
+});
+
 it("refuses to record a submitted CV whose draft changed while its PDF was rendered", async () => {
   const { job } = await fixture();
   await saveLibrary();
@@ -563,6 +592,10 @@ it("refuses to record a submitted CV whose draft changed while its PDF was rende
   await database.update(schema.cvDrafts).set({ status: "ready", content }).where(eq(schema.cvDrafts.id, draft!.id));
   await completeAssessment(draft!.id);
 
+  // Recording copies the PDF finalising kept; with none kept it renders, which is where the window
+  // between reading the draft and locking it is widest, so that is the path these attempts take.
+  const forgetKeptPdf = () => database.delete(schema.cvPdfs).where(eq(schema.cvPdfs.draftId, draft!.id));
+  await forgetKeptPdf();
   // Finalised again from another tab while this one rendered: the bytes in hand are not of that revision.
   rendering.during = async () => {
     await database.update(schema.cvDrafts).set({ finalisedAt: new Date(Date.now() + 1_000) }).where(eq(schema.cvDrafts.id, draft!.id));
@@ -572,6 +605,7 @@ it("refuses to record a submitted CV whose draft changed while its PDF was rende
   });
   const [unchanged] = await applicationsOf();
   expect(unchanged).toMatchObject({ status: "applying", pdfBase64: null });
+  await forgetKeptPdf();
   // Assessed again from another tab while this one rendered: the same refusal.
   rendering.during = async () => {
     const [current] = await database.select().from(schema.cvDrafts).where(eq(schema.cvDrafts.id, draft!.id));

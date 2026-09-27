@@ -7,6 +7,8 @@ import type { WorkerEnv } from "./env";
 import { HttpTrafficLedger, PoliteFetcher, userAgentFor } from "./fetcher";
 import { accountAiStanding, BudgetRefusedError, recordAiUsage, tryReserveAi } from "./budget";
 import { log } from "./log";
+import { encodeLogoWebp } from "./logo-encode";
+import { recordModelCall } from "./otel";
 import { loadSettings, loadUserSettings } from "./settings";
 
 export interface WorkerDeps {
@@ -65,7 +67,8 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
   // /healthz all need one at the same time. Sized under the pool the deployment's Postgres allows.
   // The environment reads that ceiling once and logs it at boot, so the pool opened is the one logged.
   // Slow queries go through the worker's own log, so each line carries the task it happened in.
-  const { db, pool } = createDb(env.databaseUrl, { max: env.databasePoolMax, onSlowQuery: q => log.info("slow database query", q) });
+  // Its connections name themselves (`application_name`), so the database's backends can be counted by client.
+  const { db, pool } = createDb(env.databaseUrl, { max: env.databasePoolMax, applicationName: env.databaseApplicationName, onSlowQuery: q => log.info("slow database query", q) });
   const now = overrides.now ?? (() => new Date());
   const settingsTtlMs = overrides.settingsTtlMs ?? 5000;
   let cached: { at: number; value: SystemSettings } | null = null;
@@ -120,6 +123,7 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
   // that still fails after its retries throws, so the engine keeps the call's hold instead of
   // releasing it and letting the spend vanish from the budget.
   const onUsage = async (r: AiUsageRecord) => {
+    recordModelCall(r);
     await recordAiUsage(db, r.userId ?? null, r);
   };
   /**
@@ -248,6 +252,8 @@ export function makeFetchContext(deps: WorkerDeps, opts: { signal?: AbortSignal 
     fetchText: (url, init) => untilStopped(signal, () => deps.fetcher.fetchText(url, { ...init, signal: init?.signal ?? signal })),
     fetchBytes: (url, init) => untilStopped(signal, () => deps.fetcher.fetchBytes(url, { ...init, signal: init?.signal ?? signal })),
     render: deps.browser ? (url, options) => untilStopped(signal, () => deps.browser!.render(url, { ...options, signal: options?.signal ?? signal })) : undefined,
+    // A captured logo is stored as a 64 px WebP where it can be (see logo-encode.ts).
+    encodeLogo: encodeLogoWebp,
     log: (msg, data) => log.debug(msg, data),
     now: deps.now,
   };

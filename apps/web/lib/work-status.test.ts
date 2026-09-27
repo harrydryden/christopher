@@ -7,7 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { createDb, schema, subscribeToCompany, type Db } from "@ava/db";
 import { createTestDb } from "@/test/db";
 import { runMigrations } from "@ava/db/migrate";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { ensureTestUser } from "@/test/auth";
 import type { User } from "@ava/db/schema";
 
@@ -19,6 +19,7 @@ let mine: string;
 let theirs: string;
 vi.mock("@/lib/db", () => ({ db: () => database }));
 import { companyWorkQuery, getCompanyWorkStatus, getRolesWorkStatus } from "./work-status";
+import { recordDecision } from "@/lib/decisions";
 
 beforeAll(async () => {
   const client = createTestDb();
@@ -93,29 +94,129 @@ describe("getCompanyWorkStatus", () => {
     expect(await status(a)).toMatchObject({ active: false });
   });
 
-  it("gives the Roles page a version that moves when a task arrives or finishes, not when it starts", async () => {
+  it("gives the Roles page the same pending flag, and a version that no task alone moves", async () => {
+    const roles = await getRolesWorkStatus(a.id);
+    expect(roles.active).toBe(false);
     const scan = await task("scan_company", { companyId: mine });
-    const roles = (await getRolesWorkStatus(a.id));
+    const pending = await getRolesWorkStatus(a.id);
+    expect(pending.active).toBe(true);
+    expect((await getRolesWorkStatus(b.id)).active).toBe(false);
+    // A task arriving, starting and finishing changes nothing the table shows.
+    expect(pending.version).toBe(roles.version);
     const companies = (await status(a)).version;
-    expect(roles.active).toBe(true);
-    // Queued to running: the companies pages show it ("Discovering…"), the Roles page does not.
     await database.update(schema.tasks).set({ status: "running" }).where(sql`id = ${scan.id}`);
     expect((await getRolesWorkStatus(a.id)).version).toBe(roles.version);
     expect((await status(a)).version).not.toBe(companies);
-    // Another account's task never moves it.
-    await task("scan_company", { companyId: theirs });
-    await task("import_posting", { companyId: mine, userId: b.id, url: "https://mine.example/jobs/1" });
-    expect((await getRolesWorkStatus(a.id)).version).toBe(roles.version);
-    // A second task of its own arriving does, and so does the first finishing.
-    const discover = await task("discover", { companyId: mine, homepageUrl: "https://mine.example" });
-    const withBoth = (await getRolesWorkStatus(a.id)).version;
-    expect(withBoth).not.toBe(roles.version);
+    await task("discover", { companyId: mine, homepageUrl: "https://mine.example" });
     await database.update(schema.tasks).set({ status: "done" }).where(sql`id = ${scan.id}`);
-    expect((await getRolesWorkStatus(a.id)).version).not.toBe(withBoth);
-    await database.update(schema.tasks).set({ status: "done" }).where(sql`id = ${discover.id}`);
-    expect(await getRolesWorkStatus(a.id)).toEqual({ active: false, version: (await status(a)).version });
+    expect(await getRolesWorkStatus(a.id)).toEqual({ active: true, version: roles.version });
+    await database.execute(sql`update tasks set status = 'done'`);
+    expect(await getRolesWorkStatus(a.id)).toEqual({ active: false, version: roles.version });
+  });
+});
+
+/**
+ * The Roles page's version is a fingerprint of what its table shows. Each writer that changes a
+ * column the table renders is replayed here as the statement it runs (worker handlers named
+ * beside each), and must move this account's version and no other account's.
+ */
+describe("getRolesWorkStatus's fingerprint", () => {
+  let source: string;
+  let mineJob: string;
+  let sharedJob: string;
+  let theirsJob: string;
+
+  async function posting(companyId: string, key: string) {
+    const [row] = await database.insert(schema.jobs).values({
+      companyId, sourceId: source, externalKey: key, title: `Role ${key}`, normalizedTitle: `role ${key}`, url: `https://example.test/${key}`,
+    }).returning();
+    return row!.id;
+  }
+  async function view(user: User, jobId: string) {
+    await database.insert(schema.userJobs).values({ userId: user.id, jobId, keywordMatched: true, locationOk: true, inTable: true });
+  }
+  const version = async (user: User) => (await getRolesWorkStatus(user.id)).version;
+
+  beforeEach(async () => {
+    const [row] = await database.insert(schema.careerSources).values({ companyId: mine, type: "html", url: "https://mine.example/jobs" }).returning();
+    source = row!.id;
+    mineJob = await posting(mine, "mine");
+    sharedJob = await posting(mine, "shared");
+    theirsJob = await posting(theirs, "theirs");
+    await view(a, mineJob);
+    await view(a, sharedJob);
+    await view(b, sharedJob);
+    await view(b, theirsJob);
   });
 
+  /** The writer runs, and this account's version moves while the other's stays put. */
+  async function moves(write: () => Promise<unknown>, reader: User = a, bystander: User = b) {
+    const [mineBefore, theirsBefore] = [await version(reader), await version(bystander)];
+    await write();
+    expect(await version(reader)).not.toBe(mineBefore);
+    expect(await version(bystander)).toBe(theirsBefore);
+  }
+  /** The writer runs, and nobody's version moves. */
+  async function stays(write: () => Promise<unknown>) {
+    const [one, two] = [await version(a), await version(b)];
+    await write();
+    expect([await version(a), await version(b)]).toEqual([one, two]);
+  }
+  const later = () => new Date(Date.now() + 60_000);
+
+  it("stays put for a scan that finds nothing new", async () => {
+    // handlers/scan.ts: the seen rows' bookkeeping, and a first miss, neither of which the table shows.
+    await stays(() => database.execute(sql`update jobs set last_seen_at = now(), missing_scans = 0, first_missed_at = null`));
+    await stays(() => database.execute(sql`update jobs set missing_scans = missing_scans + 1, first_missed_at = now() where id = ${mineJob}`));
+  });
+
+  it("moves for a scan that changes a posting, admits a role, or re-gates a view", async () => {
+    // handlers/scan.ts: changed fields, and the description, stamp `updated_at`.
+    await moves(() => database.execute(sql`update jobs set title = 'Head of Operations', updated_at = ${later()} where id = ${mineJob}`));
+    // A new posting that passes the gate: a view is inserted.
+    await moves(async () => view(a, await posting(mine, "new")));
+    // The gate's verdict on an existing view (handlers/scan.ts, packages/db gate.ts).
+    await moves(() => database.execute(sql`update user_jobs set in_table = false, updated_at = ${later()} where user_id = ${a.id} and job_id = ${mineJob}`));
+    // A shared posting's own change moves both tables that show it.
+    const [one, two] = [await version(a), await version(b)];
+    await database.execute(sql`update jobs set location = 'Leeds', updated_at = ${later()} where id = ${sharedJob}`);
+    expect(await version(a)).not.toBe(one);
+    expect(await version(b)).not.toBe(two);
+  });
+
+  it("moves for a closure and a reopening, which a scan writes without touching updated_at", async () => {
+    // handlers/scan.ts: `status = 'closed', closed_at = …, missing_scans + 1`, and the reverse.
+    await moves(() => database.execute(sql`update jobs set status = 'closed', closed_at = now(), missing_scans = missing_scans + 1 where id = ${mineJob}`));
+    await moves(() => database.execute(sql`update jobs set status = 'open', closed_at = null, missing_scans = 0, reopened_count = reopened_count + 1 where id = ${mineJob}`));
+  });
+
+  it("moves for a score, and for a blank score's reason, which moves without updated_at", async () => {
+    // handlers/learning.ts: a score stamps `updated_at`; a state (queued, budget, closed) only `score_state_at`.
+    await moves(() => database.execute(sql`update user_jobs set fit_score = 72, fit_verdict = 'strong', score_state = 'scored', score_state_at = ${later()}, updated_at = ${later()} where user_id = ${a.id} and job_id = ${sharedJob}`));
+    await moves(() => database.execute(sql`update user_jobs set score_state = 'budget', score_state_at = ${new Date(Date.now() + 120_000)} where user_id = ${a.id} and job_id = ${mineJob}`));
+    // Another account's score on the posting both follow is theirs alone.
+    await moves(() => database.execute(sql`update user_jobs set fit_score = 10, updated_at = ${new Date(Date.now() + 180_000)} where user_id = ${b.id} and job_id = ${sharedJob}`), b, a);
+  });
+
+  it("moves for a decision, an undo and an archive", async () => {
+    await moves(() => database.transaction((tx) => recordDecision(tx as never, a.id, mineJob, "skip", "Not interested")));
+    await moves(() => database.transaction((tx) => recordDecision(tx as never, a.id, mineJob, null, "")));
+    await moves(() => database.execute(sql`update user_jobs set archived_at = now(), updated_at = ${later()} where user_id = ${a.id} and job_id = ${sharedJob}`));
+    await moves(() => database.transaction((tx) => recordDecision(tx as never, b.id, sharedJob, "apply", "")), b, a);
+  });
+
+  it("moves for a filter suggestion arriving or being answered, the strip above the table", async () => {
+    let suggestion = "";
+    await moves(async () => {
+      const [row] = await database.insert(schema.filterSuggestions).values({ userId: b.id, type: "keyword_include", value: { term: "ops" } }).returning();
+      suggestion = row!.id;
+    }, b, a);
+    await moves(() => database.insert(schema.filterSuggestions).values({ userId: a.id, type: "keyword_include", value: { term: "operations" } }));
+    await moves(() => database.update(schema.filterSuggestions).set({ status: "accepted", resolvedAt: new Date() }).where(eq(schema.filterSuggestions.id, suggestion)), b, a);
+  });
+});
+
+describe("the companies work query", () => {
   it("reads the account's followed companies once per query, not once per queued task", async () => {
     const query = companyWorkQuery(a.id).toSQL();
     const plan = await pool.query(`explain ${query.sql}`, query.params);

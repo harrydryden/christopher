@@ -83,7 +83,8 @@ the same learning loop.
 
    **The arithmetic.** The database allows 103 backends (`max_connections`), three of them reserved
    for superusers. The worker holds up to `2 × (WORKER_CONCURRENCY + CV_CONCURRENCY) + 4` = 26 at
-   the supported three general slots and eight CV slots. On the direct endpoint every warm interface instance holds up to 3 more, so
+   the supported three general slots and eight CV slots in its pool, and one more outside it: the
+   connection that LISTENs for new tasks (27 in all). On the direct endpoint every warm interface instance holds up to 3 more, so
    about 30 instances (fewer during a rollout, when old and new are both warm, or with the cron
    fallback's own pool of 6) exhaust the database, and every page fails with "too many clients" for
    every account at once. Through PgBouncer an instance's connections are clients, which hold no
@@ -92,14 +93,47 @@ the same learning loop.
    steady state (`select count(*) from pg_stat_activity where state = 'active'`), leaving room for
    the worker, migrations and your own `psql`.
 
+   **Backends, not client slots, are the budget.** PgBouncer may open up to 93 backends for the
+   interface while the worker holds up to 27 directly: 120 against 100 usable. After a burst of
+   interface traffic PgBouncer keeps its server connections for its `server_idle_timeout` (600 s by
+   default; Render does not expose it), so for up to ten minutes a worker reconnect, a migration or
+   your `psql` can fail with "sorry, too many clients already". A scan that cannot connect is a
+   failed scan, never a closure, but CV builds and task claims stall. So keep
+   `WEB_DB_POOL_MAX` × peak concurrent interface instances **at or under 60**, and alert at **80**
+   client backends. Every connection names itself (`ava-web`, `ava-worker`, or `ava-web-cron` for
+   the interface's cron fallback, sent as the `application_name` startup parameter, which PgBouncer
+   accepts; an `application_name` in `DATABASE_URL` takes precedence), so the count says who holds
+   them:
+
+   ```sql
+   select application_name, count(*) as backends, count(*) filter (where state <> 'idle') as active
+   from pg_stat_activity where backend_type = 'client backend' group by 1 order by 2 desc;
+   ```
+
+   `databaseBackends()` in `@ava/db` reads the same figures, with the usable ceiling, for monitoring.
+
    That is why the interface's pool is 6 wide on the pooled endpoint and 3 on the direct one
    (`apps/web/lib/db.ts`). A full render of the Roles page issues about 14 statements, most of them
    at once, and at 3 connections they queue in waves of one round trip each: replaying them at 5 ms
-   per round trip, time to the main content was 70 ms with 3 connections and 54 ms with 6. Idle,
+   per round trip, time to the main content was 70 ms with 3 connections and 54 ms with 6. The
+   5 ms is an assumption: the first connection each interface instance opens times one `select 1`
+   and logs the real figure as a `database_round_trip` line (`ms`, `endpoint`, `region`) in
+   Vercel's function logs, and every statement a page waits on in sequence costs about that. Idle,
    the wider pool costs no backends. What it does use is PgBouncer client slots, one per open
    connection: warm instances × 6 (plus the cron fallback's 6) must stay under the pooler's
    client-connection limit, so check that figure in Render's dashboard, or ask Render's support,
    before instances grow into the hundreds, and lower `WEB_DB_POOL_MAX` if it is close.
+
+   On the pooled endpoint an interface instance keeps an idle connection for two minutes (30
+   seconds on the direct one, where idle connections are backends). A new connection costs about
+   five round trips (TCP, the SSL request, TLS 1.3, PgBouncer's SCRAM exchange), and at 30 seconds
+   the first navigation after anyone paused to read paid them again for each connection. Render's
+   PgBouncer keeps idle clients for a day, so the longer time costs only client slots. The pool is
+   registered with `attachDatabasePool` from `@vercel/functions`: after each query, Fluid compute
+   keeps the instance alive until its idle connections have closed, instead of freezing them open
+   to be found dead on the next thaw. That keeps an instance provisioned up to two minutes after
+   its last query; lower the figure in `apps/web/lib/db.ts` if that memory time ever matters more
+   than the reconnects.
 
    **Time limits.** The worker and the scripts start every connection with a `statement_timeout` of
    five minutes and an `idle_in_transaction_session_timeout` of one (`DATABASE_STATEMENT_TIMEOUT_MS`
@@ -184,7 +218,16 @@ the rollout and recovery checklist below. Check `/healthz` returns `{"ok":true,�
 
 In Vercel, **Add New → Project**, import the repository, then set **Root Directory** to `apps/web`.
 Leave the build and install commands alone: Vercel detects the pnpm workspace and installs from the
-repository root.
+repository root. Set the project's **Node.js Version** (Settings → Build and Deployment) to
+**22.x**, the version the worker runs and `apps/web/package.json` declares in `engines`: the
+`engines` field applies only while the project setting does not override it, and new projects
+default to a later major (the live project showed 24.x on 27 September 2026).
+
+The routes that render or read a PDF (`/api/cv/[id]/pdf`, `/api/cv/preview`,
+`/api/applications/[id]/pdf`) and the CV page, whose server action freezes a PDF onto an
+application, declare `maxDuration = 30`; the Library import poll, the CSV export and the cron route
+declare 60. Everything else takes Fluid compute's default of 300 s. A render takes about a second,
+so 30 s only ever cuts off a pathological document, at a tenth of the cost.
 
 | Variable | Value |
 |---|---|
@@ -201,6 +244,22 @@ the worker. The worker is last because it is the component that can first write 
 state such as `awaiting_evidence`; the corresponding interface must be live before a person can be
 left at that checkpoint. A database missing migrations altogether is a different thing — the
 "every page 500s right after deploy" row below.
+
+**Caching and response headers.** Every signed-in page and RSC payload is `private, no-store`, and
+nothing per account may ever say `public`, `s-maxage` or `CDN-Cache-Control`: Next's `Vary` leaves
+out `Cookie`, so a cacheable page would be served to the next account. The one response the CDN
+holds is a company logo whose URL names its capture (`?v=`), for a year; a re-capture changes the
+URL, and a takedown is a CDN purge. `next.config.ts` adds the same static headers to every
+response: `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`
+(`no-referrer` under `/share/`, whose URL is the credential), `Content-Security-Policy:
+frame-ancestors 'none'`, a minimal `Permissions-Policy`, and a `Content-Security-Policy-Report-Only`
+policy of `'self'` plus the hash of Next's bootstrap script. That last one reports Next's
+per-response flight-data scripts, which no hash can cover; enforcing a full policy needs nonces or
+`'unsafe-inline'`, so it stays report-only until that is decided. A header set in `next.config.ts`
+replaces the one a route sets, so the policies skip the logo route, which keeps its own sandboxing
+policy. Never add `Vary` beside these. On a custom domain outside `.app`, also send
+`Strict-Transport-Security: max-age=63072000; includeSubDomains; preload` and submit the domain to
+the preload list (`*.vercel.app` is preloaded already). `pnpm smoke:web` asserts all of this.
 
 Vercel's egress addresses vary, so the database is protected by TLS and a strong password rather
 than an IP allowlist. Leave `CRON_SECRET` unset and the daily cron in `apps/web/vercel.json` is
@@ -294,6 +353,16 @@ checkout on a laptop against the production database, so it is careful in two wa
   prompt set"). `record` and a `replay` without `--recordings` call the provider and are paid; both
   refuse without `ANTHROPIC_API_KEY`.
 
+- **`pgstat` reads what the database spent its time on.** `cli pgstat` prints the twenty statements
+  with the most total execution time from `pg_stat_statements` (calls, total, mean and standard
+  deviation, rows, buffer hits and reads, hit rate, and the normalised statement cut to 160
+  characters) for this database only; `cli pgstat --reset` then starts the statistics afresh, so the
+  next reading covers a known window. Migration 0045 creates the extension where the role may and
+  skips it with a notice where it may not; the extension records nothing unless the server preloads
+  it (`shared_preload_libraries`, preset on Render). Either gap is said in so many words, by the CLI
+  and by the administrator's **Costliest statements** card on Operations, which shows the same
+  reading. The text goes to the terminal or the page, never to a log.
+
 Inside the worker's container (Render's Shell), run it without pnpm, from `/app/apps/worker`:
 `node --import tsx src/cli.ts users`.
 
@@ -303,15 +372,27 @@ Two workflows. **CI** (`.github/workflows/ci.yml`) runs on every pull request an
 every push to `main`; **Release** (`.github/workflows/release.yml`) runs only after CI has
 passed on `main`.
 
-CI is three jobs side by side, each on its own runner with its own throwaway PostgreSQL 16:
+CI's jobs run side by side, each on its own runner with its own throwaway PostgreSQL 16 (the worker suite's shuffled `order-independence` rerun is the one not listed here):
 
 | Job | What it runs | Typical |
 |---|---|---|
 | `check` | `pnpm -r typecheck`, then `pnpm -r test`, then the release and deployment script tests | ~2.5 min |
-| `browser-and-smoke` | Chromium install, the headless browser test, `pnpm db:migrate`, `pnpm smoke:web` (a production `next build`, sign-in, every page, and the CV workspace driven through Playwright) | ~2.5 min |
+| `browser-and-smoke` | Chromium install, the headless browser test, `pnpm db:migrate`, `pnpm smoke:web` (a production `next build`, sign-in, every page, and the CV workspace driven through Playwright), then `scripts/bundle-budget.mjs`: each route's first-load JavaScript, gzipped, against `scripts/bundle-budget.json` (a route over its budget, or a new chunk of 20 KB gzip entering a first load, fails; the table goes to the run summary) | ~2.5 min |
+| `lighthouse` | `pnpm db:migrate`, a production `next build` (reusing the Next.js cache), then `scripts/perf/lighthouse.mjs`: a disposable signed-in account seeded as the smoke run does, `/`, `/companies`, `/library` and `/cv/<id>` three times each on the desktop preset (LCP ≤ 2.5 s, CLS ≤ 0.1 and TBT ≤ 200 ms fail; time to interactive ≤ 3.8 s, server response ≤ 600 ms and script transfer ≤ 134 KB on `/`, 145 KB elsewhere warn, because the bundle budget above is the gate on first-load JavaScript), then on mobile emulation as warnings only. The account is deleted in a `finally`; reports are the `lighthouse-reports` artifact, uploaded from `lighthouse-reports/` whether or not the job passed. `timeout-minutes: 12`. A second pass on a Vercel preview (`lighthouse-preview.yml`, `/login` signed out, warnings only) runs only when the repository variable `LHCI_PREVIEW_ENABLED` is `true`, with `VERCEL_AUTOMATION_BYPASS_SECRET` as a secret | ~4 min (estimated) |
 | `worker-image` | `docker build` of the image Render deploys, then boots it against the job's database and waits for `/healthz`, and checks it runs as a non-root user under `tini` | ~4 min cold (estimated, not yet measured on a runner), less with the dependency layer cached |
 
 So a pull request is green in about four minutes of wall clock for about nine billed minutes.
+
+**The wall-clock budget is ten minutes**, and the performance gates are placed to stay inside it: the
+critical path is `check` (8m14s on run 36269891342, 6m49s of it `pnpm -r test`). The bundle budget
+runs inside `browser-and-smoke` after the build it reuses (under a second; that job had about 4.5
+minutes of slack against `check`), and `lighthouse` is a job of its own beside `check`, reusing the
+Next.js cache, capped at 12 minutes so a hung browser cannot hold a pull request longer than `check`
+would. The slow measurements are scheduled, never on a pull request: **Capacity probe**
+(`capacity-probe.yml`, Mondays 03:17 UTC, `scripts/benchmark-users.mjs`) and **Performance audit**
+(`perf-audit.yml`, Mondays 04:23 UTC, `scripts/perf/run.mjs` against `scripts/perf/baseline.json`).
+Both can be run by hand from the Actions tab, upload their reports as artifacts, and open (or comment
+on) an issue labelled `performance` when a scheduled run fails instead of blocking anything.
 `worker-image` is what catches a Dockerfile that no longer builds, a workspace manifest the image
 does not copy, a Playwright bump without the matching base image, or an import that fails only
 when the worker starts — all of which would otherwise surface first as a failed Render deploy
@@ -469,6 +550,29 @@ and `DISCOVERY_AI_BUDGET_USD` in the worker's environment are the safety valves 
 as a whole: unlimited unless set, they cap a day's spend and a day's discovery spend across every
 account, and they refuse any call, a CV build included, so leave them unset unless you want that.
 
+### Batch scoring
+
+Fit scoring (A5) is the highest-volume call site. **Admin › System settings › Scoring** switches it
+between two modes, for every account:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `scoringMode` | `live` | `live` scores each role with one call as it enters a table. `batch` sends the waiting roles through the Message Batches API at half the token price (cache writes and reads included). |
+| `scoringBatchMinutes` | `10` | In batch mode, how often the roles waiting to be scored are gathered into one batch (1–60). |
+
+The trade is latency. In batch mode a new role shows "not scored yet" until its batch ends: most end
+within the hour, none later than a day, and the table orders it by its score from then on. The score
+only orders the table, so nothing appears or disappears because a score is late. Each account's share
+of a batch is held against its own monthly budget at the batch price when the batch is sent, and
+released as its results land; an account with no room left is skipped exactly as live scoring skips
+it. A request that expires or errors, and every role in a batch that could not be sent, is scored
+live instead, at the standard price. Operations reports batch calls in the same A5 lines as live
+ones, at what they cost; their duration is the time from sending the batch to its result, so A5's
+latency figures rise to minutes while batch mode is on. Batch requests go without the server-side
+refusal fallback, which the Batches API does not accept. Nothing needs deploying to switch: the
+worker reads the setting on its next claim, and switching back to `live` lets the roles already
+waiting run at once while batches in flight are still applied.
+
 ### The database disk
 
 Render's smallest Postgres plans start with **1 GB of storage and storage autoscaling off**, which
@@ -481,15 +585,23 @@ every Library save and CV keeps its own copy of the Library. A reasonable estima
 well over 1 GB, and **a full disk stops every write**: sign-ins (a session is a row), task claims and
 scans all fail at once, until someone changes the plan by hand.
 
-- Before onboarding beyond a handful of accounts, set the database's storage to at least **15 GB**
-  (the flexible plans size storage separately from RAM and CPU; `render.yaml` writes 15) and turn
-  on **storage autoscaling** in the dashboard, which the blueprint cannot. Storage can grow later but
+- Set the **live** database's storage to **15 GB** and turn on **storage autoscaling** in its
+  dashboard, before onboarding beyond a handful of accounts. `render.yaml` writes `diskSizeGB: 15`,
+  but that applies only to services created from the blueprint, and the live ones are not linked to
+  it, so the dashboard is the only place this takes effect (the flexible plans size storage
+  separately from RAM and CPU; autoscaling is dashboard-only either way). Storage can grow later but
   never shrink. At that scale also move off `basic-256mb`: 256 MB of RAM cannot keep `user_jobs`'
   indexes in memory.
+- Scan snapshots (`scans.raw_snapshot`, the compressed listing a scan keeps) are the column that
+  grows fastest per source. Each scan keeps only its source's last three and last successful one,
+  and the hourly retention clears any older than a week except the newest successful or partial one
+  per source and the newest successful scan's, which are all anything reads; the scan rows stay.
+  Measure what they hold with
+  `select count(raw_snapshot), pg_size_pretty(sum(pg_column_size(raw_snapshot))) from scans;`.
 - Watch the disk figure on the database's Metrics page, and treat 70% as the point to add storage.
   Nothing in the product alerts on it yet; add it to the alert list below.
 - Connections are a separate budget from disk: the worker opens up to `2 × (WORKER_CONCURRENCY + CV_CONCURRENCY) + 4` direct
-  connections (26 at three general and eight CV slots), and the interface should use the pooled URL, as the connection
+  connections (26 at three general and eight CV slots) plus its one listening connection, and the interface should use the pooled URL, as the connection
   guidance above describes.
 
 ## Observability
@@ -505,6 +617,7 @@ to answer a question after the fact, and the pages under **Admin › Operations*
 | `scans` | One row per scan: status, fetch method, postings, bytes fetched, requests made and how many came back 304, duration. | The scan handler | 90 days, keeping each source's last three and its last successful one |
 | `cv_build_steps` | One row per motion of a CV build — reading the Library, reserving the budget, the rubric, each writing attempt, each measurement and trim, each assessment batch, scoring, saving — with its attempt, timing, figures, cost, outcome and, when it stopped, the classified failure. The CV page narrates them; Operations aggregates them by motion and by failure kind. | The CV build handler | With the draft (deleted on cascade) |
 | `tasks` | The queue itself: type, payload, attempts, error, timings. | The queue | 30 days after finishing |
+| `web_vitals` | Real-user Core Web Vitals (LCP, INP, CLS, TTFB, FCP) as a histogram per UTC day, route and metric: counts in log-scaled buckets, from one signed-in page load in four, sent once when the tab is hidden. No event, account, session, address or URL; `/api/performance` refuses any key beyond the seven it defines. Operations shows the p75 per route over four weeks. | `/api/performance` | 90 days (the worker's monitor task) |
 
 Retention is enforced by the worker's hourly `maintainHistory`, each statement bounded so an hour's
 cleanup never holds a long transaction. `ai_calls` keeps thirteen months — a full year plus the
@@ -547,6 +660,28 @@ megabytes fresh every day, is the one to add an adapter for.
 events for what it has actually been doing. `/healthz` on the worker serves the same vitals for an
 uptime check. The runbook below covers a worker that is restarting.
 
+### Tracing (off until a collector exists)
+
+Both halves carry OpenTelemetry tracing that ships switched off. It starts only where
+`OTEL_SDK_DISABLED=false` **and** `OTEL_EXPORTER_OTLP_ENDPOINT` names an OTLP/HTTP collector
+(Grafana Cloud, Honeycomb, or Vercel's OTel integration on the interface); with either missing the
+code loads only the OpenTelemetry API, whose tracer does nothing.
+
+- **Interface** (`apps/web/instrumentation.ts`): `@vercel/otel` with service name `ava-web` and a
+  trace-id ratio sampler, `OTEL_TRACES_SAMPLER_ARG` defaulting to `0.1`. Next.js contributes its
+  route, render and fetch spans. Set the variables in Vercel › Settings › Environment Variables.
+- **Worker** (`apps/worker/src/otel.ts`, built to `dist/otel.mjs` and preloaded by the image's
+  `node --enable-source-maps --import ./dist/otel.mjs dist/index.mjs`; from source,
+  `tsx --import ./src/otel.ts src/index.ts`): the Node SDK with the pg instrumentation
+  (`enhancedDatabaseReporting` off, so statements appear without their values) and the undici
+  instrumentation, parent-based 10 % sampling, a batch processor holding at most 512 spans, and three
+  spans of its own: `task.run` (type, attempt, ready wait), `model.call` (model, call site, stage,
+  token and cache-read counts, outcome) and `scan.fetch` (source type). Log lines written inside a
+  sampled trace carry its `traceId`. Set the variables on the Render service.
+- **Never an attribute:** an account id, email, CV text, prompt, answer or statement parameter.
+- After enabling it on the worker, watch Operations › Alert signals' heap line for a week: the
+  instance is 512 MB and the span queue is bounded, but the SDK is not free.
+
 ### Why it is shaped this way
 
 The unit of observation is the external dependency, because that is where this system fails:
@@ -560,7 +695,7 @@ is the length of the question "how did this vendor behave last spring".
 
 ### What is deliberately not here
 
-No metrics stack — no Prometheus, no time-series database, no alerting rules. For one worker and
+No metrics stack — no Prometheus, no time-series database. Alert thresholds live in the operational check (see Alert ownership), and tracing is present but off (above). For one worker and
 one interface, a table queried by a page is less to run and easier to reason about than a scrape
 target. Product analytics (PostHog or similar) and an error tracker (Sentry or similar) are
 separate, later additions: they answer what people do and which exceptions are thrown, which
@@ -656,6 +791,11 @@ the `@ava/*` packages, so frozen installs are unaffected.
 ### Backup restoration drill
 
 - [ ] Restore a provider backup into an isolated database; never test restoration over production.
+- [ ] Run `vacuumdb --analyze-in-stages --dbname <restored database URL>` straight after the restore,
+  before pointing anything at it. PostgreSQL 16's `pg_restore` restores no planner statistics, so
+  until autovacuum reaches each table every query is planned as if the tables were empty; the
+  in-stages form makes the database usable after its first, coarse pass.
+  `scripts/recovery-drill.mjs` does this after its own restore.
 - [ ] Record the backup timestamp, achieved RPO, restore start/end time and achieved RTO.
 - [ ] Point an isolated web/worker pair at the restored database, apply only the migration plan being
   tested, and run authenticated reads plus one reversible queue journey.
@@ -673,6 +813,47 @@ or above 85%, oldest ready task beyond its service target, overdue daily scans, 
 database storage above 70% or connections near the provider limit, and unexpected AI spend. Record
 the delivery channel, primary/backup owner, acknowledgement target and escalation action for each
 signal. An Admin › Operations page that nobody is assigned to inspect is evidence, not an alert.
+
+**The thresholds.** The scheduled operational check (`operational-status.yml`, every 15 minutes, three
+samples of the worker's `/status` 15 s apart) enforces these; `OPERATIONAL_THRESHOLDS` in
+`scripts/release-checks.mjs` holds them. A *fail* line fails the run; *attention* prints under
+"Operational attention" and never fails it. The database-wide figures come from the worker's
+`monitor_sample` step, which the scheduler runs every five minutes and stores in
+`settings['internal:monitor']`; `/status` serves it as `monitor` and Operations › Alert signals shows
+it with the level the worker graded each line at.
+
+| Signal | Attention | Fail | Read from |
+|---|---|---|---|
+| Worker heap fraction | ≥ 75 % in 2 of 3 samples | ≥ 85 % in 2 samples | `/status` `vitals.heapFraction` |
+| Event-loop delay p99 (since boot) | ≥ 200 ms | ≥ 1,000 ms in 2 samples | `vitals.eventLoopLagP99Ms` |
+| Worker pool waiting | > 0 in 1 sample | > 0 in 2 samples | `vitals.db.waiting` |
+| Active Postgres connections | ≥ 60 % of usable | ≥ 80 % | monitor: `pg_stat_activity` client backends not idle, against `max_connections` less the reserved |
+| Oldest ready task | ≥ 5 min | ≥ 15 min | `metrics.oldest_seconds` |
+| Today's failed scans | ≥ 10 % | ≥ 25 % of at least 10 scans | monitor: `scans.status <> 'ok'` in today's runs |
+| Model calls rate-limited, last hour | ≥ 5 % | ≥ 20 % of at least 10 calls, or an outage group | monitor: `ai_calls.error` naming 429, 529, a rate limit or overload |
+| Worker slow queries | Δ ≥ 20 per 15 min | Δ ≥ 100 | monitor: the heartbeat's `slowQueries`, one process at a time; the check's own samples as a lower bound |
+| Monitor sample age | ≥ 20 min | none | monitor: `at` |
+| Overdue companies, discovery, crash recoveries, queue growth, restarts | as before | as before | `metrics` |
+
+The two-sample rule and the 20-minute deploy grace are kept, so a rollout does not page anyone.
+Disk (70 % / 85 %) and PgBouncer client connections have no reading the worker can take: they are
+Render notifications, below.
+
+**Where each alert arrives.** Two channels, both configured outside this repository:
+
+- **GitHub, for the operational check.** A failed scheduled run of *Operational status* emails the
+  repository's watchers who have Actions notifications on. The alert owner sets, in GitHub ›
+  Settings › Notifications › Actions, "Notify me: only failed workflows" with email (and the mobile
+  app, if used), and watches the repository with at least "Custom › Actions". GitHub sends a
+  scheduled workflow's failure to the last person who edited its cron, so re-save
+  `operational-status.yml` from the owner's account if that is someone else. Record the owner and
+  a backup here once set.
+- **Render, for the platform.** In the Render dashboard › the worker service › Settings ›
+  Notifications (or the workspace default under Workspace › Notifications), send *deploy failed*,
+  *service unhealthy* (the `/healthz` check failing) and *instance restarted / out of memory* to the
+  owner's email or a Slack channel. On the Postgres instance, send *disk usage* at 70 % and 85 % and
+  *connections* near the plan limit where the plan offers them; where it does not, the active
+  connections line above is the nearest reading.
 
 ## When something is wrong
 
@@ -736,19 +917,20 @@ only moves the failure from a V8 abort to the kernel's OOM killer, which is less
 lowering it makes the process die sooner. The size of the input and the number of slots are the
 two levers.
 
-**The worker runs its TypeScript through `tsx`, and that costs memory.** Measured with Node 22, the
-loader roughly doubles a trivial module's resident size (about 89 MB against 43 MB for the same file
-as plain JavaScript) and keeps an `esbuild` service process of about 14 MB alive beside it: some 60 MB
-of the 512 MB instance before any worker code runs, all of it outside the V8 heap the Operations
-reading shows. Compiling ahead of time (an `esbuild --bundle --packages=external` step in the
-Dockerfile, including the lazily imported browser and document-text modules, and `node dist/index.mjs`
-as the command) would return most of it and skip the transpile on every boot and crash restart. It
-has not been done because it is a second build of the worker to keep correct: the tests, the CLI
-and the drills run from source through `tsx`, so the compiled image would be the one artefact they
-never exercise, and a dynamic import the bundler misses fails only in production. It is the first
-lever to reach for, before a larger instance, if the unclean exits recorded in
-`docs/HOSTED-CAPACITY-2026-09-20.md` recur with the heap well under its ceiling. The `worker-image`
-CI job would then boot the compiled entry point on every pull request.
+**The worker image runs compiled JavaScript, not TypeScript through `tsx`.** Under `tsx` the loader
+roughly doubled a trivial module's resident size (about 89 MB against 43 MB for the same file as plain
+JavaScript) and kept an `esbuild` service process of about 14 MB alive beside it, all outside the V8
+heap the Operations reading shows. The Dockerfile's build stage now bundles the worker with
+`apps/worker/build.mjs` (esbuild; the workspace packages and what only they depend on are bundled, the
+worker's own dependencies stay in node_modules, the migrations are copied to `dist/drizzle`), and the
+image runs `node --enable-source-maps --import ./dist/otel.mjs dist/index.mjs` (tracing is built as
+`dist/otel.mjs` and preloaded, as the source entry preloads `src/otel.ts`). Booted locally against an empty queue with the
+deployed slot counts, the idle process measured 161–236 MB from source and 117–118 MB compiled (one
+outlier at 205 MB). The tests, the CLI and the drills still run from source through `tsx`, so the
+compiled entry point is exercised by the `worker-image` CI job, which boots the image on every pull
+request; `pnpm --filter @ava/worker build` then `pnpm --filter @ava/worker start` reproduces it locally. The
+browser is closed after five idle minutes and launched again on the next render (about 100 MiB
+outside V8 between bursts, a second or two on the first render after a quiet spell).
 
 A CV build has its own view of the same thing: while it is building, its page shows when it
 started, the stage it reached, how long since it last advanced and which attempt it is on, and

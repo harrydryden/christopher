@@ -6,6 +6,7 @@
  * `userId`, or reaches the account through the row it works on (a decision, a CV draft, a
  * discovery source, a candidate), and its dedupe key is scoped the same way.
  */
+import type { ScoreBatchRecord } from "./score-batch";
 
 export interface TaskPayloads {
   extract_document: { sourceId: string; documentId: string };
@@ -25,7 +26,23 @@ export interface TaskPayloads {
   scan_company: { companyId: string; scanRunId?: string; trigger?: "schedule" | "manual" };
   run_daily: { trigger: "schedule" | "manual"; runDate?: string };
   fetch_description: { jobId: string };
-  score_job: { userId: string; jobId: string };
+  /**
+   * One account's fit score for one role. `live` marks a role that batch scoring handed back —
+   * its batch request expired or errored, or the batch could not be sent — so the queue runs it
+   * as an ordinary call even while scoring is in batch mode.
+   */
+  score_job: { userId: string; jobId: string; live?: boolean };
+  /**
+   * Batch scoring's collector: gathers the queued `score_job` work into one Message Batches
+   * request. Shared work — it serves every account with roles waiting — so it names none.
+   */
+  collect_score_batch: { reason?: "schedule" | "backlog" };
+  /**
+   * Poll one submitted scoring batch and apply its results once it has ended. The payload is the
+   * batch's own record: which task, account and role each request was for, what each was held
+   * at, and the hold taken per account (`ScoreBatchRecord` in `score-batch`).
+   */
+  poll_score_batch: ScoreBatchRecord;
   tag_reason: { decisionId: string };
   synthesize_profile: { userId: string; force?: boolean };
   suggest_filters: { userId: string };
@@ -66,6 +83,14 @@ export interface TaskPayloads {
    * the id of the row, so an upload never travels through the queue.
    */
   import_library_document: { userId: string; importId: string };
+  /**
+   * One pass of the one-off backfill that re-encodes stored company logos as small WebP images,
+   * as a capture now stores them. A pass takes a bounded batch in company order after
+   * `afterCompanyId` and queues the next pass itself while there is more to do, so the whole
+   * catalogue is walked once without any one task holding a slot for long. Shared work: logos
+   * belong to the catalogue, not to an account.
+   */
+  reencode_logos: { afterCompanyId?: string };
 }
 
 export type TaskType = keyof TaskPayloads;
@@ -101,6 +126,10 @@ export function dedupeKeyFor<T extends TaskType>(type: T, payload: TaskPayloads[
       return `fetch_description:${(payload as TaskPayloads["fetch_description"]).jobId}`;
     case "score_job":
       { const p = payload as TaskPayloads["score_job"]; return `score_job:${p.userId}:${p.jobId}`; }
+    case "collect_score_batch":
+      return "collect_score_batch";
+    case "poll_score_batch":
+      return `poll_score_batch:${(payload as TaskPayloads["poll_score_batch"]).batchId}`;
     case "tag_reason":
       return `tag_reason:${(payload as TaskPayloads["tag_reason"]).decisionId}`;
     case "synthesize_profile":
@@ -129,6 +158,9 @@ export function dedupeKeyFor<T extends TaskType>(type: T, payload: TaskPayloads[
     // and re-reading one that failed is the same piece of work rather than a second one.
     case "import_library_document":
       return `import_library_document:${(payload as TaskPayloads["import_library_document"]).importId}`;
+    // One walk at a time: a second request while a pass waits to start is the same walk.
+    case "reencode_logos":
+      return "reencode_logos";
     default:
       return null;
   }
@@ -164,6 +196,8 @@ export function priorityFor(type: TaskType): number {
       return 1;
     case "fetch_description":
     case "score_job":
+    case "collect_score_batch":
+    case "poll_score_batch":
       return 4;
     case "scan_company":
     case "run_daily":
@@ -175,6 +209,8 @@ export function priorityFor(type: TaskType): number {
     case "rescore_all":
       return 6;
     case "suggest_companies":
+    // Housekeeping nobody is waiting for: behind everything else.
+    case "reencode_logos":
       return 7;
     default:
       return 5;
@@ -256,6 +292,10 @@ export const TASK_DEADLINES_MS: Partial<Record<TaskType, number>> & { default: n
   synthesize_profile: 5 * 60_000,
   // The same shape as extraction with up to fifteen web searches.
   suggest_companies: 7 * 60_000,
+  // Up to `SCORE_BATCH_MAX_ITEMS` roles read and prepared, one hold per account, one request.
+  collect_score_batch: 5 * 60_000,
+  // One retrieval, then up to that many results applied, one short transaction each.
+  poll_score_batch: 5 * 60_000,
   default: 2 * 60_000,
 };
 
@@ -293,7 +333,8 @@ const EVERY_TASK_TYPE: Record<TaskType, true> = {
   scan_company: true, run_daily: true, fetch_description: true, score_job: true, tag_reason: true,
   synthesize_profile: true, suggest_filters: true, suggest_from_scans: true, profile_company: true,
   suggest_companies: true, rescore_all: true, reevaluate_gate: true, import_posting: true,
-  review_library: true, import_library_document: true,
+  review_library: true, import_library_document: true, collect_score_batch: true, poll_score_batch: true,
+  reencode_logos: true,
 };
 export const TASK_TYPE_NAMES = Object.keys(EVERY_TASK_TYPE) as TaskType[];
 

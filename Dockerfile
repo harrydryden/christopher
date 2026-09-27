@@ -1,8 +1,28 @@
 # Worker image for Render, built from the repository root.
 # Based on the Playwright image so Chromium and its system libraries are already present and
 # match the installed Playwright version.
-FROM mcr.microsoft.com/playwright:v1.56.1-noble
 
+# The build stage compiles the worker ahead of time (apps/worker/build.mjs): one ES module in
+# dist/, run with plain node, rather than TypeScript transpiled by tsx for the life of the process.
+# It needs the development dependencies (esbuild), which the runtime image does not install.
+FROM mcr.microsoft.com/playwright:v1.56.1-noble AS build
+ENV PNPM_HOME=/usr/local/bin PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+WORKDIR /app
+RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY patches ./patches
+COPY packages/db/package.json packages/db/
+COPY packages/core/package.json packages/core/
+COPY packages/ai/package.json packages/ai/
+COPY apps/worker/package.json apps/worker/
+COPY apps/web/package.json apps/web/
+RUN pnpm install --frozen-lockfile --filter @ava/worker... --filter @ava/db --filter @ava/core --filter @ava/ai
+COPY tsconfig.base.json ./
+COPY packages ./packages
+COPY apps/worker ./apps/worker
+RUN pnpm --filter @ava/worker build
+
+FROM mcr.microsoft.com/playwright:v1.56.1-noble
 ENV NODE_ENV=production \
     PNPM_HOME=/usr/local/bin \
     PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
@@ -37,6 +57,9 @@ RUN pnpm install --frozen-lockfile --filter @ava/worker... --filter @ava/db --fi
 COPY --chown=pwuser:pwuser tsconfig.base.json ./
 COPY --chown=pwuser:pwuser packages ./packages
 COPY --chown=pwuser:pwuser apps/worker ./apps/worker
+# The compiled worker and the migrations it applies at boot. The sources stay for the CLI, which
+# runs through tsx in Render's Shell (docs/DEPLOY.md).
+COPY --from=build --chown=pwuser:pwuser /app/apps/worker/dist ./apps/worker/dist
 
 # Not root: Chromium renders untrusted careers pages with its sandbox off (a container rarely
 # allows the user namespaces it needs), and this process holds the database URL and the API key.
@@ -44,4 +67,4 @@ USER pwuser
 EXPOSE 8080
 WORKDIR /app/apps/worker
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["node", "--import", "tsx", "src/index.ts"]
+CMD ["node", "--enable-source-maps", "--import", "./dist/otel.mjs", "dist/index.mjs"]

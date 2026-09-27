@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import {
   captureCompanyLogo, logoCandidates, logoRetryDelayMs, sniffImageType, unsafeSvgReason,
-  LogoCaptureError, LOGO_MAX_BYTES,
+  LogoCaptureError, LOGO_MAX_BYTES, largestIcoPng, normaliseLogo,
 } from "./logo-capture";
 import type { FetchBytesResponse, FetchContext, FetchInit, FetchResponse } from "./types";
 
@@ -212,4 +212,86 @@ it.each([
   ["an embedded SVG", svg('<image href="data:image/svg+xml;base64,PHN2Zz4="/>'), "it refers to something outside itself"],
 ])("refuses an SVG with %s", (_, bytes, reason) => {
   expect(unsafeSvgReason(bytes)).toBe(reason);
+});
+
+/** The first bytes of a PNG of this size: signature, then the IHDR chunk's width and height. */
+function pngOf(px: number, length = 120): Uint8Array {
+  const bytes = filled([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52], length);
+  new DataView(bytes.buffer).setUint32(16, px);
+  new DataView(bytes.buffer).setUint32(20, px);
+  bytes[length - 1] = px; // tells the entries apart
+  return bytes;
+}
+
+/** An ICO file holding these images, each named in the directory as the format does. */
+function icoOf(images: Uint8Array[]): Uint8Array {
+  const header = 6 + images.length * 16;
+  const out = new Uint8Array(header + images.reduce((sum, image) => sum + image.length, 0));
+  const view = new DataView(out.buffer);
+  view.setUint16(2, 1, true);
+  view.setUint16(4, images.length, true);
+  let offset = header;
+  images.forEach((image, i) => {
+    view.setUint32(6 + i * 16 + 8, image.length, true);
+    view.setUint32(6 + i * 16 + 12, offset, true);
+    out.set(image, offset);
+    offset += image.length;
+  });
+  return out;
+}
+
+const WEBP = filled([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50], 90);
+
+it("finds the largest PNG of at least 32 px in an ICO, reading its size from the PNG itself", () => {
+  const bitmap = filled([0x28, 0, 0, 0], 300); // an old-style BMP entry, which is passed over
+  const ico = icoOf([pngOf(16), bitmap, pngOf(48), pngOf(32)]);
+  expect(Array.from(largestIcoPng(ico)!)).toEqual(Array.from(pngOf(48)));
+  expect(largestIcoPng(icoOf([pngOf(16), bitmap]))).toBeNull();
+  expect(largestIcoPng(PNG)).toBeNull();
+  // A directory that points past the end of the file is not trusted.
+  const truncated = icoOf([pngOf(64)]).subarray(0, 40);
+  expect(largestIcoPng(truncated)).toBeNull();
+});
+
+it("stores a raster icon as the encoder's WebP, and keeps SVG as it is", async () => {
+  const asked: Uint8Array[] = [];
+  const encode = async (bytes: Uint8Array) => { asked.push(bytes); return WEBP; };
+  expect(await normaliseLogo(PNG, "image/png", encode)).toEqual({ bytes: WEBP, contentType: "image/webp", reencoded: true });
+  expect(asked).toEqual([PNG]);
+  const plain = svg('<path d="M0 0h64v64H0z"/>');
+  expect(await normaliseLogo(plain, "image/svg+xml", encode)).toMatchObject({ bytes: plain, contentType: "image/svg+xml", reencoded: false, kept: "svg" });
+  expect(asked).toHaveLength(1);
+});
+
+it("re-encodes an ICO from its largest PNG, and keeps an ICO that has none large enough", async () => {
+  const asked: Uint8Array[] = [];
+  const encode = async (bytes: Uint8Array) => { asked.push(bytes); return WEBP; };
+  expect(await normaliseLogo(icoOf([pngOf(16), pngOf(256)]), "image/x-icon", encode)).toMatchObject({ contentType: "image/webp", reencoded: true });
+  expect(Array.from(asked[0]!)).toEqual(Array.from(pngOf(256)));
+  const small = icoOf([pngOf(16)]);
+  expect(await normaliseLogo(small, "image/x-icon", encode)).toMatchObject({ bytes: small, contentType: "image/x-icon", kept: "ico without a large png" });
+  expect(asked).toHaveLength(1);
+});
+
+it("keeps the captured bytes when the encoder fails or answers with something that is not WebP", async () => {
+  expect(await normaliseLogo(PNG, "image/png", async () => { throw new Error("Input buffer contains unsupported image format"); }))
+    .toEqual({ bytes: PNG, contentType: "image/png", reencoded: false, kept: "encode failed" });
+  expect(await normaliseLogo(PNG, "image/png", async () => PNG)).toMatchObject({ bytes: PNG, contentType: "image/png", kept: "encoder output was not webp" });
+  expect(await normaliseLogo(PNG, "image/png")).toMatchObject({ bytes: PNG, kept: "no encoder" });
+});
+
+it("captures through the context's encoder, and stores the original when it fails", async () => {
+  const script = {
+    homepage: page("https://example.com/", '<link rel="apple-touch-icon" href="/touch.png">'),
+    assets: { "https://example.com/touch.png": asset("https://example.com/touch.png", PNG) },
+  };
+  const { ctx } = scripted(script);
+  ctx.encodeLogo = async () => WEBP;
+  expect(await captureCompanyLogo("https://example.com/", "example.com", ctx)).toMatchObject({ bytes: WEBP, contentType: "image/webp", sourceUrl: "https://example.com/touch.png" });
+  const failing = scripted(script);
+  const logged: string[] = [];
+  failing.ctx.encodeLogo = async () => { throw new Error("corrupt"); };
+  failing.ctx.log = (msg) => logged.push(msg);
+  expect(await captureCompanyLogo("https://example.com/", "example.com", failing.ctx)).toMatchObject({ bytes: PNG, contentType: "image/png" });
+  expect(logged).toContain("logo kept as captured: re-encoding failed");
 });

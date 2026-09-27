@@ -10,11 +10,15 @@
  *   pnpm --filter @ava/worker cli list           (companies, sources, followers, counts)
  *   pnpm --filter @ava/worker cli table          (the CLI account's roles table as text)
  *   pnpm --filter @ava/worker cli users          (accounts and roles)
+ *   pnpm --filter @ava/worker cli pgstat [--reset]
+ *                                                (the 20 statements that cost the database the most
+ *                                                time, from pg_stat_statements; --reset starts afresh)
  *   pnpm --filter @ava/worker cli record <draft-id> [--out <file>] [--routes <json>]
  *                                                (a live, paid rebuild of a draft, recorded for replay)
  *   pnpm --filter @ava/worker cli replay <draft-id> [--recordings <file> | --baseline <file>] [--routes <json>] [--out <report.json>]
  *                                                (rebuild and grade a draft without publishing; from a
  *                                                recording without a key, or live with one)
+ *   pnpm --filter @ava/worker cli reencode-logos (one-off: store every captured logo as a 64 px WebP)
  *
  * Per-account commands act for AVA_CLI_USER (an email) or, when unset, the earliest
  * administrator.
@@ -24,7 +28,7 @@
  */
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { schema, enqueueTask, reevaluateGate, subscribeToCompany } from "@ava/db";
+import { schema, enqueueTask, formatStatementTotals, reevaluateGate, resetStatements, subscribeToCompany, topStatements } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import {
   dedupeKeyFor,
@@ -43,6 +47,7 @@ import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { createDeps, makeDiscoveryContext, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { assertSchemaCurrent, discoverTargets, findCompany, schemaState } from "./cli-guards";
+import { analyzeTables, IMPORT_ANALYZE_THRESHOLD, IMPORT_TABLES } from "./analyze";
 import { handlers } from "./handlers";
 import { TaskQueue } from "./queue";
 import { schedulerTick } from "./scheduler";
@@ -109,12 +114,12 @@ async function cliUser(deps: WorkerDeps) {
   return user;
 }
 
-const COMMANDS = new Set(["migrate", "probe", "add", "discover", "scan", "tick", "drain", "users", "list", "table", "record", "replay"]);
+const COMMANDS = new Set(["migrate", "probe", "add", "discover", "scan", "tick", "drain", "users", "list", "table", "record", "replay", "reencode-logos", "pgstat"]);
 
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (!command || !COMMANDS.has(command)) {
-    console.log("commands: migrate | probe <url> | add <url...> | discover <company> [url] | discover --all | scan [company] | tick | drain [n] | list | table | users | record <draft> [--out file] [--routes json] | replay <draft> [--recordings file | --baseline file] [--routes json] [--out report.json]");
+    console.log("commands: migrate | probe <url> | add <url...> | discover <company> [url] | discover --all | scan [company] | tick | drain [n] | list | table | users | pgstat [--reset] | record <draft> [--out file] [--routes json] | replay <draft> [--recordings file | --baseline file] [--routes json] [--out report.json] | reencode-logos");
     return;
   }
   const env = readEnv();
@@ -175,6 +180,8 @@ async function main() {
             console.log(`already tracked: ${domain}; ${subscription.created || subscription.reactivated ? "now" : "already"} followed by ${user.email} (${outcome.created} matching roles added)`);
           }
         }
+        // A bulk import changes the catalogue's shape faster than autovacuum notices.
+        if (args.length > IMPORT_ANALYZE_THRESHOLD) await analyzeTables(deps.db, IMPORT_TABLES, "company import");
         break;
       }
       case "discover": {
@@ -200,6 +207,12 @@ async function main() {
           await enqueueTask(deps.db, "run_daily", { trigger: "manual" }, { dedupeKey: null, priority: priorityFor("run_daily") });
           console.log("queued a full run");
         }
+        break;
+      }
+      case "reencode-logos": {
+        // The one-off backfill: the worker walks the stored logos in bounded passes.
+        const id = await enqueueTask(deps.db, "reencode_logos", {}, { dedupeKey: dedupeKeyFor("reencode_logos", {}), priority: priorityFor("reencode_logos") });
+        console.log(id ? "queued the logo re-encode; the worker walks the catalogue in passes of 25" : "a logo re-encode is already queued");
         break;
       }
       case "tick": {
@@ -245,6 +258,24 @@ async function main() {
           }));
         }
         reportReplay(report, flag(args, "out"));
+        break;
+      }
+      case "pgstat": {
+        // Printed to this terminal only: the text is PostgreSQL's normalised statement, cut to 160
+        // characters, and is never written to the worker's logs.
+        const totals = await topStatements(deps.db, 20);
+        if (!totals.available) {
+          console.log(totals.reason);
+          process.exitCode = 1;
+          break;
+        }
+        for (const line of formatStatementTotals(totals.rows)) console.log(line);
+        console.log(`\n${totals.rows.length} statement(s), by total execution time since the statistics were last reset.`);
+        if (args.includes("--reset")) {
+          const reset = await resetStatements(deps.db);
+          console.log(reset.ok ? "statistics reset: the next reading starts from now" : reset.reason);
+          if (!reset.ok) process.exitCode = 1;
+        }
         break;
       }
       case "users": {

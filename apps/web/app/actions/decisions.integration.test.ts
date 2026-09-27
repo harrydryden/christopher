@@ -161,6 +161,27 @@ describe("what the review panel loads on expand", () => {
     expect(details.cvQuote).not.toBeNull();
   });
 
+  it("brings the role's archive notes, this account's and shared ones only, newest first", async () => {
+    const job = await role(null);
+    const stranger = await signInTestUser(database, process.env.SESSION_SECRET!, "other-reader@example.com", "member");
+    const at = (minutes: number) => new Date(Date.now() - minutes * 60000);
+    await database.insert(schema.jobEvents).values([
+      { jobId: job.id, userId: user.id, type: "updated", payload: { action: "archived", actor: "system", reason: "No longer matches your criteria" }, at: at(30) },
+      { jobId: job.id, userId: user.id, type: "updated", payload: { action: "restored", actor: "user" }, at: at(20) },
+      { jobId: job.id, userId: user.id, type: "updated", payload: { action: "archived", actor: "user" }, at: at(10) },
+      { jobId: job.id, userId: null, type: "updated", payload: { action: "archived", actor: "system", reason: "Its careers source is no longer checked" }, at: at(5) },
+      { jobId: job.id, userId: null, type: "discovered", payload: {}, at: at(60) },
+      // Another account's archive of the same shared posting is theirs alone.
+      { jobId: job.id, userId: stranger.user.id, type: "updated", payload: { action: "archived", actor: "user", reason: "Theirs" }, at: at(1) },
+    ]);
+    expect((await detailsFor(job.id)).archiveNotes).toEqual([
+      "Archived: Its careers source is no longer checked",
+      "Archived: Put away by you",
+      "Archived: No longer matches your criteria",
+    ]);
+    expect((await detailsFor((await role(null)).id)).archiveNotes).toEqual([]);
+  });
+
   it("answers nothing for a role this account cannot see", async () => {
     const stranger = await signInTestUser(database, process.env.SESSION_SECRET!, "stranger@example.com", "member");
     const job = await role();

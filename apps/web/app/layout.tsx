@@ -6,18 +6,27 @@ import "./globals.css";
 // Silkscreen for headings, labels and the numerals beside the mark; Plex Mono
 // for everything else. next/font self-hosts both, so there is no render-blocking
 // request to Google and no flash of the fallback stack.
+//
+// Silkscreen at 400 only: `ds-pixel` pins that weight, so a bold face would be a
+// preload every hard load pays for and nothing paints. A pixel element in a bold
+// context (a <th>, a <strong>) carries `ds-pixel` itself, as the table's TH does.
 const pixel = Silkscreen({
-  weight: ["400", "700"],
+  weight: ["400"],
   subsets: ["latin"],
   display: "swap",
   variable: "--font-pixel-family",
 });
 
+// While Plex loads, a monospace stand-in rather than Arial stretched to fit: the
+// system monospaces advance within a percent of Plex's 600/1000 em, so line
+// breaks and tabular figures hold when the real face swaps in.
 const mono = IBM_Plex_Mono({
   weight: ["400", "500", "600"],
   subsets: ["latin"],
   display: "swap",
   variable: "--font-mono-family",
+  adjustFontFallback: false,
+  fallback: ["ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "Liberation Mono", "monospace"],
 });
 
 export const metadata: Metadata = {

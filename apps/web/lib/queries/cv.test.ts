@@ -26,7 +26,7 @@ let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 let user: User;
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { dailyCvVersions, getOwnCvBuildTask, getOwnCvDraft, readCvProgress } from "./cv";
+import { dailyCvVersions, getOwnCvBuildTask, getOwnCvDraft, getOwnCvDraftForPdf, readCvProgress } from "./cv";
 import { getCvWorkStatus } from "@/lib/work-status";
 
 const BUILD_COLUMNS = ["progress_at", "build_checkpoint", "failure", "gap_quiz"] as const;
@@ -285,4 +285,12 @@ it("moves the account's CV version once per motion, not once per batch", async (
   const batch2 = (await getCvWorkStatus(user.id)).version;
   expect(batch1).not.toBe(measuring);
   expect(batch2).toBe(batch1);
+});
+
+it("reads a draft for its PDF with what the check and the filename need, and only for its owner", async () => {
+  const draft = await seedDraft({ status: "ready", buildCheckpoint: { rubricAt: new Date().toISOString(), attempt: 1 }, failure });
+  const read = await getOwnCvDraftForPdf(user.id, draft.id);
+  expect(Object.keys(read!).sort()).toEqual(["assessment", "companyName", "content", "finalisedAt", "id", "jobDescription", "librarySnapshot", "status"]);
+  expect(read).toMatchObject({ id: draft.id, status: "ready", companyName: "Example", jobDescription: "Lead a team." });
+  expect(await getOwnCvDraftForPdf(crypto.randomUUID(), draft.id)).toBeNull();
 });

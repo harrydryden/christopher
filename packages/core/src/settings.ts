@@ -33,6 +33,30 @@ export interface SystemSettings {
    * A model here applies to every account, over its own CV model choice, for that stage alone.
    */
   stageRoutes: StageRoutes;
+  /**
+   * How background fit scoring (A5) reaches the model. `live` calls it once per role as the role
+   * enters the table; `batch` gathers the queued roles every `scoringBatchMinutes` into one Message
+   * Batches request at half the token price, and applies the scores when the batch ends — minutes
+   * to an hour later, at most a day. Either way the model only ranks inside each account's gate.
+   */
+  scoringMode: ScoringMode;
+  /** How often batch scoring gathers the queued roles into a batch, in minutes. */
+  scoringBatchMinutes: number;
+}
+
+/** How background fit scoring reaches the model. */
+export const SCORING_MODES = ["live", "batch"] as const;
+export type ScoringMode = (typeof SCORING_MODES)[number];
+/** The collection interval batch scoring may be set to, in minutes. */
+export const SCORING_BATCH_MINUTES_MIN = 1;
+export const SCORING_BATCH_MINUTES_MAX = 60;
+export const DEFAULT_SCORING_BATCH_MINUTES = 10;
+
+/** A stored collection interval, as a whole number of minutes inside the allowed range, or null. */
+export function scoringBatchMinutesFrom(value: unknown): number | null {
+  const minutes = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : Number.NaN;
+  if (!Number.isInteger(minutes) || minutes < SCORING_BATCH_MINUTES_MIN || minutes > SCORING_BATCH_MINUTES_MAX) return null;
+  return minutes;
 }
 
 /** Efforts a stage may be routed at: the provider's own levels. */
@@ -133,6 +157,8 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   weeklyDay: 0,
   registrationOpen: false,
   stageRoutes: {},
+  scoringMode: "live",
+  scoringBatchMinutes: DEFAULT_SCORING_BATCH_MINUTES,
 };
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
@@ -210,6 +236,17 @@ function applyRows(out: AppSettings, rows: SettingsRow[]): void {
     }
     if (key === "stageRoutes") {
       out.stageRoutes = sanitiseStageRoutes(val);
+      continue;
+    }
+    // Both scoring keys decide where money is spent, so anything but a known mode or an interval
+    // inside the range keeps the default: live scoring, every ten minutes.
+    if (key === "scoringMode") {
+      if ((SCORING_MODES as readonly unknown[]).includes(val)) out.scoringMode = val as ScoringMode;
+      continue;
+    }
+    if (key === "scoringBatchMinutes") {
+      const minutes = scoringBatchMinutesFrom(val);
+      if (minutes !== null) out.scoringBatchMinutes = minutes;
       continue;
     }
     if (key === "gate" && typeof val === "object") {

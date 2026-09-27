@@ -6,6 +6,7 @@
  * Inline runs come from the notepad's grammar (lib/notes-markdown), so a company note renders
  * here exactly as it was typed, escapes and all.
  */
+import { memo } from "react";
 import { parseRuns } from "@/lib/notes-markdown";
 
 /** The inline layer: bold runs become `<strong>`, everything else is text. */
@@ -52,7 +53,11 @@ function parseBlocks(markdown: string): MdBlock[] {
   return blocks;
 }
 
-export function SafeMarkdown({ markdown, className = "" }: { markdown: string; className?: string }) {
+/**
+ * Memoised on its two strings: an open role description is parsed once, not again on every render
+ * of the row around it.
+ */
+export const SafeMarkdown = memo(function SafeMarkdown({ markdown, className = "" }: { markdown: string; className?: string }) {
   const blocks = parseBlocks(markdown);
   if (blocks.length === 0) return null;
   return (
@@ -85,4 +90,4 @@ export function SafeMarkdown({ markdown, className = "" }: { markdown: string; c
       })}
     </div>
   );
-}
+});

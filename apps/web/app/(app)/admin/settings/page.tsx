@@ -1,4 +1,4 @@
-import { runDailyScanNow, saveAiSettings, saveSchedule, saveStageRoutes } from "@/app/actions/settings";
+import { runDailyScanNow, saveAiSettings, saveSchedule, saveScoringSettings, saveStageRoutes } from "@/app/actions/settings";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
@@ -8,7 +8,7 @@ import { inputClass, labelClass as fieldLabelClass, selectClass } from "@/compon
 import { requireAdmin } from "@/lib/auth";
 import { getSystemSettings } from "@/lib/settings";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
-import { MODEL_CHOICES, STAGE_EFFORTS } from "@ava/core";
+import { MODEL_CHOICES, SCORING_BATCH_MINUTES_MAX, SCORING_BATCH_MINUTES_MIN, STAGE_EFFORTS } from "@ava/core";
 import { stageRouteRows } from "@/lib/stage-routes";
 
 export const dynamic = "force-dynamic";
@@ -64,6 +64,28 @@ export default async function AdminSettingsPage() {
             <label className={labelClass}>
               <span className={fieldLabelClass}>Default model</span>
               <ModelSelect name="defaultModel" value={settings.defaultModel} className={selectClass} />
+            </label>
+          </div>
+        </SettingsForm>
+      </Card>
+
+      <Card title="Scoring">
+        <SettingsForm action={saveScoringSettings} submitLabel="Save scoring">
+          <p className="text-12 text-muted">
+            How fit scores reach the model for every account. <strong className="font-semibold text-fg">Live</strong> scores each role as it enters a table.{" "}
+            <strong className="font-semibold text-fg">Batch</strong> gathers waiting roles every few minutes into one batch at half the price; scores then arrive minutes to an hour later, at most a day. Either way a score only orders the table.
+          </p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className={labelClass}>
+              <span className={fieldLabelClass}>Scoring mode</span>
+              <select name="scoringMode" defaultValue={settings.scoringMode} className={selectClass}>
+                <option value="live">Live</option>
+                <option value="batch">Batch</option>
+              </select>
+            </label>
+            <label className={labelClass}>
+              <span className={fieldLabelClass}>Collect a batch every (minutes)</span>
+              <input name="scoringBatchMinutes" type="number" min={SCORING_BATCH_MINUTES_MIN} max={SCORING_BATCH_MINUTES_MAX} step={1} defaultValue={settings.scoringBatchMinutes} className={inputClass} />
             </label>
           </div>
         </SettingsForm>

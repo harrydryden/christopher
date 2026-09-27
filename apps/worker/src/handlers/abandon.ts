@@ -1,7 +1,8 @@
 import { abandonCvDraft, noteCvBuildFailure, releaseAiHolds } from "@ava/db";
-import { cvBuildFailure, type CvBuildFailure } from "@ava/core";
+import { cvBuildFailure, type CvBuildFailure, type ScoreBatchRecord } from "@ava/core";
 import type { AbandonHookMap, InterruptedHookMap } from "../queue";
 import { failOpenCvBuildStepsQuietly } from "./cv-journal";
+import { abandonScoreBatch } from "./score-batch-recovery";
 import { log } from "../log";
 import { sql } from "drizzle-orm";
 
@@ -86,6 +87,13 @@ export const onAbandon: AbandonHookMap = {
     // asked the user to start. Only this build's hold: the account may have another build running.
     const released = await releaseAiHolds(deps.db, { userId: abandoned.userId, callSite: "CV", refId: draftId });
     if (released.count) log.warn("released the abandoned build's AI holds", { draftId, userId: abandoned.userId, ...released });
+  },
+  // A scoring batch whose results could not be read: its roles are scored live, its holds let go.
+  poll_score_batch: async (task, deps, reason) => {
+    const record = task.payload as unknown as ScoreBatchRecord;
+    const { requeued } = await abandonScoreBatch(deps.db, record);
+    log.error("gave up on a scoring batch; its roles are scored live and any cost it ran up is not in the ledger", {
+      batchId: record.batchId, taskId: task.id, roles: record.items?.length ?? 0, requeued, reason });
   },
 };
 

@@ -18,8 +18,31 @@ export interface CreateDbOptions {
   statementTimeoutMs?: number;
   /** How long a session may sit idle inside an open transaction before the server ends it; 0 for never. Defaults to a minute. */
   idleInTransactionTimeoutMs?: number;
+  /** How long an idle connection stays in the pool before it is closed. Defaults to 30 seconds. */
+  idleTimeoutMillis?: number;
+  /**
+   * The `application_name` every connection reports, so `pg_stat_activity` can say which client
+   * holds the database's backends (`ava-web`, `ava-worker`). It is the one startup parameter
+   * PgBouncer accepts and tracks in transaction mode, so it is sent on 6432 too. One named in the
+   * connection string takes precedence.
+   */
+  applicationName?: string;
   /** Where a slow query is reported. Defaults to an `info` line on stdout; the worker can route it through its own log, which knows the task. */
   onSlowQuery?: (query: SlowQuery) => void;
+  /**
+   * Once this pool's first query is done, time `select 1` on a warm connection and log it as
+   * `database_round_trip`, once per process: the network round trip every sequential statement
+   * pays (docs/DEPLOY.md).
+   */
+  reportRoundTrip?: boolean;
+  /**
+   * Whether a statement given a name (Drizzle's `.prepare(name)`) is prepared under it on the
+   * connection. Defaults to `namedStatementsFor(connectionString)`: yes on a direct endpoint, no
+   * through a transaction pooler, where the connection that parsed it is not the one the next
+   * transaction is handed, and the statement then "does not exist". Off, a named statement is sent
+   * unnamed, exactly as an unnamed one is.
+   */
+  namedStatements?: boolean;
 }
 
 /** A statement that took `SLOW_QUERY_MS` or longer, identified by the start of its text (parameters are never part of it). */
@@ -51,6 +74,35 @@ export function renderEndpoint(connectionString: string): "pooled" | "direct" | 
 
 export function isRenderPooledUrl(connectionString: string): boolean {
   return renderEndpoint(connectionString) === "pooled";
+}
+
+/** A transaction pooler's endpoint: Render's PgBouncer on 6432, or a host named as a pooler (`…-pooler.…`). */
+export function isTransactionPooledUrl(connectionString: string): boolean {
+  if (isRenderPooledUrl(connectionString)) return true;
+  try {
+    return new URL(connectionString).hostname.split(".")[0]!.endsWith("-pooler");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether named statements may be kept on this endpoint's connections. Not through a transaction
+ * pooler: the worker's claim is named (apps/worker/src/queue.ts), and the interface's cron fallback
+ * runs that claim on the interface's pooled URL, where PgBouncer before 1.21, or with
+ * `max_prepared_statements = 0`, loses it between transactions
+ * (`scripts/pgbouncer-prepared-probe.mjs`).
+ */
+export function namedStatementsFor(connectionString: string): boolean {
+  return !isTransactionPooledUrl(connectionString);
+}
+
+/** A query's arguments without the statement name, when its first argument is a plain config that carries one. */
+function withoutStatementName(args: unknown[]): unknown[] {
+  const config = args[0] as { name?: unknown; submit?: unknown } | null;
+  if (!config || typeof config !== "object" || !config.name || typeof config.submit === "function") return args;
+  const { name: _name, ...unnamed } = config;
+  return [unnamed, ...args.slice(1)];
 }
 
 let warnedDirectEndpoint = false;
@@ -130,6 +182,51 @@ export function poolStats(): { total: number; idle: number; waiting: number; err
   return { total, idle, waiting, errors: connectionErrors };
 }
 
+/**
+ * Milliseconds for one `select 1` on a connection that is already open: the network round trip
+ * plus a statement that costs the server nothing, with no TCP, TLS or authentication in it. Every
+ * statement a page waits on in sequence pays this once, so it is the figure its budget is counted
+ * in; the audits assumed 1–5 ms between Vercel's fra1 and Render's Frankfurt and never measured it.
+ */
+export async function timeRoundTrip(client: { query(text: string): Promise<unknown> }, clock: () => number = () => performance.now()): Promise<number> {
+  const started = clock();
+  await client.query("select 1");
+  return Math.round((clock() - started) * 10) / 10;
+}
+
+let roundTripClaimed = false;
+const ROUND_TRIP_SAMPLES = 3;
+
+/**
+ * After a pool with `reportRoundTrip` hands back its first connection, borrow a warm one (its
+ * handshake paid, and past a new backend's first-statement cost), time three `select 1`s and log
+ * the fastest as `database_round_trip`. Once per process: a cold start is when the figure is
+ * wanted (read it beside the `x-vercel-id` region), and a steady stream of them would be noise. It
+ * runs after the query that triggered it has finished, so it never sits in front of a request's
+ * statement; at worst it holds one of the pool's connections for three round trips, once.
+ */
+function reportFirstRoundTrip(pool: pg.Pool, connectionString: string): void {
+  if (roundTripClaimed) return;
+  roundTripClaimed = true;
+  setImmediate(async () => {
+    let client: pg.PoolClient | undefined;
+    try {
+      client = await pool.connect();
+      const samples: number[] = [];
+      for (let i = 0; i < ROUND_TRIP_SAMPLES; i++) samples.push(await timeRoundTrip(client));
+      logLine("info", "database_round_trip", {
+        ms: Math.min(...samples), samplesMs: samples, endpoint: renderEndpoint(connectionString) ?? "other",
+        region: process.env.VERCEL_REGION ?? process.env.RENDER_REGION ?? null,
+      });
+    } catch {
+      // An ended pool or a failing connection: the next pool that asks tries again.
+      roundTripClaimed = false;
+    } finally {
+      client?.release();
+    }
+  });
+}
+
 const failedConnections = new WeakSet<object>();
 
 /**
@@ -181,20 +278,24 @@ export function createDb(connectionString: string, options: CreateDbOptions = {}
     connectionString,
     max: options.max ?? 5,
     ssl: sslFor(connectionString, options.ssl),
-    idleTimeoutMillis: 30_000,
+    idleTimeoutMillis: options.idleTimeoutMillis ?? 30_000,
     connectionTimeoutMillis: 10_000,
     // A serverless instance reuses its pool between requests; without keepalive
     // an idle TLS connection is silently dropped and the next query pays the
     // handshake again.
     keepAlive: true,
+    ...(options.applicationName ? { application_name: options.applicationName } : {}),
     ...serverTimeouts(connectionString, options),
   });
   const reportSlow = options.onSlowQuery ?? ((query: SlowQuery) => logLine("info", "slow_database_query", { ...query }));
   pool.on("error", (error, client) => absorbConnectionError(error, client));
+  if (options.reportRoundTrip) pool.once("release", () => reportFirstRoundTrip(pool, connectionString));
+  const named = options.namedStatements ?? namedStatementsFor(connectionString);
   pool.on("connect", client => {
     client.on("error", error => absorbConnectionError(error, client));
     const original = client.query.bind(client);
-    client.query = ((...args: unknown[]) => {
+    client.query = ((...given: unknown[]) => {
+      const args = named ? given : withoutStatementName(given);
       const started = performance.now();
       let reported = false;
       const finish = () => {

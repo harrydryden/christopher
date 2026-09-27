@@ -33,7 +33,7 @@ describe("task deadlines", () => {
 
   it("names as short exactly the types whose deadline fits a serverless invocation", () => {
     expect(new Set(TASK_TYPE_NAMES).size).toBe(TASK_TYPE_NAMES.length);
-    expect(TASK_TYPE_NAMES).toHaveLength(20);
+    expect(TASK_TYPE_NAMES).toHaveLength(23);
     for (const type of TASK_TYPE_NAMES)
       expect(SHORT_TASK_TYPES.includes(type)).toBe(deadlineMsFor(type) <= SHORT_TASK_DEADLINE_MS);
     // A CV build, a scan or a discovery can never be claimed by such a runner.

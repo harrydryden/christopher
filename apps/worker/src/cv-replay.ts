@@ -256,7 +256,7 @@ export async function replayCvDraft(deps: WorkerDeps, draftId: string, options: 
     : draft.assessment ? cvReplayBaseline(draft.assessment, "draft") : null;
 
   const records: Array<{ stage: string; costUsd: number }> = [];
-  const hold: AiHold = { release: async () => {}, consume: async () => {}, keep: () => {}, renew: async () => true, spent: 0, held: 0, limitUsd: Number.MAX_SAFE_INTEGER };
+  const hold: AiHold = { id: "replay", release: async () => {}, consume: async () => {}, keep: () => {}, renew: async () => true, spent: 0, held: 0, limitUsd: Number.MAX_SAFE_INTEGER };
   const sink: CvBuildSink = {
     reserve: async () => hold,
     record: async usage => { records.push({ stage: usage.stage ?? "?", costUsd: usage.costUsd }); },

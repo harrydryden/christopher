@@ -3,7 +3,7 @@
  * alone says a crash-looping worker is healthy. These are the rules both Health pages read.
  */
 import { expect, it } from "vitest";
-import { deriveWorkerStatus, governorSummary, heapSummary, workerStateTone, workerStatusSentence, type WorkerHeartbeat } from "./worker-status";
+import { deriveWorkerStatus, governorSummary, heapSummary, waitSummary, workerStateTone, workerStatusSentence, type WorkerHeartbeat } from "./worker-status";
 
 const now = new Date("2026-09-18T12:00:00.000Z");
 const ago = (ms: number) => new Date(now.getTime() - ms);
@@ -82,4 +82,16 @@ it("names the stream cap as the per-model figure it is, with each busy model's s
   expect(governorSummary({ streamCap: 4, inFlight: 1, queued: 0, pausedUntil: ago(1_000) }, now)).toBe(
     "Model streams: 1 open; each model may have 4 open at once.",
   );
+});
+
+it("says what the worker waits on besides memory, in warn tone at 200 ms of loop delay or any pool wait", () => {
+  const vitals = heartbeat().vitals!;
+  expect(waitSummary(vitals)).toBeNull();
+  expect(waitSummary({ ...vitals, eventLoopLagP99Ms: 12, slowQueries: 1, db: { total: 4, idle: 3, waiting: 0 } })).toEqual({
+    text: "Event loop p99 12 ms since boot; 1 query of 250 ms or longer since boot; database pool 4 open, 3 idle, 0 waiting.", warn: false,
+  });
+  expect(waitSummary({ ...vitals, eventLoopLagP99Ms: 200 })!.warn).toBe(true);
+  expect(waitSummary({ ...vitals, slowQueries: 3, db: { total: 4, idle: 0, waiting: 2 } })).toEqual({
+    text: "3 queries of 250 ms or longer since boot; database pool 4 open, 0 idle, 2 waiting.", warn: true,
+  });
 });

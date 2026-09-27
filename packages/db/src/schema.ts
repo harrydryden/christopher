@@ -20,12 +20,14 @@ import {
   bigint,
   boolean,
   customType,
+  date,
   index,
   integer,
   jsonb,
   pgTable,
   primaryKey,
   real,
+  smallint,
   text,
   timestamp,
   uniqueIndex,
@@ -77,6 +79,7 @@ export const TASK_TYPES = [
   "extract_document", "verify_company", "monitor_source", "discover", "scan_company", "run_daily", "fetch_description", "score_job", "tag_reason",
   "synthesize_profile", "suggest_filters", "suggest_from_scans", "profile_company", "suggest_companies", "rescore_all",
   "reevaluate_gate", "generate_cv", "import_posting", "review_library", "import_library_document",
+  "collect_score_batch", "poll_score_batch", "reencode_logos",
 ] as const;
 export const TASK_STATUSES = ["queued", "running", "done", "failed"] as const;
 
@@ -1060,6 +1063,21 @@ export const httpHostDaily = pgTable("http_host_daily", {
 }, (t) => [primaryKey({ columns: [t.day, t.host, t.via] }), index("http_host_daily_day_idx").on(t.day)]);
 
 /**
+ * Real-user Core Web Vitals as histograms: for each UTC day, route and metric, how many sampled page
+ * loads fell in each log-scaled bucket (apps/web/lib/web-vitals.ts defines the buckets). No event,
+ * account, session or URL is stored, only counts, so the table is bounded by routes x metrics x
+ * buckets per day. Written by `/api/performance`, read by Operations for the p75, and pruned after
+ * ninety days by the worker's monitor task.
+ */
+export const webVitals = pgTable("web_vitals", {
+  day: date("day", { mode: "string" }).notNull(),
+  route: text("route").notNull(),
+  metric: text("metric").notNull(),
+  bucket: smallint("bucket").notNull(),
+  count: integer("count").notNull().default(0),
+}, (t) => [primaryKey({ columns: [t.day, t.route, t.metric, t.bucket] })]);
+
+/**
  * One row per motion of a CV build: what it was doing, when, for how long, with what result.
  * The CV page reads them as the build's narrative while it runs and afterwards; Operations reads
  * them by motion to see where builds spend their time and where they fail. Rows go with the draft.
@@ -1092,6 +1110,20 @@ export type CvBuildStep = typeof cvBuildSteps.$inferSelect;
 
 /** Postgres `bytea`, which drizzle has no column builder for. The pg driver reads and writes it as a Buffer. */
 const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => "bytea" });
+
+/**
+ * The PDF a CV revision was rendered to, under the hash of what was rendered (content and
+ * renderer), so a download serves it instead of rendering again. One row per draft. No foreign key,
+ * for the reason `cv_tailoring_plans` gives: a delete trigger on `cv_drafts` removes it instead.
+ */
+export const cvPdfs = pgTable("cv_pdfs", {
+  draftId: uuid("draft_id").primaryKey(),
+  userId: uuid("user_id").notNull(),
+  contentHash: text("content_hash").notNull(),
+  bytes: bytea("bytes").notNull(),
+  createdAt: tsNow("created_at"),
+}, (t) => [index("cv_pdfs_user_idx").on(t.userId)]);
+export type CvPdf = typeof cvPdfs.$inferSelect;
 
 export const LIBRARY_IMPORT_KINDS = ["cv", "linkedin", "website", "paste"] as const;
 export type LibraryImportKind = (typeof LIBRARY_IMPORT_KINDS)[number];

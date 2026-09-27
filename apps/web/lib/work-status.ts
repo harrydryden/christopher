@@ -3,31 +3,36 @@ import { cvDrafts, tasks } from '@ava/db/schema';
 import { CV_PROGRESS_STALE_MS } from './cv-build-state';
 import { cache } from 'react';
 import { db } from './db';
+
 /**
  * Only work that can change this account's view counts: the daily run's fan-out task is not itself
  * news (each company it queues is), and a logo capture changes nothing a page lists, however long
- * the sweep takes. Exported apart from the memoised reader so a test can read its plan.
- *
- * `token` says what the version is taken over. The companies pages show whether discovery is
- * queued or running, so theirs moves with each task's status; the Roles page shows nothing of a
- * task's state, only what a finished one changed, so its version moves only when a task joins or
- * leaves the set. A task going from queued to running then costs the Roles page no refresh.
+ * the sweep takes.
  */
-export function companyWorkQuery(userId: string, token: "status" | "ids" = "status") {
-  const entry = token === "status" ? sql`${tasks.id}::text || ${tasks.status}` : sql`${tasks.id}::text`;
+function companyWorkWhere(userId: string) {
+  return and(
+    inArray(tasks.type, ['discover', 'scan_company', 'reevaluate_gate', 'import_posting']),
+    inArray(tasks.status, ['queued', 'running']),
+    sql`coalesce(${tasks.payload}->>'logoOnly', 'false') <> 'true'`,
+    // An import is one account's: another follower's paste must not spin this one's page. The
+    // followed companies are one uncorrelated list, read once and hashed, rather than a probe of
+    // the account's subscriptions for every queued task of the daily run.
+    sql`((${tasks.type} = 'reevaluate_gate' and coalesce(${tasks.payload}->>'userId', ${userId}) = ${userId})
+      or (${tasks.type} = 'import_posting' and ${tasks.payload}->>'userId' = ${userId})
+      or (${tasks.type} <> 'import_posting'
+          and ${tasks.payload}->>'companyId' in (select s.company_id::text from company_subscriptions s where s.user_id = ${userId})))`,
+  );
+}
+
+/**
+ * The companies pages' reading of that work: they show whether discovery is queued or running, so
+ * the version moves with each task's status. Exported apart from the memoised reader so a test can
+ * read its plan.
+ */
+export function companyWorkQuery(userId: string) {
+  const entry = sql`${tasks.id}::text || ${tasks.status}`;
   return db().select({ n: sql<number>`count(*)::int`, version: sql<string>`md5(coalesce(string_agg(${entry}, ',' order by ${tasks.id}), ''))` })
-    .from(tasks).where(and(
-      inArray(tasks.type, ['discover', 'scan_company', 'reevaluate_gate', 'import_posting']),
-      inArray(tasks.status, ['queued', 'running']),
-      sql`coalesce(${tasks.payload}->>'logoOnly', 'false') <> 'true'`,
-      // An import is one account's: another follower's paste must not spin this one's page. The
-      // followed companies are one uncorrelated list, read once and hashed, rather than a probe of
-      // the account's subscriptions for every queued task of the daily run.
-      sql`((${tasks.type} = 'reevaluate_gate' and coalesce(${tasks.payload}->>'userId', ${userId}) = ${userId})
-        or (${tasks.type} = 'import_posting' and ${tasks.payload}->>'userId' = ${userId})
-        or (${tasks.type} <> 'import_posting'
-            and ${tasks.payload}->>'companyId' in (select s.company_id::text from company_subscriptions s where s.user_id = ${userId})))`,
-    ));
+    .from(tasks).where(companyWorkWhere(userId));
 }
 
 /** Once per request, however many components ask. */
@@ -37,12 +42,42 @@ export const getCompanyWorkStatus = cache(async function getCompanyWorkStatus(us
 });
 
 /**
- * The same work as the Roles page watches it: pending exactly when `getCompanyWorkStatus` is, with a
- * version that moves only when a task is added or finishes (`companyWorkQuery`'s `ids` token).
+ * The Roles page's reading, in one statement: pending exactly when `getCompanyWorkStatus` is, with a
+ * version that is a fingerprint of what the page shows rather than of the work behind it. A scan
+ * that finds nothing new for this account leaves it alone, so an open tab is not re-rendered for it;
+ * one that admits, changes, scores, closes or reopens a role in the account's table moves it.
+ *
+ * Every column the table renders, and how a change to it is seen here:
+ * - the account's views (gate, archive, fit): `user_jobs.updated_at`, and the count for one added;
+ * - a blank score's reason ("scoring…", "budget spent"): `user_jobs.score_state_at`, which moves
+ *   with the state where `updated_at` does not;
+ * - the posting's own fields and description: `jobs.updated_at`;
+ * - closing and reopening, which a scan writes without touching `updated_at`: the closed count;
+ * - decisions and undos (tab membership, the decided line): the active decisions' count and newest;
+ * - the suggestions strip above the table: the pending suggestions' count and newest.
+ * Each part reads only this account's rows, so another account's work never moves it.
  */
+export function rolesWorkQuery(userId: string) {
+  const pending = db().select({ one: sql`1` }).from(tasks).where(companyWorkWhere(userId)).limit(1);
+  return db().execute<{ active: boolean; version: string }>(sql`
+    select exists (${pending}) as active,
+      md5(concat_ws(':', t.n, t.closed, t.views_at, t.scores_at, t.postings_at, d.n, d.newest, s.n, s.newest)) as version
+    from (
+      select count(*) as n, count(*) filter (where j.status = 'closed') as closed,
+        max(uj.updated_at) as views_at, max(uj.score_state_at) as scores_at, max(j.updated_at) as postings_at
+      from user_jobs uj join jobs j on j.id = uj.job_id
+      where uj.user_id = ${userId}::uuid
+    ) t,
+    (select count(*) as n, max(created_at) as newest from decisions where user_id = ${userId}::uuid and not superseded) d,
+    (select count(*) as n, max(created_at) as newest from filter_suggestions
+      where user_id = ${userId}::uuid and status = 'pending' and type <> 'hide_threshold') s`);
+}
+
+/** Once per request: the Roles page's notice and the poll it starts read the same thing. */
 export const getRolesWorkStatus = cache(async function getRolesWorkStatus(userId: string) {
-  const [row] = await companyWorkQuery(userId, "ids");
-  return { active: (row?.n ?? 0) > 0, version: row?.version ?? "" };
+  const result = await rolesWorkQuery(userId);
+  const row = result.rows[0];
+  return { active: !!row?.active, version: row?.version ?? "" };
 });
 
 /**

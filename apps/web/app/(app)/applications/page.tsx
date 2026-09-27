@@ -2,7 +2,7 @@ import { Fragment } from "react";
 import Link from "next/link";
 import { z } from "zod";
 import { ROLE_STAGES, ROLE_STAGE_DESCRIPTIONS, ROLE_STAGE_LABELS, type RoleStage } from "@ava/core";
-import { ApplicationsTable } from "@/components/ApplicationsTable";
+import { ApplicationsTable, type PipelineCvQuotes } from "@/components/ApplicationsTable";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { getCvWorkStatus } from "@/lib/work-status";
 import { EmptyState } from "@/components/EmptyState";
@@ -37,6 +37,17 @@ const EMPTY: Record<string, { title: string; description?: string }> = {
   all: { title: "Nothing in progress", description: "Shortlist a role from Roles to start." },
 };
 
+/** Each row's price as the sentence the CV section shows, and the refusal when the budget will not admit it. */
+async function pricedQuotes(userId: string, rows: Parameters<typeof pipelineCvQuotes>[1]): Promise<PipelineCvQuotes> {
+  // The price is advice beside the button; the build action applies the budget itself. A pricing
+  // read that fails leaves the buttons unpriced rather than failing an open row after the fact.
+  const quotes = await pipelineCvQuotes(userId, rows).catch((error: unknown) => {
+    console.error(JSON.stringify({ event: "cv_quotes_failed", message: error instanceof Error ? error.message : String(error) }));
+    return {} as Awaited<ReturnType<typeof pipelineCvQuotes>>;
+  });
+  return Object.fromEntries(Object.entries(quotes).map(([jobId, quote]) => [jobId, { line: cvQuoteLine(quote), refusal: quote.refusal }]));
+}
+
 export default async function ApplicationsPage({
   searchParams,
 }: {
@@ -58,16 +69,11 @@ export default async function ApplicationsPage({
   // What a build would cost, for the rows on this page, so the price is beside the button rather
   // than in the build log of a CV that has already been paid for. The figures are turned into
   // their sentences here: the table is a client component and the pricing is a database read.
-  // An account that has still to confirm its address cannot build anything, so nothing is priced.
+  // The read is not awaited: the table renders at once and the prices stream in behind it, into
+  // the CV section of an open row, which is the only place they are shown. An account that has
+  // still to confirm its address cannot build anything, so nothing is priced.
   const unverified = needsEmailConfirmation(user);
-  const quotes = unverified
-    ? {}
-    : Object.fromEntries(
-        Object.entries(await pipelineCvQuotes(user.id, result.rows)).map(([jobId, quote]) => [
-          jobId,
-          { line: cvQuoteLine(quote), refusal: quote.refusal },
-        ]),
-      );
+  const quotes = unverified ? {} : pricedQuotes(user.id, result.rows);
   // The two lines a row can carry under its stage, worked out here so the table shows the words
   // the server computed rather than deriving them again against the viewer's clock. A next step
   // the person wrote answers "what do I owe" better than silence does, so it wins over the hint.

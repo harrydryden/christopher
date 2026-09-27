@@ -5,7 +5,7 @@
  */
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
-import { createDb, poolErrorCount, poolStats, serverTimeouts, type SlowQuery } from "./client";
+import { createDb, namedStatementsFor, poolErrorCount, poolStats, serverTimeouts, timeRoundTrip, type SlowQuery } from "./client";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
 // A second pool plays the operator (or the failover) that ends the first pool's connections.
@@ -165,5 +165,104 @@ describe("the endpoint a serverless deployment connects to", () => {
     const line = writes.mock.calls.map(([text]) => String(text)).find(text => text.includes("database_direct_endpoint"))!;
     expect(line).toContain("6432");
     expect(line).not.toContain("u:p@");
+  });
+});
+
+describe("idle connections", () => {
+  it("are closed after 30 seconds unless the caller keeps them longer, and are kept alive at the socket", async () => {
+    const plain = createDb("postgres://u:p@127.0.0.1:5432/ava");
+    const kept = createDb("postgres://u:p@dpg-example-a.frankfurt-postgres.render.com:6432/ava", { idleTimeoutMillis: 120_000 });
+    try {
+      expect(plain.pool.options).toMatchObject({ idleTimeoutMillis: 30_000, keepAlive: true, connectionTimeoutMillis: 10_000 });
+      expect(kept.pool.options).toMatchObject({ idleTimeoutMillis: 120_000, keepAlive: true, connectionTimeoutMillis: 10_000 });
+      // A longer idle time is not a startup parameter: PgBouncer on 6432 still receives none of the timeouts.
+      expect(kept.pool.options).not.toHaveProperty("statement_timeout");
+      expect(kept.pool.options).not.toHaveProperty("idle_in_transaction_session_timeout");
+    } finally {
+      await Promise.all([plain.pool.end(), kept.pool.end()]);
+    }
+  });
+
+  it("really are closed once the idle time has passed", async () => {
+    const { db, pool } = createDb(DATABASE_URL, { max: 1, idleTimeoutMillis: 200 });
+    try {
+      await db.execute(sql`select 1`);
+      expect(pool.totalCount).toBe(1);
+      await vi.waitFor(() => expect(pool.totalCount).toBe(0), { timeout: 3_000 });
+    } finally {
+      await pool.end();
+    }
+  });
+});
+
+describe("the round trip to the database", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it("is one select 1 on an open connection, timed to a tenth of a millisecond", async () => {
+    const ticks = [1_000, 1_004.26];
+    const queries: string[] = [];
+    const ms = await timeRoundTrip({ query: async (text: string) => { queries.push(text); } }, () => ticks.shift()!);
+    expect(ms).toBe(4.3);
+    expect(queries).toEqual(["select 1"]);
+  });
+
+  it("is logged once per process, after the first query of a pool that asks, and never carries the address", async () => {
+    const writes = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const lines = () => writes.mock.calls.map(([line]) => String(line)).filter(line => line.includes("database_round_trip"));
+    const quiet = createDb(DATABASE_URL, { max: 1 });
+    const first = createDb(DATABASE_URL, { max: 2, reportRoundTrip: true });
+    const second = createDb(DATABASE_URL, { max: 1, reportRoundTrip: true });
+    try {
+      await quiet.db.execute(sql`select 1`);
+      expect(lines()).toHaveLength(0);
+      // Measured once the first query has handed its connection back, never in front of it.
+      await first.db.execute(sql`select 1`);
+      await vi.waitFor(() => expect(lines()).toHaveLength(1));
+      const logged = JSON.parse(lines()[0]!);
+      expect(logged).toMatchObject({ level: "info", event: "database_round_trip", endpoint: "other", ms: expect.any(Number) });
+      expect(logged.samplesMs).toHaveLength(3);
+      expect(logged.ms).toBe(Math.min(...logged.samplesMs));
+      expect(logged.ms).toBeGreaterThanOrEqual(0);
+      expect(lines()[0]).not.toContain("postgres:postgres@");
+      // A second connection, or a second pool, in the same process adds nothing.
+      await Promise.all([first.db.execute(sql`select pg_sleep(0.05)`), first.db.execute(sql`select pg_sleep(0.05)`)]);
+      await second.db.execute(sql`select 1`);
+      expect(first.pool.totalCount).toBe(2);
+      expect(lines()).toHaveLength(1);
+    } finally {
+      writes.mockRestore();
+      await Promise.all([quiet.pool.end(), first.pool.end(), second.pool.end()]);
+    }
+  });
+});
+
+describe("named statements", () => {
+  /** How many statements named `named_statement_probe` the pool's one connection holds after running one. */
+  const namedOnConnection = async (namedStatements?: boolean) => {
+    const { db, pool } = createDb(DATABASE_URL, { max: 1, ...(namedStatements === undefined ? {} : { namedStatements }) });
+    try {
+      await db.select({ one: sql<number>`1` }).from(sql`(select 1) as t`).prepare("named_statement_probe").execute();
+      const { rows } = await db.execute<{ n: number }>(sql`select count(*)::int as n from pg_prepared_statements where name = 'named_statement_probe'`);
+      return rows[0]!.n;
+    } finally {
+      await pool.end();
+    }
+  };
+
+  it("are prepared on a direct connection, once per connection", async () => {
+    expect(await namedOnConnection()).toBe(1);
+  });
+
+  it("are sent unnamed when the pool says so: a transaction pooler loses them between transactions", async () => {
+    expect(await namedOnConnection(false)).toBe(0);
+  });
+
+  it("are off by default on a transaction pooler's URL: Render's 6432, or a host named as a pooler", () => {
+    expect(namedStatementsFor("postgres://u:p@dpg-abc.frankfurt-postgres.render.com:6432/db")).toBe(false);
+    expect(namedStatementsFor("postgres://u:p@dpg-abc.frankfurt-postgres.render.com/db?port=6432")).toBe(false);
+    expect(namedStatementsFor("postgres://u:p@ep-cool-name-pooler.eu-central-1.aws.neon.tech/db")).toBe(false);
+    expect(namedStatementsFor("postgres://u:p@dpg-abc.frankfurt-postgres.render.com:5432/db")).toBe(true);
+    expect(namedStatementsFor("postgres://u:p@dpg-abc-a:5432/db")).toBe(true);
+    expect(namedStatementsFor(DATABASE_URL)).toBe(true);
   });
 });

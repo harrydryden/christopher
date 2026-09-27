@@ -31,43 +31,57 @@ export function LibraryEvidencePoller({ version, signature }: { version: number;
     let wait = FIRST_MS;
     let timer: ReturnType<typeof setTimeout>;
     let controller: AbortController | undefined;
-    const until = Date.now() + CEILING_MS;
+    let until = Date.now() + CEILING_MS;
+    // When a tick found the tab hidden and stopped, as `AutoRefresh` parks: the ceiling is ten
+    // minutes of someone looking, so the time away is given back and the tab is asked at once on
+    // return, rather than a score that landed while the tab was away never reaching the page.
+    let parkedAt: number | null = null;
 
     async function poll() {
       if (cancelled) return;
-      if (document.visibilityState === "visible") {
-        controller = new AbortController();
-        const timeout = setTimeout(() => controller?.abort(), 8000);
-        try {
-          const response = await fetch(`/api/cv/library/reviews?version=${version}`, {
-            cache: "no-store",
-            signal: controller.signal,
-          });
-          if (!response.ok) throw new Error("Reviews unavailable");
-          const result = (await response.json()) as { signature: string };
-          if (cancelled) return;
-          if (result.signature !== current) {
-            current = result.signature;
-            wait = FIRST_MS;
-            startTransition(() => router.refresh());
-          } else {
-            wait = Math.min(LONGEST_MS, Math.round(wait * 1.5));
-          }
-        } catch {
-          /* A refused or dropped poll is not news; wait a little longer and ask again. */
+      if (document.visibilityState !== "visible") {
+        parkedAt = Date.now();
+        return;
+      }
+      controller = new AbortController();
+      const timeout = setTimeout(() => controller?.abort(), 8000);
+      try {
+        const response = await fetch(`/api/cv/library/reviews?version=${version}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("Reviews unavailable");
+        const result = (await response.json()) as { signature: string };
+        if (cancelled) return;
+        if (result.signature !== current) {
+          current = result.signature;
+          wait = FIRST_MS;
+          startTransition(() => router.refresh());
+        } else {
           wait = Math.min(LONGEST_MS, Math.round(wait * 1.5));
-        } finally {
-          clearTimeout(timeout);
         }
+      } catch {
+        /* A refused or dropped poll is not news; wait a little longer and ask again. */
+        wait = Math.min(LONGEST_MS, Math.round(wait * 1.5));
+      } finally {
+        clearTimeout(timeout);
       }
       if (!cancelled && Date.now() < until) timer = setTimeout(poll, wait);
     }
+    function onVisibility() {
+      if (parkedAt === null || document.visibilityState !== "visible") return;
+      until += Date.now() - parkedAt;
+      parkedAt = null;
+      void poll();
+    }
 
+    document.addEventListener("visibilitychange", onVisibility);
     timer = setTimeout(poll, FIRST_MS);
     return () => {
       cancelled = true;
       clearTimeout(timer);
       controller?.abort();
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [router, version, signature]);
   return null;

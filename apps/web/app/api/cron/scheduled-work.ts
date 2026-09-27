@@ -74,7 +74,9 @@ export async function runScheduledWork(options: ScheduledWorkOptions) {
         timedOut = true;
         break;
       }
-      const task = await claimTask(deps.db, workerId, "all", FALLBACK_EXCLUDED_TYPES);
+      // In batch scoring mode a queued role waits for the batch collector here too.
+      const batchScoring = (await deps.settings()).scoringMode === "batch";
+      const task = await claimTask(deps.db, workerId, "all", FALLBACK_EXCLUDED_TYPES, { batchScoring });
       if (!task) break;
       // The task's own deadline is a ceiling for a stuck handler, and most are longer than the whole
       // invocation. Capped at the time left, the queue cuts the task off itself before the platform

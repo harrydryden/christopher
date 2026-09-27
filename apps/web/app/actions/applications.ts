@@ -7,7 +7,7 @@ import { APPLICATION_STATUSES, APPLICATION_STATUS_LABELS, CvContentSchema, appli
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { isRecordableDay, todayDay } from "@/lib/application-dates";
-import { renderCvPdf } from "@/lib/cv-pdf";
+import { cvPdfFor } from "@/lib/cv-pdf-store";
 import { lockRoleView, recordDecision } from "@/lib/decisions";
 import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
 import { revalidatePath } from "next/cache";
@@ -243,7 +243,7 @@ export async function setRoleStage(jobId: string, _prev: ActionResult, form: For
  * own rule, still finalisable. The reviewer's words about what is missing are written for the
  * person reading them.
  */
-function assertRecordable(draft: typeof cvDrafts.$inferSelect | undefined) {
+function assertRecordable<T extends Pick<typeof cvDrafts.$inferSelect, "status" | "content" | "finalisedAt" | "assessment" | "jobDescription" | "librarySnapshot">>(draft: T | undefined) {
   if (!draft || draft.status !== "ready" || !draft.content) throw new UserFacingError("Choose a completed, saved CV.");
   if (!draft.finalisedAt) throw new UserFacingError("Review the assessment and finalise this CV before recording an application.");
   const recordable = { ...draft, content: draft.content };
@@ -274,9 +274,18 @@ export async function recordApplication(cvId: string, _prev: ActionResult, form:
     // Rendering is CPU-bound and can take seconds, so it happens before the transaction opens,
     // from a read of the draft; the transaction then re-reads it under lock and writes only if it
     // is still the revision that was rendered.
-    const [rendered] = await db().select().from(cvDrafts).where(and(eq(cvDrafts.id, cvId), eq(cvDrafts.userId, user.id)));
+    // Only what the check, the render and the comparison under lock read.
+    const [rendered] = await db()
+      .select({ status: cvDrafts.status, content: cvDrafts.content, finalisedAt: cvDrafts.finalisedAt, assessment: cvDrafts.assessment, jobDescription: cvDrafts.jobDescription, librarySnapshot: cvDrafts.librarySnapshot })
+      .from(cvDrafts).where(and(eq(cvDrafts.id, cvId), eq(cvDrafts.userId, user.id)));
     if (!rendered) throw new UserFacingError("Choose a completed, saved CV.");
-    const pdf = await renderCvPdf(CvContentSchema.parse(assertRecordable(rendered).content));
+    // The bytes finalising kept, when they were drawn from exactly this content; otherwise a render,
+    // with pdfkit loaded only now. The comparison under the lock below holds either way.
+    const recordable = assertRecordable(rendered);
+    const { pdf } = await cvPdfFor(user.id, cvId, recordable.content, async (content) => {
+      const { renderCvPdf } = await import("@/lib/cv-pdf");
+      return renderCvPdf(CvContentSchema.parse(content));
+    });
     await db().transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`application:${cvId}`}))`);
       // Only a row that already stores the submitted bytes is a duplicate; a row with a stage on

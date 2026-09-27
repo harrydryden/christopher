@@ -2,7 +2,6 @@
 import { CvSelectionSchema } from "@/lib/cv-management-input";
 import { cvImprovementOwner } from "@ava/core/cv-assessment";
 import { assertCvFinalisable } from "@ava/core/cv-review";
-import { renderCvPdf } from "@/lib/cv-pdf";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
@@ -17,6 +16,7 @@ import { enqueueLibraryReview, latestLibrary, writeCvLibraryVersion, type Tx } f
 import { assertCvBuildCapacity, lockCvBuildCapacity } from "@/lib/cv-build-capacity";
 import { lockRoleView } from "@/lib/decisions";
 import { cvBuildQuote } from "@/lib/cv-quote";
+import { cvPdfContentHash, storeCvPdf } from "@/lib/cv-pdf-store";
 import { db } from "@/lib/db";
 import { userSettings as userSettingsTable } from "@ava/db/schema";
 import { getSettings, getSettingsFor, setUserSetting } from "@/lib/settings";
@@ -776,7 +776,7 @@ export async function finaliseCvDraft(
         "Review the score, evidence gaps and factual wording before finalising.",
       );
     /** The revision as it can be finalised, or the sentence that says why it cannot. */
-    const finalisable = (draft: typeof cvDrafts.$inferSelect | undefined) => {
+    const finalisable = <T extends Pick<typeof cvDrafts.$inferSelect, "status" | "content" | "assessment" | "jobDescription" | "librarySnapshot">>(draft: T | undefined) => {
       if (!draft?.content || draft.status !== "ready")
         throw new UserFacingError("Wait for this revision’s assessment to finish.");
       // What the reviewer found missing is written for the person reading it.
@@ -787,14 +787,20 @@ export async function finaliseCvDraft(
       }
       return { ...draft, content: draft.content };
     };
+    // Only what the check and the render read: the build checkpoint, gap quiz and the rest of the
+    // row stay in the database. The locked re-read below is the whole row.
     const [read] = await db()
-      .select()
+      .select({ status: cvDrafts.status, content: cvDrafts.content, assessment: cvDrafts.assessment, jobDescription: cvDrafts.jobDescription, librarySnapshot: cvDrafts.librarySnapshot })
       .from(cvDrafts)
       .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, user.id)));
     const checked = finalisable(read);
     // The render proves the revision lays out; it is seconds of work for a long CV, so it runs
     // before the transaction rather than holding the draft's row lock and a pooled connection.
-    await renderCvPdf(checked.content);
+    // pdfkit is loaded here, by the action that renders, not by every page that imports this module.
+    // The content is parsed as the download parses it, so the bytes kept below are the bytes a
+    // download would have rendered.
+    const { renderCvPdf } = await import("@/lib/cv-pdf");
+    const pdf = await renderCvPdf(CvContentSchema.parse(checked.content));
     await db().transaction(async (tx) => {
       const [draft] = await tx
         .select()
@@ -812,6 +818,10 @@ export async function finaliseCvDraft(
           .set({ finalisedAt: new Date() })
           .where(eq(cvDrafts.id, id));
     });
+    // Kept under the hash of what was rendered, which the transaction has just confirmed is still
+    // the revision: the download serves these bytes instead of rendering again. Outside the
+    // transaction, and a failure to keep them only costs the download a render.
+    await storeCvPdf(user.id, id, cvPdfContentHash(checked.content), pdf);
   } catch (error) {
     return actionError(error, "Could not finalise the CV. Please try again.");
   }

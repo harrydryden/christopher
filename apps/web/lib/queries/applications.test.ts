@@ -171,8 +171,26 @@ it("orders by how far a role has got, then by what moved last, and pages at fift
   const keys = [...first.rows, ...second.rows].map((row) => row.key);
   expect(new Set(keys).size).toBe(52);
   expect(second.counts).toEqual({ active: 52, closed: 0, all: 52 });
-  // A page beyond the end clamps rather than showing nothing.
-  expect((await listPipeline(user.id, { page: "99" })).page).toBe(2);
+  // A page beyond the end clamps rather than showing nothing: the last page, with its rows.
+  const beyond = await listPipeline(user.id, { page: "99" });
+  expect(beyond.page).toBe(2);
+  expect(beyond.rows.map((row) => row.key)).toEqual(second.rows.map((row) => row.key));
+});
+
+it("counts the stages and pages the index in one statement, evaluating it once", async () => {
+  const { job } = await role("Head of Delivery");
+  await shortlist(job.id);
+  await record(null, "applied", { jobTitle: "Legacy role" });
+  const execute = vi.spyOn(database, "execute");
+  try {
+    const page = await listPipeline(user.id, { filter: "all" });
+    expect(page.counts).toEqual({ active: 2, closed: 0, all: 2 });
+    expect(page.rows.map((row) => row.jobTitle)).toEqual(["Head of Delivery", "Legacy role"]);
+    // Counts and keys together: one raw statement before hydration, where there were two.
+    expect(execute).toHaveBeenCalledTimes(1);
+  } finally {
+    execute.mockRestore();
+  }
 });
 
 it("counts every stage for this account, in SQL, and never counts a matched role", async () => {

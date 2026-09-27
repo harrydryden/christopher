@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, startTransition, useEffect, useMemo, useRef, useState } from "react";
+import { memo, startTransition, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { decide, decideRoles, archiveRoles, roleDetails } from "@/app/actions/decisions";
 import { requestCv } from "@/app/actions/cv";
@@ -11,7 +11,7 @@ import { Button, buttonClass } from "@/components/Button";
 import { Monogram } from "@/components/brand/Monogram";
 import { SafeMarkdown } from "@/components/SafeMarkdown";
 import { SettingsForm } from "@/components/SettingsForm";
-import type { RoleDetailsVM, RoleRowVM, SortDir, SortKey } from "@/lib/queries/jobs";
+import type { RoleCompaniesVM, RoleCompanyVM, RoleDetailsVM, RoleRowVM, SortDir, SortKey } from "@/lib/queries/jobs";
 import { missingDecisionReason } from "@/lib/decision-reason";
 import { reportRoleRefusal } from "@/lib/role-refusals";
 
@@ -56,6 +56,17 @@ function movedOn(row: RoleRowVM): boolean {
 function applicationLabel(row: RoleRowVM): string {
   return roleStageRank(row.stage) >= roleStageRank("applying") ? "Open application" : "Build CV";
 }
+
+/** What a row's live-for figure counts from, for its `title`: the server sends only which basis. */
+function liveForTitle(row: RoleRowVM): string {
+  const counted = row.liveForBasis === "first_seen"
+    ? "Counted from when this tool first saw the role; the source publishes no posted date."
+    : "Counted from the date the source published for this role.";
+  return row.seeded ? `${counted} (seeded on first scan)` : counted;
+}
+
+/** Drawn for a company the page's map does not hold: a blank icon and no website link. */
+const unknownCompany: RoleCompanyVM = { iconSrc: null, domain: "", homepageUrl: "" };
 
 /** What the score says, for the `title` on the bar: the verdict, then the rationale behind it. */
 function fitTitle(row: RoleRowVM): string | undefined {
@@ -105,12 +116,21 @@ function BuildCvOffer({ jobId, details }: { jobId: string; details: RoleDetailsV
   );
 }
 
+/**
+ * The reason box as the table holds it: which row, which way, and whether it is being saved. The
+ * text is not here: `ReasonBox` owns it, so a keystroke renders the box and nothing else. `prefill`
+ * is what the box opens with, and `opened` tells one opening from the next, so a box opened again
+ * (or put back after a refusal, with the text that was sent) starts from its own `prefill`.
+ */
 interface ReasonBoxState {
   jobId: string;
   kind: ReasonKind;
-  text: string;
+  prefill: string;
   pending: boolean;
   error: string | null;
+  opened: number;
+  /** Take the focus when it opens: yes when a person opened it, no when a refusal put it back. */
+  focus: boolean;
 }
 
 /** A column head that sorts (R-7.1). The link carries the filters in hand, so sorting keeps them. */
@@ -130,8 +150,273 @@ function SortTH({ label, sortKey, links, sort, dir, className = "" }: {
   );
 }
 
-export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = false, archived = false, emptyState, sortLinks, sort, dir }: {
+/**
+ * What a row can ask the table to do. One object for the table's lifetime whose methods call the
+ * table's current handlers through a ref, so a memoised row never holds a stale handler and never
+ * re-renders because a handler was re-created.
+ */
+interface RowActions {
+  toggleExpanded(jobId: string): void;
+  toggleSelected(jobId: string): void;
+  openReasonBox(jobId: string, kind: ReasonKind, prefill?: string): void;
+  submitDecision(jobId: string, decision: ReasonKind | null, reason: string): void;
+  archiveRow(jobId: string): void;
+  setBoxKind(jobId: string, kind: ReasonKind): void;
+  closeBox(): void;
+  toggleDescription(): void;
+}
+
+/**
+ * The reason box for one row: it owns what is typed, so typing renders only this box. Enter saves
+ * (R-7.2) with the text in hand; Shift+Enter is a new line; Escape closes.
+ */
+function ReasonBox({ jobId, box, busy, actions }: { jobId: string; box: ReasonBoxState; busy: boolean; actions: RowActions }) {
+  const [text, setText] = useState(box.prefill);
+  const field = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => { if (box.focus) field.current?.focus(); }, [box.focus]);
+  const save = () => { if (!box.pending && !busy) actions.submitDecision(jobId, box.kind, text); };
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex gap-2">
+        <Button size="sm" variant={box.kind === "apply" ? "primary" : "secondary"} aria-pressed={box.kind === "apply"}
+          disabled={box.pending || busy} onClick={() => actions.setBoxKind(jobId, "apply")}>
+          Shortlist
+        </Button>
+        <Button size="sm" variant={box.kind === "skip" ? "primary" : "secondary"} aria-pressed={box.kind === "skip"}
+          disabled={box.pending || busy} onClick={() => actions.setBoxKind(jobId, "skip")}>
+          Dismiss
+        </Button>
+      </div>
+      {box.kind === "skip" && <div className="flex flex-wrap gap-2">
+        {["Wrong location", "Wrong seniority", "Not interested"].map(reason => <Button key={reason} size="sm" variant="ghost" disabled={box.pending}
+          onClick={() => setText(reason)}>{reason}</Button>)}
+      </div>}
+      <textarea disabled={box.pending}
+        ref={field}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.stopPropagation();
+            actions.closeBox();
+            e.currentTarget.blur();
+          } else if (e.key === "Enter" && !e.shiftKey) {
+            // R-7.2: enter saves. Shift+Enter is still a new line, and an empty
+            // box on a shortlist saves the decision without a reason.
+            e.preventDefault();
+            save();
+          }
+        }}
+        placeholder={box.kind === "skip" ? "Why not? (required)" : APPLY_REASON_HINT}
+        rows={box.kind === "skip" ? 2 : 1}
+        className="w-full resize-y border-2 border-line-muted bg-bg px-2 py-1 font-mono text-12 text-fg placeholder:text-faint focus:border-line focus:outline-none"
+      />
+      {box.error && <p className="text-12 text-danger">{box.error}</p>}
+      <div className="flex gap-2">
+        <Button size="sm" variant="primary" disabled={box.pending || busy} onClick={save}>
+          {box.pending || busy ? "Saving…" : "Save"}
+        </Button>
+        <Button size="sm" variant="ghost" disabled={box.pending} onClick={() => actions.closeBox()}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+interface RoleRowProps {
+  row: RoleRowVM;
+  company: RoleCompanyVM;
+  highlighted: boolean;
+  selected: boolean;
+  /** A write for this row is out: its actions wait. */
+  busy: boolean;
+  expanded: boolean;
+  detail: DetailState | undefined;
+  /** This row's reason box, or null when the box (if any) is another row's. */
+  boxed: ReasonBoxState | null;
+  /** The open panel's description is expanded; always false for a closed row. */
+  descriptionOpen: boolean;
+  hideCompany: boolean;
+  archived: boolean;
+  groupBusy: boolean;
+  /** Some row's reason box is being saved: every row's actions wait. */
+  boxPending: boolean;
+  archivingThis: boolean;
+  archivingAny: boolean;
+  actions: RowActions;
+}
+
+/**
+ * One role: its line in the table and, when open, its review panel. Memoised on primitives and
+ * stable references, so a keystroke, a `j`/`k` press or a selection renders only the rows it changes.
+ */
+const RoleRow = memo(function RoleRow({ row, company, highlighted, selected, busy, expanded, detail, boxed, descriptionOpen, hideCompany, archived, groupBusy, boxPending, archivingThis, archivingAny, actions }: RoleRowProps) {
+  // The build replaces the link only once its price is in hand: a panel that is still
+  // loading, or that could not load, keeps the link rather than offering nothing.
+  const buildHere = row.stage === "shortlisted" && detail?.state === "ready";
+  return (
+    <>
+      <TR highlighted={highlighted} className={selected ? "bg-sunken" : ""}>
+        <TD>
+          <input
+            type="checkbox"
+            className="h-4 w-4 m-0 mt-0.5 align-middle"
+            aria-label={`Select ${row.title}${hideCompany ? "" : ` at ${row.companyName}`}`}
+            aria-checked={selected}
+            checked={selected}
+            disabled={groupBusy}
+            onChange={() => actions.toggleSelected(row.id)}
+          />
+        </TD>
+        {!hideCompany && <TD>
+          <Link prefetch={false} href={`/companies/${row.companyId}`} className="flex items-center gap-1.5 no-underline hover:underline">
+            {/* The same icon the company page shows: the captured logo when there is one,
+                and the browser's own chain behind it. A bare <img> here is why Hims had a
+                logo on its company page and a blank square on its roles. */}
+            <CompanyFavicon src={company.iconSrc} domain={company.domain} size={14} />
+            <span className="max-w-[12rem] truncate">{row.companyName}</span>
+          </Link>
+        </TD>}
+        <TD id={`role-row-${row.id}`} className="max-w-[22rem]">
+          <span className="flex flex-wrap items-center gap-2">
+            <button type="button" disabled={boxPending} onClick={() => actions.toggleExpanded(row.id)} aria-expanded={expanded} className="text-left font-semibold text-fg hover:underline">
+              {row.title}
+            </button>
+            {row.addedByYou && <Badge tone="neutral">Added by you</Badge>}
+            {/* Where a shortlisted role has got to, on the row rather than only inside it. */}
+            {movedOn(row) && <Badge tone={stageTone(row.stage)} title={ROLE_STAGE_DESCRIPTIONS[row.stage]}>{stageLabel(row)}</Badge>}
+          </span>
+          <p className="mt-1 text-12 text-muted"><span title={liveForTitle(row)}>{row.liveForText}</span>{row.status === "closed" && <span className="ml-2 text-warn">Vacancy closed</span>}</p>
+        </TD>
+        <TD className="max-w-[10rem]">
+          <div className="flex flex-wrap items-center gap-1">
+            <span>{row.locations.length ? row.locations.join(", ") : row.location}</span>
+            {row.remote && <Badge tone="blue">Remote</Badge>}
+            {!row.location && row.locations.length === 0 && !row.remote && <span className="text-muted">—</span>}
+          </div>
+        </TD>
+        <TD className="whitespace-nowrap">
+          {/* A blank score says which of its five causes it is, rather than one dash. */}
+          <FitBar score={row.fitScore} title={fitTitle(row)} state={row.scoreStateText} />
+        </TD>
+        <TD className="text-right">
+          {row.workflowStatus === "user-shortlisted" ? <Link prefetch={false} href={`/applications?job=${row.id}`} className={buttonClass("secondary", "sm", "whitespace-nowrap no-underline")}>{applicationLabel(row)}</Link>
+          : archived ? <Button size="sm" disabled={archivingAny || boxPending} onClick={() => actions.archiveRow(row.id)}>{archivingThis ? "Restoring…" : "Restore"}</Button>
+          : <Button
+            size="sm"
+            aria-expanded={expanded}
+            aria-controls={`role-review-${row.id}`}
+            aria-label={`${expanded ? "Close review for" : "Review"} ${row.title} at ${row.companyName}`}
+            disabled={boxPending}
+            onClick={() => actions.toggleExpanded(row.id)}
+          >
+            {expanded ? "Close" : row.workflowStatus === "user-dismissed" ? "Reconsider" : "Review"}
+          </Button>}
+        </TD>
+      </TR>
+      {expanded && (
+        <tr id={`role-review-${row.id}`} className="bg-sunken">
+          <td colSpan={hideCompany ? 5 : 6} className="p-4">
+            <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(256px,352px)]">
+              <div className="space-y-3">
+                <p className="text-14 font-semibold text-fg">{row.title}</p>
+                <p className="text-12 text-muted">{[row.department, row.employmentType].filter(Boolean).join(" · ")}</p>
+                {row.salaryText && <p className="text-14 text-fg"><span className="ds-label mr-2">Salary</span>{row.salaryText}</p>}
+                <div>
+                  <h3 className="ds-label mb-1">Why it matched</h3>
+                  {row.keywordTerms.length > 0 && (
+                    <div className="mb-1 flex flex-wrap gap-1.5">
+                      {row.keywordTerms.map(term => <Badge key={term} tone="gray" title="Your keyword">{term}</Badge>)}
+                    </div>
+                  )}
+                  {detail?.state === "ready" && <p className="text-13 text-muted">{detail.details.locationReason}</p>}
+                </div>
+                {(row.fitScore !== null || row.scoreStateText) && (
+                  <div>
+                    <h3 className="ds-label mb-1">Fit</h3>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* The same words as the cell above, beside the verdict rather than instead of it. */}
+                      <FitBar score={row.fitScore} title={fitTitle(row)} state={row.scoreStateText} />
+                      {row.fitVerdict && <Badge tone={fitVerdictTone(row.fitVerdict)}>{FIT_VERDICT_LABELS[row.fitVerdict]}</Badge>}
+                    </div>
+                    {row.fitRationale && <p className="mt-1 max-w-3xl text-14 text-fg">{row.fitRationale}</p>}
+                  </div>
+                )}
+                <div>
+                  <h3 className="ds-label mb-1">Description</h3>
+                  {detail?.state === "loading" && <span className="inline-block text-muted"><Monogram size={16} searching title="Loading the description" /></span>}
+                  {detail?.state === "error" && <p className="text-13 text-danger">{detail.error}</p>}
+                  {detail?.state === "ready" && (detail.details.description?.trim() ? (
+                    <>
+                      <div className={descriptionOpen || detail.details.description.length <= COLLAPSED_DESCRIPTION_CHARS ? "" : "max-h-32 overflow-hidden"}>
+                        {looksMarkdown(detail.details.description)
+                          ? <SafeMarkdown markdown={detail.details.description} className="max-w-3xl" />
+                          : <div className="max-w-3xl space-y-2.5 text-14 leading-relaxed text-fg">
+                              {detail.details.description.split(/\n{2,}/).map((paragraph, i) => <p key={i}>{paragraph.trim()}</p>)}
+                            </div>}
+                      </div>
+                      {detail.details.description.length > COLLAPSED_DESCRIPTION_CHARS && (
+                        <button type="button" onClick={() => actions.toggleDescription()} className="mt-1 text-12 text-muted underline hover:text-fg">
+                          {descriptionOpen ? "Show less" : "Show more"}
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-13 text-muted">No description stored. Open the vacancy.</p>
+                  ))}
+                </div>
+                {detail?.state === "ready" && detail.details.archiveNotes.map((note, i) => <p key={i} className="text-12 text-muted">{note}</p>)}
+                {/* A shortlisted role with no CV yet is built from here; everything else
+                    keeps the link to the application that holds its CV. */}
+                {buildHere && detail?.state === "ready" && <BuildCvOffer jobId={row.id} details={detail.details} />}
+                <div className="flex flex-wrap items-center gap-4 text-12">
+                  {!buildHere && <Link prefetch={false} href={`/applications?job=${row.id}`} className="font-semibold underline">{applicationLabel(row)}</Link>}
+                  <a href={row.url} target="_blank" rel="noopener noreferrer" className="text-muted underline">View vacancy ↗</a>
+                  {company.homepageUrl && <a href={company.homepageUrl} target="_blank" rel="noopener noreferrer" className="text-muted underline">Website ↗</a>}
+                </div>
+              </div>
+              <div className="space-y-3">
+                <h3 className="ds-label">{ROLE_STATUS_LABELS[row.workflowStatus]}</h3>
+                {boxed ? (
+                  <ReasonBox key={boxed.opened} jobId={row.id} box={boxed} busy={busy} actions={actions} />
+                ) : row.decision ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone={decisionTone(row.decision.decision)}>{ROLE_STATUS_LABELS[row.decision.decision === "apply" ? "user-shortlisted" : "user-dismissed"]}</Badge>
+                    {movedOn(row) && <Badge tone={stageTone(row.stage)} title={ROLE_STAGE_DESCRIPTIONS[row.stage]}>{stageLabel(row)}</Badge>}
+                    <span className="text-12 text-muted" title={row.decision.createdTitle}>Decided {row.decision.createdLabel}</span>
+                    {row.decision.reason && <p className="w-full text-14 text-fg">{row.decision.reason}</p>}
+                    <button type="button" disabled={busy} onClick={() => actions.openReasonBox(row.id, row.decision!.decision, row.decision!.reason)} className="text-12 text-muted underline hover:text-fg disabled:opacity-40">
+                      Reconsider
+                    </button>
+                    <button type="button" disabled={busy} onClick={() => actions.submitDecision(row.id, null, "")} className="text-12 text-muted underline hover:text-fg disabled:opacity-40">
+                      Reset
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="primary" disabled={busy} onClick={() => actions.submitDecision(row.id, "apply", "")}>
+                      {busy ? "Saving…" : "Shortlist"}
+                    </Button>
+                    <Button size="sm" disabled={busy} onClick={() => actions.openReasonBox(row.id, "skip")}>
+                      Dismiss
+                    </Button>
+                  </div>
+                )}
+                <button type="button" disabled={archivingAny || boxPending || busy} onClick={() => actions.archiveRow(row.id)} className="mt-2 text-12 text-muted underline disabled:opacity-40">{archivingThis ? "Saving…" : archived ? "Restore" : "Archive"}</button>
+              </div>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+});
+
+export function RolesTable({ rows: inputRows, companies, hideCompany = false, keyboard = false, archived = false, emptyState, sortLinks, sort, dir }: {
   hideCompany?: boolean; archived?: boolean; rows: RoleRowVM[]; keyboard?: boolean; emptyState: React.ReactNode;
+  /** The rows' companies, once each (`buildRoleCompanies` over the same rows). */
+  companies: RoleCompaniesVM;
   /** One href per sortable column, built by the server with the filters in hand. */
   sortLinks?: Partial<Record<SortKey, string>>;
   sort?: SortKey;
@@ -142,7 +427,12 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
   // the page the undo re-renders arrives, drawn from `departed`, the rows as they were when they left.
   const [removedIds, setRemovedIds] = useState<ReadonlySet<string>>(() => new Set());
   const [returning, setReturning] = useState<ReadonlySet<string>>(() => new Set());
-  const departed = useRef(new Map<string, { row: RoleRowVM; index: number }>());
+  const departed = useRef(new Map<string, { row: RoleRowVM; index: number; company: RoleCompanyVM }>());
+  /**
+   * A row's company, from this page's map; a row an undo brought back after the page changed is
+   * drawn with the company it left with, so it never comes back with a blank icon.
+   */
+  const companyOf = (row: RoleRowVM): RoleCompanyVM => companies[row.companyId] ?? departed.current.get(row.id)?.company ?? unknownCompany;
   const returningRef = useRef(returning);
   returningRef.current = returning;
   const rows = useMemo(() => {
@@ -288,7 +578,8 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
   noticeRef.current = notice;
   const reasonBoxRef = useRef(reasonBox);
   reasonBoxRef.current = reasonBox;
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  /** Tells one opening of a reason box from the next, so a re-opened box starts from its prefill. */
+  const boxOpenings = useRef(0);
 
   /** One notice at a time: the newest decision replaces whatever was there. */
   function showNotice(jobId: string, text: string) {
@@ -330,8 +621,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
       setDescriptionOpen(false);
       if (!details[jobId]) loadDetails(jobId);
     }
-    setReasonBox({ jobId, kind, text: prefill, pending: false, error: null });
-    requestAnimationFrame(() => textareaRef.current?.focus());
+    setReasonBox({ jobId, kind, prefill, pending: false, error: null, opened: ++boxOpenings.current, focus: true });
   }
 
   function decidedText(row: RoleRowVM, decision: ReasonKind): string {
@@ -360,7 +650,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
     const leaves = archived || previous?.decision?.decision !== decision;
 
     if (leaves) {
-      if (previous) departed.current.set(jobId, { row: previous, index });
+      if (previous) departed.current.set(jobId, { row: previous, index, company: companyOf(previous) });
       setRemovedIds(ids => withId(ids, jobId));
       setReturning(ids => withoutId(ids, jobId));
       if (box) setReasonBox(null);
@@ -382,7 +672,8 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
       else if (box && reasonBoxRef.current === null) {
         // Back where it was typed, unless another row's box has been opened since.
         setExpandedId(jobId);
-        setReasonBox({ ...box, pending: false, error });
+        // With the text that was sent: the box that held it left with the row.
+        setReasonBox({ ...box, prefill: reason, pending: false, error, opened: ++boxOpenings.current, focus: false });
       } else setFlashError(error);
     };
 
@@ -503,6 +794,22 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
     document.getElementById(`role-row-${row.id}`)?.scrollIntoView({ block: "nearest" });
   }, [highlightIndex]);
 
+  // Every handler a row calls, read through a ref when it is called — so it is always this render's,
+  // closing over this render's rows — behind one object that never changes, so passing it to 50
+  // memoised rows costs none of them a render.
+  const handlers = useRef({ toggleExpanded, toggleSelected, openReasonBox, submitDecision, archiveRow });
+  handlers.current = { toggleExpanded, toggleSelected, openReasonBox, submitDecision, archiveRow };
+  const rowActions = useMemo<RowActions>(() => ({
+    toggleExpanded: (jobId) => handlers.current.toggleExpanded(jobId),
+    toggleSelected: (jobId) => handlers.current.toggleSelected(jobId),
+    openReasonBox: (jobId, kind, prefill) => handlers.current.openReasonBox(jobId, kind, prefill),
+    submitDecision: (jobId, decision, reason) => handlers.current.submitDecision(jobId, decision, reason),
+    archiveRow: (jobId) => handlers.current.archiveRow(jobId),
+    setBoxKind: (jobId, kind) => setReasonBox(box => (box?.jobId === jobId ? { ...box, kind } : box)),
+    closeBox: () => setReasonBox(null),
+    toggleDescription: () => setDescriptionOpen(open => !open),
+  }), []);
+
   const undoNotice = notice && (
     <p role="status" aria-live="polite" className="mt-3 flex flex-wrap items-center gap-3 border-2 border-line-muted px-3 py-1.5 text-13 text-fg">
       <span>{notice.text}</span>
@@ -593,231 +900,27 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
         </THead>
         <TBody>
           {rows.map((row, index) => {
-            const boxed = reasonBox?.jobId === row.id ? reasonBox : null;
-            const busy = writing.has(row.id);
-            const detail = details[row.id];
-            // The build replaces the link only once its price is in hand: a panel that is still
-            // loading, or that could not load, keeps the link rather than offering nothing.
-            const buildHere = row.stage === "shortlisted" && detail?.state === "ready";
+            const expanded = expandedId === row.id;
             return (
-              <Fragment key={row.id}>
-                <TR highlighted={index === highlightIndex} className={selected.has(row.id) ? "bg-sunken" : ""}>
-                  <TD>
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 m-0 mt-0.5 align-middle"
-                      aria-label={`Select ${row.title}${hideCompany ? "" : ` at ${row.companyName}`}`}
-                      aria-checked={selected.has(row.id)}
-                      checked={selected.has(row.id)}
-                      disabled={groupBusy}
-                      onChange={() => toggleSelected(row.id)}
-                    />
-                  </TD>
-                  {!hideCompany && <TD>
-                    <Link prefetch={false} href={`/companies/${row.companyId}`} className="flex items-center gap-1.5 no-underline hover:underline">
-                      {/* The same icon the company page shows: the captured logo when there is one,
-                          and the browser's own chain behind it. A bare <img> here is why Hims had a
-                          logo on its company page and a blank square on its roles. */}
-                      <CompanyFavicon src={row.companyLogoUrl ?? row.companyFaviconUrl} domain={row.companyDomain} size={14} />
-                      <span className="max-w-[12rem] truncate">{row.companyName}</span>
-                    </Link>
-                  </TD>}
-                  <TD id={`role-row-${row.id}`} className="max-w-[22rem]">
-                    <span className="flex flex-wrap items-center gap-2">
-                      <button type="button" disabled={reasonBox?.pending} onClick={() => toggleExpanded(row.id)} aria-expanded={expandedId === row.id} className="text-left font-semibold text-fg hover:underline">
-                        {row.title}
-                      </button>
-                      {row.addedByYou && <Badge tone="neutral">Added by you</Badge>}
-                      {/* Where a shortlisted role has got to, on the row rather than only inside it. */}
-                      {movedOn(row) && <Badge tone={stageTone(row.stage)} title={ROLE_STAGE_DESCRIPTIONS[row.stage]}>{stageLabel(row)}</Badge>}
-                    </span>
-                    <p className="mt-1 text-12 text-muted"><span title={row.liveForTitle}>{row.liveForText}</span>{row.status === "closed" && <span className="ml-2 text-warn">Vacancy closed</span>}</p>
-                  </TD>
-                  <TD className="max-w-[10rem]">
-                    <div className="flex flex-wrap items-center gap-1">
-                      <span>{row.locations.length ? row.locations.join(", ") : row.location}</span>
-                      {row.remote && <Badge tone="blue">Remote</Badge>}
-                      {!row.location && row.locations.length === 0 && !row.remote && <span className="text-muted">—</span>}
-                    </div>
-                  </TD>
-                  <TD className="whitespace-nowrap">
-                    {/* A blank score says which of its five causes it is, rather than one dash. */}
-                    <FitBar score={row.fitScore} title={fitTitle(row)} state={row.scoreStateText} />
-                  </TD>
-                  <TD className="text-right">
-                    {row.workflowStatus === "user-shortlisted" ? <Link prefetch={false} href={`/applications?job=${row.id}`} className={buttonClass("secondary", "sm", "whitespace-nowrap no-underline")}>{applicationLabel(row)}</Link>
-                    : archived ? <Button size="sm" disabled={archivingId !== null || reasonBox?.pending} onClick={() => void archiveRow(row.id)}>{archivingId === row.id ? "Restoring…" : "Restore"}</Button>
-                    : <Button
-                      size="sm"
-                      aria-expanded={expandedId === row.id}
-                      aria-controls={`role-review-${row.id}`}
-                      aria-label={`${expandedId === row.id ? "Close review for" : "Review"} ${row.title} at ${row.companyName}`}
-                      disabled={reasonBox?.pending}
-                      onClick={() => toggleExpanded(row.id)}
-                    >
-                      {expandedId === row.id ? "Close" : row.workflowStatus === "user-dismissed" ? "Reconsider" : "Review"}
-                    </Button>}
-                  </TD>
-                </TR>
-                {expandedId === row.id && (
-                  <tr id={`role-review-${row.id}`} className="bg-sunken">
-                    <td colSpan={hideCompany ? 5 : 6} className="p-4">
-                      <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(256px,352px)]">
-                        <div className="space-y-3">
-                          <p className="text-14 font-semibold text-fg">{row.title}</p>
-                          <p className="text-12 text-muted">{[row.department, row.employmentType].filter(Boolean).join(" · ")}</p>
-                          {row.salaryText && <p className="text-14 text-fg"><span className="ds-label mr-2">Salary</span>{row.salaryText}</p>}
-                          <div>
-                            <h3 className="ds-label mb-1">Why it matched</h3>
-                            {row.keywordTerms.length > 0 && (
-                              <div className="mb-1 flex flex-wrap gap-1.5">
-                                {row.keywordTerms.map(term => <Badge key={term} tone="gray" title="Your keyword">{term}</Badge>)}
-                              </div>
-                            )}
-                            {detail?.state === "ready" && <p className="text-13 text-muted">{detail.details.locationReason}</p>}
-                          </div>
-                          {(row.fitScore !== null || row.scoreStateText) && (
-                            <div>
-                              <h3 className="ds-label mb-1">Fit</h3>
-                              <div className="flex flex-wrap items-center gap-2">
-                                {/* The same words as the cell above, beside the verdict rather than instead of it. */}
-                                <FitBar score={row.fitScore} title={fitTitle(row)} state={row.scoreStateText} />
-                                {row.fitVerdict && <Badge tone={fitVerdictTone(row.fitVerdict)}>{FIT_VERDICT_LABELS[row.fitVerdict]}</Badge>}
-                              </div>
-                              {row.fitRationale && <p className="mt-1 max-w-3xl text-14 text-fg">{row.fitRationale}</p>}
-                            </div>
-                          )}
-                          <div>
-                            <h3 className="ds-label mb-1">Description</h3>
-                            {detail?.state === "loading" && <span className="inline-block text-muted"><Monogram size={16} searching title="Loading the description" /></span>}
-                            {detail?.state === "error" && <p className="text-13 text-danger">{detail.error}</p>}
-                            {detail?.state === "ready" && (detail.details.description?.trim() ? (
-                              <>
-                                <div className={descriptionOpen || detail.details.description.length <= COLLAPSED_DESCRIPTION_CHARS ? "" : "max-h-32 overflow-hidden"}>
-                                  {looksMarkdown(detail.details.description)
-                                    ? <SafeMarkdown markdown={detail.details.description} className="max-w-3xl" />
-                                    : <div className="max-w-3xl space-y-2.5 text-14 leading-relaxed text-fg">
-                                        {detail.details.description.split(/\n{2,}/).map((paragraph, i) => <p key={i}>{paragraph.trim()}</p>)}
-                                      </div>}
-                                </div>
-                                {detail.details.description.length > COLLAPSED_DESCRIPTION_CHARS && (
-                                  <button type="button" onClick={() => setDescriptionOpen(open => !open)} className="mt-1 text-12 text-muted underline hover:text-fg">
-                                    {descriptionOpen ? "Show less" : "Show more"}
-                                  </button>
-                                )}
-                              </>
-                            ) : (
-                              <p className="text-13 text-muted">No description stored. Open the vacancy.</p>
-                            ))}
-                          </div>
-                          {row.events.filter(event => event.label.includes("archiv")).map(event => <p key={event.id} className="text-12 text-muted">{event.label}</p>)}
-                          {/* A shortlisted role with no CV yet is built from here; everything else
-                              keeps the link to the application that holds its CV. */}
-                          {buildHere && detail?.state === "ready" && <BuildCvOffer jobId={row.id} details={detail.details} />}
-                          <div className="flex flex-wrap items-center gap-4 text-12">
-                            {!buildHere && <Link prefetch={false} href={`/applications?job=${row.id}`} className="font-semibold underline">{applicationLabel(row)}</Link>}
-                            <a href={row.url} target="_blank" rel="noopener noreferrer" className="text-muted underline">View vacancy ↗</a>
-                            <a href={row.companyHomepageUrl} target="_blank" rel="noopener noreferrer" className="text-muted underline">Website ↗</a>
-                          </div>
-                        </div>
-                        <div className="space-y-3">
-                          <h3 className="ds-label">{ROLE_STATUS_LABELS[row.workflowStatus]}</h3>
-                    {boxed ? (
-                      <div className="flex flex-col gap-2">
-                        <div className="flex gap-2">
-                          <Button
-                            size="sm"
-                            variant={boxed.kind === "apply" ? "primary" : "secondary"}
-                            aria-pressed={boxed.kind === "apply"}
-                            disabled={boxed.pending || busy} onClick={() => setReasonBox({ ...boxed, kind: "apply" })}
-                          >
-                            Shortlist
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant={boxed.kind === "skip" ? "primary" : "secondary"}
-                            aria-pressed={boxed.kind === "skip"}
-                            disabled={boxed.pending || busy} onClick={() => setReasonBox({ ...boxed, kind: "skip" })}
-                          >
-                            Dismiss
-                          </Button>
-                        </div>
-                        {boxed.kind === "skip" && <div className="flex flex-wrap gap-2">
-                          {["Wrong location", "Wrong seniority", "Not interested"].map(reason => <Button key={reason} size="sm" variant="ghost" disabled={boxed.pending}
-                            onClick={() => setReasonBox({ ...boxed, text: reason })}>{reason}</Button>)}
-                        </div>}
-                        <textarea disabled={boxed.pending}
-                          ref={textareaRef}
-                          value={boxed.text}
-                          onChange={(e) => setReasonBox({ ...boxed, text: e.target.value })}
-                          onKeyDown={(e) => {
-                            if (e.key === "Escape") {
-                              e.stopPropagation();
-                              setReasonBox(null);
-                              e.currentTarget.blur();
-                            } else if (e.key === "Enter" && !e.shiftKey) {
-                              // R-7.2: enter saves. Shift+Enter is still a new line, and an empty
-                              // box on a shortlist saves the decision without a reason.
-                              e.preventDefault();
-                              if (!boxed.pending && !busy) void submitDecision(row.id, boxed.kind, boxed.text);
-                            }
-                          }}
-                          placeholder={boxed.kind === "skip" ? "Why not? (required)" : APPLY_REASON_HINT}
-                          rows={boxed.kind === "skip" ? 2 : 1}
-                          className="w-full resize-y border-2 border-line-muted bg-bg px-2 py-1 font-mono text-12 text-fg placeholder:text-faint focus:border-line focus:outline-none"
-                        />
-                        {boxed.error && <p className="text-12 text-danger">{boxed.error}</p>}
-                        <div className="flex gap-2">
-                          <Button
-                            size="sm"
-                            variant="primary"
-                            disabled={boxed.pending || busy}
-                            onClick={() => void submitDecision(row.id, boxed.kind, boxed.text)}
-                          >
-                            {boxed.pending || busy ? "Saving…" : "Save"}
-                          </Button>
-                          <Button size="sm" variant="ghost" disabled={boxed.pending} onClick={() => setReasonBox(null)}>
-                            Cancel
-                          </Button>
-                        </div>
-                      </div>
-                    ) : row.decision ? (
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge tone={decisionTone(row.decision.decision)}>{ROLE_STATUS_LABELS[row.decision.decision === "apply" ? "user-shortlisted" : "user-dismissed"]}</Badge>
-                        {movedOn(row) && <Badge tone={stageTone(row.stage)} title={ROLE_STAGE_DESCRIPTIONS[row.stage]}>{stageLabel(row)}</Badge>}
-                        <span className="text-12 text-muted" title={row.decision.createdTitle}>Decided {row.decision.createdLabel}</span>
-                        {row.decision.reason && <p className="w-full text-14 text-fg">{row.decision.reason}</p>}
-                        <button type="button" disabled={busy} onClick={() => openReasonBox(row.id, row.decision!.decision, row.decision!.reason)} className="text-12 text-muted underline hover:text-fg disabled:opacity-40">
-                          Reconsider
-                        </button>
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => {
-                            void submitDecision(row.id, null, "");
-                          }}
-                          className="text-12 text-muted underline hover:text-fg disabled:opacity-40"
-                        >
-                          Reset
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex gap-2">
-                        <Button size="sm" variant="primary" disabled={busy} onClick={() => void submitDecision(row.id, "apply", "")}>
-                          {busy ? "Saving…" : "Shortlist"}
-                        </Button>
-                        <Button size="sm" disabled={busy} onClick={() => openReasonBox(row.id, "skip")}>
-                          Dismiss
-                        </Button>
-                      </div>
-                    )}
-                    <button type="button" disabled={archivingId !== null || reasonBox?.pending || busy} onClick={() => void archiveRow(row.id)} className="mt-2 text-12 text-muted underline disabled:opacity-40">{archivingId === row.id ? "Saving…" : archived ? "Restore" : "Archive"}</button>
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                )}
-              </Fragment>
+              <RoleRow
+                key={row.id}
+                row={row}
+                company={companyOf(row)}
+                highlighted={index === highlightIndex}
+                selected={selected.has(row.id)}
+                busy={writing.has(row.id)}
+                expanded={expanded}
+                detail={details[row.id]}
+                boxed={reasonBox?.jobId === row.id ? reasonBox : null}
+                descriptionOpen={expanded && descriptionOpen}
+                hideCompany={hideCompany}
+                archived={archived}
+                groupBusy={groupBusy}
+                boxPending={!!reasonBox?.pending}
+                archivingThis={archivingId === row.id}
+                archivingAny={archivingId !== null}
+                actions={rowActions}
+              />
             );
           })}
         </TBody>

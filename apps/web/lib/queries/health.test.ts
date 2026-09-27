@@ -15,10 +15,11 @@ let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 let user: User;
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { getAiUsage, getCvBuildCosts, getCvBuildFailureKinds, getCvBuildMotions, getScoredRoleCost, getTotalAiSpend } from "./health";
+import { getAiUsage, getCvBuildCosts, getCvBuildFailureKinds, getCvBuildMotions, getScoredRoleCost, getTopStatements, getTotalAiSpend, getWebVitalsP75 } from "./health";
 import { getCvMotionMedians, resetCvMotionMedians } from "./cv";
 import { totalAiUsage } from "@/lib/ai-usage";
 import { aiOutcome } from "@ava/db";
+import { vitalBucket, vitalBucketValue } from "@/lib/web-vitals";
 
 /** The string packages/ai writes when it stops paying for a batch whose sibling has failed. */
 const CANCELLED = "Cancelled because another call in the same task failed.";
@@ -153,6 +154,8 @@ import {
   normaliseCvBuildCosts,
   operationDate,
   readHeartbeat,
+  readMonitorSample,
+  getMonitorSample,
   requiredOperationDate,
   listRetryingTasks,
   listRunningTasks,
@@ -194,6 +197,80 @@ it("reads the governor's pause as the epoch milliseconds the engine reports, and
   // No pause is null, and an ISO string from an older shape still reads.
   expect(readHeartbeat({ at: "2026-09-18T12:00:00.000Z", governor: { cap: 4, inFlight: 0, queued: 0, pausedUntil: null } })!.governor!.pausedUntil).toBeNull();
   expect(readHeartbeat({ at: "2026-09-18T12:00:00.000Z", governor: { cap: 4, pausedUntil: "2026-09-18T12:05:00.000Z" } })!.governor!.pausedUntil).toEqual(new Date(pausedUntil));
+});
+
+it("reads each route's p75 per vital from the beacon's histograms, busiest route first, inside the window", async () => {
+  await database.execute(sql`truncate web_vitals`);
+  const add = (daysAgo: number, route: string, metric: string, value: number, count: number) =>
+    database.execute(sql`insert into web_vitals (day, route, metric, bucket, count)
+      values ((now() at time zone 'utc')::date - ${daysAgo}::int, ${route}, ${metric}, ${vitalBucket(metric as "LCP", value)}, ${count})
+      on conflict (day, route, metric, bucket) do update set count = web_vitals.count + excluded.count`);
+  // "/": 60 loads at 1.2 s and 40 at 3.1 s on two days, so the p75 is in the slower bucket.
+  await add(0, "/", "LCP", 1_200, 30);
+  await add(3, "/", "LCP", 1_200, 30);
+  await add(1, "/", "LCP", 3_100, 40);
+  await add(1, "/", "CLS", 0.02, 100);
+  // "/companies/:id": fewer loads, and a day outside the window that would change the answer.
+  await add(2, "/companies/:id", "LCP", 900, 10);
+  await add(40, "/companies/:id", "LCP", 9_000, 500);
+
+  const routes = await getWebVitalsP75(28);
+  expect(routes.map((r) => [r.route, r.samples])).toEqual([["/", 100], ["/companies/:id", 10]]);
+  expect(routes[0]!.metrics.LCP).toEqual({ p75: vitalBucketValue("LCP", vitalBucket("LCP", 3_100)), samples: 100 });
+  expect(routes[0]!.metrics.CLS!.p75).toBeCloseTo(0.02, 2);
+  expect(routes[0]!.metrics.INP).toBeUndefined();
+  expect(routes[1]!.metrics.LCP!.p75).toBeCloseTo(900, -2);
+});
+
+it("reads the costliest statements for Operations, or says why it cannot, without failing the page", async () => {
+  const totals = await getTopStatements();
+  if (totals.available) {
+    expect(totals.rows.length).toBeLessThanOrEqual(20);
+    for (const row of totals.rows) expect(row.query.length).toBeLessThanOrEqual(160);
+  } else {
+    // This suite's server does not preload the extension (CI and local both): the reason, not an error.
+    expect(totals.reason).toMatch(/pg_stat_statements/);
+  }
+});
+
+it("reads the worker's monitor sample defensively, and nothing when there is none", async () => {
+  await resetWorkerFixtures();
+  expect(await getMonitorSample()).toBeNull();
+  const stored = {
+    at: "2026-09-27T12:00:00.000Z",
+    worker: { at: "2026-09-27T11:59:40.000Z", workerId: "w", heapFraction: 0.5, eventLoopLagP99Ms: 240, dbWaiting: 0, slowQueries: 3 },
+    backends: { active: 12, total: 30, usable: 97, fraction: 0.124 },
+    oldestReadySeconds: 42,
+    scans: { since: "2026-09-27", total: 40, failed: 5, failedShare: 0.125 },
+    models: { calls1h: 50, rateLimited1h: 1, rateLimitedShare: 0.02 },
+    slowQueries: { per15m: 4, history: [] },
+    webVitalsPruned: 0,
+    levels: { heap: "ok", eventLoop: "warn", scanFailures: "warn", slowQueries: "nonsense" },
+  };
+  await database.insert(schema.settings).values({ key: "internal:monitor", value: stored });
+  const reading = await getMonitorSample();
+  expect(reading).toMatchObject({
+    at: new Date("2026-09-27T12:00:00.000Z"),
+    worker: { heapFraction: 0.5, eventLoopLagP99Ms: 240, dbWaiting: 0 },
+    backends: { active: 12, usable: 97, fraction: 0.124 },
+    scans: { total: 40, failed: 5, failedShare: 0.125 },
+    slowQueriesPer15m: 4,
+  });
+  // A level it does not know is dropped, not shown.
+  expect(reading!.levels).toEqual({ heap: "ok", eventLoop: "warn", scanFailures: "warn" });
+  expect(readMonitorSample({ at: "not a time" })).toBeNull();
+  expect(readMonitorSample({ at: "2026-09-27T12:00:00.000Z", backends: "x", scans: { total: "4" } })).toMatchObject({ backends: null, scans: null, worker: null });
+});
+
+it("reads the event-loop lag, slow queries and pool the worker writes, and leaves them null when it does not", () => {
+  const base = { heapUsedMb: 100, heapLimitMb: 258, heapFraction: 0.39, rssMb: 300, externalMb: 20, uptimeSeconds: 60 };
+  const reported = readHeartbeat({ at: "2026-09-18T12:00:00.000Z", vitals: { ...base, eventLoopLagP99Ms: 240, slowQueries: 7, db: { total: 5, idle: 2, waiting: 1 } } });
+  expect(reported!.vitals).toMatchObject({ eventLoopLagP99Ms: 240, slowQueries: 7, db: { total: 5, idle: 2, waiting: 1 } });
+  // An older worker reports none of them: null, never a zero that would read as "no lag".
+  const older = readHeartbeat({ at: "2026-09-18T12:00:00.000Z", vitals: base });
+  expect(older!.vitals).toMatchObject({ eventLoopLagP99Ms: null, slowQueries: null, db: null });
+  // A pool reading missing a count is no reading.
+  expect(readHeartbeat({ at: "2026-09-18T12:00:00.000Z", vitals: { ...base, db: { total: 5, idle: 2 } } })!.vitals!.db).toBeNull();
 });
 
 it("reads both heartbeat shapes, and calls a crash-looping worker restarting however fresh its report", async () => {

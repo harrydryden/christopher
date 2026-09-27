@@ -93,7 +93,7 @@ async function main() {
     child.stderr.on('data', b => { stderr = (stderr + b).slice(-20_000); });
     child.on('error', error => { clearTimeout(timer); reject(error); });
     child.on('close', code => {
-      const operation = ['pg_dump', 'createdb', 'pg_restore', 'cp', 'rm'].find(item => args.includes(item)) ?? command;
+      const operation = ['pg_dump', 'createdb', 'pg_restore', 'vacuumdb', 'cp', 'rm'].find(item => args.includes(item)) ?? command;
       clearTimeout(timer); commands.push({ command: command === 'docker' ? `docker ${operation}` : operation, seconds: +((performance.now() - started) / 1000).toFixed(2), code });
       code === 0 ? resolve({ stdout, stderr }) : reject(new Error(`${command} exited ${code}: ${stderr}`));
     });
@@ -109,13 +109,18 @@ async function main() {
       await run('docker', ['cp', `${dockerContainer}:${containerDump}`, dump]);
       await run('docker', [...dockerPrefix, 'createdb', '-U', decodeURIComponent(source.username), targetDb], dockerEnv);
       await run('docker', [...dockerPrefix, 'pg_restore', '--exit-on-error', '--no-owner', '--no-privileges', '--dbname', targetDb, '-U', decodeURIComponent(source.username), containerDump], dockerEnv);
+      await run('docker', [...dockerPrefix, 'vacuumdb', '--analyze-in-stages', '--dbname', targetDb, '-U', decodeURIComponent(source.username)], dockerEnv);
     } else {
       dumpVersion = (await run('pg_dump', ['--version'])).stdout.trim();
       await run('pg_dump', ['--format=custom', '--no-owner', '--no-privileges', '--file', dump, source.href]);
       const admin = new URL(source); admin.pathname = '/postgres';
       await run('createdb', ['--maintenance-db', admin.href, targetDb]);
       await run('pg_restore', ['--exit-on-error', '--no-owner', '--no-privileges', '--dbname', target.href, dump]);
+      await run('vacuumdb', ['--analyze-in-stages', '--dbname', target.href]);
     }
+    // PostgreSQL 16's pg_restore brings back no planner statistics: until autovacuum reaches each
+    // table, every query on the restored database is planned as if its tables were empty. The
+    // analyse above (coarse statistics first, then full) is part of the restore, not an extra.
     // Current migrations must be idempotent on the restored schema. This also proves the restored
     // migration ledger is understood by the checked-out release.
     await run('pnpm', ['db:migrate'], { ...process.env, DATABASE_URL: target.href });

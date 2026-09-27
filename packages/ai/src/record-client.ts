@@ -17,9 +17,9 @@
  * key — is redacted from each line before it reaches the file.
  */
 import { createHash } from "node:crypto";
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { AiCallMeta, AiClientLike, AiStreamLike, ParseResponse } from "./engine";
+import type { AiBatchesLike, AiBatchLike, AiBatchMeta, AiBatchResultLike, AiCallMeta, AiClientLike, AiStreamLike, ParseResponse } from "./engine";
 
 /** What a recording is filed under. */
 export interface RecordingKey {
@@ -34,6 +34,27 @@ export interface RecordedCall extends RecordingKey {
   kind: "call";
   request: Record<string, unknown>;
   response: ParseResponse;
+  recordedAt: string;
+}
+
+/**
+ * One submitted Message Batch: the batch the provider named and, for each request in it, the
+ * registry entry and input it was filed under. Written when the batch is sent, so its results can
+ * be filed under their prompts by whichever process reads them, however much later.
+ */
+export interface RecordedBatchSubmission {
+  kind: "batch_submit";
+  batchId: string;
+  requests: Array<RecordingKey & { customId: string; request: Record<string, unknown> }>;
+  recordedAt: string;
+}
+
+/** One batch request's result, filed under its prompt, version, stage and input like a call. */
+export interface RecordedBatchResult extends RecordingKey {
+  kind: "batch_result";
+  batchId: string;
+  customId: string;
+  result: AiBatchResultLike["result"];
   recordedAt: string;
 }
 
@@ -97,23 +118,89 @@ export class RecordingClient implements AiClientLike {
   recorded = 0;
   private readonly secrets: string[];
 
+  /** Each submitted batch's requests by `custom_id`, for filing its results under their prompts. */
+  private readonly submitted = new Map<string, Map<string, RecordingKey>>();
+
   constructor(private readonly inner: AiClientLike, private readonly options: RecordingClientOptions) {
     this.secrets = (options.secrets ?? []).filter((secret): secret is string => !!secret && secret.length >= 8);
     mkdirSync(dirname(options.path), { recursive: true });
     this.messages = this.wrap(inner.messages);
+    if (inner.messages.batches) this.messages.batches = this.wrapBatches(inner.messages.batches);
     if (inner.beta?.messages) this.beta = { messages: this.wrap(inner.beta.messages) };
+  }
+
+  private append(value: unknown): void {
+    let line = JSON.stringify(value);
+    for (const secret of this.secrets) line = line.split(secret).join("[redacted]");
+    appendFileSync(this.options.path, line + "\n");
+  }
+
+  private at(): string {
+    return (this.options.now?.() ?? new Date()).toISOString();
   }
 
   private write(params: Record<string, unknown>, meta: AiCallMeta | undefined, response: ParseResponse): void {
     const call: RecordedCall = {
       kind: "call", ...recordingKey(params, meta), request: recordedRequest(params),
       response: withoutSecrets(JSON.parse(JSON.stringify(response)) as ParseResponse),
-      recordedAt: (this.options.now?.() ?? new Date()).toISOString(),
+      recordedAt: this.at(),
     };
-    let line = JSON.stringify(call);
-    for (const secret of this.secrets) line = line.split(secret).join("[redacted]");
-    appendFileSync(this.options.path, line + "\n");
+    this.append(call);
     this.recorded++;
+  }
+
+  /** The requests of a batch this client — or an earlier process writing the same file — submitted. */
+  private submission(batchId: string): Map<string, RecordingKey> | undefined {
+    const known = this.submitted.get(batchId);
+    if (known) return known;
+    const line = readRecordingLines(this.options.path)
+      .find((entry): entry is RecordedBatchSubmission & Record<string, unknown> => entry.kind === "batch_submit" && entry.batchId === batchId);
+    if (!line) return undefined;
+    const requests = new Map(line.requests.map(({ customId, request: _request, ...key }) => [customId, key]));
+    this.submitted.set(batchId, requests);
+    return requests;
+  }
+
+  /**
+   * The batch resource, recorded: each submission as one line naming every request's key, and
+   * each result as one line filed under the key of the request it answers. A result whose request
+   * this recording never saw submitted is passed on unrecorded, since it cannot be filed.
+   */
+  private wrapBatches(batches: AiBatchesLike): AiBatchesLike {
+    return {
+      create: async (params, options, meta) => {
+        const batch = await batches.create(params, options, meta);
+        const requests = params.requests.map(item => ({
+          customId: item.custom_id, ...recordingKey(item.params, meta?.requests[item.custom_id]), request: recordedRequest(item.params),
+        }));
+        const submission: RecordedBatchSubmission = { kind: "batch_submit", batchId: batch.id, requests, recordedAt: this.at() };
+        this.append(submission);
+        this.submitted.set(batch.id, new Map(requests.map(({ customId, request: _request, ...key }) => [customId, key])));
+        return batch;
+      },
+      retrieve: (batchId, params, options) => batches.retrieve(batchId, params, options),
+      results: async (batchId, params, options) => {
+        const inner = await batches.results(batchId, params, options);
+        const record = (result: AiBatchResultLike) => {
+          const key = this.submission(batchId)?.get(result.custom_id);
+          if (!key) return;
+          const line: RecordedBatchResult = {
+            kind: "batch_result", ...key, batchId, customId: result.custom_id,
+            result: withoutSecrets(JSON.parse(JSON.stringify(result.result)) as AiBatchResultLike["result"]), recordedAt: this.at(),
+          };
+          this.append(line);
+          this.recorded++;
+        };
+        return {
+          async *[Symbol.asyncIterator]() {
+            for await (const result of inner) {
+              record(result);
+              yield result;
+            }
+          },
+        };
+      },
+    };
   }
 
   private wrap(messages: AiClientLike["messages"]): AiClientLike["messages"] {
@@ -151,11 +238,20 @@ export class ReplayMissError extends Error {
   }
 }
 
-/** Every call line of a recording file; other lines (a baseline, notes) are skipped. */
+/** Every line of a recording file, parsed; a file not written yet has none. */
+function readRecordingLines(path: string): Array<{ kind?: string } & Record<string, unknown>> {
+  if (!existsSync(path)) return [];
+  return readFileSync(path, "utf8").split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line) as { kind?: string } & Record<string, unknown>);
+}
+
+/** Every call line of a recording file; other lines (a baseline, notes, batches) are skipped. */
 export function readRecording(path: string): RecordedCall[] {
-  return readFileSync(path, "utf8").split(/\r?\n/).filter(Boolean)
-    .map(line => JSON.parse(line) as { kind?: string })
-    .filter((line): line is RecordedCall => line.kind === "call");
+  return readRecordingLines(path).filter((line): line is RecordedCall & Record<string, unknown> => line.kind === "call");
+}
+
+/** Every batch result line of a recording file. */
+export function readBatchRecording(path: string): RecordedBatchResult[] {
+  return readRecordingLines(path).filter((line): line is RecordedBatchResult & Record<string, unknown> => line.kind === "batch_result");
 }
 
 /**
@@ -171,21 +267,71 @@ export class ReplayClient implements AiClientLike {
   hits = 0;
   private readonly served = new Map<string, number>();
   private readonly byKey = new Map<string, ParseResponse[]>();
+  private readonly batchByKey = new Map<string, Array<AiBatchResultLike["result"]>>();
+  private readonly batchServed = new Map<string, number>();
+  /** The batches this client has been sent, each already ended with its recorded results. */
+  private readonly batches = new Map<string, { batch: AiBatchLike; results: AiBatchResultLike[] }>();
 
-  constructor(recording: readonly RecordedCall[] | string) {
-    const calls = typeof recording === "string" ? readRecording(recording) : recording;
-    for (const call of calls) {
-      const key = keyString(call);
-      this.byKey.set(key, [...(this.byKey.get(key) ?? []), call.response]);
+  constructor(recording: ReadonlyArray<RecordedCall | RecordedBatchResult> | string) {
+    const lines = typeof recording === "string" ? [...readRecording(recording), ...readBatchRecording(recording)] : recording;
+    for (const line of lines) {
+      const key = keyString(line);
+      if (line.kind === "batch_result") this.batchByKey.set(key, [...(this.batchByKey.get(key) ?? []), line.result]);
+      else this.byKey.set(key, [...(this.byKey.get(key) ?? []), line.response]);
     }
     const create = async (params: Record<string, unknown>, _options?: Record<string, unknown>, meta?: AiCallMeta) => this.answer(params, meta);
-    this.messages = { create };
+    this.messages = { create, batches: this.replayBatches() };
     this.beta = { messages: { create } };
   }
 
-  /** How many distinct requests the recording can answer. */
+  /**
+   * The batch resource, from the recording: a batch sent here has ended at once, each request
+   * answered by the result recorded for the same prompt, version, stage and input — under the
+   * replay's own `custom_id`, since the ids a request is named by differ from run to run. A request
+   * the recording holds no result for is a miss, and comes back errored, naming the miss; the
+   * provider is never called.
+   */
+  private replayBatches(): AiBatchesLike {
+    const held = (batchId: string) => {
+      const batch = this.batches.get(batchId);
+      if (!batch) throw new Error(`No replayed batch ${batchId}: it was not sent to this client.`);
+      return batch;
+    };
+    return {
+      create: async (params, _options, meta?: AiBatchMeta) => {
+        const id = `replay_batch_${this.batches.size + 1}`;
+        const results: AiBatchResultLike[] = params.requests.map((item): AiBatchResultLike => {
+          const key = recordingKey(item.params, meta?.requests[item.custom_id]);
+          const name = keyString(key);
+          const recorded = this.batchByKey.get(name);
+          if (!recorded?.length) {
+            this.misses.push(key);
+            return { custom_id: item.custom_id, result: { type: "errored", error: { type: "error", error: { type: "replay_miss", message: new ReplayMissError(key).message } } } };
+          }
+          const index = this.batchServed.get(name) ?? 0;
+          this.batchServed.set(name, index + 1);
+          this.hits++;
+          return { custom_id: item.custom_id, result: structuredClone(recorded[Math.min(index, recorded.length - 1)]!) };
+        });
+        const count = (type: string) => results.filter(result => result.result.type === type).length;
+        const batch: AiBatchLike = {
+          id, processing_status: "ended",
+          request_counts: { processing: 0, succeeded: count("succeeded"), errored: count("errored"), canceled: count("canceled"), expired: count("expired") },
+        };
+        this.batches.set(id, { batch, results });
+        return structuredClone(batch);
+      },
+      retrieve: async batchId => structuredClone(held(batchId).batch),
+      results: async batchId => {
+        const results = structuredClone(held(batchId).results);
+        return { async *[Symbol.asyncIterator]() { yield* results; } };
+      },
+    };
+  }
+
+  /** How many distinct requests the recording can answer, live or batched. */
   get size(): number {
-    return this.byKey.size;
+    return this.byKey.size + this.batchByKey.size;
   }
 
   private answer(params: Record<string, unknown>, meta: AiCallMeta | undefined): ParseResponse {

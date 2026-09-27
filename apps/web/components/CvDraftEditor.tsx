@@ -1,7 +1,7 @@
 "use client";
 import { CV_PROFILE_ID, cvEditFormId, cvSectionBlockId } from "@/lib/cv-content-links";
 import { useFormStatus } from "react-dom";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 // Zod-free parts of the CV contract only; `CvContentSchema` is loaded when a preview is asked for.
 import { CV_LIMITS } from "@ava/core/cv-format";
 import { cvDisplaySections } from "@ava/core/cv-helpers";
@@ -123,9 +123,10 @@ export function CvDraftEditor({
     })),
   };
   const fingerprint = JSON.stringify(candidate);
-  const dirty =
-    fingerprint !==
-    JSON.stringify({ ...content, theme: baseTheme });
+  // What was saved, as the same string: it changes only with the revision, so it is worked out once
+  // rather than stringifying the whole CV a second time on every keystroke.
+  const baseline = useMemo(() => JSON.stringify({ ...content, theme: baseTheme }), [content, baseTheme]);
+  const dirty = fingerprint !== baseline;
   const currentPreview = preview?.fingerprint === fingerprint;
   useEffect(
     () => () => {

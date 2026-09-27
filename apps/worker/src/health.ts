@@ -4,6 +4,7 @@ import { pendingTaskCounts, workloadMetrics } from "@ava/db";
 import { sql } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 import { log } from "./log";
+import { getInternal } from "./settings";
 import { vitals } from "./vitals";
 
 /**
@@ -29,7 +30,7 @@ export interface HealthServerOptions {
   /** Whether the queue is claiming work. Liveness fails once it is not. */
   isRunning?: () => boolean;
   /** The full workload reading behind `/status`; tests substitute a slow or failing one. */
-  readMetrics?: () => Promise<{ queue: unknown; metrics: unknown }>;
+  readMetrics?: () => Promise<{ queue: unknown; metrics: unknown; monitor?: unknown }>;
   /** The liveness check's database round trip. */
   probeDatabase?: () => Promise<unknown>;
   now?: () => number;
@@ -73,14 +74,16 @@ export function startHealthServer(
 ): http.Server {
   const now = options.now ?? Date.now;
   const readMetrics = options.readMetrics ?? (async () => {
-    const [queue, metrics] = await Promise.all([pendingTaskCounts(deps.db), workloadMetrics(deps.db)]);
-    return { queue, metrics };
+    // The monitor task's last sample (handlers/monitor-sample.ts) rides along, so the operational
+    // gate reads the database-wide signals from the same response as the process's own.
+    const [queue, metrics, monitor] = await Promise.all([pendingTaskCounts(deps.db), workloadMetrics(deps.db), getInternal(deps.db, "monitor")]);
+    return { queue, metrics, monitor };
   });
   const probeDatabase = options.probeDatabase ?? (() => deps.db.execute(sql`select 1`));
 
   // In-process memory is the right place for the reading: each worker answers for itself.
-  let cached: { at: number; value: { queue: unknown; metrics: unknown } } | null = null;
-  let reading: Promise<{ queue: unknown; metrics: unknown }> | null = null;
+  let cached: { at: number; value: { queue: unknown; metrics: unknown; monitor?: unknown } } | null = null;
+  let reading: Promise<{ queue: unknown; metrics: unknown; monitor?: unknown }> | null = null;
   const readState = async () => {
     if (cached && now() - cached.at < HEALTH_CACHE_MS) return cached.value;
     reading ??= (async () => {
@@ -139,13 +142,13 @@ export function startHealthServer(
           send(res, 401, { ok: false, error: "unauthorised" });
           return;
         }
-        const { queue, metrics } = await readState();
+        const { queue, metrics, monitor } = await readState();
         const current = vitals();
         // `vitals` is the reading that matters: heap against the ceiling V8 kills the process at.
         // `memory` is the raw `process.memoryUsage()` this route used to return, kept for one
         // release in case a dashboard or script outside this repository still reads it.
         send(res, 200, {
-          ok: true, workerId: deps.env.workerId, queue, metrics,
+          ok: true, workerId: deps.env.workerId, queue, metrics, monitor: monitor ?? null,
           vitals: current, pressure: current.heapFraction >= HEAP_PRESSURE_FRACTION,
           memory: process.memoryUsage(), ...extra(),
         });

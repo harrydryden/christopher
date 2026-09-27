@@ -6,7 +6,7 @@
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import type { CvJournalStepWire } from "@/lib/cv-build-journal";
 import { cvStepsSignature, stepFromWire } from "@/lib/cv-build-journal";
 import type { CvProgressReading } from "@/lib/cv-progress-types";
@@ -15,6 +15,13 @@ import { FIRST_POLL_MS } from "@/lib/polling";
 const router = vi.hoisted(() => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn(), back: vi.fn(), forward: vi.fn(), prefetch: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 vi.mock("next/link", () => ({ default: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a> }));
+// Next resolves `next/dynamic` to its app-router implementation for app/ code; outside Next the
+// package entry is the pages-router one. The narrative's views are that kind of split chunk.
+vi.mock("next/dynamic", async () => {
+  const appDynamic = (await import("next/dist/shared/lib/app-dynamic")) as { default: unknown };
+  const dynamic = appDynamic.default as { default?: unknown };
+  return { default: dynamic.default ?? dynamic };
+});
 
 import { CvBuildLive } from "./CvBuildLive";
 
@@ -47,6 +54,35 @@ const gone = (status: number) => ({ ok: false, status, json: async () => ({ ok: 
 
 let root: Root;
 let container: HTMLElement;
+// Each of the narrative's views is a chunk of its own, fetched the first time it renders, as a
+// browser fetches it. Rendered once here on the real clock, as a page that has its chunks in hand,
+// so that under the fake one a view renders in the same act as the component around it.
+beforeAll(async () => {
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+  await import("./CvBuildViews");
+  const warm = document.createElement("div");
+  const warmRoot = createRoot(warm);
+  const initial = reading([wire(1, "write", "running")]);
+  // A chunk arrives, then the render it held up is retried: two turns each.
+  const settle = async () => {
+    for (let turn = 0; turn < 2; turn++) await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+  };
+  act(() => {
+    warmRoot.render(
+      <>
+        <CvBuildLive id="warm" mode="build" initial={initial} nowMs={T0} timeZone="UTC" versionLabel="V1" />
+        <CvBuildLive id="warm" mode="log" initial={initial} nowMs={T0} timeZone="UTC" versionLabel="V1" />
+      </>,
+    );
+  });
+  await settle();
+  act(() => [...warm.querySelectorAll("button")].find((button) => button.textContent === "Show build log")?.click());
+  await settle();
+  expect(warm.querySelector('[aria-label="CV build progress"]')).not.toBeNull();
+  expect(warm.querySelector('[aria-label="Build narrative"]')).not.toBeNull();
+  act(() => warmRoot.unmount());
+  vi.unstubAllGlobals();
+});
 beforeEach(() => {
   vi.useFakeTimers({ now: T0 + 60_000 });
   router.refresh.mockReset();
@@ -125,4 +161,48 @@ it("counts every elapsed figure on the server's clock, whatever the browser's sa
   // 30 s had passed on the server when it rendered, and five more since: not "0 s" for ten minutes.
   expect(container.textContent).toContain("Writing the CV · running 35 s");
   expect(container.textContent).toContain("Started 1m ago");
+});
+
+/** Make the tab hidden or shown, as the browser does, and tell the page. */
+function setVisibility(state: DocumentVisibilityState) {
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+  document.dispatchEvent(new Event("visibilitychange"));
+}
+
+it("stops the clock while the tab is hidden and puts every figure right the moment it is shown", async () => {
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+  const running = { ...wire(1, "write", "running"), startedAt: iso(30), title: "Writing the CV" };
+  try {
+    act(() => {
+      root.render(<CvBuildLive id="draft-1" mode="build" initial={reading([running])} nowMs={T0 + 60_000} timeZone="UTC" versionLabel="18-Sep-V1" />);
+    });
+    await advance(2_000);
+    expect(container.textContent).toContain("Writing the CV · running 32 s");
+    act(() => setVisibility("hidden"));
+    await advance(20_000);
+    // Nothing re-rendered for a tab nobody can see.
+    expect(container.textContent).toContain("Writing the CV · running 32 s");
+    act(() => setVisibility("visible"));
+    // At once, not at the next tick: the 20 s away are counted.
+    expect(container.textContent).toContain("Writing the CV · running 52 s");
+  } finally {
+    act(() => setVisibility("visible"));
+  }
+});
+
+it("tells a build log only while it is open", async () => {
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+  const steps = [wire(1, "load_inputs", "done"), { ...wire(2, "write", "running"), title: "Writing the CV" }];
+  act(() => {
+    root.render(<CvBuildLive id="draft-1" mode="log" initial={reading(steps)} nowMs={T0 + 60_000} timeZone="UTC" versionLabel="18-Sep-V1" />);
+  });
+  await advance(1_000);
+  // Closed, the log is not narrated at all, however often the clock ticks.
+  expect(container.querySelector('[aria-label="Build narrative"]')).toBeNull();
+  const toggle = [...container.querySelectorAll("button")].find((button) => button.textContent === "Show build log")!;
+  await act(async () => toggle.click());
+  await advance(1_000);
+  expect(container.querySelector('[aria-label="Build narrative"]')).not.toBeNull();
+  await act(async () => toggle.click());
+  expect(container.querySelector('[aria-label="Build narrative"]')).toBeNull();
 });

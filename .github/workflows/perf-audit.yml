@@ -1,0 +1,82 @@
+name: Performance audit
+
+# The audits' measurements, re-run weekly against scripts/perf/baseline.json: statements per page,
+# sequential database round trips at the production pool width, HTML and RSC bytes, and one role
+# decision. Counts are deterministic where milliseconds on a shared runner are not, so the gate is
+# one statement more, one round trip more or 10 % more bytes (docs/PERFORMANCE-GUIDE.md 5.8).
+# Scheduled, never on a pull request; a failure opens (or comments on) an issue.
+on:
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: perf-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ava_perf_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ava_perf_ci
+      AVA_DISABLE_BROWSER: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Read the installed Playwright version
+        id: playwright
+        run: echo "version=$(pnpm --filter @ava/worker exec node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Restore the Chromium download
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - run: pnpm --filter @ava/worker exec playwright install --with-deps chromium
+      - run: pnpm db:migrate
+      - run: pnpm --filter @ava/web build
+        env:
+          SESSION_SECRET: build-only-0123456789abcdef0123456789abcdef
+      - name: Measure and compare with the baseline
+        run: node scripts/perf/run.mjs
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-audit
+          path: perf-out/
+          retention-days: 90
+          if-no-files-found: ignore
+      - if: failure() && github.event_name == 'schedule'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let failures = 'The audit did not write a report; see the run log.';
+            try { failures = JSON.parse(fs.readFileSync('perf-out/report.json', 'utf8')).failures.map(f => `- ${f}`).join('\n') || failures; } catch {}
+            const title = 'Weekly performance audit found a regression';
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = `The weekly run of \`scripts/perf/run.mjs\` failed on ${context.sha.slice(0, 7)}.\n\n${failures}\n\nIf a change added a statement or a round trip on purpose, update \`scripts/perf/baseline.json\` in a pull request with the reason. Run and report: ${run}`;
+            const { data: open } = await github.rest.issues.listForRepo({ ...context.repo, state: 'open', labels: 'performance', per_page: 100 });
+            const existing = open.find(issue => issue.title === title);
+            if (existing) await github.rest.issues.createComment({ ...context.repo, issue_number: existing.number, body });
+            else await github.rest.issues.create({ ...context.repo, title, body, labels: ['performance'] });

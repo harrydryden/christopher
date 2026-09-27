@@ -40,7 +40,7 @@ beforeEach(async () => {
   await database.execute(sql`truncate ai_calls, user_settings, companies, users restart identity cascade`);
 });
 
-it("counts once per request for every caller in the same budget month, in one round trip", async () => {
+it("counts once per request for every caller in the same budget month, in one statement", async () => {
   const user = await ensureTestUser(database, "health-count@example.com", "member");
   const other = await ensureTestUser(database, "health-other@example.com", "member");
   const now = new Date();
@@ -49,14 +49,16 @@ it("counts once per request for every caller in the same budget month, in one ro
   await database.insert(schema.aiCalls).values({ userId: user.id, callSite: "CV", model: "claude-fable-5-1", costUsd: 2, at: monthStart });
 
   reads.n = 0;
-  // The layout's count: the attention union and the budget statement, side by side.
+  // The layout's count: the attention union and the budget, in one statement.
   expect(await countHealthItems(user.id)).toBe(1);
-  expect(reads.n).toBe(2);
-  // Health's own count, with its own clock, and its items' budget: both already answered.
+  expect(reads.n).toBe(1);
+  // Health's own count, with its own clock: already answered.
   expect(await countHealthItems(user.id, new Date(now.getTime() + 1_000))).toBe(1);
+  expect(reads.n).toBe(1);
+  // Health's items read the budget for themselves, once, and agree with the count's.
   expect((await accountAiBudget(user.id, now)).spentUsd).toBe(2);
   expect(reads.n).toBe(2);
   // Another account is its own answer.
   expect(await countHealthItems(other.id, now)).toBe(0);
-  expect(reads.n).toBe(4);
+  expect(reads.n).toBe(3);
 });

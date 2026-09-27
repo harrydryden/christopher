@@ -50,7 +50,7 @@ jobs:
       - run: pnpm typecheck:eval
       - run: pnpm -r test
       - name: Test release and evaluation scripts
-        run: pnpm exec node --test scripts/*.test.mjs
+        run: pnpm exec node --test scripts/*.test.mjs scripts/perf/*.test.mjs
       # The committed evaluation reports must name the prompt set that ships; a prompt change
       # without a report at its version (verified, or marked unverified) fails here.
       - name: Check evaluation reports against the shipped prompt set
@@ -144,6 +144,64 @@ jobs:
           AVA_DISABLE_BROWSER: "0"
       - run: pnpm db:migrate
       - run: pnpm smoke:web
+      # The smoke run has just built .next; each route's first-load JavaScript, gzipped, against
+      # scripts/bundle-budget.json. Under two seconds, and the table lands in the run's summary.
+      - name: Check first-load JavaScript against the per-route budgets
+        run: node scripts/bundle-budget.mjs apps/web/.next
+
+  # Lighthouse on the pages people load most and the heaviest one, signed in, against a production
+  # build of this commit: desktop preset, three runs, median-run assertions (LCP, CLS, TBT and script
+  # transfer fail; time to interactive and server response warn), then the same pages on mobile
+  # emulation as warnings only until there is a baseline. Beside `check`, reusing the Next.js build
+  # cache, so it adds no wall clock to a pull request (docs/PERFORMANCE-GUIDE.md 5.6, 5.10).
+  lighthouse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ava_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ava_test
+      AVA_DISABLE_BROWSER: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore the Next.js build cache
+        uses: actions/cache@v4
+        with:
+          path: apps/web/.next/cache
+          key: next-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('apps/web/app/**', 'apps/web/components/**', 'apps/web/lib/**', 'apps/web/next.config.*', 'apps/web/package.json') }}
+          restore-keys: |
+            next-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+            next-${{ runner.os }}-
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate
+      - run: pnpm --filter @ava/web build
+        env:
+          SESSION_SECRET: build-only-0123456789abcdef0123456789abcdef
+      # Seeds a disposable signed-in account as smoke-web does, and deletes it in a finally.
+      - name: Lighthouse, desktop (LCP, CLS and TBT fail) and mobile (warns)
+        run: node scripts/perf/lighthouse.mjs
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-reports
+          # Not .lighthouseci/: upload-artifact skips hidden directories, so nothing was uploaded.
+          path: lighthouse-reports/
+          retention-days: 14
+          if-no-files-found: warn
 
   # The image Render deploys, built and booted here so that a broken Dockerfile, a manifest the
   # image does not copy or a runtime import error fails the pull request instead of the deploy.

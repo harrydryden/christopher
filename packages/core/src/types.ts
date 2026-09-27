@@ -125,6 +125,12 @@ export interface FetchContext {
    */
   fetchBytes?(url: string, init?: FetchInit): Promise<FetchBytesResponse>;
   /**
+   * Re-encode a captured raster logo as a small WebP (`LogoEncoder` in logo-capture.ts).
+   * Optional: without it a logo is stored as fetched. It may throw, and the capture then keeps the
+   * original bytes.
+   */
+  encodeLogo?(bytes: Uint8Array): Promise<Uint8Array>;
+  /**
    * Headless-browser render. Optional: when absent, discovery and scanning fall back to plain HTTP.
    * `signal` gives up the render: a queued one leaves the queue, a running one closes its page.
    */

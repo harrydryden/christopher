@@ -5,6 +5,7 @@
 import { cache } from "react";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { and, eq, gt, ne } from "drizzle-orm";
 import { sessions, users, type User } from "@ava/db/schema";
 import { db } from "./db";
@@ -32,11 +33,25 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
     .where(and(eq(sessions.id, parsed.sessionId), gt(sessions.expiresAt, new Date())))
     .limit(1);
   if (!row || !row.user.claimedAt) return null;
-  if (Date.now() - row.session.lastSeenAt.getTime() > 3_600_000) {
-    void db().update(sessions).set({ lastSeenAt: new Date() }).where(eq(sessions.id, row.session.id)).catch(() => undefined);
-  }
+  if (Date.now() - row.session.lastSeenAt.getTime() > 3_600_000) touchSession(row.session.id);
   return { user: row.user, sessionId: row.session.id };
 });
+
+/**
+ * Record that a session was used, at most hourly, without making the request wait for it. The
+ * write goes through `after()`, Next's hook onto the platform's `waitUntil`: fired and forgotten
+ * instead, it could be frozen with the instance once the response was sent, and lost or finished
+ * on the next thaw. Outside a request (a script, a test) there is no platform to wait for, so it
+ * simply runs.
+ */
+function touchSession(sessionId: string): void {
+  const touch = () => db().update(sessions).set({ lastSeenAt: new Date() }).where(eq(sessions.id, sessionId)).then(() => undefined, () => undefined);
+  try {
+    after(touch);
+  } catch {
+    void touch();
+  }
+}
 
 /** Server actions are callable endpoints and authenticate independently of middleware. */
 export async function requireUser(): Promise<User> {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertDedicatedDatabase, benchmarkShape, needsRender, pollSchedule, POLL_CADENCE, SCAN_STATUS_PATH, summarise, WORK_STATUS_PATH } from './benchmark-users.mjs';
+import { assertDedicatedDatabase, backoffDelays, benchmarkShape, calibrated, needsRender, POLL_MODEL, quietSchedule, refreshPathFor, REFRESH_PATHS, SCAN_STATUS_PATH, summarise, TARGETS, WORK_STATUS_PATH } from './benchmark-users.mjs';
 test('database guard accepts only the exact dedicated local database', () => {
   assert.equal(assertDedicatedDatabase('postgres://u:p@127.0.0.1:55439/christopher_users_benchmark').pathname, '/christopher_users_benchmark');
   for (const unsafe of ['postgres://u:p@example.com/christopher_users_benchmark','postgres://u:p@localhost/ava_test','postgres://u:p@localhost/postgres'])
@@ -23,15 +23,29 @@ test('the default shape is the hundred-account fixture, and the thousand-account
   for (const unsafe of [{ USERS_BENCHMARK_ACCOUNTS: '5' }, { USERS_BENCHMARK_COMPANIES: '1.5' }, { USERS_POLLING_SECONDS: '10' }, { USERS_BENCHMARK_FOLLOWS: 'many' }])
     assert.throws(() => benchmarkShape(unsafe), /must be a whole number/);
 });
-test('open tabs poll work status every ten seconds and the banner every thirty, each from its own start', () => {
-  const events = pollSchedule(4, 30);
-  const work = events.filter(e => e.path === WORK_STATUS_PATH), scan = events.filter(e => e.path === SCAN_STATUS_PATH);
-  assert.equal(work.length, 4 * 3);
-  assert.equal(scan.length, 4);
-  assert.deepEqual(scan.map(e => e.atMs), [0, 2500, 5000, 7500]);
-  assert.deepEqual(work.filter(e => e.tab === 1).map(e => e.atMs), [2500, 12_500, 22_500]);
+test('the poll model is the app\'s backoff: ten seconds, half as long again while nothing changes, a minute at most, ten again after a change', () => {
+  assert.deepEqual(POLL_MODEL, { firstMs: 10_000, longestMs: 60_000, bannerFirstMs: 30_000 });
+  assert.deepEqual(backoffDelays([false, false, false, false, false]), [10_000, 15_000, 22_500, 33_750, 50_625, 60_000]);
+  assert.deepEqual(backoffDelays([false, false, true, false]), [10_000, 15_000, 22_500, 10_000, 15_000]);
+  assert.equal(WORK_STATUS_PATH, '/api/work-status?scope=roles');
+});
+test('an idle tab asks nothing, and before a run only the banner asks, backing off to a minute', () => {
+  assert.deepEqual(quietSchedule('idle', 100, 600), []);
+  const events = quietSchedule('pre-scan', 2, 180);
+  assert.ok(events.every(e => e.path === SCAN_STATUS_PATH));
+  assert.deepEqual(events.filter(e => e.tab === 0).map(e => e.atMs), [0, 30_000, 75_000, 135_000]);
+  assert.deepEqual(events.filter(e => e.tab === 1).map(e => e.atMs), [15_000, 45_000, 90_000, 150_000]);
   assert.ok(events.every((e, i) => i === 0 || events[i - 1].atMs <= e.atMs));
-  assert.deepEqual(POLL_CADENCE, { workStatusMs: 10_000, scanStatusMs: 30_000 });
+  assert.throws(() => quietSchedule('run', 1, 60), /unknown quiet phase/);
+});
+test('a refresh is the Shortlisted view for nine tabs in ten and Matched for the tenth, held to the measured rate', () => {
+  const paths = Array.from({ length: 100 }, (_, tab) => refreshPathFor(tab));
+  assert.equal(paths.filter(p => p === REFRESH_PATHS.matched).length, 10);
+  assert.equal(paths.filter(p => p === REFRESH_PATHS.shortlisted).length, 90);
+  assert.equal(REFRESH_PATHS.shortlisted, '/');
+  assert.ok(calibrated(2.3) && calibrated(2.8) && calibrated(3.3));
+  assert.ok(!calibrated(2.29) && !calibrated(3.31));
+  assert.equal(TARGETS.refreshP95Ms, 2_000);
 });
 test('a tab renders again only for a version it has not shown, and never for its first reading or a failed one', () => {
   assert.equal(needsRender(undefined, { ok: true, version: 'a' }), false);

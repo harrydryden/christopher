@@ -2,7 +2,7 @@ import { enqueueTask, enqueueTasks } from "@ava/db/tasks";
 import { dedupeKeyFor, priorityFor, type TaskPayloads, type TaskType } from "@ava/core";
 import { db } from "./db";
 
-type TaskWriter = Pick<ReturnType<typeof db>, "insert">;
+type TaskWriter = Pick<ReturnType<typeof db>, "insert" | "execute">;
 
 const priority = (type: TaskType) => (type === "score_job" ? 1 : priorityFor(type));
 

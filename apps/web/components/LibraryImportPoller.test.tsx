@@ -53,6 +53,33 @@ it("does not refresh while the imports stand as the page showed them, and refres
   expect(router.refresh).toHaveBeenCalledTimes(1);
 });
 
+/** Make the tab hidden or shown, as the browser does, and tell the page. */
+function setVisibility(state: DocumentVisibilityState) {
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+  document.dispatchEvent(new Event("visibilitychange"));
+}
+
+it("parks while the tab is hidden, and asks at once on return however long it was away", async () => {
+  const fetch = vi.fn<(url: string) => Promise<Response>>().mockResolvedValue(answer({ reading: 1, signature: "1:1:" }));
+  vi.stubGlobal("fetch", fetch);
+  try {
+    act(() => root.render(<LibraryImportPoller pending={1} signature="1:1:" />));
+    await advance(5_000);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    act(() => setVisibility("hidden"));
+    // Away for longer than the ten-minute ceiling: nothing is asked of a hidden tab.
+    await advance(15 * 60_000);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    // The import landed meanwhile. Back on the tab, the poller asks at once and refreshes.
+    fetch.mockResolvedValue(answer({ reading: 0, signature: "1:0:2026-09-26 18:00:00+00" }));
+    await act(async () => { setVisibility("visible"); await vi.advanceTimersByTimeAsync(0); });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(router.refresh).toHaveBeenCalledTimes(1);
+  } finally {
+    act(() => setVisibility("visible"));
+  }
+});
+
 it("refreshes when fewer are being read than the page showed, even if its fingerprint was already current", async () => {
   // The page listed the import as reading, then read the fingerprint just after it landed.
   const fetch = vi.fn<(url: string) => Promise<Response>>().mockResolvedValue(answer({ reading: 0, signature: "1:0:later" }));

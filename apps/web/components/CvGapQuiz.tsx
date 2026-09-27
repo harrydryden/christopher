@@ -1,42 +1,32 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { isActiveStoredEvidence } from "@ava/core/cv-helpers";
-import type { CvGapQuiz as CvGapQuizValue, CvLibrary } from "@ava/core";
 import type { ActionResult } from "@/lib/validation";
+import type { GapQuizForm, GapQuizLibrary } from "@/lib/cv-gap-quiz-library";
 import { Button } from "@/components/Button";
 import { Checkbox, Select, Textarea } from "@/components/Field";
 
 const INITIAL: ActionResult = { ok: true };
 
-export function gapDestinationValue(
-  destination: CvGapQuizValue["questions"][number]["suggestedDestination"],
-  library: CvLibrary,
-) {
-  if (destination.kind === "employment") return `employment:${destination.employmentId}`;
-  const entry = library.entries.find(item => item.id === destination.entryId);
-  return entry?.kind === "experience" && entry.employmentId
-    ? `employment:${entry.employmentId}`
-    : `evidence:${destination.entryId}`;
-}
-
-/** The deliberate human checkpoint: optional answers, explicit destination and factual confirmation. */
+/**
+ * The deliberate human checkpoint: optional answers, explicit destination and factual confirmation.
+ *
+ * `quiz` and `library` are shaped on the server (lib/cv-gap-quiz-library.ts): the destinations an
+ * answer can be saved under and the one each question starts on, not the Library itself.
+ */
 export function CvGapQuiz({
   quiz,
   library,
   action,
 }: {
-  quiz: CvGapQuizValue;
-  library: CvLibrary;
+  quiz: GapQuizForm;
+  library: GapQuizLibrary;
   action: (state: ActionResult, form: FormData) => Promise<ActionResult>;
 }) {
   const busy = useRef(false);
   const [state, setState] = useState<ActionResult>(INITIAL);
   const [pending, setPending] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>({});
-  // Structured experience is consolidated for generation and can carry a synthetic/grouped ID;
-  // employment is its stable editable destination. Legacy unlinked experience keeps its real ID.
-  const evidence = library.entries.filter(entry => isActiveStoredEvidence(entry) && (entry.kind !== "experience" || !entry.employmentId));
   return (
     <section aria-labelledby="gap-quiz-title" className="space-y-5 border-2 border-line bg-raised p-4 sm:p-6">
       <header className="space-y-2">
@@ -88,11 +78,11 @@ export function CvGapQuiz({
                 />
                 <label className="flex flex-col gap-1.5 text-14">
                   <span className="ds-label">Save this evidence under</span>
-                  <Select name={`destination:${question.id}`} defaultValue={gapDestinationValue(question.suggestedDestination, library)} disabled={!answered}>
-                    {(library.employment ?? []).map(job => (
+                  <Select name={`destination:${question.id}`} defaultValue={question.destinationValue} disabled={!answered}>
+                    {library.employment.map(job => (
                       <option key={`employment:${job.id}`} value={`employment:${job.id}`}>{job.jobTitle} · {job.company}</option>
                     ))}
-                    {evidence.map(entry => (
+                    {library.entries.map(entry => (
                       <option key={`evidence:${entry.id}`} value={`evidence:${entry.id}`}>{entry.heading}</option>
                     ))}
                   </Select>

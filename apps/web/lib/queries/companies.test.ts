@@ -12,7 +12,9 @@ let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 const reads = vi.hoisted(() => ({ n: 0 }));
 vi.mock("@/lib/db", () => ({ db: () => { reads.n++; return database; } }));
-import { companyScanTiming } from "./companies";
+import { companyScanTiming, listCataloguePage, listCompanyPage } from "./companies";
+import { subscribeToCompany } from "@ava/db";
+import { ensureTestUser } from "@/test/auth";
 import { scanTimingLine } from "@/app/(app)/companies/scan-line";
 
 beforeAll(async () => {
@@ -77,4 +79,43 @@ it("reads no tasks for a company never scanned", async () => {
   reads.n = 0;
   expect(await companyScanTiming(company!.id, now)).toEqual({ lastGoodScanAt: null, rescanSkippedAt: null });
   expect(reads.n).toBe(1);
+});
+
+async function followed(userId: string, names: string[]) {
+  const ids: string[] = [];
+  for (const name of names) {
+    const slug = name.toLowerCase();
+    const [company] = await database.insert(schema.companies).values({ name, domain: `${slug}.example`, homepageUrl: `https://${slug}.example` }).returning();
+    await subscribeToCompany(database, userId, company!.id);
+    ids.push(company!.id);
+  }
+  return ids;
+}
+
+it("reads the companies page beside its count, and a page past the end at the last one", async () => {
+  const user = await ensureTestUser(database, "company-page@example.com");
+  await followed(user.id, ["Beta", "Alpha", "Gamma"]);
+  const first = await listCompanyPage(user.id, 1);
+  expect(first).toMatchObject({ total: 3, page: 1 });
+  expect(first.rows.map((row) => row.company.name)).toEqual(["Alpha", "Beta", "Gamma"]);
+  // Past the end: the last page, with its rows, rather than an empty table.
+  const beyond = await listCompanyPage(user.id, 7);
+  expect(beyond).toMatchObject({ total: 3, page: 1 });
+  expect(beyond.rows.map((row) => row.company.name)).toEqual(["Alpha", "Beta", "Gamma"]);
+  // Another account follows nothing here.
+  const other = await ensureTestUser(database, "company-page-other@example.com");
+  expect(await listCompanyPage(other.id, 1)).toEqual({ rows: [], total: 0, page: 1 });
+});
+
+it("reads the catalogue page with its name proposals, clamping a page past the end", async () => {
+  const admin = await ensureTestUser(database, "catalogue-admin@example.com", "admin");
+  const member = await ensureTestUser(database, "catalogue-member@example.com");
+  const [alpha] = await followed(member.id, ["Alpha", "Beta"]);
+  await database.insert(schema.companyNameSuggestions).values({ companyId: alpha!, userId: member.id, name: "Alpha Ltd" });
+  const page = await listCataloguePage(admin.id, 9);
+  expect(page).toMatchObject({ total: 2, page: 1 });
+  expect(page.rows.map((row) => ({ name: row.company.name, followers: row.followers, mine: row.followedByViewer })))
+    .toEqual([{ name: "Alpha", followers: 1, mine: false }, { name: "Beta", followers: 1, mine: false }]);
+  expect(page.suggestions.map((row) => ({ companyId: row.companyId, name: row.name, email: row.email })))
+    .toEqual([{ companyId: alpha, name: "Alpha Ltd", email: "catalogue-member@example.com" }]);
 });

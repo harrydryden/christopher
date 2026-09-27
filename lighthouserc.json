@@ -1,0 +1,49 @@
+{
+  "ci": {
+    "collect": {
+      "numberOfRuns": 3,
+      "url": [
+        "http://127.0.0.1:3124/",
+        "http://127.0.0.1:3124/companies",
+        "http://127.0.0.1:3124/library",
+        "http://127.0.0.1:3124/cv/${DRAFT_ID}"
+      ],
+      "settings": {
+        "preset": "desktop",
+        "throttlingMethod": "simulate",
+        "onlyCategories": ["performance"],
+        "disableStorageReset": false
+      }
+    },
+    "assert": {
+      "assertMatrix": [
+        {
+          "matchingUrlPattern": "^http://127\\.0\\.0\\.1:3124/$",
+          "assertions": {
+            "largest-contentful-paint": ["error", { "maxNumericValue": 2500, "aggregationMethod": "median-run" }],
+            "cumulative-layout-shift": ["error", { "maxNumericValue": 0.1, "aggregationMethod": "median-run" }],
+            "total-blocking-time": ["error", { "maxNumericValue": 200, "aggregationMethod": "median-run" }],
+            "interactive": ["warn", { "maxNumericValue": 3800, "aggregationMethod": "median-run" }],
+            "server-response-time": ["warn", { "maxNumericValue": 600, "aggregationMethod": "median-run" }],
+            "resource-summary:script:size": ["warn", { "maxNumericValue": 134000, "aggregationMethod": "median-run" }]
+          }
+        },
+        {
+          "matchingUrlPattern": "^http://127\\.0\\.0\\.1:3124/.+",
+          "assertions": {
+            "largest-contentful-paint": ["error", { "maxNumericValue": 2500, "aggregationMethod": "median-run" }],
+            "cumulative-layout-shift": ["error", { "maxNumericValue": 0.1, "aggregationMethod": "median-run" }],
+            "total-blocking-time": ["error", { "maxNumericValue": 200, "aggregationMethod": "median-run" }],
+            "interactive": ["warn", { "maxNumericValue": 3800, "aggregationMethod": "median-run" }],
+            "server-response-time": ["warn", { "maxNumericValue": 600, "aggregationMethod": "median-run" }],
+            "resource-summary:script:size": ["warn", { "maxNumericValue": 145000, "aggregationMethod": "median-run" }]
+          }
+        }
+      ]
+    },
+    "upload": {
+      "target": "filesystem",
+      "outputDir": "lighthouse-reports/desktop"
+    }
+  }
+}

@@ -3,6 +3,9 @@ import { libraryImportProgress } from "@/lib/queries/library-imports";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// A progress read, bounded at 60 s rather than the platform default of 300. The upload itself (up to
+// 5 MB) is a server action on /library, and takes that page's limit.
+export const maxDuration = 60;
 
 /**
  * How this account's Library imports in flight stand, for the Library's import poller: how many

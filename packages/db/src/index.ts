@@ -6,11 +6,13 @@
 export * from "./schema";
 export * as schema from "./schema";
 export { createDb, getDb, poolErrorCount, poolStats, slowQueryCount, type Db, type CreateDbOptions, type SlowQuery } from "./client";
-export { enqueueTask, pendingTaskCounts, taskById, activeTaskFor, type EnqueueOptions } from "./tasks";
+export { databaseBackends, BACKENDS_ALERT_AT, WEB_BACKENDS_CAP, type DatabaseBackends } from "./backends";
+export { enqueueTask, enqueueTasks, pendingTaskCounts, taskById, activeTaskFor, notifyTaskWorkers, TASKS_CHANNEL, type EnqueueOptions, type TaskWriter } from "./tasks";
 
 export { reevaluateGate, archiveNonMatches, isGateArchive, restoreGateArchive, GATE_RESTORE_EVENT, REEVALUATE_CLOSED_DAYS, type GateScope, type ArchiveScope, type ReevaluateOptions } from "./gate";
 export { appendProfile, latestProfileFor } from "./profiles";
-export { workloadMetrics } from "./scaling";
+export { claimableTaskSql, workloadMetrics } from "./scaling";
+export { topStatements, resetStatements, formatStatementTotals, type StatementTotal, type StatementTotals } from "./pg-stat";
 export { addHttpHostDaily, listHttpHostDaily, pruneHttpHostDaily, emptyHttpCounters, latencyBucketIndex, LATENCY_BUCKET_UPPER_MS, type HttpHostCounters, type HttpHostDailyDelta, type HttpHostDailyRow } from "./http-rollup";
 export { recordWorkerEvent, listWorkerEvents, countWorkerEvents, pruneWorkerEvents, type WorkerEventInput } from "./worker-events";
 export { accountAiSpend, totalAiSpend, aiUsageByAccount, recordAiCall, resetAiCallColumnsProbe, releaseAiHolds, releaseOrphanedCvHolds, aiOutcome, aiOutcomeSql, AI_OUTCOMES, costPerCvBuild, costPerScoredRole, type AiAccountUsage, type AiCallRecord, type AiOutcome, type CvBuildCost, type CvBuildCosts, type ReleasedHolds, type ScoredRoleCost } from "./ai-budget";
@@ -28,7 +30,7 @@ export { cvRoleKey } from "./cv-role-key";
 export { upsertLibraryReviews, latestLibraryReviews, libraryReviewsSignature, pruneLibraryReviews, type LibraryReviewUpsert } from "./library-reviews";
 
 export { syncCompanyStatus, subscribeToCompany, setSubscriptionStatus, subscribedCompanyIds, retireSourceRoles, SOURCE_RETIRED_REASON } from "./subscriptions";
-export { storeCompanyLogo, noteLogoFailure, readCompanyLogo, companiesDueLogoCapture, LOGO_REFRESH_AFTER_MS, type StoredLogo } from "./company-logos";
+export { storeCompanyLogo, noteLogoFailure, readCompanyLogo, companyLogoVersion, companiesDueLogoCapture, LOGO_REFRESH_AFTER_MS, type StoredLogo } from "./company-logos";
 export { BOOTSTRAP_USER_ID, BOOTSTRAP_EMAIL, DEFAULT_ADMIN_EMAILS, SEED_TAGS, adminEmailsFrom, completeAccountClaim, createUser, isEntitledEmail, isPlaceholderEmail, listUserIds, normaliseEmail, promoteIfEntitled, seedTagVocabulary, type CreateUserInput, type CreateUserResult } from "./users";
 
 export { createLibraryImport, getLibraryImport, getLibraryImportForWorker, listOpenLibraryImports, completeLibraryImport, resolveLibraryImport, pruneLibraryImports, type CreateLibraryImportInput, type LibraryImportOutcome, type LibraryImportRow, type LibraryImportSummary } from "./library-imports";

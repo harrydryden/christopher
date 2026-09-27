@@ -12,7 +12,7 @@ import {
   upsertLibraryReviews, type Db, type LibraryReviewUpsert,
 } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
-import { normaliseLibraryReview, rulesLibraryReview, type CvLibrary, type Employment, type LibraryEntryReview } from "@ava/core";
+import { detectEvidenceMarks, normaliseLibraryReview, rulesLibraryReview, type CvLibrary, type Employment, type LibraryEntryReview } from "@ava/core";
 import { sql } from "drizzle-orm";
 import pg from "pg";
 import { ensureTestUser } from "./test-users";
@@ -65,7 +65,8 @@ it("writes a pass and reads back the review of each entry as it is written now",
   expect(stored.score).toBe(stored.review.score);
   expect(stored.rating).toBe(stored.review.rating);
   // Stored as the Library will read it back: a row carries a list of the types it serves.
-  expect(stored.review.rows[0]).toMatchObject({ facets: ["outcome", "metric"], quantified: true, verified: true });
+  expect(stored.review.rows[0]).toMatchObject({ facets: ["outcome", "metric"], tagged: ["outcome", "metric"], verified: true });
+  expect(stored.review.rows[0]!.marks).toContain("metric.figure");
   expect(stored.review.prompts.length).toBeGreaterThan(0);
 
   // Another account's reviews are not this account's, however the entry ids collide.
@@ -152,9 +153,9 @@ it("keeps the newest twenty library versions and drops what is older", async () 
 });
 
 it("reads back a review a release before row types wrote, in today's shape", async () => {
-  // What is in the column for accounts that have already been reviewed: one `facet` a row, and
-  // `"unclear"` where the row served none. Nothing rewrites those rows, so every reader of
-  // `cv_library_reviews.review` goes through `normaliseLibraryReview`.
+  // What is in the column for accounts that have already been reviewed: one `facet` a row,
+  // `"unclear"` where the row served none, and no marks. Nothing rewrites those rows, so every
+  // reader of `cv_library_reviews.review` goes through `normaliseLibraryReview`.
   const stored = {
     entryId: "acme-block",
     rows: [
@@ -172,7 +173,12 @@ it("reads back a review a release before row types wrote, in today's shape", asy
   const row = (await latestLibraryReviews(db, userId, [{ entryId: "acme-block", inputHash: "hash-a" }])).get("acme-block")!;
   const review = normaliseLibraryReview(row.review);
   expect(review.rows.map(item => item.facets)).toEqual([["metric"], []]);
-  expect(review.score).toBe(row.score);
-  expect(review.rating).toBe(row.rating);
+  // The wording rules stand in for the marks it never recorded; it names no tags of its own.
+  expect(review.rows.map(item => item.marks)).toEqual(review.rows.map(item => detectEvidenceMarks(item.row)));
+  expect(review.rows.every(item => item.tagged.length === 0)).toBe(true);
+  // Recomputed under today's formula rather than read from the column: metric's coverage alone,
+  // 50 × 2/8, with no typed row to add to it. The column keeps what was stored.
+  expect(row.score).toBe(38);
+  expect(review).toMatchObject({ score: 13, rating: "none" });
   expect(review.prompts).toEqual(["What changed as a result?"]);
 });

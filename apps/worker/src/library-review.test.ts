@@ -84,7 +84,7 @@ function scriptedClient({ omit = [] }: { omit?: string[] } = {}) {
               entryId: entry.id,
               rows: entry.rows.map((row, index) => ({
                 row, facets: index === 0 ? ["responsibility"] : ["outcome", "metric"],
-                specific: true, quantified: true, outcomeLinked: index > 0, quote: row,
+                marks: index === 0 ? ["responsibility.scope", "responsibility.ownership"] : ["outcome.change", "metric.figure"], quote: row,
               })),
               prompts: ["What problem were you brought in to solve?"],
             })),
@@ -250,7 +250,12 @@ it("finishes done with the budget sentence when the account cannot afford the pa
   // The page is not left blank: the rules baseline stands for every entry.
   const stored = await reviews();
   expect(stored.map(row => [row.entryId, row.source])).toEqual([["degree", "rules"], ["role", "rules"]]);
-  expect(stored.every(row => row.score > 0)).toBe(true);
+  // Nothing here is tagged, so no row has a score of its own and the entries read 0, but each row
+  // carries the marks its wording earns, ready for the moment the person types it.
+  const { rulesLibraryReview } = await import("@ava/core");
+  const library = libraryOf();
+  expect(stored.map(row => row.score)).toEqual(["degree", "role"].map(id => rulesLibraryReview(library.entries.find(entry => entry.id === id)!, library).score));
+  expect(stored.every(row => row.review.rows.every(item => item.marks.length > 0))).toBe(true);
 });
 
 it("keeps the baseline and lets the queue retry when the pass itself fails", async () => {

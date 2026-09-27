@@ -83,6 +83,14 @@ export interface TaskPayloads {
    * the id of the row, so an upload never travels through the queue.
    */
   import_library_document: { userId: string; importId: string };
+  /**
+   * One pass of the one-off backfill that re-encodes stored company logos as small WebP images,
+   * as a capture now stores them. A pass takes a bounded batch in company order after
+   * `afterCompanyId` and queues the next pass itself while there is more to do, so the whole
+   * catalogue is walked once without any one task holding a slot for long. Shared work: logos
+   * belong to the catalogue, not to an account.
+   */
+  reencode_logos: { afterCompanyId?: string };
 }
 
 export type TaskType = keyof TaskPayloads;
@@ -150,6 +158,9 @@ export function dedupeKeyFor<T extends TaskType>(type: T, payload: TaskPayloads[
     // and re-reading one that failed is the same piece of work rather than a second one.
     case "import_library_document":
       return `import_library_document:${(payload as TaskPayloads["import_library_document"]).importId}`;
+    // One walk at a time: a second request while a pass waits to start is the same walk.
+    case "reencode_logos":
+      return "reencode_logos";
     default:
       return null;
   }
@@ -198,6 +209,8 @@ export function priorityFor(type: TaskType): number {
     case "rescore_all":
       return 6;
     case "suggest_companies":
+    // Housekeeping nobody is waiting for: behind everything else.
+    case "reencode_logos":
       return 7;
     default:
       return 5;
@@ -321,6 +334,7 @@ const EVERY_TASK_TYPE: Record<TaskType, true> = {
   synthesize_profile: true, suggest_filters: true, suggest_from_scans: true, profile_company: true,
   suggest_companies: true, rescore_all: true, reevaluate_gate: true, import_posting: true,
   review_library: true, import_library_document: true, collect_score_batch: true, poll_score_batch: true,
+  reencode_logos: true,
 };
 export const TASK_TYPE_NAMES = Object.keys(EVERY_TASK_TYPE) as TaskType[];
 

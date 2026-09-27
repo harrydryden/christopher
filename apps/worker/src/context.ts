@@ -7,6 +7,7 @@ import type { WorkerEnv } from "./env";
 import { HttpTrafficLedger, PoliteFetcher, userAgentFor } from "./fetcher";
 import { accountAiStanding, BudgetRefusedError, recordAiUsage, tryReserveAi } from "./budget";
 import { log } from "./log";
+import { encodeLogoWebp } from "./logo-encode";
 import { loadSettings, loadUserSettings } from "./settings";
 
 export interface WorkerDeps {
@@ -249,6 +250,8 @@ export function makeFetchContext(deps: WorkerDeps, opts: { signal?: AbortSignal 
     fetchText: (url, init) => untilStopped(signal, () => deps.fetcher.fetchText(url, { ...init, signal: init?.signal ?? signal })),
     fetchBytes: (url, init) => untilStopped(signal, () => deps.fetcher.fetchBytes(url, { ...init, signal: init?.signal ?? signal })),
     render: deps.browser ? (url, options) => untilStopped(signal, () => deps.browser!.render(url, { ...options, signal: options?.signal ?? signal })) : undefined,
+    // A captured logo is stored as a 64 px WebP where it can be (see logo-encode.ts).
+    encodeLogo: encodeLogoWebp,
     log: (msg, data) => log.debug(msg, data),
     now: deps.now,
   };

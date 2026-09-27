@@ -20,6 +20,7 @@
  * - An unknown `detail` key is ignored, and an unknown motion falls back to the step's own title.
  */
 import type { CvJournalStep } from "./cv-build-journal";
+import { revisionName } from "./cv-build-adopted";
 import { formatClock, formatCount, formatPercent, formatStepDuration, formatUsdPrecise, pluralize } from "./format";
 
 /** A subset of the badge tones; the narrative never needs the other two. */
@@ -192,16 +193,6 @@ function budgetStage(value: string): string {
  * original being kept, in grey, never red over a CV that is ready.
  */
 const OPTIONAL_MOTIONS = new Set(["improve_content", "compare_content", "adopt_revision"]);
-
-/** The adopted revision's name: the worker's label, the page's, or its revision number. */
-function revisionName(detail: Record<string, unknown>): string | null {
-  const label = text(detail, "label");
-  if (label) return label;
-  const revision = detail.revision;
-  if (typeof revision === "string" && revision.trim()) return revision.trim();
-  if (typeof revision === "number" && Number.isFinite(revision)) return `revision ${formatCount(revision)}`;
-  return null;
-}
 
 /** "Could not …", built from the motion's own title so the two can never drift apart. */
 function failedPhrase(step: CvJournalStep): string {
@@ -1029,14 +1020,8 @@ export function cvBuildProgressLine(steps: readonly CvJournalStep[], now: Date =
   return parts.join(" · ");
 }
 
-/** The revision the improvement pass adopted, once it has, for the link above the log. */
-export function adoptedRevision(steps: readonly CvJournalStep[]): { name: string | null; draftId: string | null } | null {
-  const adopted = [...steps].reverse().find((step) => step.motion === "adopt_revision" && step.status === "done");
-  if (!adopted) return null;
-  // TODO(merge P2): the adopted revision's draft id; `revision` is its name or number.
-  const draftId = text(adopted.detail, "draftId") ?? text(adopted.detail, "revisionId");
-  return { name: revisionName(adopted.detail), draftId };
-}
+/** The revision the improvement pass adopted: read apart from the narrative, see cv-build-adopted. */
+export { adoptedRevision } from "./cv-build-adopted";
 
 /** The Applications row's few words for what a build is doing: "checking batch 3 of 5". */
 export function cvBuildRowLabel(step: Pick<CvJournalStep, "motion" | "detail" | "status">): string | null {

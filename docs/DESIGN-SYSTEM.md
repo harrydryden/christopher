@@ -90,7 +90,10 @@ Each is at least 5:1 on white.
 Silkscreen (pixel, uppercase by typeface) for page and section titles, button
 labels, badges, table heads and numerals near the mark. Never for a paragraph.
 IBM Plex Mono for all body text and controls. Both are self-hosted through
-`next/font` in `app/layout.tsx`; `body` carries
+`next/font` in `app/layout.tsx`: Silkscreen at 400 only (there is no pixel bold;
+a pixel element in a bold context such as a `<th>` carries `ds-pixel` itself),
+Plex Mono at 400, 500 and 600 with a system monospace fallback stack rather than
+a size-adjusted Arial. `body` carries
 `font-variant-numeric: tabular-nums` so figures line up in tables.
 
 Sizes are named for their pixel value, because the scale is small and literal.

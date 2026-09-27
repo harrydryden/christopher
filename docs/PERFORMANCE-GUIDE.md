@@ -96,7 +96,7 @@ Shared floor about 108 KB (react-dom 54.3, router runtime 46.2, `next/link` 3.4,
 
 **2.1 Stop preloading Silkscreen 700 once its one use is settled, and give IBM Plex Mono a monospace fallback.**
 - Mechanism: `Silkscreen({ weight: ["400"], subsets: ["latin"], display: "swap", variable: "--font-pixel-family" })`; `IBM_Plex_Mono({ ..., adjustFontFallback: false, fallback: ["ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "Liberation Mono", "monospace"] })`. Plex advances 600/1000 em, Menlo 602, Courier New 600, so line breaks and `tabular-nums` match far better than `local("Arial")` at `size-adjust: 134.59%`.
-- Status: not done [V]: `app/layout.tsx:9-21` requests 400 and 700. `ds-pixel` pins weight 400 (`globals.css:257-259`) and no element combines it with a weight utility, but Silkscreen 700 is painted in one place: the Library evidence table's `<thead className="ds-pixel …">` (`components/CvLibraryEditor.tsx:366`) leaves its `<th>` cells on the browser default `font-weight: bold`, which Tailwind's preflight resets only for `h1`–`h6`. Dropping 700 without touching that header would render it faux-bold.
+- Status: done [V] (commit 1a071ca): the evidence table's `<th>` cells carry `ds-pixel` themselves; Silkscreen is loaded at 400 only and Plex Mono falls back to the system monospace stack with `adjustFontFallback: false`. Built CSS: 21 → 18 `@font-face` rules (no Silkscreen 700, no Plex size-adjusted fallback), next-font preloads 5 → 4 files, CSS 41,191/8,530 → 40,442/8,481 B raw/gzip.
 - Change: put `ds-pixel` on those `<th>` cells (as `components/table.tsx` `TH` already does) or add `font-normal` to the head, then remove 700 and update the font line in `docs/DESIGN-SYSTEM.md`. That header changes from bold to regular pixel, a visible design decision to take deliberately.
 - Impact: −3,208 B and one request on every hard load, `/login` included [M]; font-swap CLS on a cold first visit from ≤ 0.02 to about 0 (estimate). Merging Plex 500 (10,052 B, used 23 times in 14 files) is a separate design-system decision.
 - Effort: S. Risk → guard: synthesised bold anywhere `ds-pixel` meets a bold context (`<th>`, `<strong>`, `<kbd>` in `font-semibold` containers); grep for those and check `/library`, `/`, `/suggestions` and the CV tabs.
@@ -110,35 +110,35 @@ Shared floor about 108 KB (react-dom 54.3, router runtime 46.2, `next/link` 3.4,
 
 **2.3 Store company logos as a 64 px WebP at capture, not the site's original icon.**
 - Mechanism: `sharp(bytes).resize(64, 64, { fit: "contain", background: { r:0, g:0, b:0, alpha:0 } }).webp({ quality: 90, effort: 4 })`, stored as `image/webp` (already sniffed, `packages/core/src/logo-capture.ts:59`). Keep SVG as is. For ICO, pass on the largest PNG-embedded entry ≥ 32 px, else keep the original. `sharp.concurrency(1); sharp.cache(false)` on the 512 MB worker. The largest slot is 32 CSS px; 64 px covers 2× DPR. Backfill with a one-off task.
-- Status: not done [V]: bytes stored as fetched up to `LOGO_MAX_BYTES` 512 KB (`logo-capture.ts:18`), preferring `apple-touch-icon` then multi-size `favicon.ico` (`:130-143`); `sharp` 0.35.4 is only transitive via `next`. No fixture has captured logos, so sizes are unmeasured.
+- Status: done [V] (commit 05f1604): `normaliseLogo` (core) re-encodes through an injected `encodeLogo` (worker, sharp 64 px WebP, concurrency 1, no cache), keeps SVG, takes an ICO's largest PNG ≥ 32 px, and keeps the original on any error; one-off `reencode_logos` task in passes of 25 (`pnpm cli reencode-logos`) bumps `fetched_at` and `logo_fetched_at`. No database holds captured logos; synthetic 180 px PNG 55,601 B → 986 B, 256 px 113,065 B → 938 B.
 - Impact: estimate. Touch icons 5–30 KB and 256 px ICOs 15–100 KB become 1–3 KB: about 50–400 KB less per cold roles page, less decode. No CLS change (dimensions already set).
 - Effort: M. Risk → guard: a resize failure must not lose the logo; on any sharp error store the original and log; resize by sniffed type; keep `fetched_at` as the version so the backfill busts the immutable URL (1.2).
 
 **2.4 Gate the CV build clock on visibility and on the log being open.**
 - Mechanism: in `tick`, return when `document.visibilityState !== "visible"` and tick on `visibilitychange`; in log mode compute `narrateBuild(...)` only while open, or memoise on `[steps, Math.floor(now / 15_000)]`.
-- Status: not done [V]: `components/CvBuildLive.tsx:84-91` ticks every 1 s while live; `:203` re-runs `narrateBuild` and re-renders the list inside a closed, `hidden` disclosure.
+- Status: done [V] (commit c1a2926): the tick is a no-op while hidden and fires on `visibilitychange`; the log's narrative renders only while open (`CvDisclosure mountWhenOpen`).
 - Impact: about 1–3 ms of main thread per second for a build's duration (estimate); battery and INP on the CV page.
 - Effort: S. Risk → guard: elapsed figures must jump correctly on return; tick at once on `visibilitychange` (the `skewRef` clock already corrects).
 
 **2.5 Load the CV build narrative only when the log is opened on a finished CV.**
 - Mechanism: `next/dynamic` with no `loading` option (the `components/CvLazyWidgets.tsx` pattern, no Suspense flash), triggered from `CvDisclosure`'s `open` state; only the `mode="log"` path with `!reading.live`.
-- Status: not done [V]: the page chunk is 62.4 KB raw / 19.5 KB gzip including `lib/cv-build-narrative.ts` (54 KB of source); `CvDisclosure` renders children while `hidden` (`components/CvDisclosure.tsx:24`).
+- Status: done [V] (commit 9d1112e): narrative views split into `CvBuildViews` via `next/dynamic` (no `loading`); a finished CV fetches the chunk only when the log opens; a failed chunk shows a sentence. `/cv/[id]` first load 134,423 → 125,125 B gzip; page chunk 19,483 → 10,502 B gzip; the lazy chunk is 10,505 B gzip.
 - Impact: 5–8 KB gzip off `/cv/[id]`'s 134.7 KB plus less hydration on ready CVs (estimate).
 - Effort: M. Risk → guard: keep `CvBuildLive.test.tsx` green; a failed chunk shows a sentence, as in commit `8a5b781`.
 
 **2.6 Memoise the CV draft editor's baseline fingerprint.**
 - Mechanism: `const baseline = useMemo(() => JSON.stringify({ ...content, theme: baseTheme }), [content, baseTheme])`.
-- Status: partial [V]: `CvDraftEditor.tsx:125-128` stringifies the whole CV twice per keystroke; `CvLibraryEditor.tsx:69-87` already memoises on `value`.
+- Status: done [V] (commit 1282df9): baseline memoised on `[content, baseTheme]`; one stringify per keystroke instead of two.
 - Impact: under 1 ms per keystroke at 5–20 KB (estimate; fixture libraries are 4.3 KB [M]). `useDeferredValue` becomes worthwhile only above about 100 KB.
 - Effort: S. Risk → guard: none.
 
 **2.7 Pre-shape the gap quiz's library on the server.**
 - Mechanism: pass `{ entries: {id, heading}[], employment: {id, company, jobTitle}[] }` instead of the whole `draft.librarySnapshot` (`app/(app)/cv/[id]/page.tsx:284-286`).
-- Status: not done [V]. Impact: a few KB less RSC and HTML while a quiz is open (estimate). Effort: S. Risk → guard: type the prop from the shaped object so typecheck catches a missing field.
+- Status: done [V] (commit 7feb6f9): `gapQuizLibrary`/`gapQuizForm` shape it on the server; the prop is typed from the shaped object. Bench snapshots average 4,307 B of JSON against about 91 B shaped. Impact: a few KB less RSC and HTML while a quiz is open (estimate). Effort: S. Risk → guard: type the prop from the shaped object so typecheck catches a missing field.
 
 **2.8 Park the Library pollers while the tab is hidden.**
 - Mechanism: the `AutoRefresh` pattern (flag plus `visibilitychange`) in `components/LibraryImportPoller.tsx:30-70`; today the `until` ceiling keeps counting while hidden, so a returning user gets no refresh.
-- Status: not done [V]. Impact: correctness only; fetches are already skipped while hidden. Effort: S, when touched for another reason.
+- Status: done [V] (commit 9e003ee): both pollers park while hidden, give the time away back to the ceiling and poll at once on return. Impact: correctness only; fetches are already skipped while hidden. Effort: S, when touched for another reason.
 
 #### Already in place
 

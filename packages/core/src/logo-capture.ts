@@ -148,6 +148,93 @@ export function logoCandidates(homepageHtml: string | null, pageUrl: string, dom
 const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 /**
+ * The size a logo is stored at, in pixels a side. The largest place a logo is shown is 32 CSS
+ * pixels, so 64 covers a 2x screen; a touch icon is 180 and a multi-size favicon.ico carries 256.
+ */
+export const LOGO_STORED_PX = 64;
+
+/** An ICO whose largest PNG is smaller than this is kept as it is: there is nothing to shrink. */
+export const ICO_MIN_PNG_PX = 32;
+
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+/**
+ * The largest PNG-encoded image inside an ICO file, at least `ICO_MIN_PNG_PX` a side, or null.
+ *
+ * A favicon.ico is a directory of images: each entry names its size and where its bytes start.
+ * Modern ones carry their larger sizes as whole PNG files, which an image library reads directly;
+ * the older bitmap entries it cannot, so an ICO with no PNG large enough is stored as it came.
+ * The size is read from the PNG's own header, because the directory's one-byte width cannot say
+ * 256 (it writes 0) and nothing obliges it to agree with the image.
+ */
+export function largestIcoPng(bytes: Uint8Array): Uint8Array | null {
+  if (bytes.length < 6 || !startsWith(bytes, [0x00, 0x00, 0x01, 0x00])) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const count = view.getUint16(4, true);
+  let best: { px: number; data: Uint8Array } | null = null;
+  for (let i = 0; i < count; i++) {
+    const at = 6 + i * 16;
+    if (at + 16 > bytes.length) break;
+    const size = view.getUint32(at + 8, true);
+    const offset = view.getUint32(at + 12, true);
+    if (size < 24 || offset + size > bytes.length) continue;
+    const data = bytes.subarray(offset, offset + size);
+    // A PNG opens with its signature and then the IHDR chunk: width and height, big-endian.
+    if (!startsWith(data, PNG_SIGNATURE) || !startsWith(data, [0x49, 0x48, 0x44, 0x52], 12)) continue;
+    const header = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    const px = Math.min(header.getUint32(16), header.getUint32(20));
+    if (px < ICO_MIN_PNG_PX) continue;
+    if (!best || px > best.px) best = { px, data };
+  }
+  return best?.data ?? null;
+}
+
+/**
+ * Re-encode a raster icon as a `LOGO_STORED_PX` WebP: fitted inside the square on a transparent
+ * background, never cropped. The worker supplies one (image work needs a native library that this
+ * package does not carry); it may throw.
+ */
+export type LogoEncoder = (bytes: Uint8Array) => Promise<Uint8Array>;
+
+export interface NormalisedLogo {
+  bytes: Uint8Array;
+  contentType: string;
+  /** False when the original bytes were kept, and why. */
+  reencoded: boolean;
+  kept?: "svg" | "no encoder" | "ico without a large png" | "encode failed" | "encoder output was not webp";
+}
+
+/**
+ * What to store for a captured icon: a small WebP where one can be made, the original otherwise.
+ *
+ * A site's icon is often a 180 px touch icon or a 256 px multi-size ICO, 15 to 100 KB, shown in a
+ * 16 to 32 px slot fifty times on a roles page; the same picture at 64 px is one to three KB. SVG
+ * is already small and sharp at any size, so it is kept as it is. An ICO is re-encoded from its
+ * largest PNG entry when it has one of at least 32 px, and kept otherwise. Resizing must never
+ * cost the logo: any failure keeps the bytes that were captured, which were good enough to store
+ * before this existed.
+ */
+export async function normaliseLogo(bytes: Uint8Array, contentType: string, encode?: LogoEncoder): Promise<NormalisedLogo> {
+  const original = (kept: NonNullable<NormalisedLogo["kept"]>): NormalisedLogo => ({ bytes, contentType, reencoded: false, kept });
+  if (contentType === "image/svg+xml") return original("svg");
+  if (!encode) return original("no encoder");
+  let input = bytes;
+  if (contentType === "image/x-icon") {
+    const png = largestIcoPng(bytes);
+    if (!png) return original("ico without a large png");
+    input = png;
+  }
+  let out: Uint8Array;
+  try {
+    out = await encode(input);
+  } catch {
+    return original("encode failed");
+  }
+  if (sniffImageType(out) !== "image/webp") return original("encoder output was not webp");
+  return { bytes: out, contentType: "image/webp", reencoded: true };
+}
+
+/**
  * Read a company's logo: the homepage for what it declares, then each candidate until one
  * answers with something that really is an image.
  *
@@ -215,7 +302,11 @@ export async function captureCompanyLogo(
         tried.push(`${candidate.url}: SVG refused because ${unsafe}`);
         continue;
       }
-      return { bytes, contentType, source: candidate.source, sourceUrl: res.url || candidate.url };
+      // Stored small (see `normaliseLogo`), by the type the bytes really are; the original when
+      // it cannot be.
+      const stored = await normaliseLogo(bytes, contentType, ctx.encodeLogo);
+      if (!stored.reencoded && stored.kept === "encode failed") ctx.log?.("logo kept as captured: re-encoding failed", { url: candidate.url, contentType });
+      return { bytes: stored.bytes, contentType: stored.contentType, source: candidate.source, sourceUrl: res.url || candidate.url };
     } catch (error) {
       tried.push(`${candidate.url}: ${reason(error)}`);
     }

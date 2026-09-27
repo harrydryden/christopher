@@ -50,19 +50,21 @@ export function TD({ children, className = "", ...rest }: TdHTMLAttributes<HTMLT
  *
  * `state` is what a missing score means — "scoring…", "not scored: budget spent" — written where
  * the bar would be. A dash is kept for a row that has nothing to say about why.
+ *
+ * Only phrasing content (spans), so it can be drawn inside a button, as the Library row score is.
  */
 export function FitBar({ score, title, state }: { score: number | null; title?: string; state?: string | null }) {
   if (score === null) return <span className={state ? "text-12 text-muted" : "text-muted"} title={title}>{state || "—"}</span>;
   const filled = Math.round(Math.max(0, Math.min(100, score)) / 10);
   const tone = score >= 70 ? "bg-ok" : score >= 30 ? "bg-warn" : "bg-danger";
   return (
-    <div className="flex items-center gap-2" title={title}>
+    <span className="flex items-center gap-2" title={title}>
       <span className="ds-pixel w-6 text-right text-10 text-fg">{score}</span>
       <span className="flex gap-0.5" aria-hidden="true">
         {Array.from({ length: 10 }, (_, i) => (
           <span key={i} className={`h-2 w-1.5 ${i < filled ? tone : "bg-track"}`} />
         ))}
       </span>
-    </div>
+    </span>
   );
 }

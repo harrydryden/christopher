@@ -6,7 +6,7 @@
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import type { CvJournalStepWire } from "@/lib/cv-build-journal";
 import { cvStepsSignature, stepFromWire } from "@/lib/cv-build-journal";
 import type { CvProgressReading } from "@/lib/cv-progress-types";
@@ -15,6 +15,13 @@ import { FIRST_POLL_MS } from "@/lib/polling";
 const router = vi.hoisted(() => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn(), back: vi.fn(), forward: vi.fn(), prefetch: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 vi.mock("next/link", () => ({ default: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a> }));
+// Next resolves `next/dynamic` to its app-router implementation for app/ code; outside Next the
+// package entry is the pages-router one. The narrative's views are that kind of split chunk.
+vi.mock("next/dynamic", async () => {
+  const appDynamic = (await import("next/dist/shared/lib/app-dynamic")) as { default: unknown };
+  const dynamic = appDynamic.default as { default?: unknown };
+  return { default: dynamic.default ?? dynamic };
+});
 
 import { CvBuildLive } from "./CvBuildLive";
 
@@ -47,6 +54,35 @@ const gone = (status: number) => ({ ok: false, status, json: async () => ({ ok: 
 
 let root: Root;
 let container: HTMLElement;
+// Each of the narrative's views is a chunk of its own, fetched the first time it renders, as a
+// browser fetches it. Rendered once here on the real clock, as a page that has its chunks in hand,
+// so that under the fake one a view renders in the same act as the component around it.
+beforeAll(async () => {
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+  await import("./CvBuildViews");
+  const warm = document.createElement("div");
+  const warmRoot = createRoot(warm);
+  const initial = reading([wire(1, "write", "running")]);
+  // A chunk arrives, then the render it held up is retried: two turns each.
+  const settle = async () => {
+    for (let turn = 0; turn < 2; turn++) await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+  };
+  act(() => {
+    warmRoot.render(
+      <>
+        <CvBuildLive id="warm" mode="build" initial={initial} nowMs={T0} timeZone="UTC" versionLabel="V1" />
+        <CvBuildLive id="warm" mode="log" initial={initial} nowMs={T0} timeZone="UTC" versionLabel="V1" />
+      </>,
+    );
+  });
+  await settle();
+  act(() => [...warm.querySelectorAll("button")].find((button) => button.textContent === "Show build log")?.click());
+  await settle();
+  expect(warm.querySelector('[aria-label="CV build progress"]')).not.toBeNull();
+  expect(warm.querySelector('[aria-label="Build narrative"]')).not.toBeNull();
+  act(() => warmRoot.unmount());
+  vi.unstubAllGlobals();
+});
 beforeEach(() => {
   vi.useFakeTimers({ now: T0 + 60_000 });
   router.refresh.mockReset();

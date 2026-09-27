@@ -1,27 +1,48 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
+import { useEffect, useRef, useState, useTransition, type ComponentProps, type ComponentType, type ReactNode } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CvBuildNarrative } from "./CvBuildNarrative";
-import { CvBuildProgress } from "./CvBuildProgress";
 import { CvDisclosure } from "./CvDisclosure";
+import type * as Views from "./CvBuildViews";
+import { adoptedRevision } from "@/lib/cv-build-adopted";
 import { cvStepsSignature as signature, mergeSteps, stepFromWire, type CvJournalStep } from "@/lib/cv-build-journal";
-import {
-  CV_MILESTONES,
-  adoptedRevision,
-  currentMotionLine,
-  cvBuildMilestone,
-  cvBuildProgressLine,
-  cvBuildTotals,
-  cvBuildTotalsLine,
-  narrateBuild,
-  type CvMilestone,
-  type CvMotionMedians,
-  type NarrativeContext,
-} from "@/lib/cv-build-narrative";
+import type { CvMotionMedians, NarrativeContext } from "@/lib/cv-build-narrative";
 import { FIRST_POLL_MS, failedWorkPoll, initialWorkPoll, nextLogPoll, stepProgressPoll } from "@/lib/polling";
 import type { CvProgressBuild, CvProgressReading } from "@/lib/cv-progress-types";
+
+/**
+ * A view whose chunk could not be fetched (offline, or a deployment that replaced it) says so in
+ * its place. Without this the rejected import would reach the route's error boundary and take the
+ * whole CV page, editor and all, down with the log.
+ */
+function unavailable<P>(sentence: string): ComponentType<P> {
+  return function Unavailable() {
+    return <p className="text-14 text-muted">{sentence}</p>;
+  };
+}
+
+// The narrative's views, split from this module (see CvBuildViews). No `loading` option, as in
+// CvLazyWidgets: it would add a Suspense boundary that flashes a fallback during a refresh.
+const CvBuildScreen = dynamic(() =>
+  import("./CvBuildViews").then(
+    (module) => module.CvBuildScreen,
+    () => unavailable<ComponentProps<typeof Views.CvBuildScreen>>("This build's progress could not be loaded. Check your connection and reload the page."),
+  ),
+);
+const CvBuildCurrentLine = dynamic(() =>
+  import("./CvBuildViews").then(
+    (module) => module.CvBuildCurrentLine,
+    () => unavailable<ComponentProps<typeof Views.CvBuildCurrentLine>>("Still working on this CV after it was saved."),
+  ),
+);
+const CvBuildLogBody = dynamic(() =>
+  import("./CvBuildViews").then(
+    (module) => module.CvBuildLogBody,
+    () => unavailable<ComponentProps<typeof Views.CvBuildLogBody>>("The build log could not be loaded. Check your connection and reload the page."),
+  ),
+);
 
 function lastMoment(steps: readonly CvJournalStep[]): Date | null {
   let last = 0;
@@ -34,7 +55,8 @@ function lastMoment(steps: readonly CvJournalStep[]): Date | null {
  *
  * The page renders this once with everything it read; from then on it asks
  * `/api/cv/[id]/progress` for only what moved — one query per reading — and renders the narrative
- * itself. The page is rendered again on the server only when the feed's version changes (the
+ * itself, through the views in CvBuildViews (a chunk of their own: a finished CV fetches it only
+ * when its log is opened). The page is rendered again on the server only when the feed's version changes (the
  * draft's status, a failure, the build going stale or stopping), and a finished build keeps the
  * settle-then-reload rule of `stepWorkPoll`: two soft refreshes, then a document reload if neither
  * landed, so a lost refresh cannot leave the page on a build that has finished.
@@ -199,7 +221,6 @@ export function CvBuildLive({
     // A landed refresh renders this with a new version, which starts the poller afresh.
   }, [id, mode, timeZone, router, initial.version, initial.live, initial.active]);
 
-  const at = useMemo(() => new Date(now), [now]);
   const interrupted = mode === "build" ? build?.phase === "stopped" : !reading.live;
   const context: NarrativeContext = {
     timeZone,
@@ -210,33 +231,14 @@ export function CvBuildLive({
   };
   if (mode === "build") {
     if (!build) return null;
-    const items = narrateBuild(steps, at, context);
-    const fallback = (CV_MILESTONES as readonly string[]).includes(reading.stage ?? "") ? (reading.stage as CvMilestone) : null;
-    return (
-      <CvBuildProgress
-        milestone={cvBuildMilestone(steps) ?? fallback}
-        queued={reading.status === "queued"}
-        build={build}
-        startedAt={reading.createdAt}
-        now={now}
-        current={currentMotionLine(steps, at, context, medians)}
-        progress={cvBuildProgressLine(steps, at, medians)}
-        narrative={<CvBuildNarrative items={items} />}
-        action={build.phase === "stopped" ? action : undefined}
-      />
-    );
+    return <CvBuildScreen steps={steps} now={now} context={context} medians={medians} reading={reading} build={build} action={action} />;
   }
 
   if (!steps.length) return null;
   const adopted = adoptedRevision(steps);
-  const current = reading.live ? currentMotionLine(steps, at, context, medians) : null;
   return (
     <section className="space-y-3 border-2 border-line bg-raised p-4">
-      {current && (
-        <p className="text-14" aria-live="polite">
-          Still working on this CV after it was saved: {current}
-        </p>
-      )}
+      {reading.live && <CvBuildCurrentLine steps={steps} now={now} context={context} medians={medians} />}
       {adopted && (
         <p className="text-14" role="status">
           A stronger revision was adopted:{" "}
@@ -249,20 +251,11 @@ export function CvBuildLive({
           )}
         </p>
       )}
-      {/* Told only while open: closed, the log is not re-narrated on every tick of the clock. */}
+      {/* Told only while open: closed, the log is not re-narrated on every tick of the clock, and
+          on a finished CV its chunk is not even fetched until someone asks to read it. */}
       <CvDisclosure label="build log" mountWhenOpen>
-        <CvBuildLogBody steps={steps} at={at} context={context} live={reading.live} />
+        <CvBuildLogBody steps={steps} now={now} context={context} live={reading.live} />
       </CvDisclosure>
     </section>
-  );
-}
-
-/** What the build log shows once opened: the run's totals, then its motions in order. */
-function CvBuildLogBody({ steps, at, context, live }: { steps: CvJournalStep[]; at: Date; context: NarrativeContext; live: boolean }) {
-  return (
-    <>
-      <p className="text-14 text-muted">{cvBuildTotalsLine(cvBuildTotals(steps, at, { live }))}</p>
-      <CvBuildNarrative items={narrateBuild(steps, at, context)} />
-    </>
   );
 }

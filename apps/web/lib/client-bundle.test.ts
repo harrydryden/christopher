@@ -106,6 +106,29 @@ it("sees zod where it is statically imported", () => {
   expect(zodPath("../../packages/core/src/cv-theme.ts")).toEqual(["../../packages/core/src/cv-theme.ts", "zod"]);
 });
 
+it("keeps the build narrative out of the CV page's first load", () => {
+  // The narrative is the largest thing the CV page's client code imports, and a finished CV needs
+  // it only once its build log is opened: CvBuildLive reaches it through `next/dynamic` alone
+  // (components/CvBuildViews.tsx), with no `loading` fallback, as in CvLazyWidgets.
+  const narrative = path.join(WEB, "lib/cv-build-narrative.ts");
+  const views = path.join(WEB, "components/CvBuildViews.tsx");
+  const reached = new Set<string>();
+  const walk = (file: string) => {
+    if (reached.has(file)) return;
+    reached.add(file);
+    for (const specifier of valueImports(readFileSync(file, "utf8"))) {
+      const target = resolve(specifier, file);
+      if (target && target !== "zod") walk(target);
+    }
+  };
+  walk(path.join(WEB, "components/CvBuildLive.tsx"));
+  expect(reached.has(narrative)).toBe(false);
+  expect(reached.has(views)).toBe(false);
+  const source = readFileSync(path.join(WEB, "components/CvBuildLive.tsx"), "utf8");
+  expect(source).toMatch(/import\("\.\/CvBuildViews"\)/);
+  expect(source).not.toMatch(/loading\s*:|ssr\s*:\s*false/);
+});
+
 it("keeps the CV page's occasional widgets out of its first load", () => {
   // Each is reached only through `next/dynamic` in CvLazyWidgets; a static import anywhere else
   // would put it back in the page's entry chunk. Tests may import them directly.

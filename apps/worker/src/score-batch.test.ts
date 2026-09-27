@@ -149,9 +149,13 @@ describe("the collector", () => {
     expect(provider.sent).toHaveLength(1);
     const requests = provider.sent[0]!.params.requests;
     // custom_id = taskId:userId:jobId, in the provider's 64 characters of [a-zA-Z0-9_-].
-    expect(requests.map(item => parseScoreBatchCustomId(item.custom_id))).toEqual([
+    // Three tasks queued in the same instant tie on priority, run_after and created_at, and the
+    // collector then orders them by id, so the batch's order is not insertion order: compare as a set.
+    const byTask = (items: Array<{ taskId?: string; userId?: string; jobId?: string } | null>) =>
+      items.map(item => item ?? {}).sort((a, b) => (a.taskId ?? "").localeCompare(b.taskId ?? ""));
+    expect(byTask(requests.map(item => parseScoreBatchCustomId(item.custom_id)))).toEqual(byTask([
       { taskId: tasks[0], userId: alice, jobId: a1.id }, { taskId: tasks[1], userId: alice, jobId: a2.id }, { taskId: tasks[2], userId: bob, jobId: b1.id },
-    ]);
+    ]));
     for (const item of requests) {
       expect(item.custom_id).toMatch(/^[a-zA-Z0-9_-]{1,64}$/);
       expect(item.params).toMatchObject({ model: MODEL, max_tokens: PROMPTS.A5.maxTokens });
@@ -164,7 +168,7 @@ describe("the collector", () => {
     const [poll] = await tasksOf("poll_score_batch");
     const record = poll!.payload as unknown as ScoreBatchRecord;
     expect(record).toMatchObject({ batchId: "msgbatch_0001", model: MODEL, promptId: "A5", promptVersion: PROMPTS.A5.version });
-    expect(record.items.map(item => item.taskId)).toEqual(tasks);
+    expect(record.items.map(item => item.taskId).sort()).toEqual([...tasks].sort());
     expect((await tasksOf("score_job")).map(task => [task.status, task.result])).toEqual(tasks.map(() => ["done", { batched: "msgbatch_0001" }]));
 
     // One hold per account, the sum of its requests at the batch price, living as long as a batch can.

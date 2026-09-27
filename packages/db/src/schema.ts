@@ -77,6 +77,7 @@ export const TASK_TYPES = [
   "extract_document", "verify_company", "monitor_source", "discover", "scan_company", "run_daily", "fetch_description", "score_job", "tag_reason",
   "synthesize_profile", "suggest_filters", "suggest_from_scans", "profile_company", "suggest_companies", "rescore_all",
   "reevaluate_gate", "generate_cv", "import_posting", "review_library", "import_library_document",
+  "collect_score_batch", "poll_score_batch",
 ] as const;
 export const TASK_STATUSES = ["queued", "running", "done", "failed"] as const;
 

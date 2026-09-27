@@ -4,18 +4,26 @@
  * Evidence quality is judged today only at CV time, once per CV, inside a $2 assessment against a
  * particular job description. That is the wrong moment and the wrong price: the person writes the
  * entry weeks earlier, with no idea whether a reviewer will find anything in it. This module
- * scores an entry on its own terms, with no job description and no rubric, on the three ideas the
- * CV assessment already uses — coverage (is each facet present), specificity (is the row concrete
- * or generic) and support (is there a number, a scope or a named outcome).
+ * scores an entry on its own terms, with no job description, on two ideas: coverage (is each type
+ * of evidence present somewhere in the entry) and, row by row, whether each row says what its type
+ * needs. A row is scored against the type(s) the person tagged it with, using the checklist for
+ * that type in `evidence-rubric.ts` — four marks worth a quarter each — so a Responsibilities row
+ * is judged on what was owned, for whom, at what level and scale, and a Metrics moved row on the
+ * figure, what it measures, how it moved and what moved it. A row with no type has no score.
  *
  * Two things are deliberate. The score is computed here, from classifications, and never taken
  * from the model: `scoreLibraryRows` is the only place a number is produced, so a model cannot
  * flatter an entry. And the score gates nothing — an entry rated None is still active evidence if
  * the person says so, exactly as the fit score ranks a role without ever removing it.
  *
- * `rulesLibraryReview` is the no-model baseline, computed from the person's own facet tags. It is
- * what the Library shows the moment a save lands, before the A12 call has run, and it is the whole
- * feature for an account that has spent its budget.
+ * The marks are properties of the wording, not of the tag: the review records which of the
+ * twenty-four a row earns, and the score is read off against whatever the row is tagged with, so
+ * re-tagging re-scores without another review.
+ *
+ * `rulesLibraryReview` is the no-model baseline, computed from the person's own tags and the
+ * wording rules in `detectEvidenceMarks`. It is what the Library shows the moment a save lands,
+ * before the A12 call has run, and it is the whole feature for an account that has spent its
+ * budget. The A12 review replaces the detected marks with its own judgement of the same marks.
  */
 import { z } from "zod";
 import {
@@ -28,6 +36,14 @@ import {
   type Employment,
   type EvidenceFacet,
 } from "./cv";
+import {
+  detectEvidenceMarks,
+  EVIDENCE_MARKS,
+  knownEvidenceMarks,
+  scoreRowAgainst,
+  type EvidenceFacetScore,
+  type EvidenceMark,
+} from "./evidence-rubric";
 import { cvQuoteIsAnchored, mentionsDemographicAttribute } from "./cv-review";
 import { sha1 } from "./normalize";
 
@@ -50,16 +66,21 @@ export const LIBRARY_REVIEW_BATCH = 8;
 /**
  * One row, classified. `verified` is false when the classification could not be tied to the row.
  *
- * `facets` is every type the row serves, and empty when it serves none clearly — which is what
- * "unclear" used to say, and what an unverified row always says. A row counts for each of them, so
- * the problem someone solved and the figure it moved can be one sentence and cover both.
+ * `facets` is every type the review says the row serves — the person's own tags for the baseline,
+ * the model's classification for a model review — and empty when it serves none clearly, which is
+ * what "unclear" used to say and what an unverified row always says. It drives the entry's
+ * coverage: a row counts for each of them, so the problem someone solved and the figure it moved
+ * can be one sentence and cover both.
+ *
+ * `tagged` is the person's own tags for the row when it was reviewed, and `marks` every mark in
+ * the rubric the row's wording earns, for all six types. The row's own score is `marks` read
+ * against `tagged` (`libraryRowScore`), so it follows the person's choice of type, not the model's.
  */
 export interface LibraryRowReview {
   row: string;
   facets: EvidenceFacet[];
-  specific: boolean;
-  quantified: boolean;
-  outcomeLinked: boolean;
+  tagged: EvidenceFacet[];
+  marks: EvidenceMark[];
   quote: string | null;
   verified: boolean;
 }
@@ -121,20 +142,40 @@ const BY_WEIGHT = [...EVIDENCE_FACETS].sort(
 );
 
 /**
+ * One row's own score: the marks it earns read against the types it is tagged with, a quarter a
+ * mark and the mean across its types (`scoreRowAgainst`). Null when the row has no type, because a
+ * row nobody has said the purpose of cannot be short of anything in particular. That holds even
+ * when a model classified the row: the model's reading drives the entry's coverage and its
+ * questions, but a row is scored against what the person says it is for. An unverified row — one
+ * the review could not tie to the person's wording — earns no marks, so it scores 0 once typed.
+ *
+ * `tagged` defaults to the tags the row carried when it was reviewed; pass the tags on screen to
+ * re-score without another review. Like the entry's score it is computed here and gates nothing.
+ */
+export function libraryRowScore(
+  row: LibraryRowReview,
+  tagged: readonly EvidenceFacet[] = row.tagged,
+): { score: number | null; facets: EvidenceFacet[]; byFacet: EvidenceFacetScore[]; marks: EvidenceMark[] } {
+  const marks = row.verified ? row.marks : [];
+  const facets = EVIDENCE_FACETS.filter(facet => tagged.includes(facet));
+  return { ...scoreRowAgainst(marks, facets), facets, marks };
+}
+
+/**
  * The score, pinned:
  *
- *     score = round(50 × coverage + 25 × specificShare + 25 × quantifiedShare)
+ *     score = round(50 × coverage + 50 × meanRowScore)
  *
- *     coverage        = Σ LIBRARY_FACET_WEIGHTS[facet] over facets a verified row carries, ÷ 8
- *                       (a row carrying two of them covers both)
- *     specificShare   = verified rows marked specific    ÷ every row, 0 when there are none
- *     quantifiedShare = verified rows marked quantified  ÷ every row, 0 when there are none
+ *     coverage     = Σ LIBRARY_FACET_WEIGHTS[facet] over facets a verified row carries, ÷ 8
+ *                    (a row carrying two of them covers both)
+ *     meanRowScore = Σ libraryRowScore(row) ÷ 100 over every row, ÷ the number of rows, 0 when
+ *                    there are none; an untyped or unverified row counts 0
  *
- * So half the score is breadth — all six facets present — and half is how the rows are written,
- * split evenly between being concrete and carrying a number. All six facets covered by rows that
- * are every one of them specific and quantified reads 100; an entry with no rows reads 0. An
- * unverified row counts in the denominator and in neither numerator, so a model that cannot tie
- * its classification to the row lowers the score rather than raising it.
+ * So half the score is breadth — all six types present — and half is how well the rows are
+ * written for the types they are tagged with. All six types covered by rows that each earn every
+ * mark of their types reads 100; an entry with no rows reads 0. An unverified row counts in the
+ * denominator and adds nothing, so a model that cannot tie its classification to the row lowers
+ * the score rather than raising it, and an untyped row does the same until the person types it.
  *
  * Bands: None < 25, Weak < 50, Good < 75, Strong at 75 and above.
  */
@@ -145,43 +186,18 @@ export function scoreLibraryRows(rows: LibraryRowReview[]): {
   missing: EvidenceFacet[];
 } {
   const coverage = Object.fromEntries(EVIDENCE_FACETS.map(facet => [facet, 0])) as Record<EvidenceFacet, number>;
-  let specific = 0;
-  let quantified = 0;
+  let rowPoints = 0;
   for (const row of rows) {
+    rowPoints += libraryRowScore(row).score ?? 0;
     if (!row.verified) continue;
     // Each type once, however many times the row was tagged with it.
     for (const facet of new Set(row.facets)) coverage[facet] += 1;
-    if (row.specific) specific += 1;
-    if (row.quantified) quantified += 1;
   }
   const present = EVIDENCE_FACETS.filter(facet => coverage[facet] > 0);
   const covered = present.reduce((sum, facet) => sum + LIBRARY_FACET_WEIGHTS[facet], 0) / TOTAL_FACET_WEIGHT;
-  const share = (count: number) => (rows.length ? count / rows.length : 0);
-  const score = Math.round(50 * covered + 25 * share(specific) + 25 * share(quantified));
+  const meanRow = rows.length ? rowPoints / 100 / rows.length : 0;
+  const score = Math.round(50 * covered + 50 * meanRow);
   return { score, rating: evidenceRatingFor(score), coverage, missing: BY_WEIGHT.filter(facet => coverage[facet] === 0) };
-}
-
-/** The four things one row is scored on, in the order a row's score explains them. */
-export const LIBRARY_ROW_SIGNALS = ["typed", "specific", "quantified", "outcomeLinked"] as const;
-export type LibraryRowSignal = (typeof LIBRARY_ROW_SIGNALS)[number];
-
-/**
- * One row's own score, 0 to 100 in steps of 25: a quarter each for serving at least one of the six
- * types, being specific, carrying a number, and being tied to an outcome. These are the per-row
- * judgements `scoreLibraryRows` sums across an entry, read for the row alone, so a row's score and
- * its entry's never disagree about what counts. An unverified row — one the review could not tie to
- * the person's wording — scores 0, as it counts for nothing in the entry's score either.
- *
- * Like the entry's score it is computed here from classifications and gates nothing.
- */
-export function libraryRowScore(row: LibraryRowReview): { score: number; signals: Record<LibraryRowSignal, boolean> } {
-  const signals: Record<LibraryRowSignal, boolean> = {
-    typed: row.verified && row.facets.length > 0,
-    specific: row.verified && row.specific,
-    quantified: row.verified && row.quantified,
-    outcomeLinked: row.verified && row.outcomeLinked,
-  };
-  return { score: 25 * LIBRARY_ROW_SIGNALS.filter(signal => signals[signal]).length, signals };
 }
 
 /** The questions for the facets an entry is missing: the heaviest three, in weight order. */
@@ -204,38 +220,6 @@ export function facetForPrompt(prompt: string): EvidenceFacet | null {
 }
 
 /**
- * A number, a percentage or an amount of money anywhere in the row.
- *
- * Deliberately crude: a year in "Shipped in 2024" counts, and so it should — a row that names a
- * date is more use to a reviewer than one that does not — and the cost of the occasional false
- * positive is a slightly generous score on an entry the person can see for themselves.
- */
-const QUANTITY = /[0-9%£$€]/u;
-
-/**
- * Units a claim is usually measured in, for rows that name a scope without a digit ("cut handover
- * time from days to hours", "a team across four countries"). A short list on purpose: this is the
- * baseline shown before the model has run, not the judgement.
- */
-const UNIT = /\b(hrs?|hours?|days?|weeks?|months?|years?|people|staff|users?|customers?|clients?|countries|teams?|sites?|fte|nps|arr|mrr|sla|kpis?)\b/i;
-
-/** A word that is capitalised and is not simply the one the row opens with. */
-function namesSomething(words: string[]): boolean {
-  return words.slice(1).some(word => /^\p{Lu}/u.test(word));
-}
-
-/**
- * Concrete rather than generic: at least eight words, and naming something a reader could check —
- * a capitalised term, a number, or one of the units above. "Responsible for operations" fails on
- * both counts; "Ran the UK warehouse team through a move to a new site" passes on length and the
- * capitalised term.
- */
-function looksSpecific(row: string): boolean {
-  const words = row.split(/\s+/u).filter(Boolean);
-  return words.length >= 8 && (namesSomething(words) || QUANTITY.test(row) || UNIT.test(row));
-}
-
-/**
  * Rows a review is about: an entry's responsibility rows, minus the subsidiary labels that
  * `consolidateExperience` inserts to head a merged block. A label is not evidence —
  * `eligibleCvEvidence` already treats it that way — and counting one would penalise a person for
@@ -253,11 +237,11 @@ function assertEntryOf(entry: CvEntry, library: CvLibrary) {
 }
 
 /**
- * The review an account gets without a model call, from its own facet tags and two heuristics.
+ * The review an account gets without a model call, from its own tags and the wording rules.
  *
  * Every row is `verified`, because the person wrote it and tagged it: there is nothing to anchor.
- * An untagged row carries no types and covers no facet, which is exactly the state the prompts are
- * there to fix.
+ * Its marks are what `detectEvidenceMarks` finds in the wording. An untagged row carries no types,
+ * covers no facet and has no score, which is exactly the state the prompts are there to fix.
  */
 export function rulesLibraryReview(entry: CvEntry, library: CvLibrary): LibraryEntryReview {
   assertEntryOf(entry, library);
@@ -266,9 +250,8 @@ export function rulesLibraryReview(entry: CvEntry, library: CvLibrary): LibraryE
     return {
       row,
       facets,
-      specific: looksSpecific(row),
-      quantified: QUANTITY.test(row),
-      outcomeLinked: facets.includes("outcome") || facets.includes("metric"),
+      tagged: facets,
+      marks: detectEvidenceMarks(row),
       quote: row,
       verified: true,
     };
@@ -287,9 +270,8 @@ export const LibraryReviewPlanSchema = z.object({
       row: z.string().min(1).max(40000),
       /** Every type the row serves, and empty when it serves none clearly. */
       facets: z.array(z.enum(EVIDENCE_FACETS)).max(EVIDENCE_FACETS.length),
-      specific: z.boolean(),
-      quantified: z.boolean(),
-      outcomeLinked: z.boolean(),
+      /** Every mark in the rubric the row's wording earns, whatever it was tagged with. */
+      marks: z.array(z.enum(EVIDENCE_MARKS as [EvidenceMark, ...EvidenceMark[]])).max(EVIDENCE_MARKS.length),
       quote: reviewQuote.nullable(),
     })).max(20),
     prompts: z.array(z.string().trim().min(1).max(160)).max(3),
@@ -309,16 +291,16 @@ const knownFacets = (facets: readonly string[]): EvidenceFacet[] => EVIDENCE_FAC
  *
  * The rules are the assessment's, for the same reason: the model classifies and asks, it never
  * rewrites. A row it invented is dropped. A row it did not cover, and a row whose quote is not
- * anchored in that row, is kept as `verified: false` and counts as neither specific nor quantified
- * — marked, never silently deleted, so the Library can say which rows went unread. A row it
+ * anchored in that row, is kept as `verified: false` and earns no marks — marked, never silently deleted, so the Library can say which rows went unread. A row it
  * covered without quoting is verified: the row text itself was matched exactly, so there is
  * nothing unanchored about it. When it covered none of them, the review is marked `unread`.
  * Demographic attributes in a prompt are refused outright, as `validateCvRubric` refuses them in a
  * requirement.
  *
- * A row's types are deduplicated and anything outside the vocabulary is dropped from them, rather
- * than failing the row: the schema already holds the model to the six, and losing a whole entry's
- * classification over a repeated word would be a poor trade.
+ * A row's types and marks are deduplicated and anything outside the vocabulary is dropped from
+ * them, rather than failing the row: the schema already holds the model to the rubric, and losing
+ * a whole entry's classification over a repeated word would be a poor trade. `tagged` is always
+ * the person's own tags, whatever the model classified the row as.
  */
 export function validateLibraryReview(entry: CvEntry, plan: LibraryReviewPlanEntry): LibraryEntryReview {
   if (plan.entryId !== entry.id) throw new Error("The evidence review named an entry it was not given.");
@@ -331,16 +313,16 @@ export function validateLibraryReview(entry: CvEntry, plan: LibraryReviewPlanEnt
   const rows: LibraryRowReview[] = reviewableRows(entry).map(row => {
     const said = covered.get(normaliseRow(row));
     if (said) classified++;
+    const tagged = rowFacets(entry, row);
     const anchored = !!said && (said.quote === null || cvQuoteIsAnchored(said.quote, row));
     if (!said || !anchored) {
-      return { row, facets: [], specific: false, quantified: false, outcomeLinked: false, quote: null, verified: false };
+      return { row, facets: [], tagged, marks: [], quote: null, verified: false };
     }
     return {
       row,
       facets: knownFacets(said.facets),
-      specific: said.specific,
-      quantified: said.quantified,
-      outcomeLinked: said.outcomeLinked,
+      tagged,
+      marks: knownEvidenceMarks(said.marks),
       quote: said.quote,
       verified: true,
     };
@@ -356,6 +338,12 @@ export function validateLibraryReview(entry: CvEntry, plan: LibraryReviewPlanEnt
 }
 
 /**
+ * Which rubric a review was judged against. 1 was specific / quantified / outcome-linked; 2 is the
+ * type-specific marks in `evidence-rubric.ts`. Move it when what a review records changes meaning.
+ */
+export const LIBRARY_RUBRIC_VERSION = 2;
+
+/**
  * Everything a review of this entry was computed from: its rows in order, the types on each, and
  * the job it belongs to. Nothing version-scoped, deliberately — an entry nobody touched keeps the
  * same hash across a save, so its review carries forward to the new library version and only the
@@ -365,10 +353,16 @@ export function validateLibraryReview(entry: CvEntry, plan: LibraryReviewPlanEnt
  * a second type to a row changes the hash and re-reviews that entry, and a row that was tagged
  * with exactly one type — every row stored before a row could carry several — hashes to what it
  * always did. Representing the same tags differently is not a reason to buy the same answer again.
+ *
+ * The rubric's version leads the hashed list. A review written under an earlier rubric recorded
+ * judgements the current score does not read (it has no marks), so moving the version makes every
+ * stored review stop matching its entry: the Library falls back to the baseline and offers
+ * Re-score once, and the old reviews are left where they are rather than deleted.
  */
 export function libraryEntryInputHash(entry: CvEntry, employment: Employment | null): string {
   const rows = responsibilityRows(entry.details);
   return sha1(JSON.stringify([
+    LIBRARY_RUBRIC_VERSION,
     rows,
     rows.map(row => rowFacets(entry, row).join(",")),
     employment?.company ?? "",
@@ -380,7 +374,8 @@ export function libraryEntryInputHash(entry: CvEntry, employment: Employment | n
  * Deliberately loose: a stored review is this application's own writing, and the point of reading
  * it is to show a person their Library rather than to audit what an older release stored. Both
  * shapes of a row's classification are accepted, and the fields a review is scored from are read
- * as what they are or left at their empty value.
+ * as what they are or left at their empty value. `specific`, `quantified` and `outcomeLinked` are
+ * what the first rubric wrote; they are accepted and no longer read.
  */
 const StoredLibraryReviewSchema = z.object({
   entryId: z.string().min(1).max(100),
@@ -392,6 +387,8 @@ const StoredLibraryReviewSchema = z.object({
     specific: z.boolean().optional(),
     quantified: z.boolean().optional(),
     outcomeLinked: z.boolean().optional(),
+    marks: z.array(z.string()).optional(),
+    tagged: z.array(z.string()).optional(),
     quote: z.string().nullable().optional(),
     verified: z.boolean().optional(),
   })).default([]),
@@ -410,15 +407,18 @@ const StoredLibraryReviewSchema = z.object({
  * stored object, which returns exactly what was stored for every review written to date (one facet
  * is one facet, as a string or as a one-item list) and keeps a review that is read back internally
  * consistent with the rows it is about.
+ *
+ * A review written before marks existed carries none, so the wording rules stand in for that part
+ * (`detectEvidenceMarks`), and one written before `tagged` existed reads as untagged — its rows
+ * have no score of their own until the person's current tags are passed to `libraryRowScore`.
  */
 export function normaliseLibraryReview(raw: unknown): LibraryEntryReview {
   const stored = StoredLibraryReviewSchema.parse(raw);
   const rows: LibraryRowReview[] = stored.rows.map(row => ({
     row: row.row,
     facets: knownFacets(row.facets ?? (row.facet === undefined ? [] : [row.facet])),
-    specific: row.specific === true,
-    quantified: row.quantified === true,
-    outcomeLinked: row.outcomeLinked === true,
+    tagged: knownFacets(row.tagged ?? []),
+    marks: row.marks ? knownEvidenceMarks(row.marks) : detectEvidenceMarks(row.row),
     quote: row.quote ?? null,
     verified: row.verified === true,
   }));

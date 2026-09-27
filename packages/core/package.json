@@ -67,6 +67,10 @@
     "./library-import": {
       "types": "./src/library-import.ts",
       "default": "./src/library-import.ts"
+    },
+    "./evidence-rubric": {
+      "types": "./src/evidence-rubric.ts",
+      "default": "./src/evidence-rubric.ts"
     }
   },
   "scripts": {

@@ -308,7 +308,7 @@ CI is three jobs side by side, each on its own runner with its own throwaway Pos
 | Job | What it runs | Typical |
 |---|---|---|
 | `check` | `pnpm -r typecheck`, then `pnpm -r test`, then the release and deployment script tests | ~2.5 min |
-| `browser-and-smoke` | Chromium install, the headless browser test, `pnpm db:migrate`, `pnpm smoke:web` (a production `next build`, sign-in, every page, and the CV workspace driven through Playwright) | ~2.5 min |
+| `browser-and-smoke` | Chromium install, the headless browser test, `pnpm db:migrate`, `pnpm smoke:web` (a production `next build`, sign-in, every page, and the CV workspace driven through Playwright), then `scripts/bundle-budget.mjs`: each route's first-load JavaScript, gzipped, against `scripts/bundle-budget.json` (a route over its budget, or a new chunk of 20 KB gzip entering a first load, fails; the table goes to the run summary) | ~2.5 min |
 | `worker-image` | `docker build` of the image Render deploys, then boots it against the job's database and waits for `/healthz`, and checks it runs as a non-root user under `tini` | ~4 min cold (estimated, not yet measured on a runner), less with the dependency layer cached |
 
 So a pull request is green in about four minutes of wall clock for about nine billed minutes.

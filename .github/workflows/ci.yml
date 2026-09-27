@@ -144,6 +144,10 @@ jobs:
           AVA_DISABLE_BROWSER: "0"
       - run: pnpm db:migrate
       - run: pnpm smoke:web
+      # The smoke run has just built .next; each route's first-load JavaScript, gzipped, against
+      # scripts/bundle-budget.json. Under two seconds, and the table lands in the run's summary.
+      - name: Check first-load JavaScript against the per-route budgets
+        run: node scripts/bundle-budget.mjs apps/web/.next
 
   # The image Render deploys, built and booted here so that a broken Dockerfile, a manifest the
   # image does not copy or a runtime import error fails the pull request instead of the deploy.

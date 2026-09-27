@@ -11,7 +11,7 @@ import { Button, buttonClass } from "@/components/Button";
 import { Monogram } from "@/components/brand/Monogram";
 import { SafeMarkdown } from "@/components/SafeMarkdown";
 import { SettingsForm } from "@/components/SettingsForm";
-import type { RoleDetailsVM, RoleRowVM, SortDir, SortKey } from "@/lib/queries/jobs";
+import type { RoleCompaniesVM, RoleCompanyVM, RoleDetailsVM, RoleRowVM, SortDir, SortKey } from "@/lib/queries/jobs";
 import { missingDecisionReason } from "@/lib/decision-reason";
 import { reportRoleRefusal } from "@/lib/role-refusals";
 
@@ -56,6 +56,17 @@ function movedOn(row: RoleRowVM): boolean {
 function applicationLabel(row: RoleRowVM): string {
   return roleStageRank(row.stage) >= roleStageRank("applying") ? "Open application" : "Build CV";
 }
+
+/** What a row's live-for figure counts from, for its `title`: the server sends only which basis. */
+function liveForTitle(row: RoleRowVM): string {
+  const counted = row.liveForBasis === "first_seen"
+    ? "Counted from when this tool first saw the role; the source publishes no posted date."
+    : "Counted from the date the source published for this role.";
+  return row.seeded ? `${counted} (seeded on first scan)` : counted;
+}
+
+/** Drawn for a company the page's map does not hold: a blank icon and no website link. */
+const unknownCompany: RoleCompanyVM = { iconSrc: null, domain: "", homepageUrl: "" };
 
 /** What the score says, for the `title` on the bar: the verdict, then the rationale behind it. */
 function fitTitle(row: RoleRowVM): string | undefined {
@@ -130,8 +141,10 @@ function SortTH({ label, sortKey, links, sort, dir, className = "" }: {
   );
 }
 
-export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = false, archived = false, emptyState, sortLinks, sort, dir }: {
+export function RolesTable({ rows: inputRows, companies, hideCompany = false, keyboard = false, archived = false, emptyState, sortLinks, sort, dir }: {
   hideCompany?: boolean; archived?: boolean; rows: RoleRowVM[]; keyboard?: boolean; emptyState: React.ReactNode;
+  /** The rows' companies, once each (`buildRoleCompanies` over the same rows). */
+  companies: RoleCompaniesVM;
   /** One href per sortable column, built by the server with the filters in hand. */
   sortLinks?: Partial<Record<SortKey, string>>;
   sort?: SortKey;
@@ -142,7 +155,12 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
   // the page the undo re-renders arrives, drawn from `departed`, the rows as they were when they left.
   const [removedIds, setRemovedIds] = useState<ReadonlySet<string>>(() => new Set());
   const [returning, setReturning] = useState<ReadonlySet<string>>(() => new Set());
-  const departed = useRef(new Map<string, { row: RoleRowVM; index: number }>());
+  const departed = useRef(new Map<string, { row: RoleRowVM; index: number; company: RoleCompanyVM }>());
+  /**
+   * A row's company, from this page's map; a row an undo brought back after the page changed is
+   * drawn with the company it left with, so it never comes back with a blank icon.
+   */
+  const companyOf = (row: RoleRowVM): RoleCompanyVM => companies[row.companyId] ?? departed.current.get(row.id)?.company ?? unknownCompany;
   const returningRef = useRef(returning);
   returningRef.current = returning;
   const rows = useMemo(() => {
@@ -360,7 +378,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
     const leaves = archived || previous?.decision?.decision !== decision;
 
     if (leaves) {
-      if (previous) departed.current.set(jobId, { row: previous, index });
+      if (previous) departed.current.set(jobId, { row: previous, index, company: companyOf(previous) });
       setRemovedIds(ids => withId(ids, jobId));
       setReturning(ids => withoutId(ids, jobId));
       if (box) setReasonBox(null);
@@ -618,7 +636,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                       {/* The same icon the company page shows: the captured logo when there is one,
                           and the browser's own chain behind it. A bare <img> here is why Hims had a
                           logo on its company page and a blank square on its roles. */}
-                      <CompanyFavicon src={row.companyLogoUrl ?? row.companyFaviconUrl} domain={row.companyDomain} size={14} />
+                      <CompanyFavicon src={companyOf(row).iconSrc} domain={companyOf(row).domain} size={14} />
                       <span className="max-w-[12rem] truncate">{row.companyName}</span>
                     </Link>
                   </TD>}
@@ -631,7 +649,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                       {/* Where a shortlisted role has got to, on the row rather than only inside it. */}
                       {movedOn(row) && <Badge tone={stageTone(row.stage)} title={ROLE_STAGE_DESCRIPTIONS[row.stage]}>{stageLabel(row)}</Badge>}
                     </span>
-                    <p className="mt-1 text-12 text-muted"><span title={row.liveForTitle}>{row.liveForText}</span>{row.status === "closed" && <span className="ml-2 text-warn">Vacancy closed</span>}</p>
+                    <p className="mt-1 text-12 text-muted"><span title={liveForTitle(row)}>{row.liveForText}</span>{row.status === "closed" && <span className="ml-2 text-warn">Vacancy closed</span>}</p>
                   </TD>
                   <TD className="max-w-[10rem]">
                     <div className="flex flex-wrap items-center gap-1">
@@ -717,7 +735,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                           <div className="flex flex-wrap items-center gap-4 text-12">
                             {!buildHere && <Link prefetch={false} href={`/applications?job=${row.id}`} className="font-semibold underline">{applicationLabel(row)}</Link>}
                             <a href={row.url} target="_blank" rel="noopener noreferrer" className="text-muted underline">View vacancy ↗</a>
-                            <a href={row.companyHomepageUrl} target="_blank" rel="noopener noreferrer" className="text-muted underline">Website ↗</a>
+                            {companyOf(row).homepageUrl && <a href={companyOf(row).homepageUrl} target="_blank" rel="noopener noreferrer" className="text-muted underline">Website ↗</a>}
                           </div>
                         </div>
                         <div className="space-y-3">

@@ -5,7 +5,7 @@ import { careerSources, companies, decisions, jobs, userJobs, type Job, type Sco
 import { displayStatus, formatDuration, liveFor, type DisplayStatus } from "@ava/core";
 import { cache } from "react";
 import { db } from "@/lib/db";
-import { companyLogoUrl } from "@/lib/company-icon";
+import { companyIcon } from "@/lib/company-icon";
 import { relativeTime } from "@/lib/format";
 
 export interface RoleCompany {
@@ -474,15 +474,17 @@ export function scoreStateText(
   }
 }
 
+/**
+ * One row of the roles table, as the client component receives it. Every key of every row is
+ * serialised into the page (RSC dedupes nothing across rows), so a row carries only what the table
+ * renders: the company's icon and website travel once per company in `RoleCompaniesVM`, and a
+ * sentence that is one of two fixed ones travels as the choice between them (`liveForBasis`).
+ */
 export interface RoleRowVM {
   id: string;
+  /** The key into the page's `RoleCompaniesVM`. */
   companyId: string;
   companyName: string;
-  companyFaviconUrl: string | null;
-  /** The interface's own URL for the captured logo, or null while nothing is stored. */
-  companyLogoUrl: string | null;
-  companyDomain: string;
-  companyHomepageUrl: string;
   title: string;
   url: string;
   location: string | null;
@@ -498,7 +500,9 @@ export interface RoleRowVM {
   /** The newest application's own status, so "In process" can name its step. */
   applicationStatus: ApplicationStatus | null;
   liveForText: string;
-  liveForTitle: string;
+  /** What `liveForText` counts from; the table holds the sentence for each (`liveForTitle`). */
+  liveForBasis: "posted" | "first_seen";
+  /** New to this account on the scan that first admitted it, rather than on a later one. */
   seeded: boolean;
   fitScore: number | null;
   /** What the score handler last decided about this role, or null for a row that predates it. */
@@ -507,20 +511,36 @@ export interface RoleRowVM {
   scoreStateText: string | null;
   /** The A5 verdict stored beside the score (R-6.6): shown beside it, never instead of it. */
   fitVerdict: "strong" | "possible" | "unlikely" | null;
+  /**
+   * The A5 rationale: at most two sentences by the prompt's own rule, so it rides on the row, where
+   * the fit bar's title shows it without opening the panel.
+   */
   fitRationale: string | null;
   keywordTerms: string[];
-  /** This account's stored location verdict for the posting (`user_jobs.location_ok`). */
-  locationOk: boolean;
-  sourceType: SourceType;
-  firstSeenLabel: string;
-  firstSeenTitle: string;
-  postedLabel: string | null;
-  postedTitle: string | null;
-  closedLabel: string | null;
-  closedTitle: string | null;
   /** This account pasted this posting's URL: it is in the table whatever its gate said. */
   addedByYou: boolean;
   decision: RoleDecisionVM | null;
+}
+
+/** What the table shows of a company: its icon and its website, once per company on the page. */
+export interface RoleCompanyVM {
+  /** The captured logo's URL, else the stored favicon, else null for the browser's own chain. */
+  iconSrc: string | null;
+  domain: string;
+  homepageUrl: string;
+}
+
+export type RoleCompaniesVM = Record<string, RoleCompanyVM>;
+
+/** The companies of the rows in hand, keyed by id, built from the same rows the table renders. */
+export function buildRoleCompanies(rows: readonly Pick<RoleRow, "company">[]): RoleCompaniesVM {
+  const companies: RoleCompaniesVM = {};
+  for (const { company } of rows) {
+    if (companies[company.id]) continue;
+    const icon = companyIcon(company);
+    companies[company.id] = { iconSrc: icon.src, domain: icon.domain, homepageUrl: company.homepageUrl };
+  }
+  return companies;
 }
 
 /**
@@ -530,21 +550,12 @@ export interface RoleRowVM {
 export function buildRoleRowVM(row: RoleRow, now: Date = new Date(), viewerId?: string): RoleRowVM {
   const status = displayStatus(row.job, now);
   const { days, basis } = liveFor(row.job, now);
-  let liveForTitle =
-    basis === "first_seen"
-      ? "Counted from when this tool first saw the role; the source publishes no posted date."
-      : "Counted from the date the source published for this role.";
-  if (row.job.seeded) liveForTitle += " (seeded on first scan)";
   const liveForText = formatDuration(days) + (basis === "first_seen" ? "*" : "");
 
   return {
     id: row.job.id,
     companyId: row.company.id,
     companyName: row.company.name,
-    companyFaviconUrl: row.company.faviconUrl,
-    companyLogoUrl: companyLogoUrl(row.company.id, row.company.logoFetchedAt),
-    companyDomain: row.company.domain,
-    companyHomepageUrl: row.company.homepageUrl,
     title: row.job.title,
     url: row.job.url,
     location: row.job.location,
@@ -558,7 +569,7 @@ export function buildRoleRowVM(row: RoleRow, now: Date = new Date(), viewerId?: 
     stage: row.stage,
     applicationStatus: row.applicationStatus,
     liveForText,
-    liveForTitle,
+    liveForBasis: basis,
     seeded: row.job.seeded,
     fitScore: row.job.fitScore,
     scoreState: row.job.scoreState,
@@ -566,14 +577,6 @@ export function buildRoleRowVM(row: RoleRow, now: Date = new Date(), viewerId?: 
     fitVerdict: row.job.fitVerdict,
     fitRationale: row.job.fitRationale,
     keywordTerms: row.job.keywordTerms,
-    locationOk: row.job.locationOk,
-    sourceType: row.sourceType,
-    firstSeenLabel: relativeTime(row.job.firstSeenAt, now),
-    firstSeenTitle: row.job.firstSeenAt.toISOString(),
-    postedLabel: row.job.postedAt ? relativeTime(row.job.postedAt, now) : null,
-    postedTitle: row.job.postedAt ? row.job.postedAt.toISOString() : null,
-    closedLabel: row.job.closedAt ? relativeTime(row.job.closedAt, now) : null,
-    closedTitle: row.job.closedAt ? row.job.closedAt.toISOString() : null,
     addedByYou: row.job.origin === "user" && !!viewerId && row.job.addedBy === viewerId,
     decision: row.decision
       ? { id: row.decision.id, decision: row.decision.decision, reason: row.decision.reason, createdLabel: relativeTime(row.decision.createdAt, now), createdTitle: row.decision.createdAt.toISOString() }

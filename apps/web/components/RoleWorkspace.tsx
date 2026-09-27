@@ -6,7 +6,7 @@ import { buttonLinkClass } from "./Button";
 import { RolesTable } from "./RolesTable";
 import { RoleRefusalNotices } from "./RoleRefusalNotices";
 import { RolesFilterBar } from "./RolesFilterBar";
-import { appliedRoleCount, buildRoleRowVM, DEFAULT_SORT_DIR, fetchRolePage, fetchRoleCounts, filtersToQueryString, parseRolesFilters, resolveRoleView, roleTabFor, type RawSearchParams, type RolesFilters, type SortKey } from "@/lib/queries/jobs";
+import { appliedRoleCount, buildRoleCompanies, buildRoleRowVM, DEFAULT_SORT_DIR, fetchRolePage, fetchRoleCounts, filtersToQueryString, parseRolesFilters, resolveRoleView, roleTabFor, type RawSearchParams, type RolesFilters, type SortKey } from "@/lib/queries/jobs";
 import { listCompanyOptions } from "@/lib/queries/companies";
 import { pipelineCompany, pipelineStageCounts } from "@/lib/queries/applications";
 
@@ -63,6 +63,9 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
   const now = new Date();
   const rows = result.visible.map(row => buildRoleRowVM(row, now, userId));
   const archivedRows = (archivedResult?.visible ?? []).map(row => buildRoleRowVM(row, now, userId));
+  // Each company once per table, from the same rows, rather than four fields on every row.
+  const companies = buildRoleCompanies(result.visible);
+  const archivedCompanies = buildRoleCompanies(archivedResult?.visible ?? []);
   const query = `${filtersToQueryString(filters)}&view=${view}`;
   const href = (page: number) => `${path}?${query}${archivedResult && archivedResult.page > 1 ? `&archivedPage=${archivedResult.page}` : ""}&page=${page}#roles`;
   const archivedHref = (page: number) => `${path}?${query}${result.page > 1 ? `&page=${result.page}` : ""}&archivedPage=${page}#archived`;
@@ -80,7 +83,7 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
     {result.total !== counts[view] && <p className="mb-3 text-12 text-muted">Showing {result.total} of {counts[view]}</p>}
     {/* Outside the keyed tables, so a refusal that lands after paging or filtering still shows. */}
     <RoleRefusalNotices />
-    <RolesTable key={`${query}:${result.page}`} rows={rows} keyboard hideCompany={!!companyId}
+    <RolesTable key={`${query}:${result.page}`} rows={rows} companies={companies} keyboard hideCompany={!!companyId}
       sortLinks={sortLinksFor(path, view, filters)} sort={filters.sort} dir={filters.dir}
       emptyState={<EmptyState title={counts[view] ? "No roles match these filters" : view === "auto-matched" ? "No roles awaiting review" : `No ${ROLE_STATUS_LABELS[view].toLowerCase()} roles`}
         action={counts[view] ? <Link prefetch={false} href={`${path}?view=${view}#roles`} className={buttonLinkClass("secondary")}>Clear filters</Link> : undefined} />} />
@@ -93,7 +96,7 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
     {archivedResult && <div id="archived" className="mt-6">
       <Card title="Archived" actions={<span className="text-12 text-muted tabular-nums">{counts.archived}</span>}>
         {archivedResult.total !== counts.archived && <p className="mb-3 text-12 text-muted">Showing {archivedResult.total} of {counts.archived}</p>}
-        <RolesTable key={`${query}:archived:${archivedResult.page}`} rows={archivedRows} archived hideCompany={!!companyId}
+        <RolesTable key={`${query}:archived:${archivedResult.page}`} rows={archivedRows} companies={archivedCompanies} archived hideCompany={!!companyId}
           emptyState={<EmptyState title="No archived roles" description="Roles you archived or that stopped matching." />} />
         {archivedResult.pageCount > 1 && <nav aria-label="Archived role pages" className="mt-4 flex items-center gap-4 text-13">
           {archivedResult.page > 1 && <Link prefetch={false} className="underline" href={archivedHref(archivedResult.page - 1)}>Previous</Link>}

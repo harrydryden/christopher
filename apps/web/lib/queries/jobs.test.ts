@@ -10,7 +10,7 @@ import type { User } from "@ava/db/schema";
 let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { appliedRoleCount, sortRoleRows, parseRolesFilters, applyRolesFilters, buildRoleRowVM, fetchRecentEventsFor, fetchRolePage, fetchRoleRows, filtersToQueryString, locationReasonText, parseSince, resolveRoleView, roleTabFor, scoreStateText, SORT_KEYS, type RoleCursor, type RoleRow } from "./jobs";
+import { appliedRoleCount, sortRoleRows, parseRolesFilters, applyRolesFilters, buildRoleCompanies, buildRoleRowVM, fetchRecentEventsFor, fetchRolePage, fetchRoleRows, filtersToQueryString, locationReasonText, parseSince, resolveRoleView, roleTabFor, scoreStateText, SORT_KEYS, type RoleCursor, type RoleRow } from "./jobs";
 
 beforeAll(async () => {
   const client = createTestDb();
@@ -269,6 +269,24 @@ describe("what a blank score means", () => {
     expect(vm.scoreStateText).toBe("not scored: budget spent");
     const withScore = buildRoleRowVM({ ...base, job: { ...base.job, fitScore: 61, scoreState: "scored" } } as RoleRow, now);
     expect(withScore.scoreStateText).toBeNull();
+
+    // The row names its company and what its live-for counts from; the rest of the company, and the
+    // sentence, travel once per page.
+    expect(vm).toMatchObject({ companyId: "company-1", companyName: "Acme", liveForBasis: "first_seen", liveForText: expect.stringMatching(/\*$/) });
+    expect(Object.keys(vm).filter(key => /^company(?!Id$|Name$)|Title$|Label$|^events$|^sourceType$|^locationOk$/.test(key))).toEqual([]);
+    const posted = buildRoleRowVM({ ...base, job: { ...base.job, postedAt: new Date("2026-09-18T00:00:00Z") } } as RoleRow, now);
+    expect(posted.liveForBasis).toBe("posted");
+    const logo = new Date("2026-09-10T00:00:00Z");
+    const companies = buildRoleCompanies([
+      base,
+      { ...base, job: { ...base.job, id: "job-2" } } as RoleRow,
+      { ...base, company: { id: "company-2", name: "Beta", faviconUrl: "https://beta.test/favicon.ico", logoFetchedAt: logo, homepageUrl: "https://beta.test", domain: "beta.test" } } as RoleRow,
+    ]);
+    expect(companies).toEqual({
+      "company-1": { iconSrc: null, domain: "acme.test", homepageUrl: "https://acme.test" },
+      // The captured logo before the stored favicon, exactly as the company page draws it.
+      "company-2": { iconSrc: `/api/companies/company-2/logo?v=${logo.getTime()}`, domain: "beta.test", homepageUrl: "https://beta.test" },
+    });
   });
 
   /** The column is on this account's own view of the role, so the table's read has to carry it. */

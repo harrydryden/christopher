@@ -7,7 +7,7 @@
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { RoleRowVM } from "@/lib/queries/jobs";
+import type { RoleCompaniesVM, RoleRowVM } from "@/lib/queries/jobs";
 import type { ActionResult } from "@/lib/validation";
 
 const actions = vi.hoisted(() => ({
@@ -30,16 +30,15 @@ import { dismissRoleRefusal, roleRefusals } from "@/lib/role-refusals";
 
 function role(id: string, title: string): RoleRowVM {
   return {
-    id, companyId: "company-1", companyName: "Meridian", companyFaviconUrl: null, companyLogoUrl: null,
-    companyDomain: "meridian.example", companyHomepageUrl: "https://meridian.example", title,
+    id, companyId: "company-1", companyName: "Meridian", title,
     url: `https://meridian.example/jobs/${id}`, location: "Manchester", locations: ["Manchester"], remote: false,
     department: null, employmentType: null, salaryText: null, status: "active", workflowStatus: "auto-matched",
-    stage: "matched", applicationStatus: null, liveForText: "Live for 3 days", liveForTitle: "", seeded: false,
+    stage: "matched", applicationStatus: null, liveForText: "Live for 3 days", liveForBasis: "posted", seeded: false,
     fitScore: 72, scoreState: null, scoreStateText: null, fitVerdict: null, fitRationale: null, keywordTerms: [],
-    locationOk: true, sourceType: "greenhouse", firstSeenLabel: "", firstSeenTitle: "", postedLabel: null,
-    postedTitle: null, closedLabel: null, closedTitle: null, addedByYou: false, decision: null,
-  } as RoleRowVM;
+    addedByYou: false, decision: null,
+  };
 }
+const COMPANIES: RoleCompaniesVM = { "company-1": { iconSrc: null, domain: "meridian.example", homepageUrl: "https://meridian.example" } };
 const FIRST = role("11111111-1111-4111-8111-111111111111", "Head of Operations");
 const SECOND = role("22222222-2222-4222-8222-222222222222", "Operations Manager");
 
@@ -68,7 +67,7 @@ afterEach(() => {
 });
 
 function render(rows: RoleRowVM[]) {
-  act(() => root.render(<RolesTable rows={rows} keyboard emptyState={<p>Nothing to review</p>} />));
+  act(() => root.render(<RolesTable rows={rows} companies={COMPANIES} keyboard emptyState={<p>Nothing to review</p>} />));
 }
 const titles = () => [...container.querySelectorAll('tbody td[id^="role-row-"] button')].map(el => el.textContent);
 const text = () => container.textContent ?? "";
@@ -293,7 +292,7 @@ it("shows a refusal that lands after the table was replaced beside the new one, 
   for (const refusal of roleRefusals()) dismissRoleRefusal(refusal.id);
   const workspace = (key: string, rows: RoleRowVM[]) => act(() => root.render(<>
     <RoleRefusalNotices />
-    <RolesTable key={key} rows={rows} keyboard emptyState={<p>Nothing to review</p>} />
+    <RolesTable key={key} rows={rows} companies={COMPANIES} keyboard emptyState={<p>Nothing to review</p>} />
   </>));
   const saving = deferred();
   actions.decide.mockReturnValue(saving.promise);
@@ -310,6 +309,44 @@ it("shows a refusal that lands after the table was replaced beside the new one, 
 
   act(() => button("Dismiss").click());
   expect(text()).not.toContain("Could not save Head of Operations");
+});
+
+it("draws each row's company from the page's map and says in words what its live-for counts from", async () => {
+  const other: RoleRowVM = { ...role("33333333-3333-4333-8333-333333333333", "Site Lead"), companyId: "company-2", companyName: "Northwind", liveForBasis: "first_seen", seeded: true };
+  const companies: RoleCompaniesVM = { ...COMPANIES, "company-2": { iconSrc: "/api/companies/company-2/logo?v=1", domain: "northwind.example", homepageUrl: "https://northwind.example" } };
+  act(() => root.render(<RolesTable rows={[FIRST, other]} companies={companies} keyboard emptyState={<p>Nothing to review</p>} />));
+  const icons = [...container.querySelectorAll("tbody img")].map(img => img.getAttribute("src"));
+  expect(icons).toContain("/api/companies/company-2/logo?v=1");
+  const liveTitles = [...container.querySelectorAll("tbody p span[title]")].map(el => el.getAttribute("title"));
+  expect(liveTitles).toEqual([
+    "Counted from the date the source published for this role.",
+    "Counted from when this tool first saw the role; the source publishes no posted date. (seeded on first scan)",
+  ]);
+  act(() => button(other.title).click());
+  expect(container.querySelector<HTMLAnchorElement>(`#role-review-${other.id} a[href="https://northwind.example"]`)?.textContent).toBe("Website ↗");
+});
+
+it("brings an undone row back with its company even when the new page's map no longer holds it", async () => {
+  const other: RoleRowVM = { ...role("33333333-3333-4333-8333-333333333333", "Site Lead"), companyId: "company-2", companyName: "Northwind" };
+  const withBoth: RoleCompaniesVM = { ...COMPANIES, "company-2": { iconSrc: null, domain: "northwind.example", homepageUrl: "https://northwind.example" } };
+  const saving = deferred();
+  actions.decide.mockReturnValueOnce(saving.promise);
+  const undoing = deferred();
+  actions.decide.mockReturnValueOnce(undoing.promise);
+  const draw = (rows: RoleRowVM[], companies: RoleCompaniesVM) => act(() => root.render(<RolesTable rows={rows} companies={companies} keyboard emptyState={<p>Nothing to review</p>} />));
+  draw([other, FIRST], withBoth);
+  press("s");
+  type(reasonBox()!, "Not interested");
+  press("Enter", reasonBox()!);
+  await answer(saving, { ok: true });
+  // The server's next page no longer lists the role, nor its company.
+  draw([FIRST], COMPANIES);
+  act(() => button("Undo").click());
+  expect(titles()).toEqual([other.title, FIRST.title]);
+  // Its review panel is still the open one, as it was when the row left.
+  if (!container.querySelector(`#role-review-${other.id}`)) act(() => button(other.title).click());
+  expect(container.querySelector(`#role-review-${other.id} a[href="https://northwind.example"]`)).not.toBeNull();
+  await answer(undoing, { ok: true });
 });
 
 it("shows a role's archive notes once its review panel has loaded them, and ships none with the row", async () => {

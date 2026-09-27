@@ -243,7 +243,7 @@ export async function setRoleStage(jobId: string, _prev: ActionResult, form: For
  * own rule, still finalisable. The reviewer's words about what is missing are written for the
  * person reading them.
  */
-function assertRecordable(draft: typeof cvDrafts.$inferSelect | undefined) {
+function assertRecordable<T extends Pick<typeof cvDrafts.$inferSelect, "status" | "content" | "finalisedAt" | "assessment" | "jobDescription" | "librarySnapshot">>(draft: T | undefined) {
   if (!draft || draft.status !== "ready" || !draft.content) throw new UserFacingError("Choose a completed, saved CV.");
   if (!draft.finalisedAt) throw new UserFacingError("Review the assessment and finalise this CV before recording an application.");
   const recordable = { ...draft, content: draft.content };
@@ -274,7 +274,10 @@ export async function recordApplication(cvId: string, _prev: ActionResult, form:
     // Rendering is CPU-bound and can take seconds, so it happens before the transaction opens,
     // from a read of the draft; the transaction then re-reads it under lock and writes only if it
     // is still the revision that was rendered.
-    const [rendered] = await db().select().from(cvDrafts).where(and(eq(cvDrafts.id, cvId), eq(cvDrafts.userId, user.id)));
+    // Only what the check, the render and the comparison under lock read.
+    const [rendered] = await db()
+      .select({ status: cvDrafts.status, content: cvDrafts.content, finalisedAt: cvDrafts.finalisedAt, assessment: cvDrafts.assessment, jobDescription: cvDrafts.jobDescription, librarySnapshot: cvDrafts.librarySnapshot })
+      .from(cvDrafts).where(and(eq(cvDrafts.id, cvId), eq(cvDrafts.userId, user.id)));
     if (!rendered) throw new UserFacingError("Choose a completed, saved CV.");
     const pdf = await renderCvPdf(CvContentSchema.parse(assertRecordable(rendered).content));
     await db().transaction(async (tx) => {

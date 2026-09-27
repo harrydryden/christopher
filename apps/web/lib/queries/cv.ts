@@ -189,6 +189,30 @@ export async function getOwnCvDraft(userId: string, id: string): Promise<typeof 
   return draft ? { ...draft, progressAt: null, buildCheckpoint: null, failure: null, gapQuiz: null } : null;
 }
 
+/**
+ * One account's draft by id, as the PDF download reads it: what the finalisable check and the
+ * filename need, and nothing else. `getOwnCvDraft` reads the whole row, the build checkpoint and the
+ * gap quiz included, which a download never looks at; the Library snapshot and the description
+ * stay, because the check hashes them against the assessment.
+ */
+export async function getOwnCvDraftForPdf(userId: string, id: string) {
+  const [draft] = await db()
+    .select({
+      id: cvDrafts.id,
+      status: cvDrafts.status,
+      content: cvDrafts.content,
+      companyName: cvDrafts.companyName,
+      finalisedAt: cvDrafts.finalisedAt,
+      assessment: cvDrafts.assessment,
+      jobDescription: cvDrafts.jobDescription,
+      librarySnapshot: cvDrafts.librarySnapshot,
+    })
+    .from(cvDrafts)
+    .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, userId)))
+    .limit(1);
+  return draft ?? null;
+}
+
 /** The raw row `readCvProgress` reads, before it is shaped. */
 interface CvProgressRow extends Record<string, unknown> {
   status: CvProgressRows["draft"]["status"];

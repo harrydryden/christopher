@@ -776,7 +776,7 @@ export async function finaliseCvDraft(
         "Review the score, evidence gaps and factual wording before finalising.",
       );
     /** The revision as it can be finalised, or the sentence that says why it cannot. */
-    const finalisable = (draft: typeof cvDrafts.$inferSelect | undefined) => {
+    const finalisable = <T extends Pick<typeof cvDrafts.$inferSelect, "status" | "content" | "assessment" | "jobDescription" | "librarySnapshot">>(draft: T | undefined) => {
       if (!draft?.content || draft.status !== "ready")
         throw new UserFacingError("Wait for this revision’s assessment to finish.");
       // What the reviewer found missing is written for the person reading it.
@@ -787,8 +787,10 @@ export async function finaliseCvDraft(
       }
       return { ...draft, content: draft.content };
     };
+    // Only what the check and the render read: the build checkpoint, gap quiz and the rest of the
+    // row stay in the database. The locked re-read below is the whole row.
     const [read] = await db()
-      .select()
+      .select({ status: cvDrafts.status, content: cvDrafts.content, assessment: cvDrafts.assessment, jobDescription: cvDrafts.jobDescription, librarySnapshot: cvDrafts.librarySnapshot })
       .from(cvDrafts)
       .where(and(eq(cvDrafts.id, id), eq(cvDrafts.userId, user.id)));
     const checked = finalisable(read);

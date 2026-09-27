@@ -6,7 +6,7 @@ const throttle = vi.hoisted(() => vi.fn());
 const draft = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/auth", () => ({ requireUser: auth }));
 vi.mock("@/lib/rate-limit", () => ({ consumeRateLimit: throttle }));
-vi.mock("@/lib/queries/cv", () => ({ getOwnCvDraft: draft }));
+vi.mock("@/lib/queries/cv", () => ({ getOwnCvDraftForPdf: draft }));
 import { GET } from "./route";
 import { CV_RENDER_BUSY_SENTENCE, CV_RENDER_LIMIT } from "@/lib/cv-render-limit";
 

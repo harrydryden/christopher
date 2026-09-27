@@ -1,6 +1,6 @@
 import { recordWorkerEvent, releaseAiHolds, schema, type Db, type ReleasedHolds, type Task } from "@ava/db";
 import { AGEING_PRIORITY_FLOOR, deadlineMsFor, INTERACTIVE_TASK_TYPES, SCAN_TASK_TYPES, TASK_DEADLINES_MS, taskSubject, taskUserId, type TaskDeadlines } from "@ava/core";
-import { and, eq, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, getTableColumns, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import type { WorkerDeps } from "./context";
 import { finaliseScanRuns } from "./handlers/daily";
 import { LeaseBusyError, LeaseLostError, type RunDeps } from "./lease";
@@ -41,7 +41,7 @@ export type InterruptedHookMap = Partial<Record<Task["type"], InterruptedHook>>;
  * close that off, and it runs on every path that fails a task for good — the last attempt of a
  * handler that threw, and a task whose worker died with it claimed.
  */
-export type AbandonHook = (task: Task, deps: WorkerDeps, reason: string) => Promise<void>;
+export type AbandonHook = (task: SweptTask, deps: WorkerDeps, reason: string) => Promise<void>;
 export type AbandonHookMap = Partial<Record<Task["type"], AbandonHook>>;
 
 /** What a recovery needs to close off the work behind the tasks it gives up on. */
@@ -49,6 +49,15 @@ export interface AbandonContext {
   deps?: WorkerDeps;
   onAbandon?: AbandonHookMap;
 }
+
+/**
+ * A task as the recovery sweeps read it: every column but `result`, which nothing that requeues,
+ * fails or closes off a task reads, and which a task that wrote a large result before it was
+ * requeued would otherwise carry through every sweep. `payload` stays: the ledger names the
+ * task's subject and account from it, and the abandonment hooks find their draft through it.
+ */
+export type SweptTask = Omit<Task, "result">;
+const { result: _result, ...SWEPT_TASK_COLUMNS } = getTableColumns(schema.tasks);
 
 /** Past this many spent tasks, one sweep leaves the rest for the next. */
 const SPENT_SWEEP_LIMIT = 200;
@@ -348,7 +357,7 @@ export async function failTask(db: Db, task: Task, err: unknown): Promise<"retry
 }
 
 /** Run the type's abandonment hook, if it has one. A hook that throws never fails the recovery. */
-export async function runAbandonHook(task: Task, reason: string, context: AbandonContext): Promise<void> {
+export async function runAbandonHook(task: SweptTask, reason: string, context: AbandonContext): Promise<void> {
   const hook = context.onAbandon?.[task.type];
   if (!hook || !context.deps) return;
   try {
@@ -377,7 +386,7 @@ async function runInterruptedHook(task: Task, deps: WorkerDeps, hooks: Interrupt
  * lands — for a lost task, that its lock is still stale — because the row can change between the
  * read that chose it and this write.
  */
-export async function abandonTask(db: Db, task: Task, error: string, workerId: string, context: AbandonContext & { fence?: SQL } = {}): Promise<boolean> {
+export async function abandonTask(db: Db, task: SweptTask, error: string, workerId: string, context: AbandonContext & { fence?: SQL } = {}): Promise<boolean> {
   const rows = await db
     .update(schema.tasks)
     .set({ status: "failed", error: error.slice(0, 2000), finishedAt: new Date(), lockedAt: null })
@@ -428,14 +437,14 @@ export async function requeueStale(
   options: AbandonContext & { ids?: string[] } = {},
 ): Promise<RequeueOutcome> {
   const cutoff = new Date(Date.now() - staleAfterMs);
-  const lost = await db.select().from(schema.tasks).where(
+  const lost = await db.select(SWEPT_TASK_COLUMNS).from(schema.tasks).where(
     options.ids?.length
       ? and(eq(schema.tasks.status, "running"), inArray(schema.tasks.id, options.ids))
       : and(eq(schema.tasks.status, "running"), lt(schema.tasks.lockedAt, cutoff)),
   );
-  const earlierIncarnation = (task: Task) => !!options.ids?.length
+  const earlierIncarnation = (task: SweptTask) => !!options.ids?.length
     && (task.lockedBy === workerId || !!task.lockedBy?.startsWith(`${workerId}#`));
-  const stillLost = (task: Task) => and(
+  const stillLost = (task: SweptTask) => and(
     eq(schema.tasks.id, task.id), eq(schema.tasks.status, "running"), eq(schema.tasks.attempts, task.attempts),
     task.lockedBy === null ? isNull(schema.tasks.lockedBy) : eq(schema.tasks.lockedBy, task.lockedBy),
     earlierIncarnation(task) ? undefined : or(isNull(schema.tasks.lockedAt), lt(schema.tasks.lockedAt, cutoff)),
@@ -470,7 +479,7 @@ export async function requeueStale(
  * runs at boot and then hourly rather than on every tick, and is bounded per run.
  */
 export async function failSpentTasks(db: Db, workerId = "worker", context: AbandonContext = {}): Promise<number> {
-  const spent = await db.select().from(schema.tasks)
+  const spent = await db.select(SWEPT_TASK_COLUMNS).from(schema.tasks)
     .where(and(eq(schema.tasks.status, "queued"), sql`${schema.tasks.attempts} >= ${schema.tasks.maxAttempts}`))
     .limit(SPENT_SWEEP_LIMIT);
   let failed = 0;
@@ -518,7 +527,10 @@ export async function recoverFromCrash(
 ): Promise<CrashRecovery> {
   const staleAfterMs = opts.staleAfterMs ?? TASK_STALE_AFTER_MS;
   const cutoff = Date.now() - staleAfterMs;
-  const all = await deps.db.select().from(schema.tasks).where(eq(schema.tasks.status, "running"));
+  // Only what choosing and reporting the suspects reads; `requeueStale` reads the rest for the ones it takes.
+  const all = await deps.db
+    .select({ id: schema.tasks.id, type: schema.tasks.type, attempts: schema.tasks.attempts, lockedBy: schema.tasks.lockedBy, lockedAt: schema.tasks.lockedAt, payload: schema.tasks.payload })
+    .from(schema.tasks).where(eq(schema.tasks.status, "running"));
   // Ours, or nobody's. A slot locks a task as `<workerId>#<slot>`, and the worker id is the pod
   // name, so a running task locked by this id belonged to the incarnation before this one and can
   // be taken back at once. Anything else is left to age out through the ordinary stale sweep,

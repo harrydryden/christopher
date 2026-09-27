@@ -1,7 +1,7 @@
 import { assertCvFinalisable } from "@ava/core/cv-review";
 import { CvContentSchema } from "@ava/core";
 import { routeUser } from "@/lib/route-auth";
-import { getOwnCvDraft } from "@/lib/queries/cv";
+import { getOwnCvDraftForPdf } from "@/lib/queries/cv";
 import { zUuid } from "@/lib/validation";
 import { renderCvPdf, renderCvPdfWithReport, CvLayoutError } from "@/lib/cv-pdf";
 import { refuseCvRender } from "@/lib/cv-render-limit";
@@ -15,7 +15,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const user = auth.user;
   const { id } = await params;
   if (!zUuid().safeParse(id).success) return new Response("Not found", { status: 404 });
-  const draft = await getOwnCvDraft(user.id, id);
+  const draft = await getOwnCvDraftForPdf(user.id, id);
   if (!draft) return new Response("Not found", { status: 404 });
   const preview = new URL(_request.url).searchParams.get("preview") === "1";
   if (!draft.content || (draft.status !== "ready" && !(preview && draft.status === "failed"))) return new Response("CV is not ready", { status: 409 });

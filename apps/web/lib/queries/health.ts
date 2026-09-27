@@ -959,11 +959,14 @@ export async function listRunningTasks(limit = 25): Promise<RunningTaskRow[]> {
   return runningTaskRows(rows, await resolveSubjects(rows.map((row) => taskSubjectRef(row.type, row.payload))));
 }
 
+/** What the running-task list shows: never the task's result or error text. */
 function runningTasks(limit: number) {
-  return db().select().from(tasks).where(eq(tasks.status, "running")).orderBy(asc(tasks.startedAt)).limit(limit);
+  return db()
+    .select({ id: tasks.id, type: tasks.type, payload: tasks.payload, startedAt: tasks.startedAt, lockedBy: tasks.lockedBy, attempts: tasks.attempts, maxAttempts: tasks.maxAttempts })
+    .from(tasks).where(eq(tasks.status, "running")).orderBy(asc(tasks.startedAt)).limit(limit);
 }
 
-function runningTaskRows(rows: Task[], names: SubjectNames): RunningTaskRow[] {
+function runningTaskRows(rows: Array<Pick<Task, "id" | "type" | "payload" | "startedAt" | "lockedBy" | "attempts" | "maxAttempts">>, names: SubjectNames): RunningTaskRow[] {
   const refs = rows.map((row) => taskSubjectRef(row.type, row.payload));
   return rows.map((row, i) => ({
     id: row.id,
@@ -997,13 +1000,16 @@ export async function listRetryingTasks(limit = 25): Promise<RetryingTaskRow[]> 
   return retryingTaskRows(rows, await resolveSubjects(rows.map((row) => taskSubjectRef(row.type, row.payload))));
 }
 
+/** What the retrying-task list shows: never the task's result. */
 function retryingTasks(limit: number) {
-  return db().select().from(tasks)
+  return db()
+    .select({ id: tasks.id, type: tasks.type, payload: tasks.payload, attempts: tasks.attempts, maxAttempts: tasks.maxAttempts, error: tasks.error, runAfter: tasks.runAfter })
+    .from(tasks)
     .where(and(eq(tasks.status, "queued"), gte(tasks.attempts, 1), isNotNull(tasks.error)))
     .orderBy(desc(tasks.attempts), asc(tasks.runAfter)).limit(limit);
 }
 
-function retryingTaskRows(rows: Task[], names: SubjectNames): RetryingTaskRow[] {
+function retryingTaskRows(rows: Array<Pick<Task, "id" | "type" | "payload" | "attempts" | "maxAttempts" | "error" | "runAfter">>, names: SubjectNames): RetryingTaskRow[] {
   const refs = rows.map((row) => taskSubjectRef(row.type, row.payload));
   return rows.map((row, i) => {
     const runAfter = requiredOperationDate(row.runAfter, "task retry");

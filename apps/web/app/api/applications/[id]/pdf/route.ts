@@ -5,6 +5,8 @@ import { routeUser } from "@/lib/route-auth";
 import { zUuid } from "@/lib/validation";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Serves the stored bytes of one submitted CV; 30 s is far beyond that, and far below the platform default of 300.
+export const maxDuration = 30;
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await routeUser();
   if (!auth.ok) return auth.response;

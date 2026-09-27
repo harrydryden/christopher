@@ -7,6 +7,8 @@ import { renderCvPdf, renderCvPdfWithReport, CvLayoutError } from "@/lib/cv-pdf"
 import { refuseCvRender } from "@/lib/cv-render-limit";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// A CV renders in about a second, bounded by `cv-render-limit.ts`; a pathological document is cut off at 30 s of function time instead of the platform default of 300.
+export const maxDuration = 30;
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await routeUser();
   if (!auth.ok) return auth.response;

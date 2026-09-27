@@ -217,7 +217,16 @@ the rollout and recovery checklist below. Check `/healthz` returns `{"ok":true,�
 
 In Vercel, **Add New → Project**, import the repository, then set **Root Directory** to `apps/web`.
 Leave the build and install commands alone: Vercel detects the pnpm workspace and installs from the
-repository root.
+repository root. Set the project's **Node.js Version** (Settings → Build and Deployment) to
+**22.x**, the version the worker runs and `apps/web/package.json` declares in `engines`: the
+`engines` field applies only while the project setting does not override it, and new projects
+default to a later major (the live project showed 24.x on 27 September 2026).
+
+The routes that render or read a PDF (`/api/cv/[id]/pdf`, `/api/cv/preview`,
+`/api/applications/[id]/pdf`) and the CV page, whose server action freezes a PDF onto an
+application, declare `maxDuration = 30`; the Library import poll, the CSV export and the cron route
+declare 60. Everything else takes Fluid compute's default of 300 s. A render takes about a second,
+so 30 s only ever cuts off a pathological document, at a tenth of the cost.
 
 | Variable | Value |
 |---|---|

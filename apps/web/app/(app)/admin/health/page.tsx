@@ -11,6 +11,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { requireAdmin } from "@/lib/auth";
 import { RefusalNotice } from "@/components/RefusalNotice";
+import { StatementsCard } from "./monitoring";
 import { db } from "@/lib/db";
 import { totalAiUsage } from "@/lib/ai-usage";
 import { formatBytes, formatCount, formatDelta, formatDuration, formatLatency, formatPercent, formatStepDuration, formatUsd, formatUsdPrecise, relativeTime, shortDate } from "@/lib/format";
@@ -25,6 +26,7 @@ import {
   getCvDriftRates,
   getQueueCounts,
   getScoredRoleCost,
+  getTopStatements,
   listCompaniesWithNoSource,
   listFailedTasks,
   listLargestScanInputs,
@@ -57,7 +59,7 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
   // Budgets belong to accounts and each has its own window; this page is the deployment's report,
   // so it counts the calendar month that everybody's budget resets on.
   const since = aiBudgetWindowStart(now, null);
-  // Nineteen statements in three groups of at most eight, rather than every card's queries at once
+  // Twenty statements in groups of at most eight, rather than every card's queries at once
   // into a pool of three connections, where the ones still waiting after ten seconds fail the page.
   // The worker and the queue first; the activity names its subjects and the spend table's accounts
   // in one statement once the usage has been read.
@@ -86,7 +88,8 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
     getCvBuildFailureKinds(30),
   ]);
   // Then how the builds are trending: the week-by-week bill and the rates that drift first.
-  const [cvWeeks, cvDrift] = await Promise.all([getCvBuildWeeks(12), getCvDriftRates(30)]);
+  // With the database's own account of what it spent its time on.
+  const [cvWeeks, cvDrift, statements] = await Promise.all([getCvBuildWeeks(12), getCvDriftRates(30), getTopStatements()]);
   const { status, crash, running, retrying, events } = activity;
   const totals = totalAiUsage(usage);
   // Every call since the month began, whoever it was for: the usage table's own total.
@@ -694,6 +697,8 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
           </Table>
         )}
       </Card>
+
+      <StatementsCard totals={statements} />
 
       <Card title="Queue">
         {queueCounts.length === 0 ? (

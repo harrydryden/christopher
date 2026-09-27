@@ -294,6 +294,16 @@ checkout on a laptop against the production database, so it is careful in two wa
   prompt set"). `record` and a `replay` without `--recordings` call the provider and are paid; both
   refuse without `ANTHROPIC_API_KEY`.
 
+- **`pgstat` reads what the database spent its time on.** `cli pgstat` prints the twenty statements
+  with the most total execution time from `pg_stat_statements` (calls, total, mean and standard
+  deviation, rows, buffer hits and reads, hit rate, and the normalised statement cut to 160
+  characters) for this database only; `cli pgstat --reset` then starts the statistics afresh, so the
+  next reading covers a known window. Migration 0045 creates the extension where the role may and
+  skips it with a notice where it may not; the extension records nothing unless the server preloads
+  it (`shared_preload_libraries`, preset on Render). Either gap is said in so many words, by the CLI
+  and by the administrator's **Costliest statements** card on Operations, which shows the same
+  reading. The text goes to the terminal or the page, never to a log.
+
 Inside the worker's container (Render's Shell), run it without pnpm, from `/app/apps/worker`:
 `node --import tsx src/cli.ts users`.
 

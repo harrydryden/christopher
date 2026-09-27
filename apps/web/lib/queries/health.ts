@@ -7,9 +7,11 @@ import {
   type CvBuildMotionStat,
   listHttpHostDaily,
   listWorkerEvents,
+  topStatements,
   totalAiSpend,
   type CvBuildCosts,
   type ScoredRoleCost,
+  type StatementTotals,
 } from "@ava/db";
 import {
   cvBuildSteps,
@@ -368,6 +370,20 @@ export async function getScoredRoleCost(days = 30): Promise<ScoredRoleCost> {
 export async function outboundTraffic(days = 7): Promise<HostTraffic[]> {
   const rows = await ifLedger(() => listHttpHostDaily(db(), days * 2), [] as Awaited<ReturnType<typeof listHttpHostDaily>>);
   return foldOutboundTraffic(rows, days);
+}
+
+/**
+ * The twenty costliest statements from pg_stat_statements, for the administrator's Operations page.
+ * A database without the extension, or a server that does not preload it, answers with the reason.
+ * Any other failure is also a reason rather than an error page: the card is diagnostics, and the
+ * rest of Operations must render whatever it says.
+ */
+export async function getTopStatements(): Promise<StatementTotals> {
+  try {
+    return await topStatements(db(), 20);
+  } catch {
+    return { available: false, reason: "The statement statistics could not be read." };
+  }
 }
 
 /** Health's run history: one query for the runs, one for every run's counts. */

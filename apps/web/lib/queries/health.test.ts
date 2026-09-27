@@ -15,7 +15,7 @@ let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 let user: User;
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { getAiUsage, getCvBuildCosts, getCvBuildFailureKinds, getCvBuildMotions, getScoredRoleCost, getTotalAiSpend } from "./health";
+import { getAiUsage, getCvBuildCosts, getCvBuildFailureKinds, getCvBuildMotions, getScoredRoleCost, getTopStatements, getTotalAiSpend } from "./health";
 import { getCvMotionMedians, resetCvMotionMedians } from "./cv";
 import { totalAiUsage } from "@/lib/ai-usage";
 import { aiOutcome } from "@ava/db";
@@ -194,6 +194,17 @@ it("reads the governor's pause as the epoch milliseconds the engine reports, and
   // No pause is null, and an ISO string from an older shape still reads.
   expect(readHeartbeat({ at: "2026-09-18T12:00:00.000Z", governor: { cap: 4, inFlight: 0, queued: 0, pausedUntil: null } })!.governor!.pausedUntil).toBeNull();
   expect(readHeartbeat({ at: "2026-09-18T12:00:00.000Z", governor: { cap: 4, pausedUntil: "2026-09-18T12:05:00.000Z" } })!.governor!.pausedUntil).toEqual(new Date(pausedUntil));
+});
+
+it("reads the costliest statements for Operations, or says why it cannot, without failing the page", async () => {
+  const totals = await getTopStatements();
+  if (totals.available) {
+    expect(totals.rows.length).toBeLessThanOrEqual(20);
+    for (const row of totals.rows) expect(row.query.length).toBeLessThanOrEqual(160);
+  } else {
+    // This suite's server does not preload the extension (CI and local both): the reason, not an error.
+    expect(totals.reason).toMatch(/pg_stat_statements/);
+  }
 });
 
 it("reads the event-loop lag, slow queries and pool the worker writes, and leaves them null when it does not", () => {

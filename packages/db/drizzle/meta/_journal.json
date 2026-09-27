@@ -288,6 +288,13 @@
       "when": 1791453600000,
       "tag": "0042_scans_source_completed_index",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1791712800000,
+      "tag": "0045_pg_stat_statements_web_vitals",
+      "breakpoints": true
     }
   ]
 }

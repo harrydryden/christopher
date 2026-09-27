@@ -23,7 +23,7 @@ export async function GET(request: Request) {
   }
   // A page that renders one half's version asks for that half, so the version it compares is the
   // one it rendered: the companies pages watch their companies' work task by task, the Roles page
-  // the same work but only as tasks arrive and finish, and a page listing CVs watches only builds.
+  // waits on the same work but versions what its table shows, and a page listing CVs watches only builds.
   const scope = params.get('scope');
   if (scope === 'company') return Response.json(await getCompanyWorkStatus(user.id), { headers: { 'cache-control': 'no-store' } });
   if (scope === 'roles') return Response.json(await getRolesWorkStatus(user.id), { headers: { 'cache-control': 'no-store' } });

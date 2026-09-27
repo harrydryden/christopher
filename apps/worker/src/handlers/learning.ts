@@ -1,4 +1,5 @@
 import { withResourceLease } from "../lease";
+import { analyzeTables, GATE_ANALYZE_THRESHOLD, GATE_TABLES } from "../analyze";
 import { enqueueTasks } from "@ava/db/tasks";
 import { schema, enqueueTask, latestApplicationFor, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, type ScoreState, type Task } from "@ava/db";
 import { decisionDigest, type ScoreJobInput, type ScoreJobResult } from "@ava/ai";
@@ -497,6 +498,12 @@ export async function handleSuggestFilters(task: Task, deps: WorkerDeps): Promis
   });
 }
 
+/** How many of an account's views a gate re-evaluation wrote: created, changed or archived. */
+function gateWrites(outcome: unknown): number {
+  const o = (outcome ?? {}) as { created?: number; changed?: number; archived?: number };
+  return (o.created ?? 0) + (o.changed ?? 0) + (o.archived ?? 0);
+}
+
 /** Re-evaluate the keyword and location gate for one account, or every account, after a settings change. */
 /**
  * Re-run one account's gate, or every account's when the task names none.
@@ -512,16 +519,22 @@ export async function handleReevaluateGate(task: Task, deps: WorkerDeps): Promis
   deps.invalidateSettings(userId);
   const users = userId ? [userId] : await listUserIds(deps.db);
   const outcomes: Record<string, unknown> = {};
+  let written = 0;
   for (const id of users) {
-    outcomes[id] = await withResourceLease(deps, `reevaluate-gate:${id}`, async locked => {
+    const outcome = await withResourceLease(deps, `reevaluate-gate:${id}`, async locked => {
       const settings = await deps.userSettings(id);
       return deps.db.transaction(async tx => {
         await locked.assertOwnership?.(tx as unknown as WorkerDeps["db"]);
         return reevaluateGate(tx as unknown as WorkerDeps["db"], id, settings, deps.now(), { companyId });
       });
     });
+    outcomes[id] = outcome;
+    written += gateWrites(outcome);
   }
-  return { accounts: users.length, outcomes };
+  // Hundreds of views rewritten at once leave the planner's picture of `user_jobs` behind; refresh
+  // it after the transactions have committed, not inside them.
+  const analysed = written > GATE_ANALYZE_THRESHOLD ? await analyzeTables(deps.db, GATE_TABLES, "reevaluate_gate") : false;
+  return { accounts: users.length, outcomes, ...(analysed ? { analysed: true } : {}) };
 }
 
 /**

@@ -22,7 +22,7 @@ afterAll(() => pool.end());
  * question is whether this index can answer the query, not which of two a given table's numbers
  * happen to favour today.
  */
-async function plan(query: SQL, index: string): Promise<string> {
+async function plan(query: SQL, index: string, { analyze = true } = {}): Promise<string> {
   let text = "";
   await db.transaction(async tx => {
     const others = await tx.execute<{ name: string }>(sql`
@@ -31,6 +31,12 @@ async function plan(query: SQL, index: string): Promise<string> {
         and i.tablename = (select tablename from pg_indexes where schemaname = 'public' and indexname = ${index})
         and not exists (select 1 from pg_constraint c where c.conindid = (quote_ident(i.indexname))::regclass)`);
     for (const { name } of others.rows) await tx.execute(sql`drop index ${sql.identifier(name)}`);
+    // Statistics as the table stands now, whatever an earlier suite left in it: a plan read from
+    // numbers autovacuum has not caught up with is how a plan test goes flaky (docs/PERFORMANCE-GUIDE.md 4.4).
+    const [{ table } = { table: "" }] = (await tx.execute<{ table: string }>(sql`select tablename as table from pg_indexes where schemaname = 'public' and indexname = ${index}`)).rows;
+    // A join's order follows both tables' numbers, so a joined case asserts only the index's use
+    // and is planned on the defaults, as before.
+    if (analyze && table) await tx.execute(sql`analyze ${sql.identifier(table)}`);
     await tx.execute(sql`set local enable_seqscan = off`);
     const rows = await tx.execute(sql`explain ${query}`);
     text = rows.rows.map(row => Object.values(row).join(" ")).join("\n");
@@ -98,7 +104,7 @@ const cases: Case[] = [
 
 describe("migration 0036's indexes", () => {
   it.each(cases)("serve %s", async (_name, query, index, joined) => {
-    const text = await plan(query, index);
+    const text = await plan(query, index, { analyze: !joined });
     // Used with conditions, not read end to end: the node names the index and carries an Index Cond.
     if (joined) expect(text).toMatch(new RegExp(`using ${index} `));
     else expect(text).toMatch(new RegExp(`(using|on) ${index} [^\\n]*\\n\\s+Index Cond:`));

@@ -47,6 +47,7 @@ import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { createDeps, makeDiscoveryContext, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { assertSchemaCurrent, discoverTargets, findCompany, schemaState } from "./cli-guards";
+import { analyzeTables, IMPORT_ANALYZE_THRESHOLD, IMPORT_TABLES } from "./analyze";
 import { handlers } from "./handlers";
 import { TaskQueue } from "./queue";
 import { schedulerTick } from "./scheduler";
@@ -179,6 +180,8 @@ async function main() {
             console.log(`already tracked: ${domain}; ${subscription.created || subscription.reactivated ? "now" : "already"} followed by ${user.email} (${outcome.created} matching roles added)`);
           }
         }
+        // A bulk import changes the catalogue's shape faster than autovacuum notices.
+        if (args.length > IMPORT_ANALYZE_THRESHOLD) await analyzeTables(deps.db, IMPORT_TABLES, "company import");
         break;
       }
       case "discover": {

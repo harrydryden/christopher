@@ -789,6 +789,11 @@ the `@ava/*` packages, so frozen installs are unaffected.
 ### Backup restoration drill
 
 - [ ] Restore a provider backup into an isolated database; never test restoration over production.
+- [ ] Run `vacuumdb --analyze-in-stages --dbname <restored database URL>` straight after the restore,
+  before pointing anything at it. PostgreSQL 16's `pg_restore` restores no planner statistics, so
+  until autovacuum reaches each table every query is planned as if the tables were empty; the
+  in-stages form makes the database usable after its first, coarse pass.
+  `scripts/recovery-drill.mjs` does this after its own restore.
 - [ ] Record the backup timestamp, achieved RPO, restore start/end time and achieved RTO.
 - [ ] Point an isolated web/worker pair at the restored database, apply only the migration plan being
   tested, and run authenticated reads plus one reversible queue journey.

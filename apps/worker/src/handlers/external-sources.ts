@@ -1,4 +1,4 @@
-import { schema, enqueueTask, type Task } from "@ava/db";
+import { schema, enqueueTasks, type Task } from "@ava/db";
 import { dedupeKeyFor, discovery, extractDomain, isImportOnlyKind, isImportOnlySourceError, normalizeUrl, sha1, stripHtml } from "@ava/core";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { aiBudgetStop, makeFetchContext, type WorkerDeps } from "../context";
@@ -105,15 +105,16 @@ export async function handleMonitorSource(task: Task, deps: WorkerDeps): Promise
     const documents = await deps.db.select().from(schema.discoveryDocuments).where(and(
       eq(schema.discoveryDocuments.sourceId, sourceId), isNull(schema.discoveryDocuments.processedAt),
     )).orderBy(schema.discoveryDocuments.createdAt).limit(12);
-    for (const document of documents) {
-      await enqueueTask(deps.db, "extract_document", { sourceId, documentId: document.id }, {
-        dedupeKey: dedupeKeyFor("extract_document", { sourceId, documentId: document.id }), priority: 7,
-      });
-    }
+    await enqueueTasks(deps.db, documents.map(document => ({
+      type: "extract_document" as const, payload: { sourceId, documentId: document.id },
+      dedupeKey: dedupeKeyFor("extract_document", { sourceId, documentId: document.id }), priority: 7,
+    })));
     const pending = await deps.db.select({ id: schema.discoveryCandidates.id }).from(schema.discoveryCandidates)
       .innerJoin(schema.discoveryDocuments, eq(schema.discoveryCandidates.documentId, schema.discoveryDocuments.id))
       .where(and(eq(schema.discoveryDocuments.sourceId, sourceId), isNull(schema.discoveryCandidates.processedAt))).limit(100);
-    for (const candidate of pending) await enqueueTask(deps.db, "verify_company", { sourceId, candidateId: candidate.id }, { dedupeKey: `verify_company:${candidate.id}`, priority: 7 });
+    await enqueueTasks(deps.db, pending.map(candidate => ({
+      type: "verify_company" as const, payload: { sourceId, candidateId: candidate.id }, dedupeKey: `verify_company:${candidate.id}`, priority: 7,
+    })));
     // A site that refuses every automated reader will refuse again tomorrow. Such a source keeps
     // its normal cadence rather than retrying daily, and its imported editions still flow.
     const importOnly = fetchErrors.length > 0 && fetchErrors.every(isImportOnlySourceError);
@@ -162,7 +163,9 @@ export async function handleExtractDocument(task: Task, deps: WorkerDeps): Promi
         }
         if (candidates.length) {
           const inserted = await tx.insert(schema.discoveryCandidates).values(candidates).onConflictDoNothing().returning({ id: schema.discoveryCandidates.id });
-          for (const row of inserted) await enqueueTask(tx, "verify_company", { sourceId, candidateId: row.id }, { dedupeKey: `verify_company:${row.id}`, priority: 7 });
+          await enqueueTasks(tx, inserted.map(row => ({
+            type: "verify_company" as const, payload: { sourceId, candidateId: row.id }, dedupeKey: `verify_company:${row.id}`, priority: 7,
+          })));
         }
         await tx.update(schema.discoveryDocuments).set({ processedAt: deps.now() }).where(eq(schema.discoveryDocuments.id, documentId));
         return { extracted: candidates.length };

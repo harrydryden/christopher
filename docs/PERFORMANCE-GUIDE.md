@@ -103,7 +103,7 @@ Shared floor about 108 KB (react-dom 54.3, router runtime 46.2, `next/link` 3.4,
 
 **2.2 Stop the roles table re-rendering all 50 rows on each keystroke, `j`/`k` press and reason-box edit.**
 - Mechanism: extract `const RoleRow = memo(function RoleRow(props) {...})` taking primitives (`highlighted`, `selected`, `busy`, `expanded`, `detail`, `boxed`) and handlers through one ref-backed dispatcher so identities stay stable; a `ReasonBox` child owns `useState(prefill)` and reports `onSubmit(text)`; `export const SafeMarkdown = memo(SafeMarkdownImpl)`.
-- Status: partial [V]. `rows` is memoised (`components/RolesTable.tsx:148`) and scroll runs only on `highlightIndex` (`:495-504`). Rows still render inline (`:604`); textarea `onChange` calls `setReasonBox` on the table (`:752`); `j`/`k` call `setHighlightIndex` (`:465-470`); `SafeMarkdown` has no memo, so an open description is re-parsed per keystroke.
+- Status: done [V] (commit 9457018). `RoleRow` is a memo component on primitives with a ref-backed `RowActions` object, `ReasonBox` owns its text, `SafeMarkdown` is memoised. After, on 50 rows (`RolesTable.renders.test.tsx`, a Profiler per row): a reason-box keystroke renders 0 rows (was 50), `j`/`k` 2 (the rows whose highlight moved; was 50), `x` 1 (was 50); an open description is not re-parsed when its row renders.
 - Impact: estimate, no browser profile run. About 50 × 40 fibers per keystroke, 2–5 ms desktop and 10–25 ms on a mid-range Android phone, enough with input delay to reach INP "needs improvement"; after, one row, under 1 ms.
 - Effort: M (the row reads about 15 closure variables).
 - Risk → guard: a stale callback acting on the wrong row; route handlers through a ref updated every render, keep `RolesTable.test.tsx` green, add a `<Profiler onRender>` test asserting one row renders per keystroke.
@@ -163,13 +163,13 @@ Timings are local database time, `jit=off`, warm, on `ava_perf_bench` (1,000 `us
 
 **3.1 Reuse the tab count instead of running `countRoles` on default views.**
 - Mechanism: when `filtersToQueryString(filters)` is empty, read `counts[view]` from `fetchRoleCounts` (memoised, already read on `/`) and skip the separate count statement.
-- Status: not done [V]: `lib/queries/jobs.ts:753-762` runs count and page in parallel and re-reads the page only past the end.
+- Status: done [V] (commit 37acb9b). A view that is a whole tab (`tabCountedBy`) takes `counts[tab]` from the memoised `fetchRoleCounts`; anything narrower is counted. After: no count statement on default views (it was 1.0 ms at 1,000 and 8.5 ms at 10,000 after 3.5); `RoleWorkspace` on a named view sends 4 statements side by side.
 - Impact: `countRoles` is 2.7 ms at 1,000 roles and 28 ms at 10,000 [M], plus one pool slot per default render.
 - Effort: S. Risk → guard: filtered and tab counts could diverge if a filter is added; reuse only on the empty filter string and add a fixture test that both agree.
 
 **3.2 Take events off the table payload and out of the render chain.**
 - Mechanism: drop `fetchRecentEventsFor` from `RoleWorkspace` (`RoleWorkspace.tsx:62`); return archive events from the `roleDetails` action already loaded on row expand, selecting only `type`, `at`, `payload->>'action'`, `payload->>'reason'`. The table uses events in one place, inside the expanded panel (`components/RolesTable.tsx:713`).
-- Status: not done [V].
+- Status: done [V] (commit 23c0a42). `roleDetails` returns `archiveNotes` from `fetchArchiveNotes` (action and reason only); the page reads no events. After: 50-row Matched rows prop 63,085 → 50,435 B on `ava_perf_bench`, and no sequential events wave.
 - Impact: one sequential round trip fewer on `/` and `/companies/[id]` (1.9 ms database time plus one Vercel to PgBouncer RT) and 12.5 KB of the 63 KB rows prop, 250 B/row, 20 % [M A-baseline, 50-row RSC capture].
 - Effort: S. Risk → guard: the archive note appears after expansion, where it already sits; add a RolesTable test for the note after expand.
 
@@ -181,7 +181,7 @@ Timings are local database time, `jit=off`, warm, on `ava_perf_bench` (1,000 `us
 
 **3.4 Roles work token: fingerprint what the table shows, not the task ids.**
 - Mechanism: replace `companyWorkQuery(userId, "ids")` (`lib/work-status.ts:43-46`) with one indexed aggregate over `user_jobs(user_id)` joined to `jobs`: `count(*)`, `max(uj.updated_at)`, `max(j.updated_at)` and the pending filter-suggestion count. A scan that finds nothing new then triggers no refresh.
-- Status: partial [V]: the ids-only token is done; the fingerprint is not.
+- Status: done [V] (commit dc010cf). One statement: the pending flag plus an md5 over the account's view count, max `user_jobs.updated_at` and `score_state_at`, max `jobs.updated_at`, the closed count, active decisions and pending suggestions. After: a scan that finds nothing new moves nothing; the fingerprint costs 1.1–2.0 ms at 1,000 roles and 10.7–12.4 ms at 10,000 [M, `ava_perf_bench`].
 - Impact: D measured 2.8 full refreshes per tab per minute during a run, 56 of 74 queries/min, 80 KB per refresh on Matched [M]; most disappear (estimate).
 - Effort: M. Risk → guard: a visible column changing without `updated_at`; one `work-status.test.ts` case per writer (scan update, closure, score, decision) plus the cross-account isolation test.
 
@@ -197,7 +197,7 @@ Timings are local database time, `jit=off`, warm, on `ava_perf_bench` (1,000 `us
     ```
   - Keep the `json_build_array` cursor on the outer select so CSV export (`app/api/export.csv/route.ts:57`) still works.
 - Why: the `CASE` filters make the planner estimate 1–150 rows where 944 (1k) or 9,944 (10k) come back, so it nested-loops `companies` and `career_sources` (94k rows removed by join filter) and carries 820-byte rows into the sort [M G3, G4]. The predicate form is also what lets `user_jobs_table_idx` serve the auto-matched view without a new index (4.13).
-- Status: not done [V]: `lib/queries/jobs.ts:670-673`.
+- Status: done [V] (commit f4b3578). After, EXPLAIN ANALYZE execution on `ava_perf_bench`, Matched: page 1 15.2 → 3.1–5.7 ms at 1,000 roles and 132.5 → 16.3 ms at 10,000; offset 4,950 at 10,000 237.9 → 22–23 ms; planning rose from about 2 to about 5 ms. "No decision" is written on `decisions.job_id` (an anti-join the planner estimates), and the plan reads `user_jobs_table_idx` with `(user_id, in_table, archived_at)` as its index condition.
 - Impact: page-1 query 13–17 → 4–5 ms at 1,000 roles and 131–205 → 41–44 ms at 10,000 [M]; it is the slowest statement on `/` (A-after 12.5 ms) and on the critical path of `/` and `/companies/[id]`.
 - Effort: M. Risk → guard: inner and outer order or filters drifting; build both from one `rolesQuery()` `{conditions, order}`, keep the "Showing N of M" and order tests, add a test that page 2 matches the current form.
 
@@ -236,7 +236,7 @@ Timings are local database time, `jit=off`, warm, on `ava_perf_bench` (1,000 `us
 
 **3.10 Role row view model: drop constants and per-row company duplication.**
 - Mechanism: in `buildRoleRowVM` (`lib/queries/jobs.ts:521-574`) replace `liveForTitle` with `liveForBasis: "posted" | "first_seen"` (the client holds the strings); send one `companies: Record<id, {…}>` prop instead of four company fields per row; move `fitRationale` to `roleDetails` if real rationales prove long (`RolesTable.tsx:62,687`). RSC serialises every key: key names alone are 519 B/row (39 keys).
-- Status: not done [V].
+- Status: done [V] (commit ed14a47). `liveForBasis` replaces `liveForTitle`, one `companies` map prop replaces four fields per row, and the seven label/ISO fields, `sourceType` and `locationOk` the table never read are gone; `fitRationale` stays on the row (the prompt caps it at two sentences; stored ones average 86 characters). After: 50-row rows prop 50,435 → 30,933 B plus a 2,443 B companies map (668 B/row, from 1,262 before 3.2).
 - Impact: of 1,259 B/row [M], `liveForTitle` is 101 B (8 %), company fields 122 B (10 %), ISO `*Title` fields 43–79 B; with 3.2, about 1,259 → 850 B/row, −20 KB per 50-row page, the same in the HTML copy (estimate).
 - Effort: S–M (`RoleRowVM` is shared with `RolesTable.test.tsx`). Risk → guard: a missing company entry renders a blank favicon; build the map from the same rows and type the lookup non-optional.
 

@@ -12,7 +12,7 @@ import { db } from "@/lib/db";
 import { enqueue, enqueueMany } from "@/lib/enqueue";
 import { cvBuildQuote, cvQuoteButtonLine } from "@/lib/cv-quote";
 import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
-import { fetchRoleDetails, locationReasonText, type CvQuoteVM, type RoleDetailsVM } from "@/lib/queries/jobs";
+import { fetchArchiveNotes, fetchRoleDetails, locationReasonText, type CvQuoteVM, type RoleDetailsVM } from "@/lib/queries/jobs";
 import { getSettingsFor } from "@/lib/settings";
 import { countStandingDecisions, queueFilterSuggestionsOnCrossing, recordDecision, restoreDismissedApplications, withdrawLiveApplications } from "@/lib/decisions";
 import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
@@ -50,7 +50,9 @@ export async function roleDetails(jobId: string): Promise<RoleDetailsResult> {
     if (!row) return { ok: false, error: "Role not found." };
     // The gate's own terms and the price of a build are independent reads, so the panel waits for
     // the slower of the two rather than for both in turn.
-    const [settings, cvQuote] = await Promise.all([getSettingsFor(user.id), panelCvQuote(user.id, row)]);
+    // The archive notes come from here too, read only for the row that opened, after the row read
+    // has shown this account can see it.
+    const [settings, cvQuote, archiveNotes] = await Promise.all([getSettingsFor(user.id), panelCvQuote(user.id, row), fetchArchiveNotes(user.id, row.job.id)]);
     // The same rule the gate itself ran: `user_jobs` keeps the verdict, not the terms behind it.
     const evaluated = evaluateLocation(
       { title: row.job.title, location: row.job.location, locations: row.job.locations, remote: row.job.remote },
@@ -77,6 +79,7 @@ export async function roleDetails(jobId: string): Promise<RoleDetailsResult> {
         // `requireVerifiedUser()` in `requestCv` stays the authority; this only stops the button
         // being pressed before the wall is discovered.
         cvBlocked: needsEmailConfirmation(user) ? VERIFY_SENTENCE : null,
+        archiveNotes,
       },
     };
   } catch (error) {

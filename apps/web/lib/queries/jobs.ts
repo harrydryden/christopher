@@ -5,8 +5,8 @@ import { careerSources, companies, decisions, jobs, userJobs, type Job, type Sco
 import { displayStatus, formatDuration, liveFor, type DisplayStatus } from "@ava/core";
 import { cache } from "react";
 import { db } from "@/lib/db";
-import { companyLogoUrl } from "@/lib/company-icon";
-import { eventTypeLabel, relativeTime } from "@/lib/format";
+import { companyIcon } from "@/lib/company-icon";
+import { relativeTime } from "@/lib/format";
 
 export interface RoleCompany {
   id: string;
@@ -45,7 +45,6 @@ export interface RoleRow {
   stage: RoleStage;
   /** The newest application for it, or null when none was ever recorded. */
   applicationStatus: ApplicationStatus | null;
-  events: RoleEvent[];
 }
 
 const viewColumns = {
@@ -116,14 +115,14 @@ function baseRolesSelect(userId: string, summary = false, cursor: SQL<RoleCursor
 export async function fetchTableJobs(userId: string, archived = false, summary = false, limit?: number): Promise<RoleRow[]> {
   const query = baseRolesSelect(userId, summary).where(and(eq(userJobs.userId, userId), archived ? eq(roleStatusSql, "archived") : ne(roleStatusSql, "archived")));
   const rows = await (limit === undefined ? query : query.limit(limit));
-  return rows.map((r) => ({ ...r, events: [] as RoleEvent[] }));
+  return rows;
 }
 
 /** Fetch the large description payload only for the current page. */
 export async function fetchRoleDetails(userId: string, ids: string[]): Promise<RoleRow[]> {
   if (!ids.length) return [];
   const rows = await baseRolesSelect(userId).where(and(eq(userJobs.userId, userId), inArray(jobs.id, ids))).limit(ids.length);
-  return rows.map(row => ({ ...row, events: [] }));
+  return rows;
 }
 
 /**
@@ -166,8 +165,26 @@ export async function fetchRecentEventsFor(userId: string, jobIds: string[], per
   return map;
 }
 
-export function attachEvents(rows: RoleRow[], eventsByJob: Map<string, RoleEvent[]>): RoleRow[] {
-  return rows.map((r) => ({ ...r, events: eventsByJob.get(r.job.id) ?? [] }));
+/**
+ * The archive notes the review panel shows for one role ("Archived: No longer matches your
+ * criteria"), read when the row expands rather than for every row of every page. Of the role's
+ * newest few events — shared observations and this account's own, each a bounded probe as in
+ * `fetchRecentEventsFor` — the ones that put it away, newest first. Only the two payload fields a
+ * note says are read, never the whole payload.
+ */
+export async function fetchArchiveNotes(userId: string, jobId: string, recent = 6): Promise<string[]> {
+  const result = await db().execute(sql`
+    select e.action, e.reason from (
+      (select id, at, payload->>'action' as action, payload->>'reason' as reason from job_events
+        where job_id = ${jobId}::uuid and user_id is null order by at desc, id limit ${recent})
+      union all
+      (select id, at, payload->>'action' as action, payload->>'reason' as reason from job_events
+        where user_id = ${userId}::uuid and job_id = ${jobId}::uuid order by at desc, id limit ${recent})
+    ) e
+    order by e.at desc, e.id limit ${recent}`);
+  return (result.rows as Array<{ action: string | null; reason: string | null }>)
+    .filter((row) => row.action === "archived")
+    .map((row) => `Archived: ${row.reason ?? "Put away by you"}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -421,13 +438,6 @@ export interface RoleDecisionVM {
   createdTitle: string;
 }
 
-export interface RoleEventVM {
-  id: string;
-  type: string;
-  label: string;
-  title: string;
-}
-
 /**
  * What a missing fit score means, in the words the table shows instead of one em dash.
  *
@@ -464,15 +474,17 @@ export function scoreStateText(
   }
 }
 
+/**
+ * One row of the roles table, as the client component receives it. Every key of every row is
+ * serialised into the page (RSC dedupes nothing across rows), so a row carries only what the table
+ * renders: the company's icon and website travel once per company in `RoleCompaniesVM`, and a
+ * sentence that is one of two fixed ones travels as the choice between them (`liveForBasis`).
+ */
 export interface RoleRowVM {
   id: string;
+  /** The key into the page's `RoleCompaniesVM`. */
   companyId: string;
   companyName: string;
-  companyFaviconUrl: string | null;
-  /** The interface's own URL for the captured logo, or null while nothing is stored. */
-  companyLogoUrl: string | null;
-  companyDomain: string;
-  companyHomepageUrl: string;
   title: string;
   url: string;
   location: string | null;
@@ -488,7 +500,9 @@ export interface RoleRowVM {
   /** The newest application's own status, so "In process" can name its step. */
   applicationStatus: ApplicationStatus | null;
   liveForText: string;
-  liveForTitle: string;
+  /** What `liveForText` counts from; the table holds the sentence for each (`liveForTitle`). */
+  liveForBasis: "posted" | "first_seen";
+  /** New to this account on the scan that first admitted it, rather than on a later one. */
   seeded: boolean;
   fitScore: number | null;
   /** What the score handler last decided about this role, or null for a row that predates it. */
@@ -497,21 +511,36 @@ export interface RoleRowVM {
   scoreStateText: string | null;
   /** The A5 verdict stored beside the score (R-6.6): shown beside it, never instead of it. */
   fitVerdict: "strong" | "possible" | "unlikely" | null;
+  /**
+   * The A5 rationale: at most two sentences by the prompt's own rule, so it rides on the row, where
+   * the fit bar's title shows it without opening the panel.
+   */
   fitRationale: string | null;
   keywordTerms: string[];
-  /** This account's stored location verdict for the posting (`user_jobs.location_ok`). */
-  locationOk: boolean;
-  sourceType: SourceType;
-  firstSeenLabel: string;
-  firstSeenTitle: string;
-  postedLabel: string | null;
-  postedTitle: string | null;
-  closedLabel: string | null;
-  closedTitle: string | null;
   /** This account pasted this posting's URL: it is in the table whatever its gate said. */
   addedByYou: boolean;
   decision: RoleDecisionVM | null;
-  events: RoleEventVM[];
+}
+
+/** What the table shows of a company: its icon and its website, once per company on the page. */
+export interface RoleCompanyVM {
+  /** The captured logo's URL, else the stored favicon, else null for the browser's own chain. */
+  iconSrc: string | null;
+  domain: string;
+  homepageUrl: string;
+}
+
+export type RoleCompaniesVM = Record<string, RoleCompanyVM>;
+
+/** The companies of the rows in hand, keyed by id, built from the same rows the table renders. */
+export function buildRoleCompanies(rows: readonly Pick<RoleRow, "company">[]): RoleCompaniesVM {
+  const companies: RoleCompaniesVM = {};
+  for (const { company } of rows) {
+    if (companies[company.id]) continue;
+    const icon = companyIcon(company);
+    companies[company.id] = { iconSrc: icon.src, domain: icon.domain, homepageUrl: company.homepageUrl };
+  }
+  return companies;
 }
 
 /**
@@ -521,21 +550,12 @@ export interface RoleRowVM {
 export function buildRoleRowVM(row: RoleRow, now: Date = new Date(), viewerId?: string): RoleRowVM {
   const status = displayStatus(row.job, now);
   const { days, basis } = liveFor(row.job, now);
-  let liveForTitle =
-    basis === "first_seen"
-      ? "Counted from when this tool first saw the role; the source publishes no posted date."
-      : "Counted from the date the source published for this role.";
-  if (row.job.seeded) liveForTitle += " (seeded on first scan)";
   const liveForText = formatDuration(days) + (basis === "first_seen" ? "*" : "");
 
   return {
     id: row.job.id,
     companyId: row.company.id,
     companyName: row.company.name,
-    companyFaviconUrl: row.company.faviconUrl,
-    companyLogoUrl: companyLogoUrl(row.company.id, row.company.logoFetchedAt),
-    companyDomain: row.company.domain,
-    companyHomepageUrl: row.company.homepageUrl,
     title: row.job.title,
     url: row.job.url,
     location: row.job.location,
@@ -549,7 +569,7 @@ export function buildRoleRowVM(row: RoleRow, now: Date = new Date(), viewerId?: 
     stage: row.stage,
     applicationStatus: row.applicationStatus,
     liveForText,
-    liveForTitle,
+    liveForBasis: basis,
     seeded: row.job.seeded,
     fitScore: row.job.fitScore,
     scoreState: row.job.scoreState,
@@ -557,39 +577,76 @@ export function buildRoleRowVM(row: RoleRow, now: Date = new Date(), viewerId?: 
     fitVerdict: row.job.fitVerdict,
     fitRationale: row.job.fitRationale,
     keywordTerms: row.job.keywordTerms,
-    locationOk: row.job.locationOk,
-    sourceType: row.sourceType,
-    firstSeenLabel: relativeTime(row.job.firstSeenAt, now),
-    firstSeenTitle: row.job.firstSeenAt.toISOString(),
-    postedLabel: row.job.postedAt ? relativeTime(row.job.postedAt, now) : null,
-    postedTitle: row.job.postedAt ? row.job.postedAt.toISOString() : null,
-    closedLabel: row.job.closedAt ? relativeTime(row.job.closedAt, now) : null,
-    closedTitle: row.job.closedAt ? row.job.closedAt.toISOString() : null,
     addedByYou: row.job.origin === "user" && !!viewerId && row.job.addedBy === viewerId,
     decision: row.decision
       ? { id: row.decision.id, decision: row.decision.decision, reason: row.decision.reason, createdLabel: relativeTime(row.decision.createdAt, now), createdTitle: row.decision.createdAt.toISOString() }
       : null,
-    events: row.events.map((e) => ({ id: e.id, type: e.type, label: e.payload.action === "archived" ? `Archived: ${e.payload.reason ?? "Put away by you"}` : e.payload.action === "unarchived" ? "Back: matches your criteria again" : e.payload.action === "restored" ? "Restored by you" : eventTypeLabel(e.type), title: `${relativeTime(e.at, now)} · ${e.at.toISOString()}` })),
   };
+}
+
+/**
+ * The freshness states a view narrows to, or null when it does not narrow at all: every role is new,
+ * active or closed, so asking for all three (or, from a hand-written link, for none) filters nothing,
+ * and would only cost a per-row expression the planner cannot estimate.
+ */
+function statusFilterOf(filters: Pick<RolesFilters, "status" | "closed">): string[] | null {
+  const statuses = filters.closed ? [...new Set([...filters.status, "closed"])] : filters.status;
+  return statuses.length === 0 || STATUS_VALUES.every((s) => statuses.includes(s)) ? null : statuses;
+}
+
+/**
+ * The tab whose count is exactly this view's, or null when the view narrows below its tab.
+ *
+ * Only the tab itself, the company scope the counts are read for and the order may be set: once
+ * those are taken out of the view's query string it must be empty, or the view is a subset and is
+ * counted on its own. A filter added later reaches `filtersToQueryString`, and so falls back to its
+ * own count unless someone decides otherwise here.
+ */
+export function tabCountedBy(filters: RolesFilters, archived: boolean): RoleStatus | null {
+  const params = new URLSearchParams(filtersToQueryString(filters));
+  for (const key of ["sort", "dir", "company", "decision"]) params.delete(key);
+  if (statusFilterOf(filters) === null) { params.delete("status"); params.delete("closed"); }
+  if (params.size > 0) return null;
+  if (archived) return filters.decision === "all" ? "archived" : null;
+  return filters.decision === "inbox" ? "auto-matched" : filters.decision === "apply" ? "user-shortlisted" : filters.decision === "skip" ? "user-dismissed" : null;
+}
+
+/**
+ * Which tab's roles a view reads, as plain predicates on the columns `roleStatusSql` decides by, so
+ * the planner can estimate them and `user_jobs_table_idx (user_id, in_table, archived_at, …)` can
+ * serve them. Written through the `case` expression instead, the planner guessed 1–150 rows where
+ * 10,000 came back and nested-looped every join. Equivalent to `roleStatusSql <> 'archived'` (or
+ * `= 'archived'`), given the active-decision LEFT JOIN (a joined decision's `job_id` is the role's,
+ * so it is null exactly when there is no active decision) and that `decisions.decision` is never null.
+ */
+function viewCondition(archived: boolean, decision: DecisionFilter): SQL | undefined {
+  if (archived) return sql`(${userJobs.archivedAt} is not null or (not ${userJobs.inTable} and ${decisions.jobId} is null))`;
+  // Undecided rows are in a live tab only while the gate admits them; a decided one, whatever the gate says.
+  if (decision === "inbox" || decision === "undecided") return and(isNull(userJobs.archivedAt), sql`${userJobs.inTable}`);
+  if (decision === "apply" || decision === "skip") return isNull(userJobs.archivedAt);
+  return and(isNull(userJobs.archivedAt), sql`(${userJobs.inTable} or ${decisions.jobId} is not null)`);
 }
 
 /**
  * The one reading of a filtered view in SQL — the `where` and the `order by` the table, its counts
  * and the CSV export all share, so the file and the screen cannot disagree about which roles are in
- * a view or in what order (R-7.5).
+ * a view or in what order (R-7.5). The page read applies both twice, to pick the page's keys and to
+ * hydrate them (`fetchRoleRows`), and both come from here, so the two cannot drift apart.
  */
 function rolesQuery(userId: string, filters: RolesFilters, archived: boolean, now: Date) {
   const liveStart = sql`case when ${jobs.postedAt} <= ${jobs.firstSeenAt} + interval '1 day' then ${jobs.postedAt} else ${jobs.firstSeenAt} end`;
   const status = sql`case when ${jobs.status} = 'closed' then 'closed' when ${liveStart} >= ${new Date(now.getTime() - 7 * 86400000)} then 'new' else 'active' end`;
-  const statuses = filters.closed ? [...new Set([...filters.status, 'closed'])] : filters.status;
+  const statuses = statusFilterOf(filters);
   const cutoff = sinceCutoff(filters, now);
   const conditions = and(
     eq(userJobs.userId, userId),
-    archived ? eq(roleStatusSql, "archived") : ne(roleStatusSql, "archived"),
-    statuses.length ? inArray(status, statuses) : undefined,
+    viewCondition(archived, filters.decision),
+    statuses ? inArray(status, statuses) : undefined,
     // On the posting's own column, so the count needs no join to `companies` for it.
     filters.company ? eq(jobs.companyId, filters.company) : undefined,
-    filters.decision === 'inbox' ? isNull(decisions.id) : filters.decision === 'undecided' ? isNull(decisions.id) : ['apply','skip'].includes(filters.decision) ? eq(decisions.decision, filters.decision as 'apply' | 'skip') : undefined,
+    // "No active decision" on the column the join matches by, which PostgreSQL reads as an anti-join
+    // and estimates; on `decisions.id` it was a filter after the join, guessed at one row in 10,000.
+    filters.decision === 'inbox' || filters.decision === 'undecided' ? isNull(decisions.jobId) : filters.decision === 'apply' || filters.decision === 'skip' ? eq(decisions.decision, filters.decision) : undefined,
     filters.minFit !== null ? sql`${userJobs.fitScore} >= ${filters.minFit}` : undefined,
     filters.q ? sql`position(lower(${filters.q}) in lower(${jobs.title})) > 0` : undefined,
     filters.location ? sql`(position(lower(${filters.location}) in lower(coalesce(${jobs.location}, ''))) > 0 or exists (select 1 from jsonb_array_elements_text(${jobs.locations}) l where position(lower(${filters.location}) in lower(l)) > 0))` : undefined,
@@ -621,7 +678,9 @@ function rolesQuery(userId: string, filters: RolesFilters, archived: boolean, no
   // Each row's own values of the keys, as the database computed them: JSON keeps a timestamp to the
   // microsecond, which a JavaScript date would round and a keyset comparison would then get wrong.
   const cursor = sql<RoleCursor>`json_build_array(${sql.join(keys.map((key) => key.expr), sql`, `)})`;
-  return { conditions, order, keys, cursor };
+  // The only key that reads a table the conditions do not: picking a page by company name needs it.
+  const sortsByCompany = filters.sort === 'company';
+  return { conditions, order, keys, cursor, sortsByCompany };
 }
 
 /** One key of a view's order: what is compared, which way, and where its nulls go. */
@@ -664,14 +723,28 @@ function afterCursor(keys: SortKeyPart[], cursor: RoleCursor): SQL {
  * Summary rows either way — nothing that renders a block renders the stored description, and 50 of
  * them is up to 1.5 MB read and serialised on every render and every pagination click.
  *
+ * The block is read in one statement and two steps: the view's order and offset run over the narrow
+ * keys (`user_jobs`, `jobs`, the active decision — and `companies` only when sorting by it), and
+ * only the ids that survive are joined to the wide columns, the latest application and the stage.
+ * Sorting every admitted row with all sixty columns attached is what made a deep page cost a quarter
+ * of a second at 10,000 roles. The outer read repeats the same conditions and order from
+ * `rolesQuery`, so the page is exactly what one statement over everything would return.
+ *
  * Each row carries its `cursor`; passing the last one back as `after` reads the next block without
  * the database walking every row before it again, which an offset makes it do.
  */
 export async function fetchRoleRows(userId: string, filters: RolesFilters, archived: boolean, { offset = 0, limit = 50, now = new Date(), after = null }: { offset?: number; limit?: number; now?: Date; after?: RoleCursor | null } = {}): Promise<Array<RoleRow & { cursor: RoleCursor }>> {
-  const { conditions, order, keys, cursor } = rolesQuery(userId, filters, archived, now);
+  const { conditions, order, keys, cursor, sortsByCompany } = rolesQuery(userId, filters, archived, now);
   const where = after ? and(conditions, afterCursor(keys, after)) : conditions;
-  const rows = await baseRolesSelect(userId, true, cursor).where(where).orderBy(...order).limit(limit).offset(offset);
-  return rows.map(row => ({ ...row, events: [] as RoleEvent[] }));
+  const narrow = db().select({ jobId: userJobs.jobId }).from(userJobs)
+    .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
+    .leftJoin(decisions, and(eq(decisions.userId, userId), eq(decisions.jobId, jobs.id), eq(decisions.superseded, false)));
+  const keysOfPage = (sortsByCompany ? narrow.innerJoin(companies, eq(jobs.companyId, companies.id)) : narrow)
+    .where(where).orderBy(...order).limit(limit).offset(offset);
+  const rows = await baseRolesSelect(userId, true, cursor)
+    .where(and(sql`${jobs.id} in (select page_keys.job_id from (${keysOfPage}) page_keys)`, where))
+    .orderBy(...order).limit(limit);
+  return rows;
 }
 
 /**
@@ -707,6 +780,8 @@ export interface RoleDetailsVM {
   cvQuote: CvQuoteVM | null;
   /** Why that build cannot be asked for yet — an unconfirmed address — or null when it can. */
   cvBlocked: string | null;
+  /** "Archived: …" for each recent event that put this role away, newest first (`fetchArchiveNotes`). */
+  archiveNotes: string[];
 }
 
 /**
@@ -734,27 +809,32 @@ export function locationReasonText(evaluated: { ok: boolean; terms: string[]; re
  * active decision and one latest application exist per posting), but PostgreSQL cannot remove inner
  * joins, and counting through them cost 7.5 ms against 2.1 ms at 1,000 roles.
  */
-function countRoles(userId: string, conditions: SQL | undefined) {
-  return db().select({ n: sql<number>`count(*)::int` }).from(userJobs)
+export async function countRoles(userId: string, filters: RolesFilters, archived: boolean, now = new Date()): Promise<number> {
+  const { conditions } = rolesQuery(userId, filters, archived, now);
+  const [row] = await db().select({ n: sql<number>`count(*)::int` }).from(userJobs)
     .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
     .leftJoin(decisions, and(eq(decisions.userId, userId), eq(decisions.jobId, jobs.id), eq(decisions.superseded, false)))
     .where(conditions);
+  return row?.n ?? 0;
 }
 
 /**
  * SQL filters and pagination for one 50-row page; descriptions are left in the database. The count
  * and the page asked for are read side by side; only a page past the end of the view (a link
  * written before the view shrank) waits for the count and reads the last page instead.
+ *
+ * A view that is a whole tab (no filter but the tab, the company scope and the order) takes its
+ * count from the tab counts, which the tab strip reads anyway and the request memoises, so the page
+ * costs one statement rather than two; any narrower view is counted on its own.
  */
 export async function fetchRolePage(userId: string, filters: RolesFilters, archived: boolean, threshold: number | null, requestedPage: number, now = new Date()) {
   const started = Date.now();
-  const { conditions } = rolesQuery(userId, filters, archived, now);
   const asked = Math.max(1, Number.isSafeInteger(requestedPage) ? requestedPage : 1);
-  const [[counted], rows] = await Promise.all([
-    countRoles(userId, conditions),
+  const tab = tabCountedBy(filters, archived);
+  const [total, rows] = await Promise.all([
+    tab ? fetchRoleCounts(userId, filters.company || undefined).then(counts => counts[tab]) : countRoles(userId, filters, archived, now),
     fetchRoleRows(userId, filters, archived, { offset: (asked - 1) * 50, limit: 50, now }),
   ]);
-  const total = counted?.n ?? 0;
   // Fit is an explicit filter, never a second hidden workflow: nothing is ever held back.
   const hiddenTotal = 0;
   const pageCount = Math.max(1, Math.ceil(total / 50));

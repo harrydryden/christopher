@@ -316,6 +316,23 @@ export const CACHE_WRITE_1H_MULTIPLIER = 2;
  * row recorded before the split existed was.
  */
 export function estimateCostUsd(model: string, usage: TokenUsage): number {
+  return Number(standardCostUsd(model, usage).toFixed(6));
+}
+
+/**
+ * What a Message Batches request's tokens cost, as a multiple of the standard price. Every token
+ * of a batched request — input, output, cache writes and cache reads alike — is billed at half the
+ * standard rate; the discount stacks with the cache's own. Check against Anthropic's pricing page
+ * before relying on the number.
+ */
+export const BATCH_PRICE_MULTIPLIER = 0.5;
+
+/** What a batched request's tokens cost: the standard price of every token, halved. */
+export function estimateBatchCostUsd(model: string, usage: TokenUsage): number {
+  return Number((standardCostUsd(model, usage) * BATCH_PRICE_MULTIPLIER).toFixed(6));
+}
+
+function standardCostUsd(model: string, usage: TokenUsage): number {
   const price = priceFor(model);
   const perToken = price.input / 1_000_000;
   const cacheReadPerToken = (price.cacheRead ?? price.input * 0.1) / 1_000_000;
@@ -326,5 +343,5 @@ export function estimateCostUsd(model: string, usage: TokenUsage): number {
     (usage.cacheWriteTokens - hour) * perToken * CACHE_WRITE_5M_MULTIPLIER +
     hour * perToken * CACHE_WRITE_1H_MULTIPLIER +
     usage.outputTokens * (price.output / 1_000_000);
-  return Number(cost.toFixed(6));
+  return cost;
 }

@@ -9,6 +9,7 @@ export * from "./settings";
 export * from "./ai-budget";
 export * from "./models";
 export * from "./tasks";
+export * from "./score-batch";
 export * from "./logo-capture";
 export * from "./url-safety";
 export * from "./posting-page";

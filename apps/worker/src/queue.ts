@@ -152,14 +152,24 @@ export const interactiveTypes: string[] = [...INTERACTIVE_TASK_TYPES];
  */
 export type QueueLane = "all" | "scan" | "interactive" | "background" | "cv";
 
-export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all", excludedTypes: Task["type"][] = []): Promise<Task | null> {
+export interface ClaimOptions {
+  /**
+   * Scoring is in batch mode (`scoringMode: "batch"`): a queued `score_job` is left for the batch
+   * collector, which gathers them into one Message Batches request, unless it is marked `live` —
+   * a role a batch handed back, which is scored as an ordinary call. Off, the claim is unchanged.
+   */
+  batchScoring?: boolean;
+}
+
+export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all", excludedTypes: Task["type"][] = [], options: ClaimOptions = {}): Promise<Task | null> {
   const types = lane === "scan" ? scanTypes : interactiveTypes;
   const laneFilter = lane === "all" ? sql`true` : lane === "cv" ? sql`type = 'generate_cv'` : lane === "background"
     ? sql`type not in (${sql.join([...scanTypes, ...interactiveTypes].map(t => sql`${t}`), sql`, `)})`
     : sql`type in (${sql.join(types.map(t => sql`${t}`), sql`, `)})`;
-  const exclusionFilter = excludedTypes.length
+  const excluded = excludedTypes.length
     ? sql`type not in (${sql.join(excludedTypes.map(t => sql`${t}`), sql`, `)})`
     : sql`true`;
+  const exclusionFilter = options.batchScoring ? sql`${excluded} and (type <> 'score_job' or payload->>'live' = 'true')` : excluded;
   // One statement, two reads. `head` is the task the queue would claim by the columns the
   // ready-lane indexes carry, so it is read from the index instead of by sorting every queued task.
   // Ageing is a periodic sweep that lowers `priority` itself (see `agePriorities`), which keeps
@@ -285,6 +295,25 @@ export async function assertRunOwnership(db: Db, task: Task, signal: AbortSignal
   if (signal.aborted) throw new LeaseLostError("Run was stopped; refusing its writes");
   await assertTaskOwnership(db, task);
   if (signal.aborted) throw new LeaseLostError("Run was stopped; refusing its writes");
+}
+
+/**
+ * What a handler returns to be run again later instead of finishing: a poll that found its batch
+ * still running. The task goes back on the queue at `until` with its attempt given back — waiting
+ * is not failing — and `result` says why, so Operations can read it while it waits.
+ */
+export class TaskDeferred {
+  constructor(readonly until: Date, readonly result?: unknown) {}
+}
+
+/** Put a task this run owns back on the queue until `until`, its attempt returned. Fenced by the lease. */
+export async function deferTask(db: Db, task: Task, until: Date, result?: unknown): Promise<boolean> {
+  const rows = await db
+    .update(schema.tasks)
+    .set({ status: "queued", runAfter: until, attempts: Math.max(0, task.attempts - 1), lockedAt: null, lockedBy: null, error: null,
+      result: result === undefined ? null : (result as object) })
+    .where(ownedTask(task)).returning({ id: schema.tasks.id });
+  return rows.length === 1;
 }
 
 export async function completeTask(db: Db, task: Task, result: unknown): Promise<boolean> {
@@ -717,7 +746,7 @@ export class TaskQueue {
   async drain(maxTasks = 1000): Promise<number> {
     let n = 0;
     while (n < maxTasks) {
-      const task = await claimTask(this.deps.db, this.opts.workerId);
+      const task = await claimTask(this.deps.db, this.opts.workerId, "all", [], { batchScoring: await this.batchScoring() });
       if (!task) break;
       await this.runTask(task);
       n++;
@@ -777,12 +806,26 @@ export class TaskQueue {
         .map(([type]) => type);
       if (this.opts.cvConcurrency && !excluded.includes("generate_cv")) excluded.push("generate_cv");
       const lane: QueueLane = this.lanes ? this.lanes[slot % this.lanes.length]! : LANES[this.turn++ % LANES.length]!;
-      const task = (await claimTask(this.deps.db, workerId, lane, excluded))
-        ?? (await claimTask(this.deps.db, workerId, "all", excluded));
+      const claim = { batchScoring: await this.batchScoring() };
+      const task = (await claimTask(this.deps.db, workerId, lane, excluded, claim))
+        ?? (await claimTask(this.deps.db, workerId, "all", excluded, claim));
       if (task) this.reserveType(task.type);
       return task;
     } finally {
       release();
+    }
+  }
+
+  /**
+   * Whether scoring is in batch mode, read through the settings cache. A settings read that fails
+   * claims as live scoring does: a role is then scored at the standard price, never left unscored.
+   */
+  private async batchScoring(): Promise<boolean> {
+    try {
+      return (await this.deps.settings()).scoringMode === "batch";
+    } catch (err) {
+      log.warn("scoring mode unreadable; claiming as live scoring", { error: (err as Error)?.message });
+      return false;
     }
   }
 
@@ -904,6 +947,11 @@ export class TaskQueue {
         throw err;
       });
       if (handedBack()) { await this.handBackOne(task); return; }
+      if (result instanceof TaskDeferred) {
+        if (!await deferTask(this.deps.db, task, result.until, result.result)) log.warn("task deferral discarded: lease lost", { id: task.id });
+        else log.info("task deferred", { id: task.id, type: task.type, until: result.until.toISOString(), ms: Date.now() - started });
+        return;
+      }
       if (!await completeTask(this.deps.db, task, result)) { log.warn("task completion discarded: lease lost", { id: task.id }); return; }
       if (task.type === "scan_company" || task.type === "run_daily") await finaliseScanRuns(this.deps);
       log.info("task done", { id: task.id, type: task.type, ms: Date.now() - started, ...this.heapReport(before) });

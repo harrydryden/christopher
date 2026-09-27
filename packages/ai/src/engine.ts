@@ -32,7 +32,7 @@ import Anthropic, {
 } from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
-import { estimateCostUsd, SERVER_TOOL_USD, serverToolCostUsd } from "./pricing";
+import { BATCH_PRICE_MULTIPLIER, estimateBatchCostUsd, estimateCostUsd, estimateStage, SERVER_TOOL_USD, serverToolCostUsd } from "./pricing";
 import { modelSupportsEffort } from "./model-capabilities";
 import * as P from "./prompts";
 import type * as S from "./schemas";
@@ -161,12 +161,60 @@ export interface AiClientLike {
      * answer can no longer time out part-way through. A fake without it is called with create.
      */
     stream?(params: Record<string, unknown>, options?: Record<string, unknown>, call?: AiCallMeta): AiStreamLike;
+    /** The Message Batches resource, for background scoring in batch mode. A fake without it cannot batch. */
+    batches?: AiBatchesLike;
   };
   /**
    * The SDK's beta namespace, used for a call routed through the server-side refusal fallback
    * (`useServerFallback`). A client without it — a fake, say — is called without the fallback.
    */
-  beta?: { messages: AiClientLike["messages"] };
+  beta?: { messages: Omit<AiClientLike["messages"], "batches"> };
+}
+
+/**
+ * The slice of the SDK's Message Batches resource the engine uses (`client.messages.batches`).
+ * `create` takes a third argument the SDK ignores, as `messages.create` does: which registry entry
+ * each request is, by `custom_id`, so a recording can file each result under its prompt.
+ */
+export interface AiBatchesLike {
+  create(params: { requests: Array<{ custom_id: string; params: Record<string, unknown> }> }, options?: Record<string, unknown>, meta?: AiBatchMeta): Promise<AiBatchLike>;
+  retrieve(batchId: string, params?: Record<string, unknown> | null, options?: Record<string, unknown>): Promise<AiBatchLike>;
+  results(batchId: string, params?: Record<string, unknown>, options?: Record<string, unknown>): Promise<AsyncIterable<AiBatchResultLike>>;
+}
+
+/** Which registry entry each request of a batch is, by `custom_id`. Never sent to the provider. */
+export interface AiBatchMeta {
+  requests: Record<string, AiCallMeta>;
+}
+
+/** A Message Batch as the provider describes it. Results can be read once it has `ended`. */
+export interface AiBatchLike {
+  id: string;
+  processing_status: "in_progress" | "canceling" | "ended";
+  request_counts?: { processing?: number; succeeded?: number; errored?: number; canceled?: number; expired?: number };
+  created_at?: string;
+  ended_at?: string | null;
+  expires_at?: string;
+}
+
+/** The body of an errored batch request, as the provider reports it. */
+export interface BatchErrorBody {
+  type?: string;
+  message?: string;
+  error?: { type?: string; message?: string };
+}
+
+/**
+ * One request's result. Only `succeeded` carries a message, and is billed; an errored, canceled
+ * or expired request created no message and is not billed.
+ */
+export interface AiBatchResultLike {
+  custom_id: string;
+  result:
+    | { type: "succeeded"; message: ParseResponse }
+    | { type: "errored"; error?: BatchErrorBody }
+    | { type: "canceled" }
+    | { type: "expired" };
 }
 
 /**
@@ -901,20 +949,19 @@ export class AiEngine {
     }
   }
 
-  private async run<T>(entry: PromptEntry, call: CallInput, ref: Ref = {}): Promise<T | null> {
-    // The signal stops the call, and is not part of what is recorded about it.
-    const { signal: callerSignal, priority, ...recorded } = ref;
-    // A call's own signal when it has one (an assessment batch's, which already listens to the
-    // run's and the caller's), otherwise the caller's and the run's together.
-    const signal = call.signal ?? anySignal(callerSignal, this.options.signal);
-    if (!this.client || signal?.aborted) return null;
+  /**
+   * The request one call of `entry` sends, as the provider reads it: the model its route names,
+   * the entry's layout of the prompt, the output format without its parser, and the effort. The
+   * live path adds the refusal fallback; a batched request goes without it, as the Batches API
+   * refuses that parameter.
+   */
+  private async buildRequest(entry: PromptEntry, call: Pick<CallInput, "user" | "model" | "maxTokens">, recorded: Omit<Ref, "signal" | "priority">) {
     const callSite = entry.callSite;
     const route = resolveRoute(entry, await this.stageRoutes());
     // A route naming a model is the administrator's choice for this stage; otherwise the model is
     // the account's (handed in by the caller) or the call site's, as it always was.
     const model = route.model !== "cvModel" && route.model !== "callSite" ? route.model
       : call.model ?? await this.options.getModel(callSite);
-    const started = Date.now();
     const { system, content } = layoutFor(entry, typeof call.user === "string" ? { tail: call.user } : call.user);
     const texts = [...system.map(block => block.text), ...(typeof content === "string" ? [content] : content.map(block => block.text))];
     const maxTokens = call.maxTokens ?? entry.maxTokens;
@@ -933,16 +980,56 @@ export class AiEngine {
     };
     const tools = entry.tools?.map(tool => ({ ...tool }));
     if (tools) request.tools = tools;
+    // The caller names the step when it knows better (a re-run, a revision); otherwise the entry does.
+    const stage = recorded.stage ?? entry.stage;
+    const identity = { ...recorded, ...(stage ? { stage } : {}), promptId: entry.id, promptVersion: entry.version };
+    const meta: AiCallMeta = { promptId: entry.id, promptVersion: entry.version, ...(stage ? { stage } : {}) };
+    return { callSite, model, request, texts, maxTokens, tools, identity, meta, system, content };
+  }
+
+  /**
+   * What an answer amounts to: the validated result, or why there is none. A refusal, an answer
+   * cut off at its ceiling, a server-tool turn still paused and an answer the schema rejects are
+   * each the model's answer failing, never the transport, and each is named so the caller can
+   * decide differently about it. Shared by the live path and batch results.
+   */
+  private judge<T>(entry: PromptEntry, response: ParseResponse) {
+    const refused = response.stop_reason === "refusal";
+    const truncated = response.stop_reason === "max_tokens";
+    const paused = response.stop_reason === "pause_turn";
+    const parsed = refused || truncated || paused ? null : (response.parsed_output ?? extractJsonBlock(textOf(response)));
+    const outcome = refused
+      ? { error: `${REFUSAL_ERROR_PREFIX}${response.stop_details?.category ?? "unknown"}` }
+      : truncated
+        ? { error: OUTPUT_LIMIT_ERROR }
+      : paused
+        ? { error: PAUSED_ERROR }
+      : parsed === null || parsed === undefined
+        ? { error: NO_OUTPUT_ERROR }
+        : validate<T>(entry.schema, parsed);
+    const validated = "data" in outcome ? outcome.data : null;
+    const failure: AiFailure | undefined = validated !== null ? undefined
+      : refused ? { kind: "refused" }
+      : truncated ? { kind: "output_limit" }
+      : { kind: "output_invalid" };
+    return { validated, error: "error" in outcome ? outcome.error : undefined, failure, refused };
+  }
+
+  private async run<T>(entry: PromptEntry, call: CallInput, ref: Ref = {}): Promise<T | null> {
+    // The signal stops the call, and is not part of what is recorded about it.
+    const { signal: callerSignal, priority, ...recorded } = ref;
+    // A call's own signal when it has one (an assessment batch's, which already listens to the
+    // run's and the caller's), otherwise the caller's and the run's together.
+    const signal = call.signal ?? anySignal(callerSignal, this.options.signal);
+    if (!this.client || signal?.aborted) return null;
+    const started = Date.now();
+    const { callSite, model, request, texts, maxTokens, tools, identity, meta } = await this.buildRequest(entry, call, recorded);
     // A refusal is re-run server-side on the provider's recommended fallback, inside this call.
     const fallback = this.options.useServerFallback !== false && modelSupportsServerFallback(model) && !!this.client.beta?.messages;
     if (fallback) {
       request.betas = [SERVER_FALLBACK_BETA];
       request.fallbacks = "default";
     }
-    // The caller names the step when it knows better (a re-run, a revision); otherwise the entry does.
-    const stage = recorded.stage ?? entry.stage;
-    const identity = { ...recorded, ...(stage ? { stage } : {}), promptId: entry.id, promptVersion: entry.version };
-    const meta: AiCallMeta = { promptId: entry.id, promptVersion: entry.version, ...(stage ? { stage } : {}) };
 
     // One stream per call at the governor, held until the call has been recorded. A call stopped
     // while it waited for one was never sent, and has nothing to record.
@@ -996,28 +1083,8 @@ export class AiEngine {
       }
       const usage = addUsage(prior, response.usage ?? {});
       const tokens = tokensOf(usage);
-      const refused = response.stop_reason === "refusal";
-      const truncated = response.stop_reason === "max_tokens";
-      const paused = response.stop_reason === "pause_turn";
-      const parsed = refused || truncated || paused ? null : (response.parsed_output ?? extractJsonBlock(textOf(response)));
-      const outcome = refused
-        ? { error: `${REFUSAL_ERROR_PREFIX}${response.stop_details?.category ?? "unknown"}` }
-        : truncated
-          ? { error: OUTPUT_LIMIT_ERROR }
-        : paused
-          ? { error: PAUSED_ERROR }
-        : parsed === null || parsed === undefined
-          ? { error: NO_OUTPUT_ERROR }
-          : validate<T>(entry.schema, parsed);
-      const validated = "data" in outcome ? outcome.data : null;
+      const { validated, error, failure, refused } = this.judge<T>(entry, response);
       const served = response.model ?? model;
-      // An answered call that cannot be used still has a name: the model declined, it ran out of
-      // room, or what came back did not fit the schema. All three are the model's answer failing,
-      // never the transport, and the caller decides differently about each.
-      const failure: AiFailure | undefined = validated !== null ? undefined
-        : refused ? { kind: "refused" }
-        : truncated ? { kind: "output_limit" }
-        : { kind: "output_invalid" };
       const record: AiUsageRecord = {
         callSite,
         model: served,
@@ -1026,7 +1093,7 @@ export class AiEngine {
         costUsd: estimateCostUsd(served, tokens) + serverToolCostUsd(usage.server_tool_use),
         durationMs: Date.now() - started,
         ok: validated !== null,
-        error: "error" in outcome ? outcome.error : undefined,
+        error,
         ...(failure ? { failure } : {}),
         ...streamFigures(stats),
         ...(response.stop_reason ? { stopReason: response.stop_reason } : {}),
@@ -1417,48 +1484,139 @@ export class AiEngine {
   }
 
   // A5 ---------------------------------------------------------------------
-  async scoreJob(
-    input: {
-      profileMarkdown: string;
-      decisionDigest: string;
-      /** The evidence that bears on this role, already bounded (`scoringEvidence` in core). */
-      evidence?: string;
-      job: { title: string; company: string; location?: string; department?: string; employmentType?: string; description?: string; keywordTerms?: string[] };
-    },
-    ref: Ref = {},
-  ): Promise<{ score: number; verdict: "strong" | "possible" | "unlikely"; rationale: string; flags: string[] } | null> {
-    const j = input.job;
-    const jobText = [
-      `Title: ${j.title}`,
-      `Company: ${j.company}`,
-      j.location ? `Location: ${j.location}` : null,
-      j.department ? `Department: ${j.department}` : null,
-      j.employmentType ? `Employment type: ${j.employmentType}` : null,
-      j.keywordTerms?.length ? `Matched keywords: ${j.keywordTerms.join(", ")}` : null,
-      j.description ? `\nDescription:\n${P.truncate(j.description, 6000)}` : null,
-    ]
-      .filter(Boolean)
-      .join("\n");
-    // The account's own context is the first block and is cached: it is the same for every role
-    // the account scores, so a rescore reads it back. The evidence chosen for this role and the
-    // role itself vary, so they come after it.
-    const account = [
-      P.wrap("preference_profile", P.truncate(input.profileMarkdown || "(no profile yet; rely on the decisions)", 8_000)),
-      P.wrap("decisions", P.truncate(input.decisionDigest || "(no decisions recorded yet)", 12_000)),
-    ].join("\n\n");
-    const role = [
-      P.wrap("evidence_library", P.truncate(input.evidence || "(no confirmed evidence yet)", 10_000)),
-      P.wrap("job", jobText),
-    ].join("\n\n");
-    const result = await this.run<S.FitScoreOutput>(PROMPTS.A5, { user: { stable: [account], tail: role } }, ref);
-    if (!result) return null;
-    const score = Math.round(Math.max(0, Math.min(100, result.score)));
-    const verdict = score >= 70 ? "strong" : score >= 30 ? "possible" : "unlikely";
+  async scoreJob(input: ScoreJobInput, ref: Ref = {}): Promise<ScoreJobResult | null> {
+    const result = await this.run<S.FitScoreOutput>(PROMPTS.A5, { user: scoreJobUser(input) }, ref);
+    return result ? finishScore(result) : null;
+  }
+
+  /*
+   * Background scoring through the Message Batches API.
+   *
+   * The same A5 request the live call sends — same model, prompt, layout, schema and effort — goes
+   * into a batch instead of a stream, at half the token price. Only the transport differs: a batch
+   * cannot carry the refusal-fallback parameter, and it is not streamed. Submitting a batch is one
+   * request and takes one stream at the governor; retrieving one and reading its results are
+   * cheap reads and go outside it. Each result is judged and priced here, so a batched score is
+   * validated, clamped and recorded exactly as a live one is, at the batch price.
+   */
+
+  /** Whether this engine's client can send Message Batches. A fake without `batches` cannot. */
+  get supportsBatches(): boolean {
+    return !!this.client?.messages.batches;
+  }
+
+  /**
+   * One role's A5 request for a batch, and what to hold for it: the request priced at the batch
+   * price by the entry's cache layout — the account's context written to the cache at 1.25 times
+   * input, since a hit inside a batch is best-effort — with the output at its ceiling, as the live
+   * hold is.
+   */
+  async scoreJobBatchRequest(input: ScoreJobInput): Promise<BatchScoreRequest> {
+    const entry = PROMPTS.A5;
+    const user = scoreJobUser(input);
+    const { model, request, meta, maxTokens } = await this.buildRequest(entry, { user }, {});
+    const estimate = estimateStage(entry, {
+      stableBytes: user.stable.map(block => Buffer.byteLength(block)),
+      tailBytes: Buffer.byteLength(user.tail),
+      outputTokens: maxTokens,
+    }, { callSiteModel: model });
+    return { params: request, meta, model, estimateUsd: Number((estimate * BATCH_PRICE_MULTIPLIER).toFixed(6)) };
+  }
+
+  /**
+   * Send one batch. The submission is one request, so it takes one stream at the governor for as
+   * long as it is being sent, at background priority; a throttle it meets pauses every engine in
+   * the process, as a live call's does. `meta` names each request's registry entry, beside the
+   * request and never to the provider, so a recording can file each result under its prompt.
+   */
+  async submitBatch(requests: ReadonlyArray<{ customId: string; params: Record<string, unknown>; meta: AiCallMeta }>, opts: { signal?: AbortSignal } = {}): Promise<AiBatchLike> {
+    const batches = this.client?.messages.batches;
+    if (!batches) throw new Error("This model client cannot send Message Batches.");
+    if (!requests.length) throw new Error("A batch needs at least one request.");
+    const signal = anySignal(opts.signal, this.options.signal);
+    const model = String(requests[0]!.params.model);
+    const release = await this.governor.acquire(model, "background", signal);
+    try {
+      const batch = await batches.create(
+        { requests: requests.map(item => ({ custom_id: item.customId, params: item.params })) },
+        { timeout: BATCH_REQUEST_TIMEOUT_MS, ...(signal ? { signal } : {}) },
+        { requests: Object.fromEntries(requests.map(item => [item.customId, item.meta])) },
+      );
+      this.governor.noteSuccess();
+      return batch;
+    } catch (err) {
+      if (isThrottle(err)) this.governor.noteThrottled(retryAfterMs(err.headers));
+      throw err;
+    } finally {
+      release();
+    }
+  }
+
+  /** A batch's status. A cheap read, outside the governor. */
+  async retrieveBatch(batchId: string, opts: { signal?: AbortSignal } = {}): Promise<AiBatchLike> {
+    const batches = this.client?.messages.batches;
+    if (!batches) throw new Error("This model client cannot read Message Batches.");
+    const signal = anySignal(opts.signal, this.options.signal);
+    return batches.retrieve(batchId, undefined, { timeout: BATCH_REQUEST_TIMEOUT_MS, ...(signal ? { signal } : {}) });
+  }
+
+  /** An ended batch's results, streamed one at a time and in any order: key them by `custom_id`. */
+  async *batchResults(batchId: string, opts: { signal?: AbortSignal } = {}): AsyncGenerator<AiBatchResultLike> {
+    const batches = this.client?.messages.batches;
+    if (!batches) throw new Error("This model client cannot read Message Batches.");
+    const signal = anySignal(opts.signal, this.options.signal);
+    for await (const result of await batches.results(batchId, undefined, { timeout: BATCH_REQUEST_TIMEOUT_MS, ...(signal ? { signal } : {}) }))
+      yield result;
+  }
+
+  /**
+   * One succeeded batch result read as a score, and the ledger row it leaves: judged, clamped and
+   * named exactly as a live answer is — a refusal, a truncated answer and a schema failure are
+   * each a failed call that was billed — and priced at the batch price. The record names the
+   * prompt and version the request was sent with, and the batch as its request id.
+   */
+  readBatchScore(message: ParseResponse, item: BatchResultContext): { score: ScoreJobResult | null; record: AiUsageRecord } {
+    const usage = message.usage ?? {};
+    const tokens = tokensOf(usage);
+    const { validated, error, failure } = this.judge<S.FitScoreOutput>(PROMPTS.A5, message);
+    const served = message.model ?? item.model;
+    const record: AiUsageRecord = {
+      callSite: PROMPTS.A5.callSite,
+      model: served,
+      ...tokens,
+      costUsd: Number((estimateBatchCostUsd(served, tokens) + serverToolCostUsd(usage.server_tool_use)).toFixed(6)),
+      durationMs: Math.max(0, (item.now ?? new Date()).getTime() - item.submittedAt.getTime()),
+      ok: validated !== null,
+      error,
+      ...(failure ? { failure } : {}),
+      ...(message.stop_reason ? { stopReason: message.stop_reason } : {}),
+      requestId: item.batchId,
+      attempt: 1,
+      ...batchIdentity(item),
+    };
+    return { score: validated ? finishScore(validated) : null, record };
+  }
+
+  /**
+   * The ledger row of a batch request that errored. The provider bills none — a message was never
+   * created — so it records nothing spent, as a live call that never reached the model does, and
+   * names what went wrong so the call log stays diagnosable.
+   */
+  batchErrorRecord(error: BatchErrorBody | undefined, item: BatchResultContext): AiUsageRecord {
+    const inner = error?.error ?? error;
+    const type = inner?.type ?? "unknown_error";
     return {
-      score,
-      verdict: result.verdict === verdict ? result.verdict : verdict,
-      rationale: result.rationale.trim().slice(0, 300),
-      flags: [...new Set((result.flags ?? []).map((f) => f.trim().toLowerCase()).filter(Boolean))].slice(0, 8),
+      callSite: PROMPTS.A5.callSite,
+      model: item.model,
+      inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,
+      costUsd: 0,
+      durationMs: Math.max(0, (item.now ?? new Date()).getTime() - item.submittedAt.getTime()),
+      ok: false,
+      error: `${BATCH_ERROR_PREFIX} ${type}${inner?.message ? `: ${inner.message}` : ""}`.slice(0, 500),
+      failure: { kind: type === "rate_limit_error" ? "rate_limited" : type === "overloaded_error" || type === "api_error" ? "overloaded" : "unknown" },
+      requestId: item.batchId,
+      attempt: 1,
+      ...batchIdentity(item),
     };
   }
 
@@ -2022,6 +2180,96 @@ function validate<T>(schema: z.ZodType, value: unknown): { data: T } | { error: 
   if (result.success) return { data: result.data as T };
   const issues = result.error.issues.map(i => `${i.path.join(".")}: ${i.message}`).join("; ");
   return { error: `${SCHEMA_ERROR_PREFIX} ${issues}`.slice(0, 500) };
+}
+
+/** What one fit score (A5) is computed from. */
+export interface ScoreJobInput {
+  profileMarkdown: string;
+  decisionDigest: string;
+  /** The evidence that bears on this role, already bounded (`scoringEvidence` in core). */
+  evidence?: string;
+  job: { title: string; company: string; location?: string; department?: string; employmentType?: string; description?: string; keywordTerms?: string[] };
+}
+
+/** One fit score, clamped and checked. */
+export interface ScoreJobResult {
+  score: number;
+  verdict: "strong" | "possible" | "unlikely";
+  rationale: string;
+  flags: string[];
+}
+
+/** One role's A5 request for a batch, with what it is held at. */
+export interface BatchScoreRequest {
+  params: Record<string, unknown>;
+  meta: AiCallMeta;
+  model: string;
+  /** The request at the batch price, the account's context priced as a cache write, output at its ceiling. */
+  estimateUsd: number;
+}
+
+/** Who and what a batch result was for, as its ledger row records it. */
+export interface BatchResultContext {
+  batchId: string;
+  /** The model the request was sent to, for a result that names none. */
+  model: string;
+  /** The prompt the request was sent with, which a deploy since may have changed. */
+  promptId: string;
+  promptVersion: string;
+  submittedAt: Date;
+  userId: string;
+  jobId: string;
+  now?: Date;
+}
+
+/** How long one batch submission, status read or results stream may take to begin. */
+export const BATCH_REQUEST_TIMEOUT_MS = 120_000;
+/** The label of a batch request the provider reports as errored, followed by the error's type. */
+export const BATCH_ERROR_PREFIX = "batch request errored:";
+
+function batchIdentity(item: BatchResultContext) {
+  return { refType: "job", refId: item.jobId, userId: item.userId, promptId: item.promptId, promptVersion: item.promptVersion };
+}
+
+/**
+ * The A5 user turn: the account's own context first, cached, because it is the same for every role
+ * the account scores and a rescore reads it back; the evidence chosen for this role and the role
+ * itself vary, so they come after it.
+ */
+function scoreJobUser(input: ScoreJobInput): { stable: string[]; tail: string } {
+  const j = input.job;
+  const jobText = [
+    `Title: ${j.title}`,
+    `Company: ${j.company}`,
+    j.location ? `Location: ${j.location}` : null,
+    j.department ? `Department: ${j.department}` : null,
+    j.employmentType ? `Employment type: ${j.employmentType}` : null,
+    j.keywordTerms?.length ? `Matched keywords: ${j.keywordTerms.join(", ")}` : null,
+    j.description ? `\nDescription:\n${P.truncate(j.description, 6000)}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const account = [
+    P.wrap("preference_profile", P.truncate(input.profileMarkdown || "(no profile yet; rely on the decisions)", 8_000)),
+    P.wrap("decisions", P.truncate(input.decisionDigest || "(no decisions recorded yet)", 12_000)),
+  ].join("\n\n");
+  const role = [
+    P.wrap("evidence_library", P.truncate(input.evidence || "(no confirmed evidence yet)", 10_000)),
+    P.wrap("job", jobText),
+  ].join("\n\n");
+  return { stable: [account], tail: role };
+}
+
+/** A validated A5 answer as a score: clamped, its verdict the one its score implies, its flags cleaned. */
+function finishScore(result: S.FitScoreOutput): ScoreJobResult {
+  const score = Math.round(Math.max(0, Math.min(100, result.score)));
+  const verdict = score >= 70 ? "strong" : score >= 30 ? "possible" : "unlikely";
+  return {
+    score,
+    verdict: result.verdict === verdict ? result.verdict : verdict,
+    rationale: result.rationale.trim().slice(0, 300),
+    flags: [...new Set((result.flags ?? []).map((f) => f.trim().toLowerCase()).filter(Boolean))].slice(0, 8),
+  };
 }
 
 export function createAiEngine(options: AiEngineOptions): AiEngine {

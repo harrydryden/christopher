@@ -574,22 +574,44 @@ export function buildRoleRowVM(row: RoleRow, now: Date = new Date(), viewerId?: 
 }
 
 /**
+ * Which tab's roles a view reads, as plain predicates on the columns `roleStatusSql` decides by, so
+ * the planner can estimate them and `user_jobs_table_idx (user_id, in_table, archived_at, …)` can
+ * serve them. Written through the `case` expression instead, the planner guessed 1–150 rows where
+ * 10,000 came back and nested-looped every join. Equivalent to `roleStatusSql <> 'archived'` (or
+ * `= 'archived'`), given the active-decision LEFT JOIN (a joined decision's `job_id` is the role's,
+ * so it is null exactly when there is no active decision) and that `decisions.decision` is never null.
+ */
+function viewCondition(archived: boolean, decision: DecisionFilter): SQL | undefined {
+  if (archived) return sql`(${userJobs.archivedAt} is not null or (not ${userJobs.inTable} and ${decisions.jobId} is null))`;
+  // Undecided rows are in a live tab only while the gate admits them; a decided one, whatever the gate says.
+  if (decision === "inbox" || decision === "undecided") return and(isNull(userJobs.archivedAt), sql`${userJobs.inTable}`);
+  if (decision === "apply" || decision === "skip") return isNull(userJobs.archivedAt);
+  return and(isNull(userJobs.archivedAt), sql`(${userJobs.inTable} or ${decisions.jobId} is not null)`);
+}
+
+/**
  * The one reading of a filtered view in SQL — the `where` and the `order by` the table, its counts
  * and the CSV export all share, so the file and the screen cannot disagree about which roles are in
- * a view or in what order (R-7.5).
+ * a view or in what order (R-7.5). The page read applies both twice, to pick the page's keys and to
+ * hydrate them (`fetchRoleRows`), and both come from here, so the two cannot drift apart.
  */
 function rolesQuery(userId: string, filters: RolesFilters, archived: boolean, now: Date) {
   const liveStart = sql`case when ${jobs.postedAt} <= ${jobs.firstSeenAt} + interval '1 day' then ${jobs.postedAt} else ${jobs.firstSeenAt} end`;
   const status = sql`case when ${jobs.status} = 'closed' then 'closed' when ${liveStart} >= ${new Date(now.getTime() - 7 * 86400000)} then 'new' else 'active' end`;
   const statuses = filters.closed ? [...new Set([...filters.status, 'closed'])] : filters.status;
+  // Every role is new, active or closed, so asking for all three filters nothing and costs a
+  // per-row expression the planner cannot estimate.
+  const everyStatus = STATUS_VALUES.every((s) => statuses.includes(s));
   const cutoff = sinceCutoff(filters, now);
   const conditions = and(
     eq(userJobs.userId, userId),
-    archived ? eq(roleStatusSql, "archived") : ne(roleStatusSql, "archived"),
-    statuses.length ? inArray(status, statuses) : undefined,
+    viewCondition(archived, filters.decision),
+    statuses.length && !everyStatus ? inArray(status, statuses) : undefined,
     // On the posting's own column, so the count needs no join to `companies` for it.
     filters.company ? eq(jobs.companyId, filters.company) : undefined,
-    filters.decision === 'inbox' ? isNull(decisions.id) : filters.decision === 'undecided' ? isNull(decisions.id) : ['apply','skip'].includes(filters.decision) ? eq(decisions.decision, filters.decision as 'apply' | 'skip') : undefined,
+    // "No active decision" on the column the join matches by, which PostgreSQL reads as an anti-join
+    // and estimates; on `decisions.id` it was a filter after the join, guessed at one row in 10,000.
+    filters.decision === 'inbox' || filters.decision === 'undecided' ? isNull(decisions.jobId) : filters.decision === 'apply' || filters.decision === 'skip' ? eq(decisions.decision, filters.decision) : undefined,
     filters.minFit !== null ? sql`${userJobs.fitScore} >= ${filters.minFit}` : undefined,
     filters.q ? sql`position(lower(${filters.q}) in lower(${jobs.title})) > 0` : undefined,
     filters.location ? sql`(position(lower(${filters.location}) in lower(coalesce(${jobs.location}, ''))) > 0 or exists (select 1 from jsonb_array_elements_text(${jobs.locations}) l where position(lower(${filters.location}) in lower(l)) > 0))` : undefined,
@@ -621,7 +643,9 @@ function rolesQuery(userId: string, filters: RolesFilters, archived: boolean, no
   // Each row's own values of the keys, as the database computed them: JSON keeps a timestamp to the
   // microsecond, which a JavaScript date would round and a keyset comparison would then get wrong.
   const cursor = sql<RoleCursor>`json_build_array(${sql.join(keys.map((key) => key.expr), sql`, `)})`;
-  return { conditions, order, keys, cursor };
+  // The only key that reads a table the conditions do not: picking a page by company name needs it.
+  const sortsByCompany = filters.sort === 'company';
+  return { conditions, order, keys, cursor, sortsByCompany };
 }
 
 /** One key of a view's order: what is compared, which way, and where its nulls go. */
@@ -664,13 +688,27 @@ function afterCursor(keys: SortKeyPart[], cursor: RoleCursor): SQL {
  * Summary rows either way — nothing that renders a block renders the stored description, and 50 of
  * them is up to 1.5 MB read and serialised on every render and every pagination click.
  *
+ * The block is read in one statement and two steps: the view's order and offset run over the narrow
+ * keys (`user_jobs`, `jobs`, the active decision — and `companies` only when sorting by it), and
+ * only the ids that survive are joined to the wide columns, the latest application and the stage.
+ * Sorting every admitted row with all sixty columns attached is what made a deep page cost a quarter
+ * of a second at 10,000 roles. The outer read repeats the same conditions and order from
+ * `rolesQuery`, so the page is exactly what one statement over everything would return.
+ *
  * Each row carries its `cursor`; passing the last one back as `after` reads the next block without
  * the database walking every row before it again, which an offset makes it do.
  */
 export async function fetchRoleRows(userId: string, filters: RolesFilters, archived: boolean, { offset = 0, limit = 50, now = new Date(), after = null }: { offset?: number; limit?: number; now?: Date; after?: RoleCursor | null } = {}): Promise<Array<RoleRow & { cursor: RoleCursor }>> {
-  const { conditions, order, keys, cursor } = rolesQuery(userId, filters, archived, now);
+  const { conditions, order, keys, cursor, sortsByCompany } = rolesQuery(userId, filters, archived, now);
   const where = after ? and(conditions, afterCursor(keys, after)) : conditions;
-  const rows = await baseRolesSelect(userId, true, cursor).where(where).orderBy(...order).limit(limit).offset(offset);
+  const narrow = db().select({ jobId: userJobs.jobId }).from(userJobs)
+    .innerJoin(jobs, eq(jobs.id, userJobs.jobId))
+    .leftJoin(decisions, and(eq(decisions.userId, userId), eq(decisions.jobId, jobs.id), eq(decisions.superseded, false)));
+  const keysOfPage = (sortsByCompany ? narrow.innerJoin(companies, eq(jobs.companyId, companies.id)) : narrow)
+    .where(where).orderBy(...order).limit(limit).offset(offset);
+  const rows = await baseRolesSelect(userId, true, cursor)
+    .where(and(sql`${jobs.id} in (select page_keys.job_id from (${keysOfPage}) page_keys)`, where))
+    .orderBy(...order).limit(limit);
   return rows.map(row => ({ ...row, events: [] as RoleEvent[] }));
 }
 

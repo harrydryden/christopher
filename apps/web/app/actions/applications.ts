@@ -7,7 +7,7 @@ import { APPLICATION_STATUSES, APPLICATION_STATUS_LABELS, CvContentSchema, appli
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { isRecordableDay, todayDay } from "@/lib/application-dates";
-import { renderCvPdf } from "@/lib/cv-pdf";
+import { cvPdfFor } from "@/lib/cv-pdf-store";
 import { lockRoleView, recordDecision } from "@/lib/decisions";
 import { actionError, fail, ok, UserFacingError, zUuid, type ActionResult } from "@/lib/validation";
 import { revalidatePath } from "next/cache";
@@ -279,7 +279,13 @@ export async function recordApplication(cvId: string, _prev: ActionResult, form:
       .select({ status: cvDrafts.status, content: cvDrafts.content, finalisedAt: cvDrafts.finalisedAt, assessment: cvDrafts.assessment, jobDescription: cvDrafts.jobDescription, librarySnapshot: cvDrafts.librarySnapshot })
       .from(cvDrafts).where(and(eq(cvDrafts.id, cvId), eq(cvDrafts.userId, user.id)));
     if (!rendered) throw new UserFacingError("Choose a completed, saved CV.");
-    const pdf = await renderCvPdf(CvContentSchema.parse(assertRecordable(rendered).content));
+    // The bytes finalising kept, when they were drawn from exactly this content; otherwise a render,
+    // with pdfkit loaded only now. The comparison under the lock below holds either way.
+    const recordable = assertRecordable(rendered);
+    const { pdf } = await cvPdfFor(user.id, cvId, recordable.content, async (content) => {
+      const { renderCvPdf } = await import("@/lib/cv-pdf");
+      return renderCvPdf(CvContentSchema.parse(content));
+    });
     await db().transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`application:${cvId}`}))`);
       // Only a row that already stores the submitted bytes is a duplicate; a row with a stage on

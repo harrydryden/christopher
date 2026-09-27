@@ -7,6 +7,10 @@ const draft = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/auth", () => ({ requireUser: auth }));
 vi.mock("@/lib/rate-limit", () => ({ consumeRateLimit: throttle }));
 vi.mock("@/lib/queries/cv", () => ({ getOwnCvDraftForPdf: draft }));
+const store = vi.hoisted(() => ({ storedCvPdf: vi.fn(), storeCvPdf: vi.fn(), cvPdfContentHash: vi.fn((content: unknown) => `hash:${JSON.stringify(content).length}`) }));
+vi.mock("@/lib/cv-pdf-store", () => store);
+// The assessment's own rules are tested with it; here a finalised revision is simply finalisable.
+vi.mock("@ava/core/cv-review", () => ({ assertCvFinalisable: vi.fn() }));
 import { GET } from "./route";
 import { CV_RENDER_BUSY_SENTENCE, CV_RENDER_LIMIT } from "@/lib/cv-render-limit";
 
@@ -17,11 +21,14 @@ const LIBRARY: CvLibrary = {
 };
 const CONTENT = materialiseCv(LIBRARY, { summary: "Analyst", sections: [{ entryId: "job", bullets: ["Led a team"] }], gaps: [] });
 const preview = () => GET(new Request(`http://localhost/api/cv/${ID}/pdf?preview=1`), { params: Promise.resolve({ id: ID }) });
+const download = () => GET(new Request(`http://localhost/api/cv/${ID}/pdf`), { params: Promise.resolve({ id: ID }) });
 
 beforeEach(() => {
   auth.mockReset(); auth.mockResolvedValue({ id: "user-1" });
   throttle.mockReset(); throttle.mockResolvedValue(true);
   draft.mockReset(); draft.mockResolvedValue({ id: ID, status: "ready", content: CONTENT, companyName: "Acme", finalisedAt: null });
+  store.storedCvPdf.mockReset(); store.storedCvPdf.mockResolvedValue(null);
+  store.storeCvPdf.mockReset(); store.storeCvPdf.mockResolvedValue(undefined);
 });
 
 it("renders a saved revision's preview for its owner and counts it against the account", async () => {
@@ -42,4 +49,35 @@ it("refuses a render past the account's limit, and never counts a request that r
   draft.mockResolvedValue(null);
   expect((await preview()).status).toBe(404);
   expect(throttle).not.toHaveBeenCalled();
+});
+
+it("serves a finalised revision's stored PDF without rendering or counting a render", async () => {
+  draft.mockResolvedValue({ id: ID, status: "ready", content: CONTENT, companyName: "Acme", finalisedAt: new Date() });
+  store.storedCvPdf.mockResolvedValue(Buffer.from("%PDF-kept"));
+  const response = await download();
+  expect(response.status).toBe(200);
+  expect(store.storedCvPdf).toHaveBeenCalledWith("user-1", ID, store.cvPdfContentHash(CONTENT));
+  expect(Buffer.from(await response.arrayBuffer()).toString()).toBe("%PDF-kept");
+  expect(response.headers.get("content-disposition")).toMatch(/^attachment;/);
+  expect(throttle).not.toHaveBeenCalled();
+  expect(store.storeCvPdf).not.toHaveBeenCalled();
+});
+
+it("renders a download whose stored PDF is missing or stale, counts it, and keeps what it rendered", async () => {
+  draft.mockResolvedValue({ id: ID, status: "ready", content: CONTENT, companyName: "Acme", finalisedAt: new Date() });
+  const response = await download();
+  expect(response.status).toBe(200);
+  expect(throttle).toHaveBeenCalledWith(["cv-render:user-1"], CV_RENDER_LIMIT);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  expect(bytes.subarray(0, 5).toString()).toBe("%PDF-");
+  expect(store.storeCvPdf).toHaveBeenCalledWith("user-1", ID, store.cvPdfContentHash(CONTENT), expect.any(Buffer));
+  expect(Buffer.compare(store.storeCvPdf.mock.calls[0]![3] as Buffer, bytes)).toBe(0);
+});
+
+it("always renders a preview, and never reads or writes the stored PDF for it", async () => {
+  store.storedCvPdf.mockResolvedValue(Buffer.from("%PDF-kept"));
+  const response = await preview();
+  expect(Buffer.from(await response.arrayBuffer()).toString()).not.toBe("%PDF-kept");
+  expect(store.storedCvPdf).not.toHaveBeenCalled();
+  expect(store.storeCvPdf).not.toHaveBeenCalled();
 });

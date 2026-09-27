@@ -10,6 +10,7 @@ import {
   operationalAttentionMessage,
   operationalSuccessMessage,
   operationalWarnings,
+  readMonitor,
   readOperationalSample,
   readReleaseHealth,
   requiredOperationalConfig,
@@ -290,6 +291,83 @@ test("slow queries are compared within one process: attention at 20, a failure a
   // A replacement process starts its counter from nought: the old one's total is not a burst.
   assert.equal(slowQueryDelta([at(500, { workerId: "old", uptimeSeconds: 900 }), at(3, { workerId: "new", uptimeSeconds: 5 }), at(4, { workerId: "new", uptimeSeconds: 20 })]), 1);
   assert.equal(slowQueryDelta([at(500, { uptimeSeconds: 900 }), at(3, { uptimeSeconds: 5 })]), null, "the same id with a younger uptime restarted");
+});
+
+test("heap, a single pool wait and a five-minute-old task are attention below their failures", () => {
+  assert.deepEqual(operationalWarnings([healthy({ heapFraction: 0.76 }), healthy({ heapFraction: 0.5 }), healthy({ heapFraction: 0.74 })]), [], "one warm sample is not sustained");
+  const warm = [healthy({ heapFraction: 0.76 }), healthy({ heapFraction: 0.8 }), healthy({ heapFraction: 0.5 })];
+  assert.deepEqual(operationalFailures(warm), []);
+  assert.match(operationalWarnings(warm)[0], /^worker heap is at or above 75% in 2 samples/);
+  assert.deepEqual(operationalWarnings([healthy({ heapFraction: 0.9 }), healthy({ heapFraction: 0.9 })]).filter(w => /heap/.test(w)), [], "a failure is not also attention");
+  const oneWait = [healthy(), healthy({ dbWaiting: 1 }), healthy()];
+  assert.deepEqual(operationalFailures(oneWait), []);
+  assert.match(operationalWarnings(oneWait)[0], /waited for a database connection in 1 sample/);
+  const stale = [healthy(), healthy({ ready: 2, oldestSeconds: 6 * 60 })];
+  assert.deepEqual(operationalFailures(stale), []);
+  assert.match(operationalWarnings(stale)[0], /oldest ready task has waited 6 minutes/);
+});
+
+const monitorBody = (overrides = {}) => ({
+  at: "2026-09-27T12:00:00.000Z",
+  worker: null,
+  backends: { active: 12, total: 30, usable: 97, fraction: 0.124 },
+  oldestReadySeconds: 0,
+  scans: { since: "2026-09-27", total: 40, failed: 1, failedShare: 0.025 },
+  models: { calls1h: 50, rateLimited1h: 0, rateLimitedShare: 0 },
+  slowQueries: { per15m: 2, history: [] },
+  webVitalsPruned: 0,
+  levels: {},
+  ...overrides,
+});
+const NOW = Date.parse("2026-09-27T12:02:00.000Z");
+const withMonitor = overrides => readOperationalSample({ ...statusBody(), monitor: monitorBody(overrides) });
+
+test("the monitor's sample is optional, and read when a worker serves it", () => {
+  assert.equal("monitor" in readOperationalSample(statusBody()), false);
+  assert.equal("monitor" in readOperationalSample({ ...statusBody(), monitor: null }), false);
+  assert.equal("monitor" in readOperationalSample({ ...statusBody(), monitor: { at: "not a date" } }), false, "an unreadable sample is no sample, never a failure");
+  const sample = withMonitor();
+  assert.deepEqual(sample.monitor, readMonitor(monitorBody()));
+  assert.deepEqual(operationalFailures([sample, sample]), []);
+  assert.deepEqual(operationalWarnings([sample, sample], OPERATIONAL_THRESHOLDS, NOW), []);
+});
+
+test("active backends, scan failures, model rate limits and slow queries warn and fail at the guide's lines", () => {
+  const judge = overrides => {
+    const sample = withMonitor(overrides);
+    return { failures: operationalFailures([sample, sample]), warnings: operationalWarnings([sample, sample], OPERATIONAL_THRESHOLDS, NOW) };
+  };
+  let result = judge({ backends: { active: 60, total: 70, usable: 97, fraction: 0.619 } });
+  assert.deepEqual(result.failures, []);
+  assert.match(result.warnings[0], /^60 of 97 usable Postgres connections are active \(62%; attention at 60%\)/);
+  result = judge({ backends: { active: 80, total: 90, usable: 97, fraction: 0.825 } });
+  assert.match(result.failures[0], /the gate fails at 80%/);
+  assert.deepEqual(result.warnings, []);
+
+  result = judge({ scans: { since: "2026-09-27", total: 40, failed: 5, failedShare: 0.125 } });
+  assert.deepEqual(result.failures, []);
+  assert.match(result.warnings[0], /^13% of today's 40 scans did not succeed \(attention at 10%\)/);
+  assert.match(judge({ scans: { since: "2026-09-27", total: 40, failed: 12, failedShare: 0.3 } }).failures[0], /30% of today's 40 scans/);
+  result = judge({ scans: { since: "2026-09-27", total: 4, failed: 2, failedShare: 0.5 } });
+  assert.deepEqual(result.failures, [], "two failures in four scans is attention, not an outage");
+  assert.match(result.warnings[0], /50% of today's 4 scans/);
+
+  result = judge({ models: { calls1h: 100, rateLimited1h: 6, rateLimitedShare: 0.06 } });
+  assert.deepEqual(result.failures, []);
+  assert.match(result.warnings[0], /6% of the last hour's 100 model calls were refused as rate-limited or overloaded/);
+  assert.match(judge({ models: { calls1h: 100, rateLimited1h: 25, rateLimitedShare: 0.25 } }).failures[0], /25% of the last hour's 100 model calls/);
+  assert.deepEqual(judge({ models: { calls1h: 3, rateLimited1h: 3, rateLimitedShare: 1 } }).failures, []);
+
+  result = judge({ slowQueries: { per15m: 20, history: [] } });
+  assert.deepEqual(result.failures, []);
+  assert.match(result.warnings[0], /counted 20 queries of 250 ms or longer in fifteen minutes \(attention at 20\)/);
+  assert.match(judge({ slowQueries: { per15m: 150, history: [] } }).failures[0], /counted 150 queries/);
+});
+
+test("a monitor sample twenty minutes old is attention: the task that takes it has stopped", () => {
+  const sample = withMonitor({ at: "2026-09-27T11:40:00.000Z" });
+  assert.deepEqual(operationalFailures([sample, sample]), []);
+  assert.match(operationalWarnings([sample, sample], OPERATIONAL_THRESHOLDS, NOW)[0], /monitor sample is 22 minutes old/);
 });
 
 /** A throwaway repository whose history is main, then a branch merged with a merge commit. */

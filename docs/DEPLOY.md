@@ -685,6 +685,47 @@ database storage above 70% or connections near the provider limit, and unexpecte
 the delivery channel, primary/backup owner, acknowledgement target and escalation action for each
 signal. An Admin › Operations page that nobody is assigned to inspect is evidence, not an alert.
 
+**The thresholds.** The scheduled operational check (`operational-status.yml`, every 15 minutes, three
+samples of the worker's `/status` 15 s apart) enforces these; `OPERATIONAL_THRESHOLDS` in
+`scripts/release-checks.mjs` holds them. A *fail* line fails the run; *attention* prints under
+"Operational attention" and never fails it. The database-wide figures come from the worker's
+`monitor_sample` step, which the scheduler runs every five minutes and stores in
+`settings['internal:monitor']`; `/status` serves it as `monitor` and Operations › Alert signals shows
+it with the level the worker graded each line at.
+
+| Signal | Attention | Fail | Read from |
+|---|---|---|---|
+| Worker heap fraction | ≥ 75 % in 2 of 3 samples | ≥ 85 % in 2 samples | `/status` `vitals.heapFraction` |
+| Event-loop delay p99 (since boot) | ≥ 200 ms | ≥ 1,000 ms in 2 samples | `vitals.eventLoopLagP99Ms` |
+| Worker pool waiting | > 0 in 1 sample | > 0 in 2 samples | `vitals.db.waiting` |
+| Active Postgres connections | ≥ 60 % of usable | ≥ 80 % | monitor: `pg_stat_activity` client backends not idle, against `max_connections` less the reserved |
+| Oldest ready task | ≥ 5 min | ≥ 15 min | `metrics.oldest_seconds` |
+| Today's failed scans | ≥ 10 % | ≥ 25 % of at least 10 scans | monitor: `scans.status <> 'ok'` in today's runs |
+| Model calls rate-limited, last hour | ≥ 5 % | ≥ 20 % of at least 10 calls, or an outage group | monitor: `ai_calls.error` naming 429, 529, a rate limit or overload |
+| Worker slow queries | Δ ≥ 20 per 15 min | Δ ≥ 100 | monitor: the heartbeat's `slowQueries`, one process at a time; the check's own samples as a lower bound |
+| Monitor sample age | ≥ 20 min | none | monitor: `at` |
+| Overdue companies, discovery, crash recoveries, queue growth, restarts | as before | as before | `metrics` |
+
+The two-sample rule and the 20-minute deploy grace are kept, so a rollout does not page anyone.
+Disk (70 % / 85 %) and PgBouncer client connections have no reading the worker can take: they are
+Render notifications, below.
+
+**Where each alert arrives.** Two channels, both configured outside this repository:
+
+- **GitHub, for the operational check.** A failed scheduled run of *Operational status* emails the
+  repository's watchers who have Actions notifications on. The alert owner sets, in GitHub ›
+  Settings › Notifications › Actions, "Notify me: only failed workflows" with email (and the mobile
+  app, if used), and watches the repository with at least "Custom › Actions". GitHub sends a
+  scheduled workflow's failure to the last person who edited its cron, so re-save
+  `operational-status.yml` from the owner's account if that is someone else. Record the owner and
+  a backup here once set.
+- **Render, for the platform.** In the Render dashboard › the worker service › Settings ›
+  Notifications (or the workspace default under Workspace › Notifications), send *deploy failed*,
+  *service unhealthy* (the `/healthz` check failing) and *instance restarted / out of memory* to the
+  owner's email or a Slack channel. On the Postgres instance, send *disk usage* at 70 % and 85 % and
+  *connections* near the plan limit where the plan offers them; where it does not, the active
+  connections line above is the nearest reading.
+
 ## When something is wrong
 
 | Symptom | Cause | Fix |

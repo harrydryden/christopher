@@ -387,6 +387,60 @@ export async function getTopStatements(): Promise<StatementTotals> {
   }
 }
 
+export type MonitorLevel = "ok" | "warn" | "fail";
+
+/** The worker's five-minute monitor sample (apps/worker/src/handlers/monitor-sample.ts), as Operations shows it. */
+export interface MonitorReading {
+  at: Date;
+  worker: { heapFraction: number | null; eventLoopLagP99Ms: number | null; dbWaiting: number | null } | null;
+  backends: { active: number; total: number; usable: number; fraction: number } | null;
+  oldestReadySeconds: number | null;
+  scans: { total: number; failed: number; failedShare: number | null } | null;
+  models: { calls1h: number; rateLimited1h: number; rateLimitedShare: number | null } | null;
+  slowQueriesPer15m: number | null;
+  levels: Partial<Record<"heap" | "eventLoop" | "poolWaiting" | "backends" | "oldestReady" | "scanFailures" | "modelRateLimited" | "slowQueries", MonitorLevel>>;
+}
+
+const LEVELS = new Set<MonitorLevel>(["ok", "warn", "fail"]);
+const record = (value: unknown): Record<string, unknown> | null => (value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null);
+
+/**
+ * The stored sample read defensively: the worker writes it and deploys separately, so any part it
+ * does not recognise is null rather than an error, and a sample without a readable time is none.
+ */
+export function readMonitorSample(stored: unknown): MonitorReading | null {
+  const value = record(stored);
+  const at = isoDate(value?.at);
+  if (!value || !at) return null;
+  const worker = record(value.worker);
+  const backends = record(value.backends);
+  const scans = record(value.scans);
+  const models = record(value.models);
+  const levels = record(value.levels) ?? {};
+  return {
+    at,
+    worker: worker ? { heapFraction: finite(worker.heapFraction), eventLoopLagP99Ms: finite(worker.eventLoopLagP99Ms), dbWaiting: finite(worker.dbWaiting) } : null,
+    backends: backends && finite(backends.active) !== null && finite(backends.usable) !== null
+      ? { active: finite(backends.active)!, total: finite(backends.total) ?? 0, usable: finite(backends.usable)!, fraction: finite(backends.fraction) ?? 0 }
+      : null,
+    oldestReadySeconds: finite(value.oldestReadySeconds),
+    scans: scans && finite(scans.total) !== null ? { total: finite(scans.total)!, failed: finite(scans.failed) ?? 0, failedShare: finite(scans.failedShare) } : null,
+    models: models && finite(models.calls1h) !== null ? { calls1h: finite(models.calls1h)!, rateLimited1h: finite(models.rateLimited1h) ?? 0, rateLimitedShare: finite(models.rateLimitedShare) } : null,
+    slowQueriesPer15m: finite(record(value.slowQueries)?.per15m),
+    levels: Object.fromEntries(Object.entries(levels).filter(([, level]) => LEVELS.has(level as MonitorLevel))) as MonitorReading["levels"],
+  };
+}
+
+/** The last monitor sample, or null when the task has not run (or the settings row cannot be read). */
+export async function getMonitorSample(): Promise<MonitorReading | null> {
+  try {
+    const [row] = await db().select({ value: settings.value }).from(settings).where(eq(settings.key, "internal:monitor")).limit(1);
+    return readMonitorSample(row?.value);
+  } catch {
+    return null;
+  }
+}
+
 export interface RouteVitals {
   route: string;
   /** Sampled page loads that reported anything for this route in the window. */

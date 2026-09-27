@@ -154,6 +154,8 @@ import {
   normaliseCvBuildCosts,
   operationDate,
   readHeartbeat,
+  readMonitorSample,
+  getMonitorSample,
   requiredOperationDate,
   listRetryingTasks,
   listRunningTasks,
@@ -229,6 +231,35 @@ it("reads the costliest statements for Operations, or says why it cannot, withou
     // This suite's server does not preload the extension (CI and local both): the reason, not an error.
     expect(totals.reason).toMatch(/pg_stat_statements/);
   }
+});
+
+it("reads the worker's monitor sample defensively, and nothing when there is none", async () => {
+  await resetWorkerFixtures();
+  expect(await getMonitorSample()).toBeNull();
+  const stored = {
+    at: "2026-09-27T12:00:00.000Z",
+    worker: { at: "2026-09-27T11:59:40.000Z", workerId: "w", heapFraction: 0.5, eventLoopLagP99Ms: 240, dbWaiting: 0, slowQueries: 3 },
+    backends: { active: 12, total: 30, usable: 97, fraction: 0.124 },
+    oldestReadySeconds: 42,
+    scans: { since: "2026-09-27", total: 40, failed: 5, failedShare: 0.125 },
+    models: { calls1h: 50, rateLimited1h: 1, rateLimitedShare: 0.02 },
+    slowQueries: { per15m: 4, history: [] },
+    webVitalsPruned: 0,
+    levels: { heap: "ok", eventLoop: "warn", scanFailures: "warn", slowQueries: "nonsense" },
+  };
+  await database.insert(schema.settings).values({ key: "internal:monitor", value: stored });
+  const reading = await getMonitorSample();
+  expect(reading).toMatchObject({
+    at: new Date("2026-09-27T12:00:00.000Z"),
+    worker: { heapFraction: 0.5, eventLoopLagP99Ms: 240, dbWaiting: 0 },
+    backends: { active: 12, usable: 97, fraction: 0.124 },
+    scans: { total: 40, failed: 5, failedShare: 0.125 },
+    slowQueriesPer15m: 4,
+  });
+  // A level it does not know is dropped, not shown.
+  expect(reading!.levels).toEqual({ heap: "ok", eventLoop: "warn", scanFailures: "warn" });
+  expect(readMonitorSample({ at: "not a time" })).toBeNull();
+  expect(readMonitorSample({ at: "2026-09-27T12:00:00.000Z", backends: "x", scans: { total: "4" } })).toMatchObject({ backends: null, scans: null, worker: null });
 });
 
 it("reads the event-loop lag, slow queries and pool the worker writes, and leaves them null when it does not", () => {

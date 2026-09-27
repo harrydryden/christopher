@@ -38,6 +38,24 @@ export const OPERATIONAL_THRESHOLDS = Object.freeze({
    */
   slowQueriesWarnPer15m: 20,
   slowQueriesFailPer15m: 100,
+  /** Attention lines below the failures above, from the guide's alert table (docs/PERFORMANCE-GUIDE.md 5.5). */
+  heapFractionWarn: 0.75,
+  queueOldestWarnSeconds: 5 * 60,
+  /**
+   * From the worker's five-minute monitor sample (apps/worker/src/handlers/monitor-sample.ts, whose
+   * MONITOR_THRESHOLDS a worker test holds equal to these): active Postgres backends as a share of
+   * the usable connections, today's failed scans, and the last hour's model calls refused with a
+   * 429 or 529. A share over too few scans or calls warns but never fails.
+   */
+  backendsWarn: 0.6,
+  backendsFail: 0.8,
+  scanFailuresWarn: 0.1,
+  scanFailuresFail: 0.25,
+  modelRateLimitedWarn: 0.05,
+  modelRateLimitedFail: 0.2,
+  minimumForFailure: 10,
+  /** A monitor sample older than this is attention: the task that takes it has stopped. */
+  monitorStaleSeconds: 20 * 60,
 });
 
 export const RELEASE_VERIFY_DEADLINE_MS = 8 * 60 * 1000;
@@ -180,6 +198,11 @@ export function readOperationalSample(value) {
     sample[key] = read(raw);
     if (sample[key] === null) missing.push(key);
   }
+  // Optional: the monitor task's last sample, from a worker that runs it. Read defensively, because
+  // the gate must never fail on a shape it does not know; a figure that is present and malformed is
+  // simply not compared.
+  const monitor = readMonitor(value.monitor);
+  if (monitor) sample.monitor = monitor;
   if (metrics?.unscannableCompanies !== undefined) {
     // Optional: a worker that splits companies it cannot scan out of the overdue count reports them.
     sample.unscannableCompanies = count(metrics.unscannableCompanies);
@@ -187,6 +210,51 @@ export function readOperationalSample(value) {
   }
   if (missing.length) throw new Error(`Worker health is missing required operational fields: ${missing.join(", ")}.`);
   return sample;
+}
+
+const share = value => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+
+/**
+ * The figures the gate compares from the monitor's sample, or null when there is none. `at` is
+ * epoch milliseconds, for the staleness check.
+ */
+export function readMonitor(value) {
+  if (!value || typeof value !== "object") return null;
+  const at = typeof value.at === "string" ? Date.parse(value.at) : NaN;
+  if (!Number.isFinite(at)) return null;
+  return {
+    at,
+    backendsFraction: share(value.backends?.fraction),
+    backendsActive: count(value.backends?.active),
+    backendsUsable: count(value.backends?.usable),
+    scansTotal: count(value.scans?.total),
+    scanFailedShare: share(value.scans?.failedShare),
+    modelCalls1h: count(value.models?.calls1h),
+    modelRateLimitedShare: share(value.models?.rateLimitedShare),
+    slowQueriesPer15m: count(value.slowQueries?.per15m),
+  };
+}
+
+const percent = fraction => `${Math.round(fraction * 100)}%`;
+
+/** The monitor's figures against its thresholds: `fail` and `warn` lines, each at most once. */
+function monitorFindings(monitor, thresholds) {
+  const fail = [], warn = [];
+  if (!monitor) return { fail, warn };
+  const judge = (value, warnAt, failAt, canFail, describe) => {
+    if (value === null) return;
+    if (canFail && value >= failAt) fail.push(describe(value, failAt, "the gate fails at"));
+    else if (value >= warnAt) warn.push(describe(value, warnAt, "attention at"));
+  };
+  judge(monitor.backendsFraction, thresholds.backendsWarn, thresholds.backendsFail, true,
+    (value, line, words) => `${monitor.backendsActive ?? "?"} of ${monitor.backendsUsable ?? "?"} usable Postgres connections are active (${percent(value)}; ${words} ${percent(line)})`);
+  judge(monitor.scanFailedShare, thresholds.scanFailuresWarn, thresholds.scanFailuresFail, (monitor.scansTotal ?? 0) >= thresholds.minimumForFailure,
+    (value, line, words) => `${percent(value)} of today's ${monitor.scansTotal ?? "?"} scans did not succeed (${words} ${percent(line)})`);
+  judge(monitor.modelRateLimitedShare, thresholds.modelRateLimitedWarn, thresholds.modelRateLimitedFail, (monitor.modelCalls1h ?? 0) >= thresholds.minimumForFailure,
+    (value, line, words) => `${percent(value)} of the last hour's ${monitor.modelCalls1h ?? "?"} model calls were refused as rate-limited or overloaded (${words} ${percent(line)})`);
+  judge(monitor.slowQueriesPer15m, thresholds.slowQueriesWarnPer15m, thresholds.slowQueriesFailPer15m, true,
+    (value, line, words) => `the worker counted ${value} queries of 250 ms or longer in fifteen minutes (${words} ${line})`);
+  return { fail, warn };
 }
 
 export function operationalFailures(samples, thresholds = OPERATIONAL_THRESHOLDS) {
@@ -243,6 +311,7 @@ export function operationalFailures(samples, thresholds = OPERATIONAL_THRESHOLDS
   if (latest.ready >= thresholds.queueReady && latest.ready - first.ready >= thresholds.queueGrowth) {
     failures.push(`the ready queue grew by ${latest.ready - first.ready} tasks during the check`);
   }
+  failures.push(...monitorFindings(latest.monitor, thresholds).fail);
   return failures;
 }
 
@@ -260,7 +329,7 @@ export function slowQueryDelta(samples) {
 }
 
 /** Attention telemetry that should be surfaced but does not mean the deployment is unhealthy. */
-export function operationalWarnings(samples, thresholds = OPERATIONAL_THRESHOLDS) {
+export function operationalWarnings(samples, thresholds = OPERATIONAL_THRESHOLDS, now = Date.now()) {
   if (!Array.isArray(samples) || samples.length === 0) throw new Error("At least one operational sample is required.");
   const latest = samples.at(-1);
   const warnings = [];
@@ -279,6 +348,25 @@ export function operationalWarnings(samples, thresholds = OPERATIONAL_THRESHOLDS
   const slow = slowQueryDelta(samples);
   if (slow !== null && slow >= thresholds.slowQueriesWarnPer15m && slow < thresholds.slowQueriesFailPer15m) {
     warnings.push(`${slow} queries took 250 ms or longer during the check (attention at ${thresholds.slowQueriesWarnPer15m} in fifteen minutes)`);
+  }
+  const warm = samples.filter(sample => sample.heapFraction >= thresholds.heapFractionWarn && sample.heapFraction < thresholds.heapFraction);
+  if (warm.length >= thresholds.sustainedSamples) {
+    warnings.push(`worker heap is at or above ${percent(thresholds.heapFractionWarn)} in ${warm.length} samples (the gate fails at ${percent(thresholds.heapFraction)} in ${thresholds.sustainedSamples})`);
+  }
+  const waiting = samples.filter(sample => sample.dbWaiting > 0).length;
+  if (waiting > 0 && waiting < thresholds.sustainedSamples) {
+    warnings.push(`a query waited for a database connection in ${waiting} sample (the gate fails at ${thresholds.sustainedSamples})`);
+  }
+  if (latest.ready > 0 && latest.oldestSeconds >= thresholds.queueOldestWarnSeconds && latest.oldestSeconds < thresholds.queueOldestSeconds) {
+    warnings.push(`the oldest ready task has waited ${Math.round(latest.oldestSeconds / 60)} minutes (attention at ${thresholds.queueOldestWarnSeconds / 60}, the gate fails at ${thresholds.queueOldestSeconds / 60})`);
+  }
+  const monitor = latest.monitor;
+  if (monitor) {
+    warnings.push(...monitorFindings(monitor, thresholds).warn);
+    const ageSeconds = (now - monitor.at) / 1000;
+    if (ageSeconds >= thresholds.monitorStaleSeconds) {
+      warnings.push(`the worker's monitor sample is ${Math.round(ageSeconds / 60)} minutes old; the five-minute monitor task has stopped`);
+    }
   }
   return warnings;
 }

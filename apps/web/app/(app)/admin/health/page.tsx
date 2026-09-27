@@ -11,7 +11,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { requireAdmin } from "@/lib/auth";
 import { RefusalNotice } from "@/components/RefusalNotice";
-import { StatementsCard, WebVitalsCard } from "./monitoring";
+import { MonitorCard, StatementsCard, WebVitalsCard } from "./monitoring";
 import { db } from "@/lib/db";
 import { totalAiUsage } from "@/lib/ai-usage";
 import { formatBytes, formatCount, formatDelta, formatDuration, formatLatency, formatPercent, formatStepDuration, formatUsd, formatUsdPrecise, relativeTime, shortDate } from "@/lib/format";
@@ -24,6 +24,7 @@ import {
   getCvBuildMotions,
   getCvBuildWeeks,
   getCvDriftRates,
+  getMonitorSample,
   getQueueCounts,
   getScoredRoleCost,
   getTopStatements,
@@ -68,12 +69,13 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
   // The worker and the queue first; the activity names its subjects and the spend table's accounts
   // in one statement once the usage has been read.
   const usagePending = getAiUsage(since);
-  const [metrics, activity, failedTasks, queueCounts, usage] = await Promise.all([
+  const [metrics, activity, failedTasks, queueCounts, usage, monitor] = await Promise.all([
     workloadMetrics(db()),
     operationsActivity(now, usagePending.then((groups) => groups.map((group) => group.userId))),
     listFailedTasks(50),
     getQueueCounts(),
     usagePending,
+    getMonitorSample(),
   ]);
   // Then the catalogue and its scans.
   const [largestInputs, attentionSources, noSourceCompanies, problemScans, scanRuns] = await Promise.all([
@@ -156,6 +158,8 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
         <p className="mt-2 text-14">95% of completed tasks in the last day took at most {Math.round(metrics.p95_seconds)} seconds. {metrics.overdueCompanies} companies have no successful scan in 24 hours; {metrics.overdueDiscovery} discovery sources are over a day late.</p>
         <p className="mt-2 text-14">{formatUsd(metrics.reservedUsd)} is held by calls in flight, against the budgets of the accounts that asked for them.</p>
       </Card>
+
+      <MonitorCard sample={monitor} now={now} />
 
       <Card title="Last crash recovery">
         {!crash ? (

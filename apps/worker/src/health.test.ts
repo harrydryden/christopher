@@ -8,6 +8,7 @@ import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { HEALTH_CACHE_MS, HEALTH_DB_STALE_FAIL_MS, startHealthServer, type HealthServerOptions } from "./health";
 import { ensureTestUser } from "./test-users";
+import { runMonitorSample } from "./handlers/monitor-sample";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
 const TOKEN = "status-token-for-tests";
@@ -149,6 +150,18 @@ it("answers /status with the queue and workload in one reading, and reuses it fo
     expect(((await (await status(base)).json()) as { metrics: Record<string, number> }).metrics.ready).toBe(2);
     expect(reads).toBe(2);
   }, { readMetrics, now: () => clock });
+});
+
+it("serves the monitor task's last sample on /status, and null before one has been taken", async () => {
+  await db.execute(sql`delete from settings where key = 'internal:monitor'`);
+  await serve(async base => {
+    expect(((await (await status(base)).json()) as Record<string, unknown>).monitor).toBeNull();
+  });
+  const sample = await runMonitorSample({ db, now: () => new Date() });
+  await serve(async base => {
+    const body = (await (await status(base)).json()) as { monitor: { at: string; backends: { usable: number } } };
+    expect(body.monitor).toMatchObject({ at: sample!.at, backends: { usable: sample!.backends.usable } });
+  });
 });
 
 it("reports persisted restart, provider and spend evidence without exposing call details", async () => {

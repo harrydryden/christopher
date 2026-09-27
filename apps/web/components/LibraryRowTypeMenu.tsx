@@ -1,13 +1,8 @@
 "use client";
-import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useId, useRef, useState, type KeyboardEvent } from "react";
 import { EVIDENCE_FACETS, EVIDENCE_FACET_LABELS, type EvidenceFacet } from "@ava/core/cv-helpers";
 import { Badge } from "@/components/Badge";
-
-/**
- * The step between the trigger and its menu, and the menu's margin from the edge of the screen:
- * one unit of the 4px scale, so the open menu sits on the grid like everything else.
- */
-const GAP = 4;
+import { useAnchoredPanel } from "@/components/useAnchoredPanel";
 
 /**
  * What one row of evidence is for: a button that reads back the types chosen, and a menu of the
@@ -27,7 +22,7 @@ const GAP = 4;
  * the box — on the last row of a job, which is the row just added and the one most likely to be
  * tagged. So it is fixed-positioned from the trigger's own rectangle, measured again on every
  * scroll and resize while it is open, and flipped above the trigger when it would fall off the
- * bottom of the screen.
+ * bottom of the screen (`useAnchoredPanel`, which the row's score panel shares).
  *
  * The trigger fills its cell (`h-full`) with the narrative's own minimum height, so the Type and
  * the Narrative of one row are one height however far the narrative is dragged taller.
@@ -57,52 +52,16 @@ export function LibraryRowTypeMenu({
   }
 
   // Put the open menu under its trigger, in viewport coordinates, before it is painted anywhere
-  // else; then focus the item a person would want first.
-  useLayoutEffect(() => {
-    if (!open) return;
-    const place = () => {
-      const sheet = menu.current;
-      const anchor = trigger.current?.getBoundingClientRect();
-      if (!sheet || !anchor) return;
-      // Scrolled past its own row, the menu has nothing left to be beside, so it goes — unless
-      // somebody is moving through it, which is not a moment to take a control away.
-      const gone = anchor.bottom < 0 || anchor.top > window.innerHeight || anchor.right < 0 || anchor.left > window.innerWidth;
-      if (gone && !sheet.contains(document.activeElement)) return setOpen(false);
-      const { offsetWidth: width, offsetHeight: height } = sheet;
-      const below = anchor.bottom + GAP;
-      const above = anchor.top - GAP - height;
-      const top = below + height <= window.innerHeight || above < GAP ? below : above;
-      sheet.style.left = `${Math.max(GAP, Math.min(anchor.left, window.innerWidth - width - GAP))}px`;
-      sheet.style.top = `${Math.max(GAP, Math.min(top, window.innerHeight - height - GAP))}px`;
-    };
-    place();
-    const first = items().find(item => item.getAttribute("aria-checked") === "true") ?? items()[0];
-    first?.focus();
-    // Captured, because the scroll that moves this row is the table's own and does not bubble.
-    document.addEventListener("scroll", place, true);
-    window.addEventListener("resize", place);
-    return () => {
-      document.removeEventListener("scroll", place, true);
-      window.removeEventListener("resize", place);
-    };
-    // Opening is the only thing this is about; the value changing while open must not refocus.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  // A pointer or a focus anywhere outside the control closes it, without moving the caret back:
-  // the person has already gone somewhere else.
-  useEffect(() => {
-    if (!open) return;
-    const outside = (event: Event) => {
-      if (event.target instanceof Node && !root.current?.contains(event.target)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", outside, true);
-    document.addEventListener("focusin", outside, true);
-    return () => {
-      document.removeEventListener("pointerdown", outside, true);
-      document.removeEventListener("focusin", outside, true);
-    };
-  }, [open]);
+  // else; then focus the item a person would want first. The value changing while open must not
+  // refocus, so this runs on opening only.
+  useAnchoredPanel({
+    open,
+    setOpen,
+    root,
+    trigger,
+    panel: menu,
+    onOpen: () => (items().find(item => item.getAttribute("aria-checked") === "true") ?? items()[0])?.focus(),
+  });
 
   function toggle(facet: EvidenceFacet) {
     const next = new Set(value);

@@ -10,7 +10,7 @@ const store = vi.hoisted(() => ({ database: undefined as unknown, reads: 0 }));
 vi.mock('@/lib/db', () => ({ db: () => { store.reads++; return store.database; } }));
 
 import { createSessionCookieValue } from '@/lib/session';
-import { vitalBucket } from '@/lib/web-vitals';
+import { vitalBucket, vitalRoute } from '@/lib/web-vitals';
 import { POST } from './route';
 
 const SECRET = 'performance-route-test-secret-0123456789';
@@ -94,6 +94,27 @@ describe('POST /api/performance', () => {
     ]) expect((await beacon(body)).status, JSON.stringify(body)).toBe(400);
     expect((await beacon('x'.repeat(2_001))).status).toBe(413);
     expect(await histogram()).toEqual([]);
+  });
+
+  it('stores only the app\'s own routes: an unknown one is refused and never written', async () => {
+    for (const route of ['/wp-admin', '/companies/:id/extra', '/not-a-page', '/cv', `/x${'a'.repeat(40)}`]) {
+      expect((await beacon([report({ route })])).status, route).toBe(400);
+    }
+    expect(await histogram()).toEqual([]);
+    // A dynamic page as the beacon names it (`vitalRoute` of the real path) is its pattern.
+    const token = 'Abcdefghijklmnopqrstuvwxyz0123456789_-ABCDE';
+    for (const path of [`/cv/${crypto.randomUUID()}`, `/share/${token}`, '/cv/library', '/admin/health', '/']) {
+      expect((await beacon([report({ route: vitalRoute(path) })])).status, path).toBe(204);
+    }
+    expect([...new Set((await histogram()).map((row) => row.route))].sort()).toEqual(['/', '/admin/health', '/cv/:id', '/cv/library', '/share/:id']);
+  });
+
+  it('refuses a body its Content-Length says is too large before reading it', async () => {
+    let read = false;
+    const body = new ReadableStream({ pull(controller) { read = true; controller.enqueue(new TextEncoder().encode('[]')); controller.close(); } }, { highWaterMark: 0 });
+    const request = new Request('http://localhost/api/performance', { method: 'POST', body, headers: { 'content-length': '5000' }, duplex: 'half' } as RequestInit);
+    expect((await POST(request)).status).toBe(413);
+    expect(read).toBe(false);
   });
 
   it('answers 204 even when the write fails', async () => {

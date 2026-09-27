@@ -11,17 +11,41 @@ export const dynamic = 'force-dynamic';
  * repeated here, without the session row that would cost a round trip), and what is written is a
  * count against `(day, route, metric, bucket)`.
  *
- * The body must be exactly the shape `lib/web-vitals.ts` defines; any other key is refused with 400,
+ * The body must be exactly the shape `lib/web-vitals.ts` defines, naming one of the app's own routes
+ * (`VITAL_ROUTES`); any other key or route is refused with 400,
  * which is how the rule "no identifiers" is enforced rather than hoped for. A write that fails still
  * answers 204: the beacon has nobody to report to, and a lost sample is not worth a retry.
  */
+/** The body as text, or null as soon as it passes `limit` bytes: an undeclared size is never read in full. */
+async function readAtMost(request: Request, limit: number): Promise<string | null> {
+  if (!request.body) return '';
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
+}
+
 export async function POST(request: Request) {
   const secret = sessionSecret();
   if (!secret || !(await verifySessionCookieValue(sessionCookieValue(await cookies()), secret))) {
     return Response.json({ ok: false, error: 'Please sign in again.' }, { status: 401, headers: { 'cache-control': 'private, no-store' } });
   }
-  const body = await request.text();
-  if (body.length > VITALS_MAX_BYTES) return new Response(null, { status: 413 });
+  // Refused on its declared size before a byte is read, and again on what actually arrived, since
+  // a chunked body declares none.
+  const declared = Number(request.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > VITALS_MAX_BYTES) return new Response(null, { status: 413 });
+  const body = await readAtMost(request, VITALS_MAX_BYTES);
+  if (body === null) return new Response(null, { status: 413 });
   const reports = readVitalsBeacon(body);
   if (!reports) return new Response(null, { status: 400 });
   // One row per bucket, so a single statement never touches the same key twice.

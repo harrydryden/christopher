@@ -54,6 +54,26 @@ describe("runMonitorSample", () => {
     expect(await getInternal<MonitorSample>(db, "monitor")).toEqual(JSON.parse(JSON.stringify(sample)));
   });
 
+  it("does not count a role waiting for its batch as a ready task in batch scoring mode", async () => {
+    const minutesAgo = (m: number) => new Date(now.getTime() - m * 60_000);
+    // Batch mode on a 30-minute collection: the queue leaves these for the collector by design.
+    await db.insert(schema.settings).values([{ key: "scoringMode", value: "batch" }, { key: "scoringBatchMinutes", value: 30 }]);
+    await db.insert(schema.tasks).values({ type: "score_job", payload: { userId: "u", jobId: "j" }, runAfter: minutesAgo(20) });
+    let sample = await runMonitorSample(deps());
+    expect(sample!.oldestReadySeconds).toBe(0);
+    expect(sample!.levels.oldestReady).toBe("ok");
+    // One a batch handed back to live scoring is claimable, so it counts.
+    await db.insert(schema.tasks).values({ type: "score_job", payload: { userId: "u", jobId: "k", live: true }, runAfter: minutesAgo(16) });
+    sample = await runMonitorSample(deps());
+    expect(sample!.levels.oldestReady).toBe("fail");
+    // In live mode every queued score is the queue's to claim.
+    await db.execute(sql`truncate tasks`);
+    await db.insert(schema.tasks).values({ type: "score_job", payload: { userId: "u", jobId: "j" }, runAfter: minutesAgo(20) });
+    await db.execute(sql`update settings set value = '"live"'::jsonb where key = 'scoringMode'`);
+    sample = await runMonitorSample(deps());
+    expect(sample!.levels.oldestReady).toBe("fail");
+  });
+
   it("leaves the worker's vitals out when its heartbeat is stale", async () => {
     await heartbeat({ heapFraction: 0.9 }, new Date(now.getTime() - 10 * 60_000));
     const sample = await runMonitorSample(deps());

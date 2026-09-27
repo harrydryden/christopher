@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { claimableTaskSql } from "@ava/db";
 import type { WorkerDeps } from "../context";
 import { log } from "../log";
 import { getInternal, setInternal } from "../settings";
@@ -109,7 +110,7 @@ export async function runMonitorSample(deps: Pick<WorkerDeps, "db" | "now">): Pr
       (select count(*)::int from pg_stat_activity where backend_type = 'client backend') as total,
       current_setting('max_connections')::int as max_connections,
       current_setting('superuser_reserved_connections')::int as reserved,
-      (select coalesce(max(extract(epoch from now() - run_after)), 0)::float from tasks where status = 'queued' and run_after <= now()) as oldest_seconds,
+      (select coalesce(max(extract(epoch from now() - run_after)), 0)::float from tasks where status = 'queued' and run_after <= now() and ${claimableTaskSql}) as oldest_seconds,
       (select count(*)::int from scans s join scan_runs r on r.id = s.scan_run_id where r.started_at >= date_trunc('day', now() at time zone 'utc') at time zone 'utc' and s.finished_at is not null) as scans_total,
       (select count(*)::int from scans s join scan_runs r on r.id = s.scan_run_id where r.started_at >= date_trunc('day', now() at time zone 'utc') at time zone 'utc' and s.finished_at is not null and s.status <> 'ok') as scans_failed,
       (select count(*)::int from ai_calls where at >= now() - interval '1 hour') as calls_1h,

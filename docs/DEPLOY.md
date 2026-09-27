@@ -669,8 +669,9 @@ code loads only the OpenTelemetry API, whose tracer does nothing.
 - **Interface** (`apps/web/instrumentation.ts`): `@vercel/otel` with service name `ava-web` and a
   trace-id ratio sampler, `OTEL_TRACES_SAMPLER_ARG` defaulting to `0.1`. Next.js contributes its
   route, render and fetch spans. Set the variables in Vercel › Settings › Environment Variables.
-- **Worker** (`apps/worker/src/otel.ts`, preloaded by the image's `node --import tsx --import
-  ./src/otel.ts src/index.ts`): the Node SDK with the pg instrumentation
+- **Worker** (`apps/worker/src/otel.ts`, built to `dist/otel.mjs` and preloaded by the image's
+  `node --enable-source-maps --import ./dist/otel.mjs dist/index.mjs`; from source,
+  `tsx --import ./src/otel.ts src/index.ts`): the Node SDK with the pg instrumentation
   (`enhancedDatabaseReporting` off, so statements appear without their values) and the undici
   instrumentation, parent-based 10 % sampling, a batch processor holding at most 512 spans, and three
   spans of its own: `task.run` (type, attempt, ready wait), `model.call` (model, call site, stage,
@@ -921,7 +922,8 @@ JavaScript) and kept an `esbuild` service process of about 14 MB alive beside it
 heap the Operations reading shows. The Dockerfile's build stage now bundles the worker with
 `apps/worker/build.mjs` (esbuild; the workspace packages and what only they depend on are bundled, the
 worker's own dependencies stay in node_modules, the migrations are copied to `dist/drizzle`), and the
-image runs `node --enable-source-maps dist/index.mjs`. Booted locally against an empty queue with the
+image runs `node --enable-source-maps --import ./dist/otel.mjs dist/index.mjs` (tracing is built as
+`dist/otel.mjs` and preloaded, as the source entry preloads `src/otel.ts`). Booted locally against an empty queue with the
 deployed slot counts, the idle process measured 161–236 MB from source and 117–118 MB compiled (one
 outlier at 205 MB). The tests, the CLI and the drills still run from source through `tsx`, so the
 compiled entry point is exercised by the `worker-image` CI job, which boots the image on every pull

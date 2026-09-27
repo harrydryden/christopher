@@ -9,7 +9,7 @@ import { sql } from "drizzle-orm";
 import { testDatabaseUrl } from "./test-users";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
-import { sleep, TaskQueue } from "./queue";
+import { sleep, TaskDeferred, TaskQueue } from "./queue";
 import { TaskWakeup } from "./task-wakeup";
 
 const SUITE = "ava-wakeup-test";
@@ -110,6 +110,27 @@ it("starts a task within a second of its enqueue while the queue is polling only
   await enqueueTask(db, "discover", { companyId: "a" });
   const latency = await within(timer.first, 5_000, "the enqueue did not wake the queue");
   expect(latency).toBeLessThan(1_000);
+}, 20_000);
+
+it("runs a deferred task again when it comes due, not on the next ten-second poll", async () => {
+  wakeup = new TaskWakeup(testDatabaseUrl(`${SUITE}-listener`));
+  wakeup.start();
+  await within((async () => { while (!wakeup!.listening) await sleep(20); })(), 5_000, "the listener never connected");
+  const runs: number[] = [];
+  let dueAt = 0;
+  queue = new TaskQueue(deps, {
+    poll_score_batch: async () => {
+      runs.push(performance.now());
+      if (runs.length > 1) return { applied: true };
+      dueAt = performance.now() + 400;
+      return new TaskDeferred(new Date(Date.now() + 400), { status: "in_progress" });
+    },
+  }, { concurrency: 1, workerId: "deferring", pollMs: 10_000, wakeup });
+  queue.start();
+  await sleep(300);
+  await enqueueTask(db, "poll_score_batch", { batchId: "msgbatch_due", items: [], holds: {} } as unknown as Record<string, unknown>);
+  await within((async () => { while (runs.length < 2) await sleep(10); })(), 3_000, "the deferred task waited for the poll");
+  expect(runs[1]! - dueAt).toBeLessThan(1_000);
 }, 20_000);
 
 it("never wakes the queue for an enqueue that rolled back", async () => {

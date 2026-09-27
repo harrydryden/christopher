@@ -16,7 +16,7 @@
  * therefore moves a row, and never adds or removes one.
  */
 import { createHash } from "node:crypto";
-import { enqueueTask, recordAiCall, schema, type Task } from "@ava/db";
+import { enqueueTask, notifyTaskWorkers, recordAiCall, schema, type Task } from "@ava/db";
 import {
   aiBudgetWindowStart, dedupeKeyFor, priorityFor, scoreBatchCustomId, scoreBatchHolds, scoreBatchPollDelayMs,
   SCORE_BATCH_HOLD_MINUTES, SCORE_BATCH_MAX_ITEMS, type ScoreBatchItem, type ScoreBatchRecord, type TaskPayloads,
@@ -82,15 +82,23 @@ async function finishClaimed(db: WorkerDeps["db"], task: Task, result: unknown):
  * back, for a role a deployment cap refused.
  */
 async function handBack(db: WorkerDeps["db"], tasks: Task[], why: string, opts: { live?: boolean; runAfter?: Date } = {}): Promise<void> {
-  for (const task of tasks) {
-    await db.update(schema.tasks)
-      .set({
-        status: "queued", lockedAt: null, lockedBy: null, attempts: Math.max(0, task.attempts - 1), error: why.slice(0, 2000),
-        ...(opts.live ? { payload: { ...task.payload, live: true } } : {}),
-        ...(opts.runAfter ? { runAfter: opts.runAfter } : {}),
-      })
-      .where(claimedBy(task));
-  }
+  // One transaction, so a role handed back to live scoring wakes a listening worker as it commits
+  // (the queue claims it at once, rather than on its next idle poll up to 30 s away).
+  await db.transaction(async tx => {
+    let returned = 0;
+    for (const task of tasks) {
+      const rows = await tx.update(schema.tasks)
+        .set({
+          status: "queued", lockedAt: null, lockedBy: null, attempts: Math.max(0, task.attempts - 1), error: why.slice(0, 2000),
+          ...(opts.live ? { payload: { ...task.payload, live: true } } : {}),
+          ...(opts.runAfter ? { runAfter: opts.runAfter } : {}),
+        })
+        .where(claimedBy(task))
+        .returning({ id: schema.tasks.id });
+      returned += rows.length;
+    }
+    if (opts.live && !opts.runAfter && returned) await notifyTaskWorkers(tx);
+  });
 }
 
 interface Collected {

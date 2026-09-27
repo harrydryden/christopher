@@ -25,21 +25,21 @@ Response classes today, the basis for this section's cache policy:
 **1.1 Keep per-account HTML and RSC uncacheable, and make a test fail if that ever changes.**
 - Mechanism: RFC 9111 `private` plus `no-store` on every authenticated page and every `RSC: 1` response. Vercel's CDN stores a function response only when it carries `s-maxage`, `CDN-Cache-Control` or `Vercel-CDN-Cache-Control` [I]. Next's `Vary` omits `Cookie`, which is safe only while pages stay `private, no-store`. Do not add `ETag`/304 to HTML, RSC or polls: a conditional GET still pays the full render to compute the hash, pages stream, and poll bodies are 61–149 B [M D].
 - Policy (load-bearing, CLAUDE.md): per-account data (`user_jobs`, decisions, settings, profiles, CVs, applications) is never cached across accounts, never held in a CDN or Service Worker, and never served from a replica (section 4, Evaluated and not recommended). Only shared catalogue bytes such as logos may be public.
-- Status: headers done [V]; guard not done: `scripts/smoke-web.mjs:195` fetches every page with a cookie but asserts no headers; route tests cover the API only.
+- Status: done [V] (commit a4f59e6): `scripts/smoke-web.mjs` asserts `private, no-store`, no `public`/`s-maxage`/CDN header and no `set-cookie` on every signed-in page, the `/cv` redirect and `RSC: 1` refetches of `/` and a company page (API answers: `no-store`); allow-list logo, `_next/static`, metadata icons.
 - Change: in `smoke-web.mjs`, for every authenticated page and one `RSC: 1` refetch, assert `cache-control` contains `private` and `no-store`, contains neither `public` nor `s-maxage`, and that no `set-cookie` is returned. Allow-list: the logo route, `_next/static`, metadata icons.
 - Impact: none on latency; it prevents one account's table being served to another.
 - Effort: S. Risk → guard: none.
 
 **1.2 Cache versioned company logos on Vercel's CDN, and answer 304 before reading the blob.**
 - Mechanism: on the versioned 200 path (`?v=` equals the capture time) add `CDN-Cache-Control: public, max-age=31536000, immutable` beside the existing browser `Cache-Control`; `max-age` alone is browser-only on Vercel [I]. The query string is in the cache key, so a re-capture changes the URL. Select `fetched_at` first and compare `if-none-match` before reading the `bytea`.
-- Status: partial [V]. Browser caching is done (`logo/route.ts:46`). Every CDN miss runs Edge middleware, a Node function, `routeUser()` (session join) and `readCompanyLogo` (bytea): 2 sequential DB round trips.
+- Status: done [V] (commit d6b4e3e): `CDN-Cache-Control: public, max-age=31536000, immutable` on the versioned 200 only; a request with `if-none-match` reads `fetched_at` alone (`companyLogoVersion`) and answers 304 without the blob; no validator still reads in one statement. Option A: middleware unchanged. Route tests for the 200/304/404 header sets; smoke stores a logo and checks 200 then 304.
 - Impact: estimate. A cold browser on `/` requests up to 50 lazy logos, about 15–20 above the fold. A hit removes the invocation and both round trips for every account after the first fetch per edge region, and stops logo requests competing for the 6-connection pool (3.3).
 - Option B (needs a policy decision): drop `routeUser()` and exclude `api/companies/*/logo` from the middleware matcher, so a hit costs zero invocations.
 - Effort: S. Risk → guard: a revoked session with a validly signed cookie can fetch a cached logo, which the route already allows ("any cache may hold it", `:43`); purge via Vercel or bump `fetchedAt` for a takedown. Emit the CDN header only on the versioned 200, never on 404 or 304; add a case beside `logo/route.test.ts`.
 
 **1.3 Measure the real fra1 to Render round trip once, then budget sequential waves by it.**
 - Mechanism: time `select 1` on a warm pooled connection and log it at each instance's cold start. Every Vercel to Render hop is the public External URL over TLS (`docs/DEPLOY.md:191`); there is no private network between the providers. The Edge middleware does HMAC only, no database (`middleware.ts`, `lib/session.ts`).
-- Status: region done [V]: `apps/web/vercel.json` pins `fra1`, `render.yaml` puts database and worker in `frankfurt`, and a production `/api/health` from `lhr1` executed in `fra1` in 126 ms using 228 MB (`docs/HOSTED-CAPACITY-2026-09-20.md:22`); the dashboard's `iad1` is the overridden default, which [EFFICIENCY-REVIEW.md](EFFICIENCY-REVIEW.md) recorded before `fra1` was pinned and [PERFORMANCE-REVIEW.md](PERFORMANCE-REVIEW.md) "Remaining" asked to confirm. RTT itself never measured.
+- Status: done [V] (commit 4b223ff): the interface pool logs `database_round_trip` (`ms` = min of 3 warm `select 1`, `samplesMs`, `endpoint`, `region`) once per instance after its first query. After: 0.4–0.5 ms locally; the fra1 figure is read from Vercel's logs after deploy.
 - Re-check [I]: `curl -sI https://<host>/api/health | grep -i x-vercel-id` should contain `fra1`.
 - Budget for a warm navigation, UK user (estimates except where marked):
 
@@ -57,7 +57,7 @@ Response classes today, the basis for this section's cache policy:
 **1.4 Add a static set of security headers, kept cache-neutral.**
 - Mechanism: a `headers()` rule for `/:path*` in `next.config.ts`: `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin` (`no-referrer` on `/share/:path*`, whose URL is the credential), `Content-Security-Policy: frame-ancestors 'none'` and a minimal `Permissions-Policy`. Never add `Vary` with them. Avoid a nonce CSP: it forces a per-request render; use `'self'` plus hashes or `strict-dynamic` without nonces.
 - HSTS: `*.vercel.app` is under the preloaded `.app` TLD, so there is no http to https round trip today. On a custom domain outside `.app`, send `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload` and submit it, which removes the 301 on typed URLs.
-- Status: not done [V]: no `headers()` in `next.config.ts`; only the logo route sets a CSP and `nosniff`.
+- Status: done [V] (commit bc88af8): nosniff, Referrer-Policy (`no-referrer` on `/share/*`), Permissions-Policy on every response; `frame-ancestors 'none'` and a Report-Only CSP ('self' + the hash of Next's bootstrap script) on every response but the logo, whose sandbox CSP a `headers()` value would otherwise replace. No Vary. Asserted in the smoke test. Enforcing the full CSP still needs a nonce or `'unsafe-inline'` for Next's per-response flight scripts.
 - Impact: about 0 on performance (a few hundred bytes on the first response, then header-compressed); the gain is security.
 - Effort: S. Risk → guard: a full CSP can break Next's inline bootstrap; ship `Content-Security-Policy-Report-Only` first and assert the headers in the smoke test.
 
@@ -175,7 +175,7 @@ Timings are local database time, `jit=off`, warm, on `ava_perf_bench` (1,000 `us
 
 **3.3 Pool settings: keep warm connections for two minutes and release them before Fluid suspends.**
 - Mechanism: in `packages/db/src/client.ts:180-191`, web pool on the pooled URL `idleTimeoutMillis: 120_000` (up to 300 s is safe: Render's PgBouncer `client_idle_timeout` is 86,400 s); wrap it with `attachDatabasePool(pool)` from `@vercel/functions`. Keep `keepAlive: true`, `connectionTimeoutMillis: 10_000`, `ssl: require`, and no startup parameters on 6432. A new connection costs TCP (1 RT) + `SSLRequest` (1 RT) + TLS 1.3 (1 RT) + PgBouncer SCRAM (about 2 RT).
-- Status: partial [V]. `max` 6 pooled / 3 direct with `WEB_DB_POOL_MAX` (`apps/web/lib/db.ts:6-38`) done; `idleTimeoutMillis` is 30 s everywhere; `@vercel/functions` is not a dependency. Fluid Compute is on (`docs/HOSTED-CAPACITY-2026-09-20.md:22`). Worker `max = (3 + 8) × 2 + 4 = 26` on the direct URL (`apps/worker/src/env.ts:60`) is right.
+- Status: done [V] (commit 6a06798): pooled `idleTimeoutMillis` 120 s, direct 30 s (`webPoolIdleTimeoutMs`), pool registered with `attachDatabasePool`; `keepAlive`, 10 s connect timeout and no timeouts on 6432 unchanged. Worker keeps 30 s.
 - Impact: estimate. 4–5 RT × 1–5 ms, 5–25 ms off the first navigation after each pause over 30 s, for up to 6 parallel connections; fewer half-dead sockets after a suspend.
 - Effort: S. Risk → guard: more idle client slots on PgBouncer (instances × 6 against `max_client_conn` 30,000, not a constraint, 4.1); `absorbConnectionError` (`client.ts:137`) already drops sockets the pooler closes; `poolStats()` sits in the slow-render log.
 
@@ -307,7 +307,7 @@ Production (read-only, 2026-09-27) [V]: Postgres 16 on `basic-256mb`, `shared_bu
   - Backends are: 93 via PgBouncer plus the worker's 26 direct = 119 > 100 usable (103 − 3 reserved).
   - PgBouncer keeps server connections for `server_idle_timeout` (default 600 s [I: not exposed by Render]), so after a web burst a worker reconnect, migration or `psql` can fail with `sorry, too many clients already` for up to 10 minutes.
   - About 67 simultaneous web transactions (12 instances × 6) reach it [I]; observed live peak 8 [M HOSTED-CAPACITY].
-- Status: partial [V]: pooled URL, pool width, no startup parameters on 6432 (`packages/db/src/client.ts:167`) done; tagging, alert and cap not.
+- Status: done [V] (commit b6c5aea): `application_name` `ava-web` / `ava-worker` / `ava-web-cron` via pg's option (a URL value wins); `databaseBackends()` exported from `@ava/db` for 5.5; cap 60 and alert 80 in DEPLOY.md. Separate role not done (M, Render permission unverified).
 - Impact: prevents an outage that hits every account at once. A scan that cannot connect is a failed scan, never a closure, because only a successful scan closes a role; but CV builds and claims stall.
 - Effort: S (tagging, alert), M (separate role). Risk → guard: a role limit fails web transactions first, which retry; `WEB_DB_POOL_MAX` stays the fast lever (DEPLOY.md step 5).
 
@@ -330,7 +330,7 @@ Production (read-only, 2026-09-27) [V]: Postgres 16 on `basic-256mb`, `shared_bu
   ALTER TABLE user_jobs  SET (autovacuum_vacuum_scale_factor = 0.05, autovacuum_analyze_scale_factor = 0.02);
   ```
   `tasks` rewrites indexed `status` on every claim and finish; at the default 0.2 on about 60,000 rows vacuum waits for 12,000 dead tuples, roughly 3 days of 1,000-company churn. `user_jobs` is rewritten on every rescore (`fit_score` is in `user_jobs_table_idx`).
-- Status: not done [V]: no `autovacuum_*` storage parameter in `packages/db/drizzle`.
+- Status: done [V] (commit 4c7a117): migration 0043, checked by `storage-parameters.test.ts`. After: a 60,000-row queue table with 4,000 dead status tuples was autovacuumed within 15 s tuned; the default table still held 4,000 dead 85 s later (threshold 1,700 vs 12,050).
 - Impact: scan-lane claim 88 buffers clean, 277 after 8,008 dead tuples, 92 after `VACUUM` [M]; claim cost stays flat through the daily fan-out (poll rate: 3.6).
 - Effort: S. Risk → guard: more vacuum I/O on a small instance, seconds per run at these sizes [I]; watch `select relname, last_autovacuum, n_dead_tup from pg_stat_user_tables`; revert with `ALTER TABLE … RESET (…)`.
 
@@ -351,7 +351,7 @@ Production (read-only, 2026-09-27) [V]: Postgres 16 on `basic-256mb`, `shared_bu
   - Set the project's Node.js version to 22.x: the dashboard shows 24.x, `apps/web/package.json` declares `"node": "22.x"` and the worker runs 22; `engines` applies only when the project setting does not override it.
   - Add `export const maxDuration = 30` to `api/cv/[id]/pdf`, `api/cv/preview`, `api/applications/[id]/pdf` and the `/cv/[id]` page (its `recordApplication` action renders a PDF), and `60` to `api/cv/library/imports` (up to 5 MB parsed).
   - Wrap `lib/auth.ts:36`'s `void db().update(sessions)…` as `after(() => …)`; Next 15's `after` maps to Vercel's `waitUntil`, as `app/login/actions.ts:96,125` already use.
-- Status: not done [V]: `api/cron` and `api/export.csv` have 60; the others inherit Fluid's 300 s. Region and tier (Standard 1 vCPU / 2 GB, Fluid) done (1.3).
+- Status: done [V] (commit aaeb29a): `maxDuration` 30 on the three PDF routes and `/cv/[id]`, 60 on `api/cv/library/imports`; session touch via `after()`; DEPLOY.md tells the operator to set the project's Node.js version to 22.x (a dashboard change, not made here).
 - Impact: a pathological document costs 30 s of GB-seconds, not 300; the hourly session write can no longer be lost when an instance freezes after the response.
 - Effort: S each. Risk → guard: 30 s is 10× the render limit in `cv-render-limit.ts`; the smoke test downloads a PDF.
 
@@ -369,13 +369,13 @@ Production (read-only, 2026-09-27) [V]: Postgres 16 on `basic-256mb`, `shared_bu
       limit $n)
     ```
   - Every reader takes only the newest snapshot per source (`handlers/scan.ts:1055`, `handlers/suggest-from-scans.ts:68`); the interface never selects it.
-- Status: not done [V]: live disk 1 GB, autoscaling off [M HOSTED-CAPACITY]; database 55 MB today [V, production check]. The hourly prune job is done.
+- Status: (b) done [V] (commit 5cb3b43), keeping the newest `ok` scan's snapshot as well, which `readLastOkSnapshot` reads; with `scans_snapshot_idx` (0043): clear 2,380 snapshots 622 → 109 ms, idle hour 339 → 0.6 ms on `ava_perf_infra`. Note: scans already keep at most 4 snapshots per source (`handlers/scan.ts:926`), so the 1.8 GB estimate overstated growth. (a) not done: a dashboard change; DEPLOY.md says so.
 - Impact: snapshots are the largest grower: at an assumed 20 KB × 1,000 sources × 90 days ≈ 1.8 GB, cut to ≈ 160 MB [I]. Measure first: `select count(*), pg_size_pretty(sum(pg_column_size(raw_snapshot))) from scans;`. A full disk stops every write, sign-ins included.
 - Effort: S each. Risk → guard: keeps the latest successful snapshot per source, which closure reuse and suggestions read; add a `maintenance.test.ts` case.
 
 **4.8 Set `jit = off` for the database.**
 - Mechanism: `ALTER DATABASE ava SET jit = off;` Do not set `idle_session_timeout`: it would kill PgBouncer's idle server connections.
-- Status: not done [V]. Impact: no captured plan crosses `jit_above_cost` (100,000; largest about 10,000) today; a catalogue-wide admin or export query at scale would pay 50–200 ms to compile [I]. Effort: S. Risk → guard: revert with `ALTER DATABASE ava RESET jit`.
+- Status: done [V] (commit 4c7a117): `ALTER DATABASE <current> SET jit = off` in 0043, skipped with a NOTICE when the migrating role does not own the database. Impact: no captured plan crosses `jit_above_cost` (100,000; largest about 10,000) today; a catalogue-wide admin or export query at scale would pay 50–200 ms to compile [I]. Effort: S. Risk → guard: revert with `ALTER DATABASE ava RESET jit`.
 
 **4.9 Leave `basic-256mb` at a stated threshold.**
 - Mechanism: move to `basic-1gb` (`shared_buffers` about 256 MB) when `select sum(heap_blks_hit)::float / nullif(sum(heap_blks_hit + heap_blks_read), 0) from pg_statio_user_tables` falls below 0.99 over a day, or `pg_total_relation_size('user_jobs') + pg_indexes_size('jobs')` exceeds about 150 MB (≈ 700 accounts at 1,000 views).

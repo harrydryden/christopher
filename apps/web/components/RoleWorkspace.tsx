@@ -6,7 +6,7 @@ import { buttonLinkClass } from "./Button";
 import { RolesTable } from "./RolesTable";
 import { RoleRefusalNotices } from "./RoleRefusalNotices";
 import { RolesFilterBar } from "./RolesFilterBar";
-import { appliedRoleCount, attachEvents, buildRoleRowVM, DEFAULT_SORT_DIR, fetchRecentEventsFor, fetchRolePage, fetchRoleCounts, filtersToQueryString, parseRolesFilters, resolveRoleView, roleTabFor, type RawSearchParams, type RolesFilters, type SortKey } from "@/lib/queries/jobs";
+import { appliedRoleCount, buildRoleRowVM, DEFAULT_SORT_DIR, fetchRolePage, fetchRoleCounts, filtersToQueryString, parseRolesFilters, resolveRoleView, roleTabFor, type RawSearchParams, type RolesFilters, type SortKey } from "@/lib/queries/jobs";
 import { listCompanyOptions } from "@/lib/queries/companies";
 import { pipelineCompany, pipelineStageCounts } from "@/lib/queries/applications";
 
@@ -58,10 +58,11 @@ export async function RoleWorkspace({ userId, searchParams, companyId }: { userI
   ]);
   // "Shortlisted 12 · 3 applied": of the roles you chose to pursue, the ones actually sent.
   const applied = appliedRoleCount(stageCounts);
-  const pageRows = [...result.visible, ...(archivedResult?.visible ?? [])];
-  const events = await fetchRecentEventsFor(userId, pageRows.map(row => row.job.id));
-  const rows = attachEvents(result.visible, events).map(row => buildRoleRowVM(row, new Date(), userId));
-  const archivedRows = attachEvents(archivedResult?.visible ?? [], events).map(row => buildRoleRowVM(row, new Date(), userId));
+  // A row's archive notes are the review panel's, loaded when it expands (`roleDetails`), so the
+  // page waits for no events read and ships none.
+  const now = new Date();
+  const rows = result.visible.map(row => buildRoleRowVM(row, now, userId));
+  const archivedRows = (archivedResult?.visible ?? []).map(row => buildRoleRowVM(row, now, userId));
   const query = `${filtersToQueryString(filters)}&view=${view}`;
   const href = (page: number) => `${path}?${query}${archivedResult && archivedResult.page > 1 ? `&archivedPage=${archivedResult.page}` : ""}&page=${page}#roles`;
   const archivedHref = (page: number) => `${path}?${query}${result.page > 1 ? `&page=${result.page}` : ""}&archivedPage=${page}#archived`;

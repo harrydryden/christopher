@@ -6,7 +6,7 @@ import { displayStatus, formatDuration, liveFor, type DisplayStatus } from "@ava
 import { cache } from "react";
 import { db } from "@/lib/db";
 import { companyLogoUrl } from "@/lib/company-icon";
-import { eventTypeLabel, relativeTime } from "@/lib/format";
+import { relativeTime } from "@/lib/format";
 
 export interface RoleCompany {
   id: string;
@@ -45,7 +45,6 @@ export interface RoleRow {
   stage: RoleStage;
   /** The newest application for it, or null when none was ever recorded. */
   applicationStatus: ApplicationStatus | null;
-  events: RoleEvent[];
 }
 
 const viewColumns = {
@@ -116,14 +115,14 @@ function baseRolesSelect(userId: string, summary = false, cursor: SQL<RoleCursor
 export async function fetchTableJobs(userId: string, archived = false, summary = false, limit?: number): Promise<RoleRow[]> {
   const query = baseRolesSelect(userId, summary).where(and(eq(userJobs.userId, userId), archived ? eq(roleStatusSql, "archived") : ne(roleStatusSql, "archived")));
   const rows = await (limit === undefined ? query : query.limit(limit));
-  return rows.map((r) => ({ ...r, events: [] as RoleEvent[] }));
+  return rows;
 }
 
 /** Fetch the large description payload only for the current page. */
 export async function fetchRoleDetails(userId: string, ids: string[]): Promise<RoleRow[]> {
   if (!ids.length) return [];
   const rows = await baseRolesSelect(userId).where(and(eq(userJobs.userId, userId), inArray(jobs.id, ids))).limit(ids.length);
-  return rows.map(row => ({ ...row, events: [] }));
+  return rows;
 }
 
 /**
@@ -166,8 +165,26 @@ export async function fetchRecentEventsFor(userId: string, jobIds: string[], per
   return map;
 }
 
-export function attachEvents(rows: RoleRow[], eventsByJob: Map<string, RoleEvent[]>): RoleRow[] {
-  return rows.map((r) => ({ ...r, events: eventsByJob.get(r.job.id) ?? [] }));
+/**
+ * The archive notes the review panel shows for one role ("Archived: No longer matches your
+ * criteria"), read when the row expands rather than for every row of every page. Of the role's
+ * newest few events — shared observations and this account's own, each a bounded probe as in
+ * `fetchRecentEventsFor` — the ones that put it away, newest first. Only the two payload fields a
+ * note says are read, never the whole payload.
+ */
+export async function fetchArchiveNotes(userId: string, jobId: string, recent = 6): Promise<string[]> {
+  const result = await db().execute(sql`
+    select e.action, e.reason from (
+      (select id, at, payload->>'action' as action, payload->>'reason' as reason from job_events
+        where job_id = ${jobId}::uuid and user_id is null order by at desc, id limit ${recent})
+      union all
+      (select id, at, payload->>'action' as action, payload->>'reason' as reason from job_events
+        where user_id = ${userId}::uuid and job_id = ${jobId}::uuid order by at desc, id limit ${recent})
+    ) e
+    order by e.at desc, e.id limit ${recent}`);
+  return (result.rows as Array<{ action: string | null; reason: string | null }>)
+    .filter((row) => row.action === "archived")
+    .map((row) => `Archived: ${row.reason ?? "Put away by you"}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -421,13 +438,6 @@ export interface RoleDecisionVM {
   createdTitle: string;
 }
 
-export interface RoleEventVM {
-  id: string;
-  type: string;
-  label: string;
-  title: string;
-}
-
 /**
  * What a missing fit score means, in the words the table shows instead of one em dash.
  *
@@ -511,7 +521,6 @@ export interface RoleRowVM {
   /** This account pasted this posting's URL: it is in the table whatever its gate said. */
   addedByYou: boolean;
   decision: RoleDecisionVM | null;
-  events: RoleEventVM[];
 }
 
 /**
@@ -569,7 +578,6 @@ export function buildRoleRowVM(row: RoleRow, now: Date = new Date(), viewerId?: 
     decision: row.decision
       ? { id: row.decision.id, decision: row.decision.decision, reason: row.decision.reason, createdLabel: relativeTime(row.decision.createdAt, now), createdTitle: row.decision.createdAt.toISOString() }
       : null,
-    events: row.events.map((e) => ({ id: e.id, type: e.type, label: e.payload.action === "archived" ? `Archived: ${e.payload.reason ?? "Put away by you"}` : e.payload.action === "unarchived" ? "Back: matches your criteria again" : e.payload.action === "restored" ? "Restored by you" : eventTypeLabel(e.type), title: `${relativeTime(e.at, now)} · ${e.at.toISOString()}` })),
   };
 }
 
@@ -733,7 +741,7 @@ export async function fetchRoleRows(userId: string, filters: RolesFilters, archi
   const rows = await baseRolesSelect(userId, true, cursor)
     .where(and(sql`${jobs.id} in (select page_keys.job_id from (${keysOfPage}) page_keys)`, where))
     .orderBy(...order).limit(limit);
-  return rows.map(row => ({ ...row, events: [] as RoleEvent[] }));
+  return rows;
 }
 
 /**
@@ -769,6 +777,8 @@ export interface RoleDetailsVM {
   cvQuote: CvQuoteVM | null;
   /** Why that build cannot be asked for yet — an unconfirmed address — or null when it can. */
   cvBlocked: string | null;
+  /** "Archived: …" for each recent event that put this role away, newest first (`fetchArchiveNotes`). */
+  archiveNotes: string[];
 }
 
 /**

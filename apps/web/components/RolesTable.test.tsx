@@ -37,7 +37,7 @@ function role(id: string, title: string): RoleRowVM {
     stage: "matched", applicationStatus: null, liveForText: "Live for 3 days", liveForTitle: "", seeded: false,
     fitScore: 72, scoreState: null, scoreStateText: null, fitVerdict: null, fitRationale: null, keywordTerms: [],
     locationOk: true, sourceType: "greenhouse", firstSeenLabel: "", firstSeenTitle: "", postedLabel: null,
-    postedTitle: null, closedLabel: null, closedTitle: null, addedByYou: false, decision: null, events: [],
+    postedTitle: null, closedLabel: null, closedTitle: null, addedByYou: false, decision: null,
   } as RoleRowVM;
 }
 const FIRST = role("11111111-1111-4111-8111-111111111111", "Head of Operations");
@@ -310,4 +310,31 @@ it("shows a refusal that lands after the table was replaced beside the new one, 
 
   act(() => button("Dismiss").click());
   expect(text()).not.toContain("Could not save Head of Operations");
+});
+
+it("shows a role's archive notes once its review panel has loaded them, and ships none with the row", async () => {
+  let resolve!: (value: unknown) => void;
+  const loading = new Promise(done => { resolve = done; });
+  actions.roleDetails.mockReturnValue(loading);
+  expect(Object.keys(FIRST)).not.toContain("events");
+  render([FIRST, SECOND]);
+  act(() => button(FIRST.title).click());
+  expect(actions.roleDetails).toHaveBeenCalledWith(FIRST.id);
+  expect(text()).not.toContain("Archived:");
+
+  await act(async () => {
+    resolve({
+      ok: true,
+      details: {
+        jobId: FIRST.id, description: "Runs twelve sites.", salaryText: null, department: null, employmentType: null,
+        keywordTerms: [], fitVerdict: null, fitRationale: null, locationReason: "Your filter names no location, so every location passes.",
+        cvQuote: null, cvBlocked: null, archiveNotes: ["Archived: No longer matches your criteria"],
+      },
+    });
+    await loading;
+  });
+  const note = [...container.querySelectorAll(`#role-review-${FIRST.id} p`)].find(el => el.textContent === "Archived: No longer matches your criteria");
+  expect(note).toBeTruthy();
+  // The other row, never opened, says nothing of it.
+  expect(container.querySelector(`#role-review-${SECOND.id}`)).toBeNull();
 });

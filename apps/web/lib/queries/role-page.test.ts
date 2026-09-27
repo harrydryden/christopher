@@ -143,8 +143,9 @@ it("reads the counts beside the page when the link names its view", async () => 
   expect(value).toBeTruthy();
   // The counts (which are also the page's count), the rows, the company list and the stage counts, all at once.
   expect(widest).toBeGreaterThanOrEqual(4);
-  // A whole tab is not counted twice: those four, then the page's events.
-  expect(count).toBe(5);
+  // A whole tab is not counted twice, and no events are read for the page: those four and nothing after.
+  expect(count).toBe(widest);
+  expect(count).toBe(4);
 });
 
 /** The first element under `node` whose props match, depth first. */

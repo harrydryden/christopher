@@ -87,7 +87,6 @@ describe("the stage a row carries", () => {
       decision: null,
       stage: "in_process",
       applicationStatus: "interview",
-      events: [],
     } as unknown as RoleRow;
     const vm = buildRoleRowVM(shortlisted, new Date("2026-09-19T00:00:00Z"));
     expect(vm.stage).toBe("in_process");
@@ -263,7 +262,7 @@ describe("what a blank score means", () => {
     const base = {
       job: { id: "job-1", title: "Operations Director", url: "https://acme.test/jobs/1", location: "London", locations: ["London"], remote: false, department: null, employmentType: null, salaryText: null, keywordTerms: [], fitScore: null, fitVerdict: null, fitRationale: null, status: "open", postedAt: null, firstSeenAt: new Date("2026-09-18T00:00:00Z"), closedAt: null, seeded: false, origin: "scan", addedBy: null, scoreState: "budget", scoreStateAt: now },
       company: { id: "company-1", name: "Acme", faviconUrl: null, logoFetchedAt: null, homepageUrl: "https://acme.test", domain: "acme.test" },
-      sourceType: "html", decision: null, stage: "matched", applicationStatus: null, events: [],
+      sourceType: "html", decision: null, stage: "matched", applicationStatus: null,
     } as unknown as RoleRow;
     const vm = buildRoleRowVM(base, now);
     expect(vm.scoreState).toBe("budget");

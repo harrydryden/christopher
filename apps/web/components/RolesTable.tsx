@@ -710,7 +710,7 @@ export function RolesTable({ rows: inputRows, hideCompany = false, keyboard = fa
                               <p className="text-13 text-muted">No description stored. Open the vacancy.</p>
                             ))}
                           </div>
-                          {row.events.filter(event => event.label.includes("archiv")).map(event => <p key={event.id} className="text-12 text-muted">{event.label}</p>)}
+                          {detail?.state === "ready" && detail.details.archiveNotes.map((note, i) => <p key={i} className="text-12 text-muted">{note}</p>)}
                           {/* A shortlisted role with no CV yet is built from here; everything else
                               keeps the link to the application that holds its CV. */}
                           {buildHere && detail?.state === "ready" && <BuildCvOffer jobId={row.id} details={detail.details} />}

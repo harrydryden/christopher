@@ -25,6 +25,12 @@ export interface WorkerVitals {
   rssMb: number;
   externalMb: number;
   uptimeSeconds: number;
+  /** Event-loop delay p99 since boot, when the worker reports it. */
+  eventLoopLagP99Ms?: number | null;
+  /** Queries of 250 ms or longer since boot, when the worker reports it. */
+  slowQueries?: number | null;
+  /** The worker's database pool at the report, when one was open. */
+  db?: { total: number; idle: number; waiting: number } | null;
 }
 
 /** The heartbeat as read from `settings`. Every field the older rows lack is null. */
@@ -133,6 +139,25 @@ export function workerStatusSentence(status: WorkerStatus): string | null {
 /** The badge tone for a state, in the four status roles the design system has. */
 export function workerStateTone(state: WorkerState): "green" | "amber" | "red" {
   return state === "healthy" ? "green" : state === "restarting" ? "amber" : "red";
+}
+
+/** Event-loop delay at which a ready callback is waiting long enough to notice: attention, not failure. */
+export const EVENT_LOOP_WARN_MS = 200;
+
+/**
+ * What the worker is waiting on besides memory: its event loop, its slow queries and its pool.
+ * `warn` when the loop's p99 is at the attention line or a query is waiting for a connection.
+ * Null for a worker that reports none of the three.
+ */
+export function waitSummary(vitals: WorkerVitals): { text: string; warn: boolean } | null {
+  const parts: string[] = [];
+  const lag = vitals.eventLoopLagP99Ms;
+  if (typeof lag === "number") parts.push(`event loop p99 ${lag} ms since boot`);
+  if (typeof vitals.slowQueries === "number") parts.push(`${vitals.slowQueries} ${vitals.slowQueries === 1 ? "query" : "queries"} of 250 ms or longer since boot`);
+  if (vitals.db) parts.push(`database pool ${vitals.db.total} open, ${vitals.db.idle} idle, ${vitals.db.waiting} waiting`);
+  if (!parts.length) return null;
+  const text = parts.join("; ");
+  return { text: text[0]!.toUpperCase() + text.slice(1) + ".", warn: (typeof lag === "number" && lag >= EVENT_LOOP_WARN_MS) || (vitals.db?.waiting ?? 0) > 0 };
 }
 
 /** "184 of 258 MB heap, 71%" — the reading the incident had nowhere to appear. */

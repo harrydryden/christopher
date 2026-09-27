@@ -1,0 +1,23 @@
+{
+  "$comment": "The audits' after figures (docs/performance/A-after.md, build fbaa385, the hundred-account fixture): statements per request (table 2), effective sequential round trips at +20 ms per packet with the production pool of 6 (table 2, last column), HTML gzip and RSC bytes (table 1), and one shortlist decision (section 5; statements include BEGIN and COMMIT). scripts/perf/run.mjs fails on one statement more, one round trip more, or 10 % more bytes. A change that adds one on purpose updates this file in the same pull request, with the reason in the commit.",
+  "pool": 6,
+  "delayMs": 20,
+  "pages": {
+    "/": { "statements": 14, "roundTrips": 4.4, "htmlGzip": 22117, "rscBytes": 90832 },
+    "/?view=auto-matched": { "statements": 14, "roundTrips": 3.8, "htmlGzip": 22151, "rscBytes": 90860 },
+    "/companies": { "statements": 14, "roundTrips": 3.5, "htmlGzip": 18416, "rscBytes": 99116 },
+    "/companies?tab=discover": { "statements": 14, "roundTrips": 3.9, "htmlGzip": 18442, "rscBytes": 99139 },
+    "/companies/<id>": { "statements": 26, "roundTrips": 7.6, "htmlGzip": 20519, "rscBytes": 93473 },
+    "/applications": { "statements": 18, "roundTrips": 5.9, "htmlGzip": 11414, "rscBytes": 28251 },
+    "/library": { "statements": 12, "roundTrips": 3.8, "htmlGzip": 11207, "rscBytes": 26362 },
+    "/cv/<draftId>": { "statements": 13, "roundTrips": 3.7, "htmlGzip": 10529, "rscBytes": 22077 },
+    "/suggestions": { "statements": 11, "roundTrips": 2.7, "htmlGzip": 7351, "rscBytes": 16003 },
+    "/settings": { "statements": 8, "roundTrips": 3.0, "htmlGzip": 11323, "rscBytes": 23768 },
+    "/learning": { "statements": 12, "roundTrips": 2.9, "htmlGzip": 12225, "rscBytes": 46069 },
+    "/health": { "statements": 12, "roundTrips": 2.8, "htmlGzip": 7023, "rscBytes": 15670 },
+    "/account": { "statements": 6, "roundTrips": 1.9, "htmlGzip": 7567, "rscBytes": 16362 },
+    "/api/work-status?scope=company": { "statements": 2, "roundTrips": 2.0 },
+    "/api/scan-status": { "statements": 3, "roundTrips": 2.1 }
+  },
+  "decision": { "requests": 1, "bytes": 92856, "statements": 29 }
+}

@@ -7,6 +7,7 @@
  * follows the company. What each person sees of the listing lives in `user_jobs`, one row per
  * follower and posting, created only once the posting passes that follower's gate.
  */
+import { withSpan } from "../otel";
 import { schema, enqueueTask, archiveNonMatches, isGateArchive, restoreGateArchive, GATE_RESTORE_EVENT, type Task } from "@ava/db";
 import {
   ats,
@@ -159,7 +160,8 @@ async function scanCompany(task: Task, deps: WorkerDeps): Promise<unknown> {
   const deferred: string[] = [];
   let retryAt: Date | null = null;
   for (const source of sources) {
-    const outcome = await scanSource(deps, company, source, settings, payload.scanRunId ?? null, { deferWhenHostBusy: retries < MAX_HOST_BUSY_DEFERRALS });
+    const outcome = await withSpan("scan.fetch", { "source.type": source.type }, () =>
+      scanSource(deps, company, source, settings, payload.scanRunId ?? null, { deferWhenHostBusy: retries < MAX_HOST_BUSY_DEFERRALS }));
     if (outcome.retryAt) {
       deferred.push(source.id);
       if (!retryAt || outcome.retryAt > retryAt) retryAt = outcome.retryAt;

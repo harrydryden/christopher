@@ -10,6 +10,9 @@
  *   pnpm --filter @ava/worker cli list           (companies, sources, followers, counts)
  *   pnpm --filter @ava/worker cli table          (the CLI account's roles table as text)
  *   pnpm --filter @ava/worker cli users          (accounts and roles)
+ *   pnpm --filter @ava/worker cli pgstat [--reset]
+ *                                                (the 20 statements that cost the database the most
+ *                                                time, from pg_stat_statements; --reset starts afresh)
  *   pnpm --filter @ava/worker cli record <draft-id> [--out <file>] [--routes <json>]
  *                                                (a live, paid rebuild of a draft, recorded for replay)
  *   pnpm --filter @ava/worker cli replay <draft-id> [--recordings <file> | --baseline <file>] [--routes <json>] [--out <report.json>]
@@ -25,7 +28,7 @@
  */
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { schema, enqueueTask, reevaluateGate, subscribeToCompany } from "@ava/db";
+import { schema, enqueueTask, formatStatementTotals, reevaluateGate, resetStatements, subscribeToCompany, topStatements } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import {
   dedupeKeyFor,
@@ -110,12 +113,12 @@ async function cliUser(deps: WorkerDeps) {
   return user;
 }
 
-const COMMANDS = new Set(["migrate", "probe", "add", "discover", "scan", "tick", "drain", "users", "list", "table", "record", "replay", "reencode-logos"]);
+const COMMANDS = new Set(["migrate", "probe", "add", "discover", "scan", "tick", "drain", "users", "list", "table", "record", "replay", "reencode-logos", "pgstat"]);
 
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (!command || !COMMANDS.has(command)) {
-    console.log("commands: migrate | probe <url> | add <url...> | discover <company> [url] | discover --all | scan [company] | tick | drain [n] | list | table | users | record <draft> [--out file] [--routes json] | replay <draft> [--recordings file | --baseline file] [--routes json] [--out report.json] | reencode-logos");
+    console.log("commands: migrate | probe <url> | add <url...> | discover <company> [url] | discover --all | scan [company] | tick | drain [n] | list | table | users | pgstat [--reset] | record <draft> [--out file] [--routes json] | replay <draft> [--recordings file | --baseline file] [--routes json] [--out report.json] | reencode-logos");
     return;
   }
   const env = readEnv();
@@ -252,6 +255,24 @@ async function main() {
           }));
         }
         reportReplay(report, flag(args, "out"));
+        break;
+      }
+      case "pgstat": {
+        // Printed to this terminal only: the text is PostgreSQL's normalised statement, cut to 160
+        // characters, and is never written to the worker's logs.
+        const totals = await topStatements(deps.db, 20);
+        if (!totals.available) {
+          console.log(totals.reason);
+          process.exitCode = 1;
+          break;
+        }
+        for (const line of formatStatementTotals(totals.rows)) console.log(line);
+        console.log(`\n${totals.rows.length} statement(s), by total execution time since the statistics were last reset.`);
+        if (args.includes("--reset")) {
+          const reset = await resetStatements(deps.db);
+          console.log(reset.ok ? "statistics reset: the next reading starts from now" : reset.reason);
+          if (!reset.ok) process.exitCode = 1;
+        }
         break;
       }
       case "users": {

@@ -67,7 +67,7 @@ test("the worker image runs under an init process as the image's unprivileged us
   const dockerfile = read("Dockerfile");
   assert.match(dockerfile, /apt-get install -y --no-install-recommends tini/);
   assert.match(dockerfile, /^ENTRYPOINT \["\/usr\/bin\/tini", "--"\]$/m);
-  assert.match(dockerfile, /^CMD \["node", "--import", "tsx", "src\/index\.ts"\]$/m);
+  assert.match(dockerfile, /^CMD \["node", "--import", "tsx", "--import", "\.\/src\/otel\.ts", "src\/index\.ts"\]$/m);
   const user = dockerfile.search(/^USER pwuser$/m);
   assert.ok(user > 0, "USER pwuser is set");
   assert.ok(user < dockerfile.search(/^CMD /m), "before the command runs");

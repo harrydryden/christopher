@@ -8,6 +8,7 @@ import { log } from "./log";
 import { finaliseScanRuns } from "./handlers/daily";
 import { CV_ABANDONED_MESSAGE, cvInterruptedFailure, onAbandon } from "./handlers/abandon";
 import { failOpenCvBuildStepsQuietly } from "./handlers/cv-journal";
+import { runMonitorSample } from "./handlers/monitor-sample";
 import { agePriorities, failSpentTasks, requeueStale } from "./queue";
 import { getInternal, setInternal } from "./settings";
 
@@ -133,6 +134,8 @@ export async function schedulerTick(deps: WorkerDeps, signal?: AbortSignal): Pro
     if (failed) log.warn("reconciled CV drafts nothing was building", { failed });
   });
   await prunePeriodically(deps);
+  // The operational signals no single process can read, every five minutes (handlers/monitor-sample.ts).
+  await claimPeriodic(deps, "lastMonitorSample", 300, async () => { await runMonitorSample(deps); });
 
   if (stopped()) return;
   // Ageing, once a minute and bounded, so that a task which keeps losing to newer higher-priority

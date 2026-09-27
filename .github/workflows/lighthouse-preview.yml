@@ -1,0 +1,41 @@
+name: Lighthouse on the preview
+
+# The second Lighthouse pass, on a Vercel preview deployment: real region, edge and compression,
+# which the CI job's local server cannot show. Off unless the repository variable
+# LHCI_PREVIEW_ENABLED is "true". It measures /login signed out, warnings only: no Preview database
+# is documented, and a session row must never be written to production (docs/PERFORMANCE-GUIDE.md 5.6).
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+
+jobs:
+  lighthouse-preview:
+    if: >-
+      vars.LHCI_PREVIEW_ENABLED == 'true'
+      && github.event.deployment_status.state == 'success'
+      && github.event.deployment_status.environment != 'Production'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Lighthouse, /login on the preview (warns)
+        run: node scripts/perf/lighthouse.mjs --preview "${{ github.event.deployment_status.environment_url }}"
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-preview
+          path: .lighthouseci/
+          retention-days: 14
+          if-no-files-found: ignore

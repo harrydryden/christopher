@@ -7,9 +7,11 @@ import {
   type CvBuildMotionStat,
   listHttpHostDaily,
   listWorkerEvents,
+  topStatements,
   totalAiSpend,
   type CvBuildCosts,
   type ScoredRoleCost,
+  type StatementTotals,
 } from "@ava/db";
 import {
   cvBuildSteps,
@@ -36,6 +38,7 @@ import { formatUsd } from "@/lib/format";
 import { foldOutboundTraffic, type HostTraffic } from "@/lib/outbound-traffic";
 import { db } from "@/lib/db";
 import { deriveWorkerStatus, type WorkerHeartbeat, type WorkerStatus, type WorkerVitals } from "@/lib/worker-status";
+import { histogramP75, VITAL_METRICS, type VitalMetric } from "@/lib/web-vitals";
 
 /** Companies one account follows; with no account, every company (the administrator's view). */
 function followedBy(userId?: string) {
@@ -370,6 +373,121 @@ export async function outboundTraffic(days = 7): Promise<HostTraffic[]> {
   return foldOutboundTraffic(rows, days);
 }
 
+/**
+ * The twenty costliest statements from pg_stat_statements, for the administrator's Operations page.
+ * A database without the extension, or a server that does not preload it, answers with the reason.
+ * Any other failure is also a reason rather than an error page: the card is diagnostics, and the
+ * rest of Operations must render whatever it says.
+ */
+export async function getTopStatements(): Promise<StatementTotals> {
+  try {
+    return await topStatements(db(), 20);
+  } catch {
+    return { available: false, reason: "The statement statistics could not be read." };
+  }
+}
+
+export type MonitorLevel = "ok" | "warn" | "fail";
+
+/** The worker's five-minute monitor sample (apps/worker/src/handlers/monitor-sample.ts), as Operations shows it. */
+export interface MonitorReading {
+  at: Date;
+  worker: { heapFraction: number | null; eventLoopLagP99Ms: number | null; dbWaiting: number | null } | null;
+  backends: { active: number; total: number; usable: number; fraction: number } | null;
+  oldestReadySeconds: number | null;
+  scans: { total: number; failed: number; failedShare: number | null } | null;
+  models: { calls1h: number; rateLimited1h: number; rateLimitedShare: number | null } | null;
+  slowQueriesPer15m: number | null;
+  levels: Partial<Record<"heap" | "eventLoop" | "poolWaiting" | "backends" | "oldestReady" | "scanFailures" | "modelRateLimited" | "slowQueries", MonitorLevel>>;
+}
+
+const LEVELS = new Set<MonitorLevel>(["ok", "warn", "fail"]);
+const record = (value: unknown): Record<string, unknown> | null => (value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null);
+
+/**
+ * The stored sample read defensively: the worker writes it and deploys separately, so any part it
+ * does not recognise is null rather than an error, and a sample without a readable time is none.
+ */
+export function readMonitorSample(stored: unknown): MonitorReading | null {
+  const value = record(stored);
+  const at = isoDate(value?.at);
+  if (!value || !at) return null;
+  const worker = record(value.worker);
+  const backends = record(value.backends);
+  const scans = record(value.scans);
+  const models = record(value.models);
+  const levels = record(value.levels) ?? {};
+  return {
+    at,
+    worker: worker ? { heapFraction: finite(worker.heapFraction), eventLoopLagP99Ms: finite(worker.eventLoopLagP99Ms), dbWaiting: finite(worker.dbWaiting) } : null,
+    backends: backends && finite(backends.active) !== null && finite(backends.usable) !== null
+      ? { active: finite(backends.active)!, total: finite(backends.total) ?? 0, usable: finite(backends.usable)!, fraction: finite(backends.fraction) ?? 0 }
+      : null,
+    oldestReadySeconds: finite(value.oldestReadySeconds),
+    scans: scans && finite(scans.total) !== null ? { total: finite(scans.total)!, failed: finite(scans.failed) ?? 0, failedShare: finite(scans.failedShare) } : null,
+    models: models && finite(models.calls1h) !== null ? { calls1h: finite(models.calls1h)!, rateLimited1h: finite(models.rateLimited1h) ?? 0, rateLimitedShare: finite(models.rateLimitedShare) } : null,
+    slowQueriesPer15m: finite(record(value.slowQueries)?.per15m),
+    levels: Object.fromEntries(Object.entries(levels).filter(([, level]) => LEVELS.has(level as MonitorLevel))) as MonitorReading["levels"],
+  };
+}
+
+/** The last monitor sample, or null when the task has not run (or the settings row cannot be read). */
+export async function getMonitorSample(): Promise<MonitorReading | null> {
+  try {
+    const [row] = await db().select({ value: settings.value }).from(settings).where(eq(settings.key, "internal:monitor")).limit(1);
+    return readMonitorSample(row?.value);
+  } catch {
+    return null;
+  }
+}
+
+export interface RouteVitals {
+  route: string;
+  /** Sampled page loads that reported anything for this route in the window. */
+  samples: number;
+  metrics: Partial<Record<VitalMetric, { p75: number; samples: number }>>;
+}
+
+/**
+ * The p75 of each Core Web Vital per route over the last `days` days, from the beacon's histograms:
+ * one statement that sums the buckets across the window, the percentile read in memory. Routes
+ * with the most samples first, at most `limit` of them. A table that does not exist yet (the
+ * interface can serve before the worker migrates) is no data, not an error.
+ */
+export async function getWebVitalsP75(days = 28, limit = 20): Promise<RouteVitals[]> {
+  let rows: Array<{ route: string; metric: string; bucket: number; count: number }>;
+  try {
+    const result = await db().execute<{ route: string; metric: string; bucket: number; count: string | number }>(sql`
+      select route, metric, bucket, sum(count)::bigint as count from web_vitals
+      where day >= (now() at time zone 'utc')::date - ${days}::int
+      group by route, metric, bucket`);
+    rows = result.rows.map((row) => ({ route: row.route, metric: row.metric, bucket: Number(row.bucket), count: Number(row.count) }));
+  } catch {
+    return [];
+  }
+  const byRoute = new Map<string, Map<VitalMetric, Array<{ bucket: number; count: number }>>>();
+  for (const row of rows) {
+    if (!(VITAL_METRICS as readonly string[]).includes(row.metric)) continue;
+    const metrics = byRoute.get(row.route) ?? new Map();
+    byRoute.set(row.route, metrics);
+    const buckets = metrics.get(row.metric as VitalMetric) ?? [];
+    metrics.set(row.metric as VitalMetric, buckets);
+    buckets.push({ bucket: row.bucket, count: row.count });
+  }
+  const out: RouteVitals[] = [];
+  for (const [route, metrics] of byRoute) {
+    const entry: RouteVitals = { route, samples: 0, metrics: {} };
+    for (const [metric, buckets] of metrics) {
+      const samples = buckets.reduce((sum, b) => sum + b.count, 0);
+      const p75 = histogramP75(metric, buckets);
+      if (p75 !== null) entry.metrics[metric] = { p75, samples };
+      entry.samples = Math.max(entry.samples, samples);
+    }
+    out.push(entry);
+  }
+  return out.sort((a, b) => b.samples - a.samples || a.route.localeCompare(b.route)).slice(0, limit);
+}
+
 /** Health's run history: one query for the runs, one for every run's counts. */
 export async function listRecentScanRuns(limit = 10, userId?: string) {
   const runs = await db().select().from(scanRuns).orderBy(desc(scanRuns.startedAt)).limit(limit);
@@ -403,7 +521,19 @@ function readVitals(value: unknown): WorkerVitals | null {
     rssMb: finite(v.rssMb) ?? 0,
     externalMb: finite(v.externalMb) ?? 0,
     uptimeSeconds: finite(v.uptimeSeconds) ?? 0,
+    // Optional: an older worker does not report them, and each is null rather than a guessed zero.
+    eventLoopLagP99Ms: finite(v.eventLoopLagP99Ms),
+    slowQueries: finite(v.slowQueries),
+    db: readPool(v.db),
   };
+}
+
+/** The worker's pool reading, or null when it reported none or a malformed one. */
+function readPool(value: unknown): WorkerVitals["db"] {
+  if (!value || typeof value !== "object") return null;
+  const pool = value as Record<string, unknown>;
+  const total = finite(pool.total), idle = finite(pool.idle), waiting = finite(pool.waiting);
+  return total === null || idle === null || waiting === null ? null : { total, idle, waiting };
 }
 
 /**
@@ -503,6 +633,7 @@ interface WorkerState {
   boot: WorkerEvent | null;
   lastCrash: WorkerEvent | null;
   events: WorkerEvent[];
+  monitor: MonitorReading | null;
 }
 
 /** A ledger row as `to_jsonb` spells it, read back into the row the table would have returned. */
@@ -535,13 +666,14 @@ async function readWorkerState(now: Date, eventLimit: number): Promise<WorkerSta
   try {
     const result = await db().execute(sql`select
       (select value from settings where key = 'internal:workerHeartbeat') as heartbeat,
+      (select value from settings where key = 'internal:monitor') as monitor,
       (select count(*)::int from worker_events where kind = 'crash_recovery' and at >= ${hour}) as restarts_hour,
       (select count(*)::int from worker_events where kind = 'crash_recovery' and at >= ${day}) as restarts_day,
       (select to_jsonb(e) from (select * from worker_events where kind = 'boot' order by at desc limit 1) e) as boot,
       (select to_jsonb(e) from (select * from worker_events where kind = 'crash_recovery' order by at desc limit 1) e) as crash,
       (select coalesce(jsonb_agg(to_jsonb(e) order by e.at desc), '[]'::jsonb)
         from (select * from worker_events order by at desc limit ${eventLimit}) e) as events`);
-    const row = result.rows[0] as { heartbeat: unknown; restarts_hour: number; restarts_day: number; boot: unknown; crash: unknown; events: unknown } | undefined;
+    const row = result.rows[0] as { heartbeat: unknown; monitor: unknown; restarts_hour: number; restarts_day: number; boot: unknown; crash: unknown; events: unknown } | undefined;
     return {
       heartbeat: readHeartbeat(row?.heartbeat),
       restartsLastHour: Number(row?.restarts_hour ?? 0),
@@ -549,11 +681,12 @@ async function readWorkerState(now: Date, eventLimit: number): Promise<WorkerSta
       boot: ledgerEvent(row?.boot),
       lastCrash: ledgerEvent(row?.crash),
       events: (Array.isArray(row?.events) ? row.events : []).flatMap((raw) => ledgerEvent(raw) ?? []),
+      monitor: readMonitorSample(row?.monitor),
     };
   } catch {
     // The interface can be serving before the worker has run the migration that creates the
     // ledger. The heartbeat is still read; the ledger is "nothing recorded".
-    return { heartbeat: await getWorkerHeartbeat(), restartsLastHour: 0, restartsLastDay: 0, boot: null, lastCrash: null, events: [] };
+    return { heartbeat: await getWorkerHeartbeat(), restartsLastHour: 0, restartsLastDay: 0, boot: null, lastCrash: null, events: [], monitor: await getMonitorSample() };
   }
 }
 
@@ -892,6 +1025,8 @@ export interface OperationsActivity {
   running: RunningTaskRow[];
   retrying: RetryingTaskRow[];
   events: WorkerEventRow[];
+  /** The worker's last monitor sample, read in the same statement as its heartbeat. */
+  monitor: MonitorReading | null;
   /** The address of an account the page names elsewhere (the spend table), or null. */
   accountEmail: (userId: string) => string | null;
 }
@@ -926,6 +1061,7 @@ export async function operationsActivity(
     running: runningTaskRows(running, names),
     retrying: retryingTaskRows(retrying, names),
     events: workerEventRows(state.events, names),
+    monitor: state.monitor,
     accountEmail: (userId) => names.get(subjectKey({ kind: "user", id: userId })) ?? null,
   };
 }

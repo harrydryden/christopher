@@ -20,12 +20,14 @@ import {
   bigint,
   boolean,
   customType,
+  date,
   index,
   integer,
   jsonb,
   pgTable,
   primaryKey,
   real,
+  smallint,
   text,
   timestamp,
   uniqueIndex,
@@ -1059,6 +1061,21 @@ export const httpHostDaily = pgTable("http_host_daily", {
   durationMsMax: integer("duration_ms_max").notNull().default(0),
   latencyBuckets: integer("latency_buckets").array().notNull().default(sql`'{0,0,0,0,0,0}'::integer[]`),
 }, (t) => [primaryKey({ columns: [t.day, t.host, t.via] }), index("http_host_daily_day_idx").on(t.day)]);
+
+/**
+ * Real-user Core Web Vitals as histograms: for each UTC day, route and metric, how many sampled page
+ * loads fell in each log-scaled bucket (apps/web/lib/web-vitals.ts defines the buckets). No event,
+ * account, session or URL is stored, only counts, so the table is bounded by routes x metrics x
+ * buckets per day. Written by `/api/performance`, read by Operations for the p75, and pruned after
+ * ninety days by the worker's monitor task.
+ */
+export const webVitals = pgTable("web_vitals", {
+  day: date("day", { mode: "string" }).notNull(),
+  route: text("route").notNull(),
+  metric: text("metric").notNull(),
+  bucket: smallint("bucket").notNull(),
+  count: integer("count").notNull().default(0),
+}, (t) => [primaryKey({ columns: [t.day, t.route, t.metric, t.bucket] })]);
 
 /**
  * One row per motion of a CV build: what it was doing, when, for how long, with what result.

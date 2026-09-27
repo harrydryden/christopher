@@ -352,6 +352,16 @@ checkout on a laptop against the production database, so it is careful in two wa
   prompt set"). `record` and a `replay` without `--recordings` call the provider and are paid; both
   refuse without `ANTHROPIC_API_KEY`.
 
+- **`pgstat` reads what the database spent its time on.** `cli pgstat` prints the twenty statements
+  with the most total execution time from `pg_stat_statements` (calls, total, mean and standard
+  deviation, rows, buffer hits and reads, hit rate, and the normalised statement cut to 160
+  characters) for this database only; `cli pgstat --reset` then starts the statistics afresh, so the
+  next reading covers a known window. Migration 0045 creates the extension where the role may and
+  skips it with a notice where it may not; the extension records nothing unless the server preloads
+  it (`shared_preload_libraries`, preset on Render). Either gap is said in so many words, by the CLI
+  and by the administrator's **Costliest statements** card on Operations, which shows the same
+  reading. The text goes to the terminal or the page, never to a log.
+
 Inside the worker's container (Render's Shell), run it without pnpm, from `/app/apps/worker`:
 `node --import tsx src/cli.ts users`.
 
@@ -361,15 +371,27 @@ Two workflows. **CI** (`.github/workflows/ci.yml`) runs on every pull request an
 every push to `main`; **Release** (`.github/workflows/release.yml`) runs only after CI has
 passed on `main`.
 
-CI is three jobs side by side, each on its own runner with its own throwaway PostgreSQL 16:
+CI's jobs run side by side, each on its own runner with its own throwaway PostgreSQL 16 (the worker suite's shuffled `order-independence` rerun is the one not listed here):
 
 | Job | What it runs | Typical |
 |---|---|---|
 | `check` | `pnpm -r typecheck`, then `pnpm -r test`, then the release and deployment script tests | ~2.5 min |
-| `browser-and-smoke` | Chromium install, the headless browser test, `pnpm db:migrate`, `pnpm smoke:web` (a production `next build`, sign-in, every page, and the CV workspace driven through Playwright) | ~2.5 min |
+| `browser-and-smoke` | Chromium install, the headless browser test, `pnpm db:migrate`, `pnpm smoke:web` (a production `next build`, sign-in, every page, and the CV workspace driven through Playwright), then `scripts/bundle-budget.mjs`: each route's first-load JavaScript, gzipped, against `scripts/bundle-budget.json` (a route over its budget, or a new chunk of 20 KB gzip entering a first load, fails; the table goes to the run summary) | ~2.5 min |
+| `lighthouse` | `pnpm db:migrate`, a production `next build` (reusing the Next.js cache), then `scripts/perf/lighthouse.mjs`: a disposable signed-in account seeded as the smoke run does, `/`, `/companies`, `/library` and `/cv/<id>` three times each on the desktop preset (LCP ≤ 2.5 s, CLS ≤ 0.1, TBT ≤ 200 ms and script transfer ≤ 134 KB on `/`, 145 KB elsewhere fail; time to interactive ≤ 3.8 s and server response ≤ 600 ms warn), then on mobile emulation as warnings only. The account is deleted in a `finally`; reports are the `lighthouse-reports` artifact. `timeout-minutes: 12`. A second pass on a Vercel preview (`lighthouse-preview.yml`, `/login` signed out, warnings only) runs only when the repository variable `LHCI_PREVIEW_ENABLED` is `true`, with `VERCEL_AUTOMATION_BYPASS_SECRET` as a secret | ~4 min (estimated) |
 | `worker-image` | `docker build` of the image Render deploys, then boots it against the job's database and waits for `/healthz`, and checks it runs as a non-root user under `tini` | ~4 min cold (estimated, not yet measured on a runner), less with the dependency layer cached |
 
 So a pull request is green in about four minutes of wall clock for about nine billed minutes.
+
+**The wall-clock budget is ten minutes**, and the performance gates are placed to stay inside it: the
+critical path is `check` (8m14s on run 36269891342, 6m49s of it `pnpm -r test`). The bundle budget
+runs inside `browser-and-smoke` after the build it reuses (under a second; that job had about 4.5
+minutes of slack against `check`), and `lighthouse` is a job of its own beside `check`, reusing the
+Next.js cache, capped at 12 minutes so a hung browser cannot hold a pull request longer than `check`
+would. The slow measurements are scheduled, never on a pull request: **Capacity probe**
+(`capacity-probe.yml`, Mondays 03:17 UTC, `scripts/benchmark-users.mjs`) and **Performance audit**
+(`perf-audit.yml`, Mondays 04:23 UTC, `scripts/perf/run.mjs` against `scripts/perf/baseline.json`).
+Both can be run by hand from the Actions tab, upload their reports as artifacts, and open (or comment
+on) an issue labelled `performance` when a scheduled run fails instead of blocking anything.
 `worker-image` is what catches a Dockerfile that no longer builds, a workspace manifest the image
 does not copy, a Playwright bump without the matching base image, or an import that fails only
 when the worker starts — all of which would otherwise surface first as a failed Render deploy
@@ -594,6 +616,7 @@ to answer a question after the fact, and the pages under **Admin › Operations*
 | `scans` | One row per scan: status, fetch method, postings, bytes fetched, requests made and how many came back 304, duration. | The scan handler | 90 days, keeping each source's last three and its last successful one |
 | `cv_build_steps` | One row per motion of a CV build — reading the Library, reserving the budget, the rubric, each writing attempt, each measurement and trim, each assessment batch, scoring, saving — with its attempt, timing, figures, cost, outcome and, when it stopped, the classified failure. The CV page narrates them; Operations aggregates them by motion and by failure kind. | The CV build handler | With the draft (deleted on cascade) |
 | `tasks` | The queue itself: type, payload, attempts, error, timings. | The queue | 30 days after finishing |
+| `web_vitals` | Real-user Core Web Vitals (LCP, INP, CLS, TTFB, FCP) as a histogram per UTC day, route and metric: counts in log-scaled buckets, from one signed-in page load in four, sent once when the tab is hidden. No event, account, session, address or URL; `/api/performance` refuses any key beyond the seven it defines. Operations shows the p75 per route over four weeks. | `/api/performance` | 90 days (the worker's monitor task) |
 
 Retention is enforced by the worker's hourly `maintainHistory`, each statement bounded so an hour's
 cleanup never holds a long transaction. `ai_calls` keeps thirteen months — a full year plus the
@@ -636,6 +659,27 @@ megabytes fresh every day, is the one to add an adapter for.
 events for what it has actually been doing. `/healthz` on the worker serves the same vitals for an
 uptime check. The runbook below covers a worker that is restarting.
 
+### Tracing (off until a collector exists)
+
+Both halves carry OpenTelemetry tracing that ships switched off. It starts only where
+`OTEL_SDK_DISABLED=false` **and** `OTEL_EXPORTER_OTLP_ENDPOINT` names an OTLP/HTTP collector
+(Grafana Cloud, Honeycomb, or Vercel's OTel integration on the interface); with either missing the
+code loads only the OpenTelemetry API, whose tracer does nothing.
+
+- **Interface** (`apps/web/instrumentation.ts`): `@vercel/otel` with service name `ava-web` and a
+  trace-id ratio sampler, `OTEL_TRACES_SAMPLER_ARG` defaulting to `0.1`. Next.js contributes its
+  route, render and fetch spans. Set the variables in Vercel › Settings › Environment Variables.
+- **Worker** (`apps/worker/src/otel.ts`, preloaded by the image's `node --import tsx --import
+  ./src/otel.ts src/index.ts`): the Node SDK with the pg instrumentation
+  (`enhancedDatabaseReporting` off, so statements appear without their values) and the undici
+  instrumentation, parent-based 10 % sampling, a batch processor holding at most 512 spans, and three
+  spans of its own: `task.run` (type, attempt, ready wait), `model.call` (model, call site, stage,
+  token and cache-read counts, outcome) and `scan.fetch` (source type). Log lines written inside a
+  sampled trace carry its `traceId`. Set the variables on the Render service.
+- **Never an attribute:** an account id, email, CV text, prompt, answer or statement parameter.
+- After enabling it on the worker, watch Operations › Alert signals' heap line for a week: the
+  instance is 512 MB and the span queue is bounded, but the SDK is not free.
+
 ### Why it is shaped this way
 
 The unit of observation is the external dependency, because that is where this system fails:
@@ -649,7 +693,7 @@ is the length of the question "how did this vendor behave last spring".
 
 ### What is deliberately not here
 
-No metrics stack — no Prometheus, no time-series database, no alerting rules. For one worker and
+No metrics stack — no Prometheus, no time-series database. Alert thresholds live in the operational check (see Alert ownership), and tracing is present but off (above). For one worker and
 one interface, a table queried by a page is less to run and easier to reason about than a scrape
 target. Product analytics (PostHog or similar) and an error tracker (Sentry or similar) are
 separate, later additions: they answer what people do and which exceptions are thrown, which
@@ -762,6 +806,47 @@ or above 85%, oldest ready task beyond its service target, overdue daily scans, 
 database storage above 70% or connections near the provider limit, and unexpected AI spend. Record
 the delivery channel, primary/backup owner, acknowledgement target and escalation action for each
 signal. An Admin › Operations page that nobody is assigned to inspect is evidence, not an alert.
+
+**The thresholds.** The scheduled operational check (`operational-status.yml`, every 15 minutes, three
+samples of the worker's `/status` 15 s apart) enforces these; `OPERATIONAL_THRESHOLDS` in
+`scripts/release-checks.mjs` holds them. A *fail* line fails the run; *attention* prints under
+"Operational attention" and never fails it. The database-wide figures come from the worker's
+`monitor_sample` step, which the scheduler runs every five minutes and stores in
+`settings['internal:monitor']`; `/status` serves it as `monitor` and Operations › Alert signals shows
+it with the level the worker graded each line at.
+
+| Signal | Attention | Fail | Read from |
+|---|---|---|---|
+| Worker heap fraction | ≥ 75 % in 2 of 3 samples | ≥ 85 % in 2 samples | `/status` `vitals.heapFraction` |
+| Event-loop delay p99 (since boot) | ≥ 200 ms | ≥ 1,000 ms in 2 samples | `vitals.eventLoopLagP99Ms` |
+| Worker pool waiting | > 0 in 1 sample | > 0 in 2 samples | `vitals.db.waiting` |
+| Active Postgres connections | ≥ 60 % of usable | ≥ 80 % | monitor: `pg_stat_activity` client backends not idle, against `max_connections` less the reserved |
+| Oldest ready task | ≥ 5 min | ≥ 15 min | `metrics.oldest_seconds` |
+| Today's failed scans | ≥ 10 % | ≥ 25 % of at least 10 scans | monitor: `scans.status <> 'ok'` in today's runs |
+| Model calls rate-limited, last hour | ≥ 5 % | ≥ 20 % of at least 10 calls, or an outage group | monitor: `ai_calls.error` naming 429, 529, a rate limit or overload |
+| Worker slow queries | Δ ≥ 20 per 15 min | Δ ≥ 100 | monitor: the heartbeat's `slowQueries`, one process at a time; the check's own samples as a lower bound |
+| Monitor sample age | ≥ 20 min | none | monitor: `at` |
+| Overdue companies, discovery, crash recoveries, queue growth, restarts | as before | as before | `metrics` |
+
+The two-sample rule and the 20-minute deploy grace are kept, so a rollout does not page anyone.
+Disk (70 % / 85 %) and PgBouncer client connections have no reading the worker can take: they are
+Render notifications, below.
+
+**Where each alert arrives.** Two channels, both configured outside this repository:
+
+- **GitHub, for the operational check.** A failed scheduled run of *Operational status* emails the
+  repository's watchers who have Actions notifications on. The alert owner sets, in GitHub ›
+  Settings › Notifications › Actions, "Notify me: only failed workflows" with email (and the mobile
+  app, if used), and watches the repository with at least "Custom › Actions". GitHub sends a
+  scheduled workflow's failure to the last person who edited its cron, so re-save
+  `operational-status.yml` from the owner's account if that is someone else. Record the owner and
+  a backup here once set.
+- **Render, for the platform.** In the Render dashboard › the worker service › Settings ›
+  Notifications (or the workspace default under Workspace › Notifications), send *deploy failed*,
+  *service unhealthy* (the `/healthz` check failing) and *instance restarted / out of memory* to the
+  owner's email or a Slack channel. On the Postgres instance, send *disk usage* at 70 % and 85 % and
+  *connections* near the plan limit where the plan offers them; where it does not, the active
+  connections line above is the nearest reading.
 
 ## When something is wrong
 

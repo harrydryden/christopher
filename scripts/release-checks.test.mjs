@@ -10,11 +10,13 @@ import {
   operationalAttentionMessage,
   operationalSuccessMessage,
   operationalWarnings,
+  readMonitor,
   readOperationalSample,
   readReleaseHealth,
   requiredOperationalConfig,
   requiredReleaseConfig,
   sameWorkerInputs,
+  slowQueryDelta,
   workerIdentity,
 } from "./release-checks.mjs";
 
@@ -240,6 +242,132 @@ test("new telemetry cannot disappear or become invalid and silently pass", () =>
   response.metrics.providerOutageGroups1h = 0;
   response.metrics.spendMonthUsd = Number.NaN;
   assert.throws(() => readOperationalSample(response), /spendMonthUsd/);
+});
+
+const statusBody = (vitals = {}) => ({
+  ok: true, workerId: "worker-a",
+  metrics: {
+    ready: 0, running: 0, oldest_seconds: 0, overdueCompanies: 0, overdueDiscovery: 0,
+    crashRecoveries1h: 0, crashRecoveries24h: 0, providerCalls1h: 0, providerSuccesses1h: 0, providerFailures1h: 0,
+    providerOutageGroups1h: 0, spend24hUsd: 0, spendMonthUsd: 0, accountsAtOrOverBudget: 0,
+  },
+  vitals: { heapFraction: 0.4, uptimeSeconds: 100, ...vitals, db: { waiting: 0, ...vitals.db } },
+});
+
+test("a worker that does not report event-loop lag, slow queries or pool totals still passes", () => {
+  const sample = readOperationalSample(statusBody());
+  for (const key of ["eventLoopLagP99Ms", "slowQueries", "dbTotal", "dbIdle"]) assert.equal(key in sample, false, key);
+  assert.deepEqual(operationalFailures([sample, sample, sample]), []);
+  assert.deepEqual(operationalWarnings([sample, sample, sample]), []);
+  assert.equal(slowQueryDelta([sample, sample]), null);
+});
+
+test("event-loop lag, slow queries and pool totals are read when reported, and refused when malformed", () => {
+  const sample = readOperationalSample(statusBody({ eventLoopLagP99Ms: 12, slowQueries: 3, db: { total: 4, idle: 3, waiting: 0 } }));
+  assert.deepEqual({ lag: sample.eventLoopLagP99Ms, slow: sample.slowQueries, total: sample.dbTotal, idle: sample.dbIdle }, { lag: 12, slow: 3, total: 4, idle: 3 });
+  assert.throws(() => readOperationalSample(statusBody({ eventLoopLagP99Ms: -1 })), /eventLoopLagP99Ms/);
+  assert.throws(() => readOperationalSample(statusBody({ slowQueries: 1.5 })), /slowQueries/);
+  assert.throws(() => readOperationalSample(statusBody({ db: { total: "4" } })), /dbTotal/);
+});
+
+test("event-loop lag is attention at 200 ms and fails at a second in two samples", () => {
+  const lag = ms => healthy({ eventLoopLagP99Ms: ms });
+  assert.deepEqual(operationalFailures([lag(20), lag(30), lag(40)]), []);
+  assert.deepEqual(operationalWarnings([lag(20), lag(30), lag(40)]), []);
+  assert.deepEqual(operationalFailures([lag(20), lag(250), lag(250)]), []);
+  assert.match(operationalWarnings([lag(20), lag(250), lag(250)])[0], /event-loop delay p99 since boot is 250 ms/);
+  assert.deepEqual(operationalFailures([lag(1_200), lag(300), lag(300)]), [], "one stalled sample is not sustained");
+  assert.match(operationalFailures([lag(1_200), lag(1_000), lag(300)])[0], /event-loop delay p99 is 1200 ms, at or above 1000 ms in 2 samples/);
+});
+
+test("slow queries are compared within one process: attention at 20, a failure at 100, a restart resets the count", () => {
+  const at = (slowQueries, extra = {}) => healthy({ slowQueries, ...extra });
+  assert.equal(slowQueryDelta([at(5), at(9), at(12)]), 7);
+  assert.deepEqual(operationalWarnings([at(5), at(9), at(12)]), []);
+  assert.match(operationalWarnings([at(5), at(15), at(25)])[0], /^20 queries took 250 ms or longer during the check/);
+  assert.deepEqual(operationalFailures([at(5), at(15), at(25)]), [], "attention never fails the run");
+  assert.match(operationalFailures([at(0), at(60), at(100)])[0], /^100 queries took 250 ms or longer/);
+  assert.deepEqual(operationalWarnings([at(0), at(60), at(100)]).filter(w => /queries took/.test(w)), [], "a failure is not also attention");
+  // A replacement process starts its counter from nought: the old one's total is not a burst.
+  assert.equal(slowQueryDelta([at(500, { workerId: "old", uptimeSeconds: 900 }), at(3, { workerId: "new", uptimeSeconds: 5 }), at(4, { workerId: "new", uptimeSeconds: 20 })]), 1);
+  assert.equal(slowQueryDelta([at(500, { uptimeSeconds: 900 }), at(3, { uptimeSeconds: 5 })]), null, "the same id with a younger uptime restarted");
+});
+
+test("heap, a single pool wait and a five-minute-old task are attention below their failures", () => {
+  assert.deepEqual(operationalWarnings([healthy({ heapFraction: 0.76 }), healthy({ heapFraction: 0.5 }), healthy({ heapFraction: 0.74 })]), [], "one warm sample is not sustained");
+  const warm = [healthy({ heapFraction: 0.76 }), healthy({ heapFraction: 0.8 }), healthy({ heapFraction: 0.5 })];
+  assert.deepEqual(operationalFailures(warm), []);
+  assert.match(operationalWarnings(warm)[0], /^worker heap is at or above 75% in 2 samples/);
+  assert.deepEqual(operationalWarnings([healthy({ heapFraction: 0.9 }), healthy({ heapFraction: 0.9 })]).filter(w => /heap/.test(w)), [], "a failure is not also attention");
+  const oneWait = [healthy(), healthy({ dbWaiting: 1 }), healthy()];
+  assert.deepEqual(operationalFailures(oneWait), []);
+  assert.match(operationalWarnings(oneWait)[0], /waited for a database connection in 1 sample/);
+  const stale = [healthy(), healthy({ ready: 2, oldestSeconds: 6 * 60 })];
+  assert.deepEqual(operationalFailures(stale), []);
+  assert.match(operationalWarnings(stale)[0], /oldest ready task has waited 6 minutes/);
+});
+
+const monitorBody = (overrides = {}) => ({
+  at: "2026-09-27T12:00:00.000Z",
+  worker: null,
+  backends: { active: 12, total: 30, usable: 97, fraction: 0.124 },
+  oldestReadySeconds: 0,
+  scans: { since: "2026-09-27", total: 40, failed: 1, failedShare: 0.025 },
+  models: { calls1h: 50, rateLimited1h: 0, rateLimitedShare: 0 },
+  slowQueries: { per15m: 2, history: [] },
+  webVitalsPruned: 0,
+  levels: {},
+  ...overrides,
+});
+const NOW = Date.parse("2026-09-27T12:02:00.000Z");
+const withMonitor = overrides => readOperationalSample({ ...statusBody(), monitor: monitorBody(overrides) });
+
+test("the monitor's sample is optional, and read when a worker serves it", () => {
+  assert.equal("monitor" in readOperationalSample(statusBody()), false);
+  assert.equal("monitor" in readOperationalSample({ ...statusBody(), monitor: null }), false);
+  assert.equal("monitor" in readOperationalSample({ ...statusBody(), monitor: { at: "not a date" } }), false, "an unreadable sample is no sample, never a failure");
+  const sample = withMonitor();
+  assert.deepEqual(sample.monitor, readMonitor(monitorBody()));
+  assert.deepEqual(operationalFailures([sample, sample]), []);
+  assert.deepEqual(operationalWarnings([sample, sample], OPERATIONAL_THRESHOLDS, NOW), []);
+});
+
+test("active backends, scan failures, model rate limits and slow queries warn and fail at the guide's lines", () => {
+  const judge = overrides => {
+    const sample = withMonitor(overrides);
+    return { failures: operationalFailures([sample, sample]), warnings: operationalWarnings([sample, sample], OPERATIONAL_THRESHOLDS, NOW) };
+  };
+  let result = judge({ backends: { active: 60, total: 70, usable: 97, fraction: 0.619 } });
+  assert.deepEqual(result.failures, []);
+  assert.match(result.warnings[0], /^60 of 97 usable Postgres connections are active \(62%; attention at 60%\)/);
+  result = judge({ backends: { active: 80, total: 90, usable: 97, fraction: 0.825 } });
+  assert.match(result.failures[0], /the gate fails at 80%/);
+  assert.deepEqual(result.warnings, []);
+
+  result = judge({ scans: { since: "2026-09-27", total: 40, failed: 5, failedShare: 0.125 } });
+  assert.deepEqual(result.failures, []);
+  assert.match(result.warnings[0], /^13% of today's 40 scans did not succeed \(attention at 10%\)/);
+  assert.match(judge({ scans: { since: "2026-09-27", total: 40, failed: 12, failedShare: 0.3 } }).failures[0], /30% of today's 40 scans/);
+  result = judge({ scans: { since: "2026-09-27", total: 4, failed: 2, failedShare: 0.5 } });
+  assert.deepEqual(result.failures, [], "two failures in four scans is attention, not an outage");
+  assert.match(result.warnings[0], /50% of today's 4 scans/);
+
+  result = judge({ models: { calls1h: 100, rateLimited1h: 6, rateLimitedShare: 0.06 } });
+  assert.deepEqual(result.failures, []);
+  assert.match(result.warnings[0], /6% of the last hour's 100 model calls were refused as rate-limited or overloaded/);
+  assert.match(judge({ models: { calls1h: 100, rateLimited1h: 25, rateLimitedShare: 0.25 } }).failures[0], /25% of the last hour's 100 model calls/);
+  assert.deepEqual(judge({ models: { calls1h: 3, rateLimited1h: 3, rateLimitedShare: 1 } }).failures, []);
+
+  result = judge({ slowQueries: { per15m: 20, history: [] } });
+  assert.deepEqual(result.failures, []);
+  assert.match(result.warnings[0], /counted 20 queries of 250 ms or longer in fifteen minutes \(attention at 20\)/);
+  assert.match(judge({ slowQueries: { per15m: 150, history: [] } }).failures[0], /counted 150 queries/);
+});
+
+test("a monitor sample twenty minutes old is attention: the task that takes it has stopped", () => {
+  const sample = withMonitor({ at: "2026-09-27T11:40:00.000Z" });
+  assert.deepEqual(operationalFailures([sample, sample]), []);
+  assert.match(operationalWarnings([sample, sample], OPERATIONAL_THRESHOLDS, NOW)[0], /monitor sample is 22 minutes old/);
 });
 
 /** A throwaway repository whose history is main, then a branch merged with a merge commit. */

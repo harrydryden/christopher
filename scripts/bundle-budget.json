@@ -1,0 +1,19 @@
+{
+  "$comment": "First-load JS per route, gzip level 9, in bytes: A-after (docs/performance/A-after.md §4) plus about 3 %. Checked by scripts/bundle-budget.mjs in CI after the smoke build. Raise a figure in the pull request that needs it, so the diff records the decision. largeChunks is how many chunks of largeChunkBytes gzip or more a route's first load may hold (today the two root runtime chunks); a new one entering a first load fails even inside the byte budget.",
+  "sharedRoot": 104000,
+  "routes": {
+    "/cv/[id]": 138000,
+    "/companies/[id]": 130000,
+    "/library": 129000,
+    "/": 128000,
+    "/applications": 123000,
+    "/suggestions": 120000,
+    "/settings": 117000,
+    "/companies": 117000,
+    "*": 115000
+  },
+  "largeChunkBytes": 20480,
+  "largeChunks": {
+    "*": 2
+  }
+}

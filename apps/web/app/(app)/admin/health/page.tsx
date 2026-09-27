@@ -11,11 +11,12 @@ import { PageHeader } from "@/components/PageHeader";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { requireAdmin } from "@/lib/auth";
 import { RefusalNotice } from "@/components/RefusalNotice";
+import { MonitorCard, StatementsCard, WebVitalsCard } from "./monitoring";
 import { db } from "@/lib/db";
 import { totalAiUsage } from "@/lib/ai-usage";
 import { formatBytes, formatCount, formatDelta, formatDuration, formatLatency, formatPercent, formatStepDuration, formatUsd, formatUsdPrecise, relativeTime, shortDate } from "@/lib/format";
 import { hostNeedsAttention } from "@/lib/outbound-traffic";
-import { governorSummary, heapSummary, workerStateTone, HEAP_WARN_FRACTION } from "@/lib/worker-status";
+import { governorSummary, heapSummary, waitSummary, workerStateTone, HEAP_WARN_FRACTION } from "@/lib/worker-status";
 import {
   getAiUsage,
   getCvBuildCosts,
@@ -25,6 +26,8 @@ import {
   getCvDriftRates,
   getQueueCounts,
   getScoredRoleCost,
+  getTopStatements,
+  getWebVitalsP75,
   listCompaniesWithNoSource,
   listFailedTasks,
   listLargestScanInputs,
@@ -36,6 +39,9 @@ import {
 } from "@/lib/queries/health";
 
 export const dynamic = "force-dynamic";
+
+/** The window the real-user vitals card reads: four weeks, enough samples for a p75 on the busier routes. */
+const VITALS_DAYS = 28;
 
 /** The three states, in the words the status line uses. */
 const WORKER_STATE_LABEL = { healthy: "healthy", restarting: "restarting", stopped: "stopped" } as const;
@@ -57,7 +63,7 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
   // Budgets belong to accounts and each has its own window; this page is the deployment's report,
   // so it counts the calendar month that everybody's budget resets on.
   const since = aiBudgetWindowStart(now, null);
-  // Nineteen statements in three groups of at most eight, rather than every card's queries at once
+  // Twenty-three statements in groups of at most eight, rather than every card's queries at once
   // into a pool of three connections, where the ones still waiting after ten seconds fail the page.
   // The worker and the queue first; the activity names its subjects and the spend table's accounts
   // in one statement once the usage has been read.
@@ -86,7 +92,8 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
     getCvBuildFailureKinds(30),
   ]);
   // Then how the builds are trending: the week-by-week bill and the rates that drift first.
-  const [cvWeeks, cvDrift] = await Promise.all([getCvBuildWeeks(12), getCvDriftRates(30)]);
+  // With the database's own account of what it spent its time on.
+  const [cvWeeks, cvDrift, statements, vitals] = await Promise.all([getCvBuildWeeks(12), getCvDriftRates(30), getTopStatements(), getWebVitalsP75(VITALS_DAYS)]);
   const { status, crash, running, retrying, events } = activity;
   const totals = totalAiUsage(usage);
   // Every call since the month began, whoever it was for: the usage table's own total.
@@ -126,6 +133,17 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
         ) : (
           <p className="mt-2 text-14 text-muted">This worker has not reported a memory reading; deploy a release that sends vitals with its heartbeat.</p>
         )}
+        {(() => {
+          const waits = heartbeat?.vitals ? waitSummary(heartbeat.vitals) : null;
+          return waits && (
+            <p className={`mt-2 text-14 ${waits.warn ? "text-warn" : ""}`}>
+              {waits.text}
+              {waits.warn
+                ? " A loop delay of 200 ms or a query waiting for a connection is attention; the operational check fails at a second of delay, or waits, in two samples."
+                : " A long synchronous step shows here as loop delay before it shows anywhere else."}
+            </p>
+          );
+        })()}
         {heartbeat && <p className="mt-2 text-14 text-muted">
           {heartbeat.workerId && <>Worker <code>{heartbeat.workerId}</code>. </>}
           {heartbeat.commit && <>Release <code>{heartbeat.commit.slice(0, 7)}</code>. </>}
@@ -138,6 +156,8 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
         <p className="mt-2 text-14">95% of completed tasks in the last day took at most {Math.round(metrics.p95_seconds)} seconds. {metrics.overdueCompanies} companies have no successful scan in 24 hours; {metrics.overdueDiscovery} discovery sources are over a day late.</p>
         <p className="mt-2 text-14">{formatUsd(metrics.reservedUsd)} is held by calls in flight, against the budgets of the accounts that asked for them.</p>
       </Card>
+
+      <MonitorCard sample={activity.monitor} now={now} />
 
       <Card title="Last crash recovery">
         {!crash ? (
@@ -683,6 +703,10 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
           </Table>
         )}
       </Card>
+
+      <WebVitalsCard routes={vitals} days={VITALS_DAYS} />
+
+      <StatementsCard totals={statements} />
 
       <Card title="Queue">
         {queueCounts.length === 0 ? (

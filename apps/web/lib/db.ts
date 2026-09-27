@@ -1,5 +1,5 @@
 import { attachDatabasePool } from "@vercel/functions/db-connections";
-import { createDb, renderEndpoint } from "@ava/db/client";
+import { createDb, isTransactionPooledUrl } from "@ava/db/client";
 export type Db = ReturnType<typeof createDb>["db"];
 let cached: Db | null = null;
 
@@ -9,14 +9,7 @@ export const DIRECT_POOL_MAX = 3;
 export const POOLED_POOL_MAX = 6;
 
 /** PgBouncer's endpoint: Render's port 6432, or a host named as a pooler. */
-function isPooledUrl(url: string): boolean {
-  if (renderEndpoint(url) === "pooled") return true;
-  try {
-    return new URL(url).hostname.split(".")[0]!.endsWith("-pooler");
-  } catch {
-    return false;
-  }
-}
+const isPooledUrl = isTransactionPooledUrl;
 
 /**
  * How many connections one instance's pool may open.

@@ -35,6 +35,14 @@ export interface CreateDbOptions {
    * pays (docs/DEPLOY.md).
    */
   reportRoundTrip?: boolean;
+  /**
+   * Whether a statement given a name (Drizzle's `.prepare(name)`) is prepared under it on the
+   * connection. Defaults to `namedStatementsFor(connectionString)`: yes on a direct endpoint, no
+   * through a transaction pooler, where the connection that parsed it is not the one the next
+   * transaction is handed, and the statement then "does not exist". Off, a named statement is sent
+   * unnamed, exactly as an unnamed one is.
+   */
+  namedStatements?: boolean;
 }
 
 /** A statement that took `SLOW_QUERY_MS` or longer, identified by the start of its text (parameters are never part of it). */
@@ -66,6 +74,35 @@ export function renderEndpoint(connectionString: string): "pooled" | "direct" | 
 
 export function isRenderPooledUrl(connectionString: string): boolean {
   return renderEndpoint(connectionString) === "pooled";
+}
+
+/** A transaction pooler's endpoint: Render's PgBouncer on 6432, or a host named as a pooler (`…-pooler.…`). */
+export function isTransactionPooledUrl(connectionString: string): boolean {
+  if (isRenderPooledUrl(connectionString)) return true;
+  try {
+    return new URL(connectionString).hostname.split(".")[0]!.endsWith("-pooler");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether named statements may be kept on this endpoint's connections. Not through a transaction
+ * pooler: the worker's claim is named (apps/worker/src/queue.ts), and the interface's cron fallback
+ * runs that claim on the interface's pooled URL, where PgBouncer before 1.21, or with
+ * `max_prepared_statements = 0`, loses it between transactions
+ * (`scripts/pgbouncer-prepared-probe.mjs`).
+ */
+export function namedStatementsFor(connectionString: string): boolean {
+  return !isTransactionPooledUrl(connectionString);
+}
+
+/** A query's arguments without the statement name, when its first argument is a plain config that carries one. */
+function withoutStatementName(args: unknown[]): unknown[] {
+  const config = args[0] as { name?: unknown; submit?: unknown } | null;
+  if (!config || typeof config !== "object" || !config.name || typeof config.submit === "function") return args;
+  const { name: _name, ...unnamed } = config;
+  return [unnamed, ...args.slice(1)];
 }
 
 let warnedDirectEndpoint = false;
@@ -253,10 +290,12 @@ export function createDb(connectionString: string, options: CreateDbOptions = {}
   const reportSlow = options.onSlowQuery ?? ((query: SlowQuery) => logLine("info", "slow_database_query", { ...query }));
   pool.on("error", (error, client) => absorbConnectionError(error, client));
   if (options.reportRoundTrip) pool.once("release", () => reportFirstRoundTrip(pool, connectionString));
+  const named = options.namedStatements ?? namedStatementsFor(connectionString);
   pool.on("connect", client => {
     client.on("error", error => absorbConnectionError(error, client));
     const original = client.query.bind(client);
-    client.query = ((...args: unknown[]) => {
+    client.query = ((...given: unknown[]) => {
+      const args = named ? given : withoutStatementName(given);
       const started = performance.now();
       let reported = false;
       const finish = () => {

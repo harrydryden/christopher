@@ -1,19 +1,27 @@
 /**
  * How the Library talks about how well a block is evidenced: the words, the ordering and the lines.
  *
- * Deliberately free of the scorer. `packages/core`'s `library-review` reaches `node:crypto` through
- * the quote anchoring it shares with the CV assessment, so it cannot be loaded in a browser — and
- * the Library editor is a client component that has to say, live as somebody tags a row, what that
- * job is still missing. So the shapes and the sentences live here, the scoring stays in core, and
- * `cv-library-reviews.ts` is where the two meet on the server.
+ * Deliberately free of the entry scorer. `packages/core`'s `library-review` reaches `node:crypto`
+ * through the quote anchoring it shares with the CV assessment, so it cannot be loaded in a browser
+ * — and the Library editor is a client component that has to say, live as somebody types and tags
+ * a row, what that row is still missing. So the shapes and the sentences live here, the arithmetic
+ * stays in core (`@ava/core/evidence-rubric` is the browser-safe half of it: the marks, the
+ * checklists and `scoreRowAgainst`), and `cv-library-reviews.ts` is where the stored reviews meet
+ * this on the server.
  *
  * Nothing here gates anything. A block rated None is still active evidence if the person says so.
  */
 import { EVIDENCE_FACETS_BY_NEED, EVIDENCE_FACET_LABELS, evidenceRows, rowFacets, type EvidenceFacet } from "@ava/core/cv-helpers";
 import type { CvLibrary } from "@ava/core/cv";
-import type { EvidenceMark } from "@ava/core/evidence-rubric";
 // Types only: the scorer they belong to reaches `node:crypto` and never reaches the browser.
-import type { EvidenceRating, LibraryReviewSource, LibraryRowSignal } from "@ava/core/library-review";
+import type { EvidenceRating, LibraryReviewSource } from "@ava/core/library-review";
+import {
+  EVIDENCE_MARK_SPECS,
+  detectEvidenceMarks,
+  scoreRowAgainst,
+  scoredAsLine,
+  type EvidenceMark,
+} from "@ava/core/evidence-rubric";
 
 type CvEntry = CvLibrary["entries"][number];
 
@@ -33,16 +41,17 @@ export interface EvidencePrompt {
 
 /**
  * One reviewed row, as the inputs to its score rather than the number: the browser scores it live
- * (`scoreRowAgainst`) against the tags on screen, so re-tagging re-scores without a round trip.
+ * against the tags on the screen, so re-tagging a row re-scores it without waiting for a review.
  */
 export interface EvidenceRowView {
   row: string;
-  /** The person's own tags for the row, as saved. */
+  /** The person's own tags for the row when it was reviewed. */
   tagged: EvidenceFacet[];
-  /** The rubric marks the review found in the row's wording; empty when the row was not verified. */
+  /** The marks the review says the wording earns, across every type; none when unverified. */
   marks: EvidenceMark[];
-  /** What the review read the row as serving: the tags for the baseline, the model's reading otherwise. */
+  /** What the review reads the row as serving: the tags, or the model's own classification. */
   reviewFacets: EvidenceFacet[];
+  /** Whether the review's quote of the row was found in the row. */
   verified: boolean;
 }
 
@@ -136,30 +145,70 @@ export function evidenceByEntry(evidence: LibraryEvidence): Map<string, Evidence
   return new Map(evidence.entries.map(entry => [entry.entryId, entry]));
 }
 
-/** What each of a row's four signals is called in the score cell's explanation. */
-const SIGNAL_LABELS: Readonly<Record<LibraryRowSignal, string>> = {
-  typed: "has a type",
-  specific: "specific",
-  quantified: "has a number",
-  outcomeLinked: "tied to an outcome",
-};
+/** What is still missing for one of the types a row is scored as. */
+export interface RowGuidanceGroup {
+  facet: EvidenceFacet;
+  /** The type as the Type column names it. */
+  label: string;
+  /** One line to act on per missing mark, in the order the type's checklist reads. */
+  asks: string[];
+}
+
+/** What a row's score cell shows, and what its panel says when opened. */
+export interface RowGuidance {
+  /** 0–100, or null when the row has no type and so nothing it could be short of. */
+  score: number | null;
+  heading: string;
+  /** Only what is missing, grouped by type; nothing about what the row already has. */
+  missing: RowGuidanceGroup[];
+  footer: string;
+}
+
+const SELECT_TYPE_FOOTER = "Choose one or more types in the Type column; the row is scored against what each type needs.";
 
 /**
- * The score cell's explanation: what the number measures, which of the four signals this row has
- * and which it lacks, and whose judgement it is. Read by a pointer's hover and a screen reader.
+ * A row's score and what it still needs, against the types on the screen now.
+ *
+ * The marks are the review's when the row's saved text is the text on the screen, and otherwise
+ * the rules baseline read from the wording as typed — so the cell follows the person as they type
+ * and tag, and the full review's judgement stands exactly as long as it describes this wording.
+ * The number is `scoreRowAgainst`'s; nothing here invents one.
  */
-export function rowScoreTitle(view: EvidenceRowView | undefined, source: LibraryReviewSource, evaluating = false): string {
-  if (!view) return "Not scored yet. Rows are scored from the saved library: save it, then Re-score for the full review.";
-  const signals = (Object.keys(SIGNAL_LABELS) as LibraryRowSignal[]);
-  const has = signals.filter(signal => view.signals[signal]).map(signal => SIGNAL_LABELS[signal]);
-  const lacks = signals.filter(signal => !view.signals[signal]).map(signal => SIGNAL_LABELS[signal]);
-  const by = source === "model" ? "From the full review." : evaluating ? "From your own tags while the full review runs." : "From your own tags and wording; Re-score for the full review.";
-  return [
-    `Row evidence ${view.score}/100: 25 each for having a type, being specific, having a number and being tied to an outcome.`,
-    has.length ? `Has: ${has.join(", ")}.` : "",
-    lacks.length ? `Missing: ${lacks.join(", ")}.` : "",
-    by,
-  ].filter(Boolean).join(" ");
+export function rowGuidance({ text, facets, view, source, evaluating }: {
+  /** The row as it is on the screen, keyed as the saved library keys it. */
+  text: string;
+  /** The row's types as they are on the screen. */
+  facets: readonly EvidenceFacet[];
+  view: EvidenceRowView | undefined;
+  source: LibraryReviewSource;
+  evaluating: boolean;
+}): RowGuidance {
+  if (!facets.length) {
+    const read = view?.reviewFacets.length && source === "model" ? ` The full review reads this row as ${scoredAsLine(view.reviewFacets)}.` : "";
+    return { score: null, heading: "Select type", missing: [], footer: SELECT_TYPE_FOOTER + read };
+  }
+  // The review's marks stand only for the wording they were read from, and only when the review
+  // could tie them to it; otherwise the baseline reads the row as it is on the screen.
+  const reviewed = !!view && view.row === text && view.verified;
+  const marks = reviewed ? view.marks : detectEvidenceMarks(text);
+  const { score, byFacet } = scoreRowAgainst(marks, facets);
+  const scoredAs = scoredAsLine(facets);
+  const missing = byFacet
+    .filter(item => item.missing.length)
+    .map<RowGuidanceGroup>(item => ({
+      facet: item.facet,
+      label: EVIDENCE_FACET_LABELS[item.facet],
+      asks: item.missing.map(mark => EVIDENCE_MARK_SPECS[mark].ask),
+    }));
+  const by = reviewed && source === "model"
+    ? "From the full review."
+    : evaluating ? "From your own wording while the full review runs." : "From your own wording; Re-score for the full review.";
+  return {
+    score,
+    heading: `${score}/100 · Scored as ${scoredAs}`,
+    missing,
+    footer: missing.length ? by : `Nothing missing for ${scoredAs}. ${by}`,
+  };
 }
 
 /** Whether the rows on screen are the rows a score was computed over. */

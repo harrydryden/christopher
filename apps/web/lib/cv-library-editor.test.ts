@@ -186,9 +186,12 @@ it("offers the re-score once saved rows have changed since the last review, and 
   expect(html).toMatch(/sticky top-0[^"]*border-b-2 border-line bg-bg[\s\S]*Rows changed since the last review\.[\s\S]*>Re-score</);
   expect(html).not.toContain("Save library");
   expect(html).toContain("Scored from your own tags. Re-score for the full review.");
-  // One score per row, with what it measures in its title.
-  expect(html).toMatch(/title="Row evidence 0\/100: [^"]*"><span[^>]*>0</);
-  expect(html).toMatch(/title="Row evidence 100\/100: [^"]*"><span[^>]*>100</);
+  // One score cell per row, scored against the row's own types: an untyped row asks for one, a
+  // typed row is a button that opens what it is missing. No hover text: the guidance is a click.
+  expect(html).toMatch(/<button type="button" aria-label="Select a type for row 1"[^>]*>[\s\S]*?Select type<\/span><\/button>/);
+  expect(html).toMatch(/<button type="button" aria-label="Score 50 of 100 for row 2: show what is missing" aria-expanded="false"[^>]*>/);
+  expect(html).not.toContain("Row evidence");
+  expect(html).not.toMatch(/<button[^>]*aria-label="Score [^"]*"[^>]*title=/);
 
   // Never saved: nothing to re-score.
   expect(renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 0, evidence }))).not.toContain("Rows changed since the last review");

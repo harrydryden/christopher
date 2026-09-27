@@ -5,7 +5,7 @@
  */
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
-import { createDb, poolErrorCount, poolStats, serverTimeouts, timeRoundTrip, type SlowQuery } from "./client";
+import { createDb, namedStatementsFor, poolErrorCount, poolStats, serverTimeouts, timeRoundTrip, type SlowQuery } from "./client";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
 // A second pool plays the operator (or the failover) that ends the first pool's connections.
@@ -233,5 +233,36 @@ describe("the round trip to the database", () => {
       writes.mockRestore();
       await Promise.all([quiet.pool.end(), first.pool.end(), second.pool.end()]);
     }
+  });
+});
+
+describe("named statements", () => {
+  /** How many statements named `named_statement_probe` the pool's one connection holds after running one. */
+  const namedOnConnection = async (namedStatements?: boolean) => {
+    const { db, pool } = createDb(DATABASE_URL, { max: 1, ...(namedStatements === undefined ? {} : { namedStatements }) });
+    try {
+      await db.select({ one: sql<number>`1` }).from(sql`(select 1) as t`).prepare("named_statement_probe").execute();
+      const { rows } = await db.execute<{ n: number }>(sql`select count(*)::int as n from pg_prepared_statements where name = 'named_statement_probe'`);
+      return rows[0]!.n;
+    } finally {
+      await pool.end();
+    }
+  };
+
+  it("are prepared on a direct connection, once per connection", async () => {
+    expect(await namedOnConnection()).toBe(1);
+  });
+
+  it("are sent unnamed when the pool says so: a transaction pooler loses them between transactions", async () => {
+    expect(await namedOnConnection(false)).toBe(0);
+  });
+
+  it("are off by default on a transaction pooler's URL: Render's 6432, or a host named as a pooler", () => {
+    expect(namedStatementsFor("postgres://u:p@dpg-abc.frankfurt-postgres.render.com:6432/db")).toBe(false);
+    expect(namedStatementsFor("postgres://u:p@dpg-abc.frankfurt-postgres.render.com/db?port=6432")).toBe(false);
+    expect(namedStatementsFor("postgres://u:p@ep-cool-name-pooler.eu-central-1.aws.neon.tech/db")).toBe(false);
+    expect(namedStatementsFor("postgres://u:p@dpg-abc.frankfurt-postgres.render.com:5432/db")).toBe(true);
+    expect(namedStatementsFor("postgres://u:p@dpg-abc-a:5432/db")).toBe(true);
+    expect(namedStatementsFor(DATABASE_URL)).toBe(true);
   });
 });

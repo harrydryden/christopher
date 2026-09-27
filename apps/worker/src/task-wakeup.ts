@@ -42,6 +42,7 @@ export class TaskWakeup {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private waiters = new Set<() => void>();
   private connected = false;
+  private wakes = 0;
 
   constructor(private readonly connectionString: string) {}
 
@@ -54,8 +55,18 @@ export class TaskWakeup {
     void this.connect();
   }
 
-  /** Resolves after `ms`, or as soon as a notification (or a reconnect) arrives. */
-  wait(ms: number): Promise<void> {
+  /**
+   * How many wakes there have been. A slot reads it before it claims and hands it to `wait`: a
+   * notification delivered while the claim ran (for an enqueue whose commit that claim's snapshot
+   * could not see) woke nobody, since nobody was waiting, and must not be slept through.
+   */
+  get generation(): number {
+    return this.wakes;
+  }
+
+  /** Resolves after `ms`, or as soon as a notification (or a reconnect) arrives, or at once if one has since `since`. */
+  wait(ms: number, since?: number): Promise<void> {
+    if (since !== undefined && since !== this.wakes) return Promise.resolve();
     return new Promise(resolve => {
       const done = () => { clearTimeout(timer); this.waiters.delete(done); resolve(); };
       const timer = setTimeout(done, ms);
@@ -66,6 +77,7 @@ export class TaskWakeup {
 
   /** Wake every waiting slot. */
   wake(): void {
+    this.wakes++;
     for (const waiter of [...this.waiters]) waiter();
   }
 

@@ -152,6 +152,30 @@ it("answers /status with the queue and workload in one reading, and reuses it fo
   }, { readMetrics, now: () => clock });
 });
 
+it("leaves roles waiting for their batch out of the ready queue the release gate reads", async () => {
+  const { workloadMetrics } = await import("@ava/db");
+  const ago = (m: number) => new Date(Date.now() - m * 60_000);
+  await db.execute(sql`delete from settings where key in ('scoringMode', 'scoringBatchMinutes')`);
+  try {
+    await db.insert(schema.settings).values({ key: "scoringMode", value: "batch" });
+    await db.insert(schema.tasks).values({ type: "score_job", payload: { userId: "u", jobId: "j" }, runAfter: ago(40) });
+    let metrics = await workloadMetrics(db);
+    // Waiting for the collector by design: neither ready nor old.
+    expect(metrics.ready).toBe(0);
+    expect(metrics.oldest_seconds).toBe(0);
+    await db.insert(schema.tasks).values({ type: "score_job", payload: { userId: "u", jobId: "k", live: true }, runAfter: ago(20) });
+    metrics = await workloadMetrics(db);
+    expect(metrics.ready).toBe(1);
+    expect(metrics.oldest_seconds).toBeGreaterThanOrEqual(20 * 60 - 5);
+    await db.execute(sql`delete from settings where key = 'scoringMode'`);
+    metrics = await workloadMetrics(db);
+    expect(metrics.ready).toBe(2);
+    expect(metrics.oldest_seconds).toBeGreaterThanOrEqual(40 * 60 - 5);
+  } finally {
+    await db.execute(sql`delete from settings where key = 'scoringMode'`);
+  }
+});
+
 it("serves the monitor task's last sample on /status, and null before one has been taken", async () => {
   await db.execute(sql`delete from settings where key = 'internal:monitor'`);
   await serve(async base => {

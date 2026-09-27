@@ -83,7 +83,8 @@ the same learning loop.
 
    **The arithmetic.** The database allows 103 backends (`max_connections`), three of them reserved
    for superusers. The worker holds up to `2 × (WORKER_CONCURRENCY + CV_CONCURRENCY) + 4` = 26 at
-   the supported three general slots and eight CV slots. On the direct endpoint every warm interface instance holds up to 3 more, so
+   the supported three general slots and eight CV slots in its pool, and one more outside it: the
+   connection that LISTENs for new tasks (27 in all). On the direct endpoint every warm interface instance holds up to 3 more, so
    about 30 instances (fewer during a rollout, when old and new are both warm, or with the cron
    fallback's own pool of 6) exhaust the database, and every page fails with "too many clients" for
    every account at once. Through PgBouncer an instance's connections are clients, which hold no
@@ -93,7 +94,7 @@ the same learning loop.
    the worker, migrations and your own `psql`.
 
    **Backends, not client slots, are the budget.** PgBouncer may open up to 93 backends for the
-   interface while the worker holds up to 26 directly: 119 against 100 usable. After a burst of
+   interface while the worker holds up to 27 directly: 120 against 100 usable. After a burst of
    interface traffic PgBouncer keeps its server connections for its `server_idle_timeout` (600 s by
    default; Render does not expose it), so for up to ten minutes a worker reconnect, a migration or
    your `psql` can fail with "sorry, too many clients already". A scan that cannot connect is a
@@ -600,7 +601,7 @@ scans all fail at once, until someone changes the plan by hand.
 - Watch the disk figure on the database's Metrics page, and treat 70% as the point to add storage.
   Nothing in the product alerts on it yet; add it to the alert list below.
 - Connections are a separate budget from disk: the worker opens up to `2 × (WORKER_CONCURRENCY + CV_CONCURRENCY) + 4` direct
-  connections (26 at three general and eight CV slots), and the interface should use the pooled URL, as the connection
+  connections (26 at three general and eight CV slots) plus its one listening connection, and the interface should use the pooled URL, as the connection
   guidance above describes.
 
 ## Observability
@@ -927,7 +928,7 @@ image runs `node --enable-source-maps --import ./dist/otel.mjs dist/index.mjs` (
 deployed slot counts, the idle process measured 161–236 MB from source and 117–118 MB compiled (one
 outlier at 205 MB). The tests, the CLI and the drills still run from source through `tsx`, so the
 compiled entry point is exercised by the `worker-image` CI job, which boots the image on every pull
-request; `pnpm --filter @ava/worker build` then `node dist/index.mjs` reproduces it locally. The
+request; `pnpm --filter @ava/worker build` then `pnpm --filter @ava/worker start` reproduces it locally. The
 browser is closed after five idle minutes and launched again on the next render (about 100 MiB
 outside V8 between bursts, a second or two on the first render after a quiet spell).
 

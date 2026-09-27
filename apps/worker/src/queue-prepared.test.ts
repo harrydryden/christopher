@@ -42,10 +42,17 @@ it("claims through two named statements whatever the lane, with the lanes as arr
   sent.length = 0;
   for (const lane of ["cv", "scan", "interactive", "background", "all"] as const) await claimTask(db, `w#${lane}`, lane, ["verify_company"]);
   const claims = sent.filter(q => /update "tasks"/.test(q.text));
-  expect(claims.map(q => q.name)).toEqual(["claim_task_lane", "claim_task_lane", "claim_task_lane", "claim_task_open", "claim_task_open"]);
+  // The fairness step only where a CV build can be claimed: the CV lane, and the interactive and
+  // unlimited lanes of a deployment whose general slots take builds too.
+  expect(claims.map(q => q.name)).toEqual(["claim_task_lane_fair", "claim_task_lane", "claim_task_lane_fair", "claim_task_open", "claim_task_open_fair"]);
+  expect(claims.filter(q => /fair as/.test(q.text)).map(q => q.name)).toEqual(["claim_task_lane_fair", "claim_task_lane_fair", "claim_task_open_fair"]);
   // One text per name: nothing about the lane is spelled into the statement.
-  for (const name of ["claim_task_lane", "claim_task_open"]) expect(new Set(claims.filter(q => q.name === name).map(q => q.text)).size).toBe(1);
+  for (const name of new Set(claims.map(q => q.name))) expect(new Set(claims.filter(q => q.name === name).map(q => q.text)).size).toBe(1);
   expect(claims[1]!.values).toContainEqual(["verify_company"]);
+  // A general slot beside CV slots leaves builds out, and so never pays for the fairness step.
+  sent.length = 0;
+  await claimTask(db, "w#general", "all", ["generate_cv"]);
+  expect(sent.filter(q => /update "tasks"/.test(q.text)).map(q => q.name)).toEqual(["claim_task_open"]);
   // And the lanes still claim what they claimed: the scan lane its scan, the CV lane its build,
   // the background lane what is neither.
   const claimed = await db.execute<{ type: string; locked_by: string }>(sql`select type, locked_by from tasks order by locked_by`);

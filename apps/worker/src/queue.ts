@@ -202,7 +202,11 @@ export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all
   // unlimited one (`all`, `background`) reads `tasks_status_run_after_idx`. Folding both into one
   // text with `cardinality($1) = 0 or …` would give the generic plan neither index. Batch-mode
   // scoring adds a fixed condition, so it is a statement of its own too.
-  const kind = `${include.length ? "claim_task_lane" : "claim_task_open"}${options.batchScoring ? "_batch" : ""}`;
+  // The fairness step orders the waiting CV builds, so it is built only where a CV build can be
+  // claimed: the CV slots, or a general slot of a deployment without them. A scan-lane claim used
+  // to scan the CV backlog on every poll for a head that could never be a build.
+  const fairness = (include.length === 0 || include.includes("generate_cv")) && !exclude.includes("generate_cv");
+  const kind = `${include.length ? "claim_task_lane" : "claim_task_open"}${fairness ? "_fair" : ""}${options.batchScoring ? "_batch" : ""}`;
   const typeFilter = include.length
     ? sql`type = any(${sql.placeholder("include")}::text[]) and type <> all(${sql.placeholder("exclude")}::text[])`
     : sql`type <> all(${sql.placeholder("exclude")}::text[])`;
@@ -239,7 +243,7 @@ export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all
         and (dedupe_key is null or not exists (select 1 from tasks r where r.dedupe_key = tasks.dedupe_key and r.status = 'running'))
       order by priority asc, run_after asc, created_at asc
       limit 1 for update skip locked
-    ), fair as (
+    )${fairness ? sql`, fair as (
       select t.id from tasks t join head h on h.type = 'generate_cv'
       where t.type = 'generate_cv' and t.status = 'queued' and t.priority = h.priority
         and t.run_after <= now() and t.attempts < t.max_attempts
@@ -249,7 +253,8 @@ export async function claimTask(db: Db, workerId: string, lane: QueueLane = "all
         t.run_after asc, t.created_at asc
       limit 1 for update of t skip locked
     )
-    select coalesce((select id from fair), (select id from head)))`)
+    select coalesce((select id from fair), (select id from head))` : sql`
+    select id from head`})`)
     .returning()
     .prepare(kind)
     .execute(include.length ? { workerId, include, exclude } : { workerId, exclude });

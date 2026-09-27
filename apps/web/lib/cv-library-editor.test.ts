@@ -43,6 +43,22 @@ it("renders a labelled confirmation checkbox for every responsibility with its s
   expect(html).toContain('class="space-y-3 md:hidden"');
 });
 
+it("sets the evidence table's column heads in the pixel face's one weight, not a bold <th>", () => {
+  // Silkscreen is loaded at 400 only. A <th> is bold by default and preflight does not reset it,
+  // so a head that inherited the pixel face from its <thead> would be painted as a faux bold.
+  // Each head carries `ds-pixel` itself, as the table component's TH does, which pins 400.
+  const library: CvLibrary = { name: "Test", contact: "", profile: "", structuredExperience: true,
+    employment: [{ id: "job", company: "Acme", jobTitle: "Director", startDate: "2020", endDate: "", current: true }],
+    entries: [{ id: "one", kind: "experience", status: "active", employmentId: "job", heading: "Director", details: "Led a team" }] };
+  const html = renderToStaticMarkup(createElement(CvLibraryEditor, { library: openStoredLibrary(library), version: 1 }));
+  const table = html.slice(html.indexOf('aria-label="Acme Director responsibilities and outcomes"'));
+  const head = table.slice(0, table.indexOf("</thead>"));
+  const heads = head.match(/<th [^>]*>/g)!;
+  expect(heads).toHaveLength(6);
+  for (const th of heads) expect(th).toMatch(/class="ds-pixel[ "]/);
+  expect(head).not.toMatch(/<thead[^>]*ds-pixel/);
+});
+
 it("offers no state to set on a block and no way to archive one but removing its job", () => {
   const library: CvLibrary = { name: "Test", contact: "", profile: "", structuredExperience: true,
     employment: [{ id: "job", company: "Acme", jobTitle: "Director", startDate: "2020", endDate: "", current: true }],

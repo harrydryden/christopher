@@ -16,7 +16,7 @@
     "@ava/ai": "workspace:*",
     "@ava/core": "workspace:*",
     "@ava/db": "workspace:*",
-    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/api": "1.9.1",
     "@opentelemetry/exporter-trace-otlp-http": "^0.222.0",
     "@opentelemetry/instrumentation-pg": "^0.74.0",
     "@opentelemetry/instrumentation-undici": "^0.32.0",

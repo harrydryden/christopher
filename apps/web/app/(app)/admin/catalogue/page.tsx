@@ -12,7 +12,7 @@ import { SettingsForm } from "@/components/SettingsForm";
 import { inputClass, labelClass } from "@/components/Field";
 import { requireAdmin } from "@/lib/auth";
 import { relativeTime, scanStatusLabel } from "@/lib/format";
-import { catalogueCount, listCatalogue, pendingNameSuggestionsFor } from "@/lib/queries/companies";
+import { listCataloguePage } from "@/lib/queries/companies";
 import { companyIcon } from "@/lib/company-icon";
 
 export const dynamic = "force-dynamic";
@@ -21,10 +21,7 @@ export default async function AdminCataloguePage({ searchParams }: { searchParam
   const admin = await requireAdmin();
   const sp = await searchParams;
   const q = (sp.q ?? "").slice(0, 200);
-  const total = await catalogueCount(q);
-  const page = Math.min(pageNumber(sp.page), Math.max(1, Math.ceil(total / 50)));
-  const rows = await listCatalogue(admin.id, page, q);
-  const suggestions = await pendingNameSuggestionsFor(rows.map(row => row.company.id));
+  const { rows, total, page, suggestions } = await listCataloguePage(admin.id, pageNumber(sp.page), q);
   const now = new Date();
 
   return (

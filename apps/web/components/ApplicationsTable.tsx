@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, startTransition, useEffect, useRef, useState } from "react";
+import { Fragment, Suspense, startTransition, use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -13,6 +13,7 @@ import {
 } from "@ava/core/role-workflow";
 import { Badge, stageTone } from "@/components/Badge";
 import { Button } from "@/components/Button";
+import { Monogram } from "@/components/brand/Monogram";
 import { CompanyFavicon } from "@/components/CompanyFavicon";
 import { inputClass, labelClass, selectClass } from "@/components/Field";
 import { SettingsForm } from "@/components/SettingsForm";
@@ -22,6 +23,15 @@ import { requestCv } from "@/app/actions/cv";
 import { historyLine, type NextStepNote } from "@/lib/application-dates";
 import { relativeTime } from "@/lib/format";
 import type { PipelineCvQuote, PipelineRow } from "@/lib/queries/applications";
+
+/**
+ * What a build would cost, per posting id. The page streams it: the table renders as soon as its
+ * rows are read, and the prices, which take three or four more reads, arrive behind it.
+ */
+export type PipelineCvQuotes = Record<string, PipelineCvQuote>;
+type QuoteSource = PipelineCvQuotes | Promise<PipelineCvQuotes>;
+/** A promise that crossed from the server arrives as React's own thenable, so it is tested by shape. */
+const isThenable = (value: QuoteSource): value is Promise<PipelineCvQuotes> => typeof (value as { then?: unknown }).then === "function";
 
 /** The one sentence the product uses for work an unconfirmed account cannot start. */
 import { VERIFY_SENTENCE as UNVERIFIED } from "@/components/VerifyNotice";
@@ -192,17 +202,53 @@ function StatusPanel({ row }: { row: PipelineRow }) {
   );
 }
 
+/** The build form, or the sentence that says why it cannot be pressed, once the price is in. */
+function CvBuildControl({ row, jobId, quotes, unverified, buildLabel }: { row: PipelineRow; jobId: string; quotes: QuoteSource; unverified: boolean; buildLabel: string }) {
+  // An unconfirmed account is never priced, so it never waits on the stream.
+  const quote = unverified ? undefined : (isThenable(quotes) ? use(quotes) : quotes)[jobId];
+  // Why the build cannot be asked for, in the order the person would meet it: the account is not
+  // confirmed yet, or its budget will not admit this build. Both are the action's own refusals,
+  // said at the control rather than after it.
+  const blocked = unverified ? UNVERIFIED : quote?.refusal ?? null;
+  const blockedId = `cv-blocked-${row.key.replace(/\s+/g, "-")}`;
+  return blocked ? (
+    // The wall and the budget are both discovered here rather than after the redirect: the
+    // control says what it would cost, and says why it cannot be pressed when it cannot.
+    <div className="flex flex-col gap-3">
+      <p id={blockedId} className="text-13 text-muted">{blocked}</p>
+      <div>
+        <Button variant="primary" size="sm" disabled aria-describedby={blockedId}>{buildLabel}</Button>
+      </div>
+    </div>
+  ) : (
+    <SettingsForm action={requestCv} submitLabel={buildLabel}>
+      <input type="hidden" name="jobId" value={jobId} />
+      <label className="grid gap-1.5">
+        <span className={labelClass}>Paste a replacement description</span>
+        <textarea
+          name="description"
+          rows={3}
+          maxLength={60000}
+          placeholder="Optional. Leave empty to use the stored description."
+          className={`resize-y ${inputClass}`}
+        />
+      </label>
+      {quote && <p className="text-12 text-muted">{quote.line}</p>}
+    </SettingsForm>
+  );
+}
+
 function CvPanel({
   row,
   focus,
-  quote,
+  quotes,
   unverified,
   onPatched,
 }: {
   row: PipelineRow;
   focus: boolean;
-  /** What a build would cost this account for this role, priced before the button is pressed. */
-  quote?: PipelineCvQuote;
+  /** What a build would cost this account, per posting id, priced before the button is pressed. */
+  quotes: QuoteSource;
   unverified: boolean;
   onPatched: (row: PipelineRow) => void;
 }) {
@@ -212,11 +258,6 @@ function CvPanel({
   const heading = useRef<HTMLHeadingElement | null>(null);
   useEffect(() => { if (focus) heading.current?.focus(); }, [focus]);
   const buildLabel = row.cv ? "Rebuild CV" : "Build CV";
-  // Why the build cannot be asked for, in the order the person would meet it: the account is not
-  // confirmed yet, or its budget will not admit this build. Both are the action's own refusals,
-  // said at the control rather than after it.
-  const blocked = unverified ? UNVERIFIED : quote?.refusal ?? null;
-  const blockedId = `cv-blocked-${row.key.replace(/\s+/g, "-")}`;
   /**
    * Archive, restore and delete call the action directly, and the action answers with the row as
    * the database now has it, which the table shows at once. The page is asked for again as well,
@@ -253,31 +294,11 @@ function CvPanel({
         <p className="text-14 text-muted">No CV for this role yet.</p>
       )}
       {row.jobId ? (
-        blocked ? (
-          // The wall and the budget are both discovered here rather than after the redirect: the
-          // control says what it would cost, and says why it cannot be pressed when it cannot.
-          <div className="flex flex-col gap-3">
-            <p id={blockedId} className="text-13 text-muted">{blocked}</p>
-            <div>
-              <Button variant="primary" size="sm" disabled aria-describedby={blockedId}>{buildLabel}</Button>
-            </div>
-          </div>
-        ) : (
-          <SettingsForm action={requestCv} submitLabel={buildLabel}>
-            <input type="hidden" name="jobId" value={row.jobId} />
-            <label className="grid gap-1.5">
-              <span className={labelClass}>Paste a replacement description</span>
-              <textarea
-                name="description"
-                rows={3}
-                maxLength={60000}
-                placeholder="Optional. Leave empty to use the stored description."
-                className={`resize-y ${inputClass}`}
-              />
-            </label>
-            {quote && <p className="text-12 text-muted">{quote.line}</p>}
-          </SettingsForm>
-        )
+        // The price streams in behind the table; until it lands the control waits under the mark
+        // rather than offering a build whose refusal is still being read.
+        <Suspense fallback={<span className="inline-block text-muted"><Monogram size={16} searching title="Pricing the build" /></span>}>
+          <CvBuildControl row={row} jobId={row.jobId} quotes={quotes} unverified={unverified} buildLabel={buildLabel} />
+        </Suspense>
       ) : (
         <p className="text-13 text-muted">
           No live posting behind this row, so no new CV can be built.
@@ -319,8 +340,11 @@ export function ApplicationsTable({
   rows: PipelineRow[];
   /** The row a `?job=` link asks for: opened, with its CV section taking focus. */
   openKey?: string;
-  /** What a build would cost, per posting id, priced on the server for the rows on this page. */
-  quotes?: Record<string, PipelineCvQuote>;
+  /**
+   * What a build would cost, per posting id, priced on the server for the rows on this page. A
+   * promise when the page streams it: only an open row's CV section waits for it.
+   */
+  quotes?: QuoteSource;
   /** "Next: send references · by Tue 23 Sep", per row key, written on the server against its clock. */
   nextSteps?: Record<string, NextStepNote>;
   /** "No update for 3 weeks", per row key, for the rows that have been quiet a fortnight. */
@@ -421,7 +445,7 @@ export function ApplicationsTable({
                       <CvPanel
                         row={row}
                         focus={focusedCvKey === row.key}
-                        quote={row.jobId ? quotes[row.jobId] : undefined}
+                        quotes={quotes}
                         unverified={unverified}
                         onPatched={(fresh) => setPatched((previous) => ({ ...previous, [fresh.key]: fresh }))}
                       />

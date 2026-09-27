@@ -33,7 +33,7 @@ import {
 import { aiBudgetWindowStart, aiFeatureLabel, deadlineFor } from "@ava/core";
 import { cache } from "react";
 import { aiUsageKey, groupAiUsage, type AiUsageGroup, type AiUsagePercentiles } from "@/lib/ai-usage";
-import { accountAiBudget } from "@/lib/queries/accounts";
+import { accountAiBudget, budgetFromRow, budgetSelect, defaultAccountAiBudget, type BudgetRow } from "@/lib/queries/accounts";
 import { formatUsd } from "@/lib/format";
 import { foldOutboundTraffic, type HostTraffic } from "@/lib/outbound-traffic";
 import { db } from "@/lib/db";
@@ -1345,8 +1345,8 @@ export async function healthItems(userId: string, now: Date = new Date()): Promi
 
 /**
  * How many items there are, for the sidebar. One statement, because every page in the interface
- * renders the sidebar: the union below is the same one `healthItems` walks company by company.
- * Beside it, in the same round trip, the account's budget, which is itself one statement.
+ * renders the sidebar: the union below is the same one `healthItems` walks company by company,
+ * and the account's budget is read in the same statement.
  *
  * Kept for the request, so Health's own count reuses the sidebar's. It is keyed by account and
  * budget month, the only part of the clock the count depends on, so callers with their own `now`
@@ -1357,9 +1357,13 @@ export function countHealthItems(userId: string, now: Date = new Date()): Promis
 }
 
 const countHealthItemsForMonth = cache(async (userId: string, monthStart: number): Promise<number> => {
-  const [rows, budget] = await Promise.all([
-    db().execute(sql`
-      select count(*)::int as n
+  const month = new Date(monthStart);
+  // One statement, one pool checkout: the attention count as a scalar beside the budget row, which
+  // is the same statement `accountAiBudget` runs. Two statements side by side cost the same round
+  // trip but two checkouts from a pool of six, on every full render of every page.
+  const rows = await db().execute(sql`
+    select budget.*, (
+      select count(*)::int
       from company_subscriptions cs
       join companies c on c.id = cs.company_id
       where cs.user_id = ${userId}
@@ -1375,8 +1379,10 @@ const countHealthItemsForMonth = cache(async (userId: string, monthStart: number
               and jsonb_array_length(r.candidates) > 0
               and r.started_at = (select max(r2.started_at) from discovery_runs r2 where r2.company_id = c.id)
           )
-        )`),
-    accountAiBudget(userId, new Date(monthStart)),
-  ]);
-  return Number(rows.rows[0]?.n ?? 0) + (budget.spentUsd >= budget.limitUsd ? 1 : 0);
+        )
+    ) as attention
+    from (${budgetSelect([userId], month)}) budget`);
+  const row = rows.rows[0] as unknown as (BudgetRow & { attention: number }) | undefined;
+  const budget = row ? await budgetFromRow(row, month) : defaultAccountAiBudget(month);
+  return Number(row?.attention ?? 0) + (budget.spentUsd >= budget.limitUsd ? 1 : 0);
 });

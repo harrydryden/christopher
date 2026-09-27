@@ -12,7 +12,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { relativeTime, scanStatusLabel } from "@/lib/format";
 import { Pagination, pageNumber } from "@/components/Pagination";
-import { listCompanies, companyCount } from "@/lib/queries/companies";
+import { listCompanyPage } from "@/lib/queries/companies";
 import { companySortParams, nextCompanySort, parseCompanySort, type CompanySort, type CompanySortKey } from "@/lib/company-sort";
 import { GateSetup } from "@/components/GateSetup";
 import { getSystemSettings } from "@/lib/settings";
@@ -43,9 +43,8 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
   const user = await requireUser();
   const sp = await searchParams;
   const order = parseCompanySort(sp.sort, sp.dir);
-  const total = await companyCount(user.id);
-  const page = Math.min(pageNumber(sp.page), Math.max(1, Math.ceil(total / 50)));
-  const [rows, work, system, gateChosen] = await Promise.all([listCompanies(user.id, page, "", order), getCompanyWorkStatus(user.id), getSystemSettings(), hasChosenGate(user.id)]);
+  // The count, the page and the rest in one wave: a page past the end is re-read at the last one.
+  const [{ rows, total, page }, work, system, gateChosen] = await Promise.all([listCompanyPage(user.id, pageNumber(sp.page), "", order), getCompanyWorkStatus(user.id), getSystemSettings(), hasChosenGate(user.id)]);
   const now = new Date();
   const unverified = needsEmailConfirmation(user);
 

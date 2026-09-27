@@ -622,24 +622,41 @@ export async function listPipeline(
   options: { filter?: PipelineFilter; page?: string | number; company?: PipelineCompany } = {},
 ): Promise<PipelinePage> {
   const filter = options.filter ?? "active";
-  const stageCounts = await pipelineStageCounts(userId, { company: options.company });
+  const wanted = STAGES_BY_FILTER[filter];
+  const wantedList = sql.raw(wanted.map((stage) => `'${stage}'`).join(", "));
+  const asked = pageNumber(options.page === undefined ? undefined : String(options.page));
+  // One statement, and the index evaluated once: the per-stage counts and the page's keys both
+  // read the same `idx`, and a page past the end is clamped in SQL exactly as it is below, so the
+  // keys are the ones the counts page to. Counts first and keys second used to cost two round
+  // trips and two evaluations of the whole index.
+  const read = await db().execute<{ kind: "count" | "key"; stage: string | null; n: number | null; source: string | null; key: string | null }>(sql`
+    with idx as (${pipelineIndex(userId, options.company)}),
+    counts as (select stage, count(*)::int as n from idx group by stage),
+    wanted as (select coalesce(sum(n), 0)::int as total from counts where stage in (${wantedList})),
+    page_keys as (
+      select source, key, row_number() over (order by ${STAGE_RANK_CASE}, updated_at desc, key) as ord
+      from idx
+      where stage in (${wantedList})
+      order by ${STAGE_RANK_CASE}, updated_at desc, key
+      limit ${PAGE_SIZE}
+      offset (greatest(1, least(${asked}::int, ceil((select total from wanted) / ${PAGE_SIZE}::numeric)::int)) - 1) * ${PAGE_SIZE})
+    select 'count' as kind, stage, n, null::text as source, null::text as key, 0::bigint as ord from counts
+    union all
+    select 'key' as kind, null, null, source, key, ord from page_keys
+    order by kind, ord`);
+  const stageCounts = NO_STAGE_COUNTS();
+  for (const row of read.rows) if (row.kind === "count" && row.stage && row.stage in stageCounts) stageCounts[row.stage as RoleStage] = Number(row.n);
   const counts: Record<PipelineFilter, number> = { active: 0, closed: 0, all: 0 };
   for (const stage of ROLE_STAGES) {
     counts.all += stageCounts[stage];
     if ((ACTIVE_ROLE_STAGES as readonly RoleStage[]).includes(stage)) counts.active += stageCounts[stage];
     else if ((CLOSED_ROLE_STAGES as readonly RoleStage[]).includes(stage)) counts.closed += stageCounts[stage];
   }
-  const wanted = STAGES_BY_FILTER[filter];
   const total = wanted.reduce((sum, stage) => sum + stageCounts[stage], 0);
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const page = Math.min(pageNumber(options.page === undefined ? undefined : String(options.page)), pageCount);
+  const page = Math.min(asked, pageCount);
   if (total === 0) return { rows: [], page, pageCount, total, counts, stages: stageCounts };
-  const wantedList = sql.raw(wanted.map((stage) => `'${stage}'`).join(", "));
-  const keys = await db().execute<{ source: string; key: string }>(sql`
-    select source, key from (${pipelineIndex(userId, options.company)}) idx
-    where stage in (${wantedList})
-    order by ${STAGE_RANK_CASE}, updated_at desc, key
-    limit ${PAGE_SIZE} offset ${(page - 1) * PAGE_SIZE}`);
+  const keys = { rows: read.rows.flatMap((row) => (row.kind === "key" && row.key !== null ? [{ source: row.source!, key: row.key }] : [])) };
   const order = keys.rows.map((row) => row.key);
   const [roles, legacy] = await Promise.all([
     roleRows(userId, { jobIds: keys.rows.filter((row) => row.source === "role").map((row) => row.key) }),

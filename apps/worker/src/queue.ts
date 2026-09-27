@@ -128,7 +128,15 @@ export interface QueueOptions {
    * the general slots under `maxActiveByType`, as before.
    */
   cvConcurrency?: number;
+  /** The first wait on an empty queue (3 s); each empty claim doubles it up to `idlePollMaxMs`, and a claim resets it. */
   pollMs?: number;
+  /**
+   * The longest wait on an empty queue: 15 s, or 30 s while `wakeup` is listening and an enqueue
+   * wakes the slots itself. A caller that sets `pollMs` alone polls at that rate throughout.
+   */
+  idlePollMaxMs?: number;
+  /** Notifications from `ava_tasks`, which end an idle wait at once (see task-wakeup.ts). */
+  wakeup?: { wait(ms: number): Promise<void>; readonly listening: boolean };
   workerId: string;
   staleAfterMs?: number;
   heartbeatMs?: number;
@@ -144,6 +152,11 @@ export interface QueueOptions {
    */
   maxActiveByType?: Partial<Record<Task["type"], number>>;
 }
+
+/** The idle poll: 3 s after a claim, doubling to 15 s, or to 30 s while notifications arrive. */
+export const IDLE_POLL_MS = 3_000;
+export const IDLE_POLL_MAX_MS = 15_000;
+export const IDLE_POLL_LISTENING_MAX_MS = 30_000;
 
 /** The per-type caps every queue has, whatever it is given. */
 const DEFAULT_MAX_ACTIVE_BY_TYPE: Partial<Record<Task["type"], number>> = { verify_company: 1 };
@@ -686,6 +699,7 @@ export class TaskQueue {
    */
   async stop(graceMs = STOP_GRACE_MS, handBackMs = HAND_BACK_TIMEOUT_MS): Promise<void> {
     this.stopping = true;
+    this.idleStop.abort();
     for (const controller of this.controllers.values())
       if (!controller.signal.aborted) controller.abort(new ShutdownError());
     await settleWithin(this.handBackAll(), handBackMs);
@@ -702,6 +716,7 @@ export class TaskQueue {
    */
   async releaseAfterCrash(timeoutMs = HAND_BACK_TIMEOUT_MS): Promise<void> {
     this.stopping = true;
+    this.idleStop.abort();
     const ids = [...this.running.keys()];
     const recovered = ids.length
       ? requeueStale(this.deps.db, 0, this.opts.workerId, { ids, deps: this.deps, onAbandon: this.opts.onAbandon })
@@ -766,8 +781,27 @@ export class TaskQueue {
     return n;
   }
 
+  /** Ends every idle wait when the queue stops, so a stop never waits out a long poll. */
+  private readonly idleStop = new AbortController();
+
+  private idleFor(ms: number): Promise<void> {
+    if (this.idleStop.signal.aborted) return Promise.resolve();
+    const stopped = new Promise<void>(resolve => this.idleStop.signal.addEventListener("abort", () => resolve(), { once: true }));
+    return Promise.race([this.opts.wakeup ? this.opts.wakeup.wait(ms) : sleep(ms), stopped]);
+  }
+
+  /** How long an idle slot waits before it claims again: doubled after each empty claim, up to the ceiling. */
+  private idleWait(current: number): number {
+    const poll = this.opts.pollMs ?? IDLE_POLL_MS;
+    const ceiling = this.opts.idlePollMaxMs
+      ?? (this.opts.pollMs !== undefined && !this.opts.wakeup ? poll : this.opts.wakeup?.listening ? IDLE_POLL_LISTENING_MAX_MS : IDLE_POLL_MAX_MS);
+    return Math.max(poll, Math.min(current * 2, ceiling));
+  }
+
   private async loop(slot: number): Promise<void> {
-    const poll = this.opts.pollMs ?? 3000;
+    const poll = this.opts.pollMs ?? IDLE_POLL_MS;
+    // An empty queue used to be polled every 3 s by every slot, all day: about 280 claims a minute.
+    let idle = poll;
     while (!this.stopping) {
       let task: Task | null = null;
       try {
@@ -783,9 +817,11 @@ export class TaskQueue {
         continue;
       }
       if (!task) {
-        await sleep(poll);
+        await this.idleFor(idle);
+        idle = this.idleWait(idle);
         continue;
       }
+      idle = poll;
       try { await this.runTaskReserved(task); }
       finally { this.releaseTypeWhenSettled(task); }
     }

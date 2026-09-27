@@ -15,6 +15,7 @@ import { log } from "./log";
 import { setInternal } from "./settings";
 import { recoverFromCrash, settleWithin, TaskQueue } from "./queue";
 import { startScheduler } from "./scheduler";
+import { TaskWakeup } from "./task-wakeup";
 import { vitals } from "./vitals";
 import { stopOtel, traceHandlers } from "./otel";
 
@@ -44,8 +45,12 @@ async function main() {
   // of their own (CV_CONCURRENCY) beside the memory-bound general ones (WORKER_CONCURRENCY): a run
   // of builds never holds up the discoveries, imports and scans, and a scan never holds up a build.
   // Each handler runs in a `task.run` span; a no-op unless tracing is enabled (src/otel.ts).
+  // One listening connection outside the pool: an enqueue wakes the idle slots at once, and they
+  // poll only every 15–30 s while nothing arrives.
+  const wakeup = new TaskWakeup(env.databaseUrl);
+  wakeup.start();
   const queue = new TaskQueue(deps, traceHandlers(handlers), {
-    concurrency: env.concurrency, cvConcurrency: env.cvConcurrency, workerId: env.workerId, onAbandon, onInterrupted,
+    concurrency: env.concurrency, cvConcurrency: env.cvConcurrency, workerId: env.workerId, onAbandon, onInterrupted, wakeup,
   });
   queue.start();
   // Written only by the persistent worker, never the short-lived web cron runner.
@@ -100,6 +105,7 @@ async function main() {
       deps.traffic.flush(),
     ]), SHUTDOWN_WRITE_MS);
     await queueStopped;
+    await settleWithin(wakeup.stop(), SHUTDOWN_WRITE_MS);
     await settleWithin(schedulerStopped, SHUTDOWN_WRITE_MS);
     await settleWithin(deps.close(), SHUTDOWN_WRITE_MS);
     await settleWithin(stopOtel(), SHUTDOWN_WRITE_MS);

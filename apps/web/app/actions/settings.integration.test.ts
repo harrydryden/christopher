@@ -21,7 +21,7 @@ vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (session ? {
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
 
-import { saveAiBudget, saveGate, saveTableSettings } from "./settings";
+import { saveAiBudget, saveGate, saveScoringSettings, saveTableSettings } from "./settings";
 import { acceptFilterSuggestionWithReport } from "./learning";
 import { setAccountAiBudget } from "./account";
 
@@ -58,6 +58,26 @@ it("lets a member set their own AI budget up to the member ceiling, and an admin
   session = admin.cookie;
   expect(await saveAiBudget({ ok: true }, form({ aiBudgetUsd: "5000" }))).toEqual({ ok: true });
   expect(await budgetOf(admin.user.id)).toBe(5000);
+});
+
+it("lets only an administrator switch scoring to batch mode, and stores only a known mode and an interval in range", async () => {
+  const stored = async () => Object.fromEntries((await database.select().from(schema.settings)
+    .where(sql`${schema.settings.key} in ('scoringMode', 'scoringBatchMinutes')`)).map((row) => [row.key, row.value]));
+  // Nothing stored is live scoring, every ten minutes: the default the worker reads.
+  await database.execute(sql`delete from settings where key in ('scoringMode', 'scoringBatchMinutes')`);
+  expect(await stored()).toEqual({});
+  await expect(saveScoringSettings({ ok: true }, form({ scoringMode: "batch", scoringBatchMinutes: "10" }))).rejects.toThrow();
+  expect(await stored()).toEqual({});
+
+  session = admin.cookie;
+  expect(await saveScoringSettings({ ok: true }, form({ scoringMode: "sometimes", scoringBatchMinutes: "10" }))).toMatchObject({ ok: false });
+  expect(await saveScoringSettings({ ok: true }, form({ scoringMode: "batch", scoringBatchMinutes: "0" }))).toMatchObject({ ok: false });
+  expect(await saveScoringSettings({ ok: true }, form({ scoringMode: "batch", scoringBatchMinutes: "2.5" }))).toMatchObject({ ok: false });
+  expect(await stored()).toEqual({});
+  expect(await saveScoringSettings({ ok: true }, form({ scoringMode: "batch", scoringBatchMinutes: "15" }))).toEqual({ ok: true });
+  expect(await stored()).toEqual({ scoringMode: "batch", scoringBatchMinutes: 15 });
+  expect(await saveScoringSettings({ ok: true }, form({ scoringMode: "live", scoringBatchMinutes: "15" }))).toEqual({ ok: true });
+  expect(await stored()).toEqual({ scoringMode: "live", scoringBatchMinutes: 15 });
 });
 
 it("lets a member lower a budget an administrator granted, but never raise it past the grant", async () => {

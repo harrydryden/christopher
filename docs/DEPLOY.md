@@ -469,6 +469,29 @@ and `DISCOVERY_AI_BUDGET_USD` in the worker's environment are the safety valves 
 as a whole: unlimited unless set, they cap a day's spend and a day's discovery spend across every
 account, and they refuse any call, a CV build included, so leave them unset unless you want that.
 
+### Batch scoring
+
+Fit scoring (A5) is the highest-volume call site. **Admin › System settings › Scoring** switches it
+between two modes, for every account:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `scoringMode` | `live` | `live` scores each role with one call as it enters a table. `batch` sends the waiting roles through the Message Batches API at half the token price (cache writes and reads included). |
+| `scoringBatchMinutes` | `10` | In batch mode, how often the roles waiting to be scored are gathered into one batch (1–60). |
+
+The trade is latency. In batch mode a new role shows "not scored yet" until its batch ends: most end
+within the hour, none later than a day, and the table orders it by its score from then on. The score
+only orders the table, so nothing appears or disappears because a score is late. Each account's share
+of a batch is held against its own monthly budget at the batch price when the batch is sent, and
+released as its results land; an account with no room left is skipped exactly as live scoring skips
+it. A request that expires or errors, and every role in a batch that could not be sent, is scored
+live instead, at the standard price. Operations reports batch calls in the same A5 lines as live
+ones, at what they cost; their duration is the time from sending the batch to its result, so A5's
+latency figures rise to minutes while batch mode is on. Batch requests go without the server-side
+refusal fallback, which the Batches API does not accept. Nothing needs deploying to switch: the
+worker reads the setting on its next claim, and switching back to `live` lets the roles already
+waiting run at once while batches in flight are still applied.
+
 ### The database disk
 
 Render's smallest Postgres plans start with **1 GB of storage and storage autoscaling off**, which

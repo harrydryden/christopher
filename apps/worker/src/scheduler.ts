@@ -103,6 +103,17 @@ export async function schedulerTick(deps: WorkerDeps, signal?: AbortSignal): Pro
     dedupeKey: dedupeKeyFor("monitor_source", { sourceId: source.id }), priority: 7,
   })));
 
+  // Batch scoring: every `scoringBatchMinutes`, one collection of the roles waiting to be scored,
+  // claimed across the deployment so two workers and the cron fallback make one batch, not three.
+  if (stopped()) return;
+  if (settings.scoringMode === "batch") {
+    // A few seconds short of the interval, so a tick that lands just early does not skip a turn.
+    await claimPeriodic(deps, "lastScoreBatchCollect", Math.max(30, settings.scoringBatchMinutes * 60 - 5), async () => {
+      const payload = { reason: "schedule" as const };
+      await enqueueTask(deps.db, "collect_score_batch", payload, { dedupeKey: dedupeKeyFor("collect_score_batch", payload), priority: priorityFor("collect_score_batch") });
+    });
+  }
+
   if (stopped()) return;
   await finaliseScanRuns(deps);
 

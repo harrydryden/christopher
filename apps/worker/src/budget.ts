@@ -110,6 +110,8 @@ export type AiBudgetLimits = {
 
 /** A hold taken, with the figures it was measured against — read inside the lock that took it. */
 export interface AiHold {
+  /** The `ai_reservations` row, for work that settles its hold from another task than the one that took it (a scoring batch). */
+  id: string;
   /**
    * Release the hold. The call's real cost is already in `ai_calls`, so nothing is charged here —
    * unless a call it covered could not be recorded (`keep`), when the hold is left to expire, so
@@ -197,6 +199,7 @@ export async function tryReserveAi(db: Db, callSite: string, amount: number, lim
   let kept = false;
   return {
     ...outcome.measured,
+    id,
     release: async () => {
       if (kept) return;
       await db.execute(sql`delete from ai_reservations where id = ${id}`);

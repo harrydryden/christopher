@@ -4,7 +4,10 @@ import { needsEmailConfirmation, requireAdmin, requireUser } from "@/lib/auth";
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { isKnownModel, isValidScanTime, isValidTimezone, MAX_ACCOUNT_AI_BUDGET_USD, MAX_MEMBER_AI_BUDGET_USD, parseTermList, type GateSettings, type MatchField } from "@ava/core";
+import {
+  isKnownModel, isValidScanTime, isValidTimezone, MAX_ACCOUNT_AI_BUDGET_USD, MAX_MEMBER_AI_BUDGET_USD, parseTermList, SCORING_BATCH_MINUTES_MAX,
+  SCORING_BATCH_MINUTES_MIN, SCORING_MODES, scoringBatchMinutesFrom, type GateSettings, type MatchField,
+} from "@ava/core";
 import { enqueue } from "@/lib/enqueue";
 import { GATE_NEEDS_KEYWORD_SENTENCE } from "@/lib/setup";
 import { getSettings, setSystemSetting, setUserSetting, saveSettingsAndGate } from "@/lib/settings";
@@ -152,6 +155,24 @@ export async function saveStageRoutes(_prev: ActionResult, formData: FormData): 
   const parsed = stageRoutesFromForm(formData);
   if (!parsed.ok) return fail(parsed.error);
   await setSystemSetting("stageRoutes", parsed.routes);
+  revalidatePath("/admin/settings");
+  return ok();
+}
+
+/**
+ * How background fit scoring reaches the model, for every account: live, one call per role as it
+ * enters a table, or batched every few minutes through the Message Batches API at half the token
+ * price, with scores arriving minutes to an hour later. Administrator-only: it changes when every
+ * account's scores land and what the deployment pays for them.
+ */
+export async function saveScoringSettings(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
+  await requireAdmin();
+  const mode = String(formData.get("scoringMode") ?? "").trim();
+  if (!(SCORING_MODES as readonly string[]).includes(mode)) return fail("Choose live or batch scoring.");
+  const minutes = scoringBatchMinutesFrom(String(formData.get("scoringBatchMinutes") ?? "").trim());
+  if (minutes === null) return fail(`Collect a batch every ${SCORING_BATCH_MINUTES_MIN} to ${SCORING_BATCH_MINUTES_MAX} minutes, in whole minutes.`);
+  await setSystemSetting("scoringMode", mode);
+  await setSystemSetting("scoringBatchMinutes", minutes);
   revalidatePath("/admin/settings");
   return ok();
 }

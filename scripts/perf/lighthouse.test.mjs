@@ -6,7 +6,7 @@ import { mobileConfig, previewConfig, sessionCookie, signedInConfig } from "./li
 
 const committed = JSON.parse(readFileSync(new URL("../../lighthouserc.json", import.meta.url), "utf8"));
 
-test("the committed config holds the guide's desktop assertions, with / at 134 KB of script transfer and the rest at 145 KB", () => {
+test("the committed config errors on LCP, CLS and TBT, and only warns on script transfer, which the bundle budget gates", () => {
   const { collect, assert: rules } = committed.ci;
   assert.equal(collect.numberOfRuns, 3);
   assert.equal(collect.settings.preset, "desktop");
@@ -24,8 +24,9 @@ test("the committed config holds the guide's desktop assertions, with / at 134 K
     assert.deepEqual([a.interactive[0], a.interactive[1].maxNumericValue], ["warn", 3800]);
     assert.deepEqual([a["server-response-time"][0], a["server-response-time"][1].maxNumericValue], ["warn", 600]);
   }
-  assert.equal(home.assertions["resource-summary:script:size"][1].maxNumericValue, 134_000);
-  assert.equal(rest.assertions["resource-summary:script:size"][1].maxNumericValue, 145_000);
+  assert.deepEqual(home.assertions["resource-summary:script:size"], ["warn", { maxNumericValue: 134_000, aggregationMethod: "median-run" }]);
+  assert.deepEqual(rest.assertions["resource-summary:script:size"], ["warn", { maxNumericValue: 145_000, aggregationMethod: "median-run" }]);
+  assert.equal(committed.ci.upload.outputDir, "lighthouse-reports/desktop", "a directory upload-artifact does not skip as hidden");
 });
 
 test("the signed-in config fills in the CV and the cookie, and moves the port when asked", () => {
@@ -43,7 +44,7 @@ test("the mobile pass drops the desktop preset and only warns", () => {
   assert.equal(mobile.ci.collect.settings.preset, undefined);
   assert.ok(mobile.ci.collect.settings.extraHeaders, "still signed in");
   for (const entry of mobile.ci.assert.assertMatrix) for (const rule of Object.values(entry.assertions)) assert.equal(rule[0], "warn");
-  assert.equal(mobile.ci.upload.outputDir, ".lighthouseci/mobile");
+  assert.equal(mobile.ci.upload.outputDir, "lighthouse-reports/mobile");
 });
 
 test("the cookie is the interface's own shape", () => {

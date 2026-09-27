@@ -36,6 +36,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: lighthouse-preview
-          path: .lighthouseci/
+          # Not .lighthouseci/: upload-artifact skips hidden directories, so nothing was uploaded.
+          path: lighthouse-reports/
           retention-days: 14
-          if-no-files-found: ignore
+          if-no-files-found: warn

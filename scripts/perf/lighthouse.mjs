@@ -18,7 +18,7 @@
  * there is a baseline. The account, its company and the server go in a `finally`, whatever happened.
  *
  * The cookie reaches Chrome only as `extraHeaders` in a config written to a temporary directory; it
- * is not printed and not in any report Lighthouse uploads (reports go to `.lighthouseci/`).
+ * is not printed and not in any report Lighthouse uploads (reports go to `lighthouse-reports/`).
  */
 import { spawn } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
@@ -128,7 +128,7 @@ export function previewConfig(desktop, { url, bypass }) {
   const origin = new URL(url).origin;
   config.ci.collect.url = [`${origin}/login`];
   config.ci.assert = { assertions: { ...config.ci.assert.assertMatrix.at(-1).assertions } };
-  config.ci.upload.outputDir = ".lighthouseci/preview";
+  config.ci.upload.outputDir = "lighthouse-reports/preview";
   return config;
 }
 

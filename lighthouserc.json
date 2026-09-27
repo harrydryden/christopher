@@ -25,7 +25,7 @@
             "total-blocking-time": ["error", { "maxNumericValue": 200, "aggregationMethod": "median-run" }],
             "interactive": ["warn", { "maxNumericValue": 3800, "aggregationMethod": "median-run" }],
             "server-response-time": ["warn", { "maxNumericValue": 600, "aggregationMethod": "median-run" }],
-            "resource-summary:script:size": ["error", { "maxNumericValue": 134000, "aggregationMethod": "median-run" }]
+            "resource-summary:script:size": ["warn", { "maxNumericValue": 134000, "aggregationMethod": "median-run" }]
           }
         },
         {
@@ -36,14 +36,14 @@
             "total-blocking-time": ["error", { "maxNumericValue": 200, "aggregationMethod": "median-run" }],
             "interactive": ["warn", { "maxNumericValue": 3800, "aggregationMethod": "median-run" }],
             "server-response-time": ["warn", { "maxNumericValue": 600, "aggregationMethod": "median-run" }],
-            "resource-summary:script:size": ["error", { "maxNumericValue": 145000, "aggregationMethod": "median-run" }]
+            "resource-summary:script:size": ["warn", { "maxNumericValue": 145000, "aggregationMethod": "median-run" }]
           }
         }
       ]
     },
     "upload": {
       "target": "filesystem",
-      "outputDir": ".lighthouseci/desktop"
+      "outputDir": "lighthouse-reports/desktop"
     }
   }
 }

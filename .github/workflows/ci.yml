@@ -192,15 +192,16 @@ jobs:
         env:
           SESSION_SECRET: build-only-0123456789abcdef0123456789abcdef
       # Seeds a disposable signed-in account as smoke-web does, and deletes it in a finally.
-      - name: Lighthouse, desktop (fails) and mobile (warns)
+      - name: Lighthouse, desktop (LCP, CLS and TBT fail) and mobile (warns)
         run: node scripts/perf/lighthouse.mjs
       - if: always()
         uses: actions/upload-artifact@v4
         with:
           name: lighthouse-reports
-          path: .lighthouseci/
+          # Not .lighthouseci/: upload-artifact skips hidden directories, so nothing was uploaded.
+          path: lighthouse-reports/
           retention-days: 14
-          if-no-files-found: ignore
+          if-no-files-found: warn
 
   # The image Render deploys, built and booted here so that a broken Dockerfile, a manifest the
   # image does not copy or a runtime import error fails the pull request instead of the deploy.

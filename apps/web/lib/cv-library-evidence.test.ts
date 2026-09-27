@@ -108,7 +108,8 @@ it("falls back to the baseline for an entry nobody has reviewed in this wording,
   expect(entry.prompts.map(prompt => prompt.facet)).toEqual(["outcome", "problem", "milestone"]);
   expect(entry.prompts[0]!.question).toBe("What changed as a result?");
   expect(evidence.evaluating).toBe(true);
-  expect(evidence.line).toBe(`Evidence: ${EVIDENCE_RATING_LABELS[baseline.rating]} · 1 job is Weak`);
+  // One job, rated as the baseline rates it; a Good job adds no clause after the rating.
+  expect(evidence.line).toBe(baseline.rating === "weak" ? `Evidence: Weak · 1 job is Weak` : `Evidence: ${EVIDENCE_RATING_LABELS[baseline.rating]}`);
 });
 
 it("shows a stored model review as it was computed and stops saying Evaluating", () => {
@@ -116,8 +117,8 @@ it("shows a stored model review as it was computed and stops saying Evaluating",
   const review: LibraryEntryReview = {
     entryId: "acme",
     rows: [
-      { row: "Led a team", facets: ["responsibility"], specific: false, quantified: false, outcomeLinked: false, quote: "Led a team", verified: true },
-      { row: "Cut handovers by 40%", facets: ["metric"], specific: true, quantified: true, outcomeLinked: true, quote: "Cut handovers by 40%", verified: true },
+      { row: "Led a team", facets: ["responsibility"], tagged: ["responsibility"], marks: ["responsibility.ownership"], quote: "Led a team", verified: true },
+      { row: "Cut handovers by 40%", facets: ["metric"], tagged: ["metric"], marks: ["metric.figure", "metric.measure", "metric.movement", "outcome.change", "outcome.magnitude"], quote: "Cut handovers by 40%", verified: true },
     ],
     coverage: { responsibility: 1, problem: 0, outcome: 0, metric: 1, milestone: 0, style: 0 },
     missing: ["outcome", "problem", "milestone", "style"],

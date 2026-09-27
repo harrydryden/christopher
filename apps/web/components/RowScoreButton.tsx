@@ -80,7 +80,7 @@ export function RowScoreButton({ index, guidance }: {
           aria-label={guidance.heading}
           tabIndex={-1}
           onKeyDown={onPanelKey}
-          className="fixed z-20 grid w-80 max-w-[calc(100vw-8px)] gap-2 border-2 border-line bg-raised p-3 text-12 shadow-hard-2"
+          className="fixed z-20 grid w-80 gap-2 border-2 border-line bg-raised p-3 text-12 shadow-hard-2"
         >
           <p className="font-semibold">{guidance.heading}</p>
           {guidance.missing.map(group => (

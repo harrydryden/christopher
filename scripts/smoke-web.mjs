@@ -118,6 +118,39 @@ const ERROR_MARKERS = [
 ];
 
 /**
+ * What a cache may hold. Every response here is per account unless it is on this list: shared
+ * catalogue bytes (a company's captured logo) and build output, which carry no account's data.
+ */
+const PUBLIC_PATHS = [/^\/api\/companies\/[^/]+\/logo$/, /^\/_next\/static\//, /^\/(icon\.svg|apple-icon\.png|favicon\.ico)$/];
+
+/**
+ * Why a signed-in response could be held by a cache and served to someone else, if it could.
+ * Vercel's CDN stores a function response only when it says `s-maxage` or carries
+ * `CDN-Cache-Control`; Next's `Vary` leaves out `Cookie`, so what stands between one account's
+ * table and another account's browser is `private, no-store` on every page and every RSC refetch.
+ * An API answer needs `no-store` only, which already forbids every cache. A `set-cookie` would make
+ * a response per client in a way no cache key reflects, so none is allowed on a read.
+ */
+function cachePolicyFailures(path, res, kind = path.startsWith("/api/") ? "api" : "page") {
+  if (PUBLIC_PATHS.some(pattern => pattern.test(new URL(path, "http://smoke.invalid").pathname))) return [];
+  const failures = [];
+  const header = res.headers.get("cache-control") ?? "";
+  const directives = header.toLowerCase().split(",").map(part => part.trim().split("=")[0]);
+  const needed = kind === "api" ? ["no-store"] : ["private", "no-store"];
+  for (const directive of needed) {
+    if (!directives.includes(directive)) failures.push(`${path} (${kind}) cache-control "${header}" lacks ${directive}`);
+  }
+  for (const directive of ["public", "s-maxage"]) {
+    if (directives.includes(directive)) failures.push(`${path} (${kind}) cache-control "${header}" says ${directive}`);
+  }
+  for (const name of ["cdn-cache-control", "vercel-cdn-cache-control"]) {
+    if (res.headers.get(name)) failures.push(`${path} (${kind}) sends ${name}: ${res.headers.get(name)}`);
+  }
+  if (res.headers.get("set-cookie")) failures.push(`${path} (${kind}) sets a cookie on a read`);
+  return failures;
+}
+
+/**
  * Next.js serialises its not-found and error boundaries into every page's script payload, so the
  * markers must be looked for in visible text only.
  */
@@ -209,9 +242,11 @@ async function main() {
       if (res.status !== 307 && res.status !== 308) failures.push(`${path} returned ${res.status}, expected a redirect to ${redirectsTo}`);
       else if (!target.startsWith(redirectsTo)) failures.push(`${path} redirected to ${location}, expected ${redirectsTo}`);
       else console.log(`  ${res.status}  ${path}  -> ${location}`);
+      failures.push(...cachePolicyFailures(path, res, "api"));
       continue;
     }
     const text = visibleText(body);
+    failures.push(...cachePolicyFailures(path, res));
     if (res.status !== 200) {
       failures.push(`${path} returned ${res.status}${res.headers.get("location") ? ` -> ${res.headers.get("location")}` : ""}`);
       continue;
@@ -228,6 +263,21 @@ async function main() {
       if (!visibleText(selected).includes(selectedStatus)) failures.push(`${path} does not select the ${selectedStatus} view`);
     }
     console.log(`  ${res.status}  ${path}  (${body.length} bytes)`);
+  }
+
+  // A client-side navigation fetches the same page as an RSC payload; it is as per-account as the
+  // HTML and must be as uncacheable, or a shared cache would hand one account's table to the next.
+  for (const path of ["/", `/companies/${companyId}`]) {
+    try {
+      const rsc = await fetch(`http://127.0.0.1:${PORT}${path}`, { headers: { cookie, RSC: "1" }, redirect: "manual", signal: AbortSignal.timeout(45_000) });
+      const payload = await rsc.text();
+      if (rsc.status !== 200 || !(rsc.headers.get("content-type") ?? "").includes("text/x-component")) {
+        failures.push(`RSC ${path} returned ${rsc.status} ${rsc.headers.get("content-type")}, expected a 200 text/x-component payload`);
+      } else console.log(`  ${rsc.status}  RSC ${path}  (${payload.length} bytes)`);
+      failures.push(...cachePolicyFailures(`${path} [RSC]`, rsc, "page"));
+    } catch (err) {
+      failures.push(`RSC ${path} threw: ${err.cause?.message ?? err.message}`);
+    }
   }
 
   // A company with no captured logo answers 404, one the worker has captured answers 200. A 500

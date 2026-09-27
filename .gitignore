@@ -15,3 +15,5 @@ tsconfig.tsbuildinfo
 # Model-call recordings (pnpm cli record): kept locally, never committed.
 /docs/evaluations/recordings/*
 !/docs/evaluations/recordings/README.md
+# Lighthouse CI reports (scripts/perf/lighthouse.mjs).
+.lighthouseci/

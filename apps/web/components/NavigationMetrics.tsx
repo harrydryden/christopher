@@ -19,6 +19,8 @@ type Pending = Omit<VitalReport, 'route' | 'deviceClass' | 'effectiveType'>;
 
 let started = false;
 
+const LAB_BROWSER = /Chrome-Lighthouse|HeadlessChrome/;
+
 function deviceClass(): VitalReport['deviceClass'] {
   return (navigator.hardwareConcurrency ?? 0) <= 4 ? 'low' : 'high';
 }
@@ -32,6 +34,9 @@ function effectiveType(): VitalReport['effectiveType'] {
 export async function startVitals(random: () => number = Math.random): Promise<boolean> {
   if (started) return false;
   started = true;
+  // Lab browsers are not users: Lighthouse and the headless smoke runs would put their numbers in
+  // the field data, and a sampled lab run would download the library and move the lab's own totals.
+  if (LAB_BROWSER.test(navigator.userAgent)) return false;
   if (random() >= VITALS_SAMPLE_RATE) return false;
   const route = vitalRoute(location.pathname);
   let library: typeof import('web-vitals');

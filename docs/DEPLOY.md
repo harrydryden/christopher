@@ -313,12 +313,13 @@ Two workflows. **CI** (`.github/workflows/ci.yml`) runs on every pull request an
 every push to `main`; **Release** (`.github/workflows/release.yml`) runs only after CI has
 passed on `main`.
 
-CI is three jobs side by side, each on its own runner with its own throwaway PostgreSQL 16:
+CI is four jobs side by side, each on its own runner with its own throwaway PostgreSQL 16:
 
 | Job | What it runs | Typical |
 |---|---|---|
 | `check` | `pnpm -r typecheck`, then `pnpm -r test`, then the release and deployment script tests | ~2.5 min |
 | `browser-and-smoke` | Chromium install, the headless browser test, `pnpm db:migrate`, `pnpm smoke:web` (a production `next build`, sign-in, every page, and the CV workspace driven through Playwright), then `scripts/bundle-budget.mjs`: each route's first-load JavaScript, gzipped, against `scripts/bundle-budget.json` (a route over its budget, or a new chunk of 20 KB gzip entering a first load, fails; the table goes to the run summary) | ~2.5 min |
+| `lighthouse` | `pnpm db:migrate`, a production `next build` (reusing the Next.js cache), then `scripts/perf/lighthouse.mjs`: a disposable signed-in account seeded as the smoke run does, `/`, `/companies`, `/library` and `/cv/<id>` three times each on the desktop preset (LCP ≤ 2.5 s, CLS ≤ 0.1, TBT ≤ 200 ms and script transfer ≤ 134 KB on `/`, 145 KB elsewhere fail; time to interactive ≤ 3.8 s and server response ≤ 600 ms warn), then on mobile emulation as warnings only. The account is deleted in a `finally`; reports are the `lighthouse-reports` artifact. `timeout-minutes: 12`. A second pass on a Vercel preview (`lighthouse-preview.yml`, `/login` signed out, warnings only) runs only when the repository variable `LHCI_PREVIEW_ENABLED` is `true`, with `VERCEL_AUTOMATION_BYPASS_SECRET` as a secret | ~4 min (estimated) |
 | `worker-image` | `docker build` of the image Render deploys, then boots it against the job's database and waits for `/healthz`, and checks it runs as a non-root user under `tini` | ~4 min cold (estimated, not yet measured on a runner), less with the dependency layer cached |
 
 So a pull request is green in about four minutes of wall clock for about nine billed minutes.

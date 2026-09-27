@@ -83,6 +83,15 @@ it("sends each metric once per load, however often the tab is hidden, and only w
   expect(beacon).toHaveBeenCalledTimes(2);
 });
 
+it("leaves Lighthouse and headless browsers out of the field data", async () => {
+  for (const agent of ["Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/139.0.0.0 Safari/537.36 Chrome-Lighthouse", "Mozilla/5.0 (X11; Linux x86_64) HeadlessChrome/139.0.0.0 Safari/537.36"]) {
+    resetVitalsForTests();
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue(agent);
+    expect(await startVitals(() => 0)).toBe(false);
+  }
+  expect(callbacks.size).toBe(0);
+});
+
 it("decides once per load: a second start does nothing", async () => {
   expect(await startVitals(() => 0)).toBe(true);
   expect(await startVitals(() => 0)).toBe(false);

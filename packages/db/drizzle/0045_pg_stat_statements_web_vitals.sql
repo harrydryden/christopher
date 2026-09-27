@@ -12,3 +12,18 @@ EXCEPTION
     RAISE NOTICE 'pg_stat_statements not installed (%); create it as the database owner to enable pgstat', SQLERRM;
 END
 $$;
+--> statement-breakpoint
+-- Real-user Core Web Vitals, as one histogram per UTC day, route and metric: `/api/performance`
+-- adds each sampled page load's final LCP, INP, CLS, TTFB and FCP to the log-scaled bucket its value
+-- falls in (apps/web/lib/web-vitals.ts), and Operations reads the p75 from the counts. No event,
+-- account, session or URL is stored. Ninety days are kept; the worker's monitor task runs the
+-- retention every five minutes, and by hand it is:
+--   DELETE FROM web_vitals WHERE day < (now() AT TIME ZONE 'utc')::date - 90;
+CREATE TABLE IF NOT EXISTS "web_vitals" (
+  "day" date NOT NULL,
+  "route" text NOT NULL,
+  "metric" text NOT NULL,
+  "bucket" smallint NOT NULL,
+  "count" integer DEFAULT 0 NOT NULL,
+  CONSTRAINT "web_vitals_pkey" PRIMARY KEY ("day","route","metric","bucket")
+);

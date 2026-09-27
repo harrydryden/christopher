@@ -11,7 +11,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/table";
 import { requireAdmin } from "@/lib/auth";
 import { RefusalNotice } from "@/components/RefusalNotice";
-import { StatementsCard } from "./monitoring";
+import { StatementsCard, WebVitalsCard } from "./monitoring";
 import { db } from "@/lib/db";
 import { totalAiUsage } from "@/lib/ai-usage";
 import { formatBytes, formatCount, formatDelta, formatDuration, formatLatency, formatPercent, formatStepDuration, formatUsd, formatUsdPrecise, relativeTime, shortDate } from "@/lib/format";
@@ -27,6 +27,7 @@ import {
   getQueueCounts,
   getScoredRoleCost,
   getTopStatements,
+  getWebVitalsP75,
   listCompaniesWithNoSource,
   listFailedTasks,
   listLargestScanInputs,
@@ -38,6 +39,9 @@ import {
 } from "@/lib/queries/health";
 
 export const dynamic = "force-dynamic";
+
+/** The window the real-user vitals card reads: four weeks, enough samples for a p75 on the busier routes. */
+const VITALS_DAYS = 28;
 
 /** The three states, in the words the status line uses. */
 const WORKER_STATE_LABEL = { healthy: "healthy", restarting: "restarting", stopped: "stopped" } as const;
@@ -89,7 +93,7 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
   ]);
   // Then how the builds are trending: the week-by-week bill and the rates that drift first.
   // With the database's own account of what it spent its time on.
-  const [cvWeeks, cvDrift, statements] = await Promise.all([getCvBuildWeeks(12), getCvDriftRates(30), getTopStatements()]);
+  const [cvWeeks, cvDrift, statements, vitals] = await Promise.all([getCvBuildWeeks(12), getCvDriftRates(30), getTopStatements(), getWebVitalsP75(VITALS_DAYS)]);
   const { status, crash, running, retrying, events } = activity;
   const totals = totalAiUsage(usage);
   // Every call since the month began, whoever it was for: the usage table's own total.
@@ -697,6 +701,8 @@ export default async function AdminOperationsPage({ searchParams }: { searchPara
           </Table>
         )}
       </Card>
+
+      <WebVitalsCard routes={vitals} days={VITALS_DAYS} />
 
       <StatementsCard totals={statements} />
 

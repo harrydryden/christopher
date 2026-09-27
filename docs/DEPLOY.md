@@ -515,6 +515,7 @@ to answer a question after the fact, and the pages under **Admin › Operations*
 | `scans` | One row per scan: status, fetch method, postings, bytes fetched, requests made and how many came back 304, duration. | The scan handler | 90 days, keeping each source's last three and its last successful one |
 | `cv_build_steps` | One row per motion of a CV build — reading the Library, reserving the budget, the rubric, each writing attempt, each measurement and trim, each assessment batch, scoring, saving — with its attempt, timing, figures, cost, outcome and, when it stopped, the classified failure. The CV page narrates them; Operations aggregates them by motion and by failure kind. | The CV build handler | With the draft (deleted on cascade) |
 | `tasks` | The queue itself: type, payload, attempts, error, timings. | The queue | 30 days after finishing |
+| `web_vitals` | Real-user Core Web Vitals (LCP, INP, CLS, TTFB, FCP) as a histogram per UTC day, route and metric: counts in log-scaled buckets, from one signed-in page load in four, sent once when the tab is hidden. No event, account, session, address or URL; `/api/performance` refuses any key beyond the seven it defines. Operations shows the p75 per route over four weeks. | `/api/performance` | 90 days (the worker's monitor task) |
 
 Retention is enforced by the worker's hourly `maintainHistory`, each statement bounded so an hour's
 cleanup never holds a long transaction. `ai_calls` keeps thirteen months — a full year plus the

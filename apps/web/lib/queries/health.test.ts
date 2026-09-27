@@ -15,10 +15,11 @@ let database: Db;
 let pool: ReturnType<typeof createDb>["pool"];
 let user: User;
 vi.mock("@/lib/db", () => ({ db: () => database }));
-import { getAiUsage, getCvBuildCosts, getCvBuildFailureKinds, getCvBuildMotions, getScoredRoleCost, getTopStatements, getTotalAiSpend } from "./health";
+import { getAiUsage, getCvBuildCosts, getCvBuildFailureKinds, getCvBuildMotions, getScoredRoleCost, getTopStatements, getTotalAiSpend, getWebVitalsP75 } from "./health";
 import { getCvMotionMedians, resetCvMotionMedians } from "./cv";
 import { totalAiUsage } from "@/lib/ai-usage";
 import { aiOutcome } from "@ava/db";
+import { vitalBucket, vitalBucketValue } from "@/lib/web-vitals";
 
 /** The string packages/ai writes when it stops paying for a batch whose sibling has failed. */
 const CANCELLED = "Cancelled because another call in the same task failed.";
@@ -194,6 +195,29 @@ it("reads the governor's pause as the epoch milliseconds the engine reports, and
   // No pause is null, and an ISO string from an older shape still reads.
   expect(readHeartbeat({ at: "2026-09-18T12:00:00.000Z", governor: { cap: 4, inFlight: 0, queued: 0, pausedUntil: null } })!.governor!.pausedUntil).toBeNull();
   expect(readHeartbeat({ at: "2026-09-18T12:00:00.000Z", governor: { cap: 4, pausedUntil: "2026-09-18T12:05:00.000Z" } })!.governor!.pausedUntil).toEqual(new Date(pausedUntil));
+});
+
+it("reads each route's p75 per vital from the beacon's histograms, busiest route first, inside the window", async () => {
+  await database.execute(sql`truncate web_vitals`);
+  const add = (daysAgo: number, route: string, metric: string, value: number, count: number) =>
+    database.execute(sql`insert into web_vitals (day, route, metric, bucket, count)
+      values ((now() at time zone 'utc')::date - ${daysAgo}::int, ${route}, ${metric}, ${vitalBucket(metric as "LCP", value)}, ${count})
+      on conflict (day, route, metric, bucket) do update set count = web_vitals.count + excluded.count`);
+  // "/": 60 loads at 1.2 s and 40 at 3.1 s on two days, so the p75 is in the slower bucket.
+  await add(0, "/", "LCP", 1_200, 30);
+  await add(3, "/", "LCP", 1_200, 30);
+  await add(1, "/", "LCP", 3_100, 40);
+  await add(1, "/", "CLS", 0.02, 100);
+  // "/companies/:id": fewer loads, and a day outside the window that would change the answer.
+  await add(2, "/companies/:id", "LCP", 900, 10);
+  await add(40, "/companies/:id", "LCP", 9_000, 500);
+
+  const routes = await getWebVitalsP75(28);
+  expect(routes.map((r) => [r.route, r.samples])).toEqual([["/", 100], ["/companies/:id", 10]]);
+  expect(routes[0]!.metrics.LCP).toEqual({ p75: vitalBucketValue("LCP", vitalBucket("LCP", 3_100)), samples: 100 });
+  expect(routes[0]!.metrics.CLS!.p75).toBeCloseTo(0.02, 2);
+  expect(routes[0]!.metrics.INP).toBeUndefined();
+  expect(routes[1]!.metrics.LCP!.p75).toBeCloseTo(900, -2);
 });
 
 it("reads the costliest statements for Operations, or says why it cannot, without failing the page", async () => {

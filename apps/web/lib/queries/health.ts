@@ -38,6 +38,7 @@ import { formatUsd } from "@/lib/format";
 import { foldOutboundTraffic, type HostTraffic } from "@/lib/outbound-traffic";
 import { db } from "@/lib/db";
 import { deriveWorkerStatus, type WorkerHeartbeat, type WorkerStatus, type WorkerVitals } from "@/lib/worker-status";
+import { histogramP75, VITAL_METRICS, type VitalMetric } from "@/lib/web-vitals";
 
 /** Companies one account follows; with no account, every company (the administrator's view). */
 function followedBy(userId?: string) {
@@ -384,6 +385,53 @@ export async function getTopStatements(): Promise<StatementTotals> {
   } catch {
     return { available: false, reason: "The statement statistics could not be read." };
   }
+}
+
+export interface RouteVitals {
+  route: string;
+  /** Sampled page loads that reported anything for this route in the window. */
+  samples: number;
+  metrics: Partial<Record<VitalMetric, { p75: number; samples: number }>>;
+}
+
+/**
+ * The p75 of each Core Web Vital per route over the last `days` days, from the beacon's histograms:
+ * one statement that sums the buckets across the window, the percentile read in memory. Routes
+ * with the most samples first, at most `limit` of them. A table that does not exist yet (the
+ * interface can serve before the worker migrates) is no data, not an error.
+ */
+export async function getWebVitalsP75(days = 28, limit = 20): Promise<RouteVitals[]> {
+  let rows: Array<{ route: string; metric: string; bucket: number; count: number }>;
+  try {
+    const result = await db().execute<{ route: string; metric: string; bucket: number; count: string | number }>(sql`
+      select route, metric, bucket, sum(count)::bigint as count from web_vitals
+      where day >= (now() at time zone 'utc')::date - ${days}::int
+      group by route, metric, bucket`);
+    rows = result.rows.map((row) => ({ route: row.route, metric: row.metric, bucket: Number(row.bucket), count: Number(row.count) }));
+  } catch {
+    return [];
+  }
+  const byRoute = new Map<string, Map<VitalMetric, Array<{ bucket: number; count: number }>>>();
+  for (const row of rows) {
+    if (!(VITAL_METRICS as readonly string[]).includes(row.metric)) continue;
+    const metrics = byRoute.get(row.route) ?? new Map();
+    byRoute.set(row.route, metrics);
+    const buckets = metrics.get(row.metric as VitalMetric) ?? [];
+    metrics.set(row.metric as VitalMetric, buckets);
+    buckets.push({ bucket: row.bucket, count: row.count });
+  }
+  const out: RouteVitals[] = [];
+  for (const [route, metrics] of byRoute) {
+    const entry: RouteVitals = { route, samples: 0, metrics: {} };
+    for (const [metric, buckets] of metrics) {
+      const samples = buckets.reduce((sum, b) => sum + b.count, 0);
+      const p75 = histogramP75(metric, buckets);
+      if (p75 !== null) entry.metrics[metric] = { p75, samples };
+      entry.samples = Math.max(entry.samples, samples);
+    }
+    out.push(entry);
+  }
+  return out.sort((a, b) => b.samples - a.samples || a.route.localeCompare(b.route)).slice(0, limit);
 }
 
 /** Health's run history: one query for the runs, one for every run's counts. */

@@ -287,6 +287,8 @@ async function main() {
     const logo = await fetch(`http://127.0.0.1:${PORT}${logoPath}`, { headers: { cookie }, redirect: "manual", signal: AbortSignal.timeout(15_000) });
     if (logo.status !== 200 && logo.status !== 404) failures.push(`${logoPath} returned ${logo.status}, expected 200 or 404`);
     else console.log(`  ${logo.status}  ${logoPath}`);
+    // Only the 200 for a URL naming the stored capture may go to the CDN; this URL names none.
+    if (logo.headers.get("cdn-cache-control")) failures.push(`${logoPath} (${logo.status}, unversioned) sends cdn-cache-control: ${logo.headers.get("cdn-cache-control")}`);
   } catch (err) {
     failures.push(`${logoPath} threw: ${err.cause?.message ?? err.message}`);
   }

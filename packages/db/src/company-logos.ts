@@ -62,6 +62,19 @@ export async function noteLogoFailure(db: Db, companyId: string, error: string, 
   });
 }
 
+/**
+ * When this company's stored logo was captured, without reading its bytes: all a conditional
+ * request needs to be answered "not modified". Null when this company has never been captured.
+ */
+export async function companyLogoVersion(db: Db, companyId: string): Promise<Date | null> {
+  const [row] = await db
+    .select({ fetchedAt: companyLogos.fetchedAt })
+    .from(companyLogos)
+    .where(eq(companyLogos.companyId, companyId))
+    .limit(1);
+  return row?.fetchedAt ?? null;
+}
+
 /** The bytes to serve, decoded. Null when this company has never been captured. */
 export async function readCompanyLogo(db: Db, companyId: string): Promise<{ contentType: string; bytes: Buffer; fetchedAt: Date } | null> {
   const [row] = await db

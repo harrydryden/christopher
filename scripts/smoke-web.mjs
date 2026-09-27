@@ -150,6 +150,27 @@ function cachePolicyFailures(path, res, kind = path.startsWith("/api/") ? "api" 
   return failures;
 }
 
+/** Next's own `Vary` on pages and RSC; anything beyond it (above all `Cookie`) changes what a cache keys on. */
+const NEXT_VARY = new Set(["rsc", "next-router-state-tree", "next-router-prefetch", "next-router-segment-prefetch", "accept-encoding"]);
+
+/** The static security headers `next.config.ts` sends on every response, and the one `/share/` overrides. */
+function securityHeaderFailures(path, res, referrer = "strict-origin-when-cross-origin") {
+  const failures = [];
+  const expect = (name, test, wanted) => {
+    const value = res.headers.get(name);
+    if (value === null || !test(value)) failures.push(`${path} ${name}: ${value ?? "(missing)"}, expected ${wanted}`);
+  };
+  expect("x-content-type-options", value => value === "nosniff", "nosniff");
+  expect("referrer-policy", value => value === referrer, referrer);
+  expect("content-security-policy", value => value.includes("frame-ancestors 'none'"), "frame-ancestors 'none'");
+  expect("content-security-policy-report-only", value => value.includes("default-src 'self'") && value.includes("'sha256-"), "a report-only policy with 'self' and a hash");
+  expect("permissions-policy", value => value.includes("camera=()"), "a Permissions-Policy");
+  const vary = (res.headers.get("vary") ?? "").toLowerCase().split(",").map(part => part.trim()).filter(Boolean);
+  const extra = vary.filter(name => !NEXT_VARY.has(name));
+  if (extra.length) failures.push(`${path} varies on ${extra.join(", ")}, beyond Next's own`);
+  return failures;
+}
+
 /**
  * Next.js serialises its not-found and error boundaries into every page's script payload, so the
  * markers must be looked for in visible text only.
@@ -247,6 +268,7 @@ async function main() {
     }
     const text = visibleText(body);
     failures.push(...cachePolicyFailures(path, res));
+    failures.push(...securityHeaderFailures(path, res));
     if (res.status !== 200) {
       failures.push(`${path} returned ${res.status}${res.headers.get("location") ? ` -> ${res.headers.get("location")}` : ""}`);
       continue;
@@ -275,8 +297,23 @@ async function main() {
         failures.push(`RSC ${path} returned ${rsc.status} ${rsc.headers.get("content-type")}, expected a 200 text/x-component payload`);
       } else console.log(`  ${rsc.status}  RSC ${path}  (${payload.length} bytes)`);
       failures.push(...cachePolicyFailures(`${path} [RSC]`, rsc, "page"));
+      failures.push(...securityHeaderFailures(`${path} [RSC]`, rsc));
     } catch (err) {
       failures.push(`RSC ${path} threw: ${err.cause?.message ?? err.message}`);
+    }
+  }
+
+  // The sign-in page carries the same headers before anyone has a session, and a share link sends
+  // no referrer at all: its URL is the credential. An unknown token still gets the share headers.
+  for (const [path, referrer] of [["/login", undefined], ["/share/not-a-real-token", "no-referrer"]]) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${PORT}${path}`, { redirect: "manual", signal: AbortSignal.timeout(15_000) });
+      await res.arrayBuffer();
+      const found = securityHeaderFailures(path, res, referrer);
+      failures.push(...found);
+      if (!found.length) console.log(`  ${res.status}  ${path}  (security headers)`);
+    } catch (err) {
+      failures.push(`${path} threw: ${err.cause?.message ?? err.message}`);
     }
   }
 
@@ -291,6 +328,28 @@ async function main() {
     if (logo.headers.get("cdn-cache-control")) failures.push(`${logoPath} (${logo.status}, unversioned) sends cdn-cache-control: ${logo.headers.get("cdn-cache-control")}`);
   } catch (err) {
     failures.push(`${logoPath} threw: ${err.cause?.message ?? err.message}`);
+  }
+
+  // A captured logo, through the built server: the versioned 200 goes to the CDN and keeps the
+  // route's own sandbox policy over the site-wide headers, and a revalidation is a bare 304.
+  // The row goes with the throwaway company at the end.
+  try {
+    const { rows: [stored] } = await pool.query(
+      `insert into company_logos (company_id, content_type, data_base64, byte_length, source, source_url, fetched_at)
+       values ($1, 'image/png', $2, 8, 'site_icon', 'https://smoke.invalid/icon.png', date_trunc('milliseconds', now())) returning (extract(epoch from fetched_at) * 1000)::bigint as v`,
+      [companyId, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString("base64")],
+    );
+    const versioned = `${logoPath}?v=${stored.v}`;
+    const hit = await fetch(`http://127.0.0.1:${PORT}${versioned}`, { headers: { cookie }, signal: AbortSignal.timeout(15_000) });
+    await hit.arrayBuffer();
+    if (hit.status !== 200) failures.push(`${versioned} returned ${hit.status}, expected 200`);
+    if (hit.headers.get("cdn-cache-control") !== "public, max-age=31536000, immutable") failures.push(`${versioned} cdn-cache-control: ${hit.headers.get("cdn-cache-control")}`);
+    if (!(hit.headers.get("content-security-policy") ?? "").includes("sandbox")) failures.push(`${versioned} lost its sandbox policy: ${hit.headers.get("content-security-policy")}`);
+    const again = await fetch(`http://127.0.0.1:${PORT}${versioned}`, { headers: { cookie, "if-none-match": hit.headers.get("etag") ?? "" }, signal: AbortSignal.timeout(15_000) });
+    if (again.status !== 304 || again.headers.get("cdn-cache-control")) failures.push(`${versioned} revalidated as ${again.status} with cdn-cache-control ${again.headers.get("cdn-cache-control")}, expected a 304 without it`);
+    else console.log(`  ${hit.status}  ${versioned}  then ${again.status}`);
+  } catch (err) {
+    failures.push(`${logoPath} (captured) threw: ${err.cause?.message ?? err.message}`);
   }
 
   try { await verifyCvWorkspace(`http://127.0.0.1:${PORT}`, cookie, DATABASE_URL, userId); }

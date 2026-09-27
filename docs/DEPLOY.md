@@ -205,6 +205,22 @@ state such as `awaiting_evidence`; the corresponding interface must be live befo
 left at that checkpoint. A database missing migrations altogether is a different thing — the
 "every page 500s right after deploy" row below.
 
+**Caching and response headers.** Every signed-in page and RSC payload is `private, no-store`, and
+nothing per account may ever say `public`, `s-maxage` or `CDN-Cache-Control`: Next's `Vary` leaves
+out `Cookie`, so a cacheable page would be served to the next account. The one response the CDN
+holds is a company logo whose URL names its capture (`?v=`), for a year; a re-capture changes the
+URL, and a takedown is a CDN purge. `next.config.ts` adds the same static headers to every
+response: `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`
+(`no-referrer` under `/share/`, whose URL is the credential), `Content-Security-Policy:
+frame-ancestors 'none'`, a minimal `Permissions-Policy`, and a `Content-Security-Policy-Report-Only`
+policy of `'self'` plus the hash of Next's bootstrap script. That last one reports Next's
+per-response flight-data scripts, which no hash can cover; enforcing a full policy needs nonces or
+`'unsafe-inline'`, so it stays report-only until that is decided. A header set in `next.config.ts`
+replaces the one a route sets, so the policies skip the logo route, which keeps its own sandboxing
+policy. Never add `Vary` beside these. On a custom domain outside `.app`, also send
+`Strict-Transport-Security: max-age=63072000; includeSubDomains; preload` and submit the domain to
+the preload list (`*.vercel.app` is preloaded already). `pnpm smoke:web` asserts all of this.
+
 Vercel's egress addresses vary, so the database is protected by TLS and a strong password rather
 than an IP allowlist. Leave `CRON_SECRET` unset and the daily cron in `apps/web/vercel.json` is
 harmless: without the secret the route refuses anonymous calls, and the worker is doing the work

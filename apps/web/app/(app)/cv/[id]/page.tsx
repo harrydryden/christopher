@@ -7,6 +7,7 @@ import { cvDraftSize, cvEditCosts } from "@/lib/cv-quote";
 import { CvDisclosure } from "@/components/CvDisclosure";
 import { CvWorkspace, CvWorkspacePanel } from "@/components/CvWorkspace";
 import { CvGapQuiz } from "@/components/CvLazyWidgets";
+import { gapQuizForm, gapQuizLibrary } from "@/lib/cv-gap-quiz-library";
 import { answerCvGapQuiz } from "@/app/actions/cv";
 import { CvBuildLive } from "@/components/CvBuildLive";
 import { cvBuildTotals, cvBuildTotalsLine } from "@/lib/cv-build-narrative";
@@ -282,8 +283,9 @@ export default async function CvDraftPage({
           <CvWorkspacePanel tab="content">
             {awaitingEvidence && draft.gapQuiz?.status === "awaiting_answers" && (
               <CvGapQuiz
-                quiz={draft.gapQuiz}
-                library={draft.librarySnapshot}
+                // Shaped here: the destinations an answer can be saved under, not the snapshot.
+                quiz={gapQuizForm(draft.gapQuiz, draft.librarySnapshot)}
+                library={gapQuizLibrary(draft.librarySnapshot)}
                 action={answerCvGapQuiz.bind(null, id)}
               />
             )}

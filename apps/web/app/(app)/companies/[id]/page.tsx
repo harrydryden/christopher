@@ -51,7 +51,7 @@ import {
 } from "@/lib/queries/companies";
 import { getSystemSettings } from "@/lib/settings";
 import { needsEmailConfirmation, requireUser } from "@/lib/auth";
-import { CompanyControls } from "../CompanyControls";
+import { CompanyManageMenu } from "@/components/CompanyManageMenu";
 import { nextScanSentence, scanTimingLine } from "../scan-line";
 import { VERIFY_SENTENCE, VerifyNotice } from "@/components/VerifyNotice";
 
@@ -224,10 +224,8 @@ async function CompanyOverview({ company, details }: { company: LoadedCompany; d
             </Button>
           </form>
           {/* Re-discover is occasional, so it sits in the Manage menu beside Pause and Hide. */}
-          <CompanyControls companyId={company.id} companyName={company.name} status={subscription.status}
-            refresh={<form action={rediscoverCompany.bind(null, company.id)}>
-              <Button type="submit" size="sm" disabled={unverified} title={unverified ? VERIFY_SENTENCE : undefined}>Re-discover</Button>
-            </form>} />
+          <CompanyManageMenu companyId={company.id} companyName={company.name} status={subscription.status}
+            extra="rediscover" blockedReason={unverified ? VERIFY_SENTENCE : undefined} />
           {/* Beside Rescan, because it is the answer to "did that do anything?" */}
           <p className="w-full text-12 text-muted">{scanLine}</p>
           {unverified && <VerifyNotice className="w-full" />}

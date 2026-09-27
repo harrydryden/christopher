@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { RefreshCompanyButton } from "@/components/RefreshCompanyButton";
 import { CompanyFavicon } from "@/components/CompanyFavicon";
 import { companyIcon } from "@/lib/company-icon";
 import { getCompanyWorkStatus } from "@/lib/work-status";
@@ -18,7 +17,7 @@ import { GateSetup } from "@/components/GateSetup";
 import { getSystemSettings } from "@/lib/settings";
 import { hasChosenGate } from "@/lib/queries/setup";
 import { needsEmailConfirmation, requireUser } from "@/lib/auth";
-import { CompanyControls } from "./CompanyControls";
+import { CompanyManageMenu } from "@/components/CompanyManageMenu";
 import { nextScanSentence } from "./scan-line";
 import { VERIFY_SENTENCE } from "@/components/VerifyNotice";
 import { RefusalNotice } from "@/components/RefusalNotice";
@@ -160,14 +159,8 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                 </TD>
                 <TD>
                   {/* Refresh is occasional, so it sits in the row's Manage menu rather than beside it. */}
-                  <CompanyControls companyId={company.id} companyName={company.name} status={subscription.status}
-                    refresh={subscription.status === "active" ? (
-                      <RefreshCompanyButton
-                        companyId={company.id}
-                        running={discoveryState === "running"}
-                        blockedReason={unverified ? VERIFY_SENTENCE : undefined}
-                      />
-                    ) : undefined} />
+                  <CompanyManageMenu companyId={company.id} companyName={company.name} status={subscription.status}
+                    extra="refresh" running={discoveryState === "running"} blockedReason={unverified ? VERIFY_SENTENCE : undefined} />
                 </TD>
               </TR>
             ))}

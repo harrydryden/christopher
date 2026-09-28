@@ -11,6 +11,7 @@ export { enqueueTask, enqueueTasks, pendingTaskCounts, taskById, activeTaskFor, 
 
 export { reevaluateGate, archiveNonMatches, isGateArchive, restoreGateArchive, GATE_RESTORE_EVENT, REEVALUATE_CLOSED_DAYS, type GateScope, type ArchiveScope, type ReevaluateOptions } from "./gate";
 export { appendProfile, latestProfileFor } from "./profiles";
+export { latestCvLibrary } from "./cv-library";
 export { claimableTaskSql, workloadMetrics } from "./scaling";
 export { topStatements, resetStatements, formatStatementTotals, type StatementTotal, type StatementTotals } from "./pg-stat";
 export { addHttpHostDaily, listHttpHostDaily, pruneHttpHostDaily, emptyHttpCounters, latencyBucketIndex, LATENCY_BUCKET_UPPER_MS, type HttpHostCounters, type HttpHostDailyDelta, type HttpHostDailyRow } from "./http-rollup";

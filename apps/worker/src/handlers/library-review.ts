@@ -43,16 +43,15 @@ import {
 } from "@ava/core";
 import { createAiEngine, estimateLibraryReviewUsd, type LibraryReviewEntry } from "@ava/ai";
 import {
+  latestCvLibrary,
   latestLibraryReviews,
   latestModelReviewsByEntry,
   pruneLibraryReviews,
-  schema,
   upsertLibraryReviews,
   type Db,
   type LibraryReviewUpsert,
   type Task,
 } from "@ava/db";
-import { desc, eq } from "drizzle-orm";
 import { recordAiUsage, tryReserveAi, type AiHold } from "../budget";
 import type { TaskRunContext } from "../queue";
 import type { WorkerDeps } from "../context";
@@ -88,12 +87,7 @@ export async function handleReviewLibrary(task: Task, deps: WorkerDeps, ctx?: Ta
 
   // The dedupe key is the account, so a burst of saves runs once — for whatever is there when it
   // runs, which is the newest version rather than the one the first save happened to name.
-  const [library] = await deps.db
-    .select({ version: schema.cvLibraries.version, content: schema.cvLibraries.content })
-    .from(schema.cvLibraries)
-    .where(eq(schema.cvLibraries.userId, userId))
-    .orderBy(desc(schema.cvLibraries.version))
-    .limit(1);
+  const library = await latestCvLibrary(deps.db, userId);
   if (!library) return { skipped: "no library saved" };
   const version = library.version;
   /** Named only when it is not the version the save asked for, so the result says what was read. */

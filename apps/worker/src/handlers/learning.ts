@@ -1,7 +1,7 @@
 import { withResourceLease } from "../lease";
 import { analyzeTables, GATE_ANALYZE_THRESHOLD, GATE_TABLES } from "../analyze";
 import { enqueueTasks } from "@ava/db/tasks";
-import { schema, enqueueTask, latestApplicationFor, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, type ScoreState, type Task } from "@ava/db";
+import { schema, enqueueTask, latestApplicationFor, latestCvLibrary, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, type ScoreState, type Task } from "@ava/db";
 import { decisionDigest, type ScoreJobInput, type ScoreJobResult } from "@ava/ai";
 import { eligibleCvEvidence, evidenceHeading, responsibilityRows, scoringEvidence, sha1, dedupeKeyFor, modelForCallSite, priorityFor, type CvLibrary, type ScoringEvidenceBlock, type TaskPayloads } from "@ava/core";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
@@ -119,8 +119,7 @@ export async function prepareScoreJob(deps: WorkerDeps, userId: string, jobId: s
   const profile = await latestProfileFor(deps.db, userId);
   const digest = await buildDigest(deps, userId);
 
-  const [library] = await deps.db.select({ content: schema.cvLibraries.content }).from(schema.cvLibraries)
-    .where(eq(schema.cvLibraries.userId, userId)).orderBy(desc(schema.cvLibraries.version)).limit(1);
+  const library = await latestCvLibrary(deps.db, userId, { content: schema.cvLibraries.content });
   const role = {
     title: job.title,
     company: company?.name ?? "",
@@ -532,8 +531,7 @@ export const RESCORE_INTERVAL_MS = 60 * 60_000;
 async function rescoreInputs(deps: WorkerDeps, userId: string): Promise<string> {
   const settings = await deps.userSettings(userId);
   const profile = await latestProfileFor(deps.db, userId);
-  const [library] = await deps.db.select({ content: schema.cvLibraries.content }).from(schema.cvLibraries)
-    .where(eq(schema.cvLibraries.userId, userId)).orderBy(desc(schema.cvLibraries.version)).limit(1);
+  const library = await latestCvLibrary(deps.db, userId, { content: schema.cvLibraries.content });
   return sha1(JSON.stringify([
     profile?.markdown ?? settings.seedProfile ?? "",
     settings.gate,

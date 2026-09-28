@@ -68,4 +68,16 @@ it("picks the densest block as the description", () => {
   const body = "The role covers the whole site and every shift on it. ".repeat(5);
   expect(extractMainText(`<html><body><nav>Home</nav><main>${body}</main></body></html>`)).toContain("every shift");
   expect(extractMainText("<html><body><p>Too short</p></body></html>")).toBeUndefined();
+  expect(extractMainText(`<MAIN class="x">${body}</Main><article>ignored</article>`)).toContain("every shift");
+  expect(extractMainText(`<mainly>no</mainly><article id="a">${body}</article>`)).toContain("every shift");
+  expect(extractMainText(`<div class="job-description">${body}</div>`)).toContain("every shift");
+});
+
+it("reads a page of unclosed main and article tags in linear time", () => {
+  // A lazy `<main>…</main>` regex rescanned the rest of the page from every unclosed opening tag.
+  const page = "<main><article>".repeat(300_000);
+  const started = process.cpuUsage();
+  expect(extractMainText(page)).toBeUndefined();
+  const { user, system } = process.cpuUsage(started);
+  expect((user + system) / 1000).toBeLessThan(1000);
 });

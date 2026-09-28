@@ -1,9 +1,8 @@
 import { withResourceLease } from "../lease";
 import { analyzeTables, GATE_ANALYZE_THRESHOLD, GATE_TABLES } from "../analyze";
-import { enqueueTasks } from "@ava/db/tasks";
-import { schema, enqueueStandard, latestApplicationFor, latestCvLibrary, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, type ScoreState, type Task } from "@ava/db";
+import { schema, queueScoring, enqueueStandard, latestApplicationFor, latestCvLibrary, reevaluateGate, appendProfile, latestProfileFor, listUserIds, seedTagVocabulary, type ScoreState, type Task } from "@ava/db";
 import { decisionDigest, type ScoreJobInput, type ScoreJobResult } from "@ava/ai";
-import { eligibleCvEvidence, evidenceHeading, responsibilityRows, scoringEvidence, sha1, dedupeKeyFor, modelForCallSite, priorityFor, type CvLibrary, type ScoringEvidenceBlock, type TaskPayloads } from "@ava/core";
+import { eligibleCvEvidence, evidenceHeading, responsibilityRows, scoringEvidence, sha1, modelForCallSite, type CvLibrary, type ScoringEvidenceBlock, type TaskPayloads } from "@ava/core";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { aiBudgetStop } from "../context";
@@ -559,20 +558,10 @@ export async function handleRescoreAll(task: Task, deps: WorkerDeps): Promise<un
   const rows = await deps.db.select({ id: schema.userJobs.jobId, shortlisted }).from(schema.userJobs)
     .innerJoin(schema.jobs, eq(schema.jobs.id, schema.userJobs.jobId))
     .where(and(eq(schema.userJobs.userId, userId), eq(schema.jobs.status, "open"), sql`(${schema.userJobs.inTable} or ${shortlisted})`)).orderBy(desc(shortlisted));
-  let queued = 0;
-  for (let offset = 0; offset < rows.length; offset += 250) {
-    const batch = rows.slice(offset, offset + 250);
-    const rowFor = (row: (typeof batch)[number]) => {
-      const payload = { userId, jobId: row.id };
-      return { type: "score_job" as const, payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: row.shortlisted ? 1 : priorityFor("score_job") };
-    };
-    // A shortlisted role's score is the one the person is waiting on: a background score already
-    // queued for it is brought up to that priority rather than left where it was.
-    queued += await enqueueTasks(deps.db, batch.filter(row => row.shortlisted).map(rowFor), 250, true);
-    queued += await enqueueTasks(deps.db, batch.filter(row => !row.shortlisted).map(rowFor));
-    // Every role a new profile version will re-score reads "scoring" until its turn comes.
-    await deps.db.update(schema.userJobs).set({ scoreState: "queued", scoreStateAt: deps.now() })
-      .where(and(eq(schema.userJobs.userId, userId), inArray(schema.userJobs.jobId, batch.map(row => row.id))));
-  }
+  // A shortlisted role's score is the one the person is waiting on: a background score already
+  // queued for it is brought up to that priority rather than left where it was. Every role a new
+  // profile version will re-score reads "scoring" until its turn comes.
+  const queued = await queueScoring(deps.db, rows.filter(row => row.shortlisted).map(row => ({ userId, jobId: row.id, priority: 1 })), deps.now(), { promote: true })
+    + await queueScoring(deps.db, rows.filter(row => !row.shortlisted).map(row => ({ userId, jobId: row.id })), deps.now());
   return { queued, inputsHash };
 }

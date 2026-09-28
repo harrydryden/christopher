@@ -8,13 +8,12 @@
  * follower and posting, created only once the posting passes that follower's gate.
  */
 import { withSpan } from "../otel";
-import { schema, enqueueStandard, enqueueTask, archiveNonMatches, isGateArchive, restoreGateArchive, GATE_RESTORE_EVENT, type Task } from "@ava/db";
+import { schema, taskRow, enqueueTasks, queueScoring, enqueueStandard, enqueueTask, archiveNonMatches, isGateArchive, restoreGateArchive, GATE_RESTORE_EVENT, type Task } from "@ava/db";
 import {
   ats,
   aiBudgetWindowStart,
   classifyScan,
   compileGate,
-  dedupeKeyFor,
   keyPostings,
   listingShrank,
   looksRemote,
@@ -950,23 +949,14 @@ async function scanSource(
     await enqueueStandard(deps.db, "discover", { companyId: company.id, reason: status === "suspect_empty" ? "suspect_empty" : persistentlyShrunk ? "shrunk" : "failing" });
   }
 
-  const queued: Array<typeof schema.tasks.$inferInsert> = [];
   // Scoring is per account, so the budget is asked per account: one follower with nothing left to
   // spend has its roles left unscored, while everyone else scans and scores as usual. Queuing them
   // anyway would only fail and retry each task at the hold. Only the accounts with something to
   // score are asked, all in one read.
   const scorable = deps.ai.enabled ? await followersWithBudget(deps.db, followers, new Set(scoreQueue.map(payload => payload.userId)), deps.now()) : new Set<string>();
   const scoring = scoreQueue.filter(payload => scorable.has(payload.userId));
-  for (const payload of scoring) queued.push({ type: "score_job", payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") });
-  for (const jobId of descriptionQueue) queued.push({ type: "fetch_description", payload: { jobId }, dedupeKey: dedupeKeyFor("fetch_description", { jobId }), priority: priorityFor("fetch_description") });
-  for (let offset = 0; offset < queued.length; offset += 250) await deps.db.insert(schema.tasks).values(queued.slice(offset, offset + 250)).onConflictDoNothing();
-  // A role whose score is on its way says so on the view, so the table can tell waiting from
-  // refused instead of showing one em dash for five different situations.
-  for (let offset = 0; offset < scoring.length; offset += 250) {
-    await deps.db.execute(sql`update user_jobs uj set score_state = 'queued', score_state_at = ${deps.now()}
-      from jsonb_to_recordset(${JSON.stringify(scoring.slice(offset, offset + 250))}::jsonb) as v("userId" uuid, "jobId" uuid)
-      where uj.user_id = v."userId" and uj.job_id = v."jobId"`);
-  }
+  await queueScoring(deps.db, scoring, deps.now());
+  await enqueueTasks(deps.db, [...descriptionQueue].map(jobId => taskRow("fetch_description", { jobId })));
 
   log.info("source scanned", {
     company: company.name,

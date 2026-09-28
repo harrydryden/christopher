@@ -1,5 +1,5 @@
-import { schema, archiveNonMatches, isGateArchive, restoreGateArchive, GATE_RESTORE_EVENT, type Task } from "@ava/db";
-import { ats, compileGate, dedupeKeyFor, extractMainText, priorityFor, sha1, stripHtml, type AppSettings, type CompiledGate } from "@ava/core";
+import { schema, queueScoring, archiveNonMatches, isGateArchive, restoreGateArchive, GATE_RESTORE_EVENT, type Task } from "@ava/db";
+import { ats, compileGate, extractMainText, sha1, stripHtml, type AppSettings, type CompiledGate } from "@ava/core";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
 import { makeFetchContext } from "../context";
@@ -176,15 +176,7 @@ async function refreshFollowers(
     select ${job.id}::uuid, user_id, 'updated', ${GATE_RESTORE_EVENT}::jsonb from changed where restored`);
   }
   if (inserts.length) await db.insert(schema.userJobs).values(inserts).onConflictDoNothing();
-  if (scoring.length) {
-    await db.insert(schema.tasks).values(scoring.map(userId => {
-      const payload = { userId, jobId: job.id };
-      return { type: "score_job" as const, payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") };
-    })).onConflictDoNothing();
-    // Say so on the view as well, so the table reads "scoring" rather than a blank.
-    await db.update(schema.userJobs).set({ scoreState: "queued", scoreStateAt: now })
-      .where(and(eq(schema.userJobs.jobId, job.id), inArray(schema.userJobs.userId, scoring)));
-  }
+  await queueScoring(db, scoring.map(userId => ({ userId, jobId: job.id })), now);
 }
 
 /**

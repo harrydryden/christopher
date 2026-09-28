@@ -1,7 +1,8 @@
-import { compileGate, dedupeKeyFor, priorityFor, type AppSettings } from "@ava/core";
+import { compileGate, type AppSettings } from "@ava/core";
 import { sql } from "drizzle-orm";
 import type { Db } from "./client";
 import * as schema from "./schema";
+import { queueScoring } from "./tasks";
 
 export interface GateScope {
   /** One posting only (a description just arrived). */
@@ -113,7 +114,7 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
     examined += rows.length;
     const updates: Array<Record<string, unknown>> = [];
     const inserts: Array<typeof schema.userJobs.$inferInsert> = [];
-    const scoring: Array<typeof schema.tasks.$inferInsert> = [];
+    const scoring: Array<{ userId: string; jobId: string }> = [];
     for (const job of rows) {
       const gate = gateOf.evaluate({ title: job.title, department: job.department, description: job.descriptionText, location: job.location, locations: job.locations, remote: job.remote });
       // A role this account added by pasting its URL stays in their table whatever the gate says:
@@ -136,10 +137,7 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
         created++;
       } else continue;
       // A view whose scoring completed without a score is not asked again for the same inputs.
-      if (inTable && job.fitScore === null && job.scoredAt === null && job.status === "open") {
-        const payload = { userId, jobId: job.id };
-        scoring.push({ type: "score_job", payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") });
-      }
+      if (inTable && job.fitScore === null && job.scoredAt === null && job.status === "open") scoring.push({ userId, jobId: job.id });
     }
     for (let offset = 0; offset < updates.length; offset += 250) {
       await db.execute(sql`with changed as (
@@ -157,17 +155,7 @@ export async function reevaluateGate(db: Db, userId: string, settings: AppSettin
     for (let offset = 0; offset < inserts.length; offset += 250) {
       await db.insert(schema.userJobs).values(inserts.slice(offset, offset + 250)).onConflictDoNothing();
     }
-    for (let offset = 0; offset < scoring.length; offset += 250) {
-      const queued = await db.insert(schema.tasks).values(scoring.slice(offset, offset + 250)).onConflictDoNothing().returning({ id: schema.tasks.id });
-      queuedForScoring += queued.length;
-    }
-    // Say so on the view as well as in the queue: a role waiting for its score reads "scoring"
-    // rather than as a blank the reader cannot tell from "not scored: budget spent".
-    if (scoring.length) {
-      await db.execute(sql`update user_jobs set score_state = 'queued', score_state_at = ${now}
-        where user_id = ${userId}
-          and job_id in (select value::uuid from jsonb_array_elements_text(${JSON.stringify(scoring.map(row => (row.payload as { jobId: string }).jobId))}::jsonb))`);
-    }
+    queuedForScoring += await queueScoring(db, scoring, now);
     return rows.at(-1)!.id;
     });
     if (last === null) break;

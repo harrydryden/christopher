@@ -162,6 +162,31 @@ export async function enqueueTasks(db: TaskWriter, rows: EnqueueRow[], chunkSize
   return inserted;
 }
 
+/**
+ * Queue a score for each (account, role) and say so on the account's view, so the table reads
+ * "scoring" rather than a blank it cannot tell from "not scored: budget spent". Through
+ * `enqueueTasks`, so a listening worker is woken rather than left to its idle poll. A pair's
+ * `priority` replaces the ordinary one; `promote` brings a waiting score up to it. Returns how
+ * many tasks were inserted.
+ */
+export async function queueScoring(
+  db: TaskWriter,
+  pairs: ReadonlyArray<{ userId: string; jobId: string; priority?: number }>,
+  now: Date,
+  opts: { promote?: boolean } = {},
+): Promise<number> {
+  let queued = 0;
+  for (let offset = 0; offset < pairs.length; offset += 250) {
+    const batch = pairs.slice(offset, offset + 250);
+    queued += await enqueueTasks(db, batch.map(({ userId, jobId, priority }) =>
+      taskRow("score_job", { userId, jobId }, priority === undefined ? {} : { priority })), 250, opts.promote);
+    await db.execute(sql`update user_jobs uj set score_state = 'queued', score_state_at = ${now}
+      from jsonb_to_recordset(${JSON.stringify(batch.map(({ userId, jobId }) => ({ userId, jobId })))}::jsonb) as v("userId" uuid, "jobId" uuid)
+      where uj.user_id = v."userId" and uj.job_id = v."jobId"`);
+  }
+  return queued;
+}
+
 export async function pendingTaskCounts(db: Db) {
   const rows = await db
     .select({ type: tasks.type, status: tasks.status, n: sql<number>`count(*)::int` })

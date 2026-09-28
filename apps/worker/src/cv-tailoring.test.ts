@@ -297,7 +297,7 @@ it("a content checkpoint reserves the audit plus one improvement, reuses the aut
   const sizes = { libraryBytes: Buffer.byteLength(JSON.stringify(library)), descriptionBytes: Buffer.byteLength("Lead a team. Deliver transformation.") };
   expect(admits.map(step => step.detail.stage)).toEqual(["audit", "improve", "reaudit"]);
   const models = { cvModel: "claude-sonnet-5", routes: {} };
-  expect(admits[0]!.detail.expectedUsd).toBe(Number(estimateCvStage("audit", { ...sizes, batches: 1 }, models).toFixed(4)));
+  expect(admits[0]!.detail.expectedUsd).toBe(Number(estimateCvStage("audit", { ...sizes, batches: 1, libraryFixed: true }, models).toFixed(4)));
   expect(admits[1]!.detail.expectedUsd).toBe(Number(estimateCvStage("improve", sizes, models).toFixed(4)));
 });
 
@@ -460,8 +460,8 @@ it("admits the revision's re-check at the price of the batches it sends, not the
   const reaudit = admits.find(step => step.detail.stage === "reaudit")!;
   const sizes = { libraryBytes: Buffer.byteLength(JSON.stringify(library)), descriptionBytes: Buffer.byteLength("Lead a team. Deliver transformation.") };
   const models = { cvModel: draft.model, routes: {} };
-  expect(reaudit.detail.expectedUsd).toBe(Number(estimateCvStage("reaudit", { ...sizes, batches: 1 }, models).toFixed(4)));
-  expect(reaudit.detail.expectedUsd).not.toBe(Number(estimateCvStage("reaudit", { ...sizes, batches: 2 }, models).toFixed(4)));
+  expect(reaudit.detail.expectedUsd).toBe(Number(estimateCvStage("reaudit", { ...sizes, batches: 1, libraryFixed: true }, models).toFixed(4)));
+  expect(reaudit.detail.expectedUsd).not.toBe(Number(estimateCvStage("reaudit", { ...sizes, batches: 2, libraryFixed: true }, models).toFixed(4)));
 });
 
 it.each([
@@ -506,4 +506,94 @@ it("charges the audit's calls to a step, as every other stage's are", async () =
   expect(audit.length).toBeGreaterThan(0);
   const steps = new Set((await listCvBuildSteps(db, userId, draft.id)).filter(step => step.motion === "assess_batch").map(step => step.id));
   expect(audit.every(call => call.stepId && steps.has(call.stepId))).toBe(true);
+});
+
+// ---- The evidence plan is the audit's library-side verdict ------------------------------------------
+/** The plan finds no transformation evidence; the scripted audit always says the library demonstrates it. */
+const planWithoutChange: CvTailoringPlan = { requirements: [
+  noGapPlan.requirements[0]!,
+  { requirementId: "change", status: "missing", evidence: [], reason: "No transformation is recorded" },
+], gapQuestions: [] };
+/** The scripted client, recording each audit batch's tail. */
+function recordingAudits(options: ScriptOptions = {}) {
+  const scripted = scriptedClient(options);
+  const tails: Array<{ requirements: Array<{ id: string }>; libraryVerdicts?: Array<{ requirementId: string; libraryStatus: string }> }> = [];
+  const create = scripted.client.messages.create;
+  scripted.client.messages.create = async (params, options, call) => {
+    if (call?.promptId === "cv.review" || call?.promptId === "cv.review_candidate")
+      tails.push(JSON.parse(((params.messages as Array<{ content: Array<{ text: string }> }>)[0]!.content)[2]!.text));
+    return create(params, options, call);
+  };
+  return { ...scripted, tails };
+}
+const libraryVerdictsOf = (assessment: CvAssessment | null) =>
+  assessment!.review.matches.map(match => [match.requirementId, match.libraryStatus, match.libraryEvidence]);
+
+it("stores the plan's library verdict, not the audit's, and hands the audit the plan's as settled context", async () => {
+  const scripted = recordingAudits({ plan: planWithoutChange }); deps.aiClient = scripted.client;
+  const draft = await makeDraft();
+  await queue().drain();
+  const saved = await draftAfter(draft.id);
+  expect(saved.status).toBe("ready");
+  expect(scripted.calls.filter(call => call === "planner")).toHaveLength(1);
+  // The audit answered "demonstrated" for both; the plan found no transformation evidence.
+  expect(libraryVerdictsOf(saved.assessment)).toEqual([
+    ["lead", "demonstrated", [{ id: "entry:one", quote: "Led a team" }]],
+    ["change", "missing", []],
+  ]);
+  expect(scripted.tails[0]!.libraryVerdicts).toEqual([
+    { requirementId: "lead", libraryStatus: "demonstrated", libraryEvidence: [{ id: "entry:one", quote: "Led a team" }] },
+    { requirementId: "change", libraryStatus: "missing", libraryEvidence: [] },
+  ]);
+  // The evidence score is the plan's coverage: the essential requirement of two (weights 2 and 1).
+  expect(saved.assessment!.availableEvidenceScore).toBe(67);
+});
+
+it("a direct edit's revision reuses its parent's plan as the library verdict, and plans nothing", async () => {
+  const scripted = recordingAudits({ plan: planWithoutChange }); deps.aiClient = scripted.client;
+  const parent = await makeDraft();
+  await queue().drain();
+  const published = await draftAfter(parent.id);
+  expect(published.status).toBe("ready");
+  const edit = async (libraryVersion: number) => {
+    const [child] = await db.insert(schema.cvDrafts).values({ userId, jobTitle: published.jobTitle, companyName: published.companyName,
+      jobDescription: published.jobDescription, libraryVersion, librarySnapshot: library, model: published.model,
+      content: { ...published.content!, summary: "Operations leader" }, parentId: published.id, revision: 2,
+      buildCheckpoint: { sourceRubric: published.assessment!.rubric } }).returning();
+    const payload = { draftId: child!.id, userId, mode: "assess" as const };
+    await enqueueTask(db, "generate_cv", payload, { dedupeKey: dedupeKeyFor("generate_cv", payload) });
+    scripted.calls.length = 0;
+    scripted.tails.length = 0;
+    await queue().drain();
+    return draftAfter(child!.id);
+  };
+  const child = await edit(published.libraryVersion);
+  expect(child.status).toBe("ready");
+  expect(scripted.calls).not.toContain("planner");
+  expect(scripted.calls).not.toContain("rubric");
+  expect(scripted.tails.every(tail => tail.libraryVerdicts)).toBe(true);
+  expect(libraryVerdictsOf(child.assessment)).toEqual(libraryVerdictsOf(published.assessment));
+  // Saved beside the revision, for the revisions after it.
+  const plans = await db.select().from(schema.cvTailoringPlans).where(eq(schema.cvTailoringPlans.draftId, child.id));
+  expect(plans[0]?.plan).toEqual(planWithoutChange);
+
+  // Another Library version is other evidence: the parent's plan does not stand for it.
+  const other = await edit(published.libraryVersion + 1);
+  expect(other.status).toBe("ready");
+  expect(scripted.tails.some(tail => tail.libraryVerdicts)).toBe(false);
+  expect(libraryVerdictsOf(other.assessment)[1]).toEqual(["change", "demonstrated", [{ id: "entry:one", quote: "Led a team\nDelivered transformation" }]]);
+});
+
+it("an untailored build keeps the audit's own library verdict", async () => {
+  const scripted = recordingAudits(); deps.aiClient = scripted.client;
+  const draft = await makeDraft(null);
+  await queue().drain();
+  const saved = await draftAfter(draft.id);
+  expect(saved.status).toBe("ready");
+  expect(scripted.calls).not.toContain("planner");
+  expect(scripted.tails.some(tail => tail.libraryVerdicts)).toBe(false);
+  expect(libraryVerdictsOf(saved.assessment)).toEqual([
+    ["lead", "demonstrated", [{ id: "entry:one", quote: "Led a team\nDelivered transformation" }]],
+    ["change", "demonstrated", [{ id: "entry:one", quote: "Led a team\nDelivered transformation" }]],
+  ]);
 });

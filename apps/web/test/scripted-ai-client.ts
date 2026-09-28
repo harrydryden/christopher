@@ -44,7 +44,7 @@ export type ScriptedCallKind = "rubric" | "planning" | "author" | "review";
 
 interface PlanningPayload {
   rubric: CvRubric;
-  evidence: Array<{ id: string; text: string; entryId?: string }>;
+  evidence: CanonicalEvidence;
   destinations: {
     employment: Array<{ employmentId: string; label: string }>;
     evidence: Array<{ entryId: string; label: string; kind: string }>;
@@ -486,17 +486,28 @@ export function createScriptedAiClient(options: ScriptedAiOptions = {}): Scripte
           }
           if (kind === "planning") {
             const planning = payload as PlanningPayload;
-            const ask = planning.rubric.requirements.find(requirement => requirement.importance !== "responsibility" && requirement.category !== "logistics");
+            // The plan is the audit's library-side verdict, so it judges the library as the scripted
+            // reviewer would: the unmet requirement from the row that covers it, every other from the
+            // first row, except the one the gap question asks about, which the library does not meet.
+            const ask = planning.rubric.requirements.find(requirement => requirement.importance !== "responsibility" &&
+              requirement.category !== "logistics" && !unmet.test(requirement.quote));
+            const rows = planning.evidence.entries.flatMap(entry => entry.rows);
             const destination = planning.destinations.employment[0]
               ? { kind: "employment" as const, employmentId: planning.destinations.employment[0].employmentId }
               : { kind: "evidence" as const, entryId: planning.destinations.evidence[0]!.entryId };
             return {
-              requirements: planning.rubric.requirements.map(requirement => ({
-                requirementId: requirement.id,
-                status: "missing" as const,
-                evidence: [],
-                reason: "The scripted planner leaves this for the factual audit.",
-              })),
+              requirements: planning.rubric.requirements.map(requirement => {
+                const row = unmet.test(requirement.quote) ? rows.find(item => unmet.test(item.text)) ?? rows[0] : rows[0];
+                if (requirement === ask || !row) return {
+                  requirementId: requirement.id, status: "missing" as const, evidence: [],
+                  reason: "The scripted planner finds no evidence for this requirement.",
+                };
+                return {
+                  requirementId: requirement.id, status: "demonstrated" as const,
+                  evidence: [{ sourceId: row.id, quote: unmet.test(requirement.quote) ? excerpt(row.text, unmet) : row.text }],
+                  reason: "The scripted planner finds this in the library.",
+                };
+              }),
               gapQuestions: ask ? [{
                 id: "q1", requirementId: ask.id, requirement: ask.label,
                 prompt: "What further factual evidence can you add for this requirement?",

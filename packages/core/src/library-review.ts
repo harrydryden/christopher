@@ -404,6 +404,11 @@ export function libraryPlanCovers(
  * Which rubric a review was judged against. 1 was specific / quantified / outcome-linked; 2 is the
  * type-specific marks in `evidence-rubric.ts`; 3 is the same marks with the person's tags out of
  * the entry's hash. Move it when what a review records, or what its hash covers, changes meaning.
+ *
+ * Moving it re-reviews every entry but not every row: a re-review keeps the rows an earlier model
+ * review of the entry classified (`knownLibraryRows`), whatever hash that review was filed under,
+ * which is right from 2 to 3 because the marks mean the same. A version that changes what the marks
+ * mean must also stop that reuse, or the old judgements are carried into the new rubric.
  */
 export const LIBRARY_RUBRIC_VERSION = 3;
 

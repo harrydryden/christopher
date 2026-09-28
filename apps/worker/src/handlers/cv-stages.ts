@@ -23,6 +23,7 @@ import { createHash } from "node:crypto";
 import {
   CV_REVIEW_BATCH_SIZE,
   PROMPTS,
+  cvAuditBatchOutputTokens,
   estimateStage,
   promptSetVersion as registryPromptSetVersion,
   resolveRoute,
@@ -52,6 +53,8 @@ export interface CvStageSizes {
   cvBytes?: number;
   /** For the audit stages: how many batches are still to run. */
   batches?: number;
+  /** For the audit stages: the evidence plan settles the library side, so each batch writes less. */
+  libraryFixed?: boolean;
 }
 
 /** The models a stage may be routed to: the draft's CV model and the administrator's stage routes. */
@@ -86,10 +89,13 @@ export function estimateCvStage(stage: CvBuildStageName, sizes: CvStageSizes, mo
     case "improve":
       return estimateStage(PROMPTS["cv.improvement"], { stableBytes: [sizes.libraryBytes, roleBytes(sizes)], tailBytes: WRITER_TAIL_BYTES }, priced);
     case "audit":
-    case "reaudit":
-      return estimateStage(PROMPTS[stage === "audit" ? "cv.review" : "cv.review_candidate"], {
+    case "reaudit": {
+      const id = stage === "audit" ? "cv.review" : "cv.review_candidate";
+      return estimateStage(PROMPTS[id], {
         stableBytes: [sizes.libraryBytes, sizes.cvBytes ?? PRINTED_CV_BYTES], tailBytes: AUDIT_TAIL_BYTES, calls: Math.max(1, sizes.batches ?? 1),
+        ...(sizes.libraryFixed ? { outputTokens: cvAuditBatchOutputTokens(id, { libraryFixed: true, routes: priced.routes }) } : {}),
       }, priced);
+    }
   }
 }
 

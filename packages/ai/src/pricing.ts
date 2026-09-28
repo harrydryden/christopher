@@ -62,6 +62,28 @@ export function priceFor(model: string): { input: number; output: number; cacheR
 /** How many assessment batches a calibrated build is expected to run. */
 const CV_ASSESSMENT_BATCHES = 5;
 
+/** What one audit batch writes, recorded: the audit entries' calibrated `expectedOutputTokens`. */
+const CV_AUDIT_BATCH_OUTPUT_TOKENS = 7_000;
+
+/**
+ * What one audit batch writes when the evidence plan settles the library side: the batch no longer
+ * returns a library status and library quotes for each requirement, only the CV side and the
+ * claims. 5,500 is an estimate pending a recorded build; replace it from the output tokens a
+ * replay of a tailored build reports.
+ */
+export const CV_AUDIT_BATCH_OUTPUT_TOKENS_LIBRARY_FIXED = 5_500;
+
+/**
+ * What one batch of an audit entry is expected to write at the effort it is routed to: its
+ * calibration, or the library-fixed figure when the build's evidence plan settles the library side.
+ */
+export function cvAuditBatchOutputTokens(id: "cv.review" | "cv.review_candidate", options: { libraryFixed?: boolean; routes?: StageRoutes | null } = {}): number {
+  const entry = PROMPTS[id];
+  const effort = resolveRoute(entry, options.routes).effort;
+  if (!options.libraryFixed) return expectedOutputTokens(entry, effort);
+  return Math.min(entry.maxTokens, Math.round(CV_AUDIT_BATCH_OUTPUT_TOKENS_LIBRARY_FIXED * EFFORT_OUTPUT_SCALE[effort] / EFFORT_OUTPUT_SCALE[entry.effort]));
+}
+
 /**
  * How many times one writing pass may call the author: the fitter rewrites when the pages
  * overflow, up to three attempts (`buildFittedCv` in core). The build is held for all three.
@@ -101,7 +123,7 @@ function cvBuildUsage(size: CvBuildSize, parts: CvBuildParts): TokenUsage {
     cacheWriteTokens: library + 3_000,
     cacheWrite1hTokens: library,
     cacheReadTokens: (batches - 1) * library,
-    outputTokens: batches * 7_000,
+    outputTokens: batches * CV_AUDIT_BATCH_OUTPUT_TOKENS,
   };
   if (parts === "assessment") return assessment;
   return {

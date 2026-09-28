@@ -25,7 +25,7 @@ import {
 // The one estimator the worker admits builds with, so the price quoted here and the price held
 // there cannot drift. The interface does not depend on `@ava/ai` by name — the worker it
 // drives does — and this module is the package's pure pricing table, with no imports of its own.
-import { estimateCvBuildUsd, estimateStage, type CvBuildParts, type CvBuildSize } from "../../../packages/ai/src/pricing";
+import { cvAuditBatchOutputTokens, estimateCvBuildUsd, estimateStage, type CvBuildParts, type CvBuildSize } from "../../../packages/ai/src/pricing";
 import { CV_REVIEW_BATCH_SIZE, PROMPTS } from "../../../packages/ai/src/prompt-registry";
 import type { CvBuildStageName } from "@ava/core";
 import { db } from "@/lib/db";
@@ -173,7 +173,7 @@ const AUDIT_TAIL_BYTES = 7_500;
 const roleBytes = (size: CvBuildSize) => size.descriptionBytes * 2 + 4_000;
 
 /** One stage's expected cost, as the worker admits it. */
-function stageUsd(stage: CvBuildStageName, size: CvBuildSize, model: string, batches = 1): number {
+function stageUsd(stage: CvBuildStageName, size: CvBuildSize, model: string, batches = 1, libraryFixed = false): number {
   const priced = { cvModel: model };
   switch (stage) {
     case "rubric":
@@ -185,10 +185,13 @@ function stageUsd(stage: CvBuildStageName, size: CvBuildSize, model: string, bat
     case "improve":
       return estimateStage(PROMPTS["cv.improvement"], { stableBytes: [size.libraryBytes, roleBytes(size)], tailBytes: WRITER_TAIL_BYTES }, priced);
     case "audit":
-    case "reaudit":
-      return estimateStage(PROMPTS[stage === "audit" ? "cv.review" : "cv.review_candidate"], {
+    case "reaudit": {
+      const id = stage === "audit" ? "cv.review" : "cv.review_candidate";
+      return estimateStage(PROMPTS[id], {
         stableBytes: [size.libraryBytes, PRINTED_CV_BYTES], tailBytes: AUDIT_TAIL_BYTES, calls: Math.max(1, batches),
+        ...(libraryFixed ? { outputTokens: cvAuditBatchOutputTokens(id, { libraryFixed: true }) } : {}),
       }, priced);
+    }
   }
 }
 
@@ -209,7 +212,8 @@ export function generatingDraftRemainingUsd(draft: GeneratingCvDraft): number {
   const held = draft.stageKeys.filter((key) => key.startsWith("audit[")).length;
   if (expected - held > 0) stages.push(["audit", expected - held]);
   if (draft.mode !== "assess" && !draft.improvementAttempted) stages.push(["improve"], ["reaudit"]);
-  const remaining = stages.reduce((sum, [stage, batches]) => sum + stageUsd(stage, size, draft.model, batches), 0);
+  // A tailored build's audits take the library side from its evidence plan, as the worker admits them.
+  const remaining = stages.reduce((sum, [stage, batches]) => sum + stageUsd(stage, size, draft.model, batches, draft.tailoringEnabled), 0);
   return Math.max(0, remaining - draft.heldUsd);
 }
 

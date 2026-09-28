@@ -8,11 +8,17 @@ import {
   libraryImportUrl,
   parseLibraryAdditions,
   proposalToLibraryAdditions,
-  proposedItemIds,
   validateLibraryProposal,
   type LibraryProposal,
 } from "./library-import";
 import { CvLibrarySchema, responsibilityRows, type CvLibrary } from "./cv";
+
+/** Every id a proposal offers, in the order the card shows them: what accepting everything ticks. */
+const proposedItemIds = (proposal: LibraryProposal): string[] => [
+  ...proposal.employment.flatMap(job => [job.id, ...job.responsibilities.map(row => row.id)]),
+  ...proposal.education.map(item => item.id),
+  ...proposal.skills.map(item => item.id),
+];
 
 const DOCUMENT = [
   "Jane Okafor — Operations leader",

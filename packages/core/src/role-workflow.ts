@@ -84,9 +84,6 @@ export const APPLICATION_STATUS_LABELS: Record<ApplicationStatus, string> = {
   withdrawn: "Withdrawn",
 };
 
-/** The three statuses that collapse into the single "In process" stage, in the order they happen. */
-export const IN_PROCESS_STEPS = ["screening", "interview", "offer"] as const;
-
 /** Where an application status puts the role. Screening, interview and offer are one stage. */
 export function applicationStage(status: ApplicationStatus): RoleStage {
   switch (status) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AGEING_PRIORITY_FLOOR, dedupeKeyFor, deadlineMsFor, INTERACTIVE_TASK_TYPES, priorityFor, SHORT_TASK_DEADLINE_MS, SHORT_TASK_TYPES, TASK_DEADLINES_MS, TASK_TYPE_NAMES, type TaskPayloads, type TaskType } from "./tasks";
+import { AGEING_PRIORITY_FLOOR, dedupeKeyFor, deadlineMsFor, INTERACTIVE_TASK_TYPES, priorityFor, TASK_DEADLINES_MS, TASK_TYPE_NAMES, type TaskPayloads, type TaskType } from "./tasks";
 
 describe("task priorities", () => {
   it("floors ageing at the least urgent priority an interactive type is queued at", () => {
@@ -69,13 +69,9 @@ describe("task deadlines", () => {
     }
   });
 
-  it("names as short exactly the types whose deadline fits a serverless invocation", () => {
+  it("names every task type once", () => {
     expect(new Set(TASK_TYPE_NAMES).size).toBe(TASK_TYPE_NAMES.length);
     expect(TASK_TYPE_NAMES).toHaveLength(23);
-    for (const type of TASK_TYPE_NAMES)
-      expect(SHORT_TASK_TYPES.includes(type)).toBe(deadlineMsFor(type) <= SHORT_TASK_DEADLINE_MS);
-    // A CV build, a scan or a discovery can never be claimed by such a runner.
-    for (const type of ["generate_cv", "scan_company", "discover"] as const) expect(SHORT_TASK_TYPES).not.toContain(type);
   });
 });
 

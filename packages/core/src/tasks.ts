@@ -284,18 +284,6 @@ export function deadlineMsFor(type: TaskType, overrides: TaskDeadlines = {}): nu
 /** The same function under the shorter name the interface calls it by. */
 export { deadlineMsFor as deadlineFor };
 
-/** The longest deadline a task may have and still count as short. */
-export const SHORT_TASK_DEADLINE_MS = 45_000;
-
-/**
- * The types whose deadline is at most `SHORT_TASK_DEADLINE_MS`, read from the table above: what a
- * runner with well under a minute to spend — a serverless invocation — can claim and still see
- * finish or fail inside its own time. A type that no longer fits drops out of the list when its
- * deadline moves; nothing else has to change. With every deadline at two minutes or more, no type
- * is short today.
- */
-export const SHORT_TASK_TYPES: readonly TaskType[] = TASK_TYPE_NAMES.filter(type => deadlineMsFor(type) <= SHORT_TASK_DEADLINE_MS);
-
 /**
  * A short human label for what a task is for, read from its payload: the company, draft or
  * account behind it. Used when a crash recovery has to name the tasks that were running.

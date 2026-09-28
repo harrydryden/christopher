@@ -258,15 +258,6 @@ export function countProposedItems(
   };
 }
 
-/** Every id a proposal offers, in the order the card shows them. All of them start ticked. */
-export function proposedItemIds(proposal: LibraryProposal): string[] {
-  return [
-    ...proposal.employment.flatMap(job => [job.id, ...job.responsibilities.map(row => row.id)]),
-    ...proposal.education.map(item => item.id),
-    ...proposal.skills.map(item => item.id),
-  ];
-}
-
 /**
  * Keep what the document supports and drop the rest.
  *

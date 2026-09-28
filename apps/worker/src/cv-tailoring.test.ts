@@ -2,10 +2,11 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import { enqueueTask, listCvBuildSteps, schema, type Db } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
-import { type AiClientLike, type ParseResponse } from "@ava/ai";
+import { RateLimitError, type AiClientLike, type ParseResponse } from "@ava/ai";
 import type { CvAssessment, CvReviewPlan, CvRubric } from "@ava/core/cv-assessment";
 import type { CvTailoringPlan } from "@ava/core/cv-tailoring";
 import { dedupeKeyFor } from "@ava/core";
+import { DEFAULT_CV_THEME } from "@ava/core/cv";
 import { eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -461,6 +462,39 @@ it("admits the revision's re-check at the price of the batches it sends, not the
   const models = { cvModel: draft.model, routes: {} };
   expect(reaudit.detail.expectedUsd).toBe(Number(estimateCvStage("reaudit", { ...sizes, batches: 1 }, models).toFixed(4)));
   expect(reaudit.detail.expectedUsd).not.toBe(Number(estimateCvStage("reaudit", { ...sizes, batches: 2 }, models).toFixed(4)));
+});
+
+it.each([
+  ["reuses the plan across a Library change that touches no evidence", (snapshot: typeof library) =>
+    ({ ...snapshot, name: "Renamed Candidate", contact: "Leeds", theme: { ...DEFAULT_CV_THEME, primary: "#123456" } }), 1],
+  ["plans again when a row of evidence changes", (snapshot: typeof library) =>
+    ({ ...snapshot, entries: [{ ...snapshot.entries[0]!, details: `${snapshot.entries[0]!.details}\nCut costs by 10%`,
+      confirmedResponsibilities: [...snapshot.entries[0]!.confirmedResponsibilities, "Cut costs by 10%"] }, snapshot.entries[1]!] }), 2],
+])("%s", async (_label, change, planners) => {
+  // The writer is rate-limited once, after the plan is checkpointed, so the build resumes from it.
+  const scripted = scriptedClient();
+  let limited = true;
+  deps.aiClient = { messages: { async create(params, options, call) {
+    if (call?.promptId === "cv.author" && limited) {
+      limited = false;
+      throw new RateLimitError(429, { type: "error", error: { type: "rate_limit_error", message: "slow down" } }, undefined, new Headers());
+    }
+    return scripted.client.messages.create(params, options, call);
+  } } };
+  const draft = await makeDraft();
+  await queue().drain();
+  const waiting = await draftAfter(draft.id);
+  expect(waiting.status).toBe("generating");
+  expect(waiting.buildCheckpoint?.stages?.plan).toBeTruthy();
+
+  // The snapshot the resumed attempt reads is changed before it runs.
+  await db.update(schema.cvDrafts).set({ librarySnapshot: change(library) as never }).where(eq(schema.cvDrafts.id, draft.id));
+  await db.update(schema.tasks).set({ runAfter: sql`now()` });
+  await queue().drain();
+
+  expect((await draftAfter(draft.id)).status).toBe("ready");
+  expect(scripted.calls.filter(call => call === "planner")).toHaveLength(planners);
+  expect(scripted.calls.filter(call => call === "rubric")).toHaveLength(1);
 });
 
 it("charges the audit's calls to a step, as every other stage's are", async () => {

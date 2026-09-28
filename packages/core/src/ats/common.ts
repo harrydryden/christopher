@@ -181,6 +181,52 @@ export interface ListingRead {
   companyName?: string;
 }
 
+/** A read of an offset-paged feed; `more` says the board holds roles past the last page read. */
+export interface PagedRead extends ListingRead {
+  more: boolean;
+  /** The offset after the last page read: how far into the board the read got. */
+  nextOffset: number;
+}
+
+/**
+ * Up to `maxPages` pages of a feed paged by offset. Without a total, only a short page proves the
+ * board has ended: a full one may have a successor, and treating it as the last page closed every
+ * role past it. `totalPolicy: "first"` keeps the first positive total for a feed (Workday) whose
+ * tenants report it on the first page and send 0 after; `"latest"` takes each page's own.
+ */
+export async function readOffsetPages<R>(o: {
+  pageSize: number;
+  maxPages: number;
+  totalPolicy: "first" | "latest";
+  fetchPage: (offset: number) => Promise<{ items: R[]; total?: number; companyName?: string }>;
+  map: (item: R) => RawPosting | null;
+}): Promise<PagedRead> {
+  const out: RawPosting[] = [];
+  let total: number | undefined;
+  let companyName: string | undefined;
+  let more = false;
+  let offset = 0;
+  for (let page = 0; page < o.maxPages; page++) {
+    const { items, total: pageTotal, companyName: pageName } = await o.fetchPage(offset);
+    for (const item of items) {
+      const mapped = o.map(item);
+      if (mapped) out.push(mapped);
+    }
+    companyName ??= pageName;
+    if (typeof pageTotal === "number" && (o.totalPolicy === "latest" || (total === undefined && pageTotal > 0))) total = pageTotal;
+    offset += o.pageSize;
+    more = items.length > 0 && (total !== undefined ? offset < total : items.length === o.pageSize);
+    if (!more || out.length >= MAX_POSTINGS) break;
+  }
+  return { postings: out.slice(0, MAX_POSTINGS), total, companyName, more, nextOffset: offset };
+}
+
+/** The postings of a paged read, or an incomplete listing when the page budget ran out first. */
+export function completeListing(vendor: string, read: PagedRead): RawPosting[] {
+  if (read.more) throw new IncompleteListingError(`${vendor} listing stopped at ${read.postings.length} roles with more pages to read; this scan cannot close roles`, read.postings);
+  return read.postings;
+}
+
 /**
  * Verification reads one page. It establishes that the board exists and serves roles, and samples
  * them; whether a listing is complete is the scan's business, so a big board costs one request here

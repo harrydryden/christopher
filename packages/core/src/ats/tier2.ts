@@ -19,7 +19,7 @@ import * as cheerio from "cheerio";
 import type { FetchContext, RawPosting, SourceSpec } from "../types";
 import { IncompleteListingError, SourceFetchError } from "../types";
 import { absoluteUrl, parseDate } from "../normalize";
-import { feedAdapter, fetchJson, htmlToText, pathSegments, rec, requireSlug, safeUrl, slugOk, specOrNull, str, subdomainSlug, throwForStatus, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS, type ListingRead } from "./common";
+import { completeListing, feedAdapter, fetchJson, readOffsetPages, htmlToText, pathSegments, rec, requireSlug, safeUrl, slugOk, specOrNull, str, subdomainSlug, throwForStatus, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS, type PagedRead } from "./common";
 
 /** Most listing pages one HTML source is walked through; 50 rows a page covers the cap. */
 const MAX_PAGES = 200;
@@ -116,47 +116,42 @@ interface EfPosition { id?: number | string; name?: string; location?: string; l
 
 const EIGHTFOLD_PAGE = 100;
 
-/** Up to `maxPages` pages; `more` says the board holds roles past the last page read. */
-async function eightfoldRead(spec: SourceSpec, ctx: FetchContext, maxPages: number): Promise<ListingRead & { more: boolean }> {
+function mapEightfold(p: EfPosition, host: string): RawPosting | null {
+  const title = str(p.name), id = str(p.id);
+  if (!title || !id) return null;
+  const location = str(p.location);
+  const locations = (p.locations ?? []).map(str).filter((s): s is string => !!s);
+  return {
+    externalId: id, title,
+    url: str(p.canonicalPositionUrl) ?? `https://${host}/careers/job/${id}`,
+    location: location ?? locations[0],
+    locations: locations.length > 1 ? locations : undefined,
+    department: str(p.department),
+    remote: /remote/i.test(location ?? "") || undefined,
+    postedAt: parseDate(p.t_create),
+    descriptionHtml: str(p.job_description),
+    descriptionText: htmlToText(p.job_description),
+  };
+}
+
+/** Up to `maxPages` pages of the listing. */
+async function eightfoldRead(spec: SourceSpec, ctx: FetchContext, maxPages: number): Promise<PagedRead> {
   const host = spec.atsSite, domain = spec.atsSlug;
   if (!host || !domain) throw new Error("eightfold spec missing host/domain");
-  const out: RawPosting[] = [];
-  const num = EIGHTFOLD_PAGE;
-  let total: number | undefined;
-  let more = false;
-  for (let page = 0; page < maxPages; page++) {
-    const start = page * num;
-    // Descriptions come inline, so a page of a hundred can pass the default body cap.
-    const { data } = await fetchJson<{ count?: number; positions?: EfPosition[] }>(ctx, `https://${host}/api/apply/v2/jobs?domain=${encodeURIComponent(domain)}&start=${start}&num=${num}`, INLINE_DESCRIPTIONS_FETCH);
-    const positions = Array.isArray(data.positions) ? data.positions : [];
-    for (const p of positions) {
-      const title = str(p.name), id = str(p.id);
-      if (!title || !id) continue;
-      const location = str(p.location);
-      const locations = (p.locations ?? []).map(str).filter((s): s is string => !!s);
-      out.push({
-        externalId: id, title,
-        url: str(p.canonicalPositionUrl) ?? `https://${host}/careers/job/${id}`,
-        location: location ?? locations[0],
-        locations: locations.length > 1 ? locations : undefined,
-        department: str(p.department),
-        remote: /remote/i.test(location ?? "") || undefined,
-        postedAt: parseDate(p.t_create),
-        descriptionHtml: str(p.job_description),
-        descriptionText: htmlToText(p.job_description),
-      });
-    }
-    if (typeof data.count === "number") total = data.count;
-    // Without a count, only a short page proves the board has ended.
-    more = positions.length > 0 && (total !== undefined ? start + num < total : positions.length === num);
-    if (!more || out.length >= MAX_POSTINGS) break;
-  }
-  return { postings: out.slice(0, MAX_POSTINGS), total, more };
+  return readOffsetPages({
+    pageSize: EIGHTFOLD_PAGE,
+    maxPages,
+    totalPolicy: "latest",
+    fetchPage: async (start) => {
+      // Descriptions come inline, so a page of a hundred can pass the default body cap.
+      const { data } = await fetchJson<{ count?: number; positions?: EfPosition[] }>(ctx, `https://${host}/api/apply/v2/jobs?domain=${encodeURIComponent(domain)}&start=${start}&num=${EIGHTFOLD_PAGE}`, INLINE_DESCRIPTIONS_FETCH);
+      return { items: Array.isArray(data.positions) ? data.positions : [], total: data.count };
+    },
+    map: (p) => mapEightfold(p, host),
+  });
 }
 async function eightfoldPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
-  const { postings, more } = await eightfoldRead(spec, ctx, MAX_POSTINGS / EIGHTFOLD_PAGE);
-  if (more) throw new IncompleteListingError(`Eightfold listing stopped at ${postings.length} roles with more pages to read; this scan cannot close roles`, postings);
-  return postings;
+  return completeListing("Eightfold", await eightfoldRead(spec, ctx, MAX_POSTINGS / EIGHTFOLD_PAGE));
 }
 export const eightfold = feedAdapter({ type: "eightfold", fromUrl: eightfoldFromUrl, read: eightfoldPostings, verifyRead: (spec, ctx) => eightfoldRead(spec, ctx, 1) });
 

@@ -122,3 +122,57 @@ describe("an audit's batches, each as it ended", () => {
     expect(audit.batches[0]!.usage).toHaveLength(2);
   });
 });
+
+describe("an audit whose library side the evidence plan settles", () => {
+  const fixed = { libraryStatus: "partial" as const, libraryEvidence: [{ id: "source:profile", quote: "Operations" }] };
+  const scripted = (answer: (params: Record<string, unknown>) => unknown) => {
+    const calls: Array<Record<string, unknown>> = [];
+    const client: AiClientLike = { messages: { create: async params => {
+      calls.push(params);
+      return { parsed_output: answer(params), usage: { input_tokens: 10, output_tokens: 10 } };
+    } } };
+    return { calls, client };
+  };
+  const withoutLibrary = (params: Record<string, unknown>) => {
+    const answer = answerFor(payloadOf(params)) as unknown as { matches: Array<Record<string, unknown>> };
+    for (const match of answer.matches) { delete match.libraryStatus; delete match.libraryEvidence; }
+    return answer;
+  };
+
+  it("hands each batch its requirements' verdicts and stores them, whatever the model returns", async () => {
+    const input = inputFor(10, 2);
+    const libraryVerdicts = new Map(input.rubric.requirements.map(item => [item.id, fixed]));
+    // One batch disagrees with the plan, the other leaves the library side out: neither is corrected.
+    const { client, calls } = scripted(params => {
+      const payload = payloadOf(params);
+      if (payload.requirements[0].id !== "r0") return withoutLibrary(params);
+      const answer = answerFor(payload);
+      for (const match of answer.matches) { match.libraryStatus = "missing"; match.libraryEvidence = []; }
+      return answer;
+    });
+    const audit = await createAiEngine({ client, getModel: () => "claude-fable-5-1" }).assessCvBatches({ ...input, libraryVerdicts });
+    expect(calls).toHaveLength(2);
+    const tails = calls.map(payloadOf);
+    expect(tails[0]!.libraryVerdicts).toEqual(tails[0]!.requirements.map((item: { id: string }) => ({ requirementId: item.id, ...fixed })));
+    expect(tails.every(tail => !tail.corrections)).toBe(true);
+    expect(audit.review!.matches).toHaveLength(10);
+    expect(audit.review!.matches.every(match => match.libraryStatus === "partial" && match.libraryEvidence[0]!.quote === "Operations")).toBe(true);
+    expect(mergeCvAssessBatches(audit.batches.map(batch => batch.result!))).toEqual(audit.review);
+  });
+
+  it("without a plan, asks again for a library side left out, and records none it still lacks", async () => {
+    const input = inputFor(2, 1);
+    const { client, calls } = scripted(withoutLibrary);
+    const audit = await createAiEngine({ client, getModel: () => "claude-fable-5-1" }).assessCvBatches(input);
+    expect(calls).toHaveLength(2);
+    const tails = calls.map(payloadOf);
+    expect(tails[0]!.libraryVerdicts).toBeUndefined();
+    expect(tails[1]!.corrections).toEqual([
+      "r0: return libraryStatus and libraryEvidence, judging the confirmed evidence library for this requirement.",
+      "r1: return libraryStatus and libraryEvidence, judging the confirmed evidence library for this requirement.",
+    ]);
+    // Still missing after the correction: no verdict, no credit, and a review the schema accepts.
+    expect(audit.review!.matches.map(match => [match.libraryStatus, match.libraryEvidence])).toEqual([["unknown", []], ["unknown", []]]);
+    expect(audit.review!.matches.every(match => match.status === "demonstrated")).toBe(true);
+  });
+});

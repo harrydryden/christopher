@@ -409,11 +409,11 @@ The CV builder's entries, generated from the registry (a test fails when this ta
 | Prompt | Stage | Version | Model | Effort | Max tokens | Cache layout |
 |---|---|---|---|---|---|---|
 | `cv.rubric` | `rubric` | `cb79eb9da5` | account's CV model | high | 12,000 | system 5m · tail uncached |
-| `cv.planning` | `planning` | `1c9bc92f47` | account's CV model | high | 16,000 | system 5m · tail uncached |
+| `cv.planning` | `planning` | `e2b0f4d32f` | account's CV model | high | 16,000 | system 5m · tail uncached |
 | `cv.author` | `author` | `fdb543b246` | account's CV model | high | 32,000 | system uncached · stable 1 1h · stable 2 1h · tail uncached |
 | `cv.improvement` | `improvement` | `fdb543b246` | account's CV model | high | 32,000 | system uncached · stable 1 1h · stable 2 1h · tail uncached |
-| `cv.review` | `review` | `683d20253b` | account's CV model | high | 24,000 | system uncached · stable 1 1h · stable 2 5m · tail uncached |
-| `cv.review_candidate` | `review_candidate` | `683d20253b` | account's CV model | high | 24,000 | system uncached · stable 1 1h · stable 2 5m · tail uncached |
+| `cv.review` | `review` | `17086e59fe` | account's CV model | high | 24,000 | system uncached · stable 1 1h · stable 2 5m · tail uncached |
+| `cv.review_candidate` | `review_candidate` | `17086e59fe` | account's CV model | high | 24,000 | system uncached · stable 1 1h · stable 2 5m · tail uncached |
 <!-- cv-call-sites:end -->
 
 Guardrails common to all call sites:

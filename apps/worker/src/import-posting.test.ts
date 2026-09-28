@@ -16,7 +16,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
 import { handlers } from "./handlers";
-import { handleImportPosting, onCompanyHost } from "./handlers/import-posting";
+import { handleImportPosting } from "./handlers/import-posting";
 import { handleFetchDescription } from "./handlers/description";
 import { reevaluateGate } from "@ava/db";
 import { TaskQueue } from "./queue";
@@ -24,11 +24,12 @@ import { ensureTestUser } from "./test-users";
 import { startTestServer, type TestServer } from "./test-server";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/ava_test";
-const HOSTS = ["www.pasted.test", "pasted.test", "www.elsewhere.test"];
+const HOSTS = ["www.pasted.test", "pasted.test", "www.elsewhere.test", "evil.github.io"];
 
 const STAFF_ENGINEER = "https://www.pasted.test/jobs/staff-engineer";
 const THIN = "https://www.pasted.test/jobs/thin";
 const NOT_A_POSTING = "https://www.pasted.test/jobs";
+const STRANGER_ON_SHARED_HOST = "https://evil.github.io/jobs/staff-engineer";
 
 const DESCRIPTION = "You will own the platform team's roadmap, run the on-call rotation and work with operations on capacity. ".repeat(6);
 
@@ -75,6 +76,10 @@ beforeAll(async () => {
     "www.elsewhere.test": {
       "/robots.txt": { body: "User-agent: *\nAllow: /\n", contentType: "text/plain" },
       "/jobs/staff-engineer": { body: jsonLdPage("Staff Engineer, Platform", "https://www.elsewhere.test/jobs/staff-engineer", DESCRIPTION) },
+    },
+    "evil.github.io": {
+      "/robots.txt": { body: "User-agent: *\nAllow: /\n", contentType: "text/plain" },
+      "/jobs/staff-engineer": { body: jsonLdPage("Staff Engineer, Platform", STRANGER_ON_SHARED_HOST, DESCRIPTION) },
     },
   }, HOSTS);
 
@@ -311,20 +316,21 @@ it("keeps a stored role a second account pasted in its table, whatever its gate 
   expect(back).toMatchObject({ inTable: true, archivedAt: null, addedByUrl: true });
 });
 
-it("knows a company's own hosts from its domain, its sources and its own boards", () => {
-  const company = { domain: "acme.example", homepageUrl: "https://www.acme-robotics.example/" };
-  const sources = [
-    { type: "greenhouse", url: "https://job-boards.greenhouse.io/acme", apiUrl: "https://boards-api.greenhouse.io/v1/boards/acme/jobs", atsSlug: "acme" },
-    { type: "html", url: "https://careers.acmejobs.example/listing", apiUrl: null, atsSlug: null },
-  ];
-  expect(onCompanyHost("https://acme.example/jobs/1", company, sources)).toBe(true);
-  expect(onCompanyHost("https://jobs.acme.example/1", company, sources)).toBe(true);
-  expect(onCompanyHost("https://www.acme-robotics.example/careers/1", company, sources)).toBe(true);
-  expect(onCompanyHost("https://careers.acmejobs.example/role/9", company, sources)).toBe(true);
-  expect(onCompanyHost("https://job-boards.greenhouse.io/acme/jobs/4001", company, sources)).toBe(true);
-  // A vendor's host is shared by every customer: another company's board on it is not this one's.
-  expect(onCompanyHost("https://job-boards.greenhouse.io/someone-else/jobs/4001", company, sources)).toBe(false);
-  expect(onCompanyHost("https://notacme.example/jobs/1", company, sources)).toBe(false);
-  expect(onCompanyHost("https://evil.example/acme.example/jobs/1", company, sources)).toBe(false);
-  expect(onCompanyHost("not a url", company, sources)).toBe(false);
+// The rule itself (postingOnCompanyHost) is tested in core; these pin that the worker applies it.
+it("keeps a posting on a stranger's page of a shared host to the account that pasted it", async () => {
+  // A company whose site is a github.io page: its domain is github.io, which anyone can publish on.
+  await db.update(schema.companies).set({ domain: "github.io", homepageUrl: "https://acme.github.io/" }).where(eq(schema.companies.id, company.id));
+  const result = await handleImportPosting(importTask(STRANGER_ON_SHARED_HOST), deps) as { ok: true; jobId: string };
+  expect(result.ok).toBe(true);
+  const [job] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, result.jobId));
+  expect(job).toMatchObject({ origin: "user", addedBy: importer.id, shared: false });
+  expect(await viewsFor(matching)).toHaveLength(0);
+});
+
+it("honours the interface's verdict that a pasted URL was on a foreign host", async () => {
+  const task = { id: "00000000-0000-0000-0000-00000000000b", type: "import_posting", payload: { userId: importer.id, companyId: company.id, url: STAFF_ENGINEER, foreignHost: true }, attempts: 1 } as never;
+  const result = await handleImportPosting(task, deps) as { ok: true; jobId: string };
+  const [job] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, result.jobId));
+  expect(job!.shared).toBe(false);
+  expect(await viewsFor(matching)).toHaveLength(0);
 });

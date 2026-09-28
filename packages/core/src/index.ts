@@ -13,6 +13,7 @@ export * from "./score-batch";
 export * from "./logo-capture";
 export * from "./url-safety";
 export * from "./posting-page";
+export * from "./posting-host";
 export * from "./password";
 export * from "./env";
 export * as ats from "./ats/index";

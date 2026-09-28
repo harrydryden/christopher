@@ -22,6 +22,7 @@ import {
   looksRemote,
   normalisePostingUrl,
   normalizeTitle,
+  postingOnCompanyHost,
   priorityFor,
   sha1,
   SourceFetchError,
@@ -75,40 +76,6 @@ const hostOf = (url: string): string => {
   }
 };
 
-/** A URL's host, lower-cased and without a leading `www.`; null when it is not a URL. */
-const bareHost = (url: string | null | undefined): string | null => {
-  if (!url) return null;
-  try {
-    return new URL(url).hostname.toLowerCase().replace(/^www\./, "");
-  } catch {
-    return null;
-  }
-};
-
-const within = (host: string, parent: string) => host === parent || host.endsWith(`.${parent}`);
-
-/**
- * Whether a posting URL is on one of the company's own hosts: its domain or homepage, the host of
- * a careers source it has (unless that is an applicant-tracking vendor's, which every customer
- * shares), or its own board on such a vendor, recognised by the vendor and the board's slug.
- */
-export function onCompanyHost(
-  url: string,
-  company: { domain: string | null; homepageUrl: string | null },
-  sources: Array<{ type: string; url: string; apiUrl: string | null; atsSlug: string | null }>,
-): boolean {
-  const host = bareHost(url);
-  if (!host) return false;
-  const own = [company.domain?.toLowerCase().replace(/^www\./, "") ?? null, bareHost(company.homepageUrl)];
-  for (const source of sources) for (const address of [source.url, source.apiUrl]) {
-    const sourceHost = bareHost(address);
-    if (sourceHost && !ats.isAtsHost(sourceHost)) own.push(sourceHost);
-  }
-  if (own.some(parent => parent && within(host, parent))) return true;
-  const board = ats.specFromAnyUrl(url);
-  return !!board?.atsSlug && sources.some(source => source.type === board.type && source.atsSlug?.toLowerCase() === board.atsSlug!.toLowerCase());
-}
-
 /** How a failed fetch reads in a sentence, so a retried task's `tasks.error` says something useful. */
 function transportReason(err: unknown): string {
   if (err instanceof SourceFetchError) {
@@ -125,7 +92,7 @@ function transportReason(err: unknown): string {
 }
 
 export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise<unknown> {
-  const { userId, companyId, url } = task.payload as unknown as TaskPayloads["import_posting"];
+  const { userId, companyId, url, foreignHost } = task.payload as unknown as TaskPayloads["import_posting"];
   const deferrals = (task.payload as { hostBusyRetries?: number }).hostBusyRetries ?? 0;
   const now = deps.now();
   const host = hostOf(url);
@@ -233,8 +200,9 @@ export async function handleImportPosting(task: Task, deps: WorkerDeps): Promise
   // Only a posting on the company's own hosts joins the catalogue for every follower. A link to
   // anywhere else, or one that redirected there, is this account's alone: it is stored for them and
   // never offered to another follower's gate, so one paste cannot put a stranger's page, filed under
-  // a company everyone follows, into everyone's table.
-  const shared = onCompanyHost(url, company, sources) && onCompanyHost(storedUrl, company, sources);
+  // a company everyone follows, into everyone's table. The interface's verdict at paste time
+  // (`foreignHost`) stands; the same rule is applied again here for where the page finally landed.
+  const shared = !foreignHost && postingOnCompanyHost(url, company, sources) && postingOnCompanyHost(storedUrl, company, sources);
 
   // Every other follower's gate decides for itself whether a shared role reaches them, so their
   // settings are read here rather than from inside the transaction.

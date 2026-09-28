@@ -29,7 +29,6 @@
  */
 import {
   aiBudgetRefusalMessage,
-  aiBudgetWindowStart,
   aiFeatureLabel,
   countProposedItems,
   JS_SHELL_TEXT,
@@ -47,7 +46,7 @@ import {
   type Db,
   type Task,
 } from "@ava/db";
-import { recordAiUsage, tryReserveAi, type AiHold } from "../budget";
+import { budgetLimits, recordAiUsage, tryReserveAi, type AiHold } from "../budget";
 import { makeFetchContext, type WorkerDeps } from "../context";
 import { capDocumentText, DocumentReadError, documentToText, tidyDocumentText } from "../document-text";
 import { HostBusyError, PrivateAddressError } from "../fetcher";
@@ -180,17 +179,8 @@ export async function handleImportLibraryDocument(task: Task, deps: WorkerDeps, 
     return refuse("AVA cannot read documents at the moment: no model is configured. Your document is kept — try this import again once one is.", text);
   }
   const expected = estimateLibraryImportUsd(model, { documentBytes: Buffer.byteLength(text) });
-  const admitted = await tryReserveAi(deps.db, "A11", expected, {
-    account: {
-      userId,
-      budgetUsd: settings.aiBudgetUsd,
-      since: aiBudgetWindowStart(deps.now(), settings.aiBudgetResetAt),
-    },
-    daily: deps.env.dailyAiBudgetUsd ?? 1000000,
-    discovery: deps.env.discoveryAiBudgetUsd ?? 1000000,
-    workerId: deps.env.workerId,
-    refId: `library_import:${importId}`,
-  }, deps.now(), HOLD_MINUTES);
+  const admitted = await tryReserveAi(deps.db, "A11", expected,
+    budgetLimits(deps.env, deps.now(), { userId, settings }, { refId: `library_import:${importId}` }), deps.now(), HOLD_MINUTES);
   if ("refused" in admitted) {
     // Finished, never failed, and the text is kept: raising the budget and asking again reads the
     // document that is already here rather than another upload of it.

@@ -45,6 +45,7 @@ import { createHash } from "node:crypto";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { loadAdmissionCache } from "../admission-cache";
 import { prepareForAdmission } from "../admission";
+import { accountsWithBudget } from "../budget";
 import { HostBusyError } from "../fetcher";
 import { withResourceLease } from "../lease";
 import { log } from "../log";
@@ -226,20 +227,13 @@ async function loadFollowers(db: WorkerDeps["db"], companyId: string, opts: { lo
 }
 
 /**
- * The accounts among `wanted` with budget left this month, asked in one grouped read of `ai_calls`
- * rather than a sum per follower. Same rule as `aiBudgetStop`: an account whose spend since its
- * window opened has reached its budget has its roles left unscored.
+ * The followers among `wanted` with budget left this month, in one read for them all. Same rule as
+ * `aiBudgetStop`: an account whose spend plus what its calls in flight hold has reached its budget
+ * has its roles left unscored, so a month a running CV build is holding queues no scores to fail.
  */
-async function accountsWithBudget(db: WorkerDeps["db"], followers: Follower[], wanted: Set<string>, now: Date): Promise<Set<string>> {
-  const windows = followers.filter(f => wanted.has(f.userId))
-    .map(f => ({ userId: f.userId, since: aiBudgetWindowStart(now, f.settings.aiBudgetResetAt).toISOString(), budget: f.settings.aiBudgetUsd }));
-  if (!windows.length) return new Set();
-  const rows = await db.execute<{ user_id: string; spent: number }>(sql`select v."userId" as user_id, coalesce(sum(a.cost_usd::float8), 0) as spent
-    from jsonb_to_recordset(${JSON.stringify(windows)}::jsonb) as v("userId" uuid, since timestamptz)
-    left join ai_calls a on a.user_id = v."userId" and a.at >= v.since
-    group by v."userId"`);
-  const spent = new Map(rows.rows.map(row => [row.user_id, Number(row.spent)]));
-  return new Set(windows.filter(w => (spent.get(w.userId) ?? 0) < w.budget).map(w => w.userId));
+function followersWithBudget(db: WorkerDeps["db"], followers: Follower[], wanted: Set<string>, now: Date): Promise<Set<string>> {
+  return accountsWithBudget(db, followers.filter(f => wanted.has(f.userId))
+    .map(f => ({ userId: f.userId, since: aiBudgetWindowStart(now, f.settings.aiBudgetResetAt), budgetUsd: f.settings.aiBudgetUsd })));
 }
 
 async function scanSource(
@@ -964,7 +958,7 @@ async function scanSource(
   // spend has its roles left unscored, while everyone else scans and scores as usual. Queuing them
   // anyway would only fail and retry each task at the hold. Only the accounts with something to
   // score are asked, all in one read.
-  const scorable = deps.ai.enabled ? await accountsWithBudget(deps.db, followers, new Set(scoreQueue.map(payload => payload.userId)), deps.now()) : new Set<string>();
+  const scorable = deps.ai.enabled ? await followersWithBudget(deps.db, followers, new Set(scoreQueue.map(payload => payload.userId)), deps.now()) : new Set<string>();
   const scoring = scoreQueue.filter(payload => scorable.has(payload.userId));
   for (const payload of scoring) queued.push({ type: "score_job", payload, dedupeKey: dedupeKeyFor("score_job", payload), priority: priorityFor("score_job") });
   for (const jobId of descriptionQueue) queued.push({ type: "fetch_description", payload: { jobId }, dedupeKey: dedupeKeyFor("fetch_description", { jobId }), priority: priorityFor("fetch_description") });

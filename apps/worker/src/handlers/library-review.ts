@@ -25,7 +25,6 @@
  */
 import {
   aiBudgetRefusalMessage,
-  aiBudgetWindowStart,
   aiFeatureLabel,
   isActiveStoredEvidence,
   knownLibraryRows,
@@ -52,7 +51,7 @@ import {
   type LibraryReviewUpsert,
   type Task,
 } from "@ava/db";
-import { recordAiUsage, tryReserveAi, type AiHold } from "../budget";
+import { budgetLimits, recordAiUsage, tryReserveAi, type AiHold } from "../budget";
 import type { TaskRunContext } from "../queue";
 import type { WorkerDeps } from "../context";
 import { log } from "../log";
@@ -193,17 +192,8 @@ export async function handleReviewLibrary(task: Task, deps: WorkerDeps, ctx?: Ta
     rowsToClassify: askedRows,
     rowsTotal: askedRows + reusedRows,
   });
-  const admitted = await tryReserveAi(deps.db, "A12", expected, {
-    account: {
-      userId,
-      budgetUsd: settings.aiBudgetUsd,
-      since: aiBudgetWindowStart(deps.now(), settings.aiBudgetResetAt),
-    },
-    daily: deps.env.dailyAiBudgetUsd ?? 1000000,
-    discovery: deps.env.discoveryAiBudgetUsd ?? 1000000,
-    workerId: deps.env.workerId,
-    refId: `library:${userId}:${version}`,
-  }, deps.now(), HOLD_MINUTES);
+  const admitted = await tryReserveAi(deps.db, "A12", expected,
+    budgetLimits(deps.env, deps.now(), { userId, settings }, { refId: `library:${userId}:${version}` }), deps.now(), HOLD_MINUTES);
   if ("refused" in admitted) {
     // Finished, never failed: the rules baseline is already on the page, and retrying a pass the
     // month cannot afford would only fill Health with work nothing can complete.

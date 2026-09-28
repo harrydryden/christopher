@@ -18,13 +18,13 @@
 import { createHash } from "node:crypto";
 import { enqueueTask, notifyTaskWorkers, recordAiCall, schema, type Task } from "@ava/db";
 import {
-  aiBudgetWindowStart, dedupeKeyFor, priorityFor, scoreBatchCustomId, scoreBatchHolds, scoreBatchPollDelayMs,
+  dedupeKeyFor, priorityFor, scoreBatchCustomId, scoreBatchHolds, scoreBatchPollDelayMs,
   SCORE_BATCH_HOLD_MINUTES, SCORE_BATCH_MAX_ITEMS, type ScoreBatchItem, type ScoreBatchRecord, type TaskPayloads,
 } from "@ava/core";
 import type { AiUsageRecord, BatchScoreRequest, ScoreJobResult } from "@ava/ai";
 import { and, eq, sql } from "drizzle-orm";
 import type { WorkerDeps } from "../context";
-import { tryReserveAi, type AiHold } from "../budget";
+import { budgetLimits, tryReserveAi, type AiHold } from "../budget";
 import { log } from "../log";
 import { TaskDeferred } from "../queue";
 import { markScoreState, markScoredWithoutResult, prepareScoreJob, writeScore, type PreparedScore } from "./learning";
@@ -147,13 +147,9 @@ export async function handleCollectScoreBatch(task: Task, deps: WorkerDeps): Pro
     for (const [userId, amount] of scoreBatchHolds(collected.map(item => ({ userId: item.prepared.userId, estimateUsd: item.request.estimateUsd })))) {
       const mine = collected.filter(item => item.prepared.userId === userId);
       const account = await deps.userSettings(userId);
-      const hold = await tryReserveAi(deps.db, "A5", amount, {
-        account: { userId, budgetUsd: account.aiBudgetUsd, since: aiBudgetWindowStart(now, account.aiBudgetResetAt) },
-        daily: deps.env.dailyAiBudgetUsd,
-        discovery: deps.env.discoveryAiBudgetUsd,
-        // No worker id: the batch outlives this worker, so a restart must not release its holds.
-        refId: holdRef(task.id),
-      }, now, SCORE_BATCH_HOLD_MINUTES);
+      // No worker id: the batch outlives this worker, so a restart must not release its holds.
+      const hold = await tryReserveAi(deps.db, "A5", amount,
+        budgetLimits(deps.env, now, { userId, settings: account }, { refId: holdRef(task.id), workerId: undefined }), now, SCORE_BATCH_HOLD_MINUTES);
       if (!("refused" in hold)) {
         holds.set(userId, hold);
         continue;

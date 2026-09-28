@@ -5,7 +5,7 @@ import { sql } from "drizzle-orm";
 import { BrowserRenderer } from "./browser";
 import type { WorkerEnv } from "./env";
 import { HttpTrafficLedger, PoliteFetcher, userAgentFor } from "./fetcher";
-import { accountAiStanding, BudgetRefusedError, recordAiUsage, tryReserveAi } from "./budget";
+import { accountAiStanding, budgetLimits, BudgetRefusedError, recordAiUsage, tryReserveAi } from "./budget";
 import { log } from "./log";
 import { encodeLogoWebp } from "./logo-encode";
 import { recordModelCall } from "./otel";
@@ -137,17 +137,9 @@ export async function createDeps(env: WorkerEnv, overrides: DepsOverrides = {}):
    */
   const reserve = async (callSite: string, estimate: number, ref: Ref, hint?: ReserveHint) => {
     const at = now();
-    const account = ref.userId ? await userSettings(ref.userId) : null;
-    const hold = await tryReserveAi(db, callSite, estimate, {
-      account: ref.userId && account
-        ? { userId: ref.userId, budgetUsd: account.aiBudgetUsd, since: aiBudgetWindowStart(at, account.aiBudgetResetAt) }
-        : undefined,
-      // Unset, or at the environment's unlimited default, is no cap: tryReserveAi reads no day total.
-      daily: env.dailyAiBudgetUsd,
-      discovery: env.discoveryAiBudgetUsd,
-      workerId: env.workerId,
-      // Never shorter than the call may run, so a live call's hold is not swept from under it.
-    }, at, holdMinutesFor(hint));
+    const account = ref.userId ? { userId: ref.userId, settings: await userSettings(ref.userId) } : undefined;
+    // Never shorter than the call may run, so a live call's hold is not swept from under it.
+    const hold = await tryReserveAi(db, callSite, estimate, budgetLimits(env, at, account), at, holdMinutesFor(hint));
     if ("refused" in hold)
       // One sentence for a refused hold, wherever it was refused: the CV build and this composed
       // their own, and the two drifted into telling the person different things about one budget.

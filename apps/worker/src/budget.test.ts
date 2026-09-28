@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import { createDb, schema } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import { sql } from "drizzle-orm";
-import { accountAiStanding, BudgetRefusedError, isAccountBudgetRefusal, tryReserveAi, UNLIMITED_AI_BUDGET_USD } from "./budget";
+import { accountAiStanding, accountsWithBudget, budgetLimits, BudgetRefusedError, isAccountBudgetRefusal, tryReserveAi, UNLIMITED_AI_BUDGET_USD } from "./budget";
 import { aiBudgetStop, type WorkerDeps } from "./context";
 import { ensureTestUser } from "./test-users";
 
@@ -127,4 +127,30 @@ it("stops work before it starts once live holds fill what the month has left", a
   expect(refused).toMatchObject({ refused: { limit: "account", spent: 0.25, held: 0.75 } });
   expect(isAccountBudgetRefusal(new BudgetRefusedError((refused as { refused: never }).refused, "x"))).toBe(true);
   expect(isAccountBudgetRefusal(new BudgetRefusedError({ limit: "day", limitUsd: 1, spent: 1, held: 0 }, "x"))).toBe(false);
+});
+
+it("leaves out of a scan's scoring the accounts whose month live holds have filled, as aiBudgetStop does", async () => {
+  const held = await ensureTestUser(db, "batched-held@example.com");
+  const spent = await ensureTestUser(db, "batched-spent@example.com");
+  const roomy = await ensureTestUser(db, "batched-roomy@example.com");
+  await db.insert(schema.aiCalls).values([
+    { userId: held.id, callSite: "A5", model: "fixture", costUsd: 0.25 },
+    { userId: spent.id, callSite: "A5", model: "fixture", costUsd: 1 },
+    { userId: roomy.id, callSite: "A5", model: "fixture", costUsd: 0.25 },
+  ]);
+  // A CV build holds the rest of one account's month: its recorded spend alone has room.
+  expect("release" in await tryReserveAi(db, "CV", 0.75, { account: { userId: held.id, budgetUsd: 1, since } })).toBe(true);
+  const windows = [held, spent, roomy].map(user => ({ userId: user.id, since, budgetUsd: 1 }));
+  expect(await accountsWithBudget(db, windows)).toEqual(new Set([roomy.id]));
+  expect(await accountsWithBudget(db, [])).toEqual(new Set());
+});
+
+it("builds the same limits for every account-held call, with the caps left unset when the environment sets none", () => {
+  const now = new Date("2026-03-15T12:00:00Z");
+  const env = { workerId: "w1", dailyAiBudgetUsd: undefined, discoveryAiBudgetUsd: 20 };
+  expect(budgetLimits(env, now)).toEqual({ account: undefined, daily: undefined, discovery: 20, workerId: "w1" });
+  const limits = budgetLimits(env, now, { userId: "u1", settings: { aiBudgetUsd: 5, aiBudgetResetAt: null } }, { refId: "d1", replaceRef: true });
+  expect(limits).toEqual({ account: { userId: "u1", budgetUsd: 5, since: new Date("2026-03-01T00:00:00Z") }, daily: undefined, discovery: 20, workerId: "w1", refId: "d1", replaceRef: true });
+  // A hold that must outlive this worker takes no worker id.
+  expect(budgetLimits(env, now, undefined, { workerId: undefined }).workerId).toBeUndefined();
 });

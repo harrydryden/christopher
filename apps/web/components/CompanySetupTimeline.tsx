@@ -1,5 +1,5 @@
 import { Badge } from "./Badge";
-import { ElapsedTime } from "./ElapsedTime";
+import { Elapsed as ElapsedClock } from "./Elapsed";
 import { formatStepDuration } from "@/lib/format";
 import { companySetupLine, type CompanyTimelineStep } from "@/lib/company-timeline";
 
@@ -19,7 +19,7 @@ function Elapsed({ step }: { step: CompanyTimelineStep }) {
     return (
       <span className="text-muted">
         {" · "}
-        <ElapsedTime sinceMs={step.startedAt.getTime()} initialMs={step.elapsedMs} />
+        <ElapsedClock since={step.startedAt.getTime()} now={step.startedAt.getTime() + step.elapsedMs} />
       </span>
     );
   }

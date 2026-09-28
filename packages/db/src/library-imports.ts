@@ -13,7 +13,7 @@
  * the worker's own read returns them and no per-account query pays for them.
  */
 import { createHash } from "node:crypto";
-import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, inArray, isNotNull, isNull } from "drizzle-orm";
 import { normalizeUrl } from "@ava/core";
 import type { Db } from "./client";
 import { libraryImports, LIBRARY_IMPORT_MAX_CHARS, type LibraryImport, type LibraryImportKind } from "./schema";
@@ -23,21 +23,9 @@ export type LibraryImportRow = Omit<LibraryImport, "sourceBytes">;
 /** The same without the document's text, which a list of proposals has no use for. */
 export type LibraryImportSummary = Omit<LibraryImportRow, "content">;
 
-const summaryColumns = {
-  id: libraryImports.id,
-  userId: libraryImports.userId,
-  kind: libraryImports.kind,
-  filename: libraryImports.filename,
-  url: libraryImports.url,
-  sourceMime: libraryImports.sourceMime,
-  fingerprint: libraryImports.fingerprint,
-  proposal: libraryImports.proposal,
-  error: libraryImports.error,
-  processedAt: libraryImports.processedAt,
-  resolvedAt: libraryImports.resolvedAt,
-  createdAt: libraryImports.createdAt,
-};
-const rowColumns = { ...summaryColumns, content: libraryImports.content };
+// Every column except the bytes, which are excluded by name so a new column reaches these reads.
+const { sourceBytes: _sourceBytes, ...rowColumns } = getTableColumns(libraryImports);
+const { content: _content, ...summaryColumns } = rowColumns;
 
 export interface CreateLibraryImportInput {
   userId: string;

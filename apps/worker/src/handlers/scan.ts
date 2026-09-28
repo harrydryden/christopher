@@ -44,7 +44,7 @@ import { gzipSync, gunzipSync } from "node:zlib";
 import { loadAdmissionCache } from "../admission-cache";
 import { prepareForAdmission } from "../admission";
 import { accountsWithBudget } from "../budget";
-import { HostBusyError } from "../fetcher";
+import { HostBusyError, statusKind } from "../fetcher";
 import { withResourceLease } from "../lease";
 import { log } from "../log";
 import { loadUserSettingsMany } from "../settings";
@@ -1134,10 +1134,8 @@ async function scanHtmlPage(deps: WorkerDeps, spec: SourceSpec, source: CareerSo
     // its bytes against this scan like any other fetch.
     const rendered = await ctx.render!(spec.url, { scrollAndExpand: true });
     if (rendered.status !== null && rendered.status >= 400) {
-      // Same rule as the fetcher: 403 is bot protection and blocks the source, 429 and 503 are the
-      // host pacing us and only fail this scan.
-      const kind = rendered.status === 403 ? "blocked" : rendered.status === 429 || rendered.status === 503 ? "rate_limited" : "http";
-      throw new SourceFetchError(`Browser returned HTTP ${rendered.status}`, kind, rendered.status);
+      // Same rule as the fetcher's.
+      throw new SourceFetchError(`Browser returned HTTP ${rendered.status}`, statusKind(rendered.status), rendered.status);
     }
     const captures = rendered.listingPages?.length ? rendered.listingPages : [{ html: rendered.html, url: rendered.finalUrl }];
     const outcomes: HtmlScanOutcome[] = [];

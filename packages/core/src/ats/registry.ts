@@ -15,7 +15,7 @@ import { breezy } from "./breezy";
 import { teamtailor, icims, jobvite, jazzhr, rippling, successfactors, eightfold } from "./tier2";
 import { extractPostingsFromHtml } from "./html";
 import { extractJsonLdPostings } from "./jsonld";
-import { sample, slugOk, str } from "./common";
+import { sample, slugOk, str, throwForStatus } from "./common";
 export { isAtsHost } from "./common";
 import type { HtmlRecipe } from "../types";
 
@@ -25,7 +25,7 @@ const structured: Adapter[] = [greenhouse, lever, ashby, workable, smartrecruite
 async function fetchHtmlPage(spec: SourceSpec, ctx: FetchContext, forceBrowser = false): Promise<{ html: string; url: string; method: "http" | "browser" }> {
   if (!forceBrowser) {
     const res = await ctx.fetchText(spec.url);
-    if (res.status >= 400) throw new SourceFetchError(`HTTP ${res.status} from ${spec.url}`, res.status === 403 || res.status === 429 ? "blocked" : "http", res.status);
+    throwForStatus(res, spec.url);
     return { html: res.body, url: res.url, method: "http" };
   }
   if (!ctx.render) throw new SourceFetchError("browser rendering unavailable", "network");
@@ -61,7 +61,7 @@ function firstElementText(xml: string, names: readonly string[]): string | undef
 
 async function fetchRssPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
   const res = await ctx.fetchText(spec.apiUrl ?? spec.url, { headers: { accept: "application/rss+xml,application/xml,text/xml" } });
-  if (res.status >= 400) throw new SourceFetchError(`HTTP ${res.status} from ${spec.url}`, "http", res.status);
+  throwForStatus(res, spec.url);
   // Items and their fields are found by `elementBlocks`, which is linear on a feed of unclosed tags;
   // the feed is never truncated, because a short listing read as a complete one closes roles.
   const items = elementBlocks(res.body, ["item", "entry"], { boundary: true }).map((block) => res.body.slice(block.start, block.end));

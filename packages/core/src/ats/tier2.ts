@@ -19,7 +19,7 @@ import * as cheerio from "cheerio";
 import type { FetchContext, RawPosting, SourceSpec } from "../types";
 import { IncompleteListingError, SourceFetchError } from "../types";
 import { absoluteUrl, parseDate } from "../normalize";
-import { feedAdapter, fetchJson, htmlToText, pathSegments, rec, requireSlug, safeUrl, slugOk, specOrNull, str, subdomainSlug, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS, type ListingRead } from "./common";
+import { feedAdapter, fetchJson, htmlToText, pathSegments, rec, requireSlug, safeUrl, slugOk, specOrNull, str, subdomainSlug, throwForStatus, INLINE_DESCRIPTIONS_FETCH, MAX_POSTINGS, type ListingRead } from "./common";
 
 /** Most listing pages one HTML source is walked through; 50 rows a page covers the cap. */
 const MAX_PAGES = 200;
@@ -31,9 +31,7 @@ function clean(s: string | undefined | null): string | undefined {
 
 async function fetchHtml(ctx: FetchContext, url: string): Promise<string> {
   const res = await ctx.fetchText(url, { headers: { accept: "text/html" } });
-  if (res.status >= 400) {
-    throw new SourceFetchError(`HTTP ${res.status} from ${url}`, res.status === 403 || res.status === 429 ? "blocked" : "http", res.status);
-  }
+  throwForStatus(res, url);
   return res.body;
 }
 

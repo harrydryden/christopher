@@ -2,7 +2,7 @@ import { XMLParser } from "fast-xml-parser";
 import type { FetchContext, RawPosting, SourceSpec } from "../types";
 import { SourceFetchError } from "../types";
 import { parseDate } from "../normalize";
-import { asArray, feedAdapter, htmlToText, joinLocation, mapPostings, safeUrl, slugOk, str, INLINE_DESCRIPTIONS_FETCH } from "./common";
+import { asArray, feedAdapter, htmlToText, joinLocation, mapPostings, safeUrl, slugOk, str, throwForStatus, INLINE_DESCRIPTIONS_FETCH } from "./common";
 
 /**
  * The feed answers in the tenant's default language unless asked otherwise, and for a Personio
@@ -70,8 +70,9 @@ function mapPosition(p: PersonioPosition, host: string): RawPosting | null {
 
 async function fetchPostings(spec: SourceSpec, ctx: FetchContext): Promise<RawPosting[]> {
   const host = spec.atsSite ?? `${spec.atsSlug}.jobs.personio.de`;
-  const res = await ctx.fetchText(`https://${host}/xml${FEED_QUERY}`, { ...INLINE_DESCRIPTIONS_FETCH, headers: { accept: "application/xml,text/xml" } });
-  if (res.status >= 400) throw new SourceFetchError(`HTTP ${res.status} from personio`, res.status === 403 || res.status === 429 ? "blocked" : "http", res.status);
+  const url = `https://${host}/xml${FEED_QUERY}`;
+  const res = await ctx.fetchText(url, { ...INLINE_DESCRIPTIONS_FETCH, headers: { accept: "application/xml,text/xml" } });
+  throwForStatus(res, url);
   let parsed: unknown;
   try {
     parsed = parser.parse(res.body);

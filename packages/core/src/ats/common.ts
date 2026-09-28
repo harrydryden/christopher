@@ -71,6 +71,18 @@ export function extraLocations(primary: string | undefined, others: readonly str
   return locations.length > 1 ? locations : undefined;
 }
 
+/**
+ * Every adapter's reading of an error status. A 429 or 503 is the host pacing us, not refusing us:
+ * it retries tomorrow rather than marking the source blocked, which nothing but a person undoes.
+ * The worker's fetcher throws its own errors first in production; this serves every other
+ * `FetchContext` the same way.
+ */
+export function throwForStatus(res: FetchResponse, url: string): void {
+  if (res.status < 400) return;
+  const kind = res.status === 403 ? "blocked" : res.status === 429 || res.status === 503 ? "rate_limited" : "http";
+  throw new SourceFetchError(`HTTP ${res.status} from ${url}`, kind, res.status);
+}
+
 export async function fetchJson<T = unknown>(ctx: FetchContext, url: string, init?: { maxBodyBytes?: number; timeoutMs?: number; method?: "GET" | "POST"; body?: unknown; headers?: Record<string, string> }): Promise<{ data: T; res: FetchResponse }> {
   const res = await ctx.fetchText(url, {
     method: init?.method ?? "GET",
@@ -79,12 +91,7 @@ export async function fetchJson<T = unknown>(ctx: FetchContext, url: string, ini
     headers: { accept: "application/json", ...(init?.body !== undefined ? { "content-type": "application/json" } : {}), ...(init?.headers ?? {}) },
     body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
   });
-  if (res.status >= 400) {
-    // A 429 is the host pacing us, not refusing us: it retries tomorrow rather than marking the
-    // source blocked, which nothing but a person undoes.
-    const kind = res.status === 403 ? "blocked" : res.status === 429 || res.status === 503 ? "rate_limited" : "http";
-    throw new SourceFetchError(`HTTP ${res.status} from ${url}`, kind, res.status);
-  }
+  throwForStatus(res, url);
   try {
     return { data: JSON.parse(res.body) as T, res };
   } catch {

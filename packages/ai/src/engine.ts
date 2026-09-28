@@ -13,7 +13,7 @@ import {
   libraryPlanCovers,
   reviewableRows,
   rowFacets,
-  rowsToClassify,
+  rowNumbers,
   validateLibraryReview,
   type CvWritingBudget,
   type CvPlan,
@@ -2094,8 +2094,11 @@ export class AiEngine {
           const merged = new Map((plan?.entries ?? []).map(said => [said.entryId, said]));
           for (const said of again.entries) {
             const before = merged.get(said.entryId);
+            // A row the first answer already named keeps that reading: taken twice, the number
+            // would read as named more than once and the row would lose its classification.
+            const named = new Set(before?.rows.map(row => row.row));
             merged.set(said.entryId, before
-              ? { ...before, rows: [...before.rows, ...said.rows], prompts: before.prompts.length ? before.prompts : said.prompts }
+              ? { ...before, rows: [...before.rows, ...said.rows.filter(row => !named.has(row.row))], prompts: before.prompts.length ? before.prompts : said.prompts }
               : said);
           }
           plan = { entries: [...merged.values()] };
@@ -2175,19 +2178,20 @@ function entriesUnderReview(library: CvLibrary, entries: LibraryReviewEntry[]): 
   return entries.map(entry => {
     const job = library.employment?.find(item => item.id === entry.employmentId);
     const rows = reviewableRows(entry);
-    const ask = rowsToClassify(entry, entry.known);
+    // Numbered, so the answer names a row by its number instead of copying it back; the rows still
+    // to classify are named by number too, rather than listed a second time.
+    const { toClassify } = rowNumbers(entry, entry.known);
     return [
       `Entry [${entry.id}] (${entry.kind})`,
       job ? `Company: ${job.company}` : null,
       job ? `Title: ${job.jobTitle}` : null,
       `Heading: ${entry.heading}`,
       "Rows:",
-      ...rows.map(row => `- ${row}`),
-      ...(ask.length < rows.length
-        ? [
-          "Classify only these rows (the others are already classified; do not return them):",
-          ...(ask.length ? ask.map(row => `- ${row}`) : ["(none: return this entry with no rows, and its prompts)"]),
-        ]
+      ...rows.map((row, index) => `${index + 1}. ${row}`),
+      ...(toClassify.length < rows.length
+        ? [toClassify.length
+          ? `Classify only rows ${toClassify.join(", ")} (the others are already classified; do not return them).`
+          : "Classify no rows (all are already classified): return this entry with no rows, and its prompts."]
         : []),
     ].filter(Boolean).join("\n");
   }).join("\n\n");

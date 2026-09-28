@@ -1218,15 +1218,15 @@ describe("library evidence review (A12)", () => {
   /** What the model was asked about, read back out of the batch block the engine built. */
   const entryIdsIn = (params: Record<string, unknown>) =>
     [...userBlocks(params)[1]!.text.matchAll(/^Entry \[([^\]]+)\]/gmu)].map(match => match[1]!);
-  /** A clean answer: every row quoted verbatim, with the types it serves. */
+  /** A clean answer: every row named by its number and quoted verbatim, with the types it serves. */
   const answerFor = (params: Record<string, unknown>, over: (entryId: string) => Partial<{
-    rows: Array<{ row: string; facets: string[]; marks: string[]; quote: string | null }>;
+    rows: Array<{ row: number; facets: string[]; marks: string[]; quote: string | null }>;
     prompts: string[];
   }> = () => ({})) => ({
     entries: entryIdsIn(params).map(entryId => ({
       entryId,
       rows: ROWS.map((row, index) => ({
-        row, facets: index === 0 ? ["responsibility"] : ["outcome"],
+        row: index + 1, facets: index === 0 ? ["responsibility"] : ["outcome"],
         marks: index === 0 ? ["responsibility.scope", "responsibility.ownership", "responsibility.scale"] : ["outcome.change", "outcome.magnitude"],
         quote: row,
       })),
@@ -1294,11 +1294,11 @@ describe("library evidence review (A12)", () => {
           entryId: "entry0",
           rows: [
             // Tidied on the way back: the quote is no longer anything the person wrote.
-            { row: ROWS[0]!, facets: ["responsibility"], marks: ["responsibility.scope", "responsibility.scale"],
+            { row: 1, facets: ["responsibility"], marks: ["responsibility.scope", "responsibility.scale"],
               quote: "Ran the UK warehouse team of thirty through a relocation" },
-            { row: ROWS[1]!, facets: ["outcome"], marks: ["outcome.change"], quote: ROWS[1]! },
-            // Never written by anybody: it is not one of the entry's rows.
-            { row: "Grew revenue by 40%", facets: ["metric"], marks: ["metric.figure"], quote: "Grew revenue by 40%" },
+            { row: 2, facets: ["outcome"], marks: ["outcome.change"], quote: ROWS[1]! },
+            // A number the entry does not list: it names none of the entry's rows.
+            { row: 3, facets: ["metric"], marks: ["metric.figure"], quote: "Grew revenue by 40%" },
           ],
           prompts: ["What changed as a result?"],
         }],
@@ -1322,8 +1322,8 @@ describe("library evidence review (A12)", () => {
     const engine = createAiEngine({ getModel: () => "claude-sonnet-5", client: { messages: { create: async params => {
       calls.push({ params });
       return { parsed_output: { entries: [{ entryId: "entry0", rows: [
-        { row: ROWS[0]!, facets: ["responsibility", "milestone"], marks: ["responsibility.scope", "responsibility.ownership", "responsibility.scale"], quote: ROWS[0]! },
-        { row: ROWS[1]!, facets: ["outcome", "metric"], marks: ["problem.approach", "problem.resolution", "metric.movement", "outcome.change"], quote: ROWS[1]! },
+        { row: 1, facets: ["responsibility", "milestone"], marks: ["responsibility.scope", "responsibility.ownership", "responsibility.scale"], quote: ROWS[0]! },
+        { row: 2, facets: ["outcome", "metric"], marks: ["problem.approach", "problem.resolution", "metric.movement", "outcome.change"], quote: ROWS[1]! },
       ], prompts: [] }] }, usage: { input_tokens: 10, output_tokens: 10 } };
     } } } });
 
@@ -1345,7 +1345,7 @@ describe("library evidence review (A12)", () => {
     const library = libraryOf(2);
     const { client } = fakeClient({ entries: [
       { entryId: "entry0", rows: [], prompts: ["What is your date of birth?"] },
-      { entryId: "entry1", rows: ROWS.map(row => ({ row, facets: ["outcome"], marks: ["outcome.change"], quote: row })), prompts: [] },
+      { entryId: "entry1", rows: ROWS.map((row, index) => ({ row: index + 1, facets: ["outcome"], marks: ["outcome.change"], quote: row })), prompts: [] },
     ] });
     const engine = createAiEngine({ getModel: () => "claude-sonnet-5", client });
     const [refused, kept] = await engine.reviewLibraryEntries({ library, entries: library.entries }, ref);
@@ -1400,8 +1400,8 @@ describe("library evidence review (A12)", () => {
       return { parsed_output: { entries: [
         // Returned anyway, and differently: it is not what the model was asked, so it is ignored.
         { entryId: "entry0", rows: [
-          { row: ROWS[0]!, facets: ["style"], marks: ["style.effect"], quote: ROWS[0]! },
-          { row: edited, facets: ["metric"], marks: ["metric.figure", "metric.movement"], quote: edited },
+          { row: 1, facets: ["style"], marks: ["style.effect"], quote: ROWS[0]! },
+          { row: 2, facets: ["metric"], marks: ["metric.figure", "metric.movement"], quote: edited },
         ], prompts: ["Who relied on the handover?"] },
         answerFor(params).entries[1]!,
       ] }, usage: { input_tokens: 10, output_tokens: 10 } };
@@ -1414,8 +1414,9 @@ describe("library evidence review (A12)", () => {
     expect(calls).toHaveLength(1);
     const batch = userBlocks(calls[0]!.params)[1]!.text;
     const block = batch.split("\n\n").find(chunk => chunk.includes("Entry [entry0]"))!;
-    // Every row is in view, in order, and then only the edited one is named to classify.
-    expect(block).toContain(`Rows:\n- ${ROWS[0]}\n- ${edited}\nClassify only these rows (the others are already classified; do not return them):\n- ${edited}`);
+    // Every row is in view, numbered in order, and then only the edited one is named, by number, to classify.
+    expect(block).toContain(`Rows:\n1. ${ROWS[0]}\n2. ${edited}\nClassify only rows 2 (the others are already classified; do not return them).`);
+    expect(block.split(edited).length - 1).toBe(1);
     // An entry with nothing known is asked about as before.
     expect(batch.split("\n\n").find(chunk => chunk.includes("Entry [entry1]"))).not.toContain("Classify only");
     expect(first!.rows[0]).toMatchObject({ row: ROWS[0], facets: ["responsibility"], marks: ["responsibility.scope"], verified: true });
@@ -1431,8 +1432,9 @@ describe("library evidence review (A12)", () => {
     const engine = createAiEngine({ getModel: () => "claude-sonnet-5", client: { messages: { create: async params => {
       calls.push({ params });
       const full = answerFor(params).entries[0]!;
-      // The first answer classifies only the first row; the second classifies only the second.
-      const rows = calls.length === 1 ? full.rows.slice(0, 1) : full.rows.slice(1);
+      // The first answer classifies only the first row; the second classifies both, differently for
+      // the first, which the first answer's reading keeps rather than reading as named twice.
+      const rows = calls.length === 1 ? full.rows.slice(0, 1) : [{ ...full.rows[0]!, facets: ["style"] }, full.rows[1]!];
       return { parsed_output: { entries: [{ ...full, rows, prompts: calls.length === 1 ? full.prompts : [] }] }, usage: { input_tokens: 10, output_tokens: 10 } };
     } } } });
 

@@ -70,7 +70,7 @@ describe("the prompt registry", () => {
     // Deterministic, so the system block stays cacheable across loads.
     expect(evidenceMarksBlock()).toBe(evidenceMarksBlock());
     expect(A12_REVIEW_LIBRARY).toContain(evidenceMarksBlock());
-    const row = { row: "Revenue £5m", facets: ["metric"], marks: ["metric.figure", "metric.measure"], quote: null };
+    const row = { row: 1, facets: ["metric"], marks: ["metric.figure", "metric.measure"], quote: null };
     expect(LibraryReviewPlanSchema.safeParse({ entries: [{ entryId: "e", rows: [row], prompts: [] }] }).success).toBe(true);
     expect(PROMPTS.A12.expectedOutputTokens).toBe(4_800);
   });

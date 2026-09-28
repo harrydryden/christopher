@@ -69,10 +69,12 @@ function batchOf(params: Record<string, unknown>) {
   return blocks[1]!.text.split("\n\n").flatMap(chunk => {
     const id = chunk.match(/^Entry \[([^\]]+)\]/mu)?.[1];
     if (!id) return [];
-    const [shown, only] = chunk.split(/^Classify only these rows.*$/mu);
-    const bullets = (text: string) => text.split("\n").filter(line => line.startsWith("- ")).map(line => line.slice(2));
-    const all = bullets(shown!);
-    return [{ id, all, rows: only === undefined ? all : bullets(only) }];
+    // Rows are numbered; the rows to classify, when only some, are named by number after them.
+    const all = [...chunk.matchAll(/^(\d+)\. (.*)$/gmu)].map(match => ({ number: Number(match[1]), text: match[2]! }));
+    const only = chunk.match(/^Classify only rows ([\d, ]+) \(/mu)?.[1]?.split(", ").map(Number);
+    const none = /^Classify no rows/mu.test(chunk);
+    const asked = none ? [] : only ? all.filter(row => only.includes(row.number)) : all;
+    return [{ id, all: all.map(row => row.text), rows: asked.map(row => row.text), numbers: asked.map(row => row.number) }];
   });
 }
 
@@ -95,7 +97,7 @@ function scriptedClient({ omit = [] }: { omit?: string[] } = {}) {
             entries: batch.filter(entry => !omit.includes(entry.id)).map(entry => ({
               entryId: entry.id,
               rows: entry.rows.map((row, index) => ({
-                row, facets: index === 0 ? ["responsibility"] : ["outcome", "metric"],
+                row: entry.numbers[index]!, facets: index === 0 ? ["responsibility"] : ["outcome", "metric"],
                 marks: index === 0 ? ["responsibility.scope", "responsibility.ownership"] : ["outcome.change", "metric.figure"], quote: row,
               })),
               prompts: ["What problem were you brought in to solve?"],

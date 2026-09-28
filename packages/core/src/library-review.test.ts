@@ -16,6 +16,7 @@ import {
   normaliseLibraryReview,
   retagLibraryReview,
   reviewableRows,
+  rowNumbers,
   rowsToClassify,
   rulesLibraryReview,
   scoreLibraryRows,
@@ -252,12 +253,12 @@ describe("validateLibraryReview", () => {
   const entry = subject.entries[0]!;
   const earned: EvidenceMark[] = ["outcome.change", "milestone.deliverable", "milestone.role"];
   const said = (over: Partial<LibraryReviewPlanEntry["rows"][number]> = {}): LibraryReviewPlanEntry["rows"][number] => ({
-    row: first, facets: ["outcome"] as EvidenceFacet[], marks: earned, quote: "Rebuilt the Acme onboarding flow", ...over,
+    row: 1, facets: ["outcome"] as EvidenceFacet[], marks: earned, quote: "Rebuilt the Acme onboarding flow", ...over,
   });
   const plan = (rows: LibraryReviewPlanEntry["rows"], prompts: string[] = []): LibraryReviewPlanEntry => ({ entryId: entry.id, rows, prompts });
 
   it("keeps the entry's own rows and drops the ones the model invented", () => {
-    const result = validateLibraryReview(entry, plan([said(), said({ row: "A row nobody wrote", quote: null })]));
+    const result = validateLibraryReview(entry, plan([said(), said({ row: 9, quote: null })]));
     expect(result.rows.map(item => item.row)).toEqual([first, second]);
     // `facets` is the model's reading, `tagged` the person's own, and the row is scored on the tags.
     expect(result.rows[0]).toMatchObject({ facets: ["outcome"], tagged: ["milestone"], marks: earned, verified: true });
@@ -266,11 +267,27 @@ describe("validateLibraryReview", () => {
     expect(result.rows[1]).toMatchObject({ row: second, facets: [], tagged: [], marks: [], verified: false, quote: null });
   });
 
-  it("matches a row after NFKC and whitespace normalisation, but only once", () => {
-    const spaced = plan([said({ row: `  Rebuilt   the Acme onboarding\tflow from scratch with the design group ` }), said({ marks: [] })]);
-    const result = validateLibraryReview(entry, spaced);
-    // The first classification of a row wins; a second one for the same row is ignored.
-    expect(result.rows[0]).toMatchObject({ verified: true, marks: earned });
+  it("maps each row's number back to the entry's own row, and stores the row's text", () => {
+    const result = validateLibraryReview(entry, plan([said({ row: 2, facets: ["metric"], marks: ["metric.figure"], quote: "by 40%" })]));
+    expect(result.rows[1]).toMatchObject({ row: second, facets: ["metric"], marks: ["metric.figure"], quote: "by 40%", verified: true });
+    expect(result.rows[0]).toMatchObject({ row: first, verified: false });
+    expect(rowNumbers(entry)).toEqual({ all: [1, 2], toClassify: [1, 2] });
+  });
+
+  it("treats a number given twice as unverified, a number out of range as no row, and a mis-numbered quote as unanchored", () => {
+    // Which of two readings is meant cannot be told, so neither is taken; the row still counts as answered.
+    const twice = validateLibraryReview(entry, plan([said(), said({ marks: [] })]));
+    expect(twice.rows[0]).toMatchObject({ row: first, verified: false, marks: [] });
+    expect(twice).not.toHaveProperty("unread");
+    expect(libraryPlanCovers(entry, plan([said(), said({ row: 2 }), said({ row: 2 })]))).toBe(true);
+    // Numbers the entry does not have name no row, and cover nothing.
+    for (const row of [0, 3, 1.5]) expect(validateLibraryReview(entry, plan([said({ row })]))).toMatchObject({ unread: true });
+    expect(libraryPlanCovers(entry, plan([said(), said({ row: 3 })]))).toBe(false);
+    // The quote belongs to row 1 but the answer numbered it 2: the quote is not in row 2.
+    expect(validateLibraryReview(entry, plan([said({ row: 2 })])).rows[1]).toMatchObject({ row: second, verified: false });
+    // The schema holds the model to a whole, positive number.
+    expect(LibraryReviewPlanSchema.safeParse({ entries: [plan([said({ row: first as never })])] }).success).toBe(false);
+    expect(LibraryReviewPlanSchema.safeParse({ entries: [plan([said({ row: 0 })])] }).success).toBe(false);
   });
 
   it("marks a row unverified when its quote is not anchored in that row", () => {
@@ -283,7 +300,7 @@ describe("validateLibraryReview", () => {
   });
 
   it("scores from the classifications, never from the model, and keeps its prompts", () => {
-    const both = plan([said(), said({ row: second, facets: ["metric"], quote: "by 40%" })], ["What changed as a result?"]);
+    const both = plan([said(), said({ row: 2, facets: ["metric"], quote: "by 40%" })], ["What changed as a result?"]);
     const result = validateLibraryReview(entry, both);
     // Outcome and metric covered, 50 × 4/8 = 25; the milestone row reads 50 and the untagged one
     // nothing, 50 × 50/200 = 12.5: 37.5 → 38.
@@ -292,7 +309,7 @@ describe("validateLibraryReview", () => {
   });
 
   it("scores an untagged row the model classified against that classification in the entry mean", () => {
-    const counted = plan([said(), said({ row: second, facets: ["metric"], marks: ["metric.figure", "metric.movement"], quote: "by 40%" })]);
+    const counted = plan([said(), said({ row: 2, facets: ["metric"], marks: ["metric.figure", "metric.movement"], quote: "by 40%" })]);
     const result = validateLibraryReview(entry, counted);
     expect(result.rows[1]).toMatchObject({ facets: ["metric"], tagged: [] });
     expect(libraryRowScore(result.rows[1]!)).toMatchObject({ score: 50, facets: ["metric"] });
@@ -302,7 +319,7 @@ describe("validateLibraryReview", () => {
   });
 
   describe("with rows an earlier review already classified", () => {
-    const earlier = validateLibraryReview(entry, plan([said(), said({ row: second, facets: ["metric"], marks: ["metric.figure"], quote: "by 40%" })]));
+    const earlier = validateLibraryReview(entry, plan([said(), said({ row: 2, facets: ["metric"], marks: ["metric.figure"], quote: "by 40%" })]));
     const known = knownLibraryRows(earlier);
 
     it("keeps each known row as it was stored, with the tags saved now, and ignores the plan about it", () => {
@@ -319,7 +336,7 @@ describe("validateLibraryReview", () => {
       const edited = "Cut onboarding time by 40% in one quarter";
       const changed = library([first, edited].join("\n"), { [first]: "milestone" }).entries[0]!;
       expect(rowsToClassify(changed, known)).toEqual([edited]);
-      const answered = validateLibraryReview(changed, plan([said({ row: edited, facets: ["metric"], marks: ["metric.figure", "metric.movement"], quote: null })]), known);
+      const answered = validateLibraryReview(changed, plan([said({ row: 2, facets: ["metric"], marks: ["metric.figure", "metric.movement"], quote: null })]), known);
       expect(answered.rows.map(row => [row.row, row.facets, row.verified])).toEqual([[first, ["outcome"], true], [edited, ["metric"], true]]);
       expect(answered).not.toHaveProperty("unread");
       // Asked for the edited row and given nothing about it: unread, whatever the known rows say.
@@ -341,10 +358,10 @@ describe("validateLibraryReview", () => {
       const changed = library([first, edited].join("\n"), { [first]: "milestone" }).entries[0]!;
       expect(libraryPlanCovers(changed, undefined, known)).toBe(false);
       expect(libraryPlanCovers(changed, plan([said()]), known)).toBe(false);
-      expect(libraryPlanCovers(changed, plan([said({ row: ` ${edited} ` })]), known)).toBe(true);
+      expect(libraryPlanCovers(changed, plan([said({ row: 2 })]), known)).toBe(true);
       // Without known rows, every row has to come back.
-      expect(libraryPlanCovers(changed, plan([said({ row: edited })]))).toBe(false);
-      expect(libraryPlanCovers(changed, plan([said(), said({ row: edited })]))).toBe(true);
+      expect(libraryPlanCovers(changed, plan([said({ row: 2 })]))).toBe(false);
+      expect(libraryPlanCovers(changed, plan([said(), said({ row: 2 })]))).toBe(true);
     });
 
     it("leaves an unverified row out of what is known, so it is asked about again", () => {
@@ -369,7 +386,7 @@ describe("validateLibraryReview", () => {
     // Left out of the answer: the engine hands on an empty plan for it.
     expect(validateLibraryReview(entry, plan([]))).toMatchObject({ unread: true, score: 0 });
     // Answered only for rows the entry does not have.
-    expect(validateLibraryReview(entry, plan([said({ row: "A row nobody wrote", quote: null })])).unread).toBe(true);
+    expect(validateLibraryReview(entry, plan([said({ row: 9, quote: null })])).unread).toBe(true);
     // One row classified, even with a quote that does not anchor, is an answer about this entry.
     expect(validateLibraryReview(entry, plan([said({ quote: "Rebuilt the Globex onboarding flow" })]))).not.toHaveProperty("unread");
     expect(validateLibraryReview(entry, plan([said()]))).not.toHaveProperty("unread");
@@ -523,8 +540,8 @@ describe("retagLibraryReview", () => {
     const review = validateLibraryReview(before.entries[0]!, {
       entryId: "acme-block",
       rows: [
-        { row: first, facets: ["outcome"], marks: ["outcome.change", "milestone.deliverable", "milestone.role"], quote: null },
-        { row: second, facets: ["metric"], marks: ["metric.figure", "metric.movement"], quote: null },
+        { row: 1, facets: ["outcome"], marks: ["outcome.change", "milestone.deliverable", "milestone.role"], quote: null },
+        { row: 2, facets: ["metric"], marks: ["metric.figure", "metric.movement"], quote: null },
       ],
       prompts: [],
     });

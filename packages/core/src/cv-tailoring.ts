@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { cvRequirementWeight, RequirementStatusSchema, type CvRubric } from "./cv-assessment";
-import { CvPlanSourceRefSchema, type CvLibrary, type CvPlan } from "./cv";
+import type { CvLibrary, CvPlan } from "./cv";
 import { evidenceRows } from "./cv-helpers";
 import type { CvGapQuestion } from "./cv-gap-quiz";
 import { mentionsDemographicAttribute } from "./cv-demographics";
 
-/** A plan's citation: the same shape as a CV plan's own source reference. */
-export const CvTailoringSourceRefSchema = CvPlanSourceRefSchema;
+// The same shape as `CvPlanSourceRefSchema`, written out rather than imported: ./cv re-exports
+// ./cv-budget, which imports this module, so a value read from ./cv here is not yet initialised.
+export const CvTailoringSourceRefSchema = z.object({ sourceId: z.string().min(1).max(220), quote: z.string().trim().min(1).max(1600) });
 export type CvTailoringSourceRef = z.infer<typeof CvTailoringSourceRefSchema>;
 
 export const CvTailoringPlanSchema = z.object({

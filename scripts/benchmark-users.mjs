@@ -5,12 +5,12 @@
  * USERS_BENCHMARK_FOLLOWS give the thousand-account shape (for example 1000, 1500 and 20).
  */
 import { createRequire } from 'node:module';
-import { createHmac } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { writeFile, readFile } from 'node:fs/promises';
 import { cpus, freemem, totalmem } from 'node:os';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { sessionCookie } from './lib/web.mjs';
 // The pollers' own rules, imported rather than copied, so the probe cannot drift from the app.
 import { BANNER_FIRST_MS, FIRST_POLL_MS, LONGEST_POLL_MS, nextPollDelay } from '../apps/web/lib/polling.ts';
 
@@ -187,7 +187,7 @@ async function main() {
     const { rows: drafts } = await pool.query(`select id,user_id from cv_drafts where archived_at is null`);
     const draftByUser = new Map(drafts.map(row => [row.user_id, row.id]));
     await pool.query('analyze');
-    const cookies = sessions.map(({ id }) => `ava_session=v2.${id}.${expires}.${createHmac('sha256', secret).update(`${id}.${expires}`).digest('base64url')}`);
+    const cookies = sessions.map(({ id }) => sessionCookie(secret, id, expires));
     server = spawn(process.execPath, ['--inspect=127.0.0.1:0', require.resolve('next/dist/bin/next'), 'start', '-p', String(port)], {
       cwd: new URL('../apps/web', import.meta.url), detached: true,
       env: { ...process.env, SESSION_SECRET: secret, NODE_ENV: 'production', AVA_DISABLE_BROWSER: '1' }, stdio: ['ignore', 'pipe', 'pipe'],

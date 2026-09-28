@@ -1,11 +1,12 @@
 /** Exercise the release against the explicitly isolated managed recovery copy. Never starts a worker. */
-import { createHmac, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { readFile, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import { coreIntegritySql } from './recovery-drill.mjs';
+import { insertSession } from './lib/web.mjs';
 
 export function validateManagedRecoveryUrl(raw) {
   const url = new URL(raw.trim());
@@ -44,9 +45,7 @@ async function main() {
     if (gapColumn?.data_type !== 'jsonb' || gapColumn?.is_nullable !== 'YES') throw new Error('Quiz migration is missing or incompatible');
     const { rows: [user] } = await pool.query('select id from users where claimed_at is not null order by created_at limit 1');
     if (!user) throw new Error('Recovery copy has no claimed account');
-    const expires = Math.floor(Date.now() / 1000) + 900;
-    await pool.query("insert into sessions(id,user_id,expires_at,user_agent,ip_address) values($1,$2,to_timestamp($3),'isolated managed recovery smoke','127.0.0.1')", [sessionId, user.id, expires]);
-    const cookie = `ava_session=v2.${sessionId}.${expires}.${createHmac('sha256', secret).update(`${sessionId}.${expires}`).digest('base64url')}`;
+    const { cookie } = await insertSession(pool, user.id, { secret, ttlSeconds: 900, userAgent: 'isolated managed recovery smoke', id: sessionId, ipAddress: '127.0.0.1' });
     server = spawn(process.execPath, [require.resolve('next/dist/bin/next'), 'start', '-H', '127.0.0.1', '-p', String(port)], {
       cwd: new URL('../apps/web', import.meta.url), detached: true,
       env: { ...process.env, DATABASE_URL: url.href, SESSION_SECRET: secret, NODE_ENV: 'production', AVA_SERVERLESS_FALLBACK: '0' },

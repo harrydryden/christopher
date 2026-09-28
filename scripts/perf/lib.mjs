@@ -9,7 +9,6 @@
  * so it gives the same count on a laptop, in CI and on the audit host.
  */
 import { spawn } from "node:child_process";
-import { createHmac } from "node:crypto";
 import { createRequire } from "node:module";
 import net from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -30,11 +29,7 @@ export function assertPerfDatabase(input) {
   return url;
 }
 
-/** apps/web/lib/session.ts's cookie. */
-export function sessionCookie(secret, sessionId, expiresEpochSeconds) {
-  const sig = createHmac("sha256", secret).update(`${sessionId}.${expiresEpochSeconds}`).digest("base64url");
-  return `ava_session=v2.${sessionId}.${expiresEpochSeconds}.${sig}`;
-}
+export { sessionCookie } from "../lib/web.mjs";
 
 /** The value at fraction `p` of the sorted values (nearest rank, as the audits computed it). */
 export function percentile(values, p) {

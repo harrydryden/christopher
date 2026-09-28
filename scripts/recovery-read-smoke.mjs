@@ -1,9 +1,10 @@
 /** Authenticated, read-only application smoke for a retained synthetic restore. */
-import { createHmac, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { writeFile } from "node:fs/promises";
+import { insertSession } from "./lib/web.mjs";
 
 const EXPECTED_DB = "christopher_recovery_drill";
 export function validateSmokeUrl(raw) {
@@ -22,10 +23,8 @@ async function main() {
   const port = Number(process.env.RECOVERY_SMOKE_PORT ?? 3141);
   const { rows: [user] } = await pool.query(`select id from users where claimed_at is not null order by created_at limit 1`);
   if (!user) throw new Error("restored synthetic database has no claimed account");
-  const expires = Math.floor(Date.now() / 1000) + 900;
   const sessionId = randomUUID();
-  await pool.query(`insert into sessions(id,user_id,expires_at,user_agent,ip_address) values($1,$2,to_timestamp($3),'local recovery read smoke','127.0.0.1')`, [sessionId, user.id, expires]);
-  const cookie = `ava_session=v2.${sessionId}.${expires}.${createHmac("sha256", secret).update(`${sessionId}.${expires}`).digest("base64url")}`;
+  const { cookie } = await insertSession(pool, user.id, { secret, ttlSeconds: 900, userAgent: "local recovery read smoke", id: sessionId, ipAddress: "127.0.0.1" });
   const server = spawn(process.execPath, [require.resolve("next/dist/bin/next"), "start", "-p", String(port)], {
     cwd: new URL("../apps/web", import.meta.url), detached: true,
     env: { ...process.env, DATABASE_URL: url.href, SESSION_SECRET: secret, NODE_ENV: "production" }, stdio: ["ignore", "pipe", "pipe"],

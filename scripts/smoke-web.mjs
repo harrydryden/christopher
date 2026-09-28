@@ -10,8 +10,8 @@ import { verifyCvTailoringWorkspace } from "./smoke-cv-tailoring.mjs";
 import { createRequire } from "node:module";
 import { once } from "node:events";
 import { spawn } from "node:child_process";
-import { createHmac } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
+import { disposableAdmin } from "./lib/web.mjs";
 
 const nextBin = createRequire(new URL("../apps/web/package.json", import.meta.url)).resolve("next/dist/bin/next");
 
@@ -23,43 +23,6 @@ const skipBuild = process.argv.includes("--no-build");
 const { Pool } = createRequire(new URL("../apps/web/package.json", import.meta.url))("pg");
 const SMOKE_EMAIL = "smoke@ava.invalid";
 const SMOKE_DOMAIN = "smoke.invalid";
-
-/**
- * A disposable administrator account with one session row. Same cookie shape as apps/web/lib/session.ts:
- * "v2.<sessionId>.<expiresEpochSeconds>.<base64url HMAC-SHA256(sessionId.expires)>".
- */
-async function signIn(pool) {
-  const { rows: [user] } = await pool.query(
-    `insert into users (email, name, role, claimed_at, email_verified_at) values ($1, 'Smoke test', 'admin', now(), now())
-     on conflict (email) do update set role = 'admin', claimed_at = coalesce(users.claimed_at, now()) returning id`,
-    [SMOKE_EMAIL],
-  );
-  const expires = Math.floor(Date.now() / 1000) + 3600;
-  const { rows: [session] } = await pool.query(
-    "insert into sessions (user_id, expires_at, user_agent) values ($1, to_timestamp($2), 'smoke-web') returning id",
-    [user.id, expires],
-  );
-  const sig = createHmac("sha256", SECRET).update(`${session.id}.${expires}`).digest("base64url");
-  return { userId: user.id, cookie: `ava_session=v2.${session.id}.${expires}.${sig}` };
-}
-
-/**
- * A company this account follows, so the company page has something to render. The catalogue is
- * shared, so the row is its own throwaway domain rather than one of the seeded companies, and it
- * goes at the end with the account.
- */
-async function followCompany(pool, userId) {
-  const { rows: [company] } = await pool.query(
-    `insert into companies (name, homepage_url, domain) values ('Smoke Company', 'https://smoke.invalid', $1)
-     on conflict (domain) do update set name = excluded.name returning id`,
-    [SMOKE_DOMAIN],
-  );
-  await pool.query(
-    "insert into company_subscriptions (user_id, company_id) values ($1, $2) on conflict do nothing",
-    [userId, company.id],
-  );
-  return company.id;
-}
 
 function run(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
@@ -227,7 +190,10 @@ async function main() {
   }
 
   const pool = new Pool({ connectionString: DATABASE_URL, max: 1 });
-  const { cookie, userId } = await signIn(pool);
+  // A disposable administrator following a throwaway company, so the company page has something
+  // to render; both go at the end.
+  const { cookie, userId, companyId } = await disposableAdmin(pool, {
+    email: SMOKE_EMAIL, name: "Smoke test", domain: SMOKE_DOMAIN, companyName: "Smoke Company", secret: SECRET, userAgent: "smoke-web" });
   const failures = [];
 
   // An unauthenticated request must be turned away.
@@ -236,7 +202,6 @@ async function main() {
   else if (!(anon.headers.get("location") ?? "").includes("/login")) failures.push(`/ redirected to ${anon.headers.get("location")}, expected /login`);
 
   // The company page and its logo are per company, so they join the list once there is one.
-  const companyId = await followCompany(pool, userId);
   // The company with no source shows the setup card; the header says when it was last scanned,
   // when the next scan is due, and how many roles here this account is pursuing.
   const pages = [...PAGES, [`/companies/${companyId}`, ["Roles", "Add a role", "Notepad", "Set up this company", "next scheduled scan", "applications", "What has happened so far", "Nobody has looked for this"]]];

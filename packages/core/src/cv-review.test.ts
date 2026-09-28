@@ -6,7 +6,9 @@ import {
   validateCvReview,
   cvAssessmentCurrent,
   assertCvFinalisable,
+  cvLibraryVerdicts,
 } from "./cv-review";
+import type { CvTailoringPlan } from "./cv-tailoring";
 import {
   cvTextItems,
   cvClaimItems,
@@ -328,4 +330,86 @@ it("accepts exact one- and two-character technical skill citations", () => {
   });
   value.matches[0]!.cvEvidence = [{ id: "section:s:0", quote: "R" }];
   expect(() => validateCvReview(r, cv, shortLibrary, value)).not.toThrow();
+});
+
+// ---- The evidence plan as the library-side verdict -----------------------------------------------
+const planLibrary: CvLibrary = {
+  ...library,
+  entries: [
+    ...library.entries,
+    { id: "s", kind: "skill", heading: "Skills", details: "SQL, Python", skillItems: ["SQL", "Python"] },
+  ],
+};
+const planEvidence = cvEvidenceItems(groupCvLibrary(planLibrary));
+const planEntryIds = new Set(planLibrary.entries.map((entry) => entry.id));
+type PlanRequirement = CvTailoringPlan["requirements"][number];
+function plan(overrides: { r1?: PlanRequirement; r2?: PlanRequirement } = {}): CvTailoringPlan {
+  return {
+    requirements: [
+      overrides.r1 ?? { requirementId: "r1", status: "demonstrated", evidence: [{ sourceId: "entry:e:row:0", quote: "Led operations" }], reason: "Stated." },
+      overrides.r2 ?? { requirementId: "r2", status: "partial", evidence: [{ sourceId: "entry:s:skill:0", quote: "SQL" }], reason: "A label." },
+    ],
+    gapQuestions: [],
+  };
+}
+
+it("names each plan citation by its block: rows and skills by their entry, the profile as itself", () => {
+  const verdicts = cvLibraryVerdicts(plan({
+    r1: { requirementId: "r1", status: "demonstrated", reason: "Stated.", evidence: [
+      { sourceId: "entry:e:row:0", quote: "Led operations" },
+      { sourceId: "source:profile", quote: "Operations leader" },
+    ] },
+  }), planEvidence, planEntryIds);
+  expect(verdicts.get("r1")).toEqual({ libraryStatus: "demonstrated", libraryEvidence: [
+    { id: "entry:e", quote: "Led operations" },
+    { id: "source:profile", quote: "Operations leader" },
+  ] });
+  expect(verdicts.get("r2")).toEqual({ libraryStatus: "partial", libraryEvidence: [{ id: "entry:s", quote: "SQL" }] });
+});
+
+it("keeps only anchored citations, once each, at most eight", () => {
+  const evidence = [
+    { sourceId: "entry:e:row:0", quote: "Led operations" },
+    { sourceId: "entry:e:row:0", quote: "Led  operations" },
+    { sourceId: "entry:e:row:1", quote: "Led operations" },
+    { sourceId: "entry:e:row:0", quote: "Ran a warehouse" },
+    { sourceId: "entry:missing:row:0", quote: "Led operations" },
+    ...Array.from({ length: 3 }, () => ({ sourceId: "entry:e:row:0", quote: "using SQL" })),
+    ...["Led", "operations", "using", "SQL", "Director", "Led operations using", "operations using SQL"]
+      .map((quote) => ({ sourceId: "entry:e:row:0", quote })),
+  ];
+  const verdict = cvLibraryVerdicts(plan({ r1: { requirementId: "r1", status: "demonstrated", reason: "Stated.", evidence } }), planEvidence, planEntryIds).get("r1")!;
+  expect(verdict.libraryEvidence.map((ref) => ref.quote)).toEqual(["Led operations", "using SQL", "Led", "operations", "using", "SQL", "Director", "Led operations using"]);
+  expect(verdict.libraryEvidence.every((ref) => ref.id === "entry:e")).toBe(true);
+});
+
+it("downgrades a positive plan status to unknown when none of its citations is anchored", () => {
+  const verdicts = cvLibraryVerdicts(plan({
+    r1: { requirementId: "r1", status: "demonstrated", reason: "Stated.", evidence: [{ sourceId: "entry:e:row:0", quote: "Ran a warehouse" }] },
+    r2: { requirementId: "r2", status: "missing", reason: "None.", evidence: [] },
+  }), planEvidence, planEntryIds);
+  expect(verdicts.get("r1")).toEqual({ libraryStatus: "unknown", libraryEvidence: [] });
+  expect(verdicts.get("r2")).toEqual({ libraryStatus: "missing", libraryEvidence: [] });
+});
+
+it("replaces the model's library-side verdict with the plan's, and scores the evidence by the plan", () => {
+  const value = reviewFixture({ rubric, cv: cvTextItems(content), claims: cvClaimItems(content), evidence: planEvidence });
+  // The model disagrees with the plan, and cites a quote the library does not contain.
+  value.matches[0]!.libraryStatus = "missing";
+  value.matches[0]!.libraryEvidence = [];
+  value.matches[1]!.libraryStatus = "demonstrated";
+  value.matches[1]!.libraryEvidence = [{ id: "entry:e", quote: "Not in the library" }];
+  expect(() => validateCvReview(rubric, content, planLibrary, value)).toThrow(/not present/);
+  const checked = validateCvReview(rubric, content, planLibrary, value, plan());
+  expect(checked.matches.map((match) => [match.libraryStatus, match.libraryEvidence])).toEqual([
+    ["demonstrated", [{ id: "entry:e", quote: "Led operations" }]],
+    ["partial", [{ id: "entry:s", quote: "SQL" }]],
+  ]);
+  // A batch that returned no library side at all is completed from the plan.
+  const bare = structuredClone(value) as unknown as { matches: Array<Record<string, unknown>> };
+  for (const match of bare.matches) { delete match.libraryStatus; delete match.libraryEvidence; }
+  const assessment = createCvAssessment({ content, description, library: planLibrary, rubric, review: bare, model: "test", pageCount: 2, plan: plan() });
+  // The plan's weighted coverage: r1 essential demonstrated (2 × 1), r2 desirable partial (1 × 0.5), of 3.
+  expect(assessment.availableEvidenceScore).toBe(Math.round((100 * (2 * 1 + 1 * 0.5)) / 3));
+  expect(assessment.review.matches[1]!.libraryEvidence).toEqual([{ id: "entry:s", quote: "SQL" }]);
 });

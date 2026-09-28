@@ -1,7 +1,7 @@
 import { CvReviewPlanSchema, type CvRubric, type CvReviewPlan, type CvTextItem, type CvClaimItem } from "@ava/core/cv-assessment";
 import { CvBuildStop } from "@ava/core/cv-build-failure";
 import { mentionsDemographicAttribute } from "@ava/core/cv-review";
-import { cvReviewBatches, reviewBatchIssues, markUnverifiedFindings, type CvReviewBatch } from "./cv-review-batch";
+import { cvReviewBatches, libraryVerdictLines, reviewBatchIssues, markUnverifiedFindings, withFixedLibrarySide, type CvReviewBatch, type CvReviewBatchAnswer } from "./cv-review-batch";
 import {
   CV_PAGE_LIMITS,
   LIBRARY_REVIEW_BATCH,
@@ -683,6 +683,13 @@ export interface CvAssessInput {
    * against `evidence`, with a row cited under its own id counted as its block's.
    */
   library?: CvLibrary;
+  /**
+   * The library-side verdict of each requirement, fixed by the build's evidence plan
+   * (`cvLibraryVerdicts`). Given, each batch is handed its requirements' verdicts as settled
+   * context, is not asked for its own, and has these written onto its matches whatever it returns.
+   * Absent (a build with no plan), the audit judges the library side itself.
+   */
+  libraryVerdicts?: ReadonlyMap<string, Pick<CvReviewPlan["matches"][number], "libraryStatus" | "libraryEvidence">>;
 }
 
 export interface CvAssessOptions extends CvAssessHooks {
@@ -1230,8 +1237,16 @@ export class AiEngine {
     // One controller for the audit: a batch that fails cancels its siblings, and so does the run's
     // own signal, so a build whose task has been given up on stops paying for the rest of its audit.
     const controller = batchController([this.options.signal, ref.signal]);
-    const runBatch = (batch: CvReviewBatch, corrections?: string[], onStart?: () => void, onRecord?: (record: AiUsageRecord) => void) => this.run<CvReviewPlan>(entry, {
-      user: { stable: [stable, printed], tail: JSON.stringify({ ...batch, ...(corrections ? { corrections } : {}) }) },
+    const verdicts = input.libraryVerdicts;
+    // The fixed library verdicts ride beside the batch's requirements; a build without a plan sends the batch as it was.
+    const tailOf = (batch: CvReviewBatch) => verdicts
+      ? { requirements: batch.requirements, libraryVerdicts: libraryVerdictLines(batch.requirements, verdicts), claims: batch.claims, claimSources: batch.claimSources }
+      : batch;
+    /** An answer with its library side fixed by the plan, when there is one, before anything reads it. */
+    const settled = (answer: CvReviewBatchAnswer | null): CvReviewBatchAnswer | null =>
+      answer && verdicts ? withFixedLibrarySide(answer, verdicts) : answer;
+    const runBatch = (batch: CvReviewBatch, corrections?: string[], onStart?: () => void, onRecord?: (record: AiUsageRecord) => void) => this.run<CvReviewBatchAnswer>(entry, {
+      user: { stable: [stable, printed], tail: JSON.stringify({ ...tailOf(batch), ...(corrections ? { corrections } : {}) }) },
       signal: controller.signal,
       onStart,
       onRecord,
@@ -1268,17 +1283,19 @@ export class AiEngine {
         return { index, status: "failed", usage, ...(last!.error ? { error: last!.error } : {}), ...(last!.failure ? { failure: last!.failure } : {}) };
       };
       await say("start");
-      let result = sourcedByBlock(await runBatch(batch, undefined, onStart, onRecord), entryIds);
-      if (!result) return ended();
-      const corrections = reviewBatchIssues(result, context).map(issue => issue.correction);
+      const first = settled(sourcedByBlock(await runBatch(batch, undefined, onStart, onRecord), entryIds));
+      if (!first) return ended();
+      const corrections = reviewBatchIssues(first, context).map(issue => issue.correction);
+      // With no issues every match carries its library side: fixed by the plan, or returned and checked.
+      let result = markUnverifiedFindings(first, []);
       if (corrections.length) {
         // The first call is finished and paid for; what follows is a second charge for this batch.
         await say("retry", { corrections: corrections.length });
-        result = sourcedByBlock(await runBatch(batch, corrections, undefined, onRecord), entryIds);
-        if (!result) return ended(corrections.length);
+        const second = settled(sourcedByBlock(await runBatch(batch, corrections, undefined, onRecord), entryIds));
+        if (!second) return ended(corrections.length);
         // A repeated attribution mistake earns no credit and remains visible for review.
         // The final strict source validator still checks all accepted evidence quotes.
-        result = markUnverifiedFindings(result, reviewBatchIssues(result, context));
+        result = markUnverifiedFindings(second, reviewBatchIssues(second, context));
       }
       const extra = corrections.length ? { corrections: corrections.length } : {};
       const complete = (expected: string[], actual: string[]) =>
@@ -2202,12 +2219,12 @@ export function extractJsonBlock(text: string): unknown {
  * the canonical evidence under the row's own id; the validators know the block, and the row is in
  * it, so the citation stands or falls on its quote exactly as it would under the block's id.
  */
-function sourcedByBlock(review: CvReviewPlan | null, entryIds?: ReadonlySet<string>): CvReviewPlan | null {
+function sourcedByBlock(review: CvReviewBatchAnswer | null, entryIds?: ReadonlySet<string>): CvReviewBatchAnswer | null {
   if (!review) return review;
   const byBlock = <T extends { id: string }>(refs: T[]) => refs.map(ref => ({ ...ref, id: evidenceBlockId(ref.id, entryIds) }));
   return {
     ...review,
-    matches: review.matches.map(match => ({ ...match, libraryEvidence: byBlock(match.libraryEvidence) })),
+    matches: review.matches.map(match => (match.libraryEvidence ? { ...match, libraryEvidence: byBlock(match.libraryEvidence) } : match)),
     claims: review.claims.map(claim => ({ ...claim, evidence: byBlock(claim.evidence) })),
   };
 }

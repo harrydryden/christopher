@@ -7,6 +7,7 @@ import {
 import {
   createCvAssessment,
   cvAssessmentCurrent,
+  cvLibraryVerdicts,
   validateCvRubric,
 } from "@ava/core/cv-review";
 import {
@@ -14,6 +15,7 @@ import {
   cvClaimItems,
   cvEvidenceItems,
   cvImprovementOwner,
+  CvRubricSchema,
   type CvAssessment,
   type CvReviewPlan,
   type CvRubric,
@@ -527,6 +529,28 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
       if (reused) await runner.save(rubricStage, { description: draft.jobDescription }, rubric);
 
       // ---- The evidence plan and the optional questions ---------------------------------------
+      /**
+       * The parent revision's evidence plan, for a child draft (a direct edit, or an improvement
+       * written as a new build) whose own checkpoint has none. The plan depends only on the rubric
+       * and the evidence, so it stands for the child when both are the parent's: the same Library
+       * version and the parent's own rubric, reused rather than asked for again. It is read from the
+       * plan saved beside the parent at publication (the checkpoint is cleared then) and checked
+       * against this draft's rubric and Library; anything that fails is no plan at all.
+       */
+      const parentPlan = async (): Promise<CvTailoringPlan | undefined> => {
+        if (!parent || !reused || parent.userId !== draft.userId || parent.libraryVersion !== draft.libraryVersion ||
+            parent.jobDescription !== draft.jobDescription || !parent.assessment) return undefined;
+        try {
+          if (JSON.stringify(CvRubricSchema.parse(parent.assessment.rubric)) !== JSON.stringify(CvRubricSchema.parse(rubric))) return undefined;
+          const [row] = await deps.db.select({ plan: schema.cvTailoringPlans.plan }).from(schema.cvTailoringPlans)
+            .where(and(eq(schema.cvTailoringPlans.draftId, parent.id), eq(schema.cvTailoringPlans.userId, draft.userId)));
+          if (!row) return undefined;
+          return validateCvTailoringPlan(row.plan, rubric, cvTailoringEvidence(library), library);
+        } catch (error) {
+          log.info("parent evidence plan not reusable; continuing without it", { draftId, error: (error as Error).message });
+          return undefined;
+        }
+      };
       let tailoringPlan: CvTailoringPlan | undefined = checkpoint.tailoringPlan;
       if (checkpoint.tailoringEnabled && !inputs.reusedContent) {
         const planStage: CvStage<{ rubric: CvRubric; library: typeof library }, CvTailoringPlan> = {
@@ -552,11 +576,14 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         // A version 1 checkpoint carries its plan without a key; it was validated against this
         // rubric and library when it was made, and is checked again here.
         const legacyPlan = !checkpoint.stages?.plan && tailoringPlan ? tailoringPlan : undefined;
-        const savedPlan = runner.lookup(planStage, planInputs) ?? (legacyPlan ? validatePlan(legacyPlan, planInputs) : undefined);
+        const ownPlan = runner.lookup(planStage, planInputs) ?? (legacyPlan ? validatePlan(legacyPlan, planInputs) : undefined);
+        // An improvement rebuilt from the same Library and rubric plans nothing new: its parent's plan stands.
+        const inherited = ownPlan ? undefined : await parentPlan();
+        const savedPlan = ownPlan ?? inherited;
         if (savedPlan) {
           tailoringPlan = savedPlan;
           await journal.record("plan_evidence", { reused: true, ...planFigures(savedPlan) }, "skipped");
-          if (legacyPlan) await runner.save(planStage, planInputs, savedPlan);
+          if (legacyPlan || inherited) await runner.save(planStage, planInputs, savedPlan);
         } else {
           tailoringPlan = (await runner.run(planStage, planInputs)).value;
         }
@@ -572,6 +599,9 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
           await save({ buildCheckpoint: checkpoint });
         }
       }
+      // A direct edit writes nothing, so it never plans; its parent's plan is still the library-side
+      // verdict its audit takes, and is saved beside it at publication for the revisions after it.
+      if (!tailoringPlan && !checkpoint.tailoringEnabled) tailoringPlan = await parentPlan();
       const semantic = tailoringPlan ? { plan: tailoringPlan, rubric } : undefined;
       const target = cvRelevanceTerms(rubric.requirements);
 
@@ -729,12 +759,17 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         const pageCount = knownPages ?? (await renderCvPdfWithReport(candidate)).pageCount;
         assertCvPageLimit(pageCount, cvMaxPages(candidate.theme));
         const items = { rubric, cv: cvTextItems(candidate), claims: cvClaimItems(candidate), evidence: cvEvidenceItems(library) };
+        // The evidence plan is the library-side verdict: made once per rubric and evidence, handed
+        // to every audit of this build as settled context. A build without a plan audits both sides.
+        const libraryVerdicts = tailoringPlan
+          ? cvLibraryVerdicts(tailoringPlan, items.evidence, new Set(library.entries.map(entry => entry.id))) : undefined;
+        const libraryFixed = !!libraryVerdicts;
         const batches = cvAuditBatches(items);
         type AuditInputs = { cv: typeof items.cv; claims: typeof items.claims; evidence: typeof items.evidence; rubric: CvRubric; index: number; total: number };
         const auditStage = (index: number): CvStage<AuditInputs, CvReviewPlan> => ({
           name: `audit[${index}]`, admission: pass === "draft" ? "audit" : "reaudit", motion: "assess_batch",
           key: input => input,
-          estimate: () => estimateCvStage(pass === "draft" ? "audit" : "reaudit", { ...sizes, batches: 1 }, models),
+          estimate: () => estimateCvStage(pass === "draft" ? "audit" : "reaudit", { ...sizes, batches: 1, libraryFixed }, models),
           run: async () => { throw new Error("An audit batch runs with its siblings."); },
           validate: value => value,
         });
@@ -768,12 +803,12 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
         }
         if (pending.length) {
           const audit = await runner.paid(admission, "assess_batch",
-            estimateCvStage(admission, { ...sizes, batches: sending }, models), stageCtx => {
+            estimateCvStage(admission, { ...sizes, batches: sending, libraryFixed }, models), stageCtx => {
               stageSignal = stageCtx.signal;
               // The audit's calls are charged to the first batch step it opens: the engine reads the
               // reference as each call is made, and every batch's first call follows its step opening.
               const auditRef: ReturnType<typeof ref> & { stepId?: string } = ref("review", "cv-review", stageCtx.signal);
-              return ai.assessCvBatches(items,
+              return ai.assessCvBatches(libraryVerdicts ? { ...items, libraryVerdicts } : items,
               // The engine re-runs a batch whose attribution it had to correct, and names that
               // second charge `review_retry` (`review_candidate_retry` for the revision's re-check),
               // so a build that paid twice for one batch says so.
@@ -879,6 +914,7 @@ export async function handleGenerateCv(task: Task, deps: WorkerDeps, ctx?: CvRun
               model: draft.model,
               pageCount,
               now: deps.now(),
+              ...(tailoringPlan ? { plan: tailoringPlan } : {}),
             });
           } catch (error) {
             // Every quote is checked against its source here; an assessment that cited something

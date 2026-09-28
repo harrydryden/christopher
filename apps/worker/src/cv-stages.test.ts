@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { CvBuildCheckpoint } from "@ava/core";
-import type { StageRoutes } from "@ava/ai";
+import { cvAuditBatchOutputTokens, type StageRoutes } from "@ava/ai";
 import type { CvRubric } from "@ava/core/cv-assessment";
 import { CvBuildStop } from "@ava/core/cv-build-failure";
 import { CvStageRunner, cvAuditBatches, estimateCvStage, type CvStage } from "./handlers/cv-stages";
@@ -112,6 +112,17 @@ describe("an audit's batches", () => {
     // Each stage is priced at the model the administrator routed it to.
     expect(estimateCvStage("rubric", sizes, { ...models, routes: { "cv.rubric": { model: "claude-haiku-4-5" } } }))
       .toBeLessThan(estimateCvStage("rubric", sizes, models));
+  });
+
+  it("holds less for an audit whose library side the evidence plan settles, at the same batches", () => {
+    const sizes = { libraryBytes: 30_000, descriptionBytes: 6_000, batches: 3 };
+    const models = { cvModel: "claude-sonnet-5" };
+    for (const stage of ["audit", "reaudit"] as const)
+      expect(estimateCvStage(stage, { ...sizes, libraryFixed: true }, models)).toBeLessThan(estimateCvStage(stage, sizes, models));
+    expect(cvAuditBatchOutputTokens("cv.review")).toBe(7_000);
+    expect(cvAuditBatchOutputTokens("cv.review", { libraryFixed: true })).toBe(5_500);
+    // A lower effort writes less either way.
+    expect(cvAuditBatchOutputTokens("cv.review", { libraryFixed: true, routes: { "cv.review": { effort: "medium" } } })).toBe(Math.round(5_500 * 0.7));
   });
 });
 

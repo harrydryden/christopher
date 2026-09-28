@@ -66,7 +66,11 @@ CV evaluation:
 - The audit's claim verdicts are memoised by claim and source, so the re-audit of a revision
   sends only the claims the revision changed; every requirement is re-assessed because a
   requirement's verdict depends on the whole CV.
-- Not done, and worth its own change: the audit's library-side verdict per requirement depends
-  only on the rubric and the evidence, so it could be memoised across revisions and across the
-  drafts of one role. It would split the audit's per-requirement answer into two calls or two
-  fields, and the saving is the library half of every re-audit.
+- The evidence plan is the audit's library-side verdict. Whether the library meets a requirement
+  depends only on the rubric and the evidence, never on the CV, and the plan and the audit judge it
+  by the same words (`EVIDENCE_JUDGEMENT_RULES`), so it is judged once per rubric and evidence: each
+  audit batch is handed the plan's verdicts as settled context, answers only for the printed CV and
+  the claims, and the plan's verdict is what the assessment stores. The same verdict serves the
+  baseline audit, the improvement's re-audit, direct edits and child drafts (which reuse the
+  parent's saved plan when the Library version and rubric are the parent's). Builds with no plan —
+  untailored ones — keep the audit's own library-side judgement.

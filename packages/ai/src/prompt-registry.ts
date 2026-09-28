@@ -103,10 +103,18 @@ export function expectedOutputTokens(entry: PromptEntry, effort: Effort = entry.
 /** Assessment batches hold at most this many requirements and this many claims. */
 export const CV_REVIEW_BATCH_SIZE = 8;
 
-const CV_REVIEW_BATCH_PROMPT = CV_REVIEW_PROMPT + "\nThis is one batch of a larger audit. The user turn has three parts: the complete evidence library with the rubric's caveats, then the complete cv, then this batch: the rubric requirements and claims to assess now, with claimSources supplying each claim's required source explicitly. Assess only the batch's requirements and claims, using the complete CV and evidence as context. Return an empty array when the batch has no requirements or no claims. Use the shortest sufficient verbatim quotes; usually one or two sources per finding suffice. Keep reasons and improvements concise. Every claim with requiredEvidenceId must cite a verbatim quote from that exact source to be supported, including skills. Evidence from a different role, profile or skill block cannot substitute for it. If that source does not support the complete claim, mark it uncertain or unsupported; never copy in unrelated evidence merely to satisfy this rule.";
+const CV_REVIEW_BATCH_PROMPT = CV_REVIEW_PROMPT + "\nThis is one batch of a larger audit. The user turn has three parts: the complete evidence library with the rubric's caveats, then the complete cv, then this batch: the rubric requirements and claims to assess now, with claimSources supplying each claim's required source explicitly. Assess only the batch's requirements and claims, using the complete CV and evidence as context. Return an empty array when the batch has no requirements or no claims. Use the shortest sufficient verbatim quotes; usually one or two sources per finding suffice. Keep reasons and improvements concise. Every claim with requiredEvidenceId must cite a verbatim quote from that exact source to be supported, including skills. Evidence from a different role, profile or skill block cannot substitute for it. If that source does not support the complete claim, mark it uncertain or unsupported; never copy in unrelated evidence merely to satisfy this rule.\nWhen the batch carries libraryVerdicts, the library side of each of its requirements is already settled by the evidence plan, which judged the confirmed evidence by the same rules: assess only the printed CV for status and cvEvidence, and do not return libraryStatus or libraryEvidence. Write each reason and improvement knowing what the library holds for that requirement, so an improvement points to the library evidence the CV leaves out, or asks for evidence the library lacks.";
 
+/**
+ * One batch's answer. The library side of a match is optional: a batch whose library side the
+ * evidence plan settles is not asked for it, and the engine writes the plan's verdict on instead;
+ * a batch without a plan that leaves it out is corrected (`reviewBatchIssues`).
+ */
 export const CvReviewBatchSchema = CvReviewPlanSchema.extend({
-  matches: z.array(CvReviewPlanSchema.shape.matches.element).max(CV_REVIEW_BATCH_SIZE),
+  matches: z.array(CvReviewPlanSchema.shape.matches.element.extend({
+    libraryStatus: CvReviewPlanSchema.shape.matches.element.shape.libraryStatus.optional(),
+    libraryEvidence: CvReviewPlanSchema.shape.matches.element.shape.libraryEvidence.optional(),
+  })).max(CV_REVIEW_BATCH_SIZE),
   claims: z.array(CvReviewPlanSchema.shape.claims.element).max(CV_REVIEW_BATCH_SIZE),
 });
 

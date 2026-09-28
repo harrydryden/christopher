@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CvDisclosure } from "./CvDisclosure";
+import { useVisiblePoll } from "./useVisiblePoll";
 import type * as Views from "./CvBuildViews";
 import { adoptedRevision } from "@/lib/cv-build-adopted";
 import { cvStepsSignature as signature, mergeSteps, stepFromWire, type CvJournalStep } from "@/lib/cv-build-journal";
@@ -120,43 +121,31 @@ export function CvBuildLive({
     };
   }, [live]);
 
-  useEffect(() => {
-    if (!initial.live && !(mode === "build" && initial.active)) return;
-    let cancelled = false;
+  useVisiblePoll(() => {
+    if (!initial.live && !(mode === "build" && initial.active)) return null;
     let state = initialWorkPoll(initial.version);
     let logWait = FIRST_POLL_MS;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let controller: AbortController | undefined;
-    let parked = false;
     let resynced = false;
-    async function poll(resync = false) {
-      timer = undefined;
-      if (cancelled) return;
-      if (document.visibilityState !== "visible") {
-        parked = true;
-        return;
-      }
-      const held = stepsRef.current;
-      const sig = signature(held);
-      const after = resync ? 0 : held.reduce((max, step) => Math.max(max, step.seq), 0);
-      let next: number | null;
-      controller = new AbortController();
-      const timeout = setTimeout(() => controller?.abort(), 8000);
-      try {
+    return {
+      first: FIRST_POLL_MS,
+      async read(signal, alive, resync) {
+        const held = stepsRef.current;
+        const sig = signature(held);
+        const after = resync ? 0 : held.reduce((max, step) => Math.max(max, step.seq), 0);
         const response = await fetch(`/api/cv/${id}/progress?after=${after}&sig=${encodeURIComponent(sig)}&tz=${encodeURIComponent(timeZone)}`, {
           cache: "no-store",
-          signal: controller.signal,
+          signal,
         });
         if (response.status === 404 || response.status === 401) {
           // The draft is gone (deleted, or never this account's) or the session has ended: no later
           // reading can answer. The server renders what is true now — the not-found page, or the
           // sign-in — and this stops asking rather than backing off for ever over a silent page.
           startTransition(() => router.refresh());
-          return;
+          return null;
         }
         if (!response.ok) throw new Error("Progress unavailable");
         const next_ = (await response.json()) as CvProgressReading;
-        if (cancelled) return;
+        if (!alive()) return null;
         const merged = mergeSteps(held, next_.steps.map(stepFromWire), resync);
         const mine = signature(merged);
         const changed = mine !== sig;
@@ -165,6 +154,7 @@ export function CvBuildLive({
         setReading(next_);
         if (next_.build) setBuild(next_.build);
         setNow(Date.now() + skewRef.current);
+        let next: number | null;
         if (mode === "build") {
           const step = stepProgressPoll(state, { active: next_.active, version: next_.version }, changed);
           state = step.state;
@@ -172,7 +162,7 @@ export function CvBuildLive({
           if (step.reload) {
             // The build screen holds no edits to lose, so a stuck soft refresh is recovered whole.
             window.location.reload();
-            return;
+            return null;
           }
           if (step.refresh) startTransition(() => router.refresh());
         } else {
@@ -186,37 +176,20 @@ export function CvBuildLive({
         // one was read — are read again whole, once, rather than trusted.
         if (next !== null && mine !== next_.signature && !resynced) {
           resynced = true;
-          timer = setTimeout(() => void poll(true), 0);
-          return;
+          return "resync";
         }
         if (mine === next_.signature) resynced = false;
-      } catch {
+        return next;
+      },
+      fail() {
         if (mode === "build") {
           const failed = failedWorkPoll(state);
           state = failed.state;
-          next = failed.next;
-        } else {
-          logWait = Math.min(logWait * 2, 60_000);
-          next = logWait;
+          return failed.next;
         }
-      } finally {
-        clearTimeout(timeout);
-      }
-      if (!cancelled && next !== null) timer = setTimeout(() => void poll(), next);
-    }
-    function onVisibility() {
-      if (parked && document.visibilityState === "visible") {
-        parked = false;
-        void poll();
-      }
-    }
-    document.addEventListener("visibilitychange", onVisibility);
-    timer = setTimeout(() => void poll(), FIRST_POLL_MS);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-      controller?.abort();
-      document.removeEventListener("visibilitychange", onVisibility);
+        logWait = Math.min(logWait * 2, 60_000);
+        return logWait;
+      },
     };
     // A landed refresh renders this with a new version, which starts the poller afresh.
   }, [id, mode, timeZone, router, initial.version, initial.live, initial.active]);

@@ -10,9 +10,9 @@
  * facet tags and wording, so it costs nothing and cannot be wrong about what they wrote.
  *
  * Only entries whose wording changed are sent. `libraryEntryInputHash` covers the rubric version,
- * an entry's rows, their facets and the job it belongs to and nothing version-scoped, so fixing
- * one typo re-reviews one entry and every other entry carries its last review into the new
- * version.
+ * an entry's rows and the job it belongs to and nothing version-scoped — not the person's tags,
+ * which the page re-scores against itself — so fixing one typo re-reviews one entry, re-tagging a
+ * row re-reviews nothing, and every other entry carries its last review into the new version.
  *
  * The pass is admitted against the account's own monthly budget once, up front, exactly as a CV
  * build is, and a refusal finishes the task rather than failing it: work an exhausted account
@@ -24,6 +24,8 @@ import {
   aiFeatureLabel,
   isActiveStoredEvidence,
   libraryEntryInputHash,
+  normaliseLibraryReview,
+  retagLibraryReview,
   reviewableRows,
   rulesLibraryReview,
   usd,
@@ -115,7 +117,10 @@ export async function handleReviewLibrary(task: Task, deps: WorkerDeps, ctx?: Ta
     const held = stored.get(entry.id);
     if (held?.source === "model" && held.libraryVersion === version) return [];
     if (held?.source === "model") {
-      return [{ entryId: entry.id, inputHash: hashes.get(entry.id)!, review: held.review, source: "model", model: held.model }];
+      // Carried with the tags as saved now: the hash leaves them out, so the person may have
+      // re-tagged a row since, and the stored score is read off the tags.
+      const review = retagLibraryReview(normaliseLibraryReview(held.review), entry);
+      return [{ entryId: entry.id, inputHash: hashes.get(entry.id)!, review, source: "model", model: held.model }];
     }
     return [{
       entryId: entry.id,

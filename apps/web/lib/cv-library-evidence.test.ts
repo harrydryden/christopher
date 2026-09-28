@@ -135,6 +135,31 @@ it("shows a stored model review as it was computed and stops saying Evaluating",
   expect(evidence.line).toBe("Evidence: Weak · 1 job is Weak");
 });
 
+it("reads a stored model review against the tags saved now, since a re-tag is not re-reviewed", () => {
+  // Reviewed when the second row was untagged; the person has since tagged it an outcome. The
+  // entry's hash leaves tags out, so this is still its review, rescored against the new tags.
+  const value = library({ acme: ["Led a team", "Cut handovers by 40%"] }, { acme: { "Cut handovers by 40%": ["outcome"] } });
+  const review: LibraryEntryReview = {
+    entryId: "acme",
+    rows: [
+      { row: "Led a team", facets: ["responsibility"], tagged: [], marks: ["responsibility.ownership"], quote: null, verified: true },
+      { row: "Cut handovers by 40%", facets: ["metric"], tagged: [], marks: ["metric.figure", "metric.measure", "metric.movement", "outcome.change"], quote: null, verified: true },
+    ],
+    coverage: { responsibility: 1, problem: 0, outcome: 0, metric: 1, milestone: 0, style: 0 },
+    missing: ["outcome", "problem", "milestone", "style"],
+    prompts: [],
+    score: 44,
+    rating: "weak",
+  };
+  const stored = new Map<string, StoredLibraryReview>([["acme", { entryId: "acme", source: "model", review }]]);
+  const entry = libraryEvidence(value, stored).entries[0]!;
+  expect(entry.rows.map(row => [row.tagged, row.reviewFacets])).toEqual([[[], ["responsibility"]], [["outcome"], ["metric"]]]);
+  // Coverage is the review's reading (responsibility and metric, 50 × 3/8 = 18.75); the first row
+  // untagged reads against it (25), the second against its new tag, one outcome mark (25):
+  // 18.75 + 50 × 50/200 = 31.25 → 31, not the 44 stored when it read as a metric.
+  expect(entry).toMatchObject({ score: 31, rating: "weak", source: "model", provisional: false });
+});
+
 it("carries the worker's own refusal and stops evaluating when the pass is done", () => {
   const value = library({ acme: ["Led a team"] });
   const refusal = "Library evidence review needs about $0.12 of AI budget; your budget of $5 has $0.00 left this month (it resets on the 1st). Raise it on Settings, or ask an administrator.";

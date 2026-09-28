@@ -12,6 +12,7 @@ import {
   libraryEntryInputHash,
   libraryRowScore,
   normaliseLibraryReview,
+  retagLibraryReview,
   reviewableRows,
   rulesLibraryReview,
   scoreLibraryRows,
@@ -353,14 +354,10 @@ describe("libraryEntryInputHash", () => {
     expect(libraryEntryInputHash({ ...entry, confirmedResponsibilities: [first] }, job)).toBe(hash);
   });
 
-  it("changes when a row, its order, its types or the job it belongs to changes", () => {
+  it("changes when a row, its order or the job it belongs to changes", () => {
     const changed = [
       libraryEntryInputHash(library([first, "Cut onboarding time by 45%"].join("\n"), { [second]: "metric" }).entries[0]!, job),
       libraryEntryInputHash(library([second, first].join("\n"), { [second]: "metric" }).entries[0]!, job),
-      libraryEntryInputHash(library([first, second].join("\n"), { [second]: "outcome" }).entries[0]!, job),
-      // A second type on a row is a different classification, so that entry is reviewed again.
-      libraryEntryInputHash(library([first, second].join("\n"), { [second]: ["metric", "outcome"] }).entries[0]!, job),
-      libraryEntryInputHash(library([first, second].join("\n")).entries[0]!, job),
       libraryEntryInputHash(entry, { ...job, company: "Globex" }),
       libraryEntryInputHash(entry, { ...job, jobTitle: "Head of Operations" }),
       libraryEntryInputHash(entry, null),
@@ -370,6 +367,17 @@ describe("libraryEntryInputHash", () => {
     expect(libraryEntryInputHash(entry, { ...job, current: false, endDate: "2026-01" })).toBe(hash);
   });
 
+  it("does not change when a row is re-tagged: the review is about the wording, not the tags", () => {
+    // A different type, a second type, and every tag removed: the page re-scores each against the
+    // review's marks itself, so none of them is worth another review of the entry.
+    const retags: Array<Record<string, EvidenceFacet | EvidenceFacet[]>> = [{ [second]: "outcome" }, { [second]: ["metric", "outcome"] }, {}, { [first]: "milestone", [second]: "metric" }];
+    for (const facets of retags) {
+      expect(libraryEntryInputHash(library([first, second].join("\n"), facets).entries[0]!, job)).toBe(hash);
+    }
+    // Editing a row's wording does change it.
+    expect(libraryEntryInputHash(library([first, "Cut onboarding time by 40% in a quarter"].join("\n"), { [second]: "metric" }).entries[0]!, job)).not.toBe(hash);
+  });
+
   it("survives the consolidation the editor runs on every open and save", () => {
     const consolidated = consolidateExperience(subject);
     expect(consolidated.facetedRows).toBe(true);
@@ -377,22 +385,19 @@ describe("libraryEntryInputHash", () => {
   });
 
   it("leads with the rubric version, so a review under an earlier rubric no longer matches", () => {
-    expect(LIBRARY_RUBRIC_VERSION).toBe(2);
-    // What the first rubric's reviews were stored against: the same list with no version.
+    expect(LIBRARY_RUBRIC_VERSION).toBe(3);
+    // Rows in order, the company and the job title, after the version.
+    expect(hash).toBe(sha1(JSON.stringify([LIBRARY_RUBRIC_VERSION, [first, second], job.company, job.jobTitle])));
+    // What the first rubric's reviews were stored against (no version), and what the second's were
+    // (its version, and each row's tags joined): neither matches any more.
     expect(hash).not.toBe(sha1(JSON.stringify([[first, second], ["", "metric"], job.company, job.jobTitle])));
     expect(hash).not.toBe(sha1(JSON.stringify([1, [first, second], ["", "metric"], job.company, job.jobTitle])));
+    expect(hash).not.toBe(sha1(JSON.stringify([2, [first, second], ["", "metric"], job.company, job.jobTitle])));
   });
 
-  it("hashes a row of one type exactly as a row stored as a string", () => {
-    // Rows in order, each row's types joined, the company and the job title: one type joins to
-    // itself and an untagged row to "", so nobody's Library is re-reviewed, and nothing is paid
-    // for again, over how tags are stored.
-    expect(libraryEntryInputHash(entry, job)).toBe(sha1(JSON.stringify([LIBRARY_RUBRIC_VERSION, [first, second], ["", "metric"], job.company, job.jobTitle])));
-    expect(libraryEntryInputHash(library([first, second].join("\n"), { [second]: ["outcome", "metric"] }).entries[0]!, job))
-      .toBe(sha1(JSON.stringify([LIBRARY_RUBRIC_VERSION, [first, second], ["", "outcome,metric"], job.company, job.jobTitle])));
-    // And the entry as that release actually stored it — the tag a bare string, not a one-item
-    // list — hashes to the same thing unparsed, which is the shape the worker's handler reads
-    // `cv_libraries.content` in.
+  it("reads an entry as stored, whatever shape its tags were written in", () => {
+    // The worker's handler hashes `cv_libraries.content` unparsed, where a release stored a tag as
+    // a bare string rather than a one-item list.
     const stored = { ...entry, rowFacets: { [second]: "metric" } } as unknown as typeof entry;
     expect(libraryEntryInputHash(stored, job)).toBe(libraryEntryInputHash(entry, job));
   });
@@ -451,5 +456,32 @@ describe("facetForPrompt", () => {
     expect(facetForPrompt("  what changed as a  result?  ")).toBe("outcome");
     expect(facetForPrompt("What did the board say about the migration?")).toBeNull();
     expect(facetForPrompt("")).toBeNull();
+  });
+});
+
+describe("retagLibraryReview", () => {
+  it("reads a model review against the tags saved now, keeping its marks and its reading", () => {
+    const first = "Rebuilt the Acme onboarding flow from scratch with the design group";
+    const second = "Cut onboarding time by 40%";
+    const before = library([first, second].join("\n"), { [first]: "milestone" });
+    const review = validateLibraryReview(before.entries[0]!, {
+      entryId: "acme-block",
+      rows: [
+        { row: first, facets: ["outcome"], marks: ["outcome.change", "milestone.deliverable", "milestone.role"], quote: null },
+        { row: second, facets: ["metric"], marks: ["metric.figure", "metric.movement"], quote: null },
+      ],
+      prompts: [],
+    });
+    // Re-tagged: the first row is now an outcome, the second a metric the person chose themselves.
+    const after = library([first, second].join("\n"), { [first]: "outcome", [second]: "metric" });
+    const retagged = retagLibraryReview(review, after.entries[0]!);
+    expect(retagged.rows.map(row => row.tagged)).toEqual([["outcome"], ["metric"]]);
+    expect(retagged.rows.map(row => [row.facets, row.marks])).toEqual(review.rows.map(row => [row.facets, row.marks]));
+    // Coverage 25 either way; the first row reads 25 as an outcome where it read 50 as a milestone:
+    // 25 + 50 × 75/200 = 43.75 → 44, where the review as stored read 50.
+    expect(review.score).toBe(50);
+    expect(retagged).toMatchObject({ score: 44, rating: "weak" });
+    // The same entry as far as its review is concerned.
+    expect(libraryEntryInputHash(after.entries[0]!, job)).toBe(libraryEntryInputHash(before.entries[0]!, job));
   });
 });

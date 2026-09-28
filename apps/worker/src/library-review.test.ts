@@ -11,7 +11,7 @@ import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import { createDb, schema, type Db } from "@ava/db";
 import { runMigrations } from "@ava/db/migrate";
 import type { AiClientLike, ParseResponse } from "@ava/ai";
-import { libraryEntryInputHash, type CvLibrary } from "@ava/core";
+import { libraryEntryInputHash, setRowFacets, type CvLibrary } from "@ava/core";
 import { desc, eq, sql } from "drizzle-orm";
 import { createDeps, type WorkerDeps } from "./context";
 import { readEnv } from "./env";
@@ -199,6 +199,29 @@ it("reuses an unchanged entry's review across a save and sends only the entry wh
   expect(third.calls).toHaveLength(0);
   expect((await reviews()).filter(row => row.libraryVersion === 2).map(row => [row.entryId, row.source]))
     .toEqual([["later", "model"], ["role", "model"]]);
+});
+
+it("re-reviews nothing when a row is only re-tagged, and carries the review with the new tags", async () => {
+  await saveLibrary(1, libraryOf());
+  deps.aiClient = scriptedClient().client;
+  await handleReviewLibrary(task({ userId, libraryVersion: 1 }), deps);
+
+  const library = libraryOf();
+  const retagged = { ...library, entries: library.entries.map(entry => entry.id === "role" ? setRowFacets(entry, ROWS.cut, ["metric"]) : entry) };
+  await saveLibrary(2, retagged);
+  const second = scriptedClient();
+  deps.aiClient = second.client;
+
+  expect(await handleReviewLibrary(task({ userId, libraryVersion: 2 }), deps)).toMatchObject({ reviewed: 0, reused: 2 });
+  expect(second.calls).toHaveLength(0);
+  const role = (await reviews()).filter(row => row.entryId === "role");
+  expect(role.map(row => [row.libraryVersion, row.source])).toEqual([[1, "model"], [2, "model"]]);
+  const [before, after] = [role[0]!, role[1]!];
+  // The marks and the model's reading are about the wording and are carried as they were; the
+  // tags are the ones saved now, and the stored score is read off them.
+  expect(after.review.rows.map(row => row.tagged)).toEqual([[], ["metric"]]);
+  expect(after.review.rows.map(row => [row.facets, row.marks])).toEqual(before.review.rows.map(row => [row.facets, row.marks]));
+  expect(after.score).toBe(after.review.score);
 });
 
 it("carries an unchanged entry's model review into every newer version, so pruning never loses it", async () => {

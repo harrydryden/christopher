@@ -352,32 +352,32 @@ export function validateLibraryReview(entry: CvEntry, plan: LibraryReviewPlanEnt
 
 /**
  * Which rubric a review was judged against. 1 was specific / quantified / outcome-linked; 2 is the
- * type-specific marks in `evidence-rubric.ts`. Move it when what a review records changes meaning.
+ * type-specific marks in `evidence-rubric.ts`; 3 is the same marks with the person's tags out of
+ * the entry's hash. Move it when what a review records, or what its hash covers, changes meaning.
  */
-export const LIBRARY_RUBRIC_VERSION = 2;
+export const LIBRARY_RUBRIC_VERSION = 3;
 
 /**
- * Everything a review of this entry was computed from: its rows in order, the types on each, and
- * the job it belongs to. Nothing version-scoped, deliberately — an entry nobody touched keeps the
- * same hash across a save, so its review carries forward to the new library version and only the
- * entry whose typo was fixed is reviewed again.
+ * Everything a review of this entry was computed from: its rows in order and the job it belongs
+ * to. Nothing version-scoped, deliberately — an entry nobody touched keeps the same hash across a
+ * save, so its review carries forward to the new library version and only the entry whose typo
+ * was fixed is reviewed again.
  *
- * The types are written in canonical order and joined, so a row's tags read as one string: adding
- * a second type to a row changes the hash and re-reviews that entry, and a row that was tagged
- * with exactly one type — every row stored before a row could carry several — hashes to what it
- * always did. Representing the same tags differently is not a reason to buy the same answer again.
+ * The person's tags are not in it. A review's marks and its reading of each row's types are
+ * judgements about the wording, which a re-tag does not change, and the page re-scores a row
+ * against the tags on screen itself (`libraryRowScore`), so re-tagging a row must not re-review
+ * its entry and pay for the same answer again.
  *
  * The rubric's version leads the hashed list. A review written under an earlier rubric recorded
- * judgements the current score does not read (it has no marks), so moving the version makes every
- * stored review stop matching its entry: the Library falls back to the baseline and offers
- * Re-score once, and the old reviews are left where they are rather than deleted.
+ * judgements the current score does not read (it has no marks), or was filed under a hash that
+ * covered the tags, so moving the version makes every stored review stop matching its entry: the
+ * Library falls back to the baseline and offers Re-score once, and the old reviews are left where
+ * they are rather than deleted.
  */
 export function libraryEntryInputHash(entry: CvEntry, employment: Employment | null): string {
-  const rows = responsibilityRows(entry.details);
   return sha1(JSON.stringify([
     LIBRARY_RUBRIC_VERSION,
-    rows,
-    rows.map(row => rowFacets(entry, row).join(",")),
+    responsibilityRows(entry.details),
     employment?.company ?? "",
     employment?.jobTitle ?? "",
   ]));
@@ -437,4 +437,18 @@ export function normaliseLibraryReview(raw: unknown): LibraryEntryReview {
     verified: row.verified === true,
   }));
   return { entryId: stored.entryId, rows, ...scoreLibraryRows(rows), prompts: stored.prompts.slice(0, 3) };
+}
+
+/**
+ * A model review read against the tags the entry carries now, rescored.
+ *
+ * The entry's hash leaves the tags out, so a review of the same wording is still this entry's
+ * review after the person re-tags a row — but the `tagged` it recorded, and the score read off
+ * them, are the tags as they were. The marks and the review's own reading of each row are about
+ * the wording and stand; only the tags are replaced. A rules review is not re-read here: its
+ * `facets` are the tags too, so the baseline is simply computed again (`rulesLibraryReview`).
+ */
+export function retagLibraryReview(review: LibraryEntryReview, entry: CvEntry): LibraryEntryReview {
+  const rows = review.rows.map(row => ({ ...row, tagged: rowFacets(entry, row.row) }));
+  return { ...review, rows, ...scoreLibraryRows(rows) };
 }
